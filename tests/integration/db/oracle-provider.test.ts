@@ -1878,11 +1878,81 @@ describe("OracleProvider", () => {
       expect(overview.version).toBe("Oracle");
       expect(overview.uptime).toBe("N/A");
       expect(overview.startTime).toBeUndefined();
-      expect(overview.activeConnections).toBe(0);
+      // Not `toBe(0)` any more: this assertion pinned the fabrication rather than the
+      // degradation. `maxConnections` is different and stays 0 - its own docblock in
+      // src/lib/db/types.ts says 0 MEANS "no limit published" there, so 0 and absence
+      // are the same fact for the ceiling and different facts for the count.
+      expect("activeConnections" in overview).toBe(false);
       expect(overview.maxConnections).toBe(0);
       expect(overview.databaseSizeBytes).toBe(0);
       expect(overview.tableCount).toBe(0);
       expect(overview.indexCount).toBe(0);
+    });
+
+    test("an unprivileged V$SESSION leaves overview activeConnections absent, never a measured 0", async () => {
+      // The same defect getHealth() was already corrected for, in the same file: the
+      // block was guarded but `let activeConnections = 0` published the refusal as an
+      // instance with no user session. Oracle's own Database Reference states that
+      // "after installation, only user SYS or anyone with SYSDBA privilege has access
+      // to the dynamic performance tables", so a plain schema user is the ORDINARY
+      // case here, not an exotic one - and the refusal shape was measured 2026-08-23
+      // on Oracle AI Database 26ai Free against a user granted only CREATE SESSION
+      // (`ORA-00942: table or view "SYS"."V_$SYSSTAT" does not exist`); V_$SESSION
+      // answers in the same shape when the grant is missing.
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("V$SESSION") && upper.includes("COUNT")) {
+          throw new Error('ORA-00942: table or view "SYS"."V_$SESSION" does not exist');
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("activeConnections" in overview).toBe(false);
+      // Only the refused count goes absent; every other read still answers.
+      expect(overview.version).toContain("Oracle");
+      expect(overview.tableCount).toBe(10);
+      expect(overview.databaseSizeBytes).toBe(268435456);
+    });
+
+    test("an instance with no user session keeps its measured zero connections", async () => {
+      // The anti-vacuity twin of the test above. Absence must never be spelled with a
+      // falsy test (`Number(...) || undefined`): an instance whose only USER session is
+      // this very pool's own could still count 0 at the moment of the read, and that 0
+      // is a reading rather than a refusal.
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("V$SESSION") && upper.includes("COUNT")) {
+          return { rows: [{ CNT: 0 }], metaData: [{ name: "CNT" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("activeConnections" in overview).toBe(true);
+      expect(overview.activeConnections).toBe(0);
+    });
+
+    test("keeps the measured count when only the sessions ceiling is refused", async () => {
+      // Both reads share one try block, and the count is assigned before the ceiling
+      // is attempted - so a V$PARAMETER refusal must not carry the count away with it.
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("V$PARAMETER")) {
+          throw new Error('ORA-00942: table or view "SYS"."V_$PARAMETER" does not exist');
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect(overview.activeConnections).toBe(8);
+      expect(overview.maxConnections).toBe(0);
     });
   });
 

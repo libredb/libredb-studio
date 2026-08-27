@@ -630,13 +630,19 @@ export class TrinoProvider extends SQLBaseProvider {
   /**
    * The tables that published statistics, or an ABSENT panel with the reason.
    *
-   * An empty array here has three causes and only one of them is a measurement (see
-   * `TrinoTableStatsReading`). The other two used to render as an empty table, which
-   * claims the engine answered "no tables" - measured 2026-08-25 against Trino 476,
+   * An empty array here has four causes and only one of them is a measurement (see
+   * `TrinoTableStatsReading`). Two of the other three used to render as an empty table,
+   * which claims the engine answered "no tables" - measured 2026-08-25 against Trino 476,
    * the jmx catalog holds 379 tables in schema `current` and a 20-table random sample
    * of them answered SHOW STATS with an empty row_count (0 of 20 non-null; the jmx
    * connector supplies no statistics at all), so that panel reported nothing about a
    * catalog full of data.
+   *
+   * The fourth is D41 and used to render as something worse than an empty table: a scope
+   * holding more tables than one pass describes was silently CUT to the first 25, and
+   * `TableStats[]` has no field in which the cut could have been declared, so the panel
+   * and the agent's curated reading both published 25 as the count. It is now refused
+   * with the number of tables the scope really holds.
    */
   public async getTableStats(options: { schema?: string } = {}): Promise<TableStats[]> {
     const transport = this.requireTransport();

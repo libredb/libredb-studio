@@ -30,6 +30,16 @@ export function StorageTab({ data, loading }: StorageTabProps) {
   // is not right either - the other panels answered - so this panel alone carries the
   // engine's own sentence. See MonitoringData in src/lib/db/types.ts.
   const storageUnavailable = data?.storage === undefined ? data?.errors?.storage : undefined;
+  const tablesUnavailable = data?.tables === undefined ? data?.errors?.tables : undefined;
+
+  // A refused table read costs more than the Largest Tables panel below, because five figures
+  // on this tab come off those rows. Read as `[]`, a refusal is indistinguishable from a database
+  // that holds no tables: `every()` is vacuously true, so both totals below published a
+  // measured "0 B" at "0.0%" and the remainder row took the whole database at 100%. Gating the
+  // two `known` flags on the refusal routes every one of those figures to the "N/A" this tab
+  // already draws for a byte figure it does not have, and leaves a genuine "no tables" answer
+  // at the 0 B it measured.
+  const statsRefused = tablesUnavailable !== undefined;
 
   // Calculate totals
   //
@@ -42,7 +52,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
   // total is shown only when every table carries a figure; `every()` keeps a genuine
   // "no tables" answer at 0 B.
   const totalTableSize = tables.reduce((sum, t) => sum + (t.tableSizeBytes ?? 0), 0);
-  const tableSizeKnown = tables.every((t) => t.tableSizeBytes !== undefined);
+  const tableSizeKnown = !statsRefused && tables.every((t) => t.tableSizeBytes !== undefined);
   // The index total comes from the per-TABLE figure, not from summing the per-index rows.
   // InnoDB has no separate primary-key index: the clustered index IS the table, so
   // `mysql.innodb_index_stats` reports the PRIMARY row's size as the row data, and summing every
@@ -56,7 +66,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
   // the total is shown only when every table carries a figure - `every()` also keeps a genuine
   // "no tables" answer at 0 B.
   const totalIndexSize = tables.reduce((sum, t) => sum + (t.indexSizeBytes ?? 0), 0);
-  const indexSizeKnown = tables.every((t) => t.indexSizeBytes !== undefined);
+  const indexSizeKnown = !statsRefused && tables.every((t) => t.indexSizeBytes !== undefined);
   const walStorage = storage.find((s) => s.name === "WAL");
 
   const formatBytes = (bytes: number) => {
@@ -176,8 +186,23 @@ export function StorageTab({ data, loading }: StorageTabProps) {
                 <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
                   <span className="flex items-center gap-1 sm:gap-2">
                     <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-muted-foreground" />
-                    <span className="hidden sm:inline">Other (TOAST, FSM)</span>
-                    <span className="sm:hidden">Other</span>
+                    {/*
+                      Engine-neutral on purpose. This row is arithmetic - the database bytes the
+                      per-table data and index figures do not account for - and what fills it
+                      differs per engine: TOAST and the free space map on PostgreSQL, the schema,
+                      the freelist and page overhead on SQLite and libSQL, which have neither.
+                      Labelled "Other (TOAST, FSM)" it read "4.00 KB" of PostgreSQL structures
+                      against a real 64 KB libSQL database (U23) - the number was right and the
+                      words were another engine's. The label now names the arithmetic. Varying the
+                      wording per engine would have to come from `ProviderLabels`, the way the
+                      slow-query empty state does, and this tab is passed no labels.
+                    */}
+                    <span className="hidden sm:inline" data-testid="storage-breakdown-other-label">
+                      Other (unattributed)
+                    </span>
+                    <span className="sm:hidden" data-testid="storage-breakdown-other-label-compact">
+                      Other
+                    </span>
                   </span>
                   <span className="font-medium">
                     {breakdownKnown ? formatBytes(totalSize - totalTableSize - totalIndexSize) : "N/A"}
@@ -278,7 +303,9 @@ export function StorageTab({ data, loading }: StorageTabProps) {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 sm:p-4 sm:pt-0">
-          {tables.length === 0 ? (
+          {tablesUnavailable ? (
+            <PanelUnavailable message={tablesUnavailable} />
+          ) : tables.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Database strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p className="text-xs">No table information available.</p>

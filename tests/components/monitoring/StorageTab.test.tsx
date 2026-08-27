@@ -100,6 +100,44 @@ function makeMonitoringData(): MonitoringData {
   } as unknown as MonitoringData;
 }
 
+// A libSQL database as measured for U23: 64 KB total, of which the two tables account for
+// 48 KB of data and 12 KB of indexes, leaving a 4.00 KB remainder. libSQL and SQLite have
+// neither TOAST nor a free space map - their remainder is the schema, the freelist and page
+// overhead - so this fixture is the non-PostgreSQL arm of the breakdown-label test.
+function makeLibsqlMonitoringData(): MonitoringData {
+  const base = makeMonitoringData();
+  return {
+    ...base,
+    overview: { ...base.overview, version: "3.45.1", databaseSize: "64.00 KB", databaseSizeBytes: 65536 },
+    storage: [],
+    indexes: [],
+    tables: [
+      {
+        schemaName: "main",
+        tableName: "orders",
+        rowCount: 120,
+        tableSize: "32.00 KB",
+        tableSizeBytes: 32768,
+        indexSize: "8.00 KB",
+        indexSizeBytes: 8192,
+        totalSize: "40.00 KB",
+        totalSizeBytes: 40960,
+      },
+      {
+        schemaName: "main",
+        tableName: "users",
+        rowCount: 30,
+        tableSize: "16.00 KB",
+        tableSizeBytes: 16384,
+        indexSize: "4.00 KB",
+        indexSizeBytes: 4096,
+        totalSize: "20.00 KB",
+        totalSizeBytes: 20480,
+      },
+    ],
+  } as unknown as MonitoringData;
+}
+
 describe("StorageTab", () => {
   afterEach(() => {
     cleanup();
@@ -252,6 +290,40 @@ describe("StorageTab", () => {
     expect(queryAllByText("-").length).toBe(2); // the two % cells
   });
 
+  test("the breakdown remainder is labelled without naming any engine's storage layout", () => {
+    // The remainder row is arithmetic: the database bytes the per-table data and index
+    // figures do not account for. It was labelled "Other (TOAST, FSM)" unconditionally, and
+    // TOAST and the free space map are PostgreSQL structures - so the wide label named one
+    // engine's storage layout on all fifteen. Both breakpoint labels are asserted by value,
+    // which is what keeps the "no PostgreSQL words" check below non-vacuous: a later rename
+    // cannot satisfy it by moving the wording somewhere this test does not look.
+    const { container, getByTestId } = render(<StorageTab data={makeMonitoringData()} loading={false} />);
+
+    expect(getByTestId("storage-breakdown-other-label").textContent).toBe("Other (unattributed)");
+    expect(getByTestId("storage-breakdown-other-label-compact").textContent).toBe("Other");
+    expect(container.textContent).not.toMatch(/TOAST|FSM|free space map/i);
+    // The PostgreSQL fixture's own remainder still renders: 2 GB less 700 MB of data and
+    // 200 MB of indexes.
+    expect(container.textContent).toContain("1.12 GB");
+  });
+
+  test("a libSQL database gets the same remainder label as PostgreSQL, not another engine's", () => {
+    // Measured for U23: a real 64 KB libSQL database read "4.00 KB" under "Other (TOAST,
+    // FSM)". The number is right and the words belong to PostgreSQL - libSQL has neither
+    // structure. The label must be identical on both engines because this tab is given no
+    // provider labels to vary it by.
+    const { container, getByTestId, queryAllByText } = render(
+      <StorageTab data={makeLibsqlMonitoringData()} loading={false} />,
+    );
+
+    expect(getByTestId("storage-breakdown-other-label").textContent).toBe("Other (unattributed)");
+    expect(getByTestId("storage-breakdown-other-label-compact").textContent).toBe("Other");
+    expect(container.textContent).not.toMatch(/TOAST|FSM|free space map/i);
+    // 65536 bytes less 49152 of data and 12288 of indexes; no other figure in this fixture
+    // formats to 4.00 KB, so the remainder is pinned as well as its label.
+    expect(queryAllByText("4.00 KB").length).toBe(1);
+  });
+
   test("a table reported without an index size does not turn the totals into a measurement", () => {
     // MySQL keeps per-index bytes in `mysql.innodb_index_stats`: a user granted only its own
     // database is denied that table, and a MyISAM table has no row there (both measured
@@ -302,5 +374,92 @@ describe("a refused storage read", () => {
 
     expect(queryByTestId("panel-unavailable")).toBeNull();
     expect(queryByText("No tablespace information available.")).not.toBeNull();
+  });
+});
+
+// A refused getTableStats read costs every figure derived from the table rows, not just the
+// list - the sibling failure mode of the block above, and the one this tab was still getting
+// wrong while `storageUnavailable` handled the tablespace half correctly (2026-08-27).
+describe("a refused table statistics read", () => {
+  // Scoped here as well, for the same reason as the block above: bun:test registers a hook
+  // on the enclosing describe only.
+  afterEach(() => {
+    cleanup();
+  });
+
+  // Whatever `getTableStats()` rejected with, recorded verbatim under `errors.tables` by
+  // `BaseProvider.getMonitoringData` (src/lib/db/base-provider.ts). The two producers in the
+  // tree today are `CASSANDRA_TABLE_STATS_REFUSAL` and Trino's per-catalog
+  // `tableStatsRefusal()`; this stands in for either rather than quoting a PostgreSQL error
+  // text taken from memory instead of from that engine's own documentation.
+  const REFUSAL = "this connection has no source for table statistics";
+
+  function refusedTables(): MonitoringData {
+    const rest: MonitoringData = makeMonitoringData();
+    delete rest.tables;
+    return { ...rest, errors: { tables: REFUSAL } } as MonitoringData;
+  }
+
+  test("shows the engine's own sentence instead of the largest-tables empty state", () => {
+    const { getByTestId, queryByText } = render(<StorageTab data={refusedTables()} loading={false} />);
+
+    expect(getByTestId("panel-unavailable-message").textContent).toBe(REFUSAL);
+    expect(queryByText("No table information available.")).toBeNull();
+  });
+
+  test("the figures derived from the refused rows read N/A, not a measured zero", () => {
+    // `tables === []` after a refusal makes `every()` vacuously true, so both totals used to
+    // read a measured "0 B" at "0.0%" of the database - a measurement the engine declined to
+    // make. Five figures come off those rows: the Tables and Indexes cards, the breakdown's
+    // Tables and Indexes rows, and the remainder computed from both.
+    const { queryAllByText } = render(<StorageTab data={refusedTables()} loading={false} />);
+
+    expect(queryAllByText("N/A").length).toBe(5);
+    expect(queryAllByText("0 B").length).toBe(0);
+    expect(queryAllByText("0.0%").length).toBe(0);
+  });
+
+  test("the remainder row does not absorb the whole database", () => {
+    // With both totals at a fabricated 0, `100 - 0 - 0` handed the remainder every byte of
+    // the database at 100% - the round's relabelled "Other (unattributed)" row asserting
+    // confidently that all 2 GB is unattributed. "2.00 GB" must appear once, on the DB Size
+    // card, which is the one panel that did answer.
+    const { container, queryAllByText, getByTestId } = render(<StorageTab data={refusedTables()} loading={false} />);
+
+    expect(queryAllByText("2.00 GB").length).toBe(1);
+    // The label still renders - the row is drawn, only its figure is an absence.
+    expect(getByTestId("storage-breakdown-other-label").textContent).toBe("Other (unattributed)");
+    // And its bar with it: `Progress` draws its share as `translateX(-(100 - value)%)`, so an
+    // empty remainder bar is "-100%". A full one - "-0%", which is what `100 - 0 - 0` used to
+    // produce here - is the same overclaim in a shape no text assertion can see.
+    const bars = [...container.querySelectorAll('[data-slot="progress-indicator"]')].map(
+      (el) => (el as HTMLElement).style.transform,
+    );
+    expect(bars.slice(0, 3)).toEqual(["translateX(-100%)", "translateX(-100%)", "translateX(-100%)"]);
+  });
+
+  test("an answered empty table list still reads 0 B and 0.0%", () => {
+    // The control arm: a database that genuinely holds no tables has measured every one of
+    // them, so the zeros are real and the breakdown remainder is the whole database. Without
+    // this the refusal fix could be a blanket "N/A whenever the list is empty".
+    const data = { ...makeMonitoringData(), tables: [] } as MonitoringData;
+    const { queryAllByText, queryByTestId, queryByText } = render(<StorageTab data={data} loading={false} />);
+
+    expect(queryByTestId("panel-unavailable")).toBeNull();
+    expect(queryByText("No table information available.")).not.toBeNull();
+    // Tables and Indexes cards, plus the breakdown's two rows.
+    expect(queryAllByText("0 B").length).toBe(4);
+    expect(queryAllByText("0.0%").length).toBe(2);
+    // The remainder is the entire database, and that is the arithmetic, not a fabrication.
+    expect(queryAllByText("2.00 GB").length).toBe(2);
+  });
+
+  test("a populated table list keeps its measured figures", () => {
+    const { queryAllByText, queryByTestId } = render(<StorageTab data={makeMonitoringData()} loading={false} />);
+
+    expect(queryByTestId("panel-unavailable")).toBeNull();
+    // 500 MB + 200 MB of table data, on the Tables card and the breakdown's Tables row.
+    expect(queryAllByText("700.00 MB").length).toBe(2);
+    expect(queryAllByText("N/A").length).toBe(0);
   });
 });

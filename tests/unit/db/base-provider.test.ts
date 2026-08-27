@@ -468,6 +468,9 @@ describe("BaseDatabaseProvider", () => {
   // ─── getConnectionInfo ────────────────────────────────────────────────
 
   describe("getConnectionInfo", () => {
+    const infoFor = (connectionString: string) =>
+      new TestProvider(makeConfig({ connectionString })).callGetConnectionInfo();
+
     test("returns host:port/database when no connectionString", () => {
       const provider = new TestProvider(makeConfig());
       const info = provider.callGetConnectionInfo();
@@ -483,6 +486,125 @@ describe("BaseDatabaseProvider", () => {
       expect(info).not.toContain("s3cret");
       expect(info).toContain(":***@");
       expect(info).toContain("db.example.com");
+    });
+
+    // A connection string does not always carry its credential in the authority. libSQL
+    // passes the whole token as a query parameter, and libpq accepts `password`/`sslkey`
+    // there too, so each shape below is one the authority-only mask used to let through.
+
+    test("masks an authToken carried in the query string", () => {
+      const info = infoFor("libsql://db-org.turso.io?authToken=eyJhbGciOiJFZERTQSJ9.payload.signature");
+
+      expect(info).not.toContain("eyJhbGciOiJFZERTQSJ9");
+      expect(info).toBe("libsql://db-org.turso.io?authToken=***");
+    });
+
+    test("matches credential parameter names case-insensitively", () => {
+      expect(infoFor("libsql://host?AUTHTOKEN=abc")).toBe("libsql://host?AUTHTOKEN=***");
+      expect(infoFor("postgres://host/db?PassWord=abc")).toBe("postgres://host/db?PassWord=***");
+    });
+
+    test("masks every credential parameter when several appear in one string", () => {
+      const info = infoFor("postgres://host/db?sslmode=verify-full&password=pw&sslkey=/client.pem&token=tk");
+
+      expect(info).toBe("postgres://host/db?sslmode=verify-full&password=***&sslkey=***&token=***");
+    });
+
+    test("masks a credential in the authority and in the query string together", () => {
+      const info = infoFor("libsql://admin:s3cret@db-org.turso.io?authToken=jwt");
+
+      expect(info).toBe("libsql://admin:***@db-org.turso.io?authToken=***");
+    });
+
+    test("masks a credential value whole, url-encoded or containing '='", () => {
+      expect(infoFor("libsql://host?authToken=a%2Fb%3Dc")).toBe("libsql://host?authToken=***");
+      // Base64 padding puts a literal '=' inside the value; it must not end the value.
+      expect(infoFor("libsql://host?authToken=YWJj==&mode=ro")).toBe("libsql://host?authToken=***&mode=ro");
+    });
+
+    test("leaves an empty credential value empty rather than inventing a redaction", () => {
+      // '***' over a value that was never there would assert a secret the string does
+      // not carry, which is the absence rule wearing a redaction's clothes.
+      expect(infoFor("libsql://host?authToken=&mode=ro")).toBe("libsql://host?authToken=&mode=ro");
+    });
+
+    test("over-redacts a parameter whose name merely contains a credential word", () => {
+      // Deliberate. A driver spelling we have not seen is far more costly to miss than a
+      // non-secret is to hide, and the second case here is exactly why: `sslpassword` is
+      // a real libpq keyword that an exact-name list would have leaked.
+      expect(infoFor("libsql://host?tokenLifetime=3600")).toBe("libsql://host?tokenLifetime=***");
+      expect(infoFor("postgres://host/db?sslpassword=pw")).toBe("postgres://host/db?sslpassword=***");
+    });
+
+    test("leaves a non-credential parameter whose value contains a credential word intact", () => {
+      // The name is matched between a delimiter and '=', so a credential word sitting in
+      // somebody else's value neither triggers a mask nor mangles the string.
+      expect(infoFor("postgres://host/db?applicationName=my-password-app")).toBe(
+        "postgres://host/db?applicationName=my-password-app",
+      );
+      expect(infoFor("postgres://host/db?options=-c%20statement_timeout=5s")).toBe(
+        "postgres://host/db?options=-c%20statement_timeout=5s",
+      );
+    });
+
+    test("masks a semicolon-delimited credential in a string that is not a valid URL", () => {
+      // An ADO-style SQL Server string has no query string and no scheme, so a redaction
+      // built on URL parsing would throw on it instead of masking it.
+      expect(infoFor("Server=localhost,1433;Database=db;User Id=sa;Password=P4ssw0rd")).toBe(
+        "Server=localhost,1433;Database=db;User Id=sa;Password=***",
+      );
+    });
+
+    test("does not mistake an '@' outside the authority for userinfo", () => {
+      // ':' + text + '@' also occurs in a path and in a parameter value; masking there
+      // would destroy the host the reader needs and redact nothing secret.
+      expect(infoFor("postgres://host:5432/tenant@acme")).toBe("postgres://host:5432/tenant@acme");
+      expect(infoFor("mongodb://host/db?replicaSet=rs:0@node")).toBe("mongodb://host/db?replicaSet=rs:0@node");
+    });
+
+    // An ADO-style string orders its parameters arbitrarily, so the credential is as
+    // likely to lead as to trail. Matching a name only AFTER a delimiter returned the
+    // leading one verbatim, which is the shape a review of this round measured leaking.
+    test.each([
+      ["Password=P4ssw0rd;Server=host", "Password=***;Server=host"],
+      // Deliberately not JWT-shaped. The realistic libSQL token is pinned above, in the
+      // query-string position where it belongs; here the POSITION is the subject, so a
+      // high-entropy literal would buy nothing and trips the secret scanner's
+      // generic-api-key rule (measured: entropy 3.98 in this exact `name=value;` shape).
+      ["authToken=leading-token-value;Server=host", "authToken=***;Server=host"],
+      ["SslKey=/etc/client.pem;Server=host", "SslKey=***;Server=host"],
+      ["ClientSecret=s3cr3t;Server=host", "ClientSecret=***;Server=host"],
+    ])("masks %s, whose credential leads the string", (given, expected) => {
+      expect(infoFor(given)).toBe(expected);
+    });
+
+    test("leaves a password containing an unencoded '/' unmasked, which is the documented limit", () => {
+      // Pinned so the gap is visible rather than assumed closed. RFC 3986 wants that '/'
+      // percent-encoded, and `postgres://host:5432/tenant@acme` - a path holding an '@',
+      // pinned above - has the identical shape, so masking one masks the other. Hiding a
+      // port behind a `***` that asserts a credential the string never carried is the
+      // worse error of the two, so this case is left to the parse-based fix in D42.
+      expect(infoFor("postgres://user:p/w@db.example.com/mydb")).toBe("postgres://user:p/w@db.example.com/mydb");
+    });
+
+    test("masks the authority of a string whose scheme carries its own prefix", () => {
+      // A JDBC-style URL puts a second scheme in front. Anchoring the userinfo to the
+      // START of the string rather than to '://' would leave this password in the clear.
+      expect(infoFor("jdbc:postgresql://user:s3cret@host/db")).toBe("jdbc:postgresql://user:***@host/db");
+    });
+
+    test("leaves an authority that carries no credential exactly as it was", () => {
+      // A user name with no password, and a ':'+text+'@' that lives in the path. Neither
+      // holds a secret, so replacing either would cost the reader the host or the user
+      // and hide nothing - and a mask that eats the '//' is how a scheme goes missing.
+      expect(infoFor("postgres://user@db.example.com/mydb")).toBe("postgres://user@db.example.com/mydb");
+      expect(infoFor("postgres://host/db:owner@example.com")).toBe("postgres://host/db:owner@example.com");
+    });
+
+    test("masks a credential a fragment delimits", () => {
+      // '#' bounds a parameter the same way '&' does, so a credential written after one
+      // must not swallow the rest of the string into its value.
+      expect(infoFor("libsql://host?mode=ro#authToken=jwt")).toBe("libsql://host?mode=ro#authToken=***");
     });
   });
 

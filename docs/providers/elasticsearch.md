@@ -671,9 +671,10 @@ of the fact, which is why nothing is special-cased. Consequences elsewhere in th
   unimplemented features, so the EDIT toggle and the editable cell are not offered (#269).
 - The schema-diff migration generator emits, in place of a column change:
   *"Elasticsearch SQL reads only; change a field by reindexing into an index whose mapping declares
-  it."* ([`migration-generator.ts:81`](../../src/lib/schema-diff/migration-generator.ts)). It says
-  *reindex* rather than "use the mapping API" for a reason: an existing field's type cannot be changed
-  in place at all, even outside SQL.
+  it."* (the `NO_COLUMN_MODIFICATION` table in
+  [`migration-generator.ts`](../../src/lib/schema-diff/migration-generator.ts)). It says *reindex* rather than
+  "use the mapping API" for a reason: an existing field's type cannot be changed in place at all, even
+  outside SQL.
 - `schemaRefreshPattern` is `\b(DELETE)\b` ([index.ts:193](../../src/lib/db/providers/sql/search/index.ts)),
   which on **this** product can never fire — the grammar has no DELETE — exactly as Druid's
   `INSERT|REPLACE` never fires against its native engine. It is there for the fork, where a cluster
@@ -798,21 +799,24 @@ a relations pass would re-read every mapping to return the same empty arrays.
 ## 7. Monitoring & health
 
 Every read goes through `guarded()`
-([index.ts:694](../../src/lib/db/providers/sql/search/index.ts)), which maps a seam failure onto this
+([`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts)), which maps a seam failure onto this
 repo's error classes ([§10](#10-error-handling)). There is no per-category degradation table here as
 Druid has one: the only read allowed to fail quietly is the cluster-wide store size
 ([§7.1](#71-the-one-swallowed-failure)).
 
+Every method in the table lives in that file and is cited **by name, not by line**: the line
+numbers this table used to carry had drifted, and a method name is greppable and stays true.
+
 | Method | Source | Mapping |
 |---|---|---|
-| `getOverview()` ([index.ts:751](../../src/lib/db/providers/sql/search/index.ts)) | `/`, `_cluster/health`, `_cat/indices` — **three seam calls in parallel** | `version` = `"Elasticsearch <number>"` from the connection's product plus the payload's version; `uptime` = **`"N/A"`**; `activeConnections` / `maxConnections` = **0**; `databaseSize(Bytes)` = the cluster's store from `_cluster/stats`; `tableCount` = **user** indices only; `indexCount` = **0** |
-| `getPerformanceMetrics()` ([index.ts:811](../../src/lib/db/providers/sql/search/index.ts)) | — | **`{}`**, and it asks the cluster nothing |
-| `getSlowQueries()` ([index.ts:831](../../src/lib/db/providers/sql/search/index.ts)) | — | **`[]`**. The slow log is written to the node's **log file**, which no API returns |
-| `getIndexStats()` ([index.ts:844](../../src/lib/db/providers/sql/search/index.ts)) | — | **`[]`**. No secondary-index object exists |
-| `getActiveSessions()` ([index.ts:860](../../src/lib/db/providers/sql/search/index.ts)) | — | **`[]`**. A request is one HTTP request; there is no session and no connection catalog |
-| `getTableStats()` ([index.ts:873](../../src/lib/db/providers/sql/search/index.ts)) | `_cat/indices` | one row per **user** index: `rowCount` = `docs.count`, `tableSize(Bytes)` = `totalSize(Bytes)` = `pri.store.size`, `schemaName` = `""` |
-| `getStorageStats()` ([index.ts:884](../../src/lib/db/providers/sql/search/index.ts)) | `_cluster/health` + `_cluster/stats` | **one row for the cluster**: `name` = `cluster_name`, `sizeBytes` = `indices.store.size_in_bytes`. **No row at all** when the size was unreported |
-| `getHealth()` ([index.ts:898](../../src/lib/db/providers/sql/search/index.ts)) | the above, composed | `activeConnections`, `databaseSize`; `cacheHitRatio` = the repo's word for "not measured"; `slowQueries` = `[]`; `activeSessions` = `[]` |
+| `getOverview()` | `/`, `_cluster/health`, `_cat/indices` — **three seam calls in parallel** | `version` = `"Elasticsearch <number>"` from the connection's product plus the payload's version; `uptime` = **`"N/A"`**; `activeConnections` / `maxConnections` = **0**; `databaseSize(Bytes)` = the cluster's store from `_cluster/stats`; `tableCount` = **user** indices only; `indexCount` = **0** |
+| `getPerformanceMetrics()` | — | **`{}`**, and it asks the cluster nothing |
+| `getSlowQueries()` | — | **`[]`**. The slow log is written to the node's **log file**, which no API returns |
+| `getIndexStats()` | — | **`[]`**. No secondary-index object exists |
+| `getActiveSessions()` | — | **`[]`**. A request is one HTTP request; there is no session and no connection catalog |
+| `getTableStats()` | `_cat/indices` | one row per **user** index: `rowCount` = `docs.count`, `tableSize(Bytes)` = `totalSize(Bytes)` = `pri.store.size`, `schemaName` = `""` |
+| `getStorageStats()` | `_cluster/health` + `_cluster/stats` | **one row for the cluster**: `name` = `cluster_name`, `sizeBytes` = `indices.store.size_in_bytes`. **No row at all** when the size was unreported |
+| `getHealth()` | the above, composed | `activeConnections`, `databaseSize`; `cacheHitRatio` = the repo's word for "not measured"; `slowQueries` = `[]`; `activeSessions` = `[]` |
 
 **Two vocabulary collisions, both counted wrong by the obvious reading:**
 
@@ -825,8 +829,8 @@ Druid has one: the only read allowed to fail quietly is the cluster-wide store s
   name. The schema tree says the same thing from the other side with `indexes: []`.
 
 **`databaseSizeBytes` is the CLUSTER's store including replicas**, while the per-index sizes in the
-schema tree are **primaries only** (`pri.store.size`, chosen deliberately at
-[http-transport.ts:161](../../src/lib/db/providers/sql/search/http-transport.ts)), so they do not sum
+schema tree are **primaries only** (`pri.store.size`, chosen deliberately by `CAT_FIELDS.PRIMARY_SIZE` in
+[`http-transport.ts`](../../src/lib/db/providers/sql/search/http-transport.ts)), so they do not sum
 to it. On the measured single node with one replica requested they happen to be equal, which is
 exactly why the choice had to be made deliberately rather than discovered later.
 
@@ -845,8 +849,11 @@ The honest empties, each with its reason:
 - **`getSlowQueries()` and `getActiveSessions()` return `[]` rather than throwing.** Nothing is broken
   and nothing is misconfigured, so a monitoring tab should render as quiet, not as failed. Only
   `runMaintenance()` throws, because that one is a *request to act*.
-- **`activeConnections` / `maxConnections` are 0**, the same "not published" encoding `mssql.ts` and
-  Druid use. The cluster counts open HTTP connections per node in its stats API, which is not one of
+- **`activeConnections` / `maxConnections` are 0**. For the ceiling that is the repo's encoding, which
+  Druid and Trino share: `maxConnections` treats `0` and absence as one fact. For the count beside it
+  the encoding is now this provider's alone - SQL Server, Oracle, MongoDB and Cassandra omit
+  `activeConnections` when nothing was read, and moving this one is
+  [BACKLOG D46](../BACKLOG.md). The cluster counts open HTTP connections per node in its stats API, which is not one of
   this seam's five calls, and the shard and node counts that *are* here would be a different number
   wearing this field's name. The Connections card reads a zero maximum as "no limit published" rather
   than dividing by it.
@@ -856,7 +863,8 @@ The honest empties, each with its reason:
 **A closed index reads as zero in `getTableStats()` and is omitted in the schema tree**, and the
 asymmetry is deliberate: `TableStats.rowCount` and the size fields are *required* numbers with no way
 to say "unknown", while `TableSchema.rowCount` and `size` are optional. So the tree is the surface
-that keeps the distinction ([index.ts:310-316](../../src/lib/db/providers/sql/search/index.ts)).
+that keeps the distinction (the comment over `toTableStats()` in
+[`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts)).
 
 **Document counts exceed what a `SELECT` returns when a mapping has `nested` fields.** Measured on the
 fork's `probe_shapes`, whose `items` field is `nested`: `_cat` reports **2** documents while
@@ -870,7 +878,7 @@ whose grammar the tree must not depend on, to answer a different question than t
 
 `_cluster/stats` is heavier and more privileged than `_cluster/health`, so a cluster that answers
 health and refuses stats is an ordinary configuration. `storeSizeBytes()`
-([http-transport.ts:973](../../src/lib/db/providers/sql/search/http-transport.ts)) therefore catches
+([`http-transport.ts`](../../src/lib/db/providers/sql/search/http-transport.ts)) therefore catches
 its own failure and returns `null` — the seam's "unknown" — because losing the health status over a
 missing byte count would blank a panel that already had the important number.
 
@@ -903,7 +911,7 @@ altogether:
   cluster keeps working ([§3.8](#38-the-deadline-is-the-clients-and-only-the-clients)), and the task
   API that could really cancel a search is not part of this seam.
 
-`runMaintenance(type)` ([index.ts:931](../../src/lib/db/providers/sql/search/index.ts)) exists because
+`runMaintenance(type)` ([`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts)) exists because
 the `DatabaseProvider` interface obliges every provider to implement it, and **not** because a request
 reaches it: `/api/db/maintenance` checks `supportsMaintenance` and answers 400 first. So the message
 below is what a *programmatic* caller of `@libredb/studio` sees:

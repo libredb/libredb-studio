@@ -8,9 +8,11 @@
  * - Dialect-aware: the modified-column path, which branches per engine and names
  *   the limitation in a comment where an engine has no such statement (#269); the
  *   `ADD` / `DROP` keyword, which CQL spells without `COLUMN`; `CREATE TABLE`,
- *   which is refused outright for Cassandra (see CASSANDRA_NO_CREATE_TABLE); and,
- *   for Cassandra only, the transaction wrapper and the foreign-key statements,
- *   both of which CQL has no grammar for.
+ *   which is refused outright for Cassandra (see CASSANDRA_NO_CREATE_TABLE); the
+ *   transaction wrapper, which Cassandra and SQLite's two type ids each do
+ *   without; and the foreign-key statements, which CQL has no grammar for at all
+ *   and which SQLite's grammar takes only inside `CREATE TABLE` (see
+ *   FOREIGN_KEY_ONLY_IN_CREATE_TABLE).
  * - Not yet: the transaction wrapper for everyone ELSE (`BEGIN;` / `COMMIT;` is
  *   only valid for PostgreSQL and MySQL — MSSQL spells it `BEGIN TRANSACTION`,
  *   Oracle opens a PL/SQL block and auto-commits DDL anyway, and five remaining
@@ -74,10 +76,15 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
   // Measured over Hrana on sqld 0.24.33, and the entry exists because the PostgreSQL
   // branch this id would otherwise inherit emits text libSQL cannot parse:
   // `ALTER TABLE t ALTER COLUMN c TYPE integer` is "unexpected end of input" and the
-  // MySQL spelling `MODIFY COLUMN` is "syntax error around `MODIFY`". SQLite has no
-  // column modification at all, and libSQL is SQLite - unlike DROP COLUMN and RENAME
-  // COLUMN, which it DOES accept (both measured), so this row is narrower than the
-  // `sqlite` branch below and deliberately so.
+  // MySQL spelling `MODIFY COLUMN` is "syntax error around `MODIFY`". No SQLite has a
+  // column TYPE change, and libSQL is SQLite - unlike DROP COLUMN and RENAME COLUMN,
+  // which it DOES accept (both measured), so this row is narrower than the `sqlite`
+  // branch below and deliberately so. Nullability is the one exception and it does not
+  // reach libSQL: SQLite gained `ALTER COLUMN ... SET/DROP NOT NULL` in 3.53.0 (measured
+  // 2026-08-27 on 3.53.0 - it rewrites the stored schema and is enforced on insert),
+  // while sqld 0.24.33 ships 3.47.0, so declining every modification is still right here.
+  // Whether the `sqlite` branch should emit it is docs/BACKLOG.md D43, not a decision to
+  // take in a comment: the provider runs on whichever SQLite its runtime bundles.
   libsql: {
     label: "libSQL",
     reason: "SQLite cannot retype a column; recreate the table and copy the rows.",
@@ -184,6 +191,37 @@ function generateColumnDef(col: ColumnDiff, dialect: DatabaseType): string {
 const CASSANDRA_NO_CREATE_TABLE =
   "A CQL primary key splits into a partition key and clustering columns, and a schema diff records neither role, so the partitioning cannot be derived; write the CREATE TABLE by hand.";
 
+/**
+ * Canonical type ids whose grammar declares a foreign key ONLY as a `CREATE TABLE` table constraint,
+ * with the label each one's comments carry. `sqlite` is the engine and `libsql` is a fork of it, so
+ * the two answer identically; the labels are spelled out per id anyway, because a reader wants the
+ * name of the engine they connected to (the same reason the neighbouring libSQL branches exist).
+ *
+ * SQLite's ALTER TABLE page enumerates every schema change the engine has - "rename table", "rename
+ * column", "add column", "drop column", plus SET/DROP NOT NULL since 3.53.0 - and adding a constraint
+ * is not among them; it routes such a change through its own 12-step table-recreation procedure.
+ * Measured on sqlite3 3.53.3: `ALTER TABLE "users" ADD CONSTRAINT "fk_users_dept_id" FOREIGN KEY
+ * ("dept_id") REFERENCES "departments"("id")` is `near "FOREIGN": syntax error` - the parser has
+ * already taken `CONSTRAINT` for a column name and the quoted name for its type - and the same
+ * statement over Hrana on sqld 0.24.33 is `near CONSTRAINT ... syntax error`. Two tokens, one verdict.
+ *
+ * Both emission paths read this map and answer it DIFFERENTLY, which is the point of naming the fact
+ * once (BACKLOG D36). `generateCreateTable` is building the table right there, so it moves the key
+ * INSIDE the statement, where SQLite's grammar does take it; `generateAlterTable` has no such place
+ * to put it and declines with a comment. Declining on both paths would throw away a key the engine
+ * can perfectly well hold.
+ */
+const FOREIGN_KEY_ONLY_IN_CREATE_TABLE: Partial<Record<DatabaseType, { label: string; reason: string }>> = {
+  sqlite: {
+    label: "SQLite",
+    reason: "A foreign key is declarable only as a CREATE TABLE constraint; recreate the table and copy the rows.",
+  },
+  libsql: {
+    label: "libSQL",
+    reason: "SQLite declares one only in CREATE TABLE; recreate the table and copy the rows.",
+  },
+};
+
 function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
   const lines: string[] = [];
   const id = escapeIdentifier(table.tableName, dialect);
@@ -198,10 +236,33 @@ function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
   // Add primary key constraint
   const pkCols = table.columns.filter((c) => c.targetIsPrimary).map((c) => escapeIdentifier(c.columnName, dialect));
 
+  // A key the target can only declare here has to be emitted here, so the closing paren is not
+  // written until the constraint list is complete.
+  const addedForeignKeys = table.foreignKeys.filter((fk) => fk.action === "added");
+  const keyIsTableConstraint = FOREIGN_KEY_ONLY_IN_CREATE_TABLE[dialect] !== undefined;
+
   lines.push(`CREATE TABLE ${id} (`);
   lines.push(colDefs.join(",\n"));
   if (pkCols.length > 0) {
     lines.push(`,  PRIMARY KEY (${pkCols.join(", ")})`);
+  }
+  if (keyIsTableConstraint) {
+    // SQLite's CREATE TABLE takes "one or more column definitions, optionally followed by a list of
+    // table constraints", one of which is `FOREIGN KEY ( column-name, ... ) REFERENCES ...`. Hence
+    // the position: after the columns AND after the PRIMARY KEY line, never before them - the same
+    // constraint placed ahead of a column definition is `near "FOREIGN": syntax error` (measured on
+    // sqlite3 3.53.3, where the form below is accepted and `PRAGMA foreign_key_list` then reports the
+    // key).
+    //
+    // The `fk_<table>_<column>` name the other dialects carry is dropped rather than translated into
+    // a `CONSTRAINT name` prefix, which SQLite would also accept: the name is this generator's own
+    // invention rather than anything the diff recorded, and SQLite never reads a foreign key's name
+    // back out - `PRAGMA foreign_key_list` has no name column - so it could only ever be write-only.
+    addedForeignKeys.forEach((fk) => {
+      lines.push(
+        `,  FOREIGN KEY (${escapeIdentifier(fk.columnName, dialect)}) REFERENCES ${escapeIdentifier(fk.targetReferencedTable || "", dialect)}(${escapeIdentifier(fk.targetReferencedColumn || "", dialect)})`,
+      );
+    });
   }
   lines.push(");");
 
@@ -214,14 +275,15 @@ function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
       lines.push(`CREATE ${unique}INDEX ${escapeIdentifier(idx.indexName, dialect)} ON ${id} (${cols});`);
     });
 
-  // Foreign keys
-  table.foreignKeys
-    .filter((fk) => fk.action === "added")
-    .forEach((fk) => {
+  // Foreign keys. Already emitted above for the ids that can only declare one inside the statement;
+  // for everyone else this separate ALTER is the shape that has always been emitted here.
+  if (!keyIsTableConstraint) {
+    addedForeignKeys.forEach((fk) => {
       lines.push(
         `ALTER TABLE ${id} ADD CONSTRAINT ${escapeIdentifier(`fk_${table.tableName}_${fk.columnName}`, dialect)} FOREIGN KEY (${escapeIdentifier(fk.columnName, dialect)}) REFERENCES ${escapeIdentifier(fk.targetReferencedTable || "", dialect)}(${escapeIdentifier(fk.targetReferencedColumn || "", dialect)});`,
       );
     });
+  }
 
   return lines.join("\n");
 }
@@ -380,15 +442,14 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
         );
         return;
       }
-      // libSQL refuses the statement below outright: `ALTER TABLE t ADD CONSTRAINT
-      // fk FOREIGN KEY (c) REFERENCES u(id)` is "near CONSTRAINT ... syntax error"
-      // (measured on sqld 0.24.33). SQLite has no ALTER that adds a constraint - the
-      // key has to be part of the CREATE TABLE - so the honest line names the
-      // recreation. The `sqlite` id has the same limit and still emits the statement
-      // below; that is its own defect rather than something to copy (BACKLOG D36).
-      if (dialect === "libsql") {
+      // No ALTER in SQLite's grammar adds a constraint, so for `sqlite` and `libsql` alike the
+      // honest line names the table recreation instead (see FOREIGN_KEY_ONLY_IN_CREATE_TABLE for the
+      // two measurements). Unlike the created-table path, there is nothing to move the key into: the
+      // table already exists, and this generator does not write the recreation.
+      const declined = FOREIGN_KEY_ONLY_IN_CREATE_TABLE[dialect];
+      if (declined) {
         lines.push(
-          `-- libSQL: Cannot add a foreign key on ${escapeIdentifier(fk.columnName, dialect)}. SQLite declares one only in CREATE TABLE; recreate the table and copy the rows.`,
+          `-- ${declined.label}: Cannot add a foreign key on ${escapeIdentifier(fk.columnName, dialect)}. ${declined.reason}`,
         );
         return;
       }

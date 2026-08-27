@@ -34,6 +34,77 @@ import { DatabaseConfigError, mapDatabaseError } from "./errors";
 import { mergePoolConfig, formatDuration } from "./utils/pool-manager";
 
 // ============================================================================
+// Connection String Redaction
+// ============================================================================
+
+/**
+ * Substrings that mark a connection-string parameter as carrying a credential.
+ * They are matched case-insensitively anywhere inside the parameter NAME, so a
+ * driver-specific spelling is covered too: `password` also catches libpq's
+ * `sslpassword`, and `token` also catches `authToken` and `accessToken`. The mask
+ * deliberately errs towards hiding, because a non-secret hidden costs a reader one
+ * value while a secret missed costs a leak that looks redacted.
+ */
+const CREDENTIAL_PARAM_SUBSTRINGS = ["password", "token", "sslkey", "secret"];
+
+/**
+ * Redact the credentials a connection string carries, in the two places engines put them.
+ *
+ * PostgreSQL and MongoDB put the credential in the authority
+ * (`scheme://user:password@host`), while libSQL carries the whole token in the query
+ * string (`libsql://<db>-<org>.turso.io?authToken=<jwt>`) and libpq accepts `password`,
+ * `sslpassword` and `sslkey` as URI parameters as well. An ADO-style string
+ * (`Server=host;Database=db;Password=pw`) has neither a scheme nor a query string and
+ * puts its parameters in arbitrary order, so the first parameter is as likely to be the
+ * credential as the last.
+ *
+ * Nothing here parses the input as a URL: a connection string is not always a valid one,
+ * and a redaction that throws on the input it was handed is worse than none.
+ *
+ * What is NOT covered is an authority password containing a character RFC 3986 requires
+ * to be percent-encoded there, because each one collides with a shape that carries no
+ * secret and no regex separates them:
+ * - `@` (`scheme://user:p@ss@host`) leaves the tail after the first `@` visible, because
+ *   the authority's end cannot be located without it;
+ * - `/`, `?` or `#` (`scheme://user:p/w@host/db`) is not masked at all. `/` is the
+ *   instructive one: `scheme://host:5432/tenant@acme` has exactly the same shape, and
+ *   masking it would hide the port behind a `***` asserting a credential the string never
+ *   carried - a fabricated reading rather than a mask, which is the worse of the two. `?`
+ *   and `#` end the authority for the same reason and are excluded with it.
+ *
+ * A scheme-relative string (`//user:pass@host/db`) is not covered either, and no driver
+ * here accepts one.
+ */
+function redactConnectionString(connectionString: string): string {
+  // Anchoring the userinfo to `://` is what keeps this off a path: in
+  // `postgres://host/db:owner@example.com` the only `:`+text+`@` sits in the path, and a
+  // pattern that matched it would replace a path segment while hiding no secret. The
+  // password is bounded by '/' as well for the reason the docblock gives, and the userinfo
+  // before the ':' is bounded by it too, or the host would be swallowed.
+  const withAuthorityMasked = connectionString.replace(
+    /:\/\/([^:@/?#]*):([^@/?#]+)@/,
+    (_whole: string, userinfo: string) => `://${userinfo}:***@`,
+  );
+
+  // Replace the VALUE of a credential-shaped parameter and keep its name, so the reader
+  // can still see which knobs were set. Matching the name between a delimiter and '=' is
+  // what stops a credential word sitting in somebody else's value from triggering a
+  // replacement. ';' counts as a delimiter because ADO-style strings separate their
+  // parameters with it, and `^` counts as one because such a string may LEAD with its
+  // credential - `Password=pw;Server=host` is as valid as the reverse, and matching only
+  // after a delimiter returned the leading one verbatim.
+  return withAuthorityMasked.replace(
+    /(^|[?&#;])([^=&#;?]*)=([^&#;]*)/g,
+    (whole: string, delimiter: string, name: string, value: string) => {
+      const isCredential = CREDENTIAL_PARAM_SUBSTRINGS.some((word) => name.toLowerCase().includes(word));
+      // An empty value stays empty: '***' over a value the string never carried would
+      // assert a secret that is not there, which is a fabricated reading, not a mask.
+      return isCredential && value !== "" ? `${delimiter}${name}=***` : whole;
+    },
+  );
+}
+
+// ============================================================================
 // Base Provider Class
 // ============================================================================
 
@@ -328,11 +399,13 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
 
   /**
    * Build connection info for health check
+   *
+   * A connection string is redacted in both of the places a credential can hide - the
+   * authority and the query string - see `redactConnectionString`.
    */
   protected getConnectionInfo(): string {
     if (this.config.connectionString) {
-      // Mask password in connection string
-      return this.config.connectionString.replace(/:([^:@]+)@/, ":***@");
+      return redactConnectionString(this.config.connectionString);
     }
     return `${this.config.host}:${this.config.port}/${this.config.database}`;
   }

@@ -24,6 +24,55 @@ interface QueriesTabProps {
 type SortField = "totalTime" | "avgTime" | "calls" | "rows";
 type SortDir = "asc" | "desc";
 
+const formatTime = (ms: number) => {
+  if (ms >= 1000) {
+    return `${(ms / 1000).toFixed(2)}s`;
+  }
+  return `${ms.toFixed(2)}ms`;
+};
+
+/** The figures the stat cards print, as the loaded view computes them below. */
+interface QueryStats {
+  /** False when the list is empty: nothing was measured, so no card may print a number. */
+  statsKnown: boolean;
+  avgTime: number;
+  overOneSecond: number;
+}
+
+interface StatCard {
+  title: string;
+  icon: (stats: QueryStats) => React.ReactNode;
+  value: (stats: QueryStats) => string;
+}
+
+/**
+ * The stat cards, in order, and the only place their number is written down: the loaded
+ * view and QueriesSkeleton both map over this list, so a card added or removed here moves
+ * both grids at once. Two hand-written counts do not stay in step - when this panel dropped
+ * its third card (D41) the skeleton kept `[...Array(3)]` and every gate stayed green, because
+ * `Array(2)` and `Array(3)` are the same executable line to the coverage gate and the only
+ * loading test asserted the absence of a string the skeleton never rendered in either shape.
+ */
+const STAT_CARDS: readonly StatCard[] = [
+  {
+    title: "Avg of listed queries",
+    icon: () => <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />,
+    value: ({ statsKnown, avgTime }) => (statsKnown ? formatTime(avgTime) : "N/A"),
+  },
+  {
+    title: "Listed queries over 1s",
+    icon: ({ overOneSecond }) => (
+      <TriangleAlert
+        className={`h-3 w-3 sm:h-4 sm:w-4 ${overOneSecond > 0 ? "text-yellow-500" : "text-muted-foreground"}`}
+      />
+    ),
+    value: ({ statsKnown, overOneSecond }) => (statsKnown ? String(overOneSecond) : "N/A"),
+  },
+];
+
+/** Read by both grids, so the loaded cards and their placeholders lay out identically. */
+const STAT_GRID_CLASS = "grid grid-cols-2 gap-2 sm:gap-4";
+
 export function QueriesTab({ data, loading, labels }: QueriesTabProps) {
   const [sortField, setSortField] = useState<SortField>("totalTime");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -58,13 +107,6 @@ export function QueriesTab({ data, loading, labels }: QueriesTabProps) {
     }
   };
 
-  const formatTime = (ms: number) => {
-    if (ms >= 1000) {
-      return `${(ms / 1000).toFixed(2)}s`;
-    }
-    return `${ms.toFixed(2)}ms`;
-  };
-
   const formatNumber = (n: number) => {
     if (n >= 1000000) {
       return `${(n / 1000000).toFixed(1)}M`;
@@ -76,53 +118,57 @@ export function QueriesTab({ data, loading, labels }: QueriesTabProps) {
   };
 
   // Calculate stats. Absence and zero are different inputs: `MonitoringData.slowQueries`
-  // is required, so a provider that keeps no query log at all - Cassandra
-  // (cassandra/index.ts:573-575), Druid (index.ts:486-488), SQLite (sqlite.ts:734-737) -
-  // can only answer `[]`, and reducing that yielded "Queries 0 / Avg Time 0.00ms /
-  // Slow 0", measured 2026-08-21 in Chrome against Apache Cassandra 5.0.9. An average
-  // over an empty set is not 0.00ms and a call total of 0 is a claim about the database,
-  // so with no statistics the three cards read N/A and the sentence below them says why.
-  // Any non-empty list has been measured, zeros included, and keeps today's arithmetic.
+  // is required, so a provider that keeps no query log at all - the `getSlowQueries()` of
+  // Cassandra (cassandra/index.ts), Druid (druid/index.ts) and SQLite (sqlite.ts), named
+  // rather than pinned by line because all three coordinates this comment used to carry
+  // had drifted - can only answer `[]`, and reducing that yielded "Queries 0 / Avg Time
+  // 0.00ms / Slow 0" (the card wording of the day), measured 2026-08-21 in Chrome against
+  // Apache Cassandra 5.0.9. An average over an empty set is not 0.00ms and a call total of
+  // 0 is a claim about the database, so with no statistics the cards read N/A and the
+  // sentence below them says why. Any non-empty list has been measured, zeros included,
+  // and keeps today's arithmetic.
+  //
+  // The same list is also a CAP, which is the other way a figure here can promise more
+  // than it measured, and the paragraph above did not cover it (D41): `slowQueryLimit`
+  // defaults to 10 in src/lib/db/base-provider.ts, MonitoringDashboard overrides nothing,
+  // and every provider that fills the list applies that ceiling - `LIMIT` in postgres.ts
+  // and mysql.ts, `SELECT TOP` in mssql.ts, `ROWNUM <=` in oracle.ts, `.limit()` in
+  // mongodb.ts, and redis.ts asks `SLOWLOG GET 10` outright. So the length of a populated
+  // list is the ceiling, not a count: measured 2026-08-27 on MySQL 26.7.0, the same server
+  // as HEALTH_SLOW_QUERY_LIMIT in providers/sql/mysql.ts, the digest table held 59 rows
+  // for one connected schema and the panel was handed ten of them.
+  //
+  // A card labelled "Queries" therefore used to publish `sum(calls)` over ten digests as
+  // the database's query count, and on MongoDB and Redis - both of which project
+  // `calls: 1` per row - that sum WAS the list length. No label rescues a total the data
+  // cannot supply, so the card is gone rather than renamed; the total belongs to whatever
+  // read can count the whole log, which this one cannot.
+  //
+  // The two figures left are properties of the rows on screen, and their labels say so, so
+  // a reader can recompute both by looking at the table below. Neither survives an
+  // unscoped label: the list is ordered by total time descending and then truncated, so
+  // the mean of the ten heaviest averages is not the server's average query time, and the
+  // over-a-second count is bounded by ten however many slow statements the server holds.
   const statsKnown = slowQueries.length > 0;
-  const totalQueries = slowQueries.reduce((sum, q) => sum + q.calls, 0);
   const avgTime = statsKnown ? slowQueries.reduce((sum, q) => sum + q.avgTime, 0) / slowQueries.length : 0;
-  const slowCount = slowQueries.filter((q) => q.avgTime > 1000).length;
+  const overOneSecond = slowQueries.filter((q) => q.avgTime > 1000).length;
+  const stats: QueryStats = { statsKnown, avgTime, overOneSecond };
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
       {/* Stats Cards */}
-      <div className="grid grid-cols-3 gap-2 sm:gap-4">
-        <Card className="p-0">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Queries</CardTitle>
-            <Search strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{statsKnown ? formatNumber(totalQueries) : "N/A"}</div>
-          </CardContent>
-        </Card>
-
-        <Card className="p-0">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Avg Time</CardTitle>
-            <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{statsKnown ? formatTime(avgTime) : "N/A"}</div>
-          </CardContent>
-        </Card>
-
-        <Card className="p-0">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Slow</CardTitle>
-            <TriangleAlert
-              className={`h-3 w-3 sm:h-4 sm:w-4 ${slowCount > 0 ? "text-yellow-500" : "text-muted-foreground"}`}
-            />
-          </CardHeader>
-          <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{statsKnown ? slowCount : "N/A"}</div>
-          </CardContent>
-        </Card>
+      <div className={STAT_GRID_CLASS}>
+        {STAT_CARDS.map((card) => (
+          <Card key={card.title} className="p-0">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
+              <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">{card.title}</CardTitle>
+              {card.icon(stats)}
+            </CardHeader>
+            <CardContent className="p-2 sm:p-4 pt-0">
+              <div className="text-lg sm:text-2xl font-medium">{card.value(stats)}</div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       {/* Queries Table */}
@@ -260,11 +306,11 @@ export function QueriesTab({ data, loading, labels }: QueriesTabProps) {
 function QueriesSkeleton() {
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="grid grid-cols-3 gap-2 sm:gap-4">
-        {[...Array(3)].map((_, i) => (
-          <Card key={i} className="p-0">
+      <div className={STAT_GRID_CLASS}>
+        {STAT_CARDS.map((card) => (
+          <Card key={card.title} className="p-0">
             <CardHeader className="p-2 sm:p-4 pb-1 sm:pb-2">
-              <Skeleton className="h-3 sm:h-4 w-12 sm:w-24" />
+              <Skeleton className="h-3 sm:h-4 w-16 sm:w-32" />
             </CardHeader>
             <CardContent className="p-2 sm:p-4 pt-0">
               <Skeleton className="h-5 sm:h-8 w-10 sm:w-16" />

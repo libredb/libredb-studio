@@ -1157,7 +1157,22 @@ export class OracleProvider extends SQLBaseProvider {
       let version = "Oracle";
       let uptime = "N/A";
       let startTime: Date | undefined;
-      let activeConnections = 0;
+      // Left UNDEFINED, and spread conditionally into the return below - the same
+      // shape `getHealth()` above uses, for the same reason. `DatabaseOverview.activeConnections`
+      // is optional precisely so a user who cannot read V$SESSION omits the figure
+      // instead of publishing a fabricated 0, and the monitoring Overview card reads
+      // the absence as "N/A / not published" while a 0 is drawn as a real count and
+      // added as a real sample to the connections trend
+      // (`src/components/monitoring/tabs/OverviewTab.tsx`). The card's threshold rating
+      // is the same either way: the V$PARAMETER ceiling is read inside the same try
+      // below, so a refusal leaves maxConnections 0 as well and the card's percentage
+      // is null on both paths. Oracle's Database Reference
+      // states that after installation only SYS or a SYSDBA can read the dynamic
+      // performance tables, so a plain schema user hitting ORA-00942 here is the
+      // ordinary case rather than an exotic one.
+      let activeConnections: number | undefined;
+      // NOT made optional alongside it: `maxConnections` is a published ceiling where
+      // 0 MEANS "no limit published", so 0 and absence are the SAME fact there.
       let maxConnections = 0;
       let databaseSize = "0 bytes";
       let databaseSizeBytes = 0;
@@ -1199,14 +1214,19 @@ export class OracleProvider extends SQLBaseProvider {
         const sessRes = await conn.execute(`SELECT COUNT(*) AS CNT FROM V$SESSION WHERE TYPE = 'USER'`, [], {
           outFormat: oracledb.OUT_FORMAT_OBJECT,
         });
-        activeConnections = Number(((sessRes.rows || []) as Record<string, unknown>[])[0]?.CNT || 0);
+        // measuredNumber, not `Number(... || 0)`: a COUNT of 0 is a reading, so the
+        // falsy test would have thrown away the very figure it was meant to publish.
+        // Only an unanswered COUNT stays absent. The assignment deliberately precedes
+        // the ceiling read below, so a refused V$PARAMETER cannot carry this count away.
+        activeConnections = measuredNumber(((sessRes.rows || []) as Record<string, unknown>[])[0]?.CNT);
 
         const maxRes = await conn.execute(`SELECT VALUE FROM V$PARAMETER WHERE NAME = 'sessions'`, [], {
           outFormat: oracledb.OUT_FORMAT_OBJECT,
         });
         maxConnections = Number(((maxRes.rows || []) as Record<string, unknown>[])[0]?.VALUE || 0);
       } catch {
-        /* ignore */
+        /* Both V$ views need privileges: a refused count stays absent, never 0, while a
+           refused ceiling leaves the 0 that already means "no limit published". */
       }
 
       // Database size
@@ -1234,7 +1254,7 @@ export class OracleProvider extends SQLBaseProvider {
         version,
         uptime,
         startTime,
-        activeConnections,
+        ...(activeConnections === undefined ? {} : { activeConnections }),
         maxConnections,
         databaseSize,
         databaseSizeBytes,

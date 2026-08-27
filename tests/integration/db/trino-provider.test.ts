@@ -1122,6 +1122,57 @@ describe("TrinoProvider monitoring", () => {
     expect(sentAnything('SHOW STATS FOR "tpch"."sf1"."customer"')).toBe(true);
   });
 
+  /*
+    D41: the pass used to describe the first 25 tables of a bigger catalog and hand those
+    rows back as the reading. Nothing in `TableStats[]` or in `MonitoringData.tables`
+    could say more had been dropped, so the panel's count and the agent's `rowCount` both
+    read 25 for a catalog of any size. The provider now refuses the oversized scope, which
+    is why these two tests assert the same sentence in the two shapes it travels in: a
+    thrown `QueryError` for a direct caller, and `errors.tables` beside an absent panel for
+    the dashboard.
+
+    Live-verified 2026-08-27 against Trino 476 through this provider's own transport: the
+    real `tpch` holds 72 user tables and refuses, while `getTableStats({ schema: "tiny" })`
+    answers all 8 of them (lineitem 60175, nation 25) - a reading the catalog-wide pass
+    could never return, `tiny` sorting last behind 64 tables it never reached.
+  */
+  // The 72 in the shape it really has: the tpch connector publishes these nine schemas of
+  // the same eight tables, which is both where the number comes from and why the refusal
+  // can tell this caller that narrowing WILL work - every one of the nine is inside the
+  // bound. A catalog whose schemas are all oversized is told the opposite, in the unit
+  // tests, because there is no fixture shape that makes both sentences true at once.
+  const SEVENTY_TWO = ["tiny", "sf1", "sf100", "sf300", "sf1000", "sf3000", "sf10000", "sf30000", "sf100000"].flatMap(
+    (schema) =>
+      ["customer", "lineitem", "nation", "orders", "part", "partsupp", "region", "supplier"].map((table) => [
+        schema,
+        table,
+      ]),
+  );
+
+  test("a catalog bigger than one stats pass is refused with the number of tables it holds", async () => {
+    const provider = await connectProvider();
+    overrideSurface(trinoTableListSql(CATALOG), rows(TABLE_LIST_COLUMNS, SEVENTY_TWO));
+    sentSql = [];
+
+    await expect(provider.getTableStats()).rejects.toThrow(/Catalog "tpch" holds 72 tables/);
+    // Not one statement per table up to the bound either: the refusal is cheaper than the
+    // truncation it replaces, because the table list already answered the whole question.
+    expect(sentAnything("SHOW STATS FOR")).toBe(false);
+  });
+
+  test("the oversized table panel is ABSENT in the dashboard, carrying the size sentence", async () => {
+    const provider = await connectProvider();
+    overrideSurface(trinoTableListSql(CATALOG), rows(TABLE_LIST_COLUMNS, SEVENTY_TWO));
+    const data = await provider.getMonitoringData({ includeIndexes: false, includeStorage: false });
+
+    expect(data.tables).toBeUndefined();
+    expect(data.errors?.tables).toContain('Catalog "tpch" holds 72 tables');
+    // The advice reaches the dashboard intact, and it is the advice that is TRUE of this
+    // catalog: nine schemas, every one of them describable on its own.
+    expect(data.errors?.tables).toContain("which holds for 9 of the schemas this catalog's tables are in");
+    expect(data.overview).toBeDefined();
+  });
+
   test("the refused table panel is ABSENT with its sentence while the rest of the dashboard answers", async () => {
     // The whole point of the conversion: one panel that cannot be answered costs that
     // panel and carries its reason, instead of rendering as a table of no rows.

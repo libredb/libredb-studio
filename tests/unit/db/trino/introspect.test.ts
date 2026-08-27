@@ -800,15 +800,158 @@ describe("Trino getTableStats", () => {
     ]);
   });
 
-  test("bounds the pass, because one table is one statement", async () => {
-    const many: TrinoRow[] = Array.from({ length: TRINO_MAX_STATS_TABLES + 5 }, () => ({
+  /*
+    D41: the pass used to describe the first 25 tables of an oversized scope and return
+    them as the answer, and no consumer could see that anything had been dropped -
+    `TableStats[]` has no field for "there were more", `MonitoringData.tables` is that
+    same array, and the agent's curated reading published its length as `rowCount`. A cap
+    read as a count is the absence lie one size up, so an oversized scope now REFUSES,
+    which is the answer the agent's own row bound already gives (`READING_OVER_BUDGET` in
+    src/lib/agent/tools.ts) and for the same reason.
+
+    Measured 2026-08-27 against Trino 476: every built-in catalog but `memory` is over the
+    bound (`tpch` 72 tables, `system` 26, `tpcds` 250, `jmx` 379), and the tpch pass never
+    reached the `tiny` schema at all - it sorts last, so the 25 statements went to sf1,
+    sf100, sf1000 and sf10000.customer, of which only sf1 publishes row counts. The panel
+    therefore answered 8 rows for a 72-table catalog and named none of the tables the
+    fixtures use.
+  */
+  test("refuses a scope larger than one pass rather than describing the first 25 of it", async () => {
+    const many: TrinoRow[] = Array.from({ length: TRINO_MAX_STATS_TABLES + 1 }, () => ({
+      schemaName: "tiny",
+      tableName: "region",
+    }));
+    const { runner } = fakeRunner({ rows: { tableList: many } });
+    const { tables, refusal } = await getTableStats(runner, CATALOG);
+
+    expect(tables).toEqual([]);
+    expect(refusal).toContain(`Catalog "tpch" holds ${TRINO_MAX_STATS_TABLES + 1} tables`);
+    expect(refusal).toContain(`more than the ${TRINO_MAX_STATS_TABLES} one pass describes`);
+    // The scope word, not just the scope's name: an unnarrowed read is refused because
+    // 25 rows would be read as the CATALOG's table count. The narrowed test below pins
+    // the other arm of the same ternary, which one line of coverage cannot tell apart.
+    expect(refusal).toContain("read as the catalog's table count");
+  });
+
+  /*
+    The catalog-scope advice used to read "Ask for a single schema and the whole of it is
+    described", and that is not true of a schema which is itself over the bound - this
+    provider's own measurements name one, jmx holding 379 tables in schema `current`. The
+    advice is now conditional on a figure the reading already has: the table list is a
+    single uncapped read that has already answered for the whole catalog, so which
+    schemas a narrowed pass would describe is known before any SHOW STATS is sent.
+  */
+  test("names how many schemas a narrowed pass would describe, rather than promising all of them", async () => {
+    // Eight tables in each of nine schemas is the shape the tpch connector publishes -
+    // tiny, sf1, sf100, sf300, sf1000, sf3000, sf10000, sf30000, sf100000, of customer,
+    // lineitem, nation, orders, part, partsupp, region, supplier - and is where the
+    // measured 72 comes from. Two more schemas are added to pin the boundary of the
+    // figure itself: one of exactly the bound, which IS describable, and one of one
+    // more, which is not and must not be counted among the narrowings offered.
+    const eight = ["customer", "lineitem", "nation", "orders", "part", "partsupp", "region", "supplier"];
+    const nine = ["tiny", "sf1", "sf100", "sf300", "sf1000", "sf3000", "sf10000", "sf30000", "sf100000"];
+    const listed: TrinoRow[] = [
+      ...nine.flatMap((schemaName) => eight.map((tableName) => ({ schemaName, tableName }))),
+      ...Array.from({ length: TRINO_MAX_STATS_TABLES }, (_unused, index) => ({
+        schemaName: "at_the_bound",
+        tableName: `t${index}`,
+      })),
+      ...Array.from({ length: TRINO_MAX_STATS_TABLES + 1 }, (_unused, index) => ({
+        schemaName: "over_the_bound",
+        tableName: `t${index}`,
+      })),
+    ];
+    const { runner } = fakeRunner({ rows: { tableList: listed } });
+    const { tables, refusal } = await getTableStats(runner, CATALOG);
+
+    expect(tables).toEqual([]);
+    expect(refusal).toContain('Catalog "tpch" holds 123 tables'); // 72 + 25 + 26
+    expect(refusal).toContain("Narrowing to one schema describes the whole of it when");
+    expect(refusal).toContain("which holds for 10 of the schemas this catalog's tables are in");
+    expect(refusal).toContain('SHOW STATS FOR "tpch"."<schema>"."<table>"');
+  });
+
+  test("says plainly that no narrowing is left when every schema is over the bound as well", async () => {
+    // The shape jmx has: measured 2026-08-27 against Trino 476 it holds 379 tables and
+    // every one of them is in `current`, so the narrowing the advice used to offer lands
+    // on this same refusal one level down. Advice pointing at a scope that is also
+    // refused is worse than no advice, so the sentence offers the per-table statement -
+    // the one route that answers for any scope - and says so instead.
+    const many: TrinoRow[] = Array.from({ length: TRINO_MAX_STATS_TABLES + 1 }, (_unused, index) => ({
+      schemaName: "current",
+      tableName: `mbean${index}`,
+    }));
+    const { runner } = fakeRunner({ rows: { tableList: many } });
+    const { refusal } = await getTableStats(runner, CATALOG);
+
+    expect(refusal).toContain("Narrowing to one schema does not help here");
+    expect(refusal).toContain("every schema this catalog's tables are in is over the bound as well");
+    expect(refusal).toContain('SHOW STATS FOR "tpch"."<schema>"."<table>"');
+  });
+
+  test("sends no SHOW STATS at all for a scope it refuses, so the refusal costs less than the cut did", async () => {
+    const many: TrinoRow[] = Array.from({ length: TRINO_MAX_STATS_TABLES + 1 }, () => ({
       schemaName: "tiny",
       tableName: "region",
     }));
     const { runner, sent } = fakeRunner({ rows: { tableList: many } });
     await getTableStats(runner, CATALOG);
 
+    expect(sent.filter((sql) => sql.startsWith("SHOW STATS FOR"))).toEqual([]);
+  });
+
+  test("describes a scope exactly at the bound in full, because nothing is dropped there", async () => {
+    const exactly: TrinoRow[] = Array.from({ length: TRINO_MAX_STATS_TABLES }, () => ({
+      schemaName: "tiny",
+      tableName: "region",
+    }));
+    const { runner, sent } = fakeRunner({ rows: { tableList: exactly } });
+    const { tables, refusal } = await getTableStats(runner, CATALOG);
+
+    expect(refusal).toBeUndefined();
+    expect(tables).toHaveLength(TRINO_MAX_STATS_TABLES);
     expect(sent.filter((sql) => sql.startsWith("SHOW STATS FOR"))).toHaveLength(TRINO_MAX_STATS_TABLES);
+  });
+
+  test("answers a narrowed schema that fits even when its catalog does not", async () => {
+    // The bound is applied to what was ASKED for, not to what the catalog holds: the
+    // schema filter runs first, so `tiny` is describable in a catalog of any size. That
+    // is what makes the refusal's advice something a caller can act on - the agent's
+    // curated reading takes a `schema` - and it is the ONLY way to see `tiny` at all:
+    // measured, it sorts last in tpch, so the catalog-wide pass spent its 25 statements
+    // 64 tables short of it.
+    const many: TrinoRow[] = Array.from({ length: TRINO_MAX_STATS_TABLES + 5 }, () => ({
+      schemaName: "sf1",
+      tableName: "customer",
+    }));
+    const { runner } = fakeRunner({
+      rows: { tableList: [...many, { schemaName: "tiny", tableName: "region" }] },
+    });
+    const { tables, refusal } = await getTableStats(runner, CATALOG, { schema: "tiny" });
+
+    expect(refusal).toBeUndefined();
+    expect(tables.map((table) => table.tableName)).toEqual(["region"]);
+  });
+
+  test("names the schema, and advises no further narrowing, when the caller already narrowed", async () => {
+    // Advice a caller cannot act on is worse than none, and there IS no narrower
+    // selection than one schema here, so the sentence offers the per-table statement
+    // instead of asking again for something it already has.
+    const many: TrinoRow[] = Array.from({ length: TRINO_MAX_STATS_TABLES + 1 }, () => ({
+      schemaName: "tiny",
+      tableName: "region",
+    }));
+    const { runner } = fakeRunner({ rows: { tableList: many } });
+    const { tables, refusal } = await getTableStats(runner, CATALOG, { schema: "tiny" });
+
+    expect(tables).toEqual([]);
+    expect(refusal).toContain(`Schema "tiny" of catalog "tpch" holds ${TRINO_MAX_STATS_TABLES + 1} tables`);
+    expect(refusal).toContain('SHOW STATS FOR "tpch"."tiny"."<table>"');
+    expect(refusal).toContain("read as the schema's table count");
+    // Not vacuous: "Narrowing to one schema" is the opening of BOTH catalog-scope arms,
+    // each pinned positively above, so renaming it turns those two red before this one
+    // could quietly start passing on a string that no longer exists anywhere.
+    expect(refusal).not.toContain("Narrowing to one schema");
   });
 
   test("degrades one table's failure to that table alone", async () => {

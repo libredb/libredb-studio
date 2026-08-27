@@ -67,7 +67,7 @@ DatabaseProvider (interface) → BaseDatabaseProvider → SQLBaseProvider → MS
 
 ### Registration
 
-Loaded on demand by the factory ([`factory.ts:82`](../../src/lib/db/factory.ts)):
+Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'mssql': {
@@ -82,7 +82,7 @@ case 'mssql': {
 
 ### 3.1 Encryption on by default, Azure-aware
 
-`buildConfig()` ([mssql.ts:111](../../src/lib/db/providers/sql/mssql.ts)) sets `encrypt: true` by
+`buildConfig()` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) sets `encrypt: true` by
 default (SQL Server 2022+ and the `mssql` v12 driver require encryption), and
 `trustServerCertificate = !isAzure` — i.e. for **non-Azure** hosts it encrypts but **trusts a
 self-signed certificate** (so on-prem dev servers connect without a CA), while **Azure**
@@ -91,7 +91,7 @@ explicit-`ssl` overrides and the [security caveat](#14-known-limitations--future
 
 ### 3.2 T-SQL pagination: `TOP` and `OFFSET … FETCH`
 
-`prepareQuery()` ([mssql.ts:557](../../src/lib/db/providers/sql/mssql.ts)) overrides the base. For a
+`prepareQuery()` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) overrides the base. For a
 limit-less `SELECT`: with no offset it injects `TOP n` right after `SELECT [DISTINCT]`; with an
 offset it appends `OFFSET m ROWS FETCH NEXT n ROWS ONLY` — and because T-SQL requires an `ORDER BY`
 for `OFFSET … FETCH`, it injects `ORDER BY (SELECT NULL)` when the query has none.
@@ -195,7 +195,7 @@ bounding such a statement unless the rule above applies to it.
 
 ### 3.3 Five-query schema introspection, cross-schema
 
-`getSchema()` ([mssql.ts:369](../../src/lib/db/providers/sql/mssql.ts)) runs **five bulk queries**
+`getSchema()` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) runs **five bulk queries**
 (tables via `sys.tables`/`sys.partitions`, columns via `INFORMATION_SCHEMA.COLUMNS`, primary keys,
 foreign keys via `sys.foreign_keys`, indexes via `sys.indexes`) over the connected database, then
 groups them in memory keyed by `schema.table`. Tables in the **`dbo`** schema are shown by bare
@@ -206,8 +206,9 @@ tables. Row counts come from `SUM(sys.partitions.rows)`.
 ### 3.4 `rowsAffected` is surfaced
 
 Unlike the MySQL/Oracle providers (which report `rows.length`), `query()` sets
-`rowCount = result.rowsAffected?.[0] ?? recordset.length` ([mssql.ts:241](../../src/lib/db/providers/sql/mssql.ts)),
-so a non-`SELECT` statement returns its real affected-row count.
+`rowCount = result.rowsAffected?.[0] ?? recordset.length` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)),
+and `queryInTransaction()` repeats the same expression, so a non-`SELECT` statement returns its real
+affected-row count.
 
 ### 3.5 A query timeout *is* wired (driver-enforced)
 
@@ -221,12 +222,12 @@ statement timeout like Postgres's `statement_timeout`. An overrunning query stil
 ### 3.6 No transaction auto-rollback timeout
 
 Like Oracle (and unlike Postgres/MySQL), transactions use an `mssql.Transaction` with **no**
-5-minute auto-rollback timer ([mssql.ts:303](../../src/lib/db/providers/sql/mssql.ts)).
+5-minute auto-rollback timer (`beginTransaction()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)).
 
 ### 3.7 Named-instance support
 
 If `config.instanceName` is set, it is passed as `options.instanceName` and the explicit `port` is
-**deleted** — the SQL Server Browser service negotiates the port ([mssql.ts:150](../../src/lib/db/providers/sql/mssql.ts)).
+**deleted** — the SQL Server Browser service negotiates the port (`buildConfig()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)).
 
 ---
 
@@ -244,14 +245,14 @@ const conn = {
 };
 ```
 
-`validate()` ([mssql.ts:94](../../src/lib/db/providers/sql/mssql.ts)) requires `host` **and**
+`validate()` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) requires `host` **and**
 `database` (when no connection string is set — but note [§4.4](#44-connection-string-nuance)).
 SQL authentication only (`user`/`password`); Windows/AAD auth is not wired.
 
 ### 4.2 Connection pooling
 
 `connect()` builds an `mssql.ConnectionPool` and validates it with `SELECT 1`. Mapping
-([mssql.ts:111](../../src/lib/db/providers/sql/mssql.ts)):
+(`buildConfig()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)):
 
 | `mssql` config | Value | Source |
 |----------------|-------|--------|
@@ -262,7 +263,7 @@ SQL authentication only (`user`/`password`); Windows/AAD auth is not wired.
 | `options.requestTimeout` | 60000 | `ProviderOptions.queryTimeout` |
 
 This is the most complete pool/timeout mapping of any SQL provider. `getPoolStats()`
-([mssql.ts:702](../../src/lib/db/providers/sql/mssql.ts)) exposes
+([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) exposes
 `{ total: size, idle: available, active, waiting: pending }`.
 
 #### Pool errors are handled, not fatal
@@ -337,7 +338,7 @@ to the newer name would change the wording on the form without changing a single
 
 ### 5.1 Execution
 
-`query(sql, params?, queryId?)` ([mssql.ts:203](../../src/lib/db/providers/sql/mssql.ts)) takes a
+`query(sql, params?, queryId?)` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) takes a
 `Request` from the pool, optionally records it under `queryId` for cancellation, binds params as
 `@p1`, `@p2`, … via `request.input()`, runs the query, and returns:
 
@@ -350,14 +351,14 @@ Native `mssql` errors are normalised through `mapDatabaseError()` (see [§11](#1
 ### 5.2 Query cancellation
 
 A query issued with a `queryId` stores its `Request`. `cancelQuery(queryId)`
-([mssql.ts:247](../../src/lib/db/providers/sql/mssql.ts)) returns `false` if no `Request` is tracked
+([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) returns `false` if no `Request` is tracked
 for that id; otherwise it calls `request.cancel()` and returns `true` as long as that call doesn't
 throw — it does **not** confirm the cancellation actually took effect. Exposed via `POST /api/db/cancel`.
 
 ### 5.3 Data-type & parameter handling ⚠️
 
 - **Parameters are bound without an explicit SQL type.** `query()` calls
-  `request.input(\`p${i+1}\`, value)` ([mssql.ts:218](../../src/lib/db/providers/sql/mssql.ts)) and
+  `request.input(\`p${i+1}\`, value)` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) and
   lets `mssql` **infer** the TDS type from the JS value. Inference is convenient but a known
   foot-gun: `null` params, very large integers, and `VARCHAR` vs `NVARCHAR` intent can be guessed
   wrong. Callers needing exact typing would have to bind explicitly (not currently exposed).
@@ -409,7 +410,7 @@ probe table's `BIGINT` and `UNIQUEIDENTIFIER` columns both exported as `NVARCHAR
 
 ## 6. Transactions
 
-Explicit lifecycle via `mssql.Transaction` ([mssql.ts:303](../../src/lib/db/providers/sql/mssql.ts)),
+Explicit lifecycle via `mssql.Transaction` (`beginTransaction()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)),
 **no auto-rollback timeout** ([§3.6](#36-no-transaction-auto-rollback-timeout)). Surfaced via
 `POST /api/db/transaction`.
 
@@ -531,14 +532,89 @@ It used to be initialised to `0` and the guard left that `0` standing, which mat
 agent: its curated `health` reading forwards this figure to the model, so a refused DMV arrived as a
 *measured* "no connections open" about a server SQL Server had said nothing about.
 
-A count that really is `0` - an instance with no user sessions - is a reading and is reported as `0`.
+`DatabaseOverview.activeConnections` is **optional** for the identical reason, and `getOverview()`
+now omits it on the same refusal. It did not until D40: the block was guarded, but the local was
+initialised to `0`, so the denial was swallowed into a reading and travelled on as one. The count
+itself is the *same* `COUNT(*) FROM sys.dm_exec_sessions`, only bundled with the `sys.configurations`
+ceiling lookup - and that bundling is not cosmetic: it gives the statement a second object carrying
+its own, version-dependent permission requirement, so the two counts do not necessarily fail together
+([below](#which-half-of-the-overview-read-refuses-and-the-case-nothing-catches)).
+
+The monitoring **Connections** card
+([`src/components/monitoring/tabs/OverviewTab.tsx`](../../src/components/monitoring/tabs/OverviewTab.tsx))
+is what the difference buys: on the absence it renders `N/A` over *"not published"* and drops the
+sample from the connection-trend chart, whereas the `0` printed as the figure `0` on that card - a
+busy server reported as idle on the strength of a permission error - and, because that tab keeps a
+history, every refresh added a real `0` point to the connection sparkline, which plots present
+samples and drops absent ones.
+
+**No percentage was involved on this path.** The ceiling comes from the *same* statement, and its
+assignment lives inside the `try` that threw, so a refused read left `maxConnections` at its `0`
+initialiser; the card requires `connectionLimit > 0` for both the `/{limit}` suffix and the
+`<Progress>` + *"N% used"* branch, so what it drew was a bare `0` over *"no limit published"* - no
+ceiling, no bar. A `0/32767` with *"0% used"* is what a **successful** read of an idle instance
+draws, and this fix does not change that rendering.
+
+Nor does this figure reach the model. `getHealth()` runs its own
+`COUNT(*) FROM sys.dm_exec_sessions` rather than composing from `getOverview()`, and the agent's
+curated `health` reading is `getHealth()` as well (`method: "getHealth"` in
+[`src/lib/agent/tools.ts`](../../src/lib/agent/tools.ts); nothing under `src/lib/agent` reads
+`getOverview()`). This count's readers are the monitoring card, its trend chart, and the
+connection-threshold rating that colours the card.
+
+`maxConnections` is deliberately **not** made absent alongside it. It stays a required number because
+`0` there already *means* "no limit published" rather than "no capacity", so absence and zero are the
+same fact for the ceiling and different facts for the count; a denied read therefore leaves the count
+absent and the ceiling `0`.
+
+#### Which half of the overview read refuses, and the case nothing catches
+
+`getOverview()`'s connection read names two objects, and Microsoft documents their permissions
+differently - and differently *per version*:
+
+| Object | SQL Server 2019 and earlier | SQL Server 2022 and later |
+|--------|-----------------------------|---------------------------|
+| `sys.dm_exec_sessions` | *"Everyone can see their own session information."* … *"requires `VIEW SERVER STATE` to see all sessions on the server"* | same first sentence; *"requires `VIEW SERVER PERFORMANCE STATE` permission on the server"* to see all sessions |
+| `sys.configurations` | *"Requires membership in the **public** role."* | *"Requires VIEW SERVER PERFORMANCE STATE permission on the server."* |
+
+(Permissions sections of
+[sys.dm_exec_sessions](https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-objects/sys-dm-exec-sessions-transact-sql)
+and
+[sys.configurations](https://learn.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-configurations-transact-sql),
+read 2026-08-27.)
+
+So the version decides the *shape* an ungranted login gets, and only one of the two shapes is a
+refusal at all:
+
+- **SQL Server 2022 and later** - the `sys.configurations` subquery alone needs the server grant, so
+  the whole statement is refused, the guard runs, and the count is correctly **absent**. This is the
+  path D40 fixes, and it is why the ceiling is absent-shaped too: one statement, one catch.
+- **SQL Server 2019 and earlier** - `sys.configurations` needs only `public`, so the ceiling lookup
+  succeeds; and the session DMV is not documented as *refusing* an ungranted login at all, only as
+  showing it its own session. Taken literally, that login gets a row-filtered `COUNT(*)` - its own
+  connection rather than the server's - and the card draws a confident `1/32767` under a *"0% used"*
+  bar. **That is a wrong measurement, not an absence, and nothing here catches it: the statement
+  succeeded.**
+
+The second case is **not fixed** by D40 and is **not measured** on a live instance - it is what
+Microsoft's Permissions wording implies, not an observation. What this round did measure is the
+sibling performance-counter DMV's refusal on 2022 CU26, which is why the caveat above stands
+unchanged: the refusal on `sys.dm_exec_sessions` itself is not measured here, and neither is its
+row-filtering. Distinguishing the two would need a separate probe - the grant itself
+(`HAS_PERMS_BY_NAME`), or a count cross-checked against a source that cannot be row-filtered - not a
+`try`/`catch`. The same wording applies one layer up: `getHealth()`'s count reads that DMV *alone*,
+with no `sys.configurations` arm to refuse on any version, so its own permission-denial path is the
+less likely of the two shapes there.
+
+A count that really is `0` - an instance with no user sessions - is a reading and is reported as `0`,
+in `getOverview()` as in `getHealth()`.
 The absence is spelled `measuredNumber(...)` plus a conditional spread, never `|| undefined`.
 
 ---
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([mssql.ts:637](../../src/lib/db/providers/sql/mssql.ts)); targets
+`runMaintenance(type, target?)` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)); targets
 are bracket-escaped (`]` → `]]`):
 
 | Type | With target | Without target |
@@ -580,7 +656,7 @@ render those words and send an operation SQL Server declares (#U9).
 
 ## 10. Capabilities & labels
 
-### `getCapabilities()` ([mssql.ts:57](../../src/lib/db/providers/sql/mssql.ts))
+### `getCapabilities()` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts))
 
 | Capability | Value |
 |------------|-------|
@@ -597,7 +673,7 @@ render those words and send an operation SQL Server declares (#U9).
 | `defaultPort` | `1433` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 
-### Labels — overridden ([mssql.ts:67](../../src/lib/db/providers/sql/mssql.ts))
+### Labels — overridden (`getLabels()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts))
 
 `analyzeAction` → *"Update Statistics"*, `vacuumAction` → *"Rebuild Indexes"*, plus the matching
 global labels. The UI display name for the database type is *"SQL Server"* (`db-ui-config.ts`).
@@ -721,7 +797,7 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
     generated self-signed certificate: `{ encrypt: true, trustServerCertificate: true }` connected
     (`sys.dm_exec_connections.encrypt_option = TRUE`) while `{ encrypt: true,
     trustServerCertificate: false }` — what `verify-full` builds
-    ([mssql.ts:483](../../src/lib/db/providers/sql/mssql.ts)) — was refused with *"Failed to connect
+    (`buildConfig()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) — was refused with *"Failed to connect
     to 127.0.0.1:1433 - self signed certificate"*. If your on-prem server has no trusted certificate,
     paste `TrustServerCertificate=True` alongside `Encrypt=True`, or set SSL Mode to `require` on the
     form after pasting.

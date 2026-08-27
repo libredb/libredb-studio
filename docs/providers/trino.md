@@ -593,7 +593,7 @@ Everything comes from `system.runtime`, `system.metadata` and — for the two re
 | `getPerformanceMetrics()` | `jmx.current."trino.execution:name=querymanager"` | `queriesPerSecond` only ([§3.10](#310-absent-never-zeroed)) |
 | `getActiveSessions()` | `system.runtime.queries`, non-terminal states | The statements in flight |
 | `getSlowQueries()` | `system.runtime.queries`, `FINISHED` rows by elapsed time | The coordinator's recent history |
-| `getTableStats()` | `SHOW STATS FOR <table>`, one per table, capped at 25 | Real row counts and logical sizes |
+| `getTableStats()` | `SHOW STATS FOR <table>`, one per table, for a scope of at most 25 tables | Real row counts and logical sizes, or a refusal — never a sample |
 | `getStorageStats()` | `system.metadata.catalogs` | One row per catalog, `location` = the connector |
 | `getIndexStats()` | — | `[]`, no statement sent — a MEASUREMENT, not a refusal: no index object exists in any Trino catalog, so zero is the true count |
 | `getHealth()` | The three above | — |
@@ -620,22 +620,25 @@ Five honest blanks, each with its reason:
 - **`getTableStats()` omits a table whose connector published no row count.** Measured,
   `SHOW STATS FOR system.runtime.nodes` returns the six columns with every value null, summary row
   included. `TableStats.rowCount` cannot say "unknown", and "0 rows" is a claim nobody made.
-- **An empty table panel has three causes, and only one of them is an empty panel.** Since
-  **2026-08-25** the two that are refusals leave the panel ABSENT with a sentence under
+- **An empty table panel has four causes, and only one of them is an empty panel.** Since
+  **2026-08-25** the ones that are refusals leave the panel ABSENT with a sentence under
   `MonitoringData.errors`, which is what `PanelUnavailable` renders, instead of an empty table that
   claims the engine answered "no tables":
   - the catalog's table list was **refused** (`unknown-object` or `auth`) — the panel carries the
     server's own wording;
-  - tables were examined and **none** published a row count — the panel names how many were asked.
-    Measured 2026-08-25 against Trino 476: the `jmx` catalog holds **379** tables in schema `current`
-    and a 20-table random sample of them answered `SHOW STATS` with an empty `row_count`, 0 of 20
-    non-null — the jmx connector supplies no statistics at all — so `getTableStats()` refuses the panel there (`None of the 25 tables
-    examined in catalog "jmx" published a row count …`, 25 being the per-pass cap below) while `tpch`
-    (8 rows, `sf1.lineitem` 6,001,215) and `memory` (3 rows) answer unchanged;
+  - the scope holds **more tables than one pass describes** — the panel names how many it holds and
+    what, if anything, is narrow enough to ask for instead
+    ([§7.1](#71-a-scope-too-large-for-one-pass-is-refused-not-sampled));
+  - tables were examined and **none** published a row count — the panel names how many were asked,
+    and that number is now a count rather than a bound, because an oversized scope is refused before
+    any `SHOW STATS` is sent. Measured 2026-08-25 against Trino 476, the `jmx` catalog holds **379**
+    tables in schema `current` and a 20-table random sample of them answered `SHOW STATS` with an
+    empty `row_count`, 0 of 20 non-null — the jmx connector supplies no statistics at all. Since
+    2026-08-27 that catalog is refused on **size** first, one cause earlier; the *"none published"*
+    sentence is what a scope of 25 tables or fewer gets, as `tpch.sf10000` does;
   - the catalog genuinely holds **no table** — `[]`, which is a real measurement and keeps rendering
-    as an empty panel.
-- **`getTableStats()` is capped at 25 tables per pass.** `SHOW STATS` is one statement per table;
-  there is no catalog of sizes to aggregate, so N tables cost N statements.
+    as an empty panel. Live-verified 2026-08-27: the `memory` catalog of a fresh cluster holds 0 user
+    tables and answers `[]` with no refusal.
 - **`StorageStats.size` is `"N/A"` with `sizeBytes: 0`, and `usagePercent` is absent**
   ([§3.9](#39-the-bytes-are-somewhere-else-so-the-size-panels-say-so)). The rows are the catalogs,
   which is where the data really is; there is no capacity for a percentage to be a fraction of.
@@ -643,6 +646,71 @@ Five honest blanks, each with its reason:
 The active-query read **sees itself**, as a `RUNNING` row. That is not a defect to filter: the
 coordinator really is running it, and the only id that could exclude it is one the statement does not
 know while it is being planned.
+
+### 7.1 A scope too large for one pass is refused, not sampled
+
+`SHOW STATS` is **one statement per table** — the reference gives exactly two forms,
+`SHOW STATS FOR <table>` and `SHOW STATS FOR ( <query> )`, with no batch form and no catalog of sizes
+to aggregate — so N tables cost N statements and the pass is bounded at **25**.
+
+Until **2026-08-27** that bound *truncated*: the pass described the first 25 tables of the scope and
+returned those rows as the reading. No consumer could see it. `getTableStats()` answers
+`TableStats[]`, `MonitoringData.tables` is that same array, and the agent's curated reading publishes
+its length as `rowCount` — none of the three has a field a *"there were more"* marker could travel in,
+so 25 rows out of 500 were indistinguishable from a catalog holding exactly 25. **A cap read as a
+count is the absence lie one size up**, so the reading now **refuses** the oversized scope, which is
+the answer the agent's own row bound already gives (`READING_OVER_BUDGET`) and for the same reason.
+
+Live-verified **2026-08-27** against Trino 476 through this provider's own transport — and this is
+the ordinary case, not the exotic one:
+
+| Scope | User tables | Before | Now |
+|---|---|---|---|
+| `tpch` | 72 | 8 rows, presented as the catalog | refused, naming 72 |
+| `tpch.tiny` | 8 | 8 rows when named, but **never reached by the catalog-wide pass** — `tiny` sorts last, behind 64 tables the 25 statements never got to | **8 rows** (`lineitem` 60,175, `nation` 25) |
+| `tpch.sf1` | 8 | 8 rows | 8 rows (`lineitem` 6,001,215) |
+| `system` | 26 | 25 examined | refused, naming 26 |
+| `tpcds` | 250 | 25 examined | refused, naming 250 |
+| `jmx.current` | 379 | 25 examined | refused, naming 379 |
+| `memory` | 0 | `[]` | `[]` — a measurement, not a refusal |
+
+The refusal is also **cheaper** than the cut it replaces: the table list has already answered the
+whole question, so no `SHOW STATS` is sent at all. The bound applies to what was **asked for** and not
+to what the catalog holds, so a schema *inside* the bound is describable in a catalog of any size —
+which is how `tpch.tiny` became readable at all.
+
+Its advice differs by scope, because advice a caller cannot act on is worse than none — and a schema
+is refused by the same bound that refuses a catalog, which the table above measures: `jmx.current`
+holds **379** tables, so "ask for a single schema" would have been a remedy that fails. The sentence
+is therefore **conditional on a figure the reading already has**. The table list is one uncapped read
+that has already answered for the whole catalog, so the per-schema counts are known before any
+`SHOW STATS` is sent, and the refusal says how many schemas a narrowed pass really would describe:
+
+- **Unnarrowed, with schemas inside the bound** — how many there are, and that a larger one is
+  refused the same way. Narrowing is `MonitoringOptions.schemaFilter`, which `POST /api/db/monitoring`
+  accepts, and the agent's curated reading takes a `schema` of its own. On the real `tpch` this reads
+  *"9 of the schemas this catalog's tables are in"*: the connector publishes nine schemas — `tiny`,
+  `sf1`, `sf100`, `sf300`, `sf1000`, `sf3000`, `sf10000`, `sf30000`, `sf100000` — of the same eight
+  tables, which is where the 72 comes from and why every one of them is describable alone.
+- **Unnarrowed, with none inside it** — that narrowing does not help here, plainly, with no scope
+  offered that would be refused too. `jmx` is the shape that reaches this arm: its 379 tables are in
+  `current`, and the `history` schema the connector also publishes carries a table only for an MBean
+  named in `jmx.dump-tables`, so on a cluster that names none there is nothing narrower to send
+  anyone to.
+- **Already narrowed to a schema** — there is no narrower selection to offer, so the sentence gives
+  the statement that answers for a single table: `SHOW STATS FOR "<catalog>"."<schema>"."<table>"`.
+
+A schema holding **no** table is not counted among the describable ones — it is not in the table list
+at all — which is why the sentence says "the schemas this catalog's tables are in" rather than
+counting the catalog's schemas: an empty schema is not somewhere the advice could send anyone. Every
+one of the three sentences ends in the per-table statement, because that is the one route no bound
+applies to.
+
+The monitoring dashboard sets no `schemaFilter` today, so on a catalog over the bound its Tables
+panel is absent with this sentence. That is the intended trade: what it showed before was 8 rows for
+a 72-table catalog, none of them the tables the fixtures use. The true table count is still on the
+Overview panel, which reads it with `count(*)` in one statement, and the tables themselves are still
+in the schema tree.
 
 ---
 
@@ -701,7 +769,7 @@ are undeclared.
 
 ## 9. Capabilities & labels
 
-### `getCapabilities()` ([index.ts:243](../../src/lib/db/providers/sql/trino/index.ts))
+### `getCapabilities()` ([`trino/index.ts`](../../src/lib/db/providers/sql/trino/index.ts))
 
 | Flag | Value | Why |
 |---|---|---|
@@ -720,7 +788,7 @@ are undeclared.
 | `identifierQuoting` | `"double"` | Declared, not derived from a generic port ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)) |
 | `statementTerminator` | `"none"` | `SELECT 1;` is a syntax error ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)) |
 
-### `getLabels()` ([index.ts:308](../../src/lib/db/providers/sql/trino/index.ts))
+### `getLabels()` ([`trino/index.ts`](../../src/lib/db/providers/sql/trino/index.ts))
 
 Table and row are already Trino's own words, so the provider spreads `...super.getLabels()` and
 rewrites only the two maintenance blurbs. They must still be strings even though neither operation is
@@ -910,7 +978,10 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request/response contract.
   `0` beside `size: "N/A"`; if a panel ever renders that as "0 B", the alternative is returning no
   rows at all, which would hide the catalog list too.
 - **No uptime without the `jmx` catalog** ([§7](#7-monitoring--health)).
-- **`getTableStats()` describes at most 25 tables per pass** ([§7](#7-monitoring--health)).
+- **`getTableStats()` describes a scope of at most 25 tables**, and refuses a larger one rather than
+  sampling it ([§7.1](#71-a-scope-too-large-for-one-pass-is-refused-not-sampled)). Ask for one schema
+  that is itself inside the bound — a larger schema is refused too, and the refusal says how many of
+  the catalog's schemas qualify. `SHOW STATS FOR <table>` in the editor answers for any scope.
 - **Agent auto/operate mode is out of scope.** `queryReadOnly()` is not implemented, so
   `acquireExecutionProfileProvider` fails closed for this type-id — explicitly deferred by #424.
 - **The spooled result protocol is refused, not read.** This client never advertises an encoding, and

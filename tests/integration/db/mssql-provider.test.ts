@@ -113,6 +113,17 @@ function defaultQuery(sql: string) {
     return { recordset: [{ test: 1 }], rowsAffected: [1] };
   }
 
+  // getOverview()'s connections query, which must be matched BEFORE the generic
+  // sessions-COUNT branch below: it selects COUNT(*) FROM sys.dm_exec_sessions too,
+  // so that branch used to answer it with `{ cnt: 12 }` - a column getOverview never
+  // reads. Both this fixture and its duplicate were therefore dead, and the
+  // `typeof activeConnections === "number"` assertion they were written for passed
+  // only on the fabricated 0 the provider fell back to. `sys.configurations` is
+  // unique to this statement, so the guard is exact.
+  if (upper.includes("SYS.CONFIGURATIONS") && upper.includes("USER CONNECTIONS")) {
+    return { recordset: [{ active_connections: 5, max_connections: 32767 }], rowsAffected: [1] };
+  }
+
   if (upper.includes("SYS.DM_EXEC_SESSIONS") && upper.includes("COUNT")) {
     return { recordset: [{ cnt: 12 }], rowsAffected: [1] };
   }
@@ -379,15 +390,6 @@ function defaultQuery(sql: string) {
       recordset: [{ sqlserver_start_time: new Date(Date.now() - 86400 * 1000).toISOString(), uptime_seconds: 86400 }],
       rowsAffected: [1],
     };
-  }
-
-  // Overview connections query (active_connections + max_connections)
-  if (upper.includes("SYS.CONFIGURATIONS") && upper.includes("USER CONNECTIONS")) {
-    return { recordset: [{ active_connections: 5, max_connections: 32767 }], rowsAffected: [1] };
-  }
-
-  if (upper.includes("SYS.CONFIGURATIONS")) {
-    return { recordset: [{ active_connections: 5, max_connections: 32767 }], rowsAffected: [1] };
   }
 
   // Table/index counts for overview
@@ -1450,12 +1452,75 @@ describe("MSSQLProvider", () => {
       expect(overview.version).toContain("Microsoft SQL Server");
       expect(typeof overview.uptime).toBe("string");
       expect(overview.uptime.length).toBeGreaterThan(0);
-      expect(typeof overview.activeConnections).toBe("number");
+      expect(overview.activeConnections).toBe(5);
       expect(typeof overview.maxConnections).toBe("number");
       expect(typeof overview.databaseSize).toBe("string");
       expect(typeof overview.databaseSizeBytes).toBe("number");
       expect(typeof overview.tableCount).toBe("number");
       expect(typeof overview.indexCount).toBe("number");
+    });
+
+    test("a refused connections read leaves overview activeConnections absent, never a measured 0", async () => {
+      // The getHealth() twin of this test has guarded the same figure since D17; the
+      // identical defect survived here because `let activeConnections = 0` swallowed
+      // this block's failure into a reading. Unlike that twin, the statement here
+      // names two objects, and the fixture below refuses exactly one of them: the
+      // `sys.configurations` ceiling subquery, which Microsoft documents as needing
+      // only membership in `public` on SQL Server 2019 and earlier but
+      // VIEW SERVER PERFORMANCE STATE on the server on 2022 and later (Permissions
+      // section of sys.configurations, read 2026-08-27). So this reproduces the
+      // 2022-and-later shape - one refused statement, one catch, count absent - and
+      // speaks for those versions only. It says nothing about a login-wide loss: on
+      // 2019 and earlier that arm needs no grant, and `sys.dm_exec_sessions` is
+      // documented as row-filtered rather than refused ("Everyone can see their own
+      // session information"), so an ungranted login there may instead SUCCEED with a
+      // COUNT of its own session. That under-reading is neither measured nor caught -
+      // see docs/providers/mssql.md section 7.2. The Msg 300 wording below is the
+      // refusal measured 2026-08-23 on SQL Server 2022 CU26 against a login holding
+      // nothing beyond CONNECT; nothing asserts on it, only that it throws.
+      mockQueryFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("SYS.CONFIGURATIONS") && upper.includes("USER CONNECTIONS")) {
+          throw new Error("VIEW SERVER PERFORMANCE STATE permission was denied on object 'server', database 'master'");
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      // Absent, so OverviewTab.tsx's Connections card renders "N/A" over "not
+      // published" instead of a confident 0 with a "0% used" progress bar, and the
+      // sample is dropped from the connection trend rather than plotted as a floor.
+      expect("activeConnections" in overview).toBe(false);
+      // maxConnections is a required number where 0 and absence are the SAME fact -
+      // "no limit published" - so the refusal correctly leaves it 0. Pinned so the
+      // absence above is not widened into this field by a later change.
+      expect(overview.maxConnections).toBe(0);
+      // Only the denied block goes absent; every other reading survives.
+      expect(overview.version).toContain("Microsoft SQL Server");
+      expect(overview.tableCount).toBe(5);
+    });
+
+    test("a server with no user sessions keeps its measured zero overview connections", async () => {
+      // The anti-vacuity twin of the test above: absence must never be spelled with a
+      // falsy test. An idle instance answers COUNT(*) = 0 and that 0 is a reading, so
+      // the `Number(... || 0)` this replaces was destroying the very figure it
+      // published - it could not tell an idle server from a denied DMV.
+      mockQueryFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("SYS.CONFIGURATIONS") && upper.includes("USER CONNECTIONS")) {
+          return { recordset: [{ active_connections: 0, max_connections: 32767 }], rowsAffected: [1] };
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("activeConnections" in overview).toBe(true);
+      expect(overview.activeConnections).toBe(0);
+      expect(overview.maxConnections).toBe(32767);
     });
 
     test("Azure SQL detection from hostname", () => {

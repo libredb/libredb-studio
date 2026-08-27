@@ -309,14 +309,37 @@ function PerformanceSummaryCard({
 }
 
 /**
- * Slow-query and session counts, read straight off the payload.
+ * Slow-query and session figures, read straight off the payload.
  *
- * A count is rendered only when the panel it counts actually answered. `?? 0` used to
+ * A figure is rendered only when the panel it comes from actually answered. `?? 0` used to
  * stand in for both an empty list and a REFUSED read, which are opposite facts: measured
  * in the browser on 2026-08-24 against StarRocks 3.3, whose `getActiveSessions` is
  * "Unknown table 'information_schema.PROCESSLIST'", this card claimed "Active 0 / Idle 0"
  * for a question the engine had declined to answer. Same fabricated zero the connection
  * count lost, in a second place.
+ *
+ * The ceiling on a list that DID answer is the other half of the same rule, and the
+ * paragraph above never covered it - the shape D41 names in QueriesTab.tsx survived here
+ * three more times. Both lists this card reads are capped in
+ * src/lib/db/base-provider.ts: `slowQueryLimit = 10` and `sessionLimit = 50`, passed into
+ * `getSlowQueries` and `getActiveSessions`, and MonitoringDashboard overrides neither (it
+ * sets only the three `include*` flags). The providers that fill the session list apply the
+ * ceiling in SQL or in memory - `$2` in postgres.ts, `LIMIT` in mysql.ts, `SELECT TOP` in
+ * mssql.ts, `ROWNUM <=` in oracle.ts, `.slice(0, limit)` over `currentOp` in mongodb.ts -
+ * so a server past either ceiling hands this card a truncated list and nothing in the
+ * payload says how much was cut.
+ *
+ * This helper cannot fix that: it is handed rows and a counting function, and the length of
+ * a saturated list is the cap whatever it is divided by. What the figures needed was labels
+ * that claim only the rows the dashboard holds, which is what QuickStatsCard now writes, in
+ * the vocabulary QueriesTab.tsx settled on: every figure here is a property of the listed
+ * rows - the same rows the Queries and Sessions tabs put on screen, where a reader can
+ * recount them. So "Slow Queries 10" no longer reads as 10 slow statements on a server with
+ * 59 recorded digests, and the two badges that split one bounded list of sessions no longer
+ * read as the server's active and idle totals. All three still render, and their figures are
+ * unchanged - only the labels are, because the numbers were never the wrong part. A count
+ * below the ceiling is still exactly a count, and reads the same; the
+ * label no longer promises which case it is looking at, because the payload does not say.
  */
 function quickStat(rows: readonly unknown[] | undefined, count: () => number): string {
   return rows === undefined ? "N/A" : String(count());
@@ -335,7 +358,7 @@ function QuickStatsCard({ data }: Readonly<{ data: MonitoringData | null }>) {
       </CardHeader>
       <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-3">
         <div className="flex justify-between items-center">
-          <span className="text-xs sm:text-xs text-muted-foreground">Slow Queries</span>
+          <span className="text-xs sm:text-xs text-muted-foreground">Listed slow queries</span>
           <Badge
             variant={data?.slowQueries?.length ? "outline" : "secondary"}
             className="text-xs"
@@ -345,13 +368,13 @@ function QuickStatsCard({ data }: Readonly<{ data: MonitoringData | null }>) {
           </Badge>
         </div>
         <div className="flex justify-between items-center">
-          <span className="text-xs sm:text-xs text-muted-foreground">Active</span>
+          <span className="text-xs sm:text-xs text-muted-foreground">Active of listed sessions</span>
           <Badge variant="secondary" className="text-xs" data-testid="quick-stat-active">
             {quickStat(sessions, () => (sessions ?? []).filter((s) => s.state === "active").length)}
           </Badge>
         </div>
         <div className="flex justify-between items-center">
-          <span className="text-xs sm:text-xs text-muted-foreground">Idle</span>
+          <span className="text-xs sm:text-xs text-muted-foreground">Idle of listed sessions</span>
           <Badge variant="secondary" className="text-xs" data-testid="quick-stat-idle">
             {quickStat(sessions, () => (sessions ?? []).filter((s) => s.state === "idle").length)}
           </Badge>

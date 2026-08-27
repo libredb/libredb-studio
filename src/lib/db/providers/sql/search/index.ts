@@ -837,7 +837,13 @@ abstract class SearchProvider extends SQLBaseProvider {
         // computed from something else. A "0s" here would claim the cluster booted
         // this instant.
         uptime: SEARCH_UNKNOWN_TEXT,
-        // Zero means "not published", the same encoding `mssql.ts` and `druid` use.
+        // Zero means "not published" here. It is the correct encoding for the ceiling -
+        // `maxConnections` treats 0 and absence as one fact, which is why `druid` and
+        // `trino` cite `mssql.ts` for it - but NOT for the count beside it: `mssql.ts`,
+        // `oracle.ts`, `mongodb.ts` and `cassandra` now OMIT `activeConnections` when
+        // nothing was read, and this is the last provider still sending a 0 for it.
+        // Moving it is docs/BACKLOG.md D46, which needs both search docs and both test
+        // files with it.
         // A search cluster has no sessions and no connection pool: it counts open
         // HTTP connections per node in its stats API, which is not part of this
         // seam, and the shard and node counts that ARE here would be a different

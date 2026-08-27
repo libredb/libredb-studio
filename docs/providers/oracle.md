@@ -188,9 +188,9 @@ Oracle monitoring reads `V$` dynamic-performance views, which require privileges
 may lack. Every monitoring sub-query is wrapped in its own try/catch and degrades rather than failing
 the whole call — so the dashboard still renders for a low-privilege user, just with gaps. The default
 it degrades to is `N/A` or `[]` where the shape has a place to say "not measured", and — in the
-health reading, where a number would otherwise be invented — **nothing at all**:
-`getHealth().activeConnections` is omitted rather than reported as `0`
-([§7.2](#72-when-the-connection-count-is-not-measurable)).
+health and overview readings, where a number would otherwise be invented — **nothing at all**:
+`getHealth().activeConnections` and `getOverview().activeConnections` are both omitted rather than
+reported as `0` ([§7.2](#72-when-the-connection-count-is-not-measurable)).
 
 ---
 
@@ -759,7 +759,7 @@ sub-query is independently privilege-guarded ([§3.6](#36-privilege-resilient-mo
 | Method | Primary source | Notes / degradation |
 |--------|----------------|---------------------|
 | `getHealth()` | `V$SESSION`, `USER_SEGMENTS`, `V$SYSSTAT`, `V$SQL` | each block guarded → absent/`N/A`/`[]` if no privilege; `activeConnections` is **omitted**, never `0` ([§7.2](#72-when-the-connection-count-is-not-measurable)); `cacheHitRatio` is `N/A`, never `0%` ([§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)) |
-| `getOverview()` | `V$VERSION`, `V$INSTANCE`, `V$SESSION`, `V$PARAMETER`, `USER_SEGMENTS`, `USER_TABLES`/`USER_INDEXES` | each guarded |
+| `getOverview()` | `V$VERSION`, `V$INSTANCE`, `V$SESSION`, `V$PARAMETER`, `USER_SEGMENTS`, `USER_TABLES`/`USER_INDEXES` | each guarded; `activeConnections` is **omitted**, never `0` ([§7.2](#72-when-the-connection-count-is-not-measurable)), while `maxConnections` stays `0` because `0` there means "no limit published" |
 | `getPerformanceMetrics()` | `V$SYSSTAT` | **only** `cacheHitRatio`, and it is **omitted** when `V$SYSSTAT` cannot be read (no QPS/deadlocks/buffer-pool) — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `V$SQL` (top-N by `ELAPSED_TIME`) | `sharedBlksHit`=`BUFFER_GETS`, `sharedBlksRead`=`DISK_READS`; `[]` on failure |
 | `getActiveSessions()` | `V$SESSION` ⋈ `V$SQL` | `pid` = `"SID,SERIAL#"`; wait class/event; `[]` on failure |
@@ -802,26 +802,60 @@ them.
 
 ### 7.2 When the connection count is not measurable
 
-The health connection count is `SELECT COUNT(*) FROM V$SESSION WHERE STATUS = 'ACTIVE'`, so it needs
-the same `V_$` grant everything else here does. The refusal measured 2026-08-23 on Oracle AI Database
-26ai Free, against a user granted only `CREATE SESSION`, was on the cache-ratio view
-([§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)) - `V_$SESSION` answers in the same shape:
+**Two methods read a connection count, and both can be refused:**
+
+| Method | Statement | Field |
+|--------|-----------|-------|
+| `getHealth()` | `SELECT COUNT(*) FROM V$SESSION WHERE STATUS = 'ACTIVE'` | `HealthInfo.activeConnections` |
+| `getOverview()` | `SELECT COUNT(*) FROM V$SESSION WHERE TYPE = 'USER'` | `DatabaseOverview.activeConnections` |
+
+Both need the same `V_$` grant everything else here does, and lacking it is the ORDINARY case rather
+than an exotic one. Oracle's own
+[*Database Reference*](https://docs.oracle.com/en/database/oracle/oracle-database/19/refrn/about-dynamic-performance-views.html)
+is explicit: "After installation, only user
+`SYS` or anyone with `SYSDBA` privilege has access to the dynamic performance tables"; the views
+themselves carry the `V_$` prefix and what an application queries is the `V$` public synonym over
+them, until a DBA grants a wider set of users access. A plain schema user therefore reads nothing
+from `V$SESSION` at all. The refusal measured 2026-08-23 on Oracle AI Database 26ai Free, against a
+user granted only `CREATE SESSION`, was on the cache-ratio view
+([§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)) - `V_$SESSION` answers in the same shape,
+naming the underlying view rather than the synonym:
 
 ```
 ORA-00942: table or view "SYS"."V_$SYSSTAT" does not exist
 ```
 
-`HealthInfo.activeConnections` is **optional** for this case, so the refused count is **omitted** from
-`getHealth()` - the key is absent from the object and from the `POST /api/db/health` body, and the
-admin fleet-health row drops its `N conn` figure rather than printing `0 conn`
-([`src/components/admin/tabs/OverviewTab.tsx`](../../src/components/admin/tabs/OverviewTab.tsx)).
-It used to be initialised to `0` and the guard left that `0` standing, which mattered most to the
-agent: its curated `health` reading forwards this figure to the model, so `ORA-00942` arrived as a
-*measured* "no active sessions" about an instance Oracle had said nothing about.
+`activeConnections` is **optional on both shapes** for this case, so a refused count is **omitted**
+rather than reported:
 
-An instance that really has no ACTIVE session measures `0`, and that `0` is a reading: it is kept and
+- From `getHealth()` the key is absent from the object and from the `POST /api/db/health` body, and
+  the admin fleet-health row drops its `N conn` figure rather than printing `0 conn`
+  ([`src/components/admin/tabs/OverviewTab.tsx`](../../src/components/admin/tabs/OverviewTab.tsx)).
+- From `getOverview()` the key is absent from the monitoring payload, and the Overview tab's
+  Connections card draws **`N/A` / "not published"** instead of the figure `0`; the connections trend
+  chart drops that sample rather than plotting it at zero
+  ([`src/components/monitoring/tabs/OverviewTab.tsx`](../../src/components/monitoring/tabs/OverviewTab.tsx)).
+  The card's threshold rating is **not** among the things this changes: the `V$PARAMETER` ceiling is
+  read inside the same `try` as the count, so a refusal leaves `maxConnections` at its `0`
+  initialiser too, `connectionPercent` is `null` on both the old and the new path, and the rating is
+  taken from `connectionPercent ?? 0` either way - the same score and the same card border. The drawn
+  figure and the dropped trend sample are the whole of it.
+
+Both used to be initialised to `0` with the guard leaving that `0` standing, so `ORA-00942` arrived
+as a *measured* "no active sessions" about an instance Oracle had said nothing about. For the health
+figure that reached the model: the agent's curated `health` reading forwards this field
+(`src/lib/agent/tools.ts`), so the fabrication was a claim about a server it could not measure. The
+agent does not read `getOverview()`; that count's readers are the monitoring card and its trend
+chart (the threshold rating reads it too, to the same result either way, as above).
+
+An instance that really has no such session measures `0`, and that `0` is a reading: it is kept and
 reported as `0`. The absence is spelled `measuredNumber(...)` plus a conditional spread, never
 `|| undefined`.
+
+`maxConnections` is deliberately **not** optional alongside it. It is a published ceiling
+(`V$PARAMETER` `sessions`), and there `0` MEANS "no limit published" - the same fact as absence - so
+a refused `V$PARAMETER` leaves `0` and the card says "no limit published". The count is read first in
+that shared block precisely so a refused ceiling cannot carry a measured count away with it.
 
 ---
 
@@ -1121,7 +1155,7 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 - **Row counts (`NUM_ROWS`) are optimizer estimates** populated by `DBMS_STATS`; they can be stale
   or `NULL` until stats are gathered.
 - **Monitoring depends on `V$` privileges.** A low-privilege app user silently gets `N/A`/`[]` for the
-  views it can't read, and no `activeConnections` at all in the health reading
+  views it can't read, and no `activeConnections` at all in either the health or the overview reading
   ([§7.2](#72-when-the-connection-count-is-not-measurable)). `getPerformanceMetrics()` reports only the cache-hit ratio (no QPS,
   deadlocks, or buffer-pool usage), and **omits even that** when `V$SYSSTAT` is unreadable rather
   than substituting a figure — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable).

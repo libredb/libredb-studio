@@ -18,7 +18,9 @@
  * listed are the sections present, each listed id exists, each range's endpoints are the real
  * extremes, and the trailing count is the real number of entries. The endpoints are checked as
  * extremes rather than as a canonical rendering because the file writes a prefix's entries as
- * `U17, U22–U23` in one section and `X2–X14` in another, and both are legitimate.
+ * `X2–X14` in one section and as bare ids in another, and both are legitimate. The examples in
+ * this file are illustrative rather than pinned: a closed entry changes them, so they are written
+ * as shapes and the assertions derive the real ones from the document.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -131,7 +133,7 @@ interface Spec {
   readonly count: number | null;
 }
 
-/** `D1–D41, U17, U22–U23 · 19` becomes the six endpoints it names plus the count 19. */
+/** `D1–D39, U17, U22 · 14` becomes the four endpoints it names plus the count 14. */
 const parseSpec = (spec: string): Spec => {
   const [ranges, ...rest] = spec.split(" · ");
   return {

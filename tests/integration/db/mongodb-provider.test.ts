@@ -116,6 +116,22 @@ const defaultServerStatus = () => ({
 
 let mockServerStatus: () => Record<string, unknown> = defaultServerStatus;
 
+/**
+ * What `db.stats()` answers, a function for the same reason `serverStatus` is one:
+ * `databaseSizeBytes` is optional, so the byte figure has to be driven on a database
+ * that measures 0 bytes AND on a deployment that answers without `dataSize` at all.
+ * Both used to reach the Storage tab as a measured 0.
+ */
+const defaultDbStats = () => ({
+  dataSize: 2048,
+  indexSize: 512,
+  storageSize: 4096,
+  collections: 2,
+  objects: 100,
+});
+
+let mockDbStats: () => Record<string, unknown> = defaultDbStats;
+
 const createMockDb = () => ({
   command: async (cmd: Record<string, unknown>) => {
     if (cmd.ping) return { ok: 1 };
@@ -131,13 +147,7 @@ const createMockDb = () => ({
     toArray: async () => mockCollections,
   }),
   collection: (name?: string) => createMockCollection(name),
-  stats: async () => ({
-    dataSize: 2048,
-    indexSize: 512,
-    storageSize: 4096,
-    collections: 2,
-    objects: 100,
-  }),
+  stats: async () => mockDbStats(),
   admin: () => ({
     serverStatus: async () => mockServerStatus(),
     command: async (cmd: Record<string, unknown>) => {
@@ -246,6 +256,7 @@ describe("MongoDBProvider", () => {
     ];
     mockCurrentOps = [];
     mockServerStatus = defaultServerStatus;
+    mockDbStats = defaultDbStats;
     provider = new MongoDBProvider({ ...baseConfig });
   });
 
@@ -820,6 +831,22 @@ describe("MongoDBProvider", () => {
       expect(health.activeConnections).toBe(0);
     });
 
+    test("a dbStats answer without dataSize reports no size rather than a measured 0 B", async () => {
+      // The byte figure has the same two inputs as the connection count, and this method is
+      // the one whose reading reaches the model: the agent's curated `health` projection
+      // sends `databaseSize` verbatim (`method: "getHealth"`, `fields: [..., "databaseSize",
+      // ...]` in `src/lib/agent/tools.ts`), so `dbStats.dataSize || 0` told it a database it
+      // never measured holds nothing. "N/A" is the spelling this method's own catch uses.
+      mockDbStats = () => ({ indexSize: 512, storageSize: 4096 });
+      expect((await provider.getHealth()).databaseSize).toBe("N/A");
+    });
+
+    test("a database that really measures zero bytes still reports 0 B", async () => {
+      // The anti-vacuity twin: an empty database measured 0 bytes, and that is a reading.
+      mockDbStats = () => ({ dataSize: 0, indexSize: 0, storageSize: 0 });
+      expect((await provider.getHealth()).databaseSize).toBe("0 B");
+    });
+
     test("maps in-progress operations to active sessions", async () => {
       mockCurrentOps = [
         {
@@ -916,6 +943,98 @@ describe("MongoDBProvider", () => {
         throw new Error("not authorized on admin to execute command { serverStatus: 1 }");
       };
       expect((await provider.getOverview()).maxConnections).toBe(0);
+    });
+
+    test("an overview read that failed entirely leaves activeConnections absent, and still resolves", async () => {
+      // The same absence that `getHealth()` already carries, at the field the health
+      // reading is composed from. The catch resolves on purpose - `getMonitoringData()`
+      // reads this panel through `Promise.allSettled`, so a rethrow would replace the
+      // whole overview with an error entry rather than the version/uptime placeholders
+      // the tab renders - but nothing was read, so it must not name a connection count.
+      mockServerStatus = () => {
+        throw new Error("not authorized on admin to execute command { serverStatus: 1 }");
+      };
+      const overview = await provider.getOverview();
+
+      expect("activeConnections" in overview).toBe(false);
+      // Still a resolved DatabaseOverview, so the monitoring panel keeps its shape.
+      expect(overview.version).toBe("MongoDB Unknown");
+      expect(overview.uptime).toBe("N/A");
+    });
+
+    test("a server publishing no connections section leaves activeConnections absent", async () => {
+      // `connections` is a network-layer field, so unlike `wiredTiger` its absence is
+      // not tied to the storage engine, and which deployments omit it is not measured
+      // here. `connections?.current || 0` read the missing section as zero open
+      // connections and the Overview card rated it against the limit.
+      mockServerStatus = () => ({ uptime: 86400 });
+      const overview = await provider.getOverview();
+
+      expect("activeConnections" in overview).toBe(false);
+    });
+
+    test("a server with zero open connections keeps its measured zero", async () => {
+      // The anti-vacuity twin of the two tests above: `|| 0` destroyed a real zero as
+      // well as inventing a fake one, so absence must never be spelled with a falsy
+      // test. An idle server measured 0, and 0 is a reading.
+      mockServerStatus = () => ({ connections: { current: 0, available: 100 }, uptime: 86400 });
+      const overview = await provider.getOverview();
+
+      expect("activeConnections" in overview).toBe(true);
+      expect(overview.activeConnections).toBe(0);
+      // The limit is still the sum of what is open and what is left.
+      expect(overview.maxConnections).toBe(100);
+    });
+
+    test("an overview read that failed entirely publishes no byte figure either", async () => {
+      // `databaseSizeBytes` is optional for the reason its docblock gives: a 0 is a
+      // measurement and the Storage tab formats whatever it is given, so a path that read
+      // nothing must omit it. With the key present as 0 that tab took `sizeKnown` as true
+      // and drew the whole breakdown over a 0 B total - and once the table read answers
+      // (it goes through `listCollections` + `collStats`, not `serverStatus`), its
+      // "Other (unattributed)" row is `0 - tables - indexes`, a negative byte figure.
+      // Absent, the tab draws its own "No storage size information available."
+      mockServerStatus = () => {
+        throw new Error("not authorized on admin to execute command { serverStatus: 1 }");
+      };
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      // The required string field says the same thing in the only shape its type allows.
+      expect(overview.databaseSize).toBe("N/A");
+      // `maxConnections` stays 0 because there 0 MEANS "no limit published" - the same
+      // fact as absence - and the two counts are required numbers, so 0 is the only
+      // value the type leaves for them. They are named here so this object's remaining
+      // placeholders are pinned rather than assumed.
+      expect(overview.maxConnections).toBe(0);
+      expect(overview.tableCount).toBe(0);
+      expect(overview.indexCount).toBe(0);
+    });
+
+    test("a database that really measures zero bytes keeps its measured zero", async () => {
+      // The anti-vacuity twin: absence must not be spelled with a falsy test. An empty
+      // database measures 0 bytes, and 0 is a reading the Storage tab may divide by.
+      mockDbStats = () => ({ dataSize: 0, indexSize: 0, storageSize: 0 });
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(true);
+      expect(overview.databaseSizeBytes).toBe(0);
+      expect(overview.databaseSize).toBe("0 B");
+    });
+
+    test("a dbStats answer without dataSize publishes no byte figure", async () => {
+      // MongoDB's own dbStats reference documents `dataSize` unconditionally (only the
+      // three `freeStorage` fields are gated, on the command's `freeStorage: 1` option),
+      // so this is not a measured deployment - it is the one arm `|| 0` could not tell
+      // apart from the zero above, and the optional field exists to carry it.
+      mockDbStats = () => ({ indexSize: 512, storageSize: 4096 });
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+      // Everything the same read DID answer still arrives - this is not a failed read.
+      expect(overview.tableCount).toBe(2);
+      expect(overview.activeConnections).toBe(5);
     });
   });
 

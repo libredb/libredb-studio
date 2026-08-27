@@ -871,6 +871,133 @@ describe("generateMigrationSQL: Cassandra declines CREATE TABLE rather than gues
 });
 
 /**
+ * D36. Both directions, both ids, because the generator got each of the four cases from a different
+ * place and only one of them was right.
+ *
+ * SQLite's ALTER TABLE page enumerates every schema change the engine has - "rename table", "rename
+ * column", "add column", "drop column", plus SET/DROP NOT NULL since 3.53.0 - and adding a constraint
+ * is not among them; the page routes such a change through its own 12-step table-recreation
+ * procedure. Measured on sqlite3 3.53.3: `ALTER TABLE "users" ADD CONSTRAINT "fk_users_dept_id"
+ * FOREIGN KEY ("dept_id") REFERENCES "departments"("id");` is `near "FOREIGN": syntax error` - the
+ * parser has already taken `CONSTRAINT` for a column name and the quoted name for its type - and the
+ * same statement over Hrana on sqld 0.24.33 is `near CONSTRAINT ... syntax error`. Two tokens, one
+ * verdict.
+ *
+ * The two emission paths still want DIFFERENT answers. In `CREATE TABLE` the key IS expressible, as a
+ * table constraint: SQLite's CREATE TABLE grammar takes "one or more column definitions, optionally
+ * followed by a list of table constraints", one of which is `FOREIGN KEY ( column-name, ... )
+ * REFERENCES ...`. Measured on 3.53.3: the created form below is accepted and `PRAGMA
+ * foreign_key_list("users")` then reports the key, while the same constraint placed BEFORE a column
+ * definition is `near "FOREIGN": syntax error` - which is what the ordering assertion pins. So the
+ * created-table path emits the key and only the alter-table path declines.
+ */
+describe("generateMigrationSQL: SQLite's grammar declares a foreign key only inside CREATE TABLE", () => {
+  function addedTableWithForeignKey(): SchemaDiff {
+    const diff = makeAddedTableDiff();
+    diff.tables[0].foreignKeys = [
+      {
+        action: "added",
+        columnName: "dept_id",
+        targetReferencedTable: "departments",
+        targetReferencedColumn: "id",
+        changes: ["Added FK"],
+      },
+    ];
+    return diff;
+  }
+
+  /**
+   * Total by construction, in the same spirit as `MODIFIED_COLUMN_COVERAGE` below. The
+   * implementation's map is a `Partial<Record<DatabaseType, ...>>`, so a third id added there
+   * typechecks either way and introduces no line of its own - both arms are already covered by these
+   * two dialects, and a per-line coverage gate structurally cannot see an arm that adds no line. This
+   * total `Record` is the mechanism that does notice: a new `DatabaseType` fails typecheck here until
+   * it is classified. The two other states are asserted too, so that moving an EXISTING id into the
+   * implementation's map is red as well: `"key-follows-in-an-alter"` means the key is emitted as a
+   * trailing `ADD CONSTRAINT` statement instead, and `"engine-has-no-foreign-key"` is `cassandra`,
+   * whose whole `CREATE TABLE` is declined ahead of any constraint.
+   *
+   * `distinguishingClause` is the half of each reason that the two ids do NOT share: pinning only the
+   * common "recreate the table and copy the rows" tail would stay green if the two reasons were
+   * swapped between the two ids, which is exactly the confusion the wording exists to prevent.
+   */
+  const GRAMMAR: Record<
+    DatabaseType,
+    { label: string; distinguishingClause: string } | "key-follows-in-an-alter" | "engine-has-no-foreign-key"
+  > = {
+    sqlite: {
+      label: "SQLite",
+      distinguishingClause: "A foreign key is declarable only as a CREATE TABLE constraint;",
+    },
+    libsql: { label: "libSQL", distinguishingClause: "SQLite declares one only in CREATE TABLE;" },
+    postgres: "key-follows-in-an-alter",
+    mysql: "key-follows-in-an-alter",
+    oracle: "key-follows-in-an-alter",
+    mssql: "key-follows-in-an-alter",
+    clickhouse: "key-follows-in-an-alter",
+    couchbase: "key-follows-in-an-alter",
+    druid: "key-follows-in-an-alter",
+    trino: "key-follows-in-an-alter",
+    elasticsearch: "key-follows-in-an-alter",
+    opensearch: "key-follows-in-an-alter",
+    cassandra: "engine-has-no-foreign-key",
+    mongodb: "key-follows-in-an-alter",
+    redis: "key-follows-in-an-alter",
+    libredb: "key-follows-in-an-alter",
+  };
+
+  for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
+    const dialect = dialectId as DatabaseType;
+    if (entry === "engine-has-no-foreign-key") continue;
+    if (entry === "key-follows-in-an-alter") {
+      // The counter-arm, and the reason a third id cannot be added to the implementation's map
+      // unnoticed: for every id NOT under the grammar rule the key leaves the CREATE TABLE and
+      // becomes a statement of its own, so classifying an id here and adding it there is a conflict
+      // one of the two tests reports.
+      test(`${dialect}: the key is a trailing ALTER statement, not a CREATE TABLE constraint`, () => {
+        const sql = generateMigrationSQL(addedTableWithForeignKey(), dialect);
+
+        const createEnd = sql.indexOf("\n);") + 3;
+        expect(sql.slice(sql.indexOf("CREATE TABLE"), createEnd)).not.toContain("FOREIGN KEY");
+        expect(sql.slice(createEnd)).toContain("ADD CONSTRAINT");
+        expect(sql.slice(createEnd)).toContain("FOREIGN KEY");
+      });
+      continue;
+    }
+    const { label, distinguishingClause } = entry;
+    test(`${dialect}: a created table carries the key as a table constraint, not a following ALTER`, () => {
+      const sql = generateMigrationSQL(addedTableWithForeignKey(), dialect);
+
+      const createStatement = sql.slice(sql.indexOf('CREATE TABLE "users" ('), sql.indexOf("\n);") + 3);
+      expect(createStatement).toContain('FOREIGN KEY ("dept_id") REFERENCES "departments"("id")');
+      // The grammar's ordering rule: every table constraint follows every column definition.
+      expect(createStatement.indexOf('"email" varchar(255)')).toBeLessThan(createStatement.indexOf("FOREIGN KEY"));
+      // Not the trailing statement the generic branch emits, in any spelling.
+      expect(sql).not.toContain("ADD CONSTRAINT");
+      expect(sql).not.toContain("ALTER TABLE");
+      // And no synthesized constraint name: `fk_<table>_<column>` is this generator's invention
+      // rather than anything the diff carried, and SQLite never reads a foreign key's name back out
+      // (measured: `PRAGMA foreign_key_list` has no name column), so naming it would be write-only.
+      expect(sql).not.toContain("fk_users_dept_id");
+    });
+
+    test(`${dialect}: an existing table's added key is declined, because no ALTER can carry it`, () => {
+      const sql = generateMigrationSQL(makeModifiedTableDiff(), dialect);
+
+      // The whole line, clause included, so the reason cannot be swapped onto the other id.
+      expect(sql).toContain(
+        `-- ${label}: Cannot add a foreign key on "dept_id". ${distinguishingClause} recreate the table and copy the rows.`,
+      );
+      expect(sql).not.toContain("ADD CONSTRAINT");
+      expect(sql).not.toContain("FOREIGN KEY (");
+      // The refusal is confined to the constraint: both ids accept ADD COLUMN, so the rest of the
+      // migration is still emitted rather than the whole table being declined.
+      expect(sql).toContain('ALTER TABLE "users" ADD COLUMN "phone" varchar(20);');
+    });
+  }
+});
+
+/**
  * Exhaustive by construction, in the spirit of `PICKER_COVERAGE` in
  * `tests/hooks/use-connection-form.test.ts`: a new `DatabaseType` fails typecheck here until it is
  * classified, so it cannot silently re-inherit the generator's PostgreSQL branch — which is the whole

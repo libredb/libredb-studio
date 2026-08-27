@@ -100,13 +100,19 @@ export const TRINO_DEFAULT_SLOW_QUERY_LIMIT = 20;
 const TRINO_HEALTH_LIMIT = 10;
 
 /**
- * How many tables the stats panel will describe in one pass.
+ * How many tables the stats panel will describe in one pass, and the size past
+ * which it declines to describe them at all.
  *
- * A cap rather than a page, because `SHOW STATS` is per TABLE: there is no
- * catalog of sizes to aggregate, so N tables cost N statements. Twenty-five is
- * enough to fill the panel and small enough that a catalog with ten thousand
- * tables does not turn one panel open into ten thousand queries against the
- * coordinator.
+ * A bound rather than a page, because `SHOW STATS` is per TABLE: the reference
+ * gives exactly two forms, `SHOW STATS FOR <table>` and `SHOW STATS FOR (<query>)`,
+ * with no batch form and no catalog of sizes to aggregate, so N tables cost N
+ * statements. Twenty-five is enough to fill the panel and small enough that a
+ * catalog with ten thousand tables does not turn one panel open into ten thousand
+ * queries against the coordinator.
+ *
+ * It does NOT truncate. A scope holding more than this many tables is refused with
+ * the number it holds - see `tableStatsScopeRefusal` for why a 25-row answer out of
+ * 72 was the worse of the two.
  */
 export const TRINO_MAX_STATS_TABLES = 25;
 
@@ -741,12 +747,19 @@ function readTableStatistics(rows: TrinoRow[]): TableStatistics {
 /**
  * What a table-statistics pass found, and why it found nothing when it found nothing.
  *
- * The panel has three different empty readings and only ONE of them is a measurement:
- * a catalog that really holds no table. The other two - a refused table list, and a
- * catalog full of tables whose connector publishes no statistics - are refusals, and
- * `MonitoringData` requires those to be reported as an ABSENT panel carrying the
- * engine's own sentence rather than as an empty one (#477). The caller turns
- * `refusal` into that sentence; `undefined` means the rows are the answer.
+ * The panel has four different empty readings and only ONE of them is a measurement:
+ * a catalog that really holds no table. The other three - a refused table list, a
+ * catalog full of tables whose connector publishes no statistics, and a scope holding
+ * more tables than one pass describes - are refusals, and `MonitoringData` requires
+ * those to be reported as an ABSENT panel carrying the engine's own sentence rather
+ * than as an empty one (#477). The caller turns `refusal` into that sentence;
+ * `undefined` means the rows are the answer.
+ *
+ * There is deliberately no reading that says "here are some rows, and there were more".
+ * `tables` is what the scope holds or nothing at all, because the consumers of this
+ * reading - `MonitoringData.tables` and the agent's curated reading - are both a plain
+ * `TableStats[]` with nowhere for a partial marker to travel, and a sample they cannot
+ * tell from a whole is read as the whole (D41).
  */
 export interface TrinoTableStatsReading {
   readonly tables: TableStats[];
@@ -758,7 +771,98 @@ function tableListRefusal(catalog: string, reason: string): string {
   return `Trino refused the table list for catalog "${catalog}": ${reason}. This panel therefore has no source rather than no tables, and the schema tree reads the same list.`;
 }
 
-/** Why a catalog full of tables produced no statistics row. */
+/**
+ * Why a scope too large for one pass is refused rather than sampled.
+ *
+ * The cut this replaces was invisible to every consumer of the reading (D41), which
+ * is what made it worse than a refusal: `getTableStats` answers `TableStats[]`,
+ * `MonitoringData.tables` is that same array, and neither has a field a "there were
+ * more" marker could travel in, so 25 rows reached the panel - and reached the
+ * agent's curated reading as `rowCount: 25` - indistinguishable from a catalog that
+ * holds exactly 25 tables. A cap read as a count is the absence lie one size up, so
+ * the reading declines instead, which is the answer the agent's own row bound gives
+ * (`READING_OVER_BUDGET` in `src/lib/agent/tools.ts`) and for the same reason: a
+ * partial reading nobody was told was partial is a misleading one.
+ *
+ * Measured 2026-08-27 against Trino 476, this is the ordinary case and not the
+ * exotic one - `tpch` holds 72 user tables, `system` 26, `tpcds` 250 and `jmx` 379,
+ * every built-in catalog but `memory`. On `tpch` the dropped tables included every
+ * one of `tiny`, which sorts last: the pass spent its 25 statements on sf1, sf100,
+ * sf1000 and sf10000.customer and answered the 8 rows sf1 published.
+ *
+ * The advice differs by scope because advice a caller cannot act on is worse than
+ * none. A read that already named a schema has no narrower selection to offer, so it
+ * offers the statement that answers for a single table instead - which is also the
+ * only route open to the monitoring dashboard, whose own options set no `schemaFilter`
+ * today.
+ *
+ * An unnarrowed read can be asked again for one schema - `MonitoringOptions` carries a
+ * `schemaFilter` that `POST /api/db/monitoring` accepts, and the agent's curated
+ * reading takes a `schema` of its own - but that advice is CONDITIONAL, because the
+ * bound refuses a schema exactly as it refuses a catalog. "Ask for a single schema and
+ * the whole of it is described" was false of every schema over the bound, and this
+ * provider's own measurement names one: jmx holds 379 tables in schema `current`, so
+ * the narrowing the sentence recommended landed on this identical refusal one level
+ * down. A remedy that fails is worse than an honest refusal offering none, so the
+ * sentence now says how many schemas the narrowing really would describe
+ * (`describableSchemaCount`), and where that is none it says so plainly and offers the
+ * per-table statement instead - the one route no bound applies to.
+ */
+function tableStatsScopeRefusal(catalog: string, addresses: TableAddress[], schema: string | undefined): string {
+  const found = addresses.length;
+  const scope = schema === undefined ? `Catalog "${catalog}"` : `Schema "${schema}" of catalog "${catalog}"`;
+  const owner = schema === undefined ? "catalog" : "schema";
+  const advice =
+    schema === undefined
+      ? catalogScopeAdvice(catalog, addresses)
+      : `This reading takes no narrower selection, so one table's figures are one statement away: SHOW STATS FOR ${qualify(catalog, schema, "<table>")} in the editor.`;
+
+  return `${scope} holds ${found} tables, more than the ${TRINO_MAX_STATS_TABLES} one pass describes. SHOW STATS is one statement per table and there is no catalog of sizes to aggregate, so describing all of them would be ${found} statements against the coordinator. The first ${TRINO_MAX_STATS_TABLES} are not offered as the answer, because ${TRINO_MAX_STATS_TABLES} rows read as the ${owner}'s table count rather than as the sample they would be. ${advice}`;
+}
+
+/**
+ * What an unnarrowed caller can actually do next, which depends on the catalog.
+ *
+ * Both sentences end in the per-table statement, because it is the only route that
+ * works whatever the scope holds - `SHOW STATS FOR <table>` is one statement about one
+ * table and no bound applies to it. What differs is whether naming a schema is offered
+ * as the shorter road, and that is answered by the counts rather than assumed.
+ */
+function catalogScopeAdvice(catalog: string, addresses: TableAddress[]): string {
+  const describable = describableSchemaCount(addresses);
+  const narrowing =
+    describable === 0
+      ? "Narrowing to one schema does not help here: every schema this catalog's tables are in is over the bound as well, so this reading has no narrower scope left to describe."
+      : `Narrowing to one schema describes the whole of it when that schema is itself inside the bound, which holds for ${describable} of the schemas this catalog's tables are in; a larger schema is refused the same way.`;
+
+  return `${narrowing} One table's figures are one statement away whatever the scope holds: SHOW STATS FOR ${qualify(catalog, "<schema>", "<table>")} in the editor. The tables themselves are in the schema tree, and the overview's table count is this same figure.`;
+}
+
+/**
+ * How many of the schemas a scope's tables are in are themselves inside the bound.
+ *
+ * A real count and not an estimate: the table list is ONE uncapped read that has
+ * already answered for the whole catalog, so which schemas a narrowed pass would
+ * describe is known here without sending another statement.
+ *
+ * A schema holding no table is not among them - it is not in the list at all - which
+ * is why the sentence built from this figure says "the schemas this catalog's tables
+ * are in" rather than counting the catalog's schemas. An empty schema is not somewhere
+ * the advice could usefully send anyone.
+ */
+function describableSchemaCount(addresses: TableAddress[]): number {
+  const perSchema = new Map<string, number>();
+  for (const address of addresses) perSchema.set(address.schema, (perSchema.get(address.schema) ?? 0) + 1);
+
+  return [...perSchema.values()].filter((tables) => tables <= TRINO_MAX_STATS_TABLES).length;
+}
+
+/**
+ * Why a catalog full of tables produced no statistics row.
+ *
+ * `examined` is a count and not a bound: an oversized scope refuses above before any
+ * `SHOW STATS` is sent, so everything this sentence reports on was really asked.
+ */
 function tableStatsRefusal(catalog: string, examined: number): string {
   return `None of the ${examined} tables examined in catalog "${catalog}" published a row count. Trino answers SHOW STATS with a null row count until ANALYZE has run, and for every connector that cannot supply one at all - the jmx connector never does, measured against Trino 476. So these figures are not knowable here; the tables themselves are in the schema tree.`;
 }
@@ -771,6 +875,10 @@ function tableStatsRefusal(catalog: string, examined: number): string {
  * way to say "unknown", and "0 rows" is a claim nothing made about a Hive table
  * nobody has run `ANALYZE` on. Where that leaves NOTHING at all the panel says so in
  * words instead of rendering an empty table - see `TrinoTableStatsReading`.
+ *
+ * A scope holding more tables than one pass describes is refused for the same reason
+ * one step earlier: what came back would be a bound wearing a count's clothes, and
+ * nothing in `TableStats[]` could have said so (`tableStatsScopeRefusal`).
  */
 export async function getTableStats(
   runner: TrinoQueryRunner,
@@ -789,9 +897,19 @@ export async function getTableStats(
     throw error;
   }
 
-  const addresses = readTableAddresses(tableRows)
-    .filter((address) => options.schema === undefined || address.schema === options.schema)
-    .slice(0, TRINO_MAX_STATS_TABLES);
+  const addresses = readTableAddresses(tableRows).filter(
+    (address) => options.schema === undefined || address.schema === options.schema,
+  );
+
+  // Narrowed first, then bounded: the bound is on what the caller ASKED for, so a
+  // schema inside the bound is describable in a catalog of any size - but a schema over
+  // it is refused exactly as a catalog is, which is why the refusal's advice counts the
+  // schemas that would fit instead of promising that any narrowing works. Over the
+  // bound the pass sends nothing at all rather than its first 25 statements: the refusal
+  // is cheaper than the truncation it replaces, as well as truer.
+  if (addresses.length > TRINO_MAX_STATS_TABLES) {
+    return { tables: [], refusal: tableStatsScopeRefusal(catalog, addresses, options.schema) };
+  }
 
   const answers = await Promise.all(
     addresses.map(async (address) => {

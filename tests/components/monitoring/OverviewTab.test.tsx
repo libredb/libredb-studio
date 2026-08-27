@@ -111,6 +111,13 @@ describe("OverviewTab", () => {
     expect(card.textContent).not.toContain("/100");
     expect(card.textContent).not.toContain("% used");
     expect(card.querySelectorAll('[data-slot="progress"]').length).toBe(0);
+    // The figure itself, exactly: "N/A" alone, greyed to say it is not a reading.
+    // The muted class sits in a one-line ternary on the same JSX attribute as the
+    // present-count arm, so line coverage cannot tell the two apart - only this
+    // assertion and its twin below can.
+    const figure = card.querySelector('[data-slot="card-content"] > div')!;
+    expect(figure.textContent).toBe("N/A");
+    expect(figure.className).toContain("text-muted-foreground");
     // Absence is not a fault: nothing red or yellow on the card.
     expect(card.className).not.toContain("red");
     expect(card.className).not.toContain("yellow");
@@ -129,6 +136,14 @@ describe("OverviewTab", () => {
     expect(card.textContent).toContain("0/100");
     expect(card.textContent).toContain("0% used");
     expect(card.textContent).not.toContain("not published");
+    // The figure reads "0/100" and nothing else - no "N/A" anywhere in it - and it
+    // is NOT greyed out. A falsy test in place of the `=== undefined` one would
+    // grey a measured zero into looking like the absence above while every other
+    // assertion here still passed, which is the whole distinction collapsing in
+    // silence.
+    const figure = card.querySelector('[data-slot="card-content"] > div')!;
+    expect(figure.textContent).toBe("0/100");
+    expect(figure.className).not.toContain("text-muted-foreground");
   });
 
   // Same rule as the cache/buffer/deadlock trends in PerformanceTab: a missing
@@ -337,5 +352,81 @@ describe("Quick Stats never counts a refused read as zero", () => {
     expect(getByTestId("quick-stat-active").textContent).toBe("0");
     expect(getByTestId("quick-stat-idle").textContent).toBe("0");
     expect(getByTestId("quick-stat-slow-queries").textContent).toBe("0");
+  });
+});
+
+/**
+ * Both lists this card reads are capped: `slowQueryLimit = 10` and `sessionLimit = 50` in
+ * src/lib/db/base-provider.ts, and MonitoringDashboard overrides neither. This is the shape
+ * the card receives from any server past both ceilings - ten slow queries, fifty sessions -
+ * and the session split is deliberately lopsided so 29 and 21 are distinctive strings, while
+ * their sum being exactly the ceiling is the point: the two badges partition one truncated
+ * list, they do not count the server.
+ */
+function atCap(): MonitoringData {
+  return {
+    ...makeData(),
+    slowQueries: Array.from({ length: 10 }, (_, i) => ({
+      query: `SELECT ${i} FROM t`,
+      calls: 7,
+      totalTime: 1750,
+      avgTime: 250,
+      rows: 5,
+    })),
+    activeSessions: Array.from({ length: 50 }, (_, i) => ({
+      pid: 100 + i,
+      user: "app",
+      database: "db",
+      state: i < 29 ? "active" : "idle",
+      query: "SELECT 1",
+      duration: "1s",
+      durationMs: 1000,
+    })),
+  } as unknown as MonitoringData;
+}
+
+// The other half of the rule the block above pins. A refused read was already an absence
+// rather than a zero, but a list that ANSWERED still had its length published as a count:
+// "Slow Queries" read 10 on a server holding 59 digests, and "Active" plus "Idle" split one
+// 50-row sample under labels that read as the server's session totals. Same defect as D41 in
+// QueriesTab.tsx, three more times, and the fix is that file's vocabulary: every figure is
+// stated as a property of the listed rows.
+describe("Quick Stats publishes no cap-bounded figure as a count", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  // The row is <span>{label}</span><Badge>{value}</Badge>, so the row's own text is the
+  // whole claim - label and figure together, which is the thing that has to stay honest.
+  const claim = (el: HTMLElement): string => el.closest("div")!.textContent ?? "";
+
+  test("each figure is labelled with the rows it counts, and no unscoped label survives", () => {
+    const { getByTestId, queryByText } = render(<OverviewTab data={makeData()} loading={false} />);
+
+    expect(claim(getByTestId("quick-stat-slow-queries"))).toBe("Listed slow queries1");
+    expect(claim(getByTestId("quick-stat-active"))).toBe("Active of listed sessions1");
+    expect(claim(getByTestId("quick-stat-idle"))).toBe("Idle of listed sessions1");
+
+    // Exact matches, so none of these can be satisfied by the longer labels asserted above.
+    expect(queryByText("Slow Queries")).toBeNull();
+    expect(queryByText("Active")).toBeNull();
+    expect(queryByText("Idle")).toBeNull();
+  });
+
+  test("a saturated payload states the ceiling as a property of the listed rows", () => {
+    const data = atCap();
+    const { getByTestId } = render(<OverviewTab data={data} loading={false} />);
+
+    expect(claim(getByTestId("quick-stat-slow-queries"))).toBe("Listed slow queries10");
+    expect(claim(getByTestId("quick-stat-active"))).toBe("Active of listed sessions29");
+    expect(claim(getByTestId("quick-stat-idle"))).toBe("Idle of listed sessions21");
+
+    // The two session figures share one bounded list, which is why neither may be read as a
+    // server total: they add up to the sample, and this fixture has saturated it at the 50
+    // `sessionLimit` allows.
+    expect(data.activeSessions!.length).toBe(50);
+    const total =
+      Number(getByTestId("quick-stat-active").textContent) + Number(getByTestId("quick-stat-idle").textContent);
+    expect(total).toBe(50);
   });
 });

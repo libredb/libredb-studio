@@ -807,9 +807,20 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // connected. A server that really has 0 open connections keeps the 0.
       const currentConnections = measuredNumber(serverStatus.connections?.current);
 
+      // The byte figure has the same two inputs, and this is the method whose reading
+      // reaches the model - the curated `health` projection sends `databaseSize` verbatim
+      // - so `dbStats.dataSize || 0` reported a `db.stats()` that answered without the
+      // field as a measured "0 B". `HealthInfo.databaseSize` is a required string, and
+      // "N/A" is the absence this method's own catch below already spells. MongoDB's
+      // dbStats reference documents `dataSize` unconditionally (only the three
+      // `freeStorage*` fields are gated, on the command's own `freeStorage: 1` option), so
+      // this arm is not a deployment measured here; a database that really holds 0 bytes
+      // still formats as "0 B".
+      const healthDataSize = measuredNumber(dbStats.dataSize);
+
       return {
         ...(currentConnections === undefined ? {} : { activeConnections: currentConnections }),
-        databaseSize: formatBytes(dbStats.dataSize || 0),
+        databaseSize: healthDataSize === undefined ? "N/A" : formatBytes(healthDataSize),
         cacheHitRatio:
           healthCacheHitRatio === undefined
             ? CACHE_HIT_RATIO_UNAVAILABLE
@@ -943,9 +954,26 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // and substituted 100 - a limit no server stated, which the Overview card then
       // divided the live connection count by. 0 is how every provider in this repo
       // spells "no limit published", and the card renders it as exactly that.
+      //
+      // `current` is also the connection count itself, and it stays optional for the
+      // reason `getHealth()` above spells out: a deployment whose serverStatus answers
+      // without a `connections` section publishes no figure, and `?.current || 0`
+      // reported that as zero open connections - while destroying a genuinely idle
+      // server's real 0 into the same value. The Overview card prints the figure and
+      // its history plots one point per refresh, dropping absent samples and plotting
+      // present ones, so a fabricated 0 became a flat line nobody measured.
       const current = measuredNumber(serverStatus.connections?.current);
       const available = measuredNumber(serverStatus.connections?.available);
       const maxConnections = current === undefined || available === undefined ? undefined : current + available;
+
+      // `databaseSizeBytes` is optional and `|| 0` could not tell its two inputs apart:
+      // a database that measures 0 bytes and a `db.stats()` that answers without
+      // `dataSize` both arrived as a measured 0. MongoDB's dbStats reference documents
+      // `dataSize` unconditionally - only the three `freeStorage*` fields are gated, on
+      // the command's own `freeStorage: 1` option - so this arm is not a deployment
+      // measured here; it is the absence the optional field exists to carry, and the
+      // Storage tab keys its whole breakdown off the key being present.
+      const dataSizeBytes = measuredNumber(dbStats.dataSize);
 
       // Get index count
       let indexCount = 0;
@@ -962,23 +990,39 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         version: `MongoDB ${serverInfo.version || "Unknown"}`,
         uptime,
         startTime: new Date(Date.now() - uptimeSeconds * 1000),
-        activeConnections: serverStatus.connections?.current || 0,
+        ...(current === undefined ? {} : { activeConnections: current }),
         maxConnections: maxConnections ?? 0,
-        databaseSize: formatBytes(dbStats.dataSize || 0),
-        databaseSizeBytes: dbStats.dataSize || 0,
+        databaseSize: dataSizeBytes === undefined ? "N/A" : formatBytes(dataSizeBytes),
+        ...(dataSizeBytes === undefined ? {} : { databaseSizeBytes: dataSizeBytes }),
         tableCount: collections.length,
         indexCount,
       };
     } catch (error) {
       this.logError("getOverview", error);
+      // A resolved DatabaseOverview, NOT a rethrow: `getMonitoringData()` in
+      // `base-provider.ts` reads this panel through `Promise.allSettled`, so a rethrow
+      // would drop the whole overview in favour of an `errors.overview` entry instead of
+      // the placeholders the tab renders. What it must not do is name a figure it did
+      // not read, so BOTH optional fields - `activeConnections` and `databaseSizeBytes`
+      // - are omitted entirely rather than resolved as measured 0s. `StorageTab.tsx`
+      // keys its whole breakdown off `databaseSizeBytes !== undefined`: with the key
+      // present as 0 it drew tables, indexes and an "Other (unattributed)" remainder
+      // over a 0 B total, and that remainder is `0 - tables - indexes`, so a table read
+      // that answered (it goes through `listCollections` + `collStats`, not
+      // `serverStatus`) drove it negative - and `formatBytes` renders a negative as the
+      // literal "NaN undefined", because `Math.log` of one is `NaN` and the unit indexes
+      // out of its array. Absent, the tab says "No storage size information available."
+      //
+      // The three figures below stay because their types leave nothing else: `0` MEANS
+      // "no limit published" for `maxConnections` (its docblock in `types.ts` says
+      // absence and zero are the same fact there), and `tableCount` / `indexCount` are
+      // required numbers, so 0 is the only value available on a path that counted
+      // nothing. Those two remain the one place this object states more than it read.
       return {
         version: "MongoDB Unknown",
         uptime: "N/A",
-        activeConnections: 0,
-        // Nothing was read, so no limit is published (see the success path above).
         maxConnections: 0,
         databaseSize: "N/A",
-        databaseSizeBytes: 0,
         tableCount: 0,
         indexCount: 0,
       };

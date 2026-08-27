@@ -150,8 +150,9 @@ RedisProvider (redis.ts)
 
 `RedisProvider` extends `BaseDatabaseProvider` directly (unlike the SQL providers, which extend an
 intermediate `SQLBaseProvider`). It overrides every abstract method plus the three metadata hooks
-(`getCapabilities`, `getLabels`, `prepareQuery`). It inherits `getMonitoringData()`, which fans the
-individual monitoring methods out in parallel — see [`base-provider.ts:99`](../../src/lib/db/base-provider.ts).
+(`getCapabilities`, `getLabels`, `prepareQuery`). It inherits `getMonitoringData()` from
+[`base-provider.ts`](../../src/lib/db/base-provider.ts), which fans the individual monitoring methods
+out in parallel.
 
 ### 2.3 What the base class gives you for free
 
