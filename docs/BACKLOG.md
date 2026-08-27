@@ -22,12 +22,12 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1–D35, U17 · 11
+- [Drivers and connections](#drivers-and-connections) — D1–D38, U17 · 14
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 10
 - [Authentication and security headers](#authentication-and-security-headers) — AU4
-- [Tests](#tests) — T1–T7 · 6
+- [Tests](#tests) — T1–T5 · 4
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC1, DOC3 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -36,7 +36,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K2–K4 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A6 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B80 · 47
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B79 · 44
 
 ---
 
@@ -430,6 +430,107 @@ on and names the source it was derived from.
 
 ---
 
+### D36. A slow-query source nobody could read is still a row, and on the other path it is silence
+
+Found 2026-08-27 by the audit that closed the curated health projection's cap-as-count defect. #512
+removed MySQL's fabricated "Performance schema not available" row; three providers still ship the
+same shape, in the same field:
+
+- `src/lib/db/providers/sql/postgres.ts:1239` - a database without `pg_stat_statements` answers
+  `[{ query: "pg_stat_statements extension not enabled", calls: 0, avgTime: "N/A" }]`.
+- `src/lib/db/providers/document/mongodb.ts:791` - a database whose profiler is off answers
+  `[{ query: "Profiler not enabled. Run db.setProfilingLevel(1) to enable." }]`, and the outer catch
+  at `:830` answers `[{ query: "Error fetching health info" }]` for a read that failed entirely.
+- `src/lib/db/providers/sql/sqlite.ts:721-731` - EVERY SQLite database answers two synthetic rows,
+  `Integrity: OK|FAILED` and `Journal Mode: <mode>`, about statements that were never executed.
+
+A sentence wearing a row's clothes is the fabrication the absence rule (#477) forbids, and here it is
+worse than a zero: a caller counting the list gets 1, 1 and 2 rather than 0. Nothing counts it in the
+app any more - the agent's curated reading stopped, and `HealthInfo.slowQueries` now has no
+production consumer at all - but `POST /api/db/health` serialises the whole `HealthInfo`
+(`docs/API_DOCS.md`), so anyone embedding `@libredb/studio` and reading that body inherits all three.
+
+**The fix is a type change with a 15-type-id blast radius, which is why it is here and not in #512's
+PR.** `HealthInfo.slowQueries` is a required `SlowQuery[]` (`src/lib/db/types.ts`) with no field a
+reason could travel in, so "nobody could look" has no representation. Making it optional the way
+`activeConnections` already is touches every provider, every provider doc and every provider test
+file, and falsifies `src/lib/db/compatibility.ts:267`, `docs/providers/postgres.md:164`,
+`tests/integration/db/postgres-provider.test.ts:1325`, `tests/integration/db/sqlite-provider.test.ts`
+and `tests/helpers/sqlite-node-harness.ts:104`, all of which pin the current sentences.
+
+**The other path swallows instead of fabricating, and that is not better.** On the `slow-queries`
+reading the agent actually uses, `src/lib/db/providers/keyvalue/redis.ts:635-637` and
+`src/lib/db/providers/document/mongodb.ts:1047-1049` `return []` from their catch where MySQL now
+rejects. So a denied grant reaches the model as an empty reading, and the run prompt tells it
+`"A reading that comes back EMPTY is an answer, not a failure - no blocked session, no slow query,
+no unused index is what a healthy server looks like"` (`src/lib/agent/investigation.ts:1485`). It
+also costs the operator the reason: `getMonitoringData` records `errors.slowQueries` from a REJECTION
+(`src/lib/db/base-provider.ts:147`), and a resolved `[]` records nothing, so the panel says "no slow
+queries" where the truth is that the profiler is off.
+
+**Done when:** a slow-query source that could not be read is absent-with-a-reason on both paths - no
+provider answers a sentence as a row, and no provider answers `[]` for a read that failed - and the
+count of type-ids the type change touched is stated in the PR rather than discovered during it.
+
+### D37. The Overview panel still shows a fabricated zero for a connection count nobody could read
+
+Found 2026-08-27, one field over from the health fix in the same pass. `HealthInfo.activeConnections`
+is now absent rather than 0 on MSSQL, Oracle and MongoDB when the read is refused. The identical
+defect survives in `getOverview()` on the same three providers, against
+`DatabaseOverview.activeConnections`, which is optional for exactly the same stated reason
+(`src/lib/db/types.ts`, the D17 docblock):
+
+- `src/lib/db/providers/sql/mssql.ts:1084` and `src/lib/db/providers/sql/oracle.ts:1160` -
+  `let activeConnections = 0`, with the read's failure swallowed into it.
+- `src/lib/db/providers/document/mongodb.ts:963` and `:975` - `|| 0` and a literal `0`.
+
+What the user sees is not a hidden number: `src/components/admin/tabs/OverviewTab.tsx` renders `N/A`
+when the field is ABSENT and the figure when it is present, so a denied `VIEW SERVER STATE`, an
+unprivileged `V$SESSION` or a `serverStatus` with no `connections` section shows a confident
+**0 connections** on a server that has plenty. `src/lib/db/providers/sql/cassandra/introspect.ts` is
+the in-repo precedent for the shape, and `measuredNumber` (`src/lib/monitoring-cache-ratio.ts`) is
+the helper that keeps a real 0 while dropping an unanswered row.
+
+Deliberately left out of the health fix: the lane that closed it owned `getHealth`, and this one
+drags the three monitoring-panel docs and the Overview component's own tests with it.
+
+Whoever takes this must also move two OTHER providers' docs:
+[`docs/providers/elasticsearch.md:848`](providers/elasticsearch.md) and
+[`docs/providers/opensearch.md:855`](providers/opensearch.md) both read "`activeConnections` /
+`maxConnections` are 0, the same 'not published' encoding `mssql.ts` and Druid use" - a citation that
+becomes false the moment `mssql.ts` stops encoding it that way.
+
+**Done when:** an unmeasurable overview connection count is absent on all three providers, a real
+zero still reads as zero, each provider's doc records it, and the two search docs no longer cite an
+encoding that is gone.
+
+### D38. Two more surfaces read a capped list as a count, one of them to a person
+
+Found 2026-08-27 by the review round that closed the same defect in the agent's curated health
+reading: the projection stopped counting a capped list, and the shape's remaining instances were then
+hunted for rather than assumed gone. Two survive.
+
+**The user-facing one.** `src/components/monitoring/tabs/QueriesTab.tsx:87` computes
+`totalQueries = slowQueries.reduce((sum, q) => sum + q.calls, 0)` and renders it on a card labelled
+*Queries*; `:89` computes `slowCount = slowQueries.filter((q) => q.avgTime > 1000).length` and
+renders it as *Slow*. `MonitoringData.slowQueries` is capped at 10 by every provider that fills it
+(`slowQueryLimit = 10` in `src/lib/db/base-provider.ts`, honoured by each `getSlowQueries`), so
+*Queries* is the call total of the ten heaviest digests presented as the database's query count, and
+*Slow* is bounded by 10 no matter how many slow statements the server has. On the MySQL server this
+was measured against - 59 digests for one schema - both cards are the cap wearing a measurement's
+label. The block's own comment reasons carefully about absence versus zero and says nothing about the
+ceiling, which is how it survived: the absence rule was applied, the cap was not.
+
+**The provider-side one, reachable by the agent.** `TRINO_MAX_STATS_TABLES = 25`
+(`src/lib/db/providers/sql/trino/introspect.ts`) slices the table-stats read, so a Trino catalog with
+500 tables answers exactly 25 rows and the agent's reading reports `rowCount: 25`. Unlike the curated
+path's own row bound - which now refuses rather than truncating - this cut happens inside the provider,
+before the agent layer can see that anything was dropped, so no marker can be added above it.
+
+**Done when:** neither figure can be read as a count - the cards name what they measure (or drop the
+total no cap-bounded list can supply), and a provider that truncates a reading says so in a way the
+reading's consumer can see.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -773,46 +874,6 @@ gap in the guard rather than a defect it is hiding.
 
 **Done when:** the check resolves a route's imports transitively, or the set of indirect helpers is
 itself pinned so a new one cannot appear unnoticed.
-
-### T6. A shared mock still answers a statement no server would answer
-
-Found 2026-08-27 while closing the MySQL health defect in #512. `defaultMockExecute` in
-`tests/integration/db/mysql-provider.test.ts` used to invent `query`/`calls`/`avgTime` rows for ANY
-statement against the digest table - including one naming `sql_text`, a column that table does not
-have - and about a hundred of that file's tests run against it. That fixture unfaithfulness is
-precisely how a health read asking for a non-existent column survived every gate, 100% line coverage
-and the reviews: the mock answered what a real server refuses.
-
-All three digest fixtures now route through one `sqlTextRefusal()` helper, so a fourth cannot drift
-from the others. But the repair is **prophylactic and unpinned**: reverting the shared fixture to its
-unfaithful shape leaves the suite at 111 pass / 0 fail, because the tests that need the refusal use
-dedicated fixtures. Nothing can tell whether the shared mock is honest.
-
-The general shape is worth a rule rather than one fixture's fix: a provider mock that answers a
-statement the engine would reject makes every test built on it a test of the mock.
-
-**Done when:** a mock that answers a statement its engine refuses fails something - by construction
-(one shared refusal path every fixture must go through) or by a test that drives the fixture itself.
-
-### T7. A user-facing sentence nobody tests, under a smell that hides it
-
-Found 2026-08-27 while verifying two external reviews of #512. `src/components/agent/AgentRail.tsx`
-selects the conversation-decline sentence in a four-arm nested ternary, and SonarCloud reports the
-nesting (`typescript:S3358`) because #512 added the fourth arm. The cosmetic complaint is not the
-finding. Three of the four sentences are asserted by `tests/components/agent/AgentRail.test.tsx`; the
-fourth - `connectionDropped`, *"Connection changed, so this question started a new conversation."* -
-is asserted nowhere, and `connectionDropped` appears in no test in the repository. It is live copy:
-`AgentRail.tsx:1112` sets it whenever a follow-up target exists and the rail is no longer on the
-connection the previous run opened on.
-
-The coverage gate cannot see this. All four arms are ONE expression, so a single covered line covers
-every arm, and 100% line coverage is reached with three of the four sentences never rendered in a
-test. Extracting the selection - which is what the smell asks for - gives each arm its own line and
-would fail the gate until the fourth is driven, which is the honest order to do it in and the reason
-#512 declined to extract it as a review nit.
-
-**Done when:** each of the four decline sentences is rendered by a test that names its trigger, and
-the selection is extracted so a fifth arm cannot be added without one.
 
 ## Dependencies
 
@@ -2626,58 +2687,6 @@ so), and none of them has been measured.
 **Done when:** a resume onto a repointed connection does one stated thing, and the run's own record
 says which.
 
-### B77. The agent is told a count of slow queries that is a cap, and the rows are our own traffic
-
-Surfaced 2026-08-27 by the work that removed MySQL's fabricated "Performance schema not available"
-row. `src/lib/agent/tools.ts` projects `slowQueryCount: health.slowQueries.length`, and the health
-read that fills it is `LIMIT 5` with no slowness predicate at all - the ordering is
-`SUM_TIMER_WAIT DESC` and the only filter is the schema. So any server with five or more digests for
-the connected schema reports `slowQueryCount: 5` forever: the limit, not a count.
-
-Measured on a live MySQL 26.7.0 in that pass: 59 digests for the probed schema, and all five rows the
-health read returns are **Studio's own introspection statements**, the slow-query read itself first.
-So the model is handed a saturated constant and, if it ever reads the rows, our own monitoring
-traffic. The provider now records the cap where it is produced (`HEALTH_SLOW_QUERY_LIMIT`, and
-`docs/providers/mysql.md`), which is why this is a projection defect rather than a provider one.
-
-Not MySQL's alone: any provider whose `getHealth()` caps this list feeds the same projection, so the
-fix belongs with the curated reading rather than with one engine.
-
-**A source that could not be read reaches the model as the same zero.** Where the digest table
-cannot be read at all - a grant denied on it, or no `performance_schema` database at all
-(`ERROR 1049`, measured on an OceanBase tenant) - `getHealth()` leaves the list empty on purpose,
-because `HealthInfo.slowQueries` is a `SlowQuery[]` with no field a reason could travel in and a row
-carrying one is the fabrication #512 removed. The projection then hands the model
-`slowQueryCount: 0`, which says *this server has no slow queries* where the truth is *nobody could
-look*. The operator does get the reason, on the path that has a channel for it
-(`errors.slowQueries` -> `PanelUnavailable`); the model does not. So this is the absence rule (#477)
-one level up from the row, and it is the same fix site: the curated reading, not the provider.
-
-**Done when:** the curated health reading either carries a figure that is a measurement (a count
-under a stated threshold, or the digest total) or names the cap it is reporting, no engine's capped
-list can be read as a count, and a source that could not be read is ABSENT from the projection
-rather than present as a zero.
-
-### B78. The delta a failed statement records is unambiguous only because one constant says so
-
-Left open by #512. A failed execution now records its own span, computed as
-`tracker.usage(runId).totalElapsedMs` before the call subtracted from after
-(`src/lib/agent/tools.ts`), and a two-execution harness test pins that it is a delta rather than the
-run's running total. What makes the delta correct is `maxConcurrentExecutions: 1`
-(`src/lib/agent/execution-policy.ts`) - a single frozen constant, not a per-workflow value: with two
-executions in flight the subtraction would silently attribute the other one's time to whichever
-failed.
-
-Nothing fails if that constant is raised. The premise is documented next to the code and unguarded by
-any test, which is the same shape as a comment standing in for an assertion.
-
-The write side is the other half: `elapsedMs` survives `parseLedgerLine` under test, but nothing pins
-that the run service WRITES it into the NDJSON line in the first place - both are pass-through casts,
-so a field dropped at the write would be invisible to the fold and to the reader.
-
-**Done when:** raising `maxConcurrentExecutions` fails a test that names the delta as its reason, and
-one assertion covers the ledger write rather than only the parse.
-
 ### B79. The re-pointed decline cannot be reached from the UI in the default storage mode
 
 Measured 2026-08-27, driving the built app in Chrome. `declined: "repointed"` fires when a follow-up
@@ -2702,16 +2711,3 @@ entry's to make.
 **Done when:** the decline is observed from the UI in some supported configuration, or the rail's
 sentence names the configuration it belongs to.
 
-### B80. The engine refusal renders the same paragraph twice, in two different registers
-
-Measured 2026-08-27 in Chrome, closing the engine refusal in #512. Starting an agent-mode run on the bundled LibreDB sample
-returns 400 and the rail renders `body.error` in the `agent-error` line - the posture's full body,
-about 350 characters. The amber pre-start card two elements above is showing the identical paragraph,
-because both read the same posture. So the operator is told the same four sentences twice, once as a
-standing explanation and once as the outcome of the action they just took.
-
-Reusing the posture was deliberate and is right: a third phrasing of one fact is worse. What is
-missing is the register. An error line wants the consequence ("this run was not opened") and a
-pointer to the standing explanation already on screen, not a second copy of it.
-
-**Done when:** the refused start says what happened to the request, and the explanation is read once.
