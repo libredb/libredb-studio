@@ -31,7 +31,7 @@ Two consequences worth stating before the table:
 | 0.3 | Every route that reaches a database or an LLM verifies its caller in its own handler — a user session, or for the one machine callback a server-minted single-purpose credential | Implemented | [`src/lib/api/require-session.ts`](../src/lib/api/require-session.ts), [`src/lib/agent/drive-token.ts`](../src/lib/agent/drive-token.ts) | [`tests/security/route-auth.test.ts`](../tests/security/route-auth.test.ts), [`tests/api/agent/drive.test.ts`](../tests/api/agent/drive.test.ts) |
 | 0.4 | The security policy states only what the code does | Implemented | [`SECURITY.md`](../SECURITY.md) | [`tests/unit/security-check.test.ts`](../tests/unit/security-check.test.ts) |
 | 0.5 | A published reporting channel with a stated response time | Implemented | [`SECURITY.md`](../SECURITY.md) | [`tests/security/vulnerability-disclosure.test.ts`](../tests/security/vulnerability-disclosure.test.ts) |
-| 1.1 | Every response carries CSP, HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy and Permissions-Policy | Implemented | [`src/lib/security/headers.ts`](../src/lib/security/headers.ts), [`src/lib/security/config.ts`](../src/lib/security/config.ts), [`src/proxy.ts`](../src/proxy.ts) | [`tests/security/headers.test.ts`](../tests/security/headers.test.ts), [`tests/security/header-delivery.test.ts`](../tests/security/header-delivery.test.ts), [`e2e/security-headers.spec.ts`](../e2e/security-headers.spec.ts) |
+| 1.1 | Every document response carries CSP, HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy and Cross-Origin-Opener-Policy; the asset paths the middleware skips carry the two of those that act on a subresource | Implemented | [`src/lib/security/headers.ts`](../src/lib/security/headers.ts), [`src/lib/security/config.ts`](../src/lib/security/config.ts), [`src/proxy.ts`](../src/proxy.ts) | [`tests/security/headers.test.ts`](../tests/security/headers.test.ts), [`tests/security/header-delivery.test.ts`](../tests/security/header-delivery.test.ts), [`tests/security/cross-origin-headers.test.ts`](../tests/security/cross-origin-headers.test.ts), [`e2e/security-headers.spec.ts`](../e2e/security-headers.spec.ts) |
 | 1.2 | Login, AI and database-reaching routes are rate limited | Implemented | [`src/lib/api/rate-limit.ts`](../src/lib/api/rate-limit.ts) | [`tests/security/rate-limit-keying.test.ts`](../tests/security/rate-limit-keying.test.ts), [`tests/security/rate-limit-routes.test.ts`](../tests/security/rate-limit-routes.test.ts) |
 | 1.3 | State-changing requests are checked against the deployment's own origin | Implemented | [`src/lib/api/origin-check.ts`](../src/lib/api/origin-check.ts), [`src/proxy.ts`](../src/proxy.ts) | [`tests/security/csrf-origin.test.ts`](../tests/security/csrf-origin.test.ts) |
 | 1.4 | Authentication transitions and denials are audited | Partial | [`src/lib/audit.ts`](../src/lib/audit.ts), [`src/lib/api/require-session.ts`](../src/lib/api/require-session.ts) | [`tests/security/auth-audit.test.ts`](../tests/security/auth-audit.test.ts) |
@@ -66,6 +66,73 @@ prerendered and its hydration scripts are inline and nonce-less. What the policy
 **where an injected script could send data** — not whether one can run. Set `CSP_REPORT_ONLY=true`
 (a runtime variable, no rebuild) if an upgrade blocks a resource you need while you identify the
 directive.
+
+**1.1, the subresource half.** The row says *document* response for a reason: the two delivery
+paths do not carry the same set. [`src/proxy.ts`](../src/proxy.ts)'s matcher deliberately skips
+`_next/static`, `_next/image` and every path containing a dot — so a file under `public/` or
+`/monaco/vs/` never reaches it. [`next.config.ts`](../next.config.ts) covers those, and it carries
+**two** of the seven headers rather than all seven. That is not an omission: the set it may carry is
+derived from two exclusions, both now executed rather than asserted. A header whose value or
+presence changes under any option `src/lib/security/config.ts` can vary is operator-configurable and
+cannot be baked into a build-time routes manifest (the CSP, whose `CSP_REPORT_ONLY` escape hatch a
+baked copy would strand, and HSTS, which is host-scoped so the last value the browser sees wins). A
+header that acts on a *document* is inert on a subresource (`Referrer-Policy`,
+`Permissions-Policy`, `Cross-Origin-Opener-Policy`).
+
+Selecting by *exclusion* reversed the default that AU2's allowlist had: a new constant document
+header is now baked onto `/logo.svg` and every `_next/static` chunk unless somebody excludes it,
+where before it was withheld until somebody opted it in. What replaces the closed default is
+[`tests/security/cross-origin-headers.test.ts`](../tests/security/cross-origin-headers.test.ts) —
+the one verifier in the row that is about the *set* rather than about a path or a value. It requires
+every header `securityHeaders()` sends to declare one of three reasons (baked, document-only,
+option-dependent) and then checks the declared reason against the class the two exclusions actually
+produce, so a header added with no decision recorded fails there. The other three verifiers answer
+different questions: [`headers.test.ts`](../tests/security/headers.test.ts) the CSP's *meaning*,
+[`header-delivery.test.ts`](../tests/security/header-delivery.test.ts) what each *path* receives
+from each of the two deliveries, and [`security-headers.spec.ts`](../e2e/security-headers.spec.ts)
+whether the enforced policy breaks the real asset surface in a real browser.
+
+**1.1, the two cross-origin headers.** `Cross-Origin-Opener-Policy` and
+`Cross-Origin-Resource-Policy` are the pair that would add protection a subresource can use, and
+they are answered differently: **COOP is sent, CORP is refused.**
+
+COOP is `same-origin`, set per request in
+[`src/lib/security/headers.ts`](../src/lib/security/headers.ts) and applied by
+[`src/proxy.ts`](../src/proxy.ts) — the document path only. It is classified document-only in
+[`next.config.ts`](../next.config.ts) and therefore barred from the baked set: HTML's "create
+navigation params by fetching" obtains a response's opener policy under one step, *"If navigable is
+a top-level traversable"*, so nothing ever reads the header off a subresource and it is ignored even
+for a framed document. Its value is a constant, which is exactly what makes baking it beside
+`nosniff` tempting and pointless. `same-origin` rather than the weaker `same-origin-allow-popups`,
+because the weaker value exists for a page that opens a popup and then scripts it and nothing here
+does: the OIDC flow is a top-level redirect in both directions
+(`window.location.href = "/api/auth/oidc/login"`, and the logout redirect in
+`src/hooks/use-auth.ts`), and the one `window.open` call already passes `"noopener,noreferrer"`.
+Three things to know when reading a header dump. COOP is ignored outright in a non-secure context —
+"obtain an opener policy" returns the default `unsafe-none` before it looks at the header — so on
+the plain-HTTP channels it is a no-op regardless (loopback counts as secure, so the desktop shell is
+not among them). It appears on documents and not on `/monaco/vs/*` or `/logo.svg`, by design. And
+`same-origin` without `Cross-Origin-Embedder-Policy` does **not** make the page cross-origin
+isolated — no `SharedArrayBuffer`, and `crossOriginIsolated` stays false. That pairing was declined
+deliberately: `require-corp` makes every cross-origin subresource that carries no CORP header of its
+own count as blocked, which the documented off-origin `NEXT_PUBLIC_MONACO_VS_PATH` setup cannot
+promise, and the capability it would buy is one nothing here uses.
+
+CORP is **refused**, and the reason is recorded beside the header rule in
+[`next.config.ts`](../next.config.ts). It could not break the editor — the cross-origin resource
+policy check is only reached for a response whose tainting is opaque, which a same-origin request
+never becomes, and under the shipped defaults every asset Monaco needs is same-origin.
+`NEXT_PUBLIC_MONACO_VS_PATH` is the one documented way that stops being true, and it changes
+nothing here: a CORP header of *ours* never labels another origin's responses. What refuses it is that its
+correct *value* is the only one in the set that is a property of the deployment topology rather
+than of the application, while the only delivery path that reaches a subresource is the one baked
+at build time. The protection given up is narrow, and it is read off this repository's own code: a
+cross-**site** no-cors subresource request already arrives without `auth-token` (`sameSite: "lax"`),
+`nosniff` already refuses to execute a non-JavaScript response at a script destination, and CORP is
+not a framing defence so it does not overlap `X-Frame-Options`. What stays open is the
+same-**site**, cross-**origin** case — a sibling subdomain under the operator's own registrable
+domain does get the cookie and can time an authenticated endpoint. That residual is stated under
+"Known limits" below.
 
 **1.2.** The counters live in the application process. With more than one replica the budgets apply
 per replica; multi-replica deployments should enforce the same budgets at the ingress. See
@@ -174,6 +241,16 @@ These are real, current, and not oversights. Each is a decision with a reason.
   endpoint. What sends nothing is a deployment with **no `LLM_*` configuration at all**: the provider
   defaults to `gemini` (`config.ts:12`), it is refused without a key, availability answers
   `NO_MODEL_CONFIGURED`, no rail renders and no model call is made.
+- **A page on a sibling subdomain can time an authenticated endpoint on this one.** The auth cookie
+  is `SameSite=Lax`, which withholds it from a cross-*site* subresource request but sends it to a
+  same-*site*, cross-*origin* one — so an attacker who controls any host under the deployment's own
+  registrable domain can load a Studio URL as a no-cors subresource and read the load/error and
+  coarse-timing signal, even though the response bytes stay opaque to them.
+  `Cross-Origin-Resource-Policy: same-origin` is the control that closes this, and it is refused for
+  now with the reason recorded in [`next.config.ts`](../next.config.ts): its correct value is a
+  property of the deployment topology, and the only header path that reaches a subresource is baked
+  at build time, where an operator cannot change it. Closing it properly means a runtime delivery
+  path that reaches a subresource, which the two-path split above does not have.
 - **A test linked from this table is checked to exist and to run — not to be true.** Nothing
   verifies that a linked test actually exercises the control it is linked from. That is the
   residual this page carries knowingly; the same limitation is recorded for the route-guard

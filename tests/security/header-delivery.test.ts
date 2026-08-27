@@ -34,6 +34,7 @@ function request(pathname: string, token?: string): NextRequest {
 function expectHardened(response: Response): void {
   expect(response.headers.get("x-content-type-options")).toBe("nosniff");
   expect(response.headers.get("x-frame-options")).toBe("DENY");
+  expect(response.headers.get("cross-origin-opener-policy")).toBe("same-origin");
   expect(response.headers.get("referrer-policy")).toBe("same-origin");
   expect(response.headers.get("strict-transport-security")).toBe("max-age=15552000");
   expect(response.headers.get("permissions-policy")).toContain("camera=()");
@@ -190,11 +191,12 @@ describe("the paths the proxy matcher skips are covered by a second delivery pat
 });
 
 describe("control: the document surface is unchanged by the static-asset path", () => {
-  test("a document still carries the full six-header set from the proxy", async () => {
+  test("a document still carries the full seven-header set from the proxy", async () => {
     const response = await proxy(request("/", await createToken("user")));
 
     expect(Object.keys(securityHeaders()).sort()).toEqual([
       "Content-Security-Policy",
+      "Cross-Origin-Opener-Policy",
       "Permissions-Policy",
       "Referrer-Policy",
       "Strict-Transport-Security",

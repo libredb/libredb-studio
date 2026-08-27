@@ -60,11 +60,14 @@ vendor the server never claimed. StarRocks and SingleStore are deliberately not 
 answer with a plain MySQL number and give nothing to key on.
 
 **`performance_schema` is OFF by default on MariaDB.** Measured on `mariadb:12.3`
-(`@@performance_schema` = 0): the `performance_schema` tables exist, so the metric queries do not
-fail — they return a row of NULLs. Cache-hit ratio, queries/sec and buffer-pool usage are therefore
-absent rather than zero, and the slow-query list is empty. `information_schema`, `PROCESSLIST`,
-`EXPLAIN FORMAT=JSON`, schema introspection, sizes and row counts are unaffected. Start the server
-with `performance_schema=ON` to get the monitoring figures.
+(`@@performance_schema` = 0, build `12.3.2-MariaDB-ubu2404`): the `performance_schema` tables exist,
+so the metric queries do not fail — they return a row of NULLs. Cache-hit ratio, queries/sec and
+buffer-pool usage are therefore absent rather than zero. The digest table behaves the same way: it is
+selectable and answers **0 rows**, so the slow-query list is empty rather than an error — re-measured
+2026-08-27, and true of the health line only since the fix below, which is what made the OFF state
+distinguishable from a broken read at all. `information_schema`, `PROCESSLIST`, `EXPLAIN
+FORMAT=JSON`, schema introspection, sizes and row counts are unaffected. Start the server with
+`performance_schema=ON` to get the monitoring figures.
 
 The one metric that goes the other way is `deadlocks`: it comes from `SHOW STATUS LIKE
 'Innodb_deadlocks'`, which MariaDB publishes and MySQL does not, so it is the single performance
@@ -537,7 +540,15 @@ All monitoring reads from `SHOW STATUS`/`SHOW VARIABLES`, `information_schema`, 
 | `getStorageStats()` | `information_schema.TABLES`, `SHOW BINARY LOGS` | Data size, Binary Logs (if enabled), InnoDB data file (size `N/A`) |
 
 **Graceful degradation — note the *different* failure modes:**
-- `getHealth()` slow-queries: try/catch → a single placeholder row (*"Performance schema not available"*).
+- `getHealth()` slow-queries: the digest rows, or **an empty list** — never a placeholder row, and
+  on this path **the reason is dropped**. It used to answer a single fabricated row
+  (*"Performance schema not available"*, `calls: 0`) whenever its statement threw, and its statement
+  threw on every server: see
+  [the slow-query line asked for a column the digest table does not have](#the-slow-query-line-asked-for-a-column-the-digest-table-does-not-have)
+  below. `HealthInfo.slowQueries` is a `SlowQuery[]` with no error field and no sibling carrying one,
+  so an unreadable source is indistinguishable here from a source that measured nothing. Empty is
+  the least-wrong shape, not a shape that carries the reason — the operator gets the reason from the
+  `getSlowQueries()` path below, which does have a channel for it.
 - `getHealth()` cache-hit ratio: `formatCacheHitRatio()` → `"N/A"` when nothing was measured, and
   `"N/A"` again — rather than a failed health read — when the ratio query THROWS. A tenant can be
   missing the `performance_schema` *database* instead of merely having the schema off, and then the
@@ -545,7 +556,16 @@ All monitoring reads from `SHOW STATUS`/`SHOW VARIABLES`, `information_schema`, 
   tenant through this provider, and reproduced on `mysql:latest` as `ERROR 1049 (42000): Unknown
   database '...'`. That one throw used to abort the whole of `getHealth()`, so the panel showed
   nothing where one unavailable metric was the honest answer.
-- `getSlowQueries()`: try/catch → **empty array** `[]`.
+- `getSlowQueries()`: **the digests, or the server's refusal — this one does not swallow.** It used
+  to `return []` on any throw, which made a source that cannot be read look like a source that
+  measured nothing. What throws here is never the `performance_schema`-is-off path — an off server
+  answers 0 rows without raising — it is the source being *unreadable*: no `performance_schema`
+  database (`ERROR 1049`), or the grant denied on it (`ERROR 1142`). Letting that reject is what
+  puts the reason on screen: `getMonitoringData()`
+  ([`base-provider.ts`](../../src/lib/db/base-provider.ts)) reads every panel with
+  `Promise.allSettled` and records a rejected one under `errors.slowQueries`, and `QueriesTab`
+  renders that through `PanelUnavailable` carrying the server's own sentence. One refused panel
+  costs only itself; that method throws only when all four core reads reject.
 - `getPerformanceMetrics()`: **every field is omitted rather than defaulted.** A server with
   `performance_schema` OFF answers the `global_status` sub-selects with NULL instead of failing, so
   each reading is taken through `measuredNumber()` and a field with nothing behind it is left out of
@@ -558,6 +578,116 @@ All monitoring reads from `SHOW STATUS`/`SHOW VARIABLES`, `information_schema`, 
 - `deadlocks` reads `Innodb_deadlocks`, which is **MariaDB's** status variable. MySQL does not publish
   it — measured as an empty `SHOW STATUS` result on both 8.0.46 and 26.7.0 — so the field is absent on
   MySQL and present on MariaDB. It is the one metric that survives `performance_schema` being off.
+
+### The slow-query line asked for a column the digest table does not have
+
+`getHealth()`'s slow-query line had its own statement, `LEFT(sql_text, 100)` over
+`performance_schema.events_statements_summary_by_digest`, wrapped in a bare try/catch that reported
+`[{ query: "Performance schema not available", calls: 0, avgTime: "N/A" }]`. **That table has no
+`sql_text` column.** `SQL_TEXT` belongs to `events_statements_current`/`_history`; the digest table
+carries the normalised `DIGEST_TEXT` — [MySQL 9.4 manual, Statement Summary
+Tables](https://dev.mysql.com/doc/refman/9.4/en/performance-schema-statement-summary-tables.html),
+and each server's own `information_schema.columns` confirms it. So the statement never returned a
+row on any server, and the catch reported an engine capability as absent while the panel beside it
+listed real statements from the same table.
+
+Measured 2026-08-27 through this provider, one container per arm (`--innodb-use-native-aio=0`;
+readiness gated on a real `SELECT 1`, not `mysqladmin ping`). The raw statement's answer on all four:
+
+```
+errno=1054 code=ER_BAD_FIELD_ERROR sqlState=42S22 Unknown column 'sql_text' in 'field list'
+```
+
+(MariaDB words the same error `Unknown column 'sql_text' in 'SELECT'`.)
+
+| Server | `@@performance_schema` | `getHealth().slowQueries` before | after | `getSlowQueries()` |
+|--------|------------------------|----------------------------------|-------|--------------------|
+| MySQL 26.7.0 (`mysql:latest`) | 1 | *"Performance schema not available"* | 5 real digests — ``SELECT COUNT ( * ) FROM `t` `` at `calls: 4`, `1.09ms` | 5 rows |
+| Percona Server 8.4.11-11 | 1 | *"Performance schema not available"* | 5 real digests | 5 rows |
+| MySQL 26.7.0, `--performance-schema=OFF` | 0 | *"Performance schema not available"* | `[]` | `[]` |
+| MariaDB 12.3.2 (ships it off) | 0 | *"Performance schema not available"* | `[]` | `[]` |
+
+Three decisions came out of those measurements, and one property of the reading that none of them
+changes.
+
+**One statement, not two.** The health line and `getSlowQueries()` now share
+`SLOW_QUERIES_BODY_SQL`, differing only in the interpolated `LIMIT` (5 for the health line, the
+caller's for the panel), and both map the row through the same `toSlowQueryStats()`. Two statements
+for one fact is what drifted, and the copy the health panel used was the one no test ever put in
+front of a server — the mysql2 mock invented a `query` column for any statement over this table, so
+a broken read looked like a working one for as long as it was only mocked. The mysql2 mock in
+`mysql-provider.test.ts` now refuses `sql_text` the way a server does, and one test asserts the
+provider never asks for it.
+
+**An empty list, not an "unavailable" marker, and the reason is that OFF does not raise.** A server
+with `@@performance_schema` = 0 keeps the digest table selectable and answers **0 rows** — measured
+on both arms above, and it is why MariaDB's default has always shown an empty Queries panel rather
+than an error. There is therefore no exception that means "the capability is off", and a marker
+keyed on the throw would be emitted for something other than what it says: the same defect one level
+up. What does reach the catch is the source being *unreadable* — no `performance_schema` database at
+all (`ERROR 1049`, the OceanBase tenant above) or the grant denied on it: measured on MySQL 26.7.0
+with a user granted only `SELECT ON d32.*` plus `PROCESS`,
+
+```
+errno=1142 code=ER_TABLEACCESS_DENIED_ERROR sqlState=42000
+SELECT command denied to user 'nops'@'172.17.0.1' for table 'events_statements_summary_by_digest'
+```
+
+and on that connection `getHealth()` still answered in full (`activeConnections: 1`, `databaseSize:
+"0.02 MB"`, `cacheHitRatio: "94.3"`, one active session) with `slowQueries: []`.
+
+**Why the refusal is not carried in this field: on the health path it is dropped.** A refusal must stay
+representable as a refusal (#477), and a row is the one shape it must not take: `calls: 0` is a
+figure nobody took, and the list is *counted* — the agent's curated health reading forwards
+`health.slowQueries.length` as `slowQueryCount`
+([`src/lib/agent/tools.ts`](../../src/lib/agent/tools.ts)), so the invented row told the model
+"1 slow query" about every MySQL-family server.
+
+Dropped is the honest word for it, and this paragraph says so rather than naming a carrier the
+reading does not have. `HealthInfo.slowQueries` is a `SlowQuery[]`: no error field, no sibling that carries one, so a
+refusal cannot be represented in this reading at all. Nothing renders it either — no component reads
+`HealthInfo.slowQueries` (the monitoring Queries and Overview tabs read `MonitoringData.slowQueries`,
+a different reading), and the one caller of `POST /api/db/health`, the 60s connection pulse in
+[`use-connection-manager.ts`](../../src/hooks/use-connection-manager.ts), reads `res.ok` and
+discards the body. `ProviderLabels.slowQueriesEmptyState` is **not** a carrier for it: `QueriesTab`
+renders that one fixed sentence for every empty list whatever produced it, which is why the sentence
+had to stop naming a cause (it used to end *"enable the Performance Schema to see them"* — the one
+cause that never reaches the failure path).
+
+The operator is not left without the reason, because the *panel* path has a channel:
+`getSlowQueries()` lets the refusal reject (it used to `return []`), `getMonitoringData()`
+([`base-provider.ts`](../../src/lib/db/base-provider.ts)) records it under `errors.slowQueries`, and
+`QueriesTab` renders it through `PanelUnavailable` with the server's own sentence. The
+grant-denied and `ERROR 1049` fixtures in `mysql-provider.test.ts` assert exactly that division: the
+health line empties, `getSlowQueries()` rejects, and `errors.slowQueries` names the table.
+
+**One property of the reading the repair does not change: the list is a cap, not a count.**
+`SLOW_QUERIES_BODY_SQL` has no slowness predicate anywhere — its only `WHERE` term is the connected
+schema, "slow" is the *ordering* (`SUM_TIMER_WAIT DESC`), and the health line's `LIMIT` is 5. So on
+any server with five or more digests for the schema, `health.slowQueries.length` is 5 permanently,
+and `slowQueryCount` reports the limit rather than a number of slow statements. Measured 2026-08-27
+on MySQL 26.7.0 (`libredb-mysql`): the digest table held **59 rows** for one connected schema, and
+the five this statement returns for it were **all Studio's own introspection statements** — the
+slow-query read itself first (`avg 79.11ms`, `calls 3`), then the database-size read, `SHOW STATUS
+LIKE ?` and two `PREPARE`s, between 1.15 ms and 7.78 ms. Nothing in that list is slow and none of it
+is the user's workload. Raising the limit would move the saturation point without making the figure a
+count; only a slowness threshold, or a differently named projection, would. The projection lives in
+`src/lib/agent/tools.ts` and is tracked separately — this provider's part is that the cap and the
+missing threshold are stated at
+[`HEALTH_SLOW_QUERY_LIMIT`](../../src/lib/db/providers/sql/mysql.ts) and pinned by a test that reads
+the statement the health call actually issued.
+
+**Sibling engines.** All nine MySQL-protocol engines in
+[`compatibility.ts`](../../src/lib/db/compatibility.ts) — MariaDB, Percona Server for MySQL, TiDB,
+StarRocks, Apache Doris, Databend, Vitess, OceanBase, SingleStore — reach this exact code, so every
+one of them showed the sentence and none of them shows it now. MariaDB and Percona are the two
+measured above; on the other seven the health line now carries whatever their own
+`performance_schema.events_statements_summary_by_digest` publishes for the connected schema, and an
+empty list where it publishes nothing or the table cannot be read. OceanBase is the one whose reading
+changes shape without changing meaning: its tenants have no `performance_schema` database at all
+(`ERROR 1049`, measured 2026-08-20), so its health line goes from the fabricated row to `[]` — and
+its Queries panel, which took the same `[]` before, now shows the tenant's own `ERROR 1049` through
+`PanelUnavailable`, because `getSlowQueries()` no longer swallows it.
 
 **Index sizes: `mysql.innodb_index_stats`, and `indexSizeBytes` may be absent.** The per-index byte
 figure is `stat_value * @@innodb_page_size` for the `stat_name = 'size'` row of the InnoDB
@@ -751,10 +881,30 @@ The `mysql2/promise` module is replaced with an in-process mock via `mock.module
 **before** the provider is imported — there is no live MySQL in the suite. The mock's pool/connection
 returns canned `[rows, fields]` tuples, exercising the same provider code paths as a real server.
 
-Two mock shapes are load-bearing. A non-SELECT must be mocked as a **`ResultSetHeader` object with
+Three mock shapes are load-bearing. A non-SELECT must be mocked as a **`ResultSetHeader` object with
 `undefined` fields**, not as an array. An array-shaped mock is exactly what hid the
 `result.rows.map is not a function` defect described in [§5.1](#51-execution) — the whole suite was
 green while every DDL and DML statement failed against a real server.
+
+A mock must also refuse what a server refuses, and **every** fixture must, not just the one written
+for the defect. The default mock used to answer ANY statement over
+`performance_schema.events_statements_summary_by_digest` with an invented `query`/`calls`/`avgTime`
+row, which is how the broken health statement in
+[§8](#the-slow-query-line-asked-for-a-column-the-digest-table-does-not-have) stayed green for as long
+as it existed: it asked for a column no MySQL-family server has, and only the mock ever answered it.
+About a hundred of the tests in the file run against that fixture, so the unfaithfulness was the
+default condition of the suite rather than a gap in one test.
+
+`sqlTextRefusal()` is the corrective, and all three digest fixtures answer with it —
+`defaultMockExecute`, `perfSchemaDisabledMockExecute` and `digestTableMockExecute` — rejecting any
+statement that names `sql_text` with the real `ER_BAD_FIELD_ERROR` (1054, `42S22`, re-verified
+2026-08-27 against `libredb-mysql`) and otherwise returning the digest columns a server returns. The
+OFF fixture is the one that shows why it has to be all three: while it answered `[[], []]` to the
+broken statement too, *both* readings produced `[]`, so "the health line is empty on a server whose
+Performance Schema is off" passed with the fix reverted — it modelled a server that does not exist.
+On top of that, one test asserts independently of any fixture's kindness that no `getHealth()` read
+names `sql_text` at all, and one reads the statement the health call issued to pin its `LIMIT 5` and
+the absence of a slowness predicate.
 
 And the mock connection answers **both `query` and `execute`**, recording which one each statement
 went through. A mock that only answered `execute` could not tell a statement routed to the text
