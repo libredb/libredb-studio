@@ -804,6 +804,34 @@ The integration points, all of which need an entry. This is the list the Strateg
       guess. `tests/unit/sql/grammar.test.ts` holds `Record<DatabaseType, …>` maps for both decisions,
       so the compiler will at least stop you from *forgetting* that a decision exists
 
+**Published where a human reads it, and this is the block with the fewest gates.** `readme:check`
+compares the translated READMEs against `README.md` and `chart:check` compares versions; nothing
+counts the engines in a catalog listing, so an engine can ship while three storefronts still name the
+previous set (measured in the #511 review, which found all of these stale after libSQL had already
+landed everywhere the compiler looks):
+
+- [ ] `charts/libredb-studio/Chart.yaml` — the `description`, which is what **ArtifactHub** shows, AND
+      the `keywords` list, which is what ArtifactHub **searches**. An engine absent from the keywords is
+      an engine nobody finds; the chart's own comment says a new engine's keyword belongs in the release
+      that ships it, because #167 otherwise makes a keyword-only fix cost a chart version of its own.
+      Two names are often right — the type-id and the product a user would type (`libsql` and `turso`)
+- [ ] `operator/helm-charts/libredb-studio/Chart.yaml` — the operator's embedded copy, same edit
+- [ ] `operator/config/manifests/bases/libredb-studio-operator.clusterserviceversion.yaml` — the CSV
+      `description`, which is what **OperatorHub** shows. **Edit only this file and then run
+      `make -C operator bundle`**: `operator/bundle/manifests/...` is generated from it, and the
+      `Verify operator bundle is up to date` step re-runs the generator and diffs, so a hand-wrapped
+      YAML folded scalar fails the gate even when the text is identical to what it wants
+- [ ] `README.md` + `README_zh.md` + `README_ja.md`, `DOCKERHUB.md`, `docs/BRAND_MESSAGING.md` — the
+      engine tables and every prose numeral. **Separate the denominators before touching a numeral**:
+      type-ids the factory builds, external drivers (that set minus the embedded store), wire-compatible
+      relatives, and their sum. `connectableProductCount()` is the arithmetic's one definition — derive
+      from it, and re-read each sentence to see which of the four it counts. A mechanical replace is
+      how a correct number becomes wrong: the agent docs' "the other fourteen" counts type-ids minus
+      the two `CATALOG_PLANS` dialects and moved for a different reason than the driver count did
+- [ ] the marketplace listings under `deploy/` — a claim that enumerates engines is bound to the file
+      that proves it, and the `marketplace-copy` test fails when a plan-capable engine is missing from
+      one
+
 **And the tests for every exhaustive map**, which are the real checklist — several are exhaustive
 *by construction* (`Record<DatabaseType, …>` in `db-ui-config`, `PICKER_COVERAGE` in the
 connection-form test), so the compiler and those tests refuse to pass until each is updated:
