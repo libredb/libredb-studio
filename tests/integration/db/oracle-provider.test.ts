@@ -1296,8 +1296,58 @@ describe("OracleProvider", () => {
       await provider.connect();
       const health = await provider.getHealth();
 
-      // Should still return valid health object even if V$ queries fail
+      // Still a valid health object even though every V$ view refused: the reads that
+      // do not need a V$ grant answer. This used to assert `activeConnections` was 0,
+      // which pinned the fabrication rather than the degradation - see the pair below.
       expect(health).toBeDefined();
+      expect(health.databaseSize).toBe("256 MB");
+      expect(health.slowQueries).toEqual([]);
+      expect(health.activeSessions).toEqual([]);
+    });
+
+    test("an unprivileged V$SESSION leaves activeConnections absent, never a measured 0", async () => {
+      // A user granted only CREATE SESSION cannot read the V$ views at all. What was
+      // measured 2026-08-23 on Oracle AI Database 26ai Free is the same ORA-00942 on
+      // the cache-ratio view (`table or view "SYS"."V_$SYSSTAT" does not exist`, the
+      // getPerformanceMetrics test below); the count needs the same grant, so this
+      // fixture reproduces the shape with the view this block reads.
+      // The block was guarded, but `let activeConnections = 0` then published the
+      // refusal as a server with no active sessions - and `HealthInfo` is what the
+      // agent's curated health reading forwards to the model, so that zero was a
+      // measurement about a figure Oracle never gave.
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("V$SESSION") && upper.includes("COUNT")) {
+          throw new Error('ORA-00942: table or view "SYS"."V_$SESSION" does not exist');
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      expect("activeConnections" in health).toBe(false);
+      // Only the refused count goes absent; the other reads still answer.
+      expect(health.cacheHitRatio).toBe("97.5%");
+      expect(health.databaseSize).toBe("256 MB");
+    });
+
+    test("an instance with no active sessions keeps its measured zero connections", async () => {
+      // The anti-vacuity twin of the test above. Absence must never be spelled with a
+      // falsy test (`activeConnections || undefined`): an idle instance measures 0 and
+      // that 0 is a reading, not a refusal.
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("V$SESSION") && upper.includes("COUNT")) {
+          return { rows: [{ CNT: 0 }], metaData: [{ name: "CNT" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      expect("activeConnections" in health).toBe(true);
       expect(health.activeConnections).toBe(0);
     });
 

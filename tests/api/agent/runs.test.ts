@@ -562,11 +562,17 @@ describe("POST /api/agent/runs", () => {
     mockResolveConnection.mockResolvedValueOnce(UNSUPPORTED_ENGINE);
 
     const res = await POST(startRequest(VALID_BODY));
-    const body = await parseResponseJSON<{ error: string }>(res);
+    const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
 
     expect(res.status).toBe(400);
     // The rail's sentence, not a third phrasing of the same fact.
     expect(body.error).toBe(unsupportedSentence);
+    // And a marker beside it, because the sentence is not the protocol: the rail is
+    // already showing this paragraph in a standing card and has to be able to tell THIS
+    // refusal from the route's other `400`s in order to say something else (B80). The
+    // string is `AgentRunFailureReason`'s own `engine-unsupported`, so no new wire
+    // vocabulary enters here.
+    expect(body.refused).toBe("engine-unsupported");
     // No run id and no drive: the point of the entry is that neither is spent.
     expect(mockStart).not.toHaveBeenCalled();
     expect(mockDriveAgentRun).not.toHaveBeenCalled();
@@ -584,6 +590,7 @@ describe("POST /api/agent/runs", () => {
       mockResolveConnection.mockResolvedValueOnce(UNSUPPORTED_ENGINE);
       const res = await POST(startRequest({ ...VALID_BODY, workflowType }));
       expect(res.status, workflowType).toBe(400);
+      expect((await parseResponseJSON<{ refused?: string }>(res)).refused, workflowType).toBe("engine-unsupported");
       expect(AGENT_WORKFLOW_SENDS_STATEMENTS[workflowType as AgentRunWorkflowType], workflowType).toBe(true);
     }
     expect(mockStart).not.toHaveBeenCalled();
@@ -600,6 +607,18 @@ describe("POST /api/agent/runs", () => {
     expect(AGENT_WORKFLOW_SENDS_STATEMENTS.operations).toBe(false);
     expect(mockStart).toHaveBeenCalledTimes(1);
     expect(mockDriveAgentRun).toHaveBeenCalledTimes(1);
+  });
+
+  test("only this refusal carries the marker, so a client cannot read it off the status", async () => {
+    // `400` is the status of every other cross-field refusal this route makes, and a
+    // client discriminating on the status alone would relabel one of those as the
+    // engine's - which is the B80 defect running in the other direction: an operator
+    // told "the notice above says why" about a connection that no longer resolves.
+    // So the marker is asserted ABSENT on a neighbouring 400 as well as present above.
+    const other = await POST(startRequest({ ...VALID_BODY, previousRunId: "" }));
+
+    expect(other.status).toBe(400);
+    expect((await parseResponseJSON<{ refused?: string }>(other)).refused).toBeUndefined();
   });
 
   test("plan mode still opens there, because it executes nothing it drafts", async () => {

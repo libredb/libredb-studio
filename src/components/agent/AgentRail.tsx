@@ -36,6 +36,7 @@ import {
   type AgentRunWorkflowReading,
   type AgentRunWorkflowSource,
   type AgentRunWorkflowType,
+  type AgentThreadContext,
 } from "@/lib/agent/types";
 /*
   Type-only, and deliberately so: `workflow-classifier.ts` imports the AI SDK and the
@@ -64,7 +65,7 @@ import {
   describeFailureReason,
 } from "./timeline";
 import type { AgentPrefillRequest } from "./use-agent-prefill";
-import { useAgentRun } from "./use-agent-run";
+import { useAgentRun, type AgentStartRefusalCode } from "./use-agent-run";
 
 /**
  * The standalone agent rail (#329 T10a).
@@ -344,6 +345,103 @@ function refusalActionText(planModeOffered: boolean, streamingDisproved: boolean
     return "This endpoint answered without streaming, and plan mode reads the same stream, so it would produce nothing here either. A different model, or an endpoint that streams, is what gets an answer.";
   }
   return "A different model, one that passes the probe, is what gets a run that reads the database.";
+}
+
+/** The card's own paragraph, pointed at by the error line's `aria-describedby`. */
+const ENGINE_UNSUPPORTED_REASON_ID = "agent-engine-unsupported-reason";
+
+/**
+ * Typed rather than compared inline, so the comparison below is checked against the
+ * hook's admit list: a code renamed there stops compiling here instead of silently
+ * matching nothing and restoring the duplicated paragraph.
+ */
+const ENGINE_UNSUPPORTED_CODE: AgentStartRefusalCode = "engine-unsupported";
+
+/**
+ * A refused start, said in the register an error line owes: what happened to the REQUEST,
+ * and a pointer to the explanation the panel is already showing (B80).
+ *
+ * It states no engine fact of its own on purpose. The card above is the one author of
+ * that fact - it is `posture.ts`, verbatim - and a third phrasing beside it is the defect
+ * this replaces, not a fix for it.
+ *
+ * Measured in Chrome on 2026-08-27: the paragraph is 406 characters, and a refused start
+ * put it on screen twice - once as the card's standing explanation and once as the
+ * outcome of the action just taken. Twice VISIBLY, which is the count this removes one
+ * from: `SafetyStrip` renders a third copy in `agent-safety-claim` on every render, and
+ * that one stays. It is `sr-only` until the ⓘ is opened and is the mode pill's
+ * `aria-describedby` target, so it is a description rather than a reading - but it IS in
+ * the accessibility tree, so a screen-reader user meets the paragraph twice at the moment
+ * of refusal even now, as the description of the mode pill and as the card the error line
+ * points at. That is the trade: "the notice above" is meaningless without a pointer, and
+ * a pointer at a paragraph is what makes the short line honest.
+ */
+const ENGINE_REFUSAL_CONSEQUENCE = "No run was opened. The notice above says why, and what still runs on this engine.";
+
+/** Every reason the conversation strip has a sentence for, the rail's own included. */
+type ThreadDeclineReason = NonNullable<AgentThreadContext["declined"]> | "connection-dropped";
+
+/**
+ * Which sentence the conversation strip says, and `null` when it says nothing.
+ *
+ * An exhaustive `switch` with NO `default`, and both halves of that are load-bearing.
+ * The declared `string | null` return means a reason added to
+ * `AgentThreadContext.declined` with no case here at all fails `bun run typecheck`
+ * (TS2366, measured in-tree on a fifth member) instead of falling through to whichever
+ * arm happened to be last. Each arm being its own line then means an arm no test drives
+ * fails the 100% line gate.
+ *
+ * Neither gate covers the fifth reason FOLDED onto an existing arm, and that is the
+ * likely shape: a bare `case` label adds no executable line, so `typecheck` passes, the
+ * line gate reads 100%, and the new code renders a sentence no test has ever seen
+ * (measured 2026-08-27 — `"rotated"` folded onto the shared `unavailable`/`error`
+ * return: typecheck clean, 254 pass, this file still 100.00% lines). What closes that is
+ * in the test file: `DECLINE_SENTENCES` is a `Record` over the union, so a member with no
+ * entry is a TS2741 there whatever arm it is folded onto.
+ *
+ * The four arms were one nested ternary until T7 (SonarCloud `typescript:S3358`), and
+ * the cosmetic complaint was not the finding: a single covered line covered all four, so
+ * the gate read 100% while the fourth sentence's only assertion was a two-word
+ * `toContain` riding on a test about `previousRunId`. A `default` clause would take the
+ * TS2366 enforcement away again, so there is none, and `typescript:S131` on this switch
+ * is to be argued down rather than satisfied.
+ *
+ * The rail's own reason wins, because it is the specific one: a connection the user
+ * moved is deliberate and correct, while the server's `unavailable` collapses five
+ * causes it may not tell apart.
+ */
+function threadDeclineNotice(input: {
+  readonly connectionDropped: boolean;
+  readonly declined: AgentThreadContext["declined"];
+}): string | null {
+  const reason: ThreadDeclineReason | undefined = input.connectionDropped ? "connection-dropped" : input.declined;
+  if (reason === undefined) return null;
+  switch (reason) {
+    case "connection-dropped":
+      return "Connection changed, so this question started a new conversation.";
+    case "disabled":
+      return "Conversation context is switched off on this server, so every question starts on its own.";
+    /*
+      Says what the server measured and no more. What it compared is the connection's
+      fingerprint - server, database, role, tunnel - so the copy says "re-pointed" rather
+      than naming the database, which is only one of the four things that can have moved.
+
+      The second half is scope, and it is scope because the decline is a ONE-QUESTION
+      event: the route writes the CURRENT identity onto the run it opens here
+      (`route.ts`, the `connectionIdentity` field of the `start` call), and an ordinary
+      follow-up continues THAT run (`continueTarget` in the component below), whose
+      identity matches - so the next question carries normally. An earlier draft promised
+      the opposite, that the decline persists until the connection is pointed back, and
+      it was false in both directions: nothing keeps declining, and pointing back does
+      not restore the old conversation either, because by then the run this question
+      opened is the one being followed (#512).
+    */
+    case "repointed":
+      return "This connection was re-pointed after the earlier step ran, so this question started a new conversation. Follow-ups from here continue on the connection as it points now.";
+    case "unavailable":
+    case "error":
+      return "The earlier step could not be carried into this question, so it started on its own.";
+  }
 }
 
 /**
@@ -1023,6 +1121,12 @@ export function AgentRail({
   // route, so what the strip renders is what was recorded on the run.
   const threadSteps = run.thread?.steps ?? [];
   const threadDeclined = run.thread?.declined;
+  /*
+    Computed here rather than inside the JSX guard below, and that is a coverage
+    decision as much as a readability one: under the guard, `threadDeclineNotice`'s
+    `return null` line would be unreachable and would sit uncovered forever (T7).
+  */
+  const declineNotice = threadDeclineNotice({ connectionDropped, declined: threadDeclined });
 
   /**
    * The objective the OPEN run was opened with.
@@ -1750,6 +1854,24 @@ export function AgentRail({
     mode === "agent" && connectionType !== null && !AGENT_EXECUTION_ENGINES.includes(connectionType);
 
   /*
+    Whether the amber card above is ALREADY saying what the refused start would say, which
+    is the only condition under which the error line may say less (B80).
+
+    Both halves are load-bearing. The code is what makes this the engine's refusal rather
+    than one of the route's other `400`s - the mode validation, an unresolvable connection,
+    the `autoExecute` cross-check - each of which carries a sentence that is the only thing
+    this surface has to tell the user what went wrong. (The unresolvable connection also
+    carries a `code`, because it is raised below the route and answered by the shared error
+    mapper - but it is a code about configuration, not one this rail has words for, so the
+    sentence is still all it can say.) And `engineUnsupported` is what makes the pointer
+    true: the toggle stays live through a refusal, the card's own Switch to Plan
+    unmounts it, and the host may re-point `connectionType` - in every one of those the
+    line goes back to carrying the server's whole paragraph, which is then the only copy
+    on screen.
+  */
+  const engineRefusalExplained: boolean = run.errorCode === ENGINE_UNSUPPORTED_CODE && engineUnsupported;
+
+  /*
     The run's scaffolding, folded away (item 7 of the redesign).
 
     Three entries of every run say only that it began: the header, the drive starting and
@@ -2193,7 +2315,7 @@ export function AgentRail({
           `unavailable` (#512) — and the step list is the run's own
           header.
         */}
-        {(threadSteps.length > 0 || threadDeclined !== undefined || connectionDropped) && (
+        {(threadSteps.length > 0 || declineNotice !== null) && (
           <div data-testid="agent-thread" className="mt-2 text-[0.625rem] text-fg-muted">
             {threadSteps.length > 0 && (
               <>
@@ -2231,33 +2353,9 @@ export function AgentRail({
                 </button>
               </p>
             )}
-            {(threadDeclined !== undefined || connectionDropped) && (
+            {declineNotice !== null && (
               <p data-testid="agent-thread-notice" className="mt-1 text-amber-400/80">
-                {connectionDropped
-                  ? "Connection changed, so this question started a new conversation."
-                  : threadDeclined === "disabled"
-                    ? "Conversation context is switched off on this server, so every question starts on its own."
-                    : threadDeclined === "repointed"
-                      ? /*
-                          Says what the server measured and no more. What it compared is the
-                          connection's fingerprint - server, database, role, tunnel - so the
-                          copy says "re-pointed" rather than naming the database, which is
-                          only one of the four things that can have moved.
-
-                          The second half is scope, and it is scope because the decline is a
-                          ONE-QUESTION event: the route writes the CURRENT identity onto the
-                          run it opens here (`route.ts`, the `connectionIdentity` field of the
-                          `start` call), and an ordinary follow-up continues THAT run
-                          (`continueTarget` above), whose identity matches - so the next
-                          question carries normally. An earlier draft promised the opposite,
-                          that the decline persists until the connection is pointed back, and
-                          it was false in both directions: nothing keeps declining, and
-                          pointing back does not restore the old conversation either, because
-                          by then the run this question opened is the one being followed
-                          (#512).
-                        */
-                        "This connection was re-pointed after the earlier step ran, so this question started a new conversation. Follow-ups from here continue on the connection as it points now."
-                      : "The earlier step could not be carried into this question, so it started on its own."}
+                {declineNotice}
               </p>
             )}
           </div>
@@ -2326,8 +2424,10 @@ export function AgentRail({
           The facts are the posture's, so this card invents nothing: the engines that DO
           have one are named from `AGENT_EXECUTION_ENGINES` rather than typed, the two
           ways forward are the two that are actually open — plan mode drafts here, and the
-          operations workflow sends no statement at all — and the run would end
-          `engine-unsupported` before its first statement.
+          operations workflow sends no statement at all — and no run would open at all.
+          (It used to say the run would END `engine-unsupported` before its first
+          statement, which was true until #512 moved the refusal from the drive to the
+          route: the start is now answered `400` and no run id exists.)
 
           It does not gate Start, and `canStart` above is where that is visible: the
           refusal belongs to the provider factory, this is a notice about it, and one
@@ -2343,7 +2443,11 @@ export function AgentRail({
               <TriangleAlert strokeWidth={1.5} className="mt-px w-3 h-3 shrink-0" aria-hidden="true" />
               {selectionPosture.title}
             </p>
-            <p data-testid="agent-engine-unsupported-reason" className="text-[0.625rem] text-amber-300/90">
+            <p
+              id={ENGINE_UNSUPPORTED_REASON_ID}
+              data-testid="agent-engine-unsupported-reason"
+              className="text-[0.625rem] text-amber-300/90"
+            >
               {selectionPosture.body}
             </p>
             <button
@@ -2496,8 +2600,18 @@ export function AgentRail({
         )}
 
         {run.error !== null && (
-          <p role="alert" data-testid="agent-error" className="mt-2 text-xs text-red-400">
-            {run.error}
+          <p
+            role="alert"
+            data-testid="agent-error"
+            className="mt-2 text-xs text-red-400"
+            /*
+              "The notice above" is a positional claim, and a positional claim is false for
+              a reader who is not looking at the panel. Set on exactly the branch where the
+              target exists, so it never points at a node that has unmounted.
+            */
+            {...(engineRefusalExplained ? { "aria-describedby": ENGINE_UNSUPPORTED_REASON_ID } : {})}
+          >
+            {engineRefusalExplained ? ENGINE_REFUSAL_CONSEQUENCE : run.error}
           </p>
         )}
       </div>

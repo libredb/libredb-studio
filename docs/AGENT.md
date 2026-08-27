@@ -1598,7 +1598,7 @@ mid-run (B9).
 | --- | --- | --- |
 | `statementTimeoutMs` | 10 s | Per statement, clamped further by the run deadline. |
 | `maxResultRows` / `maxResultBytes` | 200 / 256 KiB | Compared after the driver has materialised the rows, so an oversized read is refused but still paid for at the database. |
-| `maxConcurrentExecutions` | 1 | The loop is sequential; a run cannot fan out. |
+| `maxConcurrentExecutions` | 1 | The loop is sequential; a run cannot fan out — and a second consequence rides on the same 1: a failed statement's recorded span is a DELTA over the run's charged total, so an execution in flight alongside it would have its time attributed to whichever one failed. |
 | One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. Not per workflow: how long one request may hang is a property of the transport, not of the question. |
 | Repair attempts | 3 | Statements that failed **at the database**. |
 
@@ -2445,15 +2445,9 @@ the role's own grants are the whole boundary (A3).
 - **B10** — no token budget is enforced, so the meter reports none.
 - **B11** — the rail can stop a run but cannot pause or resume one.
 - **B13** — three spends the ledger never records, so the meter reads low.
-- **B77** — the curated health reading reports `slowQueryCount` off a capped list, so on MySQL it
-  saturates at the limit and the rows behind it are Studio's own introspection traffic.
-- **B78** — a failed statement's recorded span is a delta, and what makes the subtraction
-  unambiguous is one frozen concurrency constant that no test guards.
 - **B79** — the re-pointed decline has never been reached from the UI: in the default storage mode
   the only server-held connections are the seeds, and editing a seed makes it browser-local, which
   the rail refuses before any thread check.
-- **B80** — the engine refusal shows the posture's whole paragraph in the error line while the
-  pre-start card two elements above is showing the same one.
 - **B15** — a run's stored results are released when it ends, so a report's citations can outlive its
   rows.
 - **B16** — the opt-in `@workflow/world-postgres` backend is not present in the standalone payload,

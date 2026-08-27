@@ -780,6 +780,46 @@ describe("MongoDBProvider", () => {
       expect(health.cacheHitRatio).toBe("0.0%");
     });
 
+    test("a health read that failed entirely leaves activeConnections absent, and still resolves", async () => {
+      // The outer catch is deliberate: `POST /api/db/health` serialises whatever
+      // `getHealth()` resolves with, and the admin fleet-health row reads `healthy`
+      // from a resolved read - a rethrow here would turn both into an error for a
+      // server that is up (the health-gate lockout class). What it must NOT do is
+      // resolve with `activeConnections: 0`, because nothing was read: the agent's
+      // curated health reading forwards that key to the model as a measurement.
+      mockServerStatus = () => {
+        throw new Error("not authorized on admin to execute command { serverStatus: 1 }");
+      };
+      const health = await provider.getHealth();
+
+      expect("activeConnections" in health).toBe(false);
+      // Still a resolved HealthInfo, so the route keeps answering 200.
+      expect(health.databaseSize).toBe("N/A");
+      expect(health.cacheHitRatio).toBe("N/A");
+    });
+
+    test("a server publishing no connections section leaves activeConnections absent", async () => {
+      // An API-compatible service, or any deployment whose serverStatus answers
+      // without the section - `connections` is a network-layer field, so unlike
+      // `wiredTiger` its absence is not tied to the storage engine, and which
+      // deployments omit it is not measured here. `connections?.current || 0` read
+      // that as zero open connections; the figure was never published.
+      mockServerStatus = () => ({ uptime: 86400 });
+      const health = await provider.getHealth();
+
+      expect("activeConnections" in health).toBe(false);
+    });
+
+    test("a server with zero open connections keeps its measured zero", async () => {
+      // The anti-vacuity twin of the two tests above. Absence must never be spelled
+      // with a falsy test (`activeConnections || undefined`): 0 here is a reading.
+      mockServerStatus = () => ({ connections: { current: 0, available: 100 }, uptime: 86400 });
+      const health = await provider.getHealth();
+
+      expect("activeConnections" in health).toBe(true);
+      expect(health.activeConnections).toBe(0);
+    });
+
     test("maps in-progress operations to active sessions", async () => {
       mockCurrentOps = [
         {

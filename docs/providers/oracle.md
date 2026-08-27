@@ -185,9 +185,12 @@ PEM rather than three options.
 ### 3.6 Privilege-resilient monitoring
 
 Oracle monitoring reads `V$` dynamic-performance views, which require privileges a typical app user
-may lack. Every monitoring sub-query is wrapped in its own try/catch and degrades to a default
-(`N/A`, `0`, or `[]`) rather than failing the whole call — so the dashboard still renders for a
-low-privilege user, just with gaps.
+may lack. Every monitoring sub-query is wrapped in its own try/catch and degrades rather than failing
+the whole call — so the dashboard still renders for a low-privilege user, just with gaps. The default
+it degrades to is `N/A` or `[]` where the shape has a place to say "not measured", and — in the
+health reading, where a number would otherwise be invented — **nothing at all**:
+`getHealth().activeConnections` is omitted rather than reported as `0`
+([§7.2](#72-when-the-connection-count-is-not-measurable)).
 
 ---
 
@@ -755,7 +758,7 @@ sub-query is independently privilege-guarded ([§3.6](#36-privilege-resilient-mo
 
 | Method | Primary source | Notes / degradation |
 |--------|----------------|---------------------|
-| `getHealth()` | `V$SESSION`, `USER_SEGMENTS`, `V$SYSSTAT`, `V$SQL` | each block guarded → `N/A`/`0`/`[]` if no privilege; `cacheHitRatio` is `N/A`, never `0%` ([§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)) |
+| `getHealth()` | `V$SESSION`, `USER_SEGMENTS`, `V$SYSSTAT`, `V$SQL` | each block guarded → absent/`N/A`/`[]` if no privilege; `activeConnections` is **omitted**, never `0` ([§7.2](#72-when-the-connection-count-is-not-measurable)); `cacheHitRatio` is `N/A`, never `0%` ([§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)) |
 | `getOverview()` | `V$VERSION`, `V$INSTANCE`, `V$SESSION`, `V$PARAMETER`, `USER_SEGMENTS`, `USER_TABLES`/`USER_INDEXES` | each guarded |
 | `getPerformanceMetrics()` | `V$SYSSTAT` | **only** `cacheHitRatio`, and it is **omitted** when `V$SYSSTAT` cannot be read (no QPS/deadlocks/buffer-pool) — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `V$SQL` (top-N by `ELAPSED_TIME`) | `sharedBlksHit`=`BUFFER_GETS`, `sharedBlksRead`=`DISK_READS`; `[]` on failure |
@@ -796,6 +799,29 @@ tuning", so a least-privilege application user saw a cache fault Oracle never re
 under a second name, which the Performance tab drew and rated as an independent gauge. Oracle does
 publish pool occupancy, in `V$BUFFER_POOL_STATISTICS`/`V$SGASTAT`, but this method does not query
 them.
+
+### 7.2 When the connection count is not measurable
+
+The health connection count is `SELECT COUNT(*) FROM V$SESSION WHERE STATUS = 'ACTIVE'`, so it needs
+the same `V_$` grant everything else here does. The refusal measured 2026-08-23 on Oracle AI Database
+26ai Free, against a user granted only `CREATE SESSION`, was on the cache-ratio view
+([§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)) - `V_$SESSION` answers in the same shape:
+
+```
+ORA-00942: table or view "SYS"."V_$SYSSTAT" does not exist
+```
+
+`HealthInfo.activeConnections` is **optional** for this case, so the refused count is **omitted** from
+`getHealth()` - the key is absent from the object and from the `POST /api/db/health` body, and the
+admin fleet-health row drops its `N conn` figure rather than printing `0 conn`
+([`src/components/admin/tabs/OverviewTab.tsx`](../../src/components/admin/tabs/OverviewTab.tsx)).
+It used to be initialised to `0` and the guard left that `0` standing, which mattered most to the
+agent: its curated `health` reading forwards this figure to the model, so `ORA-00942` arrived as a
+*measured* "no active sessions" about an instance Oracle had said nothing about.
+
+An instance that really has no ACTIVE session measures `0`, and that `0` is a reading: it is kept and
+reported as `0`. The absence is spelled `measuredNumber(...)` plus a conditional spread, never
+`|| undefined`.
 
 ---
 
@@ -1076,7 +1102,7 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 - **`kill` and full monitoring require elevated privileges.** `ALTER SYSTEM KILL SESSION` needs the
   `ALTER SYSTEM` privilege; the `V$` monitoring views need `SELECT` on the `V_$` views. A
   least-privilege application user can neither kill sessions nor read most monitoring (the queries
-  degrade to `N/A`/`0`/`[]`).
+  degrade to absent/`N/A`/`[]`).
 - **Module-global driver settings.** The constructor sets `oracledb.outFormat`/`autoCommit` on the
   shared `oracledb` module singleton (not per-pool/connection) — fine for a single embedding, but a
   process-wide side effect to be aware of if Oracle is ever used alongside another `oracledb` consumer.
@@ -1094,8 +1120,9 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   counters aren't read here.
 - **Row counts (`NUM_ROWS`) are optimizer estimates** populated by `DBMS_STATS`; they can be stale
   or `NULL` until stats are gathered.
-- **Monitoring depends on `V$` privileges.** A low-privilege app user silently gets `N/A`/`0`/`[]`
-  for the views it can't read. `getPerformanceMetrics()` reports only the cache-hit ratio (no QPS,
+- **Monitoring depends on `V$` privileges.** A low-privilege app user silently gets `N/A`/`[]` for the
+  views it can't read, and no `activeConnections` at all in the health reading
+  ([§7.2](#72-when-the-connection-count-is-not-measurable)). `getPerformanceMetrics()` reports only the cache-hit ratio (no QPS,
   deadlocks, or buffer-pool usage), and **omits even that** when `V$SYSSTAT` is unreadable rather
   than substituting a figure — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable).
 - **No two-phase schema loading** — `/api/db/schema/list` falls back to the full `getSchema()`.

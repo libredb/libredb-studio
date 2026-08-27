@@ -261,13 +261,15 @@ Detailed health check for a specific database connection.
 ```json
 {
   "error": "Connection failed: timeout",
-  "activeConnections": 0,
-  "databaseSize": "N/A",
-  "cacheHitRatio": "N/A",
-  "slowQueries": [],
-  "activeSessions": []
+  "code": "CONNECTION_ERROR",
+  "statusCode": 503
 }
 ```
+
+> A failed health read answers the shared error shape, NOT a `HealthInfo` filled with zeros. This
+> block used to show `"activeConnections": 0` beside `"error"`, which is a fabricated measurement in
+> a document other people build clients against: the route's failure path is
+> `createErrorResponse` (`src/lib/api/errors.ts`) and it never composes a reading.
 
 ---
 
@@ -1014,7 +1016,10 @@ could arrive twice.
 { "error": "mode must be \"planning\" or \"agent\"" }
 { "error": "An agent run needs a server-resolvable connectionId; an inline connection cannot be resumed" }
 { "error": "previousRunId must be a non-empty string when provided" }
-{ "error": "Agent mode executes only where the provider implements a database-native read-only statement path — PostgreSQL and SQLite. On MySQL a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine." }
+{
+  "error": "Agent mode executes only where the provider implements a database-native read-only statement path — PostgreSQL and SQLite. On MySQL a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.",
+  "refused": "engine-unsupported"
+}
 
 // 404 Not Found — this server runs no agents
 { "error": "The agent runtime is not enabled on this server" }
@@ -1035,6 +1040,21 @@ could arrive twice.
 > and no run. `operations` is admitted on every engine because it sends no statement at all, and a
 > `planning` run is never refused this way — it executes nothing anywhere. The refusal reads the
 > same fact the provider factory does (`typeof provider.queryReadOnly`), so the two cannot disagree.
+>
+> **It is the only `400` here that carries `refused`**, and the value is `"engine-unsupported"` —
+> the same name the fact travels under as an `AgentRunFailureReason` on a run that ended this way,
+> and the same name in code: both ends of the wire extract that member from the union rather than
+> writing the string, so a rename cannot leave the wire on the old one. Every refusal this route's
+> own validation writes answers with `error` alone, because the message is the only thing that says
+> what went wrong. The connection resolver's `400` is the exception and is worth knowing about: a
+> `connectionId` that is not `seed:`-prefixed answers in the shared error shape — `error` plus
+> `code` (`"CONFIG_ERROR"`) plus `statusCode` — because it is raised below the route and answered by
+> the shared error mapper. The engine refusal is different again because a client may already be
+> showing the same paragraph itself: the studio's agent rail stands an amber card carrying it, so it
+> needs to know WHICH refusal this is in order to answer with the consequence and a pointer instead
+> of a second copy (B80). A client that ignores the field and renders `error` is correct; a client
+> that discriminates on the `400` alone is not, and would relabel a malformed `mode`, or an
+> `autoExecute` asked for on a workflow that presents no answer, as the engine's refusal.
 
 > `422` rather than `400`: the request is well-formed and it is the server's configuration that
 > cannot honour it. Only a **positively established** incapability refuses this way — a bad key, a
@@ -1283,7 +1303,7 @@ catalog entry to answer with.
 
 ```typescript
 interface HealthInfo {
-  activeConnections: number;
+  activeConnections?: number;  // Absent when the engine cannot measure it - never a fabricated 0
   databaseSize: string;
   cacheHitRatio: string;
   slowQueries: SlowQuery[];

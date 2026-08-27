@@ -616,8 +616,9 @@ caller's for the panel), and both map the row through the same `toSlowQueryStats
 for one fact is what drifted, and the copy the health panel used was the one no test ever put in
 front of a server — the mysql2 mock invented a `query` column for any statement over this table, so
 a broken read looked like a working one for as long as it was only mocked. The mysql2 mock in
-`mysql-provider.test.ts` now refuses `sql_text` the way a server does, and one test asserts the
-provider never asks for it.
+`mysql-provider.test.ts` now refuses `sql_text` the way a server does, one test asserts the provider
+never asks for it, and a construction in the mock's single call funnel records any fixture that
+answers such a statement instead of refusing it ([§12.1](#121-how-the-tests-work)).
 
 **An empty list, not an "unavailable" marker, and the reason is that OFF does not raise.** A server
 with `@@performance_schema` = 0 keeps the digest table selectable and answers **0 rows** — measured
@@ -638,10 +639,12 @@ and on that connection `getHealth()` still answered in full (`activeConnections:
 
 **Why the refusal is not carried in this field: on the health path it is dropped.** A refusal must stay
 representable as a refusal (#477), and a row is the one shape it must not take: `calls: 0` is a
-figure nobody took, and the list is *counted* — the agent's curated health reading forwards
+figure nobody took, and the list was *counted* — the agent's curated health reading then forwarded
 `health.slowQueries.length` as `slowQueryCount`
 ([`src/lib/agent/tools.ts`](../../src/lib/agent/tools.ts)), so the invented row told the model
-"1 slow query" about every MySQL-family server.
+"1 slow query" about every MySQL-family server. That projection no longer carries any length, so a
+row invented here would now be silent rather than counted — which is a reason to keep it out, not a
+reason it could come back.
 
 Dropped is the honest word for it, and this paragraph says so rather than naming a carrier the
 reading does not have. `HealthInfo.slowQueries` is a `SlowQuery[]`: no error field, no sibling that carries one, so a
@@ -665,15 +668,18 @@ health line empties, `getSlowQueries()` rejects, and `errors.slowQueries` names 
 `SLOW_QUERIES_BODY_SQL` has no slowness predicate anywhere — its only `WHERE` term is the connected
 schema, "slow" is the *ordering* (`SUM_TIMER_WAIT DESC`), and the health line's `LIMIT` is 5. So on
 any server with five or more digests for the schema, `health.slowQueries.length` is 5 permanently,
-and `slowQueryCount` reports the limit rather than a number of slow statements. Measured 2026-08-27
+and any consumer counting it reads the limit rather than a number of slow statements. Measured 2026-08-27
 on MySQL 26.7.0 (`libredb-mysql`): the digest table held **59 rows** for one connected schema, and
 the five this statement returns for it were **all Studio's own introspection statements** — the
 slow-query read itself first (`avg 79.11ms`, `calls 3`), then the database-size read, `SHOW STATUS
 LIKE ?` and two `PREPARE`s, between 1.15 ms and 7.78 ms. Nothing in that list is slow and none of it
 is the user's workload. Raising the limit would move the saturation point without making the figure a
-count; only a slowness threshold, or a differently named projection, would. The projection lives in
-`src/lib/agent/tools.ts` and is tracked separately — this provider's part is that the cap and the
-missing threshold are stated at
+count; only a slowness threshold, or a differently named projection, would. The agent's curated
+health reading has since stopped projecting the length at all — it declares
+`activeConnections`, `databaseSize` and `cacheHitRatio` only, and the slow-query facts travel on the
+`slow-queries` reading, where the rows are visible
+([`src/lib/agent/tools.ts`](../../src/lib/agent/tools.ts)) — so this provider's part is that the cap
+and the missing threshold are stated at
 [`HEALTH_SLOW_QUERY_LIMIT`](../../src/lib/db/providers/sql/mysql.ts) and pinned by a test that reads
 the statement the health call actually issued.
 
@@ -905,6 +911,40 @@ Performance Schema is off" passed with the fix reverted — it modelled a server
 On top of that, one test asserts independently of any fixture's kindness that no `getHealth()` read
 names `sql_text` at all, and one reads the statement the health call issued to pin its `LIMIT 5` and
 the absence of a slowness predicate.
+
+That corrective was still unpinned, though, and said so: reverting `defaultMockExecute` to its
+unfaithful shape left the suite at 111 pass / 0 fail, because every test that needs the refusal
+installs a dedicated fixture. So the rule now lives where no fixture can opt out of it.
+`UNANSWERABLE_STATEMENTS` is a list of statements no MySQL-family server accepts — one entry today,
+the `sql_text` digest read, and each entry has to be a *measured* refusal, because a rule that
+refuses what a server answers is the same defect with its sign flipped. It is evaluated in
+`recordCall`, the one funnel every fixture in the file goes through (named, delegating and inline
+alike). The match is a co-occurrence over the whole statement, which is wider than the measurement:
+a join of the digest table against `events_statements_current` — which *does* have `SQL_TEXT` —
+would trip it too. Nothing `mysql.ts` emits has that shape, so the over-match is recorded next to
+the rule rather than paid for; the day a statement does, the rule narrows rather than gaining an
+exception. A fixture that *answers* a listed statement is **recorded** rather than thrown at: a
+throw from there would arrive inside `getHealth()`'s per-panel catch as a panel error the test under
+way might legitimately be asserting, which is exactly where the original unfaithfulness did its
+damage. A file-scope `afterEach` — file scope because the file has five top-level `describe`s, and a
+hook inside one would leave four unguarded — drains the recorded violations and fails the single
+test that produced one.
+
+Because `mysql.ts` no longer emits any statement naming `sql_text`, nothing else in the suite can
+make that rule fire, so a `describe` at the end of the file drives it directly: one test installs an
+unfaithful fixture and asserts the violation is recorded, and one installs the shared fixture and
+asserts it *rejects* — which pins `defaultMockExecute`'s fidelity (deleting its refusal branch now
+fails that test by name **and** the file-scope hook) and simultaneously proves the guard's `.then`
+wrapper leaves a rejection a rejection.
+
+Its reach is exactly the rules it carries, and only over statements a test actually sends. Deleting
+`perfSchemaDisabledMockExecute`'s refusal branch, for instance, is **not** caught today: no test
+installs that fixture *and* sends a `sql_text` statement, so nothing asks it the question. The guard
+closes the door on a fixture that lies when asked; it does not interrogate fixtures nobody asks.
+The list stays in this file rather than in `tests/helpers/` until a second engine has a measured
+refusal of its own — the other fourteen provider test files would receive an empty rule list, which
+proves nothing about their fixtures and reads as coverage. That condition is recorded in the list's
+own docblock, where a second engine's implementer will meet it.
 
 And the mock connection answers **both `query` and `execute`**, recording which one each statement
 went through. A mock that only answered `execute` could not tell a statement routed to the text

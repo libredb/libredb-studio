@@ -796,8 +796,19 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
       const healthCacheHitRatio = wiredTigerCacheHitRatio(serverStatus.wiredTiger?.cache);
 
+      // measuredNumber and a conditional spread, not `|| 0`, for the same reason
+      // `HealthInfo.activeConnections` is optional: an API-compatible service - or any
+      // deployment whose serverStatus answers without a `connections` section - publishes
+      // no figure. `connections` is a network-layer field, so unlike `wiredTiger` above
+      // its absence is not tied to the storage engine, and which deployments omit it is
+      // not measured here. The agent's curated health reading forwards this key to
+      // the model (`src/lib/agent/tools.ts` projects it with `?? null`), so a
+      // fabricated 0 told the model a server it could not measure had nothing
+      // connected. A server that really has 0 open connections keeps the 0.
+      const currentConnections = measuredNumber(serverStatus.connections?.current);
+
       return {
-        activeConnections: serverStatus.connections?.current || 0,
+        ...(currentConnections === undefined ? {} : { activeConnections: currentConnections }),
         databaseSize: formatBytes(dbStats.dataSize || 0),
         cacheHitRatio:
           healthCacheHitRatio === undefined
@@ -808,8 +819,13 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       };
     } catch (error) {
       this.logError("getHealth", error);
+      // A resolved HealthInfo on purpose, NOT a rethrow: `POST /api/db/health`
+      // serialises what this resolves with and `POST /api/admin/fleet-health` reads
+      // `healthy` from a read that returned, so rethrowing here would report a server
+      // that is up as an error - the health-gate lockout class. What it must not do is
+      // name a figure: nothing was read, so `activeConnections` is omitted entirely
+      // rather than resolved as a measured 0.
       return {
-        activeConnections: 0,
         databaseSize: "N/A",
         cacheHitRatio: "N/A",
         slowQueries: [{ query: "Error fetching health info", calls: 0, avgTime: "N/A" }],

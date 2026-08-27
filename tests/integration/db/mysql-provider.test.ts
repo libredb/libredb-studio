@@ -33,13 +33,65 @@ let mockExecuteFn: (sql: string, params?: unknown[]) => Promise<[unknown, unknow
 type ProtocolCall = { method: "query" | "execute"; sql: string; params?: unknown[] };
 let protocolCalls: ProtocolCall[] = [];
 
+/**
+ * Statements NO MySQL-family server accepts, and the refusal each one earns. A fixture
+ * that RESOLVES one models a server that does not exist, and every test built on that
+ * fixture is then a test of the mock - which is how the health read asking for
+ * `LEFT(sql_text, 100)` passed 100% line coverage and two reviews (#512).
+ *
+ * Evaluated in `recordCall`, the ONE funnel every fixture in this file goes through -
+ * named, delegating and inline alike - so a fixture added tomorrow cannot opt out of it.
+ *
+ * Each rule is a MEASURED refusal, never a guess: a rule that refuses what a server
+ * answers is the same defect with its sign flipped. `sql_text` is not a column of
+ * `events_statements_summary_by_digest` on any build - 1054 / ER_BAD_FIELD_ERROR /
+ * 42S22 on MySQL 26.7.0, Percona Server 8.4.11-11 and MariaDB 12.3.2, with
+ * `@@performance_schema` 1 and 0 alike (see `sqlTextRefusal()` below and
+ * `docs/providers/mysql.md`).
+ *
+ * The MATCH is wider than that measurement, on purpose and worth knowing: it is a
+ * co-occurrence over the whole statement, so any statement naming the digest table and
+ * `sql_text` anywhere trips it - including one shape a real server WOULD answer, a join
+ * of the digest table against `events_statements_current`, which does have `SQL_TEXT`.
+ * Nothing `mysql.ts` emits has that shape, so the over-match costs nothing today. The
+ * day a statement does, narrow this rule to a `sql_text` reference bound to the digest
+ * table; do not add an exception, which is the sign flipped a second time.
+ *
+ * There is one rule, so this list stays in this file. Lift it to `tests/helpers/` when a
+ * SECOND engine has a measured refusal of its own - not before: the other fourteen
+ * provider test files would receive an empty rule list, which proves nothing about their
+ * fixtures and reads as coverage.
+ */
+const UNANSWERABLE_STATEMENTS: readonly { readonly why: string; readonly matches: (lowered: string) => boolean }[] = [
+  {
+    why: "events_statements_summary_by_digest has no sql_text column (ER_BAD_FIELD_ERROR 1054)",
+    matches: (lowered) => lowered.includes("events_statements_summary_by_digest") && lowered.includes("sql_text"),
+  },
+];
+
+/** A fixture answered a statement a real server refuses. Drained and asserted per test. */
+let fixtureViolations: string[] = [];
+
 function recordCall(
   method: "query" | "execute",
   sql: string,
   params?: unknown[],
 ): Promise<[unknown, unknown[] | undefined]> {
   protocolCalls.push({ method, sql, params });
-  return mockExecuteFn(sql, params);
+  const answered = mockExecuteFn(sql, params);
+  const rule = UNANSWERABLE_STATEMENTS.find((entry) => entry.matches(sql.trim().toLowerCase()));
+  if (rule === undefined) return answered;
+  // RECORDED, not thrown. `getHealth()` catches per panel, so a throw from here would
+  // arrive as a panel error that the test under way may legitimately be asserting - the
+  // unfaithfulness would be swallowed at exactly the place it did its damage. Pushing to
+  // a sink a hook drains keeps the failure attributable to the fixture instead.
+  //
+  // The `.then` also has to leave a rejection alone: a fixture that refuses correctly
+  // must stay refused, which the second test of the guard's own describe pins.
+  return answered.then((value) => {
+    fixtureViolations.push(`${rule.why} - the fixture ANSWERED it: ${sql.trim()}`);
+    return value;
+  });
 }
 
 /** The method the first statement matching `fragment` (case-insensitive) went through. */
@@ -80,6 +132,18 @@ mock.module("mysql2/promise", () => ({
   default: { createPool },
   createPool,
 }));
+
+/**
+ * FILE SCOPE on purpose. This file has five top-level `describe`s and a hook inside one
+ * of them would leave the other four unguarded - the funnel is shared, so its assertion
+ * has to be too. Drains before asserting, so one unfaithful answer fails the one test
+ * that produced it rather than every test after it.
+ */
+afterEach(() => {
+  const violations = fixtureViolations;
+  fixtureViolations = [];
+  expect(violations).toEqual([]);
+});
 
 // Dynamic import AFTER mock is installed
 const { MySQLProvider } = await import("@/lib/db/providers/sql/mysql");
@@ -203,10 +267,11 @@ function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
   // the former `avgTime: "12.5ms"` is gone with it, an invention of the same kind (that
   // alias belonged to the broken health statement, and nothing reads it now).
   //
-  // Routing every digest fixture through the one refusal helper is prophylactic: reverting
-  // this function to its unfaithful shape leaves the suite green, because the tests that
-  // need the refusal use dedicated fixtures. Nothing here can tell whether the shared mock
-  // is honest - `docs/BACKLOG.md` T6.
+  // Routing every digest fixture through the one refusal helper is no longer merely
+  // prophylactic: `UNANSWERABLE_STATEMENTS` records any fixture that ANSWERS this
+  // statement, and the guard's own describe at the end of the file drives that rule with
+  // an unfaithful fixture and then asserts THIS function refuses. So deleting the two
+  // lines below fails a test by name instead of leaving the suite green.
   if (normalized.includes("events_statements_summary_by_digest")) {
     if (normalized.includes("sql_text")) {
       return Promise.reject(sqlTextRefusal());
@@ -945,10 +1010,10 @@ describe("MySQLProvider", () => {
       expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
       expect(health.activeConnections).toBe(5);
       // EMPTY, not a sentence about the Performance Schema: see the slow-query line
-      // section below and the reason recorded next to the read in `mysql.ts`. A row here
-      // is counted
-      // (`slowQueryCount` in the agent's curated health reading), so a sentence
-      // wearing a row's clothes is a fabricated measurement.
+      // section below and the reason recorded next to the read in `mysql.ts`. A sentence
+      // wearing a row's clothes is a fabricated measurement whatever counts it; when this
+      // was written the agent's curated health reading also forwarded the list's length,
+      // and that projection has since been removed (B77).
       expect(health.slowQueries).toEqual([]);
       expect(Array.isArray(health.activeSessions)).toBe(true);
     });
@@ -1031,10 +1096,12 @@ describe("MySQLProvider", () => {
       // statements. There is no slowness predicate anywhere in the statement: the only
       // WHERE term is the connected schema, "slow" is an ORDERING (`SUM_TIMER_WAIT
       // DESC`), and the LIMIT is 5. So on any server with five or more digests for this
-      // schema the list is five rows whatever their times are, and
-      // `health.slowQueries.length` - which the agent's curated health reading forwards
-      // as `slowQueryCount` (src/lib/agent/tools.ts) - reports 5 forever. It saturates at
-      // the cap; it is not a count, and no threshold makes a member of it "slow".
+      // schema the list is five rows whatever their times are, so `health.slowQueries.length`
+      // reports 5 forever. It saturates at the cap; it is not a count, and no threshold
+      // makes a member of it "slow". The agent's curated health reading used to forward
+      // that length to the model and no longer projects any length at all (B77), which is
+      // why this stays pinned here: the cap is a property of the statement, not of the
+      // consumer that happened to count it.
       expect(normalized).toContain("order by sum_timer_wait desc");
       expect(normalized.endsWith("limit 5;")).toBe(true);
       expect(normalized.split("where")[1]?.split("order by")[0]?.trim()).toBe("schema_name = ?");
@@ -2365,5 +2432,43 @@ describe("MySQLProvider wire protocol", () => {
     await running;
 
     expect(methodFor("kill query 42")).toBe("query");
+  });
+});
+
+// ============================================================================
+// The fixture-fidelity guard itself
+// ============================================================================
+
+/**
+ * `UNANSWERABLE_STATEMENTS` is a construction, and a construction nothing drives is the
+ * `toBeNull()`-after-a-testid-rename shape: `mysql.ts` no longer emits any statement
+ * naming `sql_text`, so no other test in this file can make the guard fire. These two
+ * do it directly - one with an unfaithful fixture, one with the shared one.
+ */
+describe("the mysql2 fixture-fidelity guard", () => {
+  const SQL_TEXT_DIGEST_READ =
+    "SELECT LEFT(sql_text, 100) as query, COUNT_STAR as calls FROM performance_schema.events_statements_summary_by_digest WHERE SCHEMA_NAME = ?";
+
+  test("an unfaithful fixture that answers the sql_text digest read is recorded as a violation", async () => {
+    mockExecuteFn = () => Promise.resolve([[{ query: "SELECT * FROM users", calls: "100" }], []]);
+
+    await mockConnection.execute(SQL_TEXT_DIGEST_READ, ["testdb"]);
+
+    expect(fixtureViolations).toHaveLength(1);
+    expect(fixtureViolations[0]).toContain("no sql_text column");
+    expect(fixtureViolations[0]).toContain("ANSWERED it");
+    // Drained here so the file-scope afterEach does not fail this test for the very
+    // violation it exists to produce.
+    fixtureViolations = [];
+  });
+
+  test("the SHARED fixture refuses that statement, so the guard has nothing to record", async () => {
+    mockExecuteFn = defaultMockExecute;
+
+    // `rejects` is doing two jobs: it pins the shared fixture's fidelity (reverting it
+    // to the shape that answered a row fails here), and it proves the guard's `.then`
+    // wrapper leaves a rejection a rejection rather than resolving it.
+    await expect(mockConnection.execute(SQL_TEXT_DIGEST_READ, ["testdb"])).rejects.toThrow(/Unknown column 'sql_text'/);
+    expect(fixtureViolations).toEqual([]);
   });
 });

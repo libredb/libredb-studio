@@ -1025,7 +1025,7 @@ then the provider, against both servers:
 | `getOverview` | `Apache Cassandra 5.0.9`, uptime `12.49h`, 23 tables, 1 index, connections 1 | `Apache Cassandra 3.0.8`, uptime `12.50h`, 60 tables, 0 indexes, `activeConnections` key **absent** |
 | `getPerformanceMetrics` | `{ cacheHitRatio: 86.97 }` | `{}` |
 | `getActiveSessions` | 1 running statement | `[]` |
-| `getHealth` | `cacheHitRatio` `86.97%`, connections 1 | `cacheHitRatio` `N/A`, no connections key, no sessions |
+| `getHealth` | `cacheHitRatio` `86.97%`, connections 1 | `cacheHitRatio` `N/A`, `activeConnections` with no value, no sessions |
 | `getMonitoringData` | answers with data | answers, `performance: {}` |
 | `getSchema` | answers | answers |
 | `system_views` statements sent per monitoring refresh | 3 | **0** |
@@ -1047,7 +1047,7 @@ converted to report absence ([§7.4](#74-the-panels-that-report-nothing--and-how
 | `getActiveSessions` | 1 running statement | **refused**, same sentence naming `system_views.queries` |
 | `getTableStats` / `getIndexStats` / `getStorageStats` | **refused** with their own reasons | **refused**, identically — the cause is the engine, not the build |
 | `getSlowQueries` | `[]` | `[]` — the panel whose label already carries the sentence |
-| `getHealth` | `cacheHitRatio 87.19%`, 1 connection, 6 sessions | answers: `cacheHitRatio N/A`, no connections key, no sessions |
+| `getHealth` | `cacheHitRatio 87.19%`, 1 connection, 6 sessions | answers: `cacheHitRatio N/A`, `activeConnections` with no value, no sessions |
 | `getMonitoringData` panels PRESENT | `overview`, `performance`, `slowQueries`, `activeSessions` | `overview`, `slowQueries` |
 | `getMonitoringData` `errors` keys | `tables`, `indexes`, `storage` | `performance`, `activeSessions`, `tables`, `indexes`, `storage` |
 
@@ -1069,9 +1069,14 @@ too.** `DatabaseOverview.activeConnections` is optional, and this provider omits
 send a fabricated 0 on a build with no `system_views` keyspace — the same omission a permission-denied
 role has always needed and, until that change, never got either. `OverviewTab` renders the absence as "not
 published" instead of "0 connections". `HealthInfo.activeConnections` is optional too now: `getHealth`
-composes it straight from the overview with no `?? 0` seam, so the omission survives to the agent's
+composes it straight from the overview with no `?? 0` seam, so the absence survives to the agent's
 curated health reading (`src/lib/agent/tools.ts`), which reports it to the model as `null` rather than
-telling an LLM "0 connections" about a server it could not measure.
+telling an LLM "0 connections" about a server it could not measure. Note the exact shape this
+provider produces differs from mssql/oracle/mongodb, which spread the key conditionally: `getOverview`
+omits `activeConnections` entirely, while `getHealth` writes the key with the value `undefined`. Every
+consumer discriminates on `undefined` rather than on key presence, and `JSON.stringify` drops such a
+key, so the two are indistinguishable to the API body, the fleet-health chip and the agent — but a
+reader inspecting the object with `in` will find the key on `getHealth()`.
 
 What works:
 

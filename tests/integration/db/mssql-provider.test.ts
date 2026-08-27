@@ -1180,6 +1180,53 @@ describe("MSSQLProvider", () => {
       expect(health.activeSessions).toBeArray();
     });
 
+    test("a denied session DMV leaves activeConnections absent, never a measured 0", async () => {
+      // `sys.dm_exec_sessions` needs VIEW SERVER STATE - the sibling of the grant whose
+      // refusal WAS measured here, 2026-08-23 on SQL Server 2022 CU26 against a login
+      // with nothing beyond CONNECT (`Msg 300 ... VIEW SERVER PERFORMANCE STATE
+      // permission was denied on object 'server', database 'master'`, the
+      // getPerformanceMetrics test below). The Msg 300 shape is the same; only the
+      // permission named differs, so this fixture reproduces the shape, not a quote.
+      // The block was guarded, but `let activeConnections = 0` then published the
+      // denial as a server with no connections open - and `HealthInfo` is the shape
+      // the agent's curated health reading forwards to the model, so that zero was a
+      // measurement the model could cite about a figure SQL Server never gave.
+      mockQueryFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("SYS.DM_EXEC_SESSIONS") && upper.includes("COUNT")) {
+          throw new Error("VIEW SERVER STATE permission was denied on object 'server', database 'master'");
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      expect("activeConnections" in health).toBe(false);
+      // Only the denied block goes absent; the rest of the reading is unaffected.
+      expect(health.cacheHitRatio).toBe("99.5%");
+      expect(health.activeSessions).toBeArray();
+    });
+
+    test("a server with no user sessions keeps its measured zero connections", async () => {
+      // The anti-vacuity twin of the test above. Absence must never be spelled with a
+      // falsy test (`activeConnections || undefined`): an idle instance measures 0 and
+      // that 0 is a reading, not a refusal.
+      mockQueryFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("SYS.DM_EXEC_SESSIONS") && upper.includes("COUNT")) {
+          return { recordset: [{ cnt: 0 }], rowsAffected: [1] };
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      expect("activeConnections" in health).toBe(true);
+      expect(health.activeConnections).toBe(0);
+    });
+
     test("reports an unreadable cache hit ratio as unavailable, not as 0%", async () => {
       // `${recordset[0]?.hit_ratio || 0}%` published "0%" for a NULL, and the
       // Overview card rates 0 as "Needs tuning" - a fault SQL Server never

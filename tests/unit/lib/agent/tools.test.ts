@@ -1561,6 +1561,73 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
     expect(outcome.refusal.elapsedMs).not.toBe(h.tracker.usage("run-1").totalElapsedMs);
   });
 
+  /**
+   * The premise `chargedBeforeMs` rests on, made observable (`docs/BACKLOG.md` B78).
+   *
+   * `refusal.elapsedMs` is a delta over the tracker's RUNNING TOTAL — read in `tools.ts`
+   * before the call and subtracted after it — so it is this execution's own span only
+   * while nothing else can charge the same run inside that window. The tracker has no
+   * ceiling of its own (`budgets.ts`: `beginExecution` increments and `endExecution`
+   * adds, with no notion of WHO is charging), so the sibling charge below is exactly
+   * what a policy-admitted second execution would do to it; and the policy evaluation
+   * that would refuse a second one happens BEFORE `invoke` (`execution.ts` evaluates,
+   * then calls `beginExecution`, then `invoke`), which is why a sibling starting
+   * mid-span is never seen by the gate.
+   *
+   * What keeps that impossible is one frozen number: `maxConcurrentExecutions: 1`
+   * (`execution-policy.ts`), enforced by the `CONCURRENCY_BUDGET_EXCEEDED` deny in
+   * `policy.ts`. The loop at the end of this test is the guard on it, and the arithmetic
+   * above is what it guards: raise the ceiling and this figure becomes a sum over
+   * whatever settled alongside, which the rail folds into its database-time gauge as if
+   * one statement had spent it. `execution-policy.test.ts` already asserts the same
+   * value under "runs one statement at a time: the loop is sequential" — a different
+   * claim, and one a reader who decided the loop need not be sequential would relax
+   * without ever learning what it costs this subtraction.
+   *
+   * The clock hands out 1_000 -> 1_040 for the read that settles and 1_040 -> 1_045 for
+   * the one that fails (`executeAuditedOperation` reads it exactly twice per
+   * execution), so the honest span of the failing execution is 5 ms and the 505 below is
+   * 5 plus the sibling's 500 — the misattribution, in one number.
+   */
+  test("a sibling execution's charge lands in the failed statement's span, which only maxConcurrentExecutions: 1 rules out", async () => {
+    let attempt = 0;
+    let sibling: ExecutionBudgetTracker | undefined;
+    const h = harness({ clock: stubClock(1_000, 1_040, 1_040, 1_045) }, async () => {
+      attempt += 1;
+      if (attempt === 1) return queryResult();
+      if (sibling === undefined) throw new Error("the sibling tracker was never wired up");
+      // What a concurrent execution of the same run does to the shared tracker.
+      sibling.beginExecution("run-1");
+      sibling.endExecution("run-1", { statements: 1, elapsedMs: 500 });
+      throw new QueryError('column "ordr_id" does not exist', "postgres", "SELECT ordr_id FROM orders");
+    });
+    sibling = h.tracker;
+
+    const settled = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+    if (settled.kind !== "completed") throw new Error(`expected completed, got ${settled.kind}`);
+    // Non-zero, so the subtraction below is not trivially the running total.
+    expect(h.tracker.usage("run-1").totalElapsedMs).toBe(40);
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT ordr_id FROM orders" });
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+      throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
+    }
+
+    // 40 + 500 + 5. The delta is 545 - 40 = 505, and 500 of it is the sibling's.
+    expect(h.tracker.usage("run-1").totalElapsedMs).toBe(545);
+    expect(outcome.refusal.elapsedMs).toBe(505);
+    // The figure this execution actually spent, and did not get credited with.
+    expect(outcome.refusal.elapsedMs).not.toBe(5);
+
+    // THE GUARD. Raising this is what makes the 505 above reachable in production.
+    for (const workflow of WORKFLOW_TYPES) {
+      expect(
+        AGENT_WORKFLOW_BUDGETS[workflow].policy.budgets.maxConcurrentExecutions,
+        `${workflow}: raising this makes refusal.elapsedMs a sum over concurrent executions — see this test's body`,
+      ).toBe(1);
+    }
+  });
+
   test("the row budget refusal names the LIMIT to use, for a model that earned the advice", async () => {
     /*
       `database-error` is the largest refusal in the system by nearly four to one — 368 against
@@ -3219,20 +3286,78 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     });
   });
 
-  test("health is projected as ONE row of figures, and never as a second copy of the other readings", async () => {
+  test("health declares only the figures the engine measured", async () => {
     // `HealthInfo` nests its own slow-query and session lists, and both have their own
     // kind. Projecting them here would give one fact two shapes and two ways to cite it.
+    // The exact array is the assertion rather than a `not.toContain`: a negative alone
+    // would keep passing forever after any rename of the field it names.
     const h = curatedHarness();
 
     const outcome = await inspectOperationsTool(h.context, { kind: "health" });
 
     if (outcome.kind !== "completed") throw new Error("expected completed");
     expect(outcome.artifact.summary.rowCount).toBe(1);
-    expect(outcome.artifact.summary.columnNames).not.toContain("slowQueries");
-    expect(h.artifacts.get(outcome.artifact.correlationId, 1_000)?.value.rows[0]).toMatchObject({
-      activeConnections: 4,
-      slowQueryCount: 0,
-      activeSessionCount: 0,
+    expect(outcome.artifact.summary.columnNames).toEqual(["activeConnections", "databaseSize", "cacheHitRatio"]);
+  });
+
+  test("no length of a capped list reaches the model, on a SATURATED health reading", async () => {
+    // The fixture is saturated on purpose. Both lists `getHealth()` fills are capped by
+    // every provider that fills them (5 slow-query rows, 10 sessions), so a length was
+    // the limit rather than a count on any server with that many digests. A default
+    // empty-list fixture cannot tell "the field is gone" from "the field is 0", which
+    // is exactly the reading this projection must no longer offer (B77).
+    const h = curatedHarness(
+      {},
+      {
+        getHealth: mock(async () => ({
+          activeConnections: 7,
+          databaseSize: "1 GB",
+          cacheHitRatio: "99.1",
+          slowQueries: Array.from({ length: 5 }, (_unused, index) => ({
+            query: `SELECT ${index}`,
+            calls: 1,
+            avgTime: "1ms",
+          })),
+          activeSessions: Array.from({ length: 10 }, (_unused, index) => ({ pid: index, query: "SELECT 1" })),
+        })),
+      },
+    );
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "health" });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    // `toEqual`, not `toMatchObject`: the absence of the two counts is the point, and
+    // `toMatchObject` would pass with them still present.
+    expect(h.artifacts.get(outcome.artifact.correlationId, 1_000)?.value.rows[0]).toEqual({
+      activeConnections: 7,
+      databaseSize: "1 GB",
+      cacheHitRatio: "99.1",
+    });
+    // The rendered rows are what the model actually reads, so the carrier is asserted
+    // as well as the stored record.
+    expect(outcome.modelText).toContain("activeConnections");
+    expect(outcome.modelText).not.toMatch(/slowQuer|sessionCount/i);
+  });
+
+  test("a health summary carrying no slow-query list at all is still projected", async () => {
+    // Proof that the projection does not READ the nested lists, which a string
+    // assertion cannot give: a health summary with neither list present must still
+    // complete. Six engines publish no slow-query source at all, and this is the test
+    // that lets `HealthInfo.slowQueries` become optional without touching this layer.
+    const h = curatedHarness(
+      {},
+      {
+        getHealth: mock(async () => ({ activeConnections: 3, databaseSize: "20 MB", cacheHitRatio: "99.1" })),
+      },
+    );
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "health" });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    expect(h.artifacts.get(outcome.artifact.correlationId, 1_000)?.value.rows[0]).toEqual({
+      activeConnections: 3,
+      databaseSize: "20 MB",
+      cacheHitRatio: "99.1",
     });
   });
 
@@ -3387,9 +3512,10 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
 
   test("a reading larger than the run may carry is refused rather than truncated", async () => {
     // The same promise the read path makes: a delivered result is a COMPLETE one, so
-    // an overflow is an answer to correct rather than rows to quietly drop. The cap
-    // that can still be breached is the BYTE one — the row cap is applied by the
-    // projection, which is what makes "ask again with a smaller limit" actionable.
+    // an overflow is an answer to correct rather than rows to quietly drop. This is the
+    // BYTE bound; the row bound refuses in its own two tests below. What makes "ask
+    // again with a smaller limit" actionable on either is that the projection applies
+    // the limit itself, for every kind, including the four whose method ignores it.
     // Read off the `operations` row, because this branch split the single execution
     // policy into one frozen budget per workflow and `inspect_operations` is that
     // workflow's tool. Taking the ceiling from the row the tool actually enforces is
@@ -3436,6 +3562,70 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     if (outcome.kind !== "completed") throw new Error("expected completed");
     expect(outcome.artifact.summary.rowCount).toBe(3);
     expect(h.artifacts.get(outcome.artifact.correlationId, 1_000)?.value.rows).toHaveLength(3);
+  });
+
+  test("a reading whose rows exceed the run's ROW budget is refused, not cut to the cap", async () => {
+    // The ceiling is not a request. Answering 200 of 500 rows and reporting
+    // `rowCount: 200` hands the model a cap it reads as a count — B77's defect one
+    // reading over, since the carrier the model sees is `result, N row(s)` and nothing
+    // in it says rows were dropped. The four optionless curated methods are where this
+    // bites: `getStorageStats` ignores the limit the projection passes it, so the
+    // projection is the only thing that can refuse. Rows deliberately tiny, so the BYTE
+    // bound two lines below cannot be what refuses.
+    const ceiling = AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxResultRows;
+    const many = Array.from({ length: ceiling + 1 }, (_, index) => ({
+      name: `store-${index}`,
+      size: "1 MB",
+      sizeBytes: 1,
+    }));
+    const h = curatedHarness({}, { getStorageStats: mock(async () => many) });
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "storage" });
+
+    if (outcome.kind !== "refused") throw new Error("expected refused");
+    expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
+    expect(outcome.modelText).toContain("smaller limit");
+  });
+
+  test("a limit AT the ceiling is the budget's cut, not the model's, so it still refuses", async () => {
+    // The boundary, and the widest limit that can reach the projection at all:
+    // `agentCuratedReadInput`'s `limit` is `.max(200)`, so anything above the ceiling is
+    // refused as invalid input before this function runs. At exactly the ceiling the cut
+    // would sit where the budget's own cut sits and `rowCount` would read as the cap
+    // again, so only a limit BELOW the ceiling counts as the model's own bound.
+    const ceiling = AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxResultRows;
+    const many = Array.from({ length: ceiling + 1 }, (_, index) => ({
+      name: `store-${index}`,
+      size: "1 MB",
+      sizeBytes: 1,
+    }));
+    const h = curatedHarness({}, { getStorageStats: mock(async () => many) });
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "storage", limit: ceiling });
+
+    if (outcome.kind !== "refused") throw new Error("expected refused");
+    expect(outcome.refusal).toMatchObject({ reasonCode: "READING_OVER_BUDGET" });
+  });
+
+  test("a limit the MODEL asked for still delivers, even with more rows than the ceiling behind it", async () => {
+    // The half that keeps the refusal above from becoming a blanket one, and the half
+    // that keeps "ask again with a smaller limit" actionable on the four methods that
+    // ignore the argument. Ten rows asked for and ten delivered is a complete answer to
+    // what was asked, the way a model-written `ORDER BY … LIMIT 10` is honest while an
+    // injected one is not.
+    const ceiling = AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxResultRows;
+    const many = Array.from({ length: ceiling + 50 }, (_, index) => ({
+      name: `store-${index}`,
+      size: "1 MB",
+      sizeBytes: 1,
+    }));
+    const h = curatedHarness({}, { getStorageStats: mock(async () => many) });
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "storage", limit: 10 });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    expect(outcome.artifact.summary.rowCount).toBe(10);
+    expect(h.artifacts.get(outcome.artifact.correlationId, 1_000)?.value.rows).toHaveLength(10);
   });
 
   test("schema narrows the rows even when the engine ignored the argument", async () => {

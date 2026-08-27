@@ -334,10 +334,14 @@ const SLOW_QUERIES_BODY_SQL = `
  * A CAP, NOT A COUNT, and nothing downstream can tell the difference, which is why it is
  * written here. `SLOW_QUERIES_BODY_SQL` has no slowness predicate at all: its only WHERE
  * term is the connected schema and "slow" is the ORDERING (`SUM_TIMER_WAIT DESC`), so the
- * top five digests for a schema come back whether they took 15 ms or 15 hours. The agent's
- * curated health reading forwards `health.slowQueries.length` as `slowQueryCount`
- * (`src/lib/agent/tools.ts`), so on any server with five or more digests for this schema
- * that figure is 5 - permanently, and about statements no threshold has called slow.
+ * top five digests for a schema come back whether they took 15 ms or 15 hours. So on any
+ * server with five or more digests for this schema, the LENGTH of this list is 5 -
+ * permanently, and about statements no threshold has called slow. The agent's curated
+ * health reading used to forward that length to the model as `slowQueryCount`; it no
+ * longer projects any length at all, because a figure whose value is a cap has no
+ * referent (`src/lib/agent/tools.ts`, and B77 in `docs/BACKLOG.md`). The cap is still
+ * written here: nothing downstream can tell a cap from a count, so the only place the
+ * distinction can be recorded is where the limit is applied.
  *
  * Measured 2026-08-27 on MySQL 26.7.0: the digest table held 59 rows for one connected
  * schema, and the five this statement returns for it were ALL Studio's own introspection
@@ -377,9 +381,10 @@ function toSlowQueryStats(r: RowDataPacket): SlowQueryStats {
  * monitoring Queries and Overview tabs read `MonitoringData.slowQueries`, a different
  * reading with its own `SlowQueryStats` shape), and the one caller of
  * `POST /api/db/health` - the 60s connection pulse in `src/hooks/use-connection-manager.ts` -
- * reads `res.ok` and discards the body. The sole live consumer is the agent's curated
- * health reading (`src/lib/agent/tools.ts`), which projects `slowQueries.length` as
- * `slowQueryCount` and reads NEITHER `query` NOR `avgTime`.
+ * reads `res.ok` and discards the body. The agent's curated health reading
+ * (`src/lib/agent/tools.ts`) was the last live consumer and read only the list's LENGTH -
+ * never `query`, never `avgTime` - and it no longer reads the list at all (B77). So this
+ * shape now has no consumer in the app beyond the serialised route body.
  *
  * So `toFixed(2)` plus `"ms"` is here for one reason: it is the string the statement this
  * replaced produced with `CONCAT(ROUND(avg_timer_wait / 1000000000, 2), 'ms')`, and
@@ -980,9 +985,11 @@ export class MySQLProvider extends SQLBaseProvider {
       //
       // That row was a fabricated measurement rather than a missing number, which is the
       // class the absence rule (#477) exists to prevent: `calls: 0` is a figure nobody
-      // took, and it is COUNTED - the agent's curated health reading forwards
+      // took, and it was COUNTED - the agent's curated health reading then forwarded
       // `health.slowQueries.length` as `slowQueryCount` (src/lib/agent/tools.ts), so the
-      // invented row told the model "1 slow query" about every MySQL-family server.
+      // invented row told the model "1 slow query" about every MySQL-family server. That
+      // projection carries no length any more (B77), so a row invented here would now be
+      // silent rather than counted - a reason to keep it out, not a reason it could return.
       //
       // Why an empty list rather than a marker that says "unavailable": the capability
       // being OFF does not raise here at all. Measured on the same pass, MySQL 26.7.0

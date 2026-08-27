@@ -6,6 +6,7 @@ import { isAgentModelCapability } from "@/lib/agent/capability-labels";
 import type { AgentModelCapability } from "@/lib/agent/capability-probe";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 import type {
+  AgentRunFailureReason,
   AgentRunMode,
   AgentRunWorkflowReading,
   AgentRunWorkflowSource,
@@ -105,6 +106,17 @@ export interface AgentRunFollower {
   /** The app's own words about why the last attempt did not continue. */
   readonly error: string | null;
   /**
+   * WHICH refusal `error` is, when the server named one, and `null` otherwise.
+   *
+   * Only for a refused START, and only for a code this build has words for. It exists
+   * because a surface may already be explaining the same fact for itself — the rail's
+   * amber engine card is, verbatim — and a second copy of that explanation in an error
+   * line is not an error message (B80). A reader that ignores this field renders `error`
+   * and is correct, which is why it is a code beside the sentence rather than a
+   * replacement for it.
+   */
+  readonly errorCode: AgentStartRefusalCode | null;
+  /**
    * The one start failure that is a verdict about the MODEL rather than about the
    * attempt (#331 T4). Set only for the capability gate's `422`; every other refused
    * start, and every failure of a run that did open, stays in `error` or in the
@@ -135,10 +147,42 @@ export interface AgentRunFollower {
 interface StartResponse {
   readonly runId?: unknown;
   readonly error?: unknown;
+  readonly refused?: unknown;
   readonly missing?: unknown;
   readonly disproved?: unknown;
   readonly thread?: unknown;
 }
+
+/**
+ * The start-refusal codes this build has words for (`route.ts`, `badRequest`).
+ *
+ * `Extract` rather than a bare literal so the wire value cannot drift from the name the
+ * same fact travels under as an `AgentRunFailureReason`: with two independent literals,
+ * renaming the union member broke `timeline.ts` and `runtime.ts` and left both ends of
+ * THIS wire silently on the old string.
+ *
+ * Exported because the surface that acts on it has to be able to name it: `AgentRail`
+ * compares against this rather than against a string of its own.
+ */
+export type AgentStartRefusalCode = Extract<AgentRunFailureReason, "engine-unsupported">;
+
+/** Typed rather than compared inline, so the RUNTIME string is extracted from the union too. */
+const ENGINE_UNSUPPORTED_CODE: AgentStartRefusalCode = "engine-unsupported";
+
+/**
+ * What `errorCode` may hold, checked at runtime and not only declared.
+ *
+ * A value outside the list is not shown AS A CODE: it is dropped here and the refusal
+ * renders as the server's own sentence, which is the right answer to a refusal this build
+ * has no words for. What that guarantees is the TYPE of `errorCode` — no surface added
+ * later can read a code out of it that this build cannot name. It is not what keeps the
+ * wrong paragraph off the screen today: the rail compares against its own
+ * `ENGINE_UNSUPPORTED_CODE` as well, and the two checks are in SERIES, so widening either
+ * one alone changes nothing that renders (both measured, 2026-08-27). Driven by "an
+ * unknown code never reaches errorCode" in `tests/components/agent/AgentRail.test.tsx`,
+ * which reaches for the hook rather than the rail for exactly that reason.
+ */
+const isStartRefusalCode = (value: unknown): value is AgentStartRefusalCode => value === ENGINE_UNSUPPORTED_CODE;
 
 /**
  * The conversation the SERVER says this run belongs to.
@@ -233,6 +277,24 @@ class ModelRefusedError extends Error {
   }
 }
 
+/**
+ * Carries a named refusal out through the same exit as the unnamed ones, so nothing
+ * about what may be reported after an abort is written twice.
+ *
+ * A subclass rather than a second `setState` at the throw site for the same reason
+ * `ModelRefusedError` is one: the `catch` below is the single place that knows whether
+ * the request was abandoned. Its `message` is the server's sentence, so a reader that
+ * loses the `instanceof` still shows the paragraph rather than nothing.
+ */
+class StartRefusedError extends Error {
+  readonly code: AgentStartRefusalCode;
+
+  constructor(message: string, code: AgentStartRefusalCode) {
+    super(message);
+    this.code = code;
+  }
+}
+
 /** Names this build has words for, and nothing else: an unknown one is dropped, never shown. */
 function readCapabilities(value: unknown): readonly AgentModelCapability[] {
   return Array.isArray(value) ? value.filter(isAgentModelCapability) : [];
@@ -249,6 +311,7 @@ export function useAgentRun(): AgentRunFollower {
   const [isBusy, setIsBusy] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<AgentStartRefusalCode | null>(null);
   const [refusal, setRefusal] = useState<AgentModelRefusal | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -306,6 +369,7 @@ export function useAgentRun(): AgentRunFollower {
       setIsBusy(true);
       setIsStopping(false);
       setError(null);
+      setErrorCode(null);
       // A verdict is about the model that was configured when it was reached; an
       // operator who changed it and started again is owed the new answer, not the old one.
       setRefusal(null);
@@ -337,6 +401,10 @@ export function useAgentRun(): AgentRunFollower {
               mode: input.mode,
             });
           }
+          // A code the server named, when this build knows it. It rides beside the
+          // sentence rather than replacing it: a surface that has no use for the code
+          // renders `error` and is right (B80).
+          if (isStartRefusalCode(body.refused)) throw new StartRefusedError(said, body.refused);
           throw new Error(said);
         }
         if (typeof body.runId !== "string") {
@@ -347,7 +415,10 @@ export function useAgentRun(): AgentRunFollower {
       } catch (startError) {
         if (!controller.signal.aborted) {
           if (startError instanceof ModelRefusedError) setRefusal(startError.refusal);
-          else setError(messageFor(startError));
+          else {
+            setError(messageFor(startError));
+            if (startError instanceof StartRefusedError) setErrorCode(startError.code);
+          }
           setIsBusy(false);
         }
         return;
@@ -420,5 +491,5 @@ export function useAgentRun(): AgentRunFollower {
   */
   const timeline = useMemo(() => foldLedgerEntries(entries), [entries]);
 
-  return { runId, thread, isBusy, isStopping, timeline, error, refusal, start, cancel };
+  return { runId, thread, isBusy, isStopping, timeline, error, errorCode, refusal, start, cancel };
 }

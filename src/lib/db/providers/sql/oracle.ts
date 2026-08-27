@@ -879,7 +879,17 @@ export class OracleProvider extends SQLBaseProvider {
     try {
       conn = await this.pool!.getConnection();
 
-      let activeConnections = 0;
+      // Left UNDEFINED, and spread conditionally into the return below.
+      // `HealthInfo.activeConnections` is optional precisely so a user who cannot read
+      // V$SESSION omits the figure instead of sending a fabricated 0, and this is the
+      // reading the agent forwards to the model (`src/lib/agent/tools.ts` projects it
+      // with `?? null`), so an initial 0 made a refused view indistinguishable from an
+      // idle instance. V$SESSION needs the same `V_$` grant as everything else here,
+      // and that refusal was measured 2026-08-23 on Oracle AI Database 26ai Free
+      // against a user granted only CREATE SESSION: `ORA-00942: table or view
+      // "SYS"."V_$SYSSTAT" does not exist`. V_$SESSION answers ORA-00942 in the same
+      // shape when the grant is missing.
+      let activeConnections: number | undefined;
       let databaseSize = "N/A";
       let cacheHitRatio: string = CACHE_HIT_RATIO_UNAVAILABLE;
       const slowQueries: SlowQuery[] = [];
@@ -891,9 +901,12 @@ export class OracleProvider extends SQLBaseProvider {
           outFormat: oracledb.OUT_FORMAT_OBJECT,
         });
         const rows = (connRes.rows || []) as Record<string, unknown>[];
-        activeConnections = Number(rows[0]?.CNT || 0);
+        // measuredNumber, not `Number(... || 0)`: an instance with no ACTIVE session
+        // answers 0 and that 0 is a reading, so the falsy test would have thrown away
+        // the very figure it was meant to publish. Only an unanswered COUNT stays absent.
+        activeConnections = measuredNumber(rows[0]?.CNT);
       } catch {
-        /* V$ requires privileges */
+        /* V$SESSION requires privileges; the figure stays absent, never 0. */
       }
 
       // Database size
@@ -957,7 +970,13 @@ export class OracleProvider extends SQLBaseProvider {
         /* ignore */
       }
 
-      return { activeConnections, databaseSize, cacheHitRatio, slowQueries, activeSessions };
+      return {
+        ...(activeConnections === undefined ? {} : { activeConnections }),
+        databaseSize,
+        cacheHitRatio,
+        slowQueries,
+        activeSessions,
+      };
     } finally {
       if (conn) await conn.close();
     }

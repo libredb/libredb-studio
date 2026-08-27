@@ -755,6 +755,54 @@ describe("AgentRunService — a tool execution is in the ledger before its effec
     });
   });
 
+  /**
+   * The write half of the duration (`docs/BACKLOG.md` B78). `elapsedMs` is OPTIONAL on
+   * both refusal variants that carry it (`types.ts`), and it crosses this layer as a
+   * whole-object pass-through: `settlementEvent` puts `settlement.refusal` on the event
+   * and the store's `append` JSON.stringifies the entry, so a projection that dropped
+   * the field would COMPILE, would pass every parse-side test — the fold reads what the
+   * bytes carry — and would silently take the rail's database-time gauge below the bound
+   * the tracker is already enforcing on the run.
+   *
+   * Read back through a SECOND store over the same files, so the figure comes off the
+   * ledger bytes on disk rather than out of the object this process still holds. Those
+   * bytes are one framed JSON entry per chunk file, not NDJSON: `run-store.append`
+   * newline-terminates each entry and hands it to the world's stream, and the reader
+   * concatenates the chunks and splits on newlines again. NDJSON is what
+   * `GET /api/agent/runs/{runId}/stream` serves (`application/x-ndjson`), which is a
+   * different layer from this one. `toEqual`,
+   * not `toMatchObject`: a dropped field and an added one both have to fail.
+   */
+  test("a database-error refusal's elapsedMs reaches the ledger bytes, not only the parser that accepts it", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+
+    await h.service.runStep(runId, { stepId: "s1", tool: "run_read_query" }, async () => ({
+      kind: "refused",
+      refusal: {
+        class: "database-error",
+        statementFingerprint: "fp1",
+        message: 'relation "custmers" does not exist',
+        elapsedMs: 30,
+      },
+    }));
+
+    const view = await h.reader().read(runId);
+
+    expect(view?.record.events.at(-1)).toEqual({
+      kind: "tool-refused",
+      atMs: expect.any(Number),
+      stepId: "s1",
+      refusal: {
+        class: "database-error",
+        statementFingerprint: "fp1",
+        message: 'relation "custmers" does not exist',
+        elapsedMs: 30,
+      },
+    });
+  });
+
   test("a call the layer never attempted leaves no outcome event to replay", async () => {
     // `not-attempted` is the run loop's own outcome (a deadline, a repair-ledger
     // refusal, a toolless mode): nothing was asked of the database, so there is

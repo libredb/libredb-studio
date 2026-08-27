@@ -1612,8 +1612,24 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
     sibling can reach `endExecution` inside this span. `endRun` cannot land in it
     either — it refuses while an execution is live. Raise that ceiling above 1 and this
     delta becomes a sum over whatever settled alongside; read the tracker per execution
-    then, rather than around the call. Nothing FAILS if it is raised, though — the premise
-    is stated here and pinned by no test, which is what `docs/BACKLOG.md` B78 is open for.
+    then, rather than around the call. That premise is pinned by "a sibling execution's
+    charge lands in the failed statement's span, which only maxConcurrentExecutions: 1
+    rules out" (`tests/unit/lib/agent/tools.test.ts`), and the division of labour inside
+    it is worth knowing before editing it: the body DEMONSTRATES the misattribution —
+    charging the tracker from inside a failing execution and showing the 500 ms land on
+    this figure — while what FAILS when the ceiling is raised is a value assertion over
+    every workflow's budget, carrying that demonstration as its failure message. Under
+    `maxConcurrentExecutions: 2` the arithmetic still passes, because the body charges the
+    sibling directly and bypasses the policy gate; the message is what tells whoever
+    raised it where to look.
+
+    The named successor, for when this delta stops being worth defending:
+    `executeAuditedOperation` already computes the failed execution's own charge and
+    throws it away with the error. Carrying it — a module-level `WeakMap<object, number>`
+    in `execution.ts` plus an exported reader, consulted here instead of subtracting —
+    makes the figure correct under ANY concurrency, covers the `AgentCuratedReadError`
+    site below as well, and retires the premise rather than asserting it, all without
+    mutating the error object the "rethrown untouched" contract protects.
   */
   const chargedBeforeMs = context.tracker.usage(context.runId).totalElapsedMs;
 
@@ -2361,10 +2377,24 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
   health: {
     label: "health",
     method: "getHealth",
-    // The scalar figures only. `HealthInfo` also nests its own slow-query and session
+    // The MEASURED scalars only. `HealthInfo` also nests its own slow-query and session
     // lists, and those are the two readings that have their own kind — projecting them
-    // here as well would give one fact two shapes and two ways to be cited.
-    fields: ["activeConnections", "databaseSize", "cacheHitRatio", "slowQueryCount", "activeSessionCount"],
+    // here as well would give one fact two shapes and two ways to be cited. Their
+    // LENGTHS used to travel here, and that was the same defect one size down: every
+    // provider that fills either list caps it (5 slow-query rows on MySQL's
+    // `HEALTH_SLOW_QUERY_LIMIT`, PostgreSQL's `LIMIT 5`, SQL Server's `TOP 5`, Oracle's
+    // `ROWNUM <= 5`, MongoDB's `.limit(5)`, Couchbase and ClickHouse `{ limit: 5 }`; and
+    // 10 sessions on those seven plus Druid, 10 on BOTH of Trino's — one
+    // `TRINO_HEALTH_LIMIT` serves its slow queries and its sessions alike — and 50 on
+    // Cassandra's `DEFAULT_SESSION_LIMIT`), and none of the slow-query
+    // statements carries a slowness predicate at all — "slow" is the ORDERING. So the
+    // length was the cap, permanently, on any server with that many digests; and where
+    // the source could not be read it was 0, or 1, or 2 (PostgreSQL and MongoDB still
+    // push a sentence wearing a row's clothes, and SQLite's list is two integrity rows).
+    // No name fixes a figure with no referent: the `slow-queries` and `sessions` kinds
+    // carry those facts with their rows visible, which is the only form in which they
+    // mean anything (`docs/BACKLOG.md` B77).
+    fields: ["activeConnections", "databaseSize", "cacheHitRatio"],
     read: async (provider) => {
       const health = await provider.getHealth();
       return [
@@ -2377,12 +2407,6 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
           activeConnections: health.activeConnections ?? null,
           databaseSize: health.databaseSize,
           cacheHitRatio: health.cacheHitRatio,
-          // The LENGTH of a list the provider caps, not a count of slow statements:
-          // an engine whose health read returns its limit reports that limit forever.
-          // Named where it is produced rather than fixed here, because every capped
-          // provider feeds the same projection (`docs/BACKLOG.md` B77).
-          slowQueryCount: health.slowQueries.length,
-          activeSessionCount: health.activeSessions.length,
         },
       ];
     },
@@ -2399,17 +2423,27 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
  * budget at all, so the deadline's clamp is ADVISORY on this path. What still binds
  * is everything else: the run deadline decides whether the call is admitted, the
  * statement budget counts it, and the row and byte caps are applied below by this
- * projection instead of by the engine. A reading that is still too LARGE once it has
- * been narrowed is REFUSED rather than truncated, which is the same promise the read
- * path makes — a delivered result is a complete one.
+ * projection instead of by the engine.
+ *
+ * The two BOUNDS both REFUSE, and the only CUT there is was asked for. `maxResultRows`
+ * and `maxResultBytes` are this run's ceilings rather than anything the model named, so
+ * a reading that only fits under either once rows are dropped is refused — the same
+ * promise the read path makes, where both `queryReadOnly` implementations throw on
+ * either overrun — and a delivered result is therefore a complete one. A `limit` the model itself named BELOW
+ * the ceiling is different in kind: it is a request, slicing to it answers exactly that
+ * request, and the reading is delivered cut. A `limit` at or above the ceiling is not
+ * the model's own bound — the cut would sit where the budget's cut sits — so it refuses
+ * with the rest. Reporting a ceiling-sized slice as `rowCount` would publish a cap the
+ * model reads as a count, which is `docs/BACKLOG.md` B77's defect one reading over.
  *
  * `limit` and `schema` are applied HERE, to the projected rows, and not merely passed
  * to the provider. That is not defensive duplication: only `getActiveSessions` and
  * `getSlowQueries` take a limit at all, and four of the curated methods take no
  * options whatsoever, so a selector honoured only in the arguments would be a promise
- * the tool description makes and half the engines silently break. Narrowing before
- * bounding, because a limit applied to the wrong schema's rows answers a question
- * nobody asked.
+ * the tool description makes and half the engines silently break — and it is what makes
+ * the over-budget refusal's advice ("ask again with a smaller limit") something the
+ * model can actually act on. Narrowing before bounding, because a limit applied to the
+ * wrong schema's rows answers a question nobody asked.
  */
 async function runCuratedRead(
   context: AgentToolContext,
@@ -2424,7 +2458,13 @@ async function runCuratedRead(
     throw new AgentCuratedReadError("KIND_UNSUPPORTED_BY_PROVIDER");
   }
 
-  const limit = Math.min(input.limit ?? budget.maxResultRows, budget.maxResultRows);
+  // A model-supplied `limit` is a REQUEST, and only a limit BELOW this run's ceiling is
+  // one: a wider one is a request for rows the run may not carry, which the budget has to
+  // clamp, and what would come back under it is the ceiling rather than the model's own
+  // number. The provider is still asked for the clamped figure either way, so the two
+  // methods that take a limit narrow at the engine.
+  const modelLimit = input.limit !== undefined && input.limit < budget.maxResultRows ? input.limit : undefined;
+  const limit = modelLimit ?? budget.maxResultRows;
   const startedAtMs = context.clock?.() ?? Date.now();
   // Set immediately before the call leaves, for the same reason the statement path
   // sets it: anything that threw while we were still connecting is not the model's.
@@ -2441,7 +2481,18 @@ async function runCuratedRead(
     reading.schemaColumn === undefined || input.schema === undefined
       ? read
       : read.filter((row) => row[reading.schemaColumn as string] === input.schema);
-  const rows = narrowed.slice(0, limit);
+  // The ceiling REFUSES; the model's own limit CUTS. Slicing to the ceiling instead would
+  // report the cap as `rowCount`, and the model's carrier for a reading is
+  // `<label>, <rowCount> row(s)` with nothing in it saying rows were dropped — a cap read
+  // as a count, which is B77's defect one reading over. So an unnarrowed reading that
+  // overflows is refused the way the byte bound refuses below and the way the read path
+  // refuses a row overflow (`postgres.ts`, `sqlite.ts`), while a reading the model asked to
+  // cut is delivered cut, because ten rows asked for and ten delivered is a complete
+  // answer to what was asked.
+  if (modelLimit === undefined && narrowed.length > budget.maxResultRows) {
+    throw new AgentCuratedReadError("READING_OVER_BUDGET");
+  }
+  const rows = modelLimit === undefined ? narrowed : narrowed.slice(0, modelLimit);
 
   if (JSON.stringify(rows).length > budget.maxResultBytes) {
     throw new AgentCuratedReadError("READING_OVER_BUDGET");

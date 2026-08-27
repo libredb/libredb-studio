@@ -13,8 +13,11 @@ import {
   type ManagedConnectionPayload,
 } from "@/hooks/use-connection-payload";
 import { applyStatementName } from "@/components/agent/rail-parts";
+import { useAgentRun } from "@/components/agent/use-agent-run";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
-import type { AgentRunWorkflowType } from "@/lib/agent/types";
+import { agentPosture } from "@/lib/agent/posture";
+import type { AgentRunWorkflowType, AgentThreadContext } from "@/lib/agent/types";
+import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseConnection } from "@/lib/types";
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
 
@@ -174,6 +177,22 @@ const DEFAULT_PROPS = {
   connectionId: { id: "seed:sales" },
   connectionName: "Sales",
 };
+
+/**
+ * The paragraph the route answers a refused engine start with, read from the same module
+ * the rail's amber card reads.
+ *
+ * Built rather than quoted, because the point of B80 is that ONE paragraph reaches the
+ * panel twice: a hand-copied second literal here would keep passing after the posture
+ * was reworded and stop being about the duplication at all. `tests/api/agent/runs.test.ts`
+ * builds the same fixture the same way, which is what keeps the two suites from drifting.
+ */
+const ENGINE_POSTURE_BODY = agentPosture({
+  mode: "agent",
+  engine: "libredb",
+  engineLabel: getDBConfig("libredb").label,
+  handover: false,
+}).body;
 
 /**
  * POST /api/agent/runs accepted, then a stream of whatever lines are given — including
@@ -470,43 +489,67 @@ describe("AgentRail", () => {
     expect(body.previousRunId).toBeUndefined();
   });
 
-  test.each([
-    ["disabled", ["switched off on this server"]],
-    /*
-      Since #512 the re-pointed connection carries its own code, because it is the only
-      decline that is not a failure — every check the route makes passed, and the server refused
-      the carry on purpose. Both halves are pinned, because the half that was wrong was
-      the second one: it claimed the decline persists until the connection is pointed
-      back, and the route writes the CURRENT identity onto the run it opens, so the next
-      follow-up continues off THAT run and carries normally.
+  /*
+    Every reason the SERVER can decline a carry for, and the WHOLE sentence each one
+    gets. A `Record` over the union rather than a hand-written row list, and both halves
+    of that shape are load-bearing.
 
-      Not "could not be reached" for the five under `unavailable` either: the sentence
-      still has to be true of every cause it covers, and one of them is a predecessor that
-      simply has not ended yet, which can be reached perfectly well.
-    */
-    [
-      "repointed",
-      ["re-pointed after the earlier step ran", "Follow-ups from here continue on the connection as it points now"],
-    ],
-    ["unavailable", ["could not be carried into this question"]],
-    ["error", ["could not be carried into this question"]],
-  ])("a %s conversation renders its own sentence", async (declined, copies) => {
-    mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE], {
-      runId: "arun_b",
-      status: "queued",
-      mode: "planning",
-      thread: { threadId: "arun_a", steps: [], text: "", declined },
-    });
-    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+    The KEYS are the gate the production `switch` cannot supply on its own. `TS2366`
+    there catches a fifth member that needs a sentence of its own, but a member folded
+    onto the shared `unavailable`/`error` return adds only a bare `case` label: no
+    executable line, so `typecheck` passes and the 100% line gate reads 100% with the
+    new code rendered by no test (measured 2026-08-27 — fifth member `"rotated"` folded
+    onto the shared arm: `typecheck` clean, 254 pass / 0 fail, `AgentRail.tsx` still
+    100.00% lines). Missing an entry here is `TS2741` IN THIS FILE, whatever arm the
+    reason is folded onto.
 
-    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "chart those" } });
-    await act(async () => {
-      fireEvent.click(view.getByTestId("agent-start"));
-    });
-    await view.findByTestId("agent-thread-notice");
+    The VALUES are whole sentences because fragments let a reword through: three of
+    these four were `toContain` fragments, and prepending "MUTATED " to their arms one
+    at a time left the suite at 254 pass / 0 fail three times out of four. `toBe` also
+    subsumes the negative that used to ride along here — the rail's own "Connection
+    changed" sentence is not an acceptable answer to any of these rows, and now it is
+    not an acceptable answer to any of them character for character.
 
-    for (const copy of copies) expect(view.getByTestId("agent-thread-notice").textContent).toContain(copy);
-  });
+    Since #512 the re-pointed connection carries its own code, because it is the only
+    decline that is not a failure — every check the route makes passed, and the server
+    refused the carry on purpose. Both halves of that sentence are pinned, because the
+    half that was wrong was the second one: it claimed the decline persists until the
+    connection is pointed back, and the route writes the CURRENT identity onto the run it
+    opens, so the next follow-up continues off THAT run and carries normally.
+
+    Not "could not be reached" for the five under `unavailable` either: the sentence
+    still has to be true of every cause it covers, and one of them is a predecessor that
+    simply has not ended yet, which can be reached perfectly well.
+  */
+  const DECLINE_SENTENCES: Record<NonNullable<AgentThreadContext["declined"]>, string> = {
+    disabled: "Conversation context is switched off on this server, so every question starts on its own.",
+    repointed:
+      "This connection was re-pointed after the earlier step ran, so this question started a new conversation. Follow-ups from here continue on the connection as it points now.",
+    unavailable: "The earlier step could not be carried into this question, so it started on its own.",
+    error: "The earlier step could not be carried into this question, so it started on its own.",
+  };
+
+  test.each(Object.entries(DECLINE_SENTENCES) as [NonNullable<AgentThreadContext["declined"]>, string][])(
+    "a %s conversation renders its own sentence",
+    async (declined, sentence) => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE], {
+        runId: "arun_b",
+        status: "queued",
+        mode: "planning",
+        thread: { threadId: "arun_a", steps: [], text: "", declined },
+      });
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "chart those" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      await view.findByTestId("agent-thread-notice");
+
+      const notice = view.getByTestId("agent-thread-notice").textContent ?? "";
+      expect(notice, declined).toBe(sentence);
+    },
+  );
 
   /*
     The persistence claim, pinned as an ABSENCE, because that is the shape the defect had:
@@ -615,9 +658,90 @@ describe("AgentRail", () => {
     expect(runCalls).toHaveLength(2);
     const lastBody = JSON.parse(String(runCalls.at(-1)?.[1]?.body)) as Record<string, unknown>;
     expect(lastBody.previousRunId).toBeUndefined();
-    // And the rail says WHY, in its own voice: a connection change is deliberate and
-    // correct, so blaming the server's "could not be reached" would be a lie.
-    expect(view.getByTestId("agent-thread-notice").textContent).toContain("Connection changed");
+  });
+
+  /*
+    The sentence the rail owns, and the only one of the four the rail writes for itself
+    (T7). It used to be asserted as a two-word `toContain` riding on the test above,
+    whose subject is `previousRunId` - so every rewording after the second word survived
+    it, and the arm it selects shared one expression with the other three, which is why
+    the coverage gate could not see the gap either.
+
+    `toBe` and not `toContain`, because the whole sentence is the claim: a connection the
+    user moved is deliberate and correct, and the server's vocabulary for a carry that
+    failed would be a lie about it.
+  */
+  test("a connection change gets the rail's own sentence, in full", async () => {
+    const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+    await view.findByTestId("agent-run-id");
+    await waitFor(() => {
+      expect(view.getByTestId("agent-run-status").textContent).toBe("succeeded");
+    });
+
+    view.rerender(<AgentRail {...DEFAULT_PROPS} connectionId={{ id: "seed:analytics" }} connectionName="Analytics" />);
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "what is blocked" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+
+    // Non-vacuous: the second start DID fire, so the sentence below is about a
+    // connection the rail watched move rather than about a render that never happened.
+    const runCalls = (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][]).filter(
+      ([url]) => String(url) === "/api/agent/runs",
+    );
+    expect(runCalls).toHaveLength(2);
+    expect(view.getByTestId("agent-thread-notice").textContent).toBe(
+      "Connection changed, so this question started a new conversation.",
+    );
+  });
+
+  /*
+    The precedence, pinned in the only direction that can be wrong (T7): the rail's own
+    reason and one of the server's codes are both true of this render, and the rail's is
+    the one that must be said.
+
+    It wins because it is the specific one. `unavailable` collapses five causes the
+    server may not tell apart, while a connection the user moved is a fact the rail
+    watched happen - so the shared sentence's absence is asserted beside the presence of
+    the connection sentence, which is what keeps the negative from going vacuous.
+  */
+  test("the rail's own connection sentence outranks any code the server sent", async () => {
+    const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE], {
+      runId: "arun_b",
+      status: "queued",
+      mode: "planning",
+      thread: { threadId: "arun_a", steps: [], text: "", declined: "unavailable" },
+    });
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+    await view.findByTestId("agent-run-id");
+    await waitFor(() => {
+      expect(view.getByTestId("agent-run-status").textContent).toBe("succeeded");
+    });
+
+    view.rerender(<AgentRail {...DEFAULT_PROPS} connectionId={{ id: "seed:analytics" }} connectionName="Analytics" />);
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "what is blocked" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+
+    const runCalls = (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][]).filter(
+      ([url]) => String(url) === "/api/agent/runs",
+    );
+    expect(runCalls).toHaveLength(2);
+    const notice = view.getByTestId("agent-thread-notice").textContent ?? "";
+    expect(notice).toContain("Connection changed");
+    expect(notice).not.toContain("could not be carried into this question");
   });
 
   test("a run cannot start without an objective", () => {
@@ -5261,6 +5385,14 @@ describe("AgentRail", () => {
       return view;
     }
 
+    /*
+      Counted rather than queried by id, because the defect this suite keeps catching is
+      never a testid: it is the same words rendered twice, and a reworded second copy
+      would be the same defect. Shared by the strip's suite (L7) and the engine notice's
+      (B80), which found the identical shape in a different register.
+    */
+    const occurrences = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
+
     describe("the safety strip", () => {
       test("plan mode says it executes nothing, and says what its one reach is", () => {
         const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" />);
@@ -5505,7 +5637,6 @@ describe("AgentRail", () => {
       amber engine notice — says something the strip does not.
     */
     describe("what pressing Start means, said once", () => {
-      const occurrences = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
       /*
         Asserted as a boolean rather than with `toBeNull()`, and that is not style: this
         node lives deep inside the rail, and bun's inspector walks an element's parents
@@ -5624,6 +5755,156 @@ describe("AgentRail", () => {
         const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="mongodb" />);
 
         expect(view.queryByTestId("agent-engine-unsupported-notice")).toBeNull();
+      });
+
+      /*
+        B80, measured in Chrome on 2026-08-27: a refused agent start on the bundled
+        LibreDB sample rendered the posture's whole 406-character paragraph in the red
+        error line, while the amber card two elements above was showing the identical
+        paragraph. The operator was told the same four sentences twice, once as a standing
+        explanation and once as the outcome of the action they had just taken.
+
+        Reusing the posture is right - a third phrasing of one fact is worse - so what
+        these tests pin is the REGISTER: an error line owes the consequence and a pointer,
+        and the paragraph stays the card's.
+
+        Answering every request with the 400 is the shape `survives a start the server
+        refused` already uses: the classify call falls back to an unclassified
+        investigation, which is a statement-sending workflow, and the run POST is refused.
+      */
+      /*
+        The strip's claim node is taken out before counting, and that is a property of the
+        panel rather than a convenience: `SafetyStrip` renders the posture body into
+        `agent-safety-claim` on EVERY render - `sr-only` when shut, a popover when open -
+        because it is the `aria-describedby` target for the mode pill and may never be
+        reachable only by clicking. So on an unsupported engine in agent mode the paragraph
+        is in the DOM twice before any start is refused, once as that description and once
+        as the amber card's visible reading. B80 is about the THIRD copy, in the red line.
+      */
+      const panelOutsideSafetyClaim = (view: RenderResult): string => {
+        const clone = view.container.cloneNode(true) as HTMLElement;
+        clone.querySelector('[data-testid="agent-safety-claim"]')?.remove();
+        return clone.textContent ?? "";
+      };
+
+      async function refusedStart(startBody: unknown): Promise<RenderResult> {
+        globalThis.fetch = mock(async () => jsonResponse(startBody, 400)) as unknown as typeof fetch;
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="libredb" />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        await view.findByTestId("agent-error");
+        return view;
+      }
+
+      test("a start refused for the engine says the request was refused, and the explanation is read once", async () => {
+        const view = await refusedStart({ error: ENGINE_POSTURE_BODY, refused: "engine-unsupported" });
+
+        expect(view.getByTestId("agent-error").textContent).toBe(
+          "No run was opened. The notice above says why, and what still runs on this engine.",
+        );
+        // The paragraph is the card's, and it is read once. Counted rather than queried by
+        // id, because the defect was not a testid: it was the same 406 characters rendered
+        // twice in two registers, and a reworded second copy would be the same defect.
+        expect(occurrences(panelOutsideSafetyClaim(view), ENGINE_POSTURE_BODY)).toBe(1);
+        expect(view.getByTestId("agent-engine-unsupported-reason").textContent).toBe(ENGINE_POSTURE_BODY);
+        // "The notice above" is a positional claim, and a positional claim is false for a
+        // reader who is not looking at the panel. The pointer is made real here, on
+        // exactly the branch where its target exists.
+        const described = view.getByTestId("agent-error").getAttribute("aria-describedby") ?? "";
+        expect(described).toBe("agent-engine-unsupported-reason");
+        // And it RESOLVES. Pinning the attribute's VALUE is not the same claim: with only
+        // that assertion, deleting the target paragraph's own `id` left the suite at 254
+        // pass / 0 fail (measured 2026-08-27) while every screen reader had a description
+        // pointing at nothing.
+        const target = view.container.ownerDocument.getElementById(described);
+        expect(target?.getAttribute("data-testid")).toBe("agent-engine-unsupported-reason");
+      });
+
+      test("it carries the whole explanation again once the card is gone", async () => {
+        const view = await refusedStart({ error: ENGINE_POSTURE_BODY, refused: "engine-unsupported" });
+
+        // The card's own way out, which unmounts the card and leaves the error line
+        // standing: `run.error` is cleared only by the next start. The short line points
+        // at a notice that is no longer there, so the paragraph has to come back - it is
+        // then the only copy on screen, which is correct and not a degradation.
+        fireEvent.click(view.getByTestId("agent-engine-unsupported-plan"));
+
+        expect(view.queryByTestId("agent-engine-unsupported-notice")).toBeNull();
+        expect(view.getByTestId("agent-error").textContent).toBe(ENGINE_POSTURE_BODY);
+        expect(view.getByTestId("agent-error").getAttribute("aria-describedby")).toBeNull();
+      });
+
+      /*
+        A `refused` value this build has no words for, which is the shape the NEXT server
+        version has if it grows a second code. The answer owed is the server's own sentence:
+        the consequence line says "the notice above says why", and the notice above does not
+        say why an unrecognised refusal happened.
+
+        What this pins is that the code gate EXISTS at all: dropping it, so the rail explains
+        every refusal that arrives while the card is up, fails here and in the no-code test
+        below (measured 2026-08-27: 254 pass / 2 fail). It does not pin either gate's
+        NARROWNESS, and nothing rendered can: `use-agent-run.ts`'s admit list and the rail's
+        comparison against `ENGINE_UNSUPPORTED_CODE` are in SERIES, so widening one alone
+        leaves this line exactly as it is (rail comparison widened to any non-null code: 256
+        pass / 0 fail). The admit list is driven at the hook below for that reason.
+
+        The card IS on screen, so this is not the no-code case: the refusal names a code, it
+        just is not this one.
+      */
+      test("a 400 naming a code this build has no words for still says what the server said", async () => {
+        const view = await refusedStart({ error: ENGINE_POSTURE_BODY, refused: "agent-credential-unusable" });
+
+        expect(view.getByTestId("agent-engine-unsupported-notice")).toBeTruthy();
+        expect(view.getByTestId("agent-error").textContent).toBe(ENGINE_POSTURE_BODY);
+        expect(view.getByTestId("agent-error").getAttribute("aria-describedby")).toBeNull();
+      });
+
+      /*
+        The admit list itself, driven at the hook, because the rail cannot see it: widening
+        `isStartRefusalCode` to any defined value changes nothing the rail renders (the
+        comparison then rejects the value the list admitted), so before this test the whole
+        component suite stayed green through it — 255 pass / 0 fail. With it: 255 pass / 1
+        fail, here.
+
+        What the list guarantees is a TYPE: `errorCode` never carries a code this build has
+        no words for, so a surface added later cannot read one out of it and act on a value
+        it cannot name.
+      */
+      test("an unknown code never reaches errorCode", async () => {
+        globalThis.fetch = mock(async () =>
+          jsonResponse(
+            { error: "the agent credential could not be applied", refused: "agent-credential-unusable" },
+            400,
+          ),
+        ) as unknown as typeof fetch;
+        const hook = renderHook(() => useAgentRun());
+
+        await act(async () => {
+          await hook.result.current.start({
+            mode: "agent",
+            objective: "why is checkout slow",
+            connectionId: "seed:sales",
+          });
+        });
+
+        expect(hook.result.current.error).toBe("the agent credential could not be applied");
+        expect(hook.result.current.errorCode).toBeNull();
+      });
+
+      test("a 400 that named no code still says what the server said", async () => {
+        // The card IS on screen and the refusal is NOT the engine's: 400 is also the
+        // status of every other cross-field refusal this route makes, so discriminating
+        // on the status alone would relabel this one as the engine's and withhold the
+        // only sentence that says what actually went wrong.
+        const view = await refusedStart({ error: "connection seed:sales no longer resolves" });
+
+        expect(view.getByTestId("agent-engine-unsupported-notice")).toBeTruthy();
+        const line = view.getByTestId("agent-error").textContent ?? "";
+        expect(line).toContain("no longer resolves");
+        expect(line).not.toContain("No run was opened");
       });
     });
 

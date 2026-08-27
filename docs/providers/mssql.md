@@ -445,7 +445,7 @@ in parallel. Each sub-query is independently privilege-guarded (DMVs need `VIEW 
 
 | Method | Primary source | Notes |
 |--------|----------------|-------|
-| `getHealth()` | `dm_exec_sessions`, `database_files`, `dm_os_performance_counters`, `dm_exec_query_stats` | connections, size, buffer-cache-hit % (`N/A`, never `0%`, when unreadable — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)), top-5 slow queries, 10 sessions; each block guarded → `N/A`/`0`/`[]` |
+| `getHealth()` | `dm_exec_sessions`, `database_files`, `dm_os_performance_counters`, `dm_exec_query_stats` | connections (**omitted**, never `0`, when the DMV is denied — [§7.2](#72-when-the-connection-count-is-not-measurable)), size, buffer-cache-hit % (`N/A`, never `0%`, when unreadable — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)), top-5 slow queries, 10 sessions; each block guarded → absent/`N/A`/`[]` |
 | `getOverview()` | `@@VERSION`, `dm_os_sys_info`, `dm_exec_sessions`, `sys.configurations`, `database_files`, `sys.tables`/`indexes` | `user connections = 0` → reported as 32767 (unlimited) |
 | `getPerformanceMetrics()` | `dm_os_performance_counters` | **only** the cache-hit ratio, and it is **omitted** when the DMV cannot be read (no QPS/deadlocks/buffer-pool) — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `dm_exec_query_stats` ⋈ `dm_exec_sql_text` | `sharedBlksHit`=logical reads, `sharedBlksRead`=physical reads; `[]` on failure |
@@ -494,6 +494,45 @@ SQL Server is the only provider that reports **real blocked-session detection** 
 Postgres/Oracle/MySQL report `blocked: false`). For **index scan counts** it joins
 `dm_db_index_usage_stats` — real usage data, the same calibre as Postgres's `pg_stat_user_indexes.idx_scan`
 (whereas Oracle reports `0` and MySQL substitutes `CARDINALITY`).
+
+### 7.2 When the connection count is not measurable
+
+`sys.dm_exec_sessions` is server-scoped, so reading every session needs the server-state grant, and
+which grant that is depends on the version. Microsoft's reference for the view states it directly:
+*"In SQL Server 2019 (15.x) and earlier versions, requires `VIEW SERVER STATE` to see all sessions on
+the server. In SQL Server 2022 (16.x) and later versions, requires `VIEW SERVER PERFORMANCE STATE`
+permission on the server"*, and on Azure SQL Database it requires `VIEW DATABASE STATE`, which cannot
+be granted in `master`
+([sys.dm_exec_sessions](https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-objects/sys-dm-exec-sessions-transact-sql)).
+`VIEW SERVER STATE` is the covering grant either way: the 2022 split made
+`VIEW SERVER PERFORMANCE STATE` a permission *implied by* `VIEW SERVER STATE`
+([GRANT Server Permissions](https://learn.microsoft.com/en-us/sql/t-sql/statements/grant-server-permissions-transact-sql)),
+so granting it still works, and it is the coarser choice.
+
+On SQL Server 2022 CU26 - the instance the §7.1 refusal was measured on 2026-08-23, against a login
+with nothing beyond `CONNECT` - that makes the session DMV's requirement the **same** permission as
+the performance-counter DMV's, not a sibling. The refusal shape we measured there
+([§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)) is therefore what a denied session count
+looks like too:
+
+```
+Msg 300, Level 14, State 1, Line 1
+VIEW SERVER PERFORMANCE STATE permission was denied on object 'server', database 'master'.
+```
+
+The refusal on `sys.dm_exec_sessions` itself is **not** measured here - only the sibling DMV's is, on
+the same login and the same instance. Azure SQL Database restricts the same server-scoped DMVs.
+
+`HealthInfo.activeConnections` is **optional** for this case, so the denied count is **omitted** from
+`getHealth()` - the key is absent from the object and from the `POST /api/db/health` body, and the
+admin fleet-health row drops its `N conn` figure rather than printing `0 conn`
+([`src/components/admin/tabs/OverviewTab.tsx`](../../src/components/admin/tabs/OverviewTab.tsx)).
+It used to be initialised to `0` and the guard left that `0` standing, which mattered most to the
+agent: its curated `health` reading forwards this figure to the model, so a refused DMV arrived as a
+*measured* "no connections open" about a server SQL Server had said nothing about.
+
+A count that really is `0` - an instance with no user sessions - is a reading and is reported as `0`.
+The absence is spelled `measuredNumber(...)` plus a conditional spread, never `|| undefined`.
 
 ---
 
@@ -706,11 +745,16 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   secondary) are not set — both are common requirements for enterprise HA SQL Server. *Future:*
   surface them as connection options.
 - **Azure SQL caveats.** Some server-scoped DMVs and `DBCC CHECKDB` behave differently or are
-  restricted on Azure SQL Database, so parts of monitoring/maintenance silently degrade
-  (`N/A`/`0`/`[]`) there.
+  restricted on Azure SQL Database, so parts of monitoring/maintenance silently degrade there:
+  `N/A`/`[]` where the shape can say "not measured", and, for the health connection count, nothing
+  at all ([§7.2](#72-when-the-connection-count-is-not-measurable)). The monitoring Overview's
+  `getOverview()` connection count is the exception and still degrades to `0`.
 - **SQL authentication only** — Windows Integrated / Azure AD auth is not wired.
 - **No two-phase schema loading** — `/api/db/schema/list` falls back to the full `getSchema()`.
-- **DMV monitoring needs `VIEW SERVER STATE`**; a least-privilege user silently gets `N/A`/`0`/`[]`.
+- **DMV monitoring needs `VIEW SERVER STATE`** (`VIEW SERVER PERFORMANCE STATE` on SQL Server 2022
+  and later, which `VIEW SERVER STATE` implies — [§7.2](#72-when-the-connection-count-is-not-measurable));
+  a least-privilege user silently gets `N/A`/`[]` and,
+  for the health connection count, nothing at all ([§7.2](#72-when-the-connection-count-is-not-measurable)).
   `getPerformanceMetrics()` reports only the cache-hit ratio (no QPS, deadlocks, or buffer-pool
   usage), and **omits even that** when `dm_os_performance_counters` is unreadable rather than
   substituting a figure — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable).

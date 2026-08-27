@@ -320,7 +320,7 @@ Every method is wrapped in try/catch. Degradation reports the absence rather tha
 
 | Method | Source | Notes |
 |--------|--------|-------|
-| `getHealth()` | `serverStatus`, `dbStats`, `currentOp`, `system.profile` | connections, data size, WiredTiger cache-hit % (`"N/A"` when unmeasurable, [§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)), current ops; slow queries need the profiler (placeholder row if disabled) |
+| `getHealth()` | `serverStatus`, `dbStats`, `currentOp`, `system.profile` | connections (**omitted**, never `0`, when the server publishes none — [§7.2](#72-a-connection-count-nobody-published-is-absent-not-zero)), data size, WiredTiger cache-hit % (`"N/A"` when unmeasurable, [§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)), current ops; slow queries need the profiler (placeholder row if disabled) |
 | `getOverview()` | `serverStatus`, `buildInfo`, `dbStats`, `listCollections` | version, uptime, connections, collection/index counts. `maxConnections` is `connections.current + connections.available`, or `0` — the repo's spelling of *no limit published* — when the server publishes no headroom |
 | `getPerformanceMetrics()` | `serverStatus` (WiredTiger + opcounters) | cache-hit %, **ops/sec** (`query`+`insert`+`update`+`delete` opcounters ÷ uptime — *total operations, not just queries*), buffer-pool % (cache bytes), `deadlocks: 0`. **Every field is optional**: each one is present only if its reading was, and a failed `serverStatus` reports `{}` ([§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)) |
 | `getSlowQueries()` | `system.profile` | per-op time/returned; **`[]` if the profiler isn't enabled** (`db.setProfilingLevel(1)`); sorted by `millis` (slowest) — note `getHealth()`'s slow-query block instead sorts by `ts` (most recent) and emits a placeholder row when disabled |
@@ -353,6 +353,39 @@ This replaces a hardcoded `cacheHitRatio: 99` that both the no-`wiredTiger` path
 from a measurement (the rule [#424](https://github.com/libredb/libredb-studio/issues/424) exists to
 enforce, and [#452](https://github.com/libredb/libredb-studio/pull/452) built the *unavailable*
 rendering for).
+
+### 7.2 A connection count nobody published is absent, not zero
+
+`getHealth().activeConnections` comes from `serverStatus.connections.current`, and there are two
+ordinary ways that reading does not happen:
+
+- the deployment publishes no `connections` section at all — an API-compatible service, or any
+  deployment whose `serverStatus` answers without it. This is **not** [§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)'s
+  set: `connections` is a network-layer field of `serverStatus`, not a storage-engine sub-document
+  like `wiredTiger`, so the reason that set omits `wiredTiger` does not carry here, and which
+  deployments omit `connections` is not measured in this repo;
+- `serverStatus` (or `db.stats()`, or `currentOp`) fails outright, which is what a user without
+  `clusterMonitor` gets, and the whole health read then falls into its outer catch.
+
+`HealthInfo.activeConnections` is **optional** for exactly this case, so in both the key is now
+**omitted** — absent from the object, absent from the `POST /api/db/health` body, and the admin
+fleet-health row drops its `N conn` figure rather than printing `0 conn`
+([`src/components/admin/tabs/OverviewTab.tsx`](../../src/components/admin/tabs/OverviewTab.tsx)).
+Both paths used to answer `0`: `connections?.current || 0` on the success path and a literal
+`activeConnections: 0` in the outer catch. That mattered most to the agent, whose curated `health`
+reading forwards this figure to the model: a MongoDB the caller could not query at all arrived as a
+*measured* "no connections open".
+
+A server that really has `0` open connections keeps the `0` — it is a reading, and the absence is
+spelled `measuredNumber(...)` plus a conditional spread, never `|| undefined`.
+
+The outer catch still **resolves** with a `HealthInfo` rather than rethrowing, and that is deliberate:
+`POST /api/db/health` serialises whatever it resolves with, and `POST /api/admin/fleet-health` reads
+`healthy` from a read that returned, so rethrowing would report a server that is up as an error. What
+it must not do is name a figure it never read. (Its `slowQueries: [{ query: "Error fetching health
+info" }]` placeholder is the same class of fabrication one size down and is still there; it is
+tracked separately, because removing it needs `HealthInfo.slowQueries` to become optional across all
+15 type-ids.)
 
 ---
 
@@ -538,7 +571,9 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 - **Monitoring needs privileges.** `serverStatus`/`currentOp`/`$indexStats` and the profiler require
   appropriate roles (`clusterMonitor`, etc.); without them the affected metrics are reported as
   *unavailable* rather than as numbers ([§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)),
-  and slow queries require the profiler to be enabled.
+  the health connection count is omitted rather than reported as `0`
+  ([§7.2](#72-a-connection-count-nobody-published-is-absent-not-zero)), and slow queries require the
+  profiler to be enabled.
 - **`Binary` values are shown as a placeholder** (`<Binary: N bytes>`), not the raw bytes, and only
   a subset of BSON types are normalised (`Long`/`Timestamp`/`UUID`/`RegExp`/`Code`/`DBRef` render as
   generic objects).

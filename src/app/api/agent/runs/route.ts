@@ -15,6 +15,7 @@ import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
   AGENT_WORKFLOW_SENDS_STATEMENTS,
   DEFAULT_AGENT_WORKFLOW_TYPE,
+  type AgentRunFailureReason,
   type AgentRunMode,
   type AgentRunWorkflowReading,
   type AgentRunWorkflowSource,
@@ -103,8 +104,34 @@ const WORKFLOW_READINGS: ReadonlySet<string> = new Set<AgentRunWorkflowReading>(
   "unrecorded",
 ]);
 
-function badRequest(message: string): NextResponse {
-  return NextResponse.json({ error: message }, { status: 400 });
+/**
+ * A refusal a CLIENT has to be able to tell apart from the route's other `400`s, as a
+ * code rather than as prose (B80).
+ *
+ * One member, and adding a second is a decision rather than a convenience: every other
+ * refusal here is a rule the caller can read off the message, and the rail renders the
+ * message. This one is different because the rail is already showing the same paragraph
+ * in a standing amber card, so it needs to know WHICH refusal this is in order to say
+ * something else — and `400` cannot tell it, being also the status of the mode
+ * validation, the unresolvable connection and the `autoExecute` cross-check.
+ *
+ * The string is `AgentRunFailureReason`'s own `engine-unsupported`, deliberately: the
+ * same fact already travels under that name on a run that ended this way, and
+ * `src/components/agent/timeline.ts` already has a sentence for it, so no new wire
+ * vocabulary enters. `Extract` rather than a bare literal, and that is the enforcement
+ * of the sentence above: renaming the union member used to break `timeline.ts` and
+ * `runtime.ts` while leaving THIS wire value silently on the old name (measured, five
+ * TS errors and none of them here), so the doc's claim that the two names are one could
+ * go false with every gate green. Narrowed to that one member rather than aliased to the
+ * whole union, because the other members are outcomes of a run that OPENED and none of
+ * them can be refused with here. The other end of the wire is `use-agent-run.ts`'s admit
+ * list, which is a `"use client"` module a route may not import, so the extraction is
+ * written twice on purpose and the two must stay equal.
+ */
+type AgentStartRefusalCode = Extract<AgentRunFailureReason, "engine-unsupported">;
+
+function badRequest(message: string, refused?: AgentStartRefusalCode): NextResponse {
+  return NextResponse.json({ error: message, ...(refused === undefined ? {} : { refused }) }, { status: 400 });
 }
 
 export async function POST(req: Request) {
@@ -271,6 +298,9 @@ export async function POST(req: Request) {
           engineLabel: getDBConfig(connection.type).label,
           handover: false,
         }).body,
+        // The only refusal here that a client can already be explaining for itself, so
+        // the only one that carries a code (B80).
+        "engine-unsupported",
       );
     }
 

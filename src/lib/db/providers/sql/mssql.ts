@@ -897,7 +897,21 @@ export class MSSQLProvider extends SQLBaseProvider {
     this.ensureConnected();
 
     try {
-      let activeConnections = 0;
+      // Left UNDEFINED, and spread conditionally into the return below.
+      // `HealthInfo.activeConnections` is optional precisely so a server whose session
+      // DMV was denied omits the figure instead of sending a fabricated 0, and this is
+      // the reading the agent forwards to the model (`src/lib/agent/tools.ts` projects
+      // it with `?? null`), so an initial 0 made a denial indistinguishable from an
+      // idle instance. Reading every session from sys.dm_exec_sessions needs
+      // VIEW SERVER STATE on SQL Server 2019 and earlier and VIEW SERVER PERFORMANCE
+      // STATE on 2022 and later (Microsoft's reference for the view; VIEW SERVER STATE
+      // implies the newer grant, so it still covers this) - on the 2022 CU26 instance
+      // whose refusal was measured 2026-08-23 that is the SAME permission the
+      // performance-counter DMV wanted, not a sibling grant (`Msg 300 ... VIEW SERVER
+      // PERFORMANCE STATE permission was denied on object 'server', database
+      // 'master'`). Azure SQL Database wants VIEW DATABASE STATE and restricts the
+      // same server-scoped DMVs. See docs/providers/mssql.md section 7.2.
+      let activeConnections: number | undefined;
       let databaseSize = "N/A";
       let cacheHitRatio: string = CACHE_HIT_RATIO_UNAVAILABLE;
       const slowQueries: SlowQuery[] = [];
@@ -908,9 +922,12 @@ export class MSSQLProvider extends SQLBaseProvider {
         const connRes = await this.pool!.request().query(
           `SELECT COUNT(*) AS cnt FROM sys.dm_exec_sessions WHERE is_user_process = 1`,
         );
-        activeConnections = connRes.recordset[0]?.cnt || 0;
+        // measuredNumber, not `|| 0`: a genuinely idle instance answers 0 and that 0 is
+        // a reading, so the falsy test would have thrown away the very figure it was
+        // meant to publish. Only an unanswered COUNT stays absent.
+        activeConnections = measuredNumber(connRes.recordset[0]?.cnt);
       } catch {
-        /* DMV may require permissions */
+        /* The DMV needs VIEW SERVER STATE; the figure stays absent, never 0. */
       }
 
       // Database size
@@ -967,7 +984,13 @@ export class MSSQLProvider extends SQLBaseProvider {
         /* ignore */
       }
 
-      return { activeConnections, databaseSize, cacheHitRatio, slowQueries, activeSessions };
+      return {
+        ...(activeConnections === undefined ? {} : { activeConnections }),
+        databaseSize,
+        cacheHitRatio,
+        slowQueries,
+        activeSessions,
+      };
     } catch (error) {
       throw mapDatabaseError(error, "mssql");
     }

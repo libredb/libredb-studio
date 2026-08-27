@@ -722,8 +722,13 @@ export interface DatabaseOverview {
    * count lives in Cassandra's `system_views` keyspace, which ScyllaDB does not
    * have - and a Cassandra role denied that same grant has answered a fabricated 0
    * since the provider shipped (docs/BACKLOG.md D17). `HealthInfo.activeConnections`
-   * stays a required `number`: a provider composing it from this field falls back to
-   * `?? 0` at that one seam, the number this field has always answered with.
+   * is optional for the identical reason and the absence travels THROUGH that seam:
+   * a provider composing one from the other must carry the missing key across rather
+   * than flatten it with `?? 0`, which is what the docblock on that field says and
+   * what MSSQL, Oracle and MongoDB were corrected to do - all three initialised a
+   * local to 0 and swallowed the read's failure into it, so a denied DMV, an
+   * unprivileged `V$SESSION` and a whole failed `serverStatus` each reached the
+   * agent's curated reading as a measured zero.
    */
   activeConnections?: number;
   /**
