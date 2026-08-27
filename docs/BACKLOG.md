@@ -22,10 +22,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1–D49, U17, U22 · 22
+- [Drivers and connections](#drivers-and-connections) — D1–D51, U17, U22 · 23
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U24 · 11
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U26 · 12
 - [Authentication and security headers](#authentication-and-security-headers) — AU4
 - [Tests](#tests) — T1–T5 · 4
 - [Dependencies](#dependencies) — P1–P5 · 5
@@ -571,7 +571,7 @@ the feature (cheap, and it is what the comment now does), or the generator learn
 engine's version and emits the nullability change only above 3.53.0, with the emitted statement
 measured against both a 3.47 and a 3.53 build. The second is only worth it if something else needs the
 version too.
-### D44. `databaseSizeBytes` is fabricated as 0 wherever the size is unknown, in 14 of 16 type-ids
+### D44. `databaseSizeBytes` is fabricated as 0 wherever the size is unknown, in 11 of 17 type-ids
 
 Found 2026-08-27 by the sweep that closed the overview connection count's fabricated zero (D40, PR
 round 17). `DatabaseOverview.activeConnections` and `DatabaseOverview.databaseSizeBytes` are optional
@@ -603,11 +603,30 @@ breakdown off `overview?.databaseSizeBytes !== undefined`: present, and the card
 against the total; absent, and it draws its own "No storage size information available." So a fabricated
 0 does not hide a number, it replaces an honest refusal with a breakdown over a zero-byte database.
 
-**Done when:** an unknown size is absent rather than 0 on every type-id, a real zero still reads as
-zero, each provider's doc records it, and each provider's test pins both arms - the same shape D40
-used, applied to the field beside it. The blast radius is why this is an entry and not part of that PR:
-14 provider files, 14 provider docs and 14 test files, plus `formatBytes` callers that assume a number.
-Doing it per family, one PR each, is the cheap ordering.
+**Three of the fourteen are closed (#517, round 18)** - the ones that contradicted themselves inside a
+single object. `trino/introspect.ts` no longer writes the key beside
+`databaseSize: TRINO_UNAVAILABLE_TEXT`, and `search/index.ts` spreads it conditionally instead of
+`?? 0` beside `SEARCH_UNKNOWN_TEXT`, which is two type-ids (`elasticsearch` and `opensearch`) from one
+file. That round also measured a mechanism this entry had missed: Couchbase does not merely coerce, it
+wraps the read in `degradeTo(..., {})`, so a REFUSED bucket read reaches `basicStats?.diskUsed ?? 0` and
+publishes a measured-looking zero - see D51, which is the same shape on the field beside this one.
+
+**The counts moved for a second reason.** DuckDB arrived as a seventeenth type-id in #516 and gets this
+right without being asked: `duckdb/introspect.ts` spreads the key conditionally and spells the string
+`"N/A"` when the database is in-memory. So it is a fourth correct provider rather than a fifteenth
+fabricating one, and it independently reached the same encoding this entry prescribes.
+
+**Done when:** an unknown size is absent rather than 0 on the remaining eleven type-ids, a real zero
+still reads as zero, each provider's doc records it, and each provider's test pins both arms - the same
+shape D40 used, applied to the field beside it. Remaining: `sql/postgres.ts`, `sql/mysql.ts`,
+`sql/sqlite.ts`, `sql/mssql.ts`, `sql/oracle.ts`, `sql/libsql/introspect.ts`, `sql/druid/introspect.ts`,
+`sql/clickhouse/index.ts`, `document/couchbase/index.ts`, `keyvalue/redis.ts` and `embedded/libredb.ts`.
+MongoDB is NOT on that list: its catch and its success path both spread conditionally already.
+
+Doing it per family, one PR each, is the cheap ordering, and #517 is the pattern to copy - including the
+second test file the triad brief does not name: Trino's own `tests/unit/db/trino/introspect.test.ts`
+asserted the 0, no gate but a test run found it, and the triad invariant names only the integration
+file.
 ### D45. On SQL Server 2019 and earlier the connection count is under-reported, not refused
 
 Found 2026-08-27 while making the overview connection count absent instead of 0 (D40, PR round 17).
@@ -646,34 +665,6 @@ current database, and that permission cannot be granted in `master`.
 `SERVERPROPERTY('ProductMajorVersion')` to pick the permission name - and an incomplete count is absent
 rather than published. Measured on a real instance with a login that has neither grant, because the
 whole entry rests on a permission boundary no fixture can prove.
-### D46. One fabricated connection zero survives the sweep, and five comments cite it as the pattern
-
-Found 2026-08-27 by the sweep that finished D40. After that round, `activeConnections` is honest almost
-everywhere: MSSQL, Oracle, MongoDB and Cassandra omit it when the read is refused; SQLite and the
-embedded LibreDB publish `1`, which is the measurement for a single-writer file; PostgreSQL, Redis,
-Couchbase, ClickHouse, Trino and Druid publish a real count.
-
-`src/lib/db/providers/sql/search/index.ts:846` is the exception, for both `elasticsearch` and
-`opensearch`: `activeConnections: 0` with a comment saying it means "not published". The field is
-optional and its docblock (`src/lib/db/types.ts`, D17) says absence is how "not published" is said, so
-this is the last site where the old encoding survives - and the comment's reason is sound, only its
-encoding is not. A search cluster counts open HTTP connections per node in a stats API this seam does
-not call, so nothing is knowable, which is precisely the case absence exists for.
-
-`maxConnections: 0` beside it stays correct: for that field the type says 0 and absence are the SAME
-fact, which is why Druid's and Trino's comments citing `mssql.ts` for the ceiling remain true.
-
-**The citations are the second half.** Before D40, "0 means not published" was a shared convention with
-`mssql.ts` as its reference, and five places say so:
-`src/lib/db/providers/sql/search/index.ts:840`, `sql/druid/introspect.ts:572`,
-`sql/trino/introspect.ts:612`, `docs/providers/elasticsearch.md` and `docs/providers/opensearch.md`.
-The Druid and Trino ones are about the ceiling and stay true. The search comment and the two search docs
-bundle `activeConnections` into the same sentence, so for that half they now cite an encoding
-`mssql.ts` no longer uses.
-
-**Done when:** the search provider omits `activeConnections` rather than sending 0, its two docs and its
-two test files move with it (the provider triad is per type-id even though one directory serves both),
-and no comment cites `mssql.ts` for an encoding it has stopped using.
 
 ### D47. Nine outward-facing enumerations name the engines by hand, and nothing counts them
 
@@ -784,6 +775,72 @@ change.
 **Done when:** the row passes the qualified name, every one of the twelve providers has been
 measured against a table outside its default schema (or recorded as having no such concept), and a
 component test pins the target the row sends so it cannot silently revert to the bare name.
+
+### D50. The search seam zeroes two OPTIONAL `TableStats` size fields for an index that reported nothing
+
+Found 2026-08-27 in the #517 review, inside the file that PR was already fixing. `toTableStats()`
+(`src/lib/db/providers/sql/search/index.ts`) reads `const sizeBytes = index.sizeBytes ?? 0` and writes
+that zero into `tableSize`, `tableSizeBytes`, `totalSize` and `totalSizeBytes`. Its docblock justified
+all four with "`TableStats` has no way to say 'unknown' - both fields are required numbers".
+
+**That justification was false for half of them.** Measured against `src/lib/db/types.ts`: `rowCount`,
+`totalSize` and `totalSizeBytes` are required, so for those three a closed index genuinely has nowhere
+to read but zero. `tableSize`, `tableSizeBytes`, `indexSize` and `indexSizeBytes` are **optional**, and
+their own docblock says why in as many words - "A `0` would be the same lie in a different digit, so
+absence is the answer, and every consumer of the aggregate gates on it - see `StorageTab`'s
+`tableSizeKnown`". The doc sentence and the docblock were corrected in #517; the code was not, because
+the consequence needs a decision rather than a patch.
+
+**The consequence, and why it is not obvious.** A CLOSED index reports neither a document count nor a
+size (measured: both arrive as JSON null while the listing still names the index). Filling
+`tableSizeBytes` with 0 keeps `StorageTab`'s `tableSizeKnown` true, so the Data figure reads `0 B` for
+that index rather than N/A. But omitting it flips `tableSizeKnown` false for the WHOLE cluster -
+`tables.every(...)` - so one closed index takes the Data figure away from every open one. That is the
+behaviour the type prescribes and SQLite-under-Bun already gets, and it is still a visible change to a
+panel, which is why it is an entry.
+
+**Done when:** the two optional fields are omitted for an index that published no size, both search
+docs record what one closed index does to the cluster's Data figure, and both test files pin an open
+index beside a closed one so the aggregate's behaviour is asserted rather than inferred.
+
+### D51. Four providers degrade a refused monitoring read to no rows, then read the absent row as 0
+
+Found 2026-08-27 in the #517 review, which asked whether the search provider really held the last
+fabricated `activeConnections` zero. It held the last *unconditional literal* one. It did not hold the
+last zero: four providers reach the same encoding by a longer route, and the route is what hides it.
+
+Each one swallows an unavailable monitoring surface into an empty result, and then a helper maps the
+absent row to zero. Measured, all four:
+- `sql/trino/introspect.ts` - `readOptionalRows` returns `[]` for every category in
+  `UNAVAILABLE_CATEGORIES`, `readOptionalRow` turns that into `null`, and
+  `nonNegative(readNumber(active?.activeQueries))` returns 0. A refused `jmx` surface publishes "0
+  active connections".
+- `sql/druid/introspect.ts` - `readRows` catches `isMonitoringUnavailable()` and returns `[]`, and
+  `asNumber(undefined)` is 0. The SQL's own docblock says the empty answer is expected when nothing is
+  running, which is true and is exactly why the refusal is invisible: the two produce the same rows.
+- `sql/clickhouse/index.ts` - `monitoringRows` catches `isMonitoringUnavailable()`, and `asNumber` maps
+  absence to 0 for `activeConnections`, `maxConnections`, `databaseSizeBytes`, `tableCount`,
+  `indexCount` and the uptime. A single refused read therefore publishes a fully-zeroed overview that
+  reads as measured. `startTime` is the one field that already declines (`identity === null ?
+  undefined`), so the correct shape is present in the same object.
+- `document/couchbase/index.ts` - `degradeTo(..., {})` around the pools and bucket reads, then
+  `lastSample(samples, "curr_connections") ?? 0` and `basicStats?.diskUsed ?? 0`.
+
+**Why this is one entry and not four.** The mechanism is identical and so is the fix's shape: the
+degrade step already knows the difference between "answered with no rows" and "declined", and it throws
+that distinction away before the mapper can act on it. Whatever carries it - a sentinel, a tuple, or
+the `errors` channel `getMonitoringData()` already has - is one decision applied four times.
+`sql/druid/introspect.ts`'s `startTime` and `clickhouse`'s show a provider can already tell them apart
+where someone thought to.
+
+Not measured, and deliberately not claimed: `keyvalue/redis.ts` and `sql/postgres.ts` write
+`parseInt(x || "0")` for the same field, but there the read either answers or throws, so a missing
+FIELD inside a successful response is a different question and needs its own measurement.
+
+**Done when:** a refused monitoring read is distinguishable from an empty one in all four providers, the
+optional fields are absent rather than 0 on the refusal, each provider's doc and test move with it, and
+`maxConnections` keeps its 0 - for that field the type says 0 and absence are one fact.
+
 
 ## Value interpolation
 
@@ -1026,46 +1083,65 @@ is not a free read.
 **Done when:** an operation a provider declares globally runnable either has its own card copy or a
 recorded reason it is withheld.
 
-### U24. Two absences the Storage tab still renders as measurements
+### U25. One byte formatter exists three times, and the two local copies draw non-magnitudes as figures
 
-Found 2026-08-27 while giving the tab the refused-`tables` arm it was missing (PR round 17). Both are
-narrow, both are in `src/components/monitoring/tabs/StorageTab.tsx`, and neither was introduced by that
-change.
+Found 2026-08-27 in the #517 review, which fixed the shared one. `formatBytes` exists in three places:
+the exported `src/lib/db/utils/pool-manager.ts` one that every provider calls, and a private
+threshold-cascade copy inside `src/components/monitoring/tabs/StorageTab.tsx` and another inside
+`src/components/monitoring/tabs/TablesTab.tsx`. The two components do NOT import the shared one, which
+is how the closed entry's claim that the Storage remainder rendered `NaN undefined` came to be wrong: that is the
+shared function's output, and the cell that was measured runs the local cascade.
 
-**A measured zero total draws the remainder bar full.** The breakdown computes
+#517 gave the shared one a guard (a negative or non-finite input returns `"N/A"`, and the unit index is
+clamped). The cascade copies have no guard, and their failure is quieter because the output looks like a
+reading. Measured against `TablesTab`'s copy: `-1` renders `"-1 B"`, `NaN` renders `"NaN B"`, `Infinity`
+renders `"Infinity GB"`, and 1 EB renders `"1073741824.00 GB"`. The Storage copy behaves identically;
+#517 closed its one reachable negative by refusing to compute a contradictory remainder at all, so that
+tab no longer feeds it one, but the formatter is unchanged.
+
+`TablesTab` reads the numeric twins (`tableSizeBytes` and its siblings) rather than the engine's own
+strings, so its input is whatever a provider computed - and D44 and D51 are both about providers that
+compute those numbers from an absent row.
+
+**Done when:** one formatter serves all three call sites, or the two copies carry the same guard as the
+shared one; the units agree (the cascade stops at GB, so it spells an exabyte in gigabytes); and a unit
+test pins a negative, a non-finite and a PB-scale input for whatever survives. Deleting the copies is
+the smaller change but not free: they exist at module scope with a comment saying they are there to keep
+the components' cognitive complexity down, and the shared module is a pool manager.
+
+### U26. The fleet total sums display strings, so a terabyte counts as one byte
+
+Found 2026-08-27 in the #517 review. `totalDBSize` in `src/components/admin/tabs/OverviewTab.tsx`
+builds the admin dashboard's total by RE-PARSING each connection's formatted size:
 
 ```ts
-const tablePercent = totalSize > 0 && tableSizeKnown ? (totalTableSize / totalSize) * 100 : 0;
-const otherPercent = breakdownKnown ? Math.max(0, 100 - tablePercent - indexPercent) : 0;
+const s = item.databaseSize.toLowerCase();
+const num = parseFloat(s);
+if (isNaN(num)) continue;
+if (s.includes("gb")) totalBytes += num * 1024 * 1024 * 1024;
+else if (s.includes("mb")) totalBytes += num * 1024 * 1024;
+else if (s.includes("kb")) totalBytes += num * 1024;
+else totalBytes += num;
 ```
 
-so on a provider that reports a real `databaseSizeBytes` of 0 - Trino and Druid do, and the comment
-above the block names them as the case it handles - the `totalSize > 0` guard forces both shares to 0
-while `breakdownKnown` stays true, and the remainder becomes `100 - 0 - 0`. Measured in the DOM against
-the tab's own measured-zero fixture: the Tables and Indexes indicators read `translateX(-100%)` (empty)
-and the remainder reads `translateX(-0%)` - a full bar over a database with no bytes. Its figure beside
-it correctly reads `0 B`, so nothing numeric is fabricated; the overclaim is entirely in the bar, which
-is why no text assertion could see it.
+`tb` is not a branch, so a `"1 TB"` database falls to `else` and contributes **1 byte** to the fleet
+total - and #517 added `PB` and `EB` to the shared formatter's ladder, so two more spellings now reach
+this parser and land in the same arm. The `else` arm is right for a bare `"512"` and cannot tell it from
+a truncated unit, which is the whole problem with parsing a string that was built for a human.
 
-**A refused overview drops the engine's sentence.** The tab carries `errors.storage` for the
-Tablespaces panel and now `errors.tables` for Largest Tables, but there is no `overviewUnavailable`:
-with `data.overview` absent and `errors.overview` set, the DB Size card falls to `N/A` and the
-breakdown to "No storage size information available." Both are honest - no figure is invented - but the
-engine's own explanation is discarded in a file that surfaces it for two other panels.
+The `"N/A"` handling is correct by accident and worth keeping: `parseFloat("n/a")` is `NaN`, so a
+refusal is skipped rather than counted as zero.
 
-**And the same zero total can put `NaN undefined` in the cell beside it.** The remainder's bytes are
-`totalSize - totalTableSize - totalIndexSize`, so a provider reporting a 0 total while its table read
-answers with real per-table bytes makes that negative - and `formatBytes`
-(`src/lib/db/utils/pool-manager.ts`) does not survive a negative: `Math.log(-1536)` is `NaN`, `i` is
-`NaN`, and `sizes[NaN]` is `undefined`, so the cell renders the literal string **`NaN undefined`**
-(measured 2026-08-27). This is reachable wherever D44 is: 14 type-ids send 0 for an unknown size, and
-`getTableStats()` is a separate read that does not share the failure. `formatBytes` guarding its own
-input is the cheaper half of the fix and belongs with this entry rather than with D44.
+**The real defect is that there is no numeric channel to sum.** `FleetHealthItem`
+(`src/app/api/admin/fleet-health/route.ts`) carries `databaseSize?: string` and nothing else, because
+`HealthInfo.databaseSize` is a required string. So the fix is not a `tb` branch - it is carrying the
+bytes the providers already have, which is also what makes an honest absence expressible here.
 
-**Done when:** the remainder's bar is empty rather than full when there is no total to divide, with a
-component test asserting the indicator transform rather than the text (the figure is already right);
-`formatBytes` refuses a negative rather than rendering `NaN undefined`, with a unit test; and a refused
-overview carries its own sentence the way the two sibling panels do.
+**Done when:** `FleetHealthItem` carries an optional byte count beside the string, the route projects it
+from the provider (absent when the provider published none), the total sums those numbers and shows how
+many connections it could not include rather than silently undercounting, and a test pins a TB-scale
+connection plus one with no byte figure at all.
+
 
 ---
 
