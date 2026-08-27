@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   AgentComposedSqlError,
   composeCatalogRead,
@@ -8,6 +8,9 @@ import {
   MAX_CATALOG_SELECTOR_LENGTH,
 } from "@/lib/agent/composed-sql";
 import { agentReadSqlInput, inspectAgentStatement } from "@/lib/db/operations/statement-guard";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { quoteLiteral } from "@/lib/sql/values";
 
 /**
@@ -676,5 +679,327 @@ describe("composeEstimatingExplain", () => {
     expect(composeEstimatingExplain("sqlite", "SELECT 'EXPLAIN' AS word FROM orders")).toBe(
       "EXPLAIN QUERY PLAN SELECT 'EXPLAIN' AS word FROM orders",
     );
+  });
+});
+
+// ============================================================================
+// DuckDB (#424 Phase 6)
+// ============================================================================
+
+/*
+  The DuckDB arms live in this file rather than beside the provider because every
+  assertion below RUNS the composed statement against a real embedded DuckDB, and the
+  coverage authority for `composed-sql.ts` is this process: a separate test file left
+  the string-continuation lines of the four composers reading as uncovered phantoms in
+  the merged lcov, because the process that executes them emits no DA record for them
+  while every process that merely loads the module does.
+
+  An embedded engine is available in the test process, so a shape assertion alone would
+  only prove the composer agrees with itself - and the defect these arms exist to fix
+  was exactly that kind of agreement. DuckDB reached `AGENT_EXECUTION_ENGINES` with NO
+  entry in `CATALOG_COMPOSERS`, so `POST /api/agent/runs` accepted the
+  `query-optimization` and `database-assessment` workflows on it while `inspect_schema`,
+  `profile_table` and `inspect_plan` could only ever refuse.
+
+  Gate 4 pin: DuckDB v1.5.5 via @duckdb/node-api 1.5.5-r.4. The fixture carries the two
+  shapes that broke the other engines' catalog reads - a COMPOSITE foreign key (B8's
+  cross-product) and a constraint-backed index carrying no DDL text (B25) - so a
+  regression in either shows up as wrong rows rather than as a passing string test.
+*/
+
+let workDir: string;
+let connection: { runAndReadAll: (sql: string) => Promise<{ getRowObjectsJson: () => unknown[] }> };
+let closeAll: () => void;
+
+/** Runs a composed statement on the fixture and hands back its rows as plain JSON. */
+async function rows(sql: string): Promise<Record<string, unknown>[]> {
+  const result = await connection.runAndReadAll(sql);
+  return result.getRowObjectsJson() as Record<string, unknown>[];
+}
+
+beforeAll(async () => {
+  workDir = mkdtempSync(join(tmpdir(), "libredb-duckdb-composer-"));
+  const { DuckDBInstance } = await import("@duckdb/node-api");
+  const instance = await DuckDBInstance.create(join(workDir, "fixture.duckdb"));
+  const open = await instance.connect();
+  connection = open;
+  closeAll = () => {
+    open.disconnectSync();
+    instance.closeSync();
+  };
+
+  await open.run("CREATE SCHEMA sales");
+  // A composite primary key on the parent, so the composite foreign key below has
+  // something to reference: DuckDB requires the referenced columns to carry one.
+  await open.run("CREATE TABLE pair_parent(a INTEGER, b INTEGER, PRIMARY KEY (a, b))");
+  await open.run(
+    "CREATE TABLE child(x INTEGER, y INTEGER, note VARCHAR, FOREIGN KEY (x, y) REFERENCES pair_parent(a, b))",
+  );
+  await open.run("CREATE TABLE sales.orders(id INTEGER PRIMARY KEY, sku VARCHAR UNIQUE)");
+  await open.run("CREATE INDEX idx_child_note ON child(note)");
+  await open.run("INSERT INTO pair_parent VALUES (1, 2)");
+  await open.run("INSERT INTO child VALUES (1, 2, 'n')");
+});
+
+afterAll(() => {
+  closeAll?.();
+  rmSync(workDir, { recursive: true, force: true });
+});
+
+describe("composeCatalogRead — DuckDB columns", () => {
+  test("reads duckdb_columns() rather than information_schema, and answers on a live engine", async () => {
+    const sql = composeCatalogRead("duckdb", {});
+
+    expect(guardAccepts(sql)).toBe(true);
+    expect(sql).toContain("duckdb_columns()");
+    expect(sql).not.toContain("information_schema");
+
+    const inventory = await rows(sql);
+    expect(inventory.length).toBeGreaterThan(0);
+    for (const projected of [
+      "table_schema",
+      "table_name",
+      "column_name",
+      "data_type",
+      "is_nullable",
+      "ordinal_position",
+    ]) {
+      expect(Object.keys(inventory[0] as object), projected).toContain(projected);
+    }
+  });
+
+  /**
+   * The trap this bounding exists for: `duckdb_schemas().internal` is TRUE for `main`
+   * even in a user database, so `NOT internal` alone would drop the default schema.
+   * `database_name = current_database()` is what excludes the `system` and `temp`
+   * catalogs instead, and the assertion is the ROWS rather than the clause - a reader
+   * cannot tell from the SQL text whether the bound actually holds.
+   */
+  test("lists both user schemas and no engine catalog", async () => {
+    const schemas = new Set((await rows(composeCatalogRead("duckdb", {}))).map((row) => row.table_schema));
+
+    expect(schemas.has("main")).toBe(true);
+    expect(schemas.has("sales")).toBe(true);
+    expect(schemas.has("information_schema")).toBe(false);
+    expect(schemas.has("pg_catalog")).toBe(false);
+  });
+
+  test("narrows on a schema selector, and the narrowing is what the engine returns", async () => {
+    const sql = composeCatalogRead("duckdb", { schema: "sales" });
+
+    expect(sql).toContain("schema_name = 'sales'");
+    const schemas = new Set((await rows(sql)).map((row) => row.table_schema));
+    expect([...schemas]).toEqual(["sales"]);
+  });
+
+  test("narrows on a table selector", async () => {
+    const sql = composeCatalogRead("duckdb", { table: "child" });
+
+    expect(sql).toContain("table_name = 'child'");
+    const names = new Set((await rows(sql)).map((row) => row.table_name));
+    expect([...names]).toEqual(["child"]);
+  });
+
+  test("orders the rows, so two identical inventories serialise identically", () => {
+    expect(composeCatalogRead("duckdb", {})).toContain("ORDER BY");
+  });
+});
+
+describe("composeCatalogRead — DuckDB relations", () => {
+  /**
+   * B8's defect, on this engine's own catalog. `duckdb_constraints()` publishes both
+   * sides as LISTS and DuckDB has no `WITH ORDINALITY`, so unnesting the two
+   * independently would produce the cross-product: four rows for a two-column key,
+   * two of them pairing columns that were never declared together. One shared ordinal
+   * from `generate_series` is what pairs them, and the row count is the proof.
+   */
+  test("a composite foreign key is two edges and not four", async () => {
+    const sql = composeCatalogRead("duckdb", { kind: "relations" });
+
+    expect(guardAccepts(sql)).toBe(true);
+    const edges = await rows(sql);
+
+    expect(edges).toHaveLength(2);
+    expect(edges.map((edge) => [edge.column_name, edge.referenced_column])).toEqual([
+      ["x", "a"],
+      ["y", "b"],
+    ]);
+    for (const edge of edges) {
+      expect(edge.table_name).toBe("child");
+      expect(edge.referenced_table).toBe("pair_parent");
+      expect(edge.referenced_schema).toBe("main");
+    }
+  });
+
+  test("carries the same six projected names as the PostgreSQL read, so one reader folds both", async () => {
+    const edge = (await rows(composeCatalogRead("duckdb", { kind: "relations" })))[0] as object;
+
+    expect(Object.keys(edge).sort()).toEqual(
+      [
+        "column_name",
+        "referenced_column",
+        "referenced_schema",
+        "referenced_table",
+        "table_name",
+        "table_schema",
+      ].sort(),
+    );
+  });
+
+  test("narrows on a table selector", async () => {
+    const edges = await rows(composeCatalogRead("duckdb", { kind: "relations", table: "pair_parent" }));
+
+    // pair_parent is the REFERENCED side, never the referencing one, so narrowing by
+    // it is empty rather than the parent's own edges - the same reading the other
+    // engines give, and the reason the selector names the referencing table.
+    expect(edges).toEqual([]);
+  });
+});
+
+describe("composeCatalogRead — DuckDB indexes", () => {
+  /**
+   * B25's hole, measured here: `duckdb_indexes()` lists ONLY indexes somebody wrote a
+   * `CREATE INDEX` for. The ART index a `PRIMARY KEY` or `UNIQUE` constraint builds is
+   * used by the planner and appears nowhere in it, so a foreign key covered by a unique
+   * constraint would read as unindexed. It also carries the only primary-key
+   * information on this engine's agent path, since the column read publishes no
+   * `is_primary`.
+   */
+  test("the union carries constraint-backed indexes duckdb_indexes() does not list", async () => {
+    const sql = composeCatalogRead("duckdb", { kind: "indexes" });
+
+    expect(guardAccepts(sql)).toBe(true);
+    const inventory = await rows(sql);
+    const written = inventory.filter((row) => row.index_name === "idx_child_note");
+    const primary = inventory.filter((row) => row.is_primary === true);
+    const unique = inventory.filter((row) => row.is_unique === true && row.is_primary === false);
+
+    expect(written).toHaveLength(1);
+    expect(written[0]?.is_unique).toBe(false);
+    // The composite primary key is two rows, in its declared order.
+    expect(primary.map((row) => row.column_name)).toEqual(["a", "b", "id"]);
+    expect(unique.map((row) => row.column_name)).toEqual(["sku"]);
+  });
+
+  test("a composite index reads in its own column order, not alphabetically", async () => {
+    const inventory = await rows(composeCatalogRead("duckdb", { kind: "indexes", table: "pair_parent" }));
+
+    expect(inventory.map((row) => [row.ordinal_position, row.column_name])).toEqual([
+      ["1", "a"],
+      ["2", "b"],
+    ]);
+  });
+
+  test("the narrowing reaches BOTH halves of the union", async () => {
+    const sql = composeCatalogRead("duckdb", { kind: "indexes", schema: "sales" });
+    const inventory = await rows(sql);
+
+    // Two arms, one narrowing each: if only the first carried it, main's rows would
+    // arrive through the constraint-backed half.
+    expect(new Set(inventory.map((row) => row.table_schema))).toEqual(new Set(["sales"]));
+    expect(inventory.length).toBeGreaterThan(0);
+  });
+});
+
+describe("composeCatalogRead — DuckDB statistics", () => {
+  test("reads the estimate the catalog already holds and scans nothing", async () => {
+    const sql = composeCatalogRead("duckdb", { kind: "statistics" });
+
+    expect(guardAccepts(sql)).toBe(true);
+    expect(sql).toContain("duckdb_tables()");
+    expect(sql).toContain("estimated_size AS estimated_rows");
+    // A scan is what this composition exists to avoid, and ANALYZE is a write.
+    expect(sql.toUpperCase()).not.toContain("COUNT(");
+    expect(sql.toUpperCase()).not.toContain("ANALYZE");
+
+    const inventory = await rows(sql);
+    expect(inventory.map((row) => `${row.table_schema}.${row.table_name}`)).toEqual([
+      "main.child",
+      "main.pair_parent",
+      "sales.orders",
+    ]);
+  });
+
+  test("narrows on both selectors together", async () => {
+    const inventory = await rows(
+      composeCatalogRead("duckdb", { kind: "statistics", schema: "sales", table: "orders" }),
+    );
+
+    expect(inventory).toHaveLength(1);
+    expect(inventory[0]?.table_name).toBe("orders");
+  });
+});
+
+describe("DuckDB composed SQL — the contracts every arm shares", () => {
+  const KINDS = ["columns", "relations", "indexes", "statistics"] as const;
+
+  test("every kind satisfies the bounded-read guard and the descriptor's input schema", () => {
+    for (const kind of KINDS) {
+      const sql = composeCatalogRead("duckdb", { kind });
+      expect(inspectAgentStatement(sql), kind).toBeNull();
+      expect(agentReadSqlInput.safeParse({ sql }).success, kind).toBe(true);
+    }
+  });
+
+  /**
+   * A hostile selector must become a quoted LITERAL rather than statement text, and the
+   * engine is the only witness that can settle it: the statement below runs, and the
+   * table it names would be gone if the quoting had failed.
+   */
+  test("a hostile selector is a literal on every kind, and the live engine agrees", async () => {
+    for (const kind of KINDS) {
+      const sql = composeCatalogRead("duckdb", { kind, table: "orders'; DROP TABLE child --" });
+
+      expect(inspectAgentStatement(sql), kind).toBeNull();
+      expect(sql, kind).toContain("''");
+      expect(await rows(sql), kind).toEqual([]);
+    }
+
+    const survivors = await rows("SELECT table_name FROM duckdb_tables() WHERE table_name = 'child'");
+    expect(survivors).toHaveLength(1);
+  });
+});
+
+describe("composeEstimatingExplain — DuckDB", () => {
+  /**
+   * The estimating form is the ONLY one this layer will compose for DuckDB, and the
+   * reason is measured rather than stylistic: `EXPLAIN ANALYZE` RUNS the statement on
+   * v1.5.5 (a probe table went from 0 rows to 1), and its JSON variant answers
+   * `{"result": "error"}` instead of a plan. A later DuckDB fixing that JSON makes the
+   * hazard worse, not better.
+   */
+  test("gets the estimating form, and it describes without running", async () => {
+    const sql = composeEstimatingExplain("duckdb", "SELECT id FROM sales.orders");
+
+    expect(sql).toBe("EXPLAIN (FORMAT JSON) SELECT id FROM sales.orders");
+    expect(sql.toUpperCase()).not.toContain("ANALYZE");
+    expect(agentReadSqlInput.safeParse({ sql }).success).toBe(true);
+
+    const plan = await rows(sql);
+    expect(plan).toHaveLength(1);
+    expect(plan[0]?.explain_key).toBe("physical_plan");
+    expect(JSON.parse(String(plan[0]?.explain_value))).toBeArray();
+  });
+
+  test("an INSERT the model smuggled in is refused by the guard rather than explained", () => {
+    const sql = composeEstimatingExplain("duckdb", "INSERT INTO child VALUES (9, 9, 'x')");
+
+    expect(agentReadSqlInput.safeParse({ sql }).success).toBe(false);
+    expect(inspectAgentStatement(sql)).toBe("SIDE_EFFECT_KEYWORD");
+  });
+});
+
+describe("the composers are reachable, which is the defect that put this file here", () => {
+  /**
+   * The four DuckDB functions existed and were never registered in `CATALOG_COMPOSERS`,
+   * so they were dead code that typecheck, lint and the whole test suite all passed
+   * over - only the 100% line-coverage gate saw them. This test fails if the
+   * registration is removed again, whatever the functions themselves still say.
+   */
+  test("every kind composes rather than refusing UNSUPPORTED_DIALECT", () => {
+    for (const kind of ["columns", "relations", "indexes", "statistics"] as const) {
+      expect(() => composeCatalogRead("duckdb", { kind }), kind).not.toThrow(AgentComposedSqlError);
+    }
+    expect(() => composeEstimatingExplain("duckdb", "SELECT 1")).not.toThrow(AgentComposedSqlError);
   });
 });

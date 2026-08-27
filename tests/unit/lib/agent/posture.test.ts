@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { AGENT_HANDOVER_BUDGET, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { agentPosture, autoExecuteTerms } from "@/lib/agent/posture";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
@@ -20,8 +20,13 @@ import { getDBConfig } from "@/lib/db-ui-config";
  *    that guard: it substitutes a third engine and fails if the copy does not follow.
  */
 
+/**
+ * The same join the copy uses, and it is `namedList` rather than a local `join(" and ")`:
+ * a local copy would have gone on asserting "PostgreSQL and SQLite and DuckDB" - the
+ * sentence a three-engine list produced before the shared helper existed.
+ */
 const labelsOf = (types: readonly string[]): string =>
-  types.map((type) => getDBConfig(type as Parameters<typeof getDBConfig>[0]).label).join(" and ");
+  namedList(types.map((type) => getDBConfig(type as Parameters<typeof getDBConfig>[0]).label));
 
 const EXECUTION_ENGINE_NAMES = labelsOf(AGENT_EXECUTION_ENGINES);
 const WORKFLOW_TYPES = Object.keys(AGENT_WORKFLOW_BUDGETS) as AgentRunWorkflowType[];
@@ -259,8 +264,12 @@ describe("the engine names follow the enforcing list", () => {
   test("an engine added to AGENT_EXECUTION_ENGINES changes the copy with no copy edit", async () => {
     const real = [...AGENT_EXECUTION_ENGINES];
     try {
+      // `namedList` is re-exported by the substitute rather than dropped: the module under
+      // test imports it from here too, and a factory naming only the array would swap the
+      // list for a third engine and take the join with it.
       mock.module("@/lib/agent/engine-support", () => ({
         AGENT_EXECUTION_ENGINES: ["postgres", "sqlite", "mysql"],
+        namedList,
       }));
       const { agentPosture: withThree } = await import("@/lib/agent/posture");
       const blocked = withThree({
@@ -270,10 +279,10 @@ describe("the engine names follow the enforcing list", () => {
         handover: false,
       });
 
-      expect(blocked.body).toContain("path — PostgreSQL and SQLite and MySQL.");
+      expect(blocked.body).toContain("path — PostgreSQL, SQLite and MySQL.");
       expect(withThree({ mode: "agent", engine: "mysql", engineLabel: "MySQL", handover: false }).tone).toBe("reads");
     } finally {
-      mock.module("@/lib/agent/engine-support", () => ({ AGENT_EXECUTION_ENGINES: real }));
+      mock.module("@/lib/agent/engine-support", () => ({ AGENT_EXECUTION_ENGINES: real, namedList }));
     }
   });
 

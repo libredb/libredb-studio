@@ -220,6 +220,19 @@ const FOREIGN_KEY_ONLY_IN_CREATE_TABLE: Partial<Record<DatabaseType, { label: st
     label: "libSQL",
     reason: "SQLite declares one only in CREATE TABLE; recreate the table and copy the rows.",
   },
+  // Measured on DuckDB v1.5.5, both arms. The table constraint this map selects is
+  // accepted and readable back - `CREATE TABLE "users" (..., PRIMARY KEY ("id"),
+  // FOREIGN KEY ("dept_id") REFERENCES "departments"("id"))` lands, and
+  // `duckdb_constraints()` then reports it. The trailing ALTER the other ids get is
+  // NOT: `ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u(id)` answers
+  // "Not implemented Error: No support for that ALTER TABLE option yet!", which is
+  // exactly what `generateAlterTable` already declines to emit for this id. Without
+  // this entry the two halves disagreed: the created-table path emitted the very
+  // statement the modified-table path documents as refused.
+  duckdb: {
+    label: "DuckDB",
+    reason: "ALTER TABLE cannot add one yet; recreate the table and copy the rows.",
+  },
 };
 
 function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
@@ -442,10 +455,14 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
         );
         return;
       }
-      // No ALTER in SQLite's grammar adds a constraint, so for `sqlite` and `libsql` alike the
-      // honest line names the table recreation instead (see FOREIGN_KEY_ONLY_IN_CREATE_TABLE for the
-      // two measurements). Unlike the created-table path, there is nothing to move the key into: the
-      // table already exists, and this generator does not write the recreation.
+      // No ALTER adds a foreign key on these ids, so the honest line names the table recreation
+      // instead (see FOREIGN_KEY_ONLY_IN_CREATE_TABLE for the three measurements). For `sqlite` and
+      // `libsql` it is SQLite's grammar; for `duckdb` it is a refusal at execution -
+      // `ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u(id)` parses and then answers
+      // "Not implemented Error: No support for that ALTER TABLE option yet!" (v1.5.5), as does the
+      // UNIQUE form, while `ADD CONSTRAINT ... PRIMARY KEY` is the one arm that lands. Unlike the
+      // created-table path, there is nothing to move the key into: the table already exists, and
+      // this generator does not write the recreation.
       const declined = FOREIGN_KEY_ONLY_IN_CREATE_TABLE[dialect];
       if (declined) {
         lines.push(
@@ -473,6 +490,12 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
         // syntax error". Same limit as SQLite, named separately so the comment names
         // the engine the reader connected to.
         lines.push(`-- libSQL: Cannot drop a foreign key directly. Requires table recreation.`);
+      } else if (dialect === "duckdb") {
+        // The generic branch below is refused here too, measured on v1.5.5: `ALTER
+        // TABLE t DROP CONSTRAINT IF EXISTS fk_x` is "Not implemented Error: No
+        // support for that ALTER TABLE option yet!" - and a `Not implemented` is not
+        // an `IF EXISTS` no-op, so the line would fail a migration rather than skip.
+        lines.push(`-- DuckDB: Cannot drop a foreign key directly. Requires table recreation.`);
       } else if (dialect === "cassandra") {
         // `DROP CONSTRAINT IF EXISTS fk_x` is "mismatched input 'IF' expecting EOF"
         // (measured), and dropping what was never declarable is not a statement.

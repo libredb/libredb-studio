@@ -48,7 +48,22 @@ export type DatabaseType =
   // were all unpullable on 2026-08-27) and ships as an in-process npm engine, so
   // there is nothing to connect to and #424 publishes no name it has not connected
   // to.
-  | "libsql";
+  | "libsql"
+  // DuckDB (issue #424). An EMBEDDED analytical engine: the whole connection is a
+  // file path (or `:memory:`), there is nothing listening on a port, and the driver
+  // is a native N-API addon this app loads in its own process. It is separate from
+  // `sqlite` for the reason those two cannot share a provider even though both open
+  // a local file: the dialects disagree (`[1,2][1]` is a list index here, not a
+  // quoted identifier; block comments nest; `X'…'` is a STRING rather than a blob),
+  // the catalog is DuckDB's own `duckdb_*` table functions rather than
+  // `sqlite_master`, and the file admits exactly ONE operating-system process - a
+  // second one is refused even in read-only mode, which is why this provider
+  // declares `singleWriterFile`.
+  //
+  // MotherDuck (`md:`), Quack and DuckLake are NOT this id and have no row anywhere
+  // yet: each is a different connection story than a local path, and #424 publishes
+  // no name it has not connected to.
+  | "duckdb";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

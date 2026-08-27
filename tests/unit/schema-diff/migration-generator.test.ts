@@ -930,6 +930,11 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
       distinguishingClause: "A foreign key is declarable only as a CREATE TABLE constraint;",
     },
     libsql: { label: "libSQL", distinguishingClause: "SQLite declares one only in CREATE TABLE;" },
+    // Not an inheritance from the two SQLite ids but a measurement of its own: DuckDB
+    // v1.5.5 accepts the table constraint and reports it back through
+    // `duckdb_constraints()`, and answers the trailing ALTER with "Not implemented
+    // Error: No support for that ALTER TABLE option yet!".
+    duckdb: { label: "DuckDB", distinguishingClause: "ALTER TABLE cannot add one yet;" },
     postgres: "key-follows-in-an-alter",
     mysql: "key-follows-in-an-alter",
     oracle: "key-follows-in-an-alter",
@@ -1003,7 +1008,10 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
  * classified, so it cannot silently re-inherit the generator's PostgreSQL branch — which is the whole
  * of #269. `"has-own-branch"` means the modified-column chain answers that id in its own dialect.
  */
-const MODIFIED_COLUMN_COVERAGE: Record<DatabaseType, { label: string; reason: string } | "has-own-branch"> = {
+const MODIFIED_COLUMN_COVERAGE: Record<
+  DatabaseType,
+  { label: string; reason: string } | "has-own-branch" | "postgres-branch-measured"
+> = {
   postgres: "has-own-branch",
   mysql: "has-own-branch",
   sqlite: "has-own-branch",
@@ -1014,6 +1022,13 @@ const MODIFIED_COLUMN_COVERAGE: Record<DatabaseType, { label: string; reason: st
     label: "libSQL",
     reason: "SQLite cannot retype a column; recreate the table and copy the rows.",
   },
+  // The third answer, and DuckDB is the first id to need it: the PostgreSQL branch is
+  // reached AND every statement it emits was measured running on v1.5.5 - `ALTER
+  // COLUMN "a" TYPE BIGINT`, `SET NOT NULL`, `DROP NOT NULL`, `SET DEFAULT 1` and
+  // `DROP DEFAULT` all answered OK. So this is not the silent inheritance #269 closed;
+  // it is a measured decision that the shared arm is correct here, and the test below
+  // pins the DDL rather than a comment.
+  duckdb: "postgres-branch-measured",
   oracle: "has-own-branch",
   mssql: "has-own-branch",
   clickhouse: "has-own-branch",
@@ -1041,9 +1056,119 @@ const MODIFIED_COLUMN_COVERAGE: Record<DatabaseType, { label: string; reason: st
   libredb: { label: "LibreDB", reason: "JSON command grammar" },
 };
 
+/**
+ * DuckDB is the one id that reaches the PostgreSQL arm on purpose and is refused on the
+ * two foreign-key ones. Every expectation below is a statement measured on v1.5.5
+ * through `@duckdb/node-api` 1.5.5-r.4, so this block is where the measurement is
+ * pinned rather than only described in a comment.
+ */
+describe("generateMigrationSQL: duckdb", () => {
+  test("a modified column emits the real ALTER COLUMN DDL, not a limitation comment", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "duckdb");
+
+    expect(sql).toContain('ALTER TABLE "users" ALTER COLUMN "name" TYPE varchar(255);');
+    expect(sql).toContain('ALTER TABLE "users" ALTER COLUMN "name" SET NOT NULL;');
+    expect(sql).toContain('ALTER TABLE "users" ALTER COLUMN "name" SET DEFAULT \'unknown\';');
+    expect(sql).not.toContain("Cannot alter column");
+  });
+
+  test("added and dropped columns take the standard spelling, which DuckDB accepts", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "duckdb");
+
+    expect(sql).toContain('ALTER TABLE "users" ADD COLUMN "phone" varchar(20);');
+    expect(sql).toContain('ALTER TABLE "users" DROP COLUMN "legacy_col";');
+  });
+
+  test("an added foreign key is declined in words, because ADD CONSTRAINT ... FOREIGN KEY is not implemented", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "duckdb");
+
+    expect(sql).toContain('-- DuckDB: Cannot add a foreign key on "dept_id".');
+    expect(sql).toContain("recreate the table and copy the rows");
+    // The words `ADD CONSTRAINT` appear in the comment itself, so the assertion is that
+    // no STATEMENT carries them - not that the text does not.
+    expect(sql).not.toMatch(/^ALTER TABLE .*ADD CONSTRAINT/m);
+  });
+
+  test("a removed foreign key is declined too, since DROP CONSTRAINT is not an IF EXISTS no-op here", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "duckdb");
+
+    expect(sql).toContain("-- DuckDB: Cannot drop a foreign key directly. Requires table recreation.");
+    expect(sql).not.toContain("DROP CONSTRAINT");
+  });
+
+  test("the migration is still wrapped in a transaction, because DuckDB DDL is transactional", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "duckdb");
+
+    expect(sql).toContain("BEGIN;");
+    expect(sql).toContain("COMMIT;");
+  });
+
+  /*
+    The created-table half of the same measurement, and the reason `duckdb` had to join
+    FOREIGN_KEY_ONLY_IN_CREATE_TABLE: without an entry there the generator emitted the very
+    `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY` that this engine answers with "Not
+    implemented Error", one screen away from the modified-table path that declines to emit it.
+
+    The statement is not merely asserted, it is EXECUTED against a real embedded DuckDB - the
+    only assertion that can tell a runnable migration from a plausible-looking one - and the
+    key is then read back out of `duckdb_constraints()` to prove the engine kept it rather
+    than parsed and dropped it.
+  */
+  test("an added table declares its foreign key inside CREATE TABLE, and the engine accepts it", async () => {
+    const diff = makeAddedTableDiff();
+    // The shared fixture declares no `dept_id`, and the two string-only tests above never
+    // needed one. An executing assertion does: DuckDB answers `Binder Error: column
+    // "dept_id" named in key does not exist` for a key over a column the statement omits,
+    // which is itself a small proof that the engine is really reading this SQL.
+    diff.tables[0].columns.push({
+      action: "added",
+      columnName: "dept_id",
+      targetType: "integer",
+      targetNullable: true,
+      targetIsPrimary: false,
+      changes: ['Added column "dept_id"'],
+    });
+    diff.tables[0].foreignKeys = [
+      {
+        action: "added",
+        columnName: "dept_id",
+        targetReferencedTable: "departments",
+        targetReferencedColumn: "id",
+        changes: ["Added FK"],
+      },
+    ];
+    const sql = generateMigrationSQL(diff, "duckdb");
+
+    expect(sql).toContain('FOREIGN KEY ("dept_id") REFERENCES "departments"("id")');
+    expect(sql).not.toContain("ADD CONSTRAINT");
+
+    const { DuckDBInstance } = await import("@duckdb/node-api");
+    const instance = await DuckDBInstance.create(":memory:");
+    const connection = await instance.connect();
+    try {
+      // The parent the generated statement references; the diff carries only the child.
+      await connection.run('CREATE TABLE "departments" ("id" integer NOT NULL, PRIMARY KEY ("id"))');
+      // Only the table body: the migration's own BEGIN/COMMIT and comment lines are not the
+      // subject here, and `run` takes one statement.
+      const createTable = sql.slice(sql.indexOf('CREATE TABLE "users"'), sql.indexOf("\n);") + 3);
+      await connection.run(createTable);
+
+      const declared = await connection.runAndReadAll(
+        "SELECT table_name, constraint_column_names, referenced_table FROM duckdb_constraints() WHERE constraint_type = 'FOREIGN KEY'",
+      );
+      expect(declared.getRowObjectsJson()).toEqual([
+        { table_name: "users", constraint_column_names: ["dept_id"], referenced_table: "departments" },
+      ]);
+    } finally {
+      connection.disconnectSync();
+      instance.closeSync();
+    }
+  });
+});
+
 describe("generateMigrationSQL: dialects that cannot modify a column", () => {
   for (const [dialect, expected] of Object.entries(MODIFIED_COLUMN_COVERAGE)) {
-    if (expected === "has-own-branch") continue;
+    if (typeof expected === "string") continue;
 
     test(`${dialect}: modified column emits a comment naming the limitation, never PostgreSQL DDL`, () => {
       const sql = generateMigrationSQL(makeModifiedTableDiff(), dialect as DatabaseType);

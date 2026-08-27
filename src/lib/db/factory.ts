@@ -86,6 +86,11 @@ export async function createDatabaseProvider(
       return new SQLiteProvider(connection, options, execution);
     }
 
+    case "duckdb": {
+      const { DuckDBProvider } = await import("./providers/sql/duckdb");
+      return new DuckDBProvider(connection, options, execution);
+    }
+
     case "libsql": {
       const { LibSQLProvider } = await import("./providers/sql/libsql");
       return new LibSQLProvider(connection, options);
@@ -178,7 +183,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/unit/db/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, libredb`,
         connection.type,
       );
   }
@@ -267,10 +272,29 @@ const providerCache = new Map<string, CachedProvider>();
  * two engines can never collide over one path.
  *
  * `null` when the connection carries no file path at all, which is every
- * client-server connection and every connection-string one.
+ * client-server connection, every connection-string one, and every ANONYMOUS
+ * IN-MEMORY one.
+ *
+ * That last case is not a nicety. `path.resolve(":memory:")` is a path in the working
+ * directory, so two unrelated in-memory connections came out with ONE identity and the
+ * second borrowed the first's open handle - reading a database nobody pointed it at.
+ * It fires on the engines that declare `singleWriterFile`, which is where the borrow
+ * lives: DuckDB accepts `:memory:` (LibreDB does not). An anonymous in-memory database
+ * is per-handle by definition - there is no file to share, no lock to work around, and
+ * therefore nothing a borrow could buy.
+ *
+ * The comparison is EXACT, matching `DuckDBProvider.getDatabasePath()` character for
+ * character: that method treats `:memory:` and nothing else as in-memory, and resolves
+ * every other spelling - `:MEMORY:`, ` :memory:`, DuckDB's own `:memory:named` - as a
+ * relative file path. Two connections spelling one of those the same way really do
+ * point at one file, and must keep matching. The narrowing here is only ever as wide as
+ * the provider's own reading of the value.
  */
+const ANONYMOUS_IN_MEMORY_DATABASE = ":memory:";
+
 function fileIdentity(connection: DatabaseConnection): string | null {
   if (!connection.database) return null;
+  if (connection.database === ANONYMOUS_IN_MEMORY_DATABASE) return null;
   return `${connection.type}::${path.resolve(connection.database)}`;
 }
 

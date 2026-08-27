@@ -405,6 +405,18 @@ describe("buildResultExport — a binary value in a statement", () => {
     expect(file.content).toContain("VALUES (HEXTORAW('0102deadbeef'));");
   });
 
+  // The trap this row exists for: DuckDB is Postgres-shaped everywhere else in this
+  // file, and the standard `X'…'` form PARSES here - it is just not a binary literal.
+  // Measured on v1.5.5, `SELECT typeof(X'0102')` answers `VARCHAR` and `SELECT X'0102'`
+  // answers the five characters `x0102`, so the standard spelling would write TEXT into
+  // a BLOB column and the file would replay wrong rather than fail.
+  test("writes DuckDB's unhex, because its X'…' is a string and not six bytes", () => {
+    const file = buildResultExport("sql-insert", source({ ...binaryRow(wire), dialect: "duckdb" }));
+
+    expect(file.content).toContain("VALUES (unhex('0102deadbeef'));");
+    expect(file.content).not.toContain("X'");
+  });
+
   test("writes ClickHouse's unhex", () => {
     const file = buildResultExport("sql-insert", source({ ...binaryRow(wire), dialect: "clickhouse" }));
 
@@ -440,6 +452,11 @@ describe("buildResultExport — a binary value in a statement", () => {
     );
     expect(buildResultExport("sql-insert", source({ ...binaryRow(empty), dialect: "oracle" })).content).toContain(
       "VALUES (HEXTORAW(''));",
+    );
+    // `unhex('')` really inserts the zero-length blob on DuckDB: measured, the row
+    // reads back with `octet_length(payload)` 0 rather than NULL.
+    expect(buildResultExport("sql-insert", source({ ...binaryRow(empty), dialect: "duckdb" })).content).toContain(
+      "VALUES (unhex(''));",
     );
   });
 
@@ -735,6 +752,30 @@ describe("buildResultExport — the bare names the remaining reachable dialects 
     expect(ddl({ c: "CLOB" }, "trino")).toContain('"c" VARCHAR');
     expect(ddl({ c: "blob" }, "trino")).toContain('"c" VARBINARY');
     expect(ddl({ c: "decimal" }, "trino")).toContain('"c" DOUBLE PRECISION');
+  });
+
+  // Measured on DuckDB v1.5.5, read back out of `duckdb_columns().data_type`. The
+  // seven character spellings all resolve to an unbounded `VARCHAR`, the four byte ones
+  // to `BLOB` and the four moment ones to `TIMESTAMP` - so a declared type survives a
+  // DuckDB target as it was spelled.
+  test("keeps the names DuckDB stores unnarrowed", () => {
+    for (const bare of ["varchar", "nvarchar", "char", "text", "bytea", "varbinary", "datetime", "timestamp"]) {
+      expect(ddl({ c: bare }, "duckdb")).toContain(`"c" ${bare}`);
+    }
+  });
+
+  test("re-spells what DuckDB does not have, and the two names it would silently narrow", () => {
+    // `Catalog Error: Type with name … does not exist!` for each of these.
+    expect(ddl({ c: "VARCHAR2" }, "duckdb")).toContain('"c" TEXT');
+    expect(ddl({ c: "longtext" }, "duckdb")).toContain('"c" TEXT');
+    expect(ddl({ c: "CLOB" }, "duckdb")).toContain('"c" TEXT');
+    expect(ddl({ c: "NUMBER" }, "duckdb")).toContain('"c" DOUBLE PRECISION');
+    expect(ddl({ c: "BINARY_DOUBLE" }, "duckdb")).toContain('"c" DOUBLE PRECISION');
+    // The narrowing pair, and the reason they are absent from the row above rather
+    // than kept: DuckDB ACCEPTS both and stores `DECIMAL(18,3)`, which rounds away
+    // every value past the third decimal the column existed for.
+    expect(ddl({ c: "numeric" }, "duckdb")).toContain('"c" DOUBLE PRECISION');
+    expect(ddl({ c: "decimal" }, "duckdb")).toContain('"c" DOUBLE PRECISION');
   });
 
   // Measured on Cassandra 5.0.9, read back out of `system_schema.columns`: exactly

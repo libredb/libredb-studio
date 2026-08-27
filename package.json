@@ -139,7 +139,9 @@
     "readme:check": "node scripts/readme-check.mjs",
     "security:check": "node scripts/security-check.mjs"
   },
+  "//dependencies": "@duckdb/node-api is the one exact pin in this list. Its versions carry a prerelease suffix (1.5.5-r.4 = DuckDB 1.5.5, driver revision 4), and npm and bun treat a caret over a prerelease tag inconsistently - `^1.5.5-r.4` would resolve forward across 1.x in a way neither tool agrees on - so the range is written out. The driver is four packages, not one: @duckdb/node-api -> @duckdb/node-bindings -> a per-platform, per-libc @duckdb/node-bindings-<platform>-<arch>[-musl] holding duckdb.node next to the ~70 MB libduckdb.so it links against. None of the four declares a scripts block or a binding.gyp, so no trustedDependencies entry is needed. Bumping it is a provider change, not a routine bump (see docs/providers/duckdb.md and the tri-sync rule in CLAUDE.md).",
   "dependencies": {
+    "@duckdb/node-api": "1.5.5-r.4",
     "@google/generative-ai": "^0.24.1",
     "@libredb/libredb": "^0.2.2",
     "@monaco-editor/react": "^4.7.0",

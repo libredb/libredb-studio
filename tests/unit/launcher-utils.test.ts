@@ -286,10 +286,11 @@ describe("assessNodeRuntime", () => {
   );
 
   // Every major at or above the floor is silent, including majors newer than
-  // the one the payload was built on. That is only true because better-sqlite3
-  // v13 moved to the N-API: its prebuilt binary is ABI-independent, so a
-  // payload built on Node 24 runs its native module on Node 26 unchanged
-  // (probed under node:26-trixie-slim). Under v12's per-ABI binding this tier
+  // the one the payload was built on. That is only true because BOTH native
+  // modules in the payload are N-API - better-sqlite3 since v13, and the DuckDB
+  // driver's binding addon - so their prebuilt binaries are ABI-independent and
+  // a payload built on Node 24 runs them on Node 26 unchanged (probed under
+  // node:26-trixie-slim). Under better-sqlite3 v12's per-ABI binding this tier
   // had to warn that server-side SQLite storage was unavailable.
   test.each(["24.0.0", "24.14.0", "24.19.0", "25.9.0", "26.0.0", "26.7.0"])(
     "is silent on the fully supported %s",

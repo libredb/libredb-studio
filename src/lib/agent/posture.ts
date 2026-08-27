@@ -29,7 +29,7 @@
  *    carries the full claim rather than the missing half.
  */
 
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { AGENT_HANDOVER_BUDGET, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import { getDBConfig } from "@/lib/db-ui-config";
@@ -79,9 +79,14 @@ const CATALOG_CAPTURE_ENGINES: readonly DatabaseType[] = ["postgres", "sqlite"];
  */
 const STATEMENT_BOUNDS = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
 
-/** The engines agent mode can execute on, named as the product names them. */
-const engineNames = (types: readonly DatabaseType[]): string =>
-  types.map((type) => getDBConfig(type).label).join(" and ");
+/**
+ * The engines agent mode can execute on, named as the product names them.
+ *
+ * The join is `namedList` and not `join(" and ")`: with three execution engines the local
+ * join printed "PostgreSQL and SQLite and DuckDB" here and on the login hero, which had a
+ * copy of the same line. One helper serves both.
+ */
+const engineNames = (types: readonly DatabaseType[]): string => namedList(types.map((type) => getDBConfig(type).label));
 
 /**
  * The terms of the auto-execute consent, as ONE sentence-run rather than as JSX prose: the

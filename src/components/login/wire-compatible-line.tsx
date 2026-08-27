@@ -8,8 +8,8 @@ interface WireCompatibleLineProps {
 /**
  * The engines that connect through a driver of their own name's making.
  *
- * The login page named fifteen providers and stopped there, while the product connects to
- * forty named products: the other twenty-six speak a wire protocol we already ship and
+ * The login page named sixteen providers and stopped there, while the product connects to
+ * forty-two named products: the other twenty-six speak a wire protocol we already ship and
  * were published in README.md and the docs compatibility table, but nowhere a visitor to
  * the front door could see them. This line closes that gap and nothing else - the count and
  * every name come from `WIRE_COMPATIBLE_ENGINES`, so a twentieth probed engine joins the

@@ -24,6 +24,8 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("O'Brien", "druid")).toBe("'O''Brien'");
     // Measured on Trino 476: `SELECT 'O''Brien' AS a` answers the row `O'Brien`.
     expect(quoteLiteral("O'Brien", "trino")).toBe("'O''Brien'");
+    // Measured on DuckDB v1.5.5: `SELECT 'it''s'` answers `it's`.
+    expect(quoteLiteral("O'Brien", "duckdb")).toBe("'O''Brien'");
   });
 
   test("escapes the quote with a backslash where the grammar has no doubling", () => {
@@ -31,6 +33,12 @@ describe("quoteLiteral", () => {
     //   char ::= unicode-character | '\' ( '\' | '"' | "'" | 'b' | ... )
     // Doubling is not in that grammar, so `'O''Brien'` is not one literal there.
     expect(quoteLiteral("O'Brien", "couchbase")).toBe("'O\\'Brien'");
+  });
+
+  test("leaves a backslash alone on duckdb, where it is ordinary data", () => {
+    // Measured on v1.5.5: `SELECT 'a\\b', length('a\\b')` answers the three characters
+    // `a\\b`, so doubling it would add a second one to the value.
+    expect(quoteLiteral("a\\b", "duckdb")).toBe("'a\\b'");
   });
 
   test("doubles a backslash where the dialect reads it as an escape", () => {
@@ -97,6 +105,10 @@ describe("positionalPlaceholder", () => {
     // test pins the pair with `bodyOf("country = $1").args`.
     expect(positionalPlaceholder("couchbase", 1)).toBe("$1");
     expect(positionalPlaceholder("couchbase", 2)).toBe("$2");
+    // DuckDB binds both `?` and `$1` (measured); `?` is the form this repo pins,
+    // because `$` also opens a dollar-quoted literal in this dialect.
+    expect(positionalPlaceholder("duckdb", 1)).toBe("?");
+    expect(positionalPlaceholder("duckdb", 2)).toBe("?");
   });
 
   test("trino has no positional placeholder, because its provider refuses to bind one", () => {

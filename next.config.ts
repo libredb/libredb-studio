@@ -212,7 +212,19 @@ const nextConfig: NextConfig = {
   // an OPTIONAL dependency, so bundling it makes the build try to resolve a module
   // nobody installed. Externalizing leaves the try/catch to fail at runtime the way
   // the driver intends.
-  serverExternalPackages: ["pg", "mysql2", "mongodb", "better-sqlite3", "ssh2", "cassandra-driver"],
+  // `@duckdb/node-bindings` is listed next to `@duckdb/node-api` on purpose: it is
+  // the loader that does a bare top-level `require('@duckdb/node-bindings-<platform>-
+  // <arch>/duckdb.node')`, so it is the module that must never be bundled.
+  serverExternalPackages: [
+    "pg",
+    "mysql2",
+    "mongodb",
+    "better-sqlite3",
+    "ssh2",
+    "cassandra-driver",
+    "@duckdb/node-api",
+    "@duckdb/node-bindings",
+  ],
 
   // One rule over every path, not just the skipped ones: both values are constants and byte
   // identical to what proxy() already sets, so the overlap on documents is inert, while a narrower

@@ -388,3 +388,34 @@ export const LibSQLIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <circle cx="19.5" cy="16" r="1.2" fill="currentColor" stroke="none" />
   </svg>
 );
+
+/**
+ * DuckDB: an analytical store the app opens as a local file.
+ *
+ * Not a copy of the project's logo, which is a filled duck head in its own brand
+ * yellow. This is the house idiom instead - one stroke at weight 1.5 - and what it
+ * draws is the two halves of the id rather than the brand: a duck's head and bill
+ * above a database cylinder, because the engine is a database FILE this process
+ * opens and not a server it dials. The cylinder is what tells it apart from the
+ * SQLite document outline above; the head is what tells it apart from every other
+ * cylinder on the page. It still reads at 14px, where the eye is the only fill.
+ */
+export const DuckDBIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="17.3" cy="6" r="3" />
+    <polyline points="14.4 5 10.4 6 14.1 7.7" />
+    <path d="M15.3 8.4 13.9 10.2" />
+    <ellipse cx="9" cy="12" rx="5" ry="2" />
+    <path d="M4 12v5.2c0 1.1 2.2 2 5 2s5-.9 5-2V12" />
+    <circle cx="18.3" cy="5.2" r="0.85" fill="currentColor" stroke="none" />
+  </svg>
+);

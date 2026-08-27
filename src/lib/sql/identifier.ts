@@ -49,7 +49,9 @@ export function quoteIdentifier(name: string, dialect: DatabaseType | undefined)
       // Cassandra (measured on 5.0.9: `SELECT "id" FROM probe.customers` returns the
       // column, a backtick is "no viable alternative at character '`'", and a
       // double-quoted STRING is a syntax error - so `"` is the name quote and nothing
-      // else), and the document/key-value providers
+      // else), DuckDB (measured on v1.5.5: `"quoted identifier"` works, and `[…]` is a
+      // LIST literal here rather than a name quote, so the bracket branch above would
+      // be wrong for it), and the document/key-value providers
       // whose generators fall back to it. An undefined dialect lands here too —
       // a generator with no connection to name one can claim only the standard.
       return `"${name.replace(/"/g, '""')}"`;

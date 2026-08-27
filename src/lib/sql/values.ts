@@ -23,6 +23,10 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // Measured on sqld 0.24.33: `SELECT 'it''s'` answers `it's`, and a backslash has no
   // special meaning - the same standard doubling SQLite defines.
   libsql: "standard",
+  // Measured on DuckDB v1.5.5, both directions: `SELECT 'it''s'` answers `it's`, and
+  // `SELECT 'a\b', length('a\b')` answers the three characters `a\b` - so a backslash
+  // is data, and doubling it would add a second one to the value.
+  duckdb: "standard",
   oracle: "standard",
   mssql: "standard",
   // Druid quotes a string with single quotes and puts its backslash escapes in the
@@ -149,6 +153,15 @@ export function positionalPlaceholder(dialect: DatabaseType, position: number): 
       return `$${position}`;
     // Druid binds a `parameters` array against `?`, live-verified when the
     // provider was written (`src/lib/db/providers/sql/druid/index.ts`).
+    // DuckDB binds BOTH forms - measured on v1.5.5, `runAndReadAll("SELECT ?::INTEGER
+    // AS a, ?::VARCHAR AS b", [7, "x"])` and `runAndReadAll("SELECT $1::INTEGER AS a",
+    // [9])` each answer - so this is a choice rather than a reading, and `?` is the one
+    // taken. `$` is overloaded in this dialect: `$tag$…$tag$` is a dollar-quoted string
+    // literal (measured), so a `$1` written into a generated statement sits one
+    // character away from a form the readers in this folder have to tell apart, while
+    // `?` has no second meaning anywhere in DuckDB's grammar. It also matches the
+    // positional ORDER the driver binds by, which is the array's, not the digit's.
+    case "duckdb":
     case "mysql":
     case "sqlite":
     case "druid":

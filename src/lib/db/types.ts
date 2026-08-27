@@ -176,7 +176,8 @@ export type ExplainFormat =
   | "couchbase-json"
   | "clickhouse-json"
   | "druid-native"
-  | "trino-json";
+  | "trino-json"
+  | "duckdb-json";
 
 export interface ProviderCapabilities {
   queryLanguage: "sql" | "json";

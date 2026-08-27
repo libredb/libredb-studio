@@ -451,6 +451,32 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
     "datetime",
     "year",
   ],
+  // Measured on DuckDB v1.5.5, one `CREATE TABLE probe (c <name>)` per name read back
+  // out of `duckdb_columns().data_type`. Every name here resolved to an UNNARROWED
+  // type - the seven text spellings to `VARCHAR`, the four byte ones to `BLOB`, the
+  // four moment ones to `TIMESTAMP` (and `TIMESTAMP WITH TIME ZONE` to itself).
+  //
+  // `numeric` and `decimal` are the absences that matter: DuckDB accepts both and
+  // stores `DECIMAL(18,3)`, which rounds away every value past the third decimal the
+  // column existed for - the same silent narrowing MySQL's bare `decimal` does. They
+  // are therefore re-spelled from their family rather than kept.
+  duckdb: [
+    "character varying",
+    "varchar",
+    "nvarchar",
+    "character",
+    "char",
+    "nchar",
+    "text",
+    "binary",
+    "varbinary",
+    "blob",
+    "bytea",
+    "timestamp",
+    "timestamp without time zone",
+    "timestamp with time zone",
+    "datetime",
+  ],
   trino: ["varchar", "varbinary", "timestamp", "timestamp without time zone", "timestamp with time zone"],
   cassandra: ["varchar", "text", "blob", "decimal", "timestamp"],
   druid: NOTHING_STANDS_ALONE,
@@ -601,6 +627,15 @@ const BINARY_LITERAL: Record<DatabaseType, BinaryLiteral> = {
   // Measured on 26.7.1: `unhex('0102deadbeef')` into a `String` column reads back as
   // `hex(payload)` = `0102DEADBEEF` with `length(payload)` 6, and `length(unhex(''))`
   // is 0.
+  // `unhex`, and NOT `standard-hex` even though DuckDB is Postgres-shaped everywhere
+  // else in this file. Measured on v1.5.5: `X'0102'` is not a binary literal at all -
+  // `SELECT typeof(X'0102')` answers `VARCHAR` and `SELECT X'0102'` answers the five
+  // characters `x0102`, so the standard spelling PARSES and writes text where bytes
+  // belong. `unhex('0102deadbeef')` answers a real `BLOB`, and the generated pair
+  // replays: inserted into a `BLOB` column it reads back as `hex(payload)` =
+  // `0102DEADBEEF` with `octet_length(payload)` 6, and `unhex('')` inserts the
+  // zero-length blob (`octet_length` 0). `0x0102` is a parser error here.
+  duckdb: "unhex",
   clickhouse: "unhex",
   couchbase: "text",
 };

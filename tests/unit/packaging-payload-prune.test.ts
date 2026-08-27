@@ -28,6 +28,12 @@ const KEEP_FILES = [
   "public/logo.svg",
   "node_modules/better-sqlite3/package.json",
   "node_modules/@libredb/libredb/package.json",
+  // The DuckDB driver's whole scope, including the per-platform bindings
+  // package: the addon and the libduckdb.so beside it are the payload's
+  // largest single files and the easiest thing for a root-level prune to
+  // sweep away by accident.
+  "node_modules/@duckdb/node-api/package.json",
+  "node_modules/@duckdb/node-bindings-linux-x64/duckdb.node",
   // Deny-list names nested inside kept directories are NOT payload-root
   // entries and must survive (the prune is root-only by design).
   "node_modules/@libredb/libredb/docs/README.md",

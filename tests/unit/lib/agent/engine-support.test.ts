@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
+import { getDBConfig } from "@/lib/db-ui-config";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import type { DatabaseType } from "@/lib/types";
 
@@ -127,5 +128,35 @@ describe("AGENT_EXECUTION_ENGINES", () => {
     const results = await Promise.all(databaseTypes.map(hasReadOnlyPath));
     const measured = databaseTypes.filter((_, index) => results[index]);
     expect(measured.sort()).toEqual([...AGENT_EXECUTION_ENGINES].sort());
+  });
+});
+
+/**
+ * The engine list is now THREE names long, and "A and B and C" is what a two-name join
+ * produces when a third engine arrives. Both surfaces that print it - the login hero
+ * (`src/components/login/hero-proof.tsx`) and the agent posture popover
+ * (`src/lib/agent/posture.ts`) - carried their own copy of that join, so the next engine
+ * would have reopened it in two places. One helper, tested here, is what closes it.
+ */
+describe("namedList", () => {
+  test("one name is itself and two are joined with 'and'", () => {
+    expect(namedList([])).toBe("");
+    expect(namedList(["PostgreSQL"])).toBe("PostgreSQL");
+    expect(namedList(["PostgreSQL", "SQLite"])).toBe("PostgreSQL and SQLite");
+  });
+
+  test("three or more read as a list, not as a chain of 'and'", () => {
+    expect(namedList(["PostgreSQL", "SQLite", "DuckDB"])).toBe("PostgreSQL, SQLite and DuckDB");
+    expect(namedList(["a", "b", "c", "d"])).toBe("a, b, c and d");
+  });
+
+  test("the engines agent mode executes on read as one list", () => {
+    // Derived from the array rather than typed out, so this stays true of the next engine
+    // and fails only if the JOIN regresses.
+    const names = AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label);
+    const sentence = namedList(names);
+
+    for (const name of names) expect(sentence).toContain(name);
+    expect(sentence.match(/ and /g)?.length).toBe(1);
   });
 });

@@ -20,6 +20,7 @@ const ALL_TYPES: DatabaseType[] = [
   "trino",
   "cassandra",
   "libsql",
+  "duckdb",
 ];
 
 describe("db-ui-config", () => {
@@ -154,6 +155,23 @@ describe("db-ui-config", () => {
       expect(getDBConfig("cassandra").showConnectionStringToggle).toBe(false);
     });
 
+    test("duckdb is file-based, so the modal renders a path input and no host section", () => {
+      // The exact triple `isFileBased` tests for. One extra connection field here and
+      // the "Database File Path" input silently becomes a host/user/password form for
+      // an engine that has no host at all.
+      const config = getDBConfig("duckdb");
+
+      expect(config.connectionFields).toEqual(["database"]);
+      expect(isFileBased("duckdb")).toBe(true);
+      expect(config.defaultPort).toBe("");
+    });
+
+    test("duckdb offers no connection-string paste, because a DuckDB connection is a path", () => {
+      // There is no `duckdb://` scheme in any DuckDB tooling, so the toggle would
+      // promise a paste `connection-string-parser.ts` has no branch for.
+      expect(getDBConfig("duckdb").showConnectionStringToggle).toBe(false);
+    });
+
     test("every provider carries a distinct colour class", () => {
       const colors = ALL_TYPES.map((type) => getDBConfig(type).color);
       expect(new Set(colors).size).toBe(colors.length);
@@ -228,6 +246,9 @@ describe("db-showcase", () => {
         "postgres",
         "mysql",
         "sqlite",
+        // Immediately after SQLite: the two file-based engines read together, and
+        // DuckDB is the best-known name of the analytical group.
+        "duckdb",
         "mongodb",
         "redis",
         "oracle",

@@ -189,6 +189,23 @@ done
 # smaller). The release tarball keeps them; only this bundle is pruned.
 rm -rf "$STAGE_PAYLOAD"/node_modules/@img/*musl*
 
+# The DuckDB driver hits the same wall from a third direction. bun installs the
+# optional bindings packages by platform and arch but ignores their `libc`
+# field, so a Linux tree carries BOTH @duckdb/node-bindings-linux-<arch> and its
+# -musl sibling; the musl one holds a duckdb.node and a ~70 MB libduckdb.so that
+# need libc.musl-x86_64.so.1 and can never load in a glibc bundle. Whole
+# DIRECTORIES, not the better-sqlite3 `find -name '*.node' -delete` shape:
+# duckdb.node links against libduckdb.so with RUNPATH $ORIGIN, so deleting the
+# addon alone would keep the 70 MB and lose the function.
+rm -rf "$STAGE_PAYLOAD"/node_modules/@duckdb/*-musl
+
+# ...and the positive half: a missing bindings package leaves the DuckDB
+# provider dead in the bundle while every other surface looks healthy.
+if [ ! -f "$STAGE_PAYLOAD/node_modules/@duckdb/node-bindings-linux-${ARCH}/duckdb.node" ]; then
+  echo "@duckdb ships no linux-${ARCH} binding in the payload - the bundle would have no DuckDB support" >&2
+  exit 1
+fi
+
 # better-sqlite3 13 is N-API and ships a prebuild for EVERY platform in the one
 # package (darwin/win32 binaries plus Linux ELFs for the other arch and for
 # musl), where v12 shipped a single binding compiled for the build host. That
@@ -206,12 +223,20 @@ if [ -d "$BETTER_SQLITE3_PREBUILDS" ]; then
 fi
 
 # Turbopack resolves the externalized database drivers (pg, mysql2, mongodb,
-# ssh2, better-sqlite3) through hashed SYMLINKS under .next/node_modules, and
+# ssh2, better-sqlite3, @duckdb/node-api) through hashed SYMLINKS under
+# .next/node_modules, and
 # Tauri's resource copy silently drops symlinks: the directory is simply absent
 # from the bundle and every request dies with
 # "Failed to load external module ssh2-<hash>". Materialize them as real
 # directories before bundling.
-for link in "$STAGE_PAYLOAD"/.next/node_modules/*; do
+#
+# The second glob covers a SCOPED external: its hashed entry lands one level
+# down, as .next/node_modules/@scope/name-<hash>, so @scope itself is a real
+# directory that the `[ -L ]` guard skips and the symlink inside it would be
+# left behind - the exact failure above, surfacing only in the bundled AppImage.
+# A glob that matches nothing expands to itself and is filtered by that same
+# guard, so this is inert on a payload with no scoped externals.
+for link in "$STAGE_PAYLOAD"/.next/node_modules/* "$STAGE_PAYLOAD"/.next/node_modules/@*/*; do
   [ -L "$link" ] || continue
   target=$(readlink -f "$link")
   if [ ! -d "$target" ]; then

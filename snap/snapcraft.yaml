@@ -34,9 +34,10 @@ base: core24
 adopt-info: payload
 summary: The modern, AI-powered open-source SQL IDE for cloud-native teams
 description: |
-  Web-based SQL IDE for PostgreSQL, MySQL, SQLite, Oracle, SQL Server,
-  MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch,
-  OpenSearch and Apache Trino with AI query assistance.
+  Web-based SQL IDE for PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle,
+  SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
+  Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra with AI
+  query assistance.
 
   Installing the snap starts a background service that serves the app on
   port 3000 (http://localhost:3000). State (SQLite storage, generated

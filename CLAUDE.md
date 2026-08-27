@@ -6,7 +6,7 @@ Guidance for Claude Code in this repo — conventions, rules, and gotchas only. 
 
 ## Project Overview
 
-Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, libSQL, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra (plus the embedded LibreDB) + AI query assistance. Runs **two ways** — a standalone Next.js app AND a published npm package (CLI plus an embeddable library surface); `build:lib` (tsup) produces the package dist. The two modes render different chrome, so a UI change verified in one is not verified in the other.
+Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra (plus the embedded LibreDB) + AI query assistance. Runs **two ways** — a standalone Next.js app AND a published npm package (CLI plus an embeddable library surface); `build:lib` (tsup) produces the package dist. The two modes render different chrome, so a UI change verified in one is not verified in the other.
 
 ## Branching & PRs
 
@@ -63,14 +63,14 @@ After every code change, run all six locally before claiming done — they match
 ## Architecture
 
 - **Stack:** Next.js 16 (App Router) + React 19 + TypeScript; Tailwind 4 + Shadcn/UI; Monaco editor; TanStack Table + react-virtual; `jose` JWT + `openid-client` OIDC.
-- **DB drivers:** `pg`, `mysql2`, `cassandra-driver` (pure JS, external in both build configs), **`bun:sqlite`/`node:sqlite`** (the DB provider, runtime-selected; `LIBREDB_SQLITE_DRIVER` overrides) / `better-sqlite3` (the storage layer), `oracledb`, `mssql`, `mongodb`, `ioredis`.
+- **DB drivers:** `pg`, `mysql2`, `cassandra-driver` (pure JS, external in both build configs), **`bun:sqlite`/`node:sqlite`** (the DB provider, runtime-selected; `LIBREDB_SQLITE_DRIVER` overrides) / `better-sqlite3` (the storage layer), `oracledb`, `mssql`, `mongodb`, `ioredis`, **`@duckdb/node-api`** (a native N-API addon: ~68 MB of platform bindings per libc variant, external in both build configs).
 - **Layout:** full tree + data flow in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Key dirs: `src/lib/db` (DB providers, Strategy Pattern), `src/lib/llm` (LLM providers), `src/lib/storage` (pluggable persistence), `src/workspace` + `src/exports` (the npm-package library surface), `src/proxy.ts` (RBAC middleware).
 - **Path alias:** `@/*` → `./src/*`.
 
 ### Rules & patterns
 
-> **⚠️ Providers are the lifeblood of this project — keep the triad in lockstep: code ↔ docs ↔ tests**, 1:1 per canonical type-id — the type-id set is the `DatabaseType` union in [`src/lib/types.ts`](src/lib/types.ts) (`postgres`, `mysql`, `sqlite`, `libsql`, `mongodb`, `redis`, `oracle`, `mssql`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `cassandra`, `trino`, plus the embedded `libredb`):
-> - Code: `src/lib/db/providers/<family>/<type-id>.ts`, or `src/lib/db/providers/<family>/<type-id>/index.ts` when the provider is split across modules, as `couchbase`, `clickhouse`, `druid`, `trino`, `cassandra` and `libsql` are · Docs: `docs/providers/<type-id>.md` · Tests: `tests/integration/db/<type-id>-provider.test.ts`
+> **⚠️ Providers are the lifeblood of this project — keep the triad in lockstep: code ↔ docs ↔ tests**, 1:1 per canonical type-id — the type-id set is the `DatabaseType` union in [`src/lib/types.ts`](src/lib/types.ts) (`postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `mssql`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `cassandra`, `trino`, plus the embedded `libredb`):
+> - Code: `src/lib/db/providers/<family>/<type-id>.ts`, or `src/lib/db/providers/<family>/<type-id>/index.ts` when the provider is split across modules, as `couchbase`, `clickhouse`, `druid`, `trino`, `cassandra`, `libsql` and `duckdb` are · Docs: `docs/providers/<type-id>.md` · Tests: `tests/integration/db/<type-id>-provider.test.ts`
 > - **One directory may serve two type-ids** — `src/lib/db/providers/sql/search/` is both `elasticsearch` and `opensearch` (#424). Docs and tests stay 1:1 anyway: the invariant is per type-id, and each doc is the prime reference for its own product's measured behaviour.
 > - Any change to one side MUST sync the others **in the same PR**. The doc mirrors the code and the code mirrors the doc — never let them drift.
 

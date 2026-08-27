@@ -84,9 +84,9 @@ LibreDB Studio 走另一条路：**工具去找数据，而不是把数据搬来
 
 ## 核心能力
 
-### 十四种引擎，一个界面
+### 十六种引擎，一个界面
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
+PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
 
 所有 SQL 引擎共用同一套 schema 浏览器、ER 图、schema 对比和监控面板。MongoDB 和 Redis 不属于 SQL 引擎，没有 ER 图和 schema 对比；Druid、Elasticsearch、OpenSearch 和 Trino 都是双重例外：它们的 HTTP SQL 接口没有本构建能解析的 URI 形式，只能按 host/port 配置，而且生成的迁移会直接说明限制，而不是对一个 SQL 里根本没有列变更语句的引擎硬输出 DDL；Couchbase 的 schemaless collection 同理。搜索集群的 ER 图只有方框没有连线：索引不声明外键，引擎模型里也没有外键可声明。
 
@@ -98,6 +98,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · MongoDB · Re
 | **SQL Server** | `mssql` (tedious) | 完整 SQL IDE、`TOP N` / `OFFSET FETCH` 分页、`sys.dm_*` DMV、`UPDATE STATISTICS`、`DBCC CHECKDB`、事务、自动识别 Azure SQL |
 | **SQLite** | `bun:sqlite` / `node:sqlite`（运行时自选） | 完整 SQL IDE，文件型或内存型数据库 |
 | **libSQL** | 无驱动，纯 HTTP（Hrana 协议，`POST /v2/pipeline`，8080 端口） | 完整 SQL IDE，同一个 type-id 同时连接自建 libSQL 服务器（`sqld`）与 Turso Cloud。就是跨网络的 SQLite 方言，并能通过 `dbstat` 读到真实的表与索引字节数。凭据是 auth token 而不是密码。维护操作只有 Reindex 和完整性检查：`VACUUM`、`ANALYZE`、`PRAGMA optimize` 都被服务端拒绝 |
+| **DuckDB** | `@duckdb/node-api`（原生 N-API 插件，每个平台约 68 MB 绑定） | 面向本地 DuckDB 文件或 `:memory:` 的完整 SQL IDE，运行在应用所在的服务器上。`EXPLAIN (FORMAT JSON)` 物理计划树、`duckdb_*` 目录自省、来自 `pragma_storage_info` 块分配的真实单表字节数，以及通过驱动自身 `interrupt()` 实现的查询取消。三项维护操作：`VACUUM`、`ANALYZE` 和 `CHECKPOINT`——这里 `REINDEX` 是语法错误，`PRAGMA integrity_check` 与 `PRAGMA optimize` 都不存在，因此不为它们提供入口。没有慢查询日志，也没有会话列表：DuckDB 两者都不公开，所以这两个面板会如实说明，而不是显示 0。数据库文件只允许一个操作系统进程打开（只读模式下同样被拒绝），因此第二个 Studio 实例无法打开本实例已持有的文件 |
 | **MongoDB** | `mongodb` | JSON 查询编辑器，集合操作（find、aggregate、insert、update、delete） |
 | **Couchbase** | 无驱动，纯 HTTP（Query + 管理 REST） | 完整 SQL++ IDE、EXPLAIN、bucket/scope/collection 浏览器、`INFER` 字段推断 |
 | **ClickHouse** | 无驱动，纯 HTTP（SQL 接口，8123 端口） | 完整 SQL IDE、JSON EXPLAIN 树、系统表 schema 自省、`OPTIMIZE TABLE` |
@@ -108,7 +109,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · MongoDB · Re
 | **Apache Cassandra** | `cassandra-driver`（纯 JavaScript，无原生模块） | 基于原生协议（9042 端口）的 CQL IDE、标注分区键与聚簇键的 keyspace 浏览器、来自 `system_views` 的概览、运行时长与正在执行的语句。连接**必须填写 `localDataCenter`**：驱动没有它就拒绝连接。没有 EXPLAIN（CQL 文法中根本没有这个关键字），没有查询取消（协议没有取消帧），也没有维护操作（compaction、repair、flush 全是 `nodetool` 的 JMX 操作）。并且**不显示任何行数与容量**：Cassandra 能给出的只有基于已刷盘文件的分区估算（实测 500 行的聚簇表读作 143）和整数 MiB（19,476 字节的表读作 `1 MiB`），因此宁可不显示，也不显示错的数字 |
 | **Redis** | `ioredis` | 命令编辑器、键浏览器、基于 INFO 的监控 |
 
-> **传输层安全是横向能力，不是逐引擎的。** SSH 隧道在 provider 建连之前就已建立，连接会被改写到本地端点，因此与具体引擎无关：只要连接配置了 host 和 port 就适用。改用连接串填写的连接（MongoDB、Couchbase、ClickHouse 支持这种方式）没有 host/port，因此不会走隧道；SQLite 同样两者都没有。SSL/TLS 面板目前在 PostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch 和 Trino 上生效；在 Trino 上它并非可选项，因为 coordinator 会拒绝明文 HTTP 上的密码。Oracle、MongoDB 和 Redis 会忽略这个设置，所以这三个引擎是否加密，取决于连接串本身怎么写，而不是对话框里选了什么。
+> **传输层安全是横向能力，不是逐引擎的。** SSH 隧道在 provider 建连之前就已建立，连接会被改写到本地端点，因此与具体引擎无关：只要连接配置了 host 和 port 就适用。改用连接串填写的连接（MongoDB、Couchbase、ClickHouse 支持这种方式）没有 host/port，因此不会走隧道；SQLite 和 DuckDB 同样两者都没有。SSL/TLS 面板目前在 PostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch 和 Trino 上生效；在 Trino 上它并非可选项，因为 coordinator 会拒绝明文 HTTP 上的密码。Oracle、MongoDB 和 Redis 会忽略这个设置，所以这三个引擎是否加密，取决于连接串本身怎么写，而不是对话框里选了什么。
 
 > Redis 之所以能套进这套面向 SQL 的接口，靠的是一层约定。`getSchema()` 用非阻塞的 `SCAN`（**绝不用 `KEYS *`**）把键前缀归类成“表”，健康与指标来自 `INFO`，慢查询和会话来自 `SLOWLOG GET` / `CLIENT LIST`。
 
@@ -135,11 +136,12 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · MongoDB · Re
 - **只读，而且由数据库本身来保证**：Agent 执行的每条语句都走 **Agent 自己的受审计管线**——在碰到驱动
   之前先做策略判定、写审计事件、记账预算（`executeAuditedOperation`，
   `src/lib/db/operations/execution.ts:129`）——并使用只读执行档案（PostgreSQL 上是只读事务，SQLite 上
-  每条语句都重新声明 `PRAGMA query_only`）。写入和 DDL 在到达数据库之前就被拒绝，`EXPLAIN ANALYZE`
+  每条语句都重新声明 `PRAGMA query_only`，DuckDB 上是 `READ_ONLY` 引擎句柄外加一层 SQL 守卫，因为仅靠该标志仍然放行 `COPY … TO`、`EXPORT DATABASE` 和读取本地文件的表函数）。写入和 DDL 在到达数据库之前就被拒绝，`EXPLAIN ANALYZE`
   因为会真正执行语句而默认禁止。这条管线只属于 Agent：你自己在编辑器里执行的语句是直接调用 provider 的
   （`src/app/api/db/query/route.ts:44`），不会经过这里的策略判定，也不会产生这类审计记录。
-- **Agent 模式只支持 PostgreSQL 和 SQLite**：只读档案由数据库原生保证，因此只在实现了它的 provider 上
-  存在——只有 `postgres.ts:870` 和 `sqlite.ts:397` 上的 `queryReadOnly`，别无其他。在其他引擎上，
+- **Agent 模式只支持 PostgreSQL、SQLite 和 DuckDB**：只读档案由数据库原生保证，因此只在实现了它的
+  provider 上存在——只有 `postgres.ts:915`、`sqlite.ts:537` 和 `duckdb/index.ts:525` 上的
+  `queryReadOnly`，别无其他。在其他引擎上，
   Agent 模式的运行会以 `engine-unsupported` 结束（`src/lib/agent/runtime.ts:199`）。**Plan** 模式不使用
   任何工具，完全不访问数据库，因此对所有连接都可用。
 - **三种工作流**：**Investigate**（回答问题）、**Optimize**（比较预估执行计划，提出索引或改写）、

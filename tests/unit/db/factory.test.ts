@@ -12,7 +12,7 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, QueryResult } from "@/lib/db/types";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, relative as relativePath } from "node:path";
 import type { DatabaseConnection, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -351,6 +351,15 @@ describe("createDatabaseProvider", () => {
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
     expect(provider.type).toBe("sqlite");
+  });
+
+  test('creates provider for type "duckdb"', async () => {
+    // `:memory:` rather than a path, so the case is exercised without the engine taking
+    // an exclusive lock on a file in the working tree.
+    const conn = makeConnection("duckdb", { database: ":memory:" });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("duckdb");
   });
 
   test('creates provider for type "mongodb"', async () => {
@@ -1389,6 +1398,42 @@ describe("single-writer file reuse", () => {
     };
 
     expect(findOpenSingleWriterProvider(spelled)).toBe(writable);
+  });
+
+  test("two anonymous in-memory DuckDB connections are not the same database", async () => {
+    // `:memory:` is not a file. Resolving it against the working directory gave two
+    // unrelated connections one identity, so the second borrowed the first's handle and
+    // read a database nobody pointed it at - DuckDB declares `singleWriterFile`, so the
+    // borrow fires. There is no file to share and no lock to work around here: an
+    // anonymous in-memory database is per-handle by definition.
+    const held = makeConnection("duckdb", { id: "duck-memory-a", database: ":memory:" });
+    const other = makeConnection("duckdb", { id: "duck-memory-b", database: ":memory:" });
+    await getOrCreateProvider(held);
+
+    expect(findOpenSingleWriterProvider(other)).toBeNull();
+    // Nor does the holding record match itself: `getOrCreateProvider` serves it from the
+    // cache by id, and this lookup is about files.
+    expect(findOpenSingleWriterProvider(held)).toBeNull();
+    await removeProvider(held.id);
+  });
+
+  test("a real DuckDB file is still matched across its spellings", async () => {
+    // The other direction of the same change: narrowing `fileIdentity` must not cost the
+    // borrow the case it exists for. `..` and a relative spelling are what `path.resolve`
+    // normalises and a string comparison would not.
+    const file = join(dir, "borrowed.duckdb");
+    const held = makeConnection("duckdb", { id: "duck-file-a", database: file });
+    const writable = await getOrCreateProvider(held);
+
+    const dotted = makeConnection("duckdb", {
+      id: "duck-file-b",
+      database: join(dir, "..", basename(dir), "borrowed.duckdb"),
+    });
+    const relative = makeConnection("duckdb", { id: "duck-file-c", database: relativePath(process.cwd(), file) });
+
+    expect(findOpenSingleWriterProvider(dotted)).toBe(writable);
+    expect(findOpenSingleWriterProvider(relative)).toBe(writable);
+    await removeProvider(held.id);
   });
 
   test("a connection with no file path holds no file, and matches nothing", async () => {

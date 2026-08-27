@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting fifteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and libSQL
+description: Web-based SQL IDE for cloud-native teams supporting sixteen engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and libSQL
 type: application
-version: 0.1.53
+version: 0.1.54
 appVersion: "0.13.4"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -35,6 +35,9 @@ keywords:
   # provider is registered as `libsql`, but the product an evaluator types is Turso.
   - libsql
   - turso
+  # One keyword only, unlike the pair above: DuckDB is registered as `duckdb` and that
+  # is also the product name an evaluator types, so there is no second spelling to catch.
+  - duckdb
   - web-ide
 maintainers:
   - name: cevheri
@@ -43,6 +46,10 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
+  # False: 0.1.54 changes no packaged template and no value - it names one more engine in
+  # the README, the description and the keywords, DuckDB, which is a new provider in the
+  # app rather than a chart change. The README is a packaged file, so #167 costs it a
+  # chart version even though nothing an operator deploys moves.
   # False: 0.1.53 changes no packaged template and no value - it names one more engine in
   # the README, the description and the keywords, libSQL, which is a new provider in the
   # app rather than a chart change. The README is a packaged file, so #167 costs it a

@@ -499,6 +499,20 @@ services:
       retries: 10
 
   # ---------------------------------------------------------------------------------------
+  # DuckDB (issue #424) has NO service here, and that is not an oversight.
+  #
+  # It is an EMBEDDED engine: the driver is a native N-API addon this app loads into its own
+  # process, and the whole connection is a file path (or `:memory:`). There is no server to
+  # start and nothing listening on a port, so a container would have nothing to run - the same
+  # reason `sqlite` and the embedded `libredb` have no service either. The file also admits
+  # exactly ONE operating-system process, measured refused even in read-only mode, so a
+  # sidecar holding it open would lock the app out rather than help it.
+  #
+  # To repeat the live pass, build a local file instead of starting a service - see
+  # docs/providers/duckdb.md.
+  # ---------------------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------------------
   # Apache Trino (issue #424, Phase 2). One container is the whole cluster: the coordinator
   # runs the worker in-process by default, which is enough to answer every statement the
   # provider sends. Nothing else is needed to exercise it.

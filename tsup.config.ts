@@ -34,6 +34,11 @@ export default defineConfig({
     "node:sqlite", // Node-runtime builtin (SQLite DB provider driver under Node)
     "oracledb",
     "mssql",
+    // The DuckDB driver ends in a native `require('.../duckdb.node')`; both the
+    // API package and its binding loader stay external so nothing resolves an
+    // addon into the published ESM/CJS bundles.
+    "@duckdb/node-api",
+    "@duckdb/node-bindings",
     // Pure JS, but external for the same reason it is in `serverExternalPackages`:
     // its optional `require('kerberos')` is unresolvable at build time.
     "cassandra-driver",

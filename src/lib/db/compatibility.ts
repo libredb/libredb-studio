@@ -36,6 +36,11 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // driver from `sqlite` rather than a relative of it - the two share a dialect and
   // nothing else, since one holds a file handle and the other speaks HTTP.
   libsql: true,
+  // DuckDB (#424): its own provider, doc and integration test. It is a driver rather
+  // than a relative of anything - it speaks no PostgreSQL or MySQL wire protocol, and
+  // there is no wire at all, so no engine can be compatible with it by pretending to
+  // be it. Nothing is recorded as a relative below for that reason.
+  duckdb: true,
   oracle: true,
   mssql: true,
   clickhouse: true,
@@ -74,10 +79,10 @@ export const SHIPPED_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(Obj
 /**
  * Which shipped ids are databases a user already runs, and which one is not.
  *
- * `libredb` is the embedded store this app carries with it; the other fifteen are
+ * `libredb` is the embedded store this app carries with it; the other sixteen are
  * external engines you point the product at. Everything published as a database
- * count means the external fifteen - README.md's "fifteen drivers reach
- * forty-one named engines", the login hero's engine claim - so the split needs a
+ * count means the external sixteen - README.md's "sixteen drivers reach
+ * forty-two named engines", the login hero's engine claim - so the split needs a
  * definition somewhere, and it belongs beside `SHIPPED` rather than in the UI that
  * prints it. That is the same reason `SHIPPED` itself lives here.
  *
@@ -90,6 +95,9 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   mysql: true,
   sqlite: true,
   libsql: true,
+  // The user's own file, opened from a path they give us - the same reading as
+  // `sqlite` below, and external for the same reason.
+  duckdb: true,
   oracle: true,
   mssql: true,
   clickhouse: true,
@@ -543,7 +551,7 @@ export function compatibleEnginesFor(type: DatabaseType): readonly WireCompatibl
  * app at it, so the embedded store is out of both halves of the sum.
  *
  * Still no runtime consumer: README.md and the docs table are markdown and quote the
- * number as prose, and the login hero prints the two halves separately - fifteen in
+ * number as prose, and the login hero prints the two halves separately - sixteen in
  * the proof row, twenty-six in the relatives line - rather than their sum. This exists
  * so the arithmetic has one definition, and the unit test pins it.
  */

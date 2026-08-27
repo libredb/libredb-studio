@@ -27,6 +27,16 @@ src/lib/db/
 │   │   ├── mysql.ts            # MySQL Strategy
 │   │   ├── sqlite.ts           # SQLite Strategy
 │   │   ├── sqlite-driver.ts    # SQLite runtime driver adapter (bun:sqlite | node:sqlite)
+│   │   ├── libsql/             # libSQL Strategy (SQLite's dialect over the Hrana protocol, no driver)
+│   │   │   ├── index.ts        #   LibSQLProvider
+│   │   │   ├── transport.ts    #   LibSQLTransport seam + neutral result types
+│   │   │   ├── hrana-transport.ts # The one HTTP implementation (fetch); POST /v2/pipeline
+│   │   │   └── introspect.ts   #   sqlite_master + pragma_* + dbstat -> schema and sizes
+│   │   ├── duckdb/             # DuckDB Strategy (embedded analytical engine, native N-API driver)
+│   │   │   ├── index.ts        #   DuckDBProvider
+│   │   │   ├── client.ts       #   The one file that imports @duckdb/node-api (instance, connection, interrupt)
+│   │   │   ├── introspect.ts   #   duckdb_* table functions + pragma_storage_info -> schema, sizes, health
+│   │   │   └── values.ts       #   result -> QueryResult and DuckDB type text -> the product's own names
 │   │   ├── oracle.ts           # Oracle Strategy
 │   │   ├── mssql.ts            # SQL Server Strategy
 │   │   ├── clickhouse/         # ClickHouse Strategy (SQL over HTTP, no driver)
@@ -79,13 +89,16 @@ BaseDatabaseProvider (abstract)
 │   ├── PostgresProvider                    │
 │   ├── MySQLProvider                       │ SQL Databases
 │   ├── SQLiteProvider                      │ (shared SQL utilities)
+│   ├── LibSQLProvider                      │
+│   ├── DuckDBProvider                      │
 │   ├── OracleProvider                      │
 │   ├── MSSQLProvider                       │
 │   ├── ClickHouseProvider                  │
 │   ├── DruidProvider                       │
 │   ├── ElasticsearchProvider               │
 │   ├── OpenSearchProvider                  │
-│   └── TrinoProvider                       │
+│   ├── TrinoProvider                       │
+│   └── CassandraProvider                   │
 ├── MongoDBProvider ────────────────────────┤ Document Database
 ├── CouchbaseProvider ──────────────────────┤ Document Database (SQL++ over REST)
 ├── RedisProvider ──────────────────────────┤ Key-Value Store
@@ -146,7 +159,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Sixteen type-ids are supported by fifteen provider modules — `elasticsearch` and `opensearch` share
+Seventeen type-ids are supported by sixteen provider modules — `elasticsearch` and `opensearch` share
 one, `providers/sql/search/`. The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice. For
 the per-provider reference (driver, pooling, query format,
@@ -159,6 +172,8 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | Oracle | `oracle` | SQL | [providers/oracle.md](./providers/oracle.md) |
 | Microsoft SQL Server | `mssql` | SQL | [providers/mssql.md](./providers/mssql.md) |
 | SQLite | `sqlite` | SQL (embedded) | [providers/sqlite.md](./providers/sqlite.md) |
+| libSQL | `libsql` | SQL (SQLite over a network) | [providers/libsql.md](./providers/libsql.md) |
+| DuckDB | `duckdb` | SQL (embedded, analytical) | [providers/duckdb.md](./providers/duckdb.md) |
 | Redis | `redis` | Key-Value | [providers/redis.md](./providers/redis.md) |
 | MongoDB | `mongodb` | Document | [providers/mongodb.md](./providers/mongodb.md) |
 | Couchbase | `couchbase` | Document (SQL++) | [providers/couchbase.md](./providers/couchbase.md) |
@@ -340,8 +355,8 @@ DatabaseError (base)
 Provider-specific behaviour — pooling model, SSL/encryption, pagination, monitoring sources,
 maintenance operations, and known limitations — is documented per provider under
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
-Oracle, SQL Server, SQLite, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch,
-OpenSearch, Apache Trino, Apache Cassandra, or LibreDB.
+Oracle, SQL Server, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid,
+Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, or LibreDB.
 
 Not every provider has every feature, and the docs record the absences rather than glossing over
 them. Druid is the sharpest case: its SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, no

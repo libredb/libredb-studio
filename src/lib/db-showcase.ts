@@ -19,37 +19,42 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   postgres: 0,
   mysql: 1,
   sqlite: 2,
-  mongodb: 3,
-  redis: 4,
-  oracle: 5,
-  mssql: 6,
+  // Immediately after SQLite, and for the same reason it sits there: the two are
+  // the file-based engines on this page, and a reader who has just met one is
+  // reading the other in the same breath. DuckDB is also the best-known name of
+  // the analytical group, which is why it goes here rather than beside ClickHouse.
+  duckdb: 3,
+  mongodb: 4,
+  redis: 5,
+  oracle: 6,
+  mssql: 7,
   // The two search engines sit here, ahead of the analytical stores: Elasticsearch is
   // one of the best-known names on this page, and OpenSearch reads as its sibling to
   // anyone who knows it - which is also what the code says, since the two type-ids
   // share one HTTP SQL transport (#424).
-  elasticsearch: 7,
-  opensearch: 8,
+  elasticsearch: 8,
+  opensearch: 9,
   // Ahead of the analytical stores and behind the search pair: Cassandra is a
   // first-rank name for anyone who has met a wide-column store, and it is the only
   // one of those on this page.
-  cassandra: 9,
-  couchbase: 10,
-  clickhouse: 11,
-  druid: 12,
+  cassandra: 10,
+  couchbase: 11,
+  clickhouse: 12,
+  druid: 13,
   // Ahead of the embedded store and behind the three analytical ones: Trino is the
   // name an evaluator is most likely to already know out of this last group, because
   // it is the engine a data platform is usually met THROUGH rather than one more
   // store to choose between.
-  trino: 13,
+  trino: 14,
   // Behind Trino and ahead of the embedded store: libSQL is the newest name on this
   // page and the one an evaluator is least likely to have met, but it is a product
   // name (Turso's server) rather than our own, so it goes ahead of `libredb`.
-  libsql: 14,
+  libsql: 15,
   // Last on purpose: the embedded store is the least recognisable name here. It is
   // still shown - it is a shipped provider with a doc (docs/providers/libredb.md), an
   // icon and a slot in the connection picker, so omitting it would make the login page
   // contradict the app (issue #425, step 2).
-  libredb: 15,
+  libredb: 16,
 };
 
 /**
@@ -69,7 +74,7 @@ export interface ShowcaseDatabase {
   /**
    * True for the embedded store, false for a database the user already runs.
    *
-   * The showcase shows all sixteen providers while the hero claims fifteen engines,
+   * The showcase shows all seventeen providers while the hero claims sixteen engines,
    * and this flag is how the page carries that difference without any surface typing
    * the word "libredb": the pill it marks is the one the count leaves out.
    */

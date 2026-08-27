@@ -511,6 +511,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         // addressed by host and port like Druid, and `http(s)://` already resolves to
         // ClickHouse there, so listing them would promise a paste this form cannot
         // honour. Trino's own `jdbc:trino://…` is a JDBC URL the parser does not read.
+        // DuckDB, SQLite and the embedded store are absent for a different reason:
+        // they are FILE-based, `showConnectionStringToggle` is false for all three, so
+        // this control is never rendered for them and no scheme is being withheld.
         message:
           "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, couchbase://, clickhouse://, libsql://, http(s)://, redis://, oracle://, mssql://",
       });
@@ -593,6 +596,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "trino",
     "cassandra",
     "libsql",
+    "duckdb",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

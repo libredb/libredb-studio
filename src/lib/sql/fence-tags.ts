@@ -38,6 +38,12 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // statements, measured on sqld 0.24.33 (SQLite 3.47.0). `turso` is registered as
   // an alias below because that is the product name a model is likelier to write.
   libsql: true,
+  // A ```duckdb block holds a statement this editor runs against the open file. No
+  // alias is registered below: `duck` and `ddb` are both written for other things
+  // (`ddb` is DynamoDB in most of the material a model has read), and an alias that
+  // names the WRONG engine is worse here than a missing one, because `fenceTagEngine`
+  // is what decides whether a plan's deliverable was written for this connection.
+  duckdb: true,
   mongodb: true,
   redis: true,
   oracle: true,

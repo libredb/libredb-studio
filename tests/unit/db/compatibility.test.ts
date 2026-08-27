@@ -312,6 +312,18 @@ describe("wire-compatibility registry", () => {
     expect(compatibleEnginesFor("not-a-database" as DatabaseType)).toEqual([]);
   });
 
+  test("duckdb ships as a driver and is a relative of nothing", () => {
+    // The negative half is the load-bearing one. DuckDB speaks no wire protocol at all -
+    // it is an in-process library reading a file - so no engine can be compatible with
+    // it by pretending to be it, and an empty relatives list here is a measured fact
+    // rather than work not yet done.
+    expect(SHIPPED_DATABASE_TYPES).toContain("duckdb");
+    expect(EXTERNAL_DATABASE_TYPES).toContain("duckdb");
+    expect(compatibleEnginesFor("duckdb")).toEqual([]);
+    // And nothing reaches DuckDB through another driver either.
+    for (const engine of WIRE_COMPATIBLE_ENGINES) expect(engine.via).not.toBe("duckdb");
+  });
+
   test("EXTERNAL_DATABASE_TYPES omits the embedded provider and nothing else", () => {
     // The login hero publishes this length as "database engines", so the one thing this
     // list may not contain is the embedded provider: libredb is a store this app carries,

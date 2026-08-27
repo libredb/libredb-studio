@@ -232,9 +232,13 @@ export function extractArchive(archivePath, destDir) {
  * payload on (issue #326 raised the floor here from 20.9 to clear the runway
  * for the agent runtime, which needs a modern Node and ESM).
  *
- * There is a floor but deliberately no ceiling. The payload's only native
- * module is better-sqlite3, and since v13 it is built on the N-API: one
- * prebuilt binary per platform, valid across Node majors. So a payload built
+ * There is a floor but deliberately no ceiling. The payload carries two native
+ * modules - better-sqlite3 (N-API since v13) and the DuckDB driver's
+ * @duckdb/node-bindings-<platform>-<arch> addon (measured: it exports
+ * napi_register_module_v1) - and both are therefore one prebuilt binary per
+ * platform, valid across Node majors. Adding a THIRD native module that is not
+ * N-API would reintroduce a ceiling; this reasoning does not generalise past
+ * what is actually in the payload. So a payload built
  * on Node 24 runs unchanged on Node 26, and every runtime at or above the
  * floor is fully supported rather than degraded - which is what the node26 leg
  * of scripts/engine-smoke.sh asserts.

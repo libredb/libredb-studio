@@ -44,7 +44,7 @@ if it only lists the good news.
 | Surface | What it sends | Fenced? |
 | --- | --- | --- |
 | `POST /api/agent/classify`, **before any run exists** | Your objective, and nothing else. One short completion that asks the model to name one of the five workflows. It fires when you press **Start** with the workflow left on **Automatic**, which is the default; naming a workflow yourself under **Advanced** skips it entirely. See [the classification, before any run](#the-classification-before-any-run) | No — it carries no database content to fence. Your objective is sent as the user message, and the server's instructions tell the model to treat that text as data to classify and never as instructions to it |
-| Any **run**, in either mode, on **any** engine | Your objective, and a schema inventory (table, column, index identifiers and column types) with its relations graph (identifiers only). **Since #414 that inventory leaves on every engine**, where before it left on PostgreSQL and SQLite alone: those two are read with catalog statements the server composes, and the other fourteen by asking the connection's own provider to describe its schema. On **MongoDB and Couchbase** the provider works out a collection's fields from a **sample of your own documents** — no value from them is in the message, but the **existence** of a field there is derived from your data rather than read from a catalog, which is a weaker claim than a catalog reading's and is why that reading has its own operation id (`db.schema.read`) an operator can deny alone. When the reading cannot be taken — a refusal, a provider that cannot describe its own schema, a description that overran the time the run granted it — nothing of the schema leaves and a server sentence saying which of those happened goes in its place. See [the schema inventory](#3-the-schema-inventory--identifiers-and-types-fenced) | Everything derived from the database is wrapped in an untrusted-content fence before it reaches a prompt |
+| Any **run**, in either mode, on **any** engine | Your objective, and a schema inventory (table, column, index identifiers and column types) with its relations graph (identifiers only). **Since #414 that inventory leaves on every engine**, where before it left on PostgreSQL and SQLite alone: those two are read with catalog statements the server composes, and the other fifteen by asking the connection's own provider to describe its schema. On **MongoDB and Couchbase** the provider works out a collection's fields from a **sample of your own documents** — no value from them is in the message, but the **existence** of a field there is derived from your data rather than read from a catalog, which is a weaker claim than a catalog reading's and is why that reading has its own operation id (`db.schema.read`) an operator can deny alone. When the reading cannot be taken — a refusal, a provider that cannot describe its own schema, a description that overran the time the run granted it — nothing of the schema leaves and a server sentence saying which of those happened goes in its place. See [the schema inventory](#3-the-schema-inventory--identifiers-and-types-fenced) | Everything derived from the database is wrapped in an untrusted-content fence before it reaches a prompt |
 | An **agent run** | The above, plus the rows of each read the model performed, up to 200 per read; engine error text; server-written refusals; server-minted ids | Same fence |
 | Any **run that continues a conversation**, in either mode, on any engine | **In addition to everything above**: the earlier steps' objectives — *your own earlier questions*, capped at 200 characters each — and the most recent step's report, which is a model's claims about your data. No row of any result, and no earlier step's report but the newest. Sent only when the rail attaches a previous run's id, which it does for a follow-up on the same connection; a run that starts its own conversation sends no such message. Bounded to 4000 characters by default and switchable off with `LIBREDB_AGENT_THREAD_CONTEXT=false`. See [the conversation](#2a-the-conversation-when-a-run-continues-one--fenced) | Same fence, identified as `operation agent/thread`: it is prose a user and a model wrote, and none of it is the server's voice |
 | An **agent run opened as Operate** | Your objective; a **schema inventory reduced to its own names and index names** (no column names, no column types, no relations graph), read whichever of the two ways that engine is read and named with whichever noun that engine's provider declares — tables, collections, datasources, key patterns; in Plan mode the engine's **row-count estimates** for those same tables where the engine holds any — PostgreSQL and SQLite — and nothing per column; and the rows of each curated reading — which, for the `sessions` and `slow-queries` kinds, include **other database users' in-flight statement text and their database usernames**. See [the operations workflow](#5a-the-operations-workflow-what-a-curated-reading-sends) | Same fence: the inventory and every reading's rows are database content and are fenced |
@@ -197,7 +197,7 @@ One field of your connection record *is*: its **engine type**, the canonical typ
 spends it on the fence tag the deliverable must carry, and since the Operate-engine fix a prose plan
 spends it twice: on the rule that binds the readings it may name to the engine it is planning
 against, and on the fence tag for a reading that engine happens to express as a statement. It is
-a server-side enum with sixteen members, so what it discloses is which of sixteen engines this
+a server-side enum with seventeen members, so what it discloses is which of seventeen engines this
 connection is — never its host, its database name or its credentials, none of which reach a prompt at
 all (see [What never leaves](#what-never-leaves)).
 
@@ -267,21 +267,24 @@ a refusal — nothing of the schema leaves and a server-written note says so in 
 
 **Two readings produce it, and which one runs is the dialect's decision** (#414). On PostgreSQL and
 SQLite the server composes a catalog statement per kind and executes it read-only. On the other
-fourteen it invokes `db.schema.read`, which calls the connection's own `provider.getSchema()` — the
+fifteen it invokes `db.schema.read`, which calls the connection's own `provider.getSchema()` — the
 inspection the sidebar performs when it lists your tables — and composes no statement at all.
-**Fourteen counts type-ids the factory can build, not engines a user would name**: `SHIPPED` holds
-sixteen, `CATALOG_PLANS` serves two of them, and the remainder is what this second reading covers.
+**Fifteen counts type-ids the factory can build, not engines a user would name**: `SHIPPED` holds
+seventeen, `CATALOG_PLANS` serves two of them, and the remainder is what this second reading covers.
 Every other count said about grounding in these docs counts the same thing. libSQL is one of the
-fourteen and not one of the two: it speaks SQLite's dialect, but the read-only catalog path
+fifteen and not one of the two: it speaks SQLite's dialect, but the read-only catalog path
 `CATALOG_PLANS` serves needs a database-native read-only profile, and `PRAGMA query_only` is refused
 by a libSQL server (see [`providers/libsql.md`](./providers/libsql.md)). Two things it does
 NOT count. The wire-compatible engines of
 [`docs/providers/README.md`](./providers/README.md) are not extra members — TiDB is grounded because it
-arrives as `mysql`, and it is that type-id that is counted. And one of the fourteen, the embedded
-`libredb`, reaches this path through a handle it does not open: the file takes an exclusive lock, so
-the grounding acquisition borrows the connection's own open provider rather than opening a second one
-that the lock would refuse (`findOpenSingleWriterProvider`, `src/lib/db/factory.ts`; see
-[`docs/providers/libredb.md`](./providers/libredb.md) §4.2.1). A connection that configures an
+arrives as `mysql`, and it is that type-id that is counted. And two of the fifteen, the embedded
+`libredb` and `duckdb`, reach this path through a handle they do not open: the file takes an exclusive
+lock, so the grounding acquisition borrows the connection's own open provider rather than opening a
+second one that the lock would refuse (`findOpenSingleWriterProvider`, `src/lib/db/factory.ts`; see
+[`docs/providers/libredb.md`](./providers/libredb.md) §4.2.1 and
+[`docs/providers/duckdb.md`](./providers/duckdb.md)). DuckDB is the sharper of the two: a second
+OPERATING-SYSTEM process is refused on that file even in read-only mode, measured, so the borrow is
+not an optimisation there but the only handle there is. A connection that configures an
 `agentUser` opts out of that borrow, and such a run is still honestly ungrounded. What
 leaves this process is the same KIND of thing either way, identifiers and types and nothing else, but
 two properties differ and are stated here rather than left to be discovered:
@@ -538,7 +541,7 @@ The frozen execution policies are the ceiling on one run's egress, one row per w
 | Bound | Value | What it caps |
 | --- | --- | --- |
 | `maxResultRows` / `maxResultBytes` | 200 rows / 256 KiB | The most one read can return — and therefore the most one tool result can send |
-| `maxStatementsPerRun` | 18-45, by workflow | Reads per drive, grounding reads and repairs included — the composed catalog reads and, since #414, the one `db.schema.read` call that replaces them on the other fourteen. The figures did not move for it: that path is the cheapest of the three, so nothing had to be bought (`docs/AGENT.md`, the budget arithmetic) |
+| `maxStatementsPerRun` | 18-45, by workflow | Reads per drive, grounding reads and repairs included — the composed catalog reads and, since #414, the one `db.schema.read` call that replaces them on the other fifteen. The figures did not move for it: that path is the cheapest of the three, so nothing had to be bought (`docs/AGENT.md`, the budget arithmetic) |
 | `AGENT_CONTEXT_PACK_MAX_CHARS` | 6000 | The fenced schema inventory |
 | `MAX_ER_CHARS` | 2000 | The fenced relations block |
 | `AGENT_MAX_OBJECTIVE_LENGTH` | 4000 | Your objective |

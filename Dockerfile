@@ -14,11 +14,20 @@ RUN bun install --frozen-lockfile
 
 # Build with Node.js to avoid Bun/QEMU segfaults on ARM64.
 # trixie-slim keeps the toolchain consistent with the oven/bun deps stage, but
-# it is no longer load-bearing for the native module: better-sqlite3 v13 ships
+# it is no longer load-bearing for the better-sqlite3 native module: v13 ships
 # every prebuild inside the package and picks one in the RUNNING process
 # (lib/binding.js reads process.platform/arch and detects musl via
 # process.report), so neither the ABI nor the libc of the installing stage
 # constrains the stage that requires it.
+#
+# @duckdb/node-api works differently and the reasoning above does NOT transfer:
+# its binaries live in separate per-libc, per-platform packages
+# (@duckdb/node-bindings-<platform>-<arch>[-musl]), so the libc choice is made
+# partly at INSTALL time - which optional package the deps stage fetches - and
+# partly at runtime, where @duckdb/node-bindings uses detect-libc to pick
+# between whichever ones are present. Every stage here is glibc, so the glibc
+# package is the one installed and the one loaded; keeping the stages on the
+# same base is what makes that hold.
 FROM node:26.7.0-trixie-slim AS builder
 WORKDIR /usr/src/app
 COPY --from=deps /usr/src/app/node_modules ./node_modules
@@ -85,6 +94,22 @@ COPY --from=builder /usr/src/app/node_modules/better-sqlite3 ./node_modules/bett
 # that also means Next.js output-file-tracing does not include it in the
 # standalone server bundle — copy it explicitly so the provider works at runtime.
 COPY --from=builder /usr/src/app/node_modules/@libredb/libredb ./node_modules/@libredb/libredb
+
+# Copy the DuckDB driver. Same tracing blind spot as @libredb/libredb (the
+# provider lazy-imports it), but a different shape: the driver is FOUR packages,
+# not one. @duckdb/node-api -> @duckdb/node-bindings -> a per-platform
+# @duckdb/node-bindings-<platform>-<arch> holding duckdb.node next to the
+# ~70 MB libduckdb.so it links against (NEEDED libduckdb.so, RUNPATH $ORIGIN,
+# so the two must stay in the same directory). Copying the whole @duckdb scope
+# in one line is also what keeps the ARM64 cross-build working: the deps stage
+# installs only the optional package matching the build arch, so naming a
+# platform package here would break that leg. detect-libc is what
+# @duckdb/node-bindings requires to choose between a glibc and a musl package;
+# it is required inside a try/catch that silently falls back to glibc, so its
+# absence would never announce itself - ship it rather than rely on tracing.
+# Keep in sync with scripts/build-standalone-payload.sh.
+COPY --from=builder /usr/src/app/node_modules/@duckdb ./node_modules/@duckdb
+COPY --from=builder /usr/src/app/node_modules/detect-libc ./node_modules/detect-libc
 
 # Vendored sample database templates (the SQLite employees sample). Read at
 # runtime via fs relative to process.cwd() (/app), so output file tracing

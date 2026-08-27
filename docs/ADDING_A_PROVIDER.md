@@ -166,10 +166,10 @@ directly; reshaping rows inside the transport would have broken schema loading. 
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'cockroachdb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'cockroachdb';
 ```
 
 ### 1.2 — Add to `QueryTab.type` if needed
@@ -317,7 +317,7 @@ Then add the type to the selectable list that drives the ConnectionModal picker:
 // Append to the existing list - do not retype it, or you will drop a provider from the picker.
 const selectableTypes: DatabaseType[] = [
   'postgres', 'mysql', 'sqlite', 'oracle', 'mssql', 'mongodb', 'couchbase', 'redis', 'libredb',
-  'clickhouse', 'druid', 'elasticsearch', 'opensearch', 'trino', 'cassandra', 'libsql',
+  'clickhouse', 'druid', 'elasticsearch', 'opensearch', 'trino', 'cassandra', 'libsql', 'duckdb',
   'cockroachdb',
 ];
 ```
@@ -343,11 +343,19 @@ bun add <driver-package>
 # libSQL needs no driver — SQLite's dialect over the Hrana protocol, POST /v2/pipeline (port 8080)
 # bun add cassandra-driver  (Apache Cassandra — a binary protocol over TCP, so a driver is not
 #                            optional; this one is pure JS, which is the next best thing)
+# bun add @duckdb/node-api  (DuckDB — an embedded engine, so there is no protocol at all and no
+#                            HTTP alternative; this one is a NATIVE N-API addon)
 ```
 
 If your engine exposes a documented HTTP API, weigh it against the native driver before adding a
 dependency: a native module lands in the Docker image, every native distribution channel, and the
 `@libredb/studio` package that libredb-platform consumes.
+
+**DuckDB is the counter-example, and it is worth stating rather than hiding.** It has no first-class
+HTTP query API to weigh — the engine is a library, not a server — so the native `@duckdb/node-api`
+addon was the only route, and it costs about 68 MB of platform bindings per libc variant (measured:
+138.7 MiB uncompressed on a Linux tree carrying both glibc and musl, and the AppImage build prunes
+the musl half). Pay that only when there is genuinely nothing to weigh it against.
 
 ## Traps specific to HTTP databases
 
@@ -649,7 +657,7 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · libsql · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · cassandra · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), or
@@ -775,7 +783,9 @@ The integration points, all of which need an entry. This is the list the Strateg
       each add nothing here
 - [ ] `database-compose.yml` — a service, so the next person can repeat the live pass. A distributed
       engine contributes a `profiles: [...]` set instead, as Druid's seven services do, so the default
-      stack does not grow for everyone. Check what the image ships before writing a healthcheck: the
+      stack does not grow for everyone. An EMBEDDED engine gets no service at all — SQLite, DuckDB and
+      LibreDB are files rather than servers — but say so in a comment there, or the next reader reads
+      the absence as an oversight. Check what the image ships before writing a healthcheck: the
       ClickHouse image has no `curl` and the Trino image ships its own `health-check` script that waits
       for `"starting": false`, which a bare `curl /v1/info` would not
 
@@ -826,8 +836,12 @@ landed everywhere the compiler looks):
       type-ids the factory builds, external drivers (that set minus the embedded store), wire-compatible
       relatives, and their sum. `connectableProductCount()` is the arithmetic's one definition — derive
       from it, and re-read each sentence to see which of the four it counts. A mechanical replace is
-      how a correct number becomes wrong: the agent docs' "the other fourteen" counts type-ids minus
-      the two `CATALOG_PLANS` dialects and moved for a different reason than the driver count did
+      how a correct number becomes wrong: the agent docs' "the other fifteen" counts type-ids minus
+      the two `CATALOG_PLANS` dialects and moved for a different reason than the driver count did.
+      DuckDB is the sharpest illustration: it moved the type-id count and the driver count, left
+      "the fourteen the read-only profile refuses" exactly where it was — because it implements
+      `queryReadOnly`, so numerator and denominator both grew by one — and moved the
+      `CATALOG_PLANS` remainder, because it is not one of those two dialects
 - [ ] the marketplace listings under `deploy/` — a claim that enumerates engines is bound to the file
       that proves it, and the `marketplace-copy` test fails when a plan-capable engine is missing from
       one

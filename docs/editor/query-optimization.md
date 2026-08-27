@@ -151,13 +151,13 @@ id, so no reader can grow a dialect test of its own.
 | Character | Established reading | Dialects |
 |-----------|--------------------|----------|
 | `#` | opens a line comment | MySQL, MariaDB, ClickHouse (which also has `#!`), OpenSearch |
-| `#` | ordinary code — a jsonb/geometric operator, an identifier character, a temp-table name, a bind-variable prefix, or a character the parser simply refuses | PostgreSQL, Oracle, SQL Server, SQLite, Elasticsearch, Trino |
+| `#` | ordinary code — a jsonb/geometric operator, an identifier character, a temp-table name, a bind-variable prefix, or a character the parser simply refuses | PostgreSQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, Elasticsearch, Trino |
 | `q'…'` | a string literal (alternate quoting): the delimiter after the tag opens the body and its partner followed by `'` closes it, so the body carries apostrophes unescaped — `[ ] { } ( ) < >` pair up, any other character closes with itself, either letter case of the tag, and `nq'…'` is the same form for the national character set | Oracle only |
 | `q'…'` | not a form at all — a name followed by an ordinary string, which is what those characters are there | everything else, including the default |
-| `[…]` | a quoted **name**: everything between the brackets is the identifier (`SELECT [a--b] FROM t` selects a column called `a--b`) and the run does not nest. The doubled `]` this reading honours is SQL Server's escape — SQLite stops at the first `]` and has none, so `[a]]b]` reads as one name where SQLite reads `[a]` and then junk, which it rejects either way | SQL Server, SQLite, OpenSearch |
-| `[…]` | an **array literal or subscript**: it nests (`[[1,2],[3,4]]`), nothing inside it is escaped, and a literal inside it is a literal (`m['a]b']`) | ClickHouse, PostgreSQL, Trino |
-| `/* … /* … */ … */` | one **nesting** comment: a `/*` inside a comment opens another and the run continues until the depth returns to zero, so a region that already contains comments can be commented out. A run short of a closer is undeterminable rather than closed early | PostgreSQL, SQL Server, ClickHouse |
-| `/* … /* … */ … */` | a **flat** comment: the first `*/` ends it, and everything after that is the statement's own code | MySQL, MariaDB, SQLite, Oracle, and the default |
+| `[…]` | a quoted **name**: everything between the brackets is the identifier (`SELECT [a--b] FROM t` selects a column called `a--b`) and the run does not nest. The doubled `]` this reading honours is SQL Server's escape — SQLite stops at the first `]` and has none, so `[a]]b]` reads as one name where SQLite reads `[a]` and then junk, which it rejects either way | SQL Server, SQLite, libSQL, OpenSearch |
+| `[…]` | an **array literal or subscript**: it nests (`[[1,2],[3,4]]`), nothing inside it is escaped, and a literal inside it is a literal (`m['a]b']`) | ClickHouse, PostgreSQL, DuckDB, Trino |
+| `/* … /* … */ … */` | one **nesting** comment: a `/*` inside a comment opens another and the run continues until the depth returns to zero, so a region that already contains comments can be commented out. A run short of a closer is undeterminable rather than closed early | PostgreSQL, SQL Server, ClickHouse, DuckDB |
+| `/* … /* … */ … */` | a **flat** comment: the first `*/` ends it, and everything after that is the statement's own code | MySQL, MariaDB, SQLite, libSQL, Oracle, and the default |
 | `//` | opens a **line comment**, ending at the newline like `--` | Apache Cassandra (and its relatives), ClickHouse |
 | `//` | **ordinary code** — an operator the parser refuses (`operator does not exist: integer // integer` on PostgreSQL 18), or a character it rejects outright | everything else, including the default |
 
@@ -197,9 +197,9 @@ read as SQL, and its undecided grammar facts are rows in the table below.
 |------|-----------------------------------|--------------------------------------------------|
 | `#` | Couchbase, Druid, the embedded LibreDB provider | — |
 | `q'…'` | nobody | everything except Oracle: the form is Oracle's alone, so "not a literal" is the correct reading for the rest |
-| `[…]` | MySQL, Oracle, Elasticsearch, Couchbase, Druid, LibreDB | SQL Server, SQLite and OpenSearch, whose rule the default already applied |
-| `/* … */` nesting | Couchbase, Druid, LibreDB | MySQL, SQLite, Oracle, Elasticsearch, OpenSearch and Trino, whose flat rule the default already applied — each established from its own source rather than assumed to agree |
-| `//` | Elasticsearch, OpenSearch, Couchbase, Druid, LibreDB | PostgreSQL, MySQL, SQLite, Oracle, SQL Server and Trino, each refused on a live server: `SELECT 1 // note` is an error there, so "not a comment" is the reading the default already applied |
+| `[…]` | MySQL, Oracle, Elasticsearch, Couchbase, Druid, LibreDB | SQL Server, SQLite, libSQL and OpenSearch, whose rule the default already applied |
+| `/* … */` nesting | Couchbase, Druid, LibreDB | MySQL, SQLite, libSQL, Oracle, Elasticsearch, OpenSearch and Trino, whose flat rule the default already applied — each established from its own source rather than assumed to agree |
+| `//` | Elasticsearch, OpenSearch, Couchbase, Druid, LibreDB | PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server and Trino, each refused on a live server: `SELECT 1 // note` is an error there, so "not a comment" is the reading the default already applied |
 
 The distinction is visible in `src/lib/sql/grammar.ts` too: an established fact is written out in that
 dialect's row, an undecided one is written `DEFAULT_SQL_GRAMMAR.<fact>`.

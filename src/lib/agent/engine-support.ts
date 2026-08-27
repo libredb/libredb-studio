@@ -7,8 +7,8 @@ import type { DatabaseType } from "@/lib/types";
  * refused unless the provider exposes a database-native read-only statement path
  * (`acquisition.requiresReadOnlyStatements && typeof provider.queryReadOnly !== "function"`,
  * `src/lib/db/factory.ts`), which throws `PROFILE_UNSUPPORTED_BY_PROVIDER` and ends the run
- * `engine-unsupported`. `queryReadOnly` exists on exactly two providers today
- * (`providers/sql/postgres.ts`, `providers/sql/sqlite.ts`), and that probe stays the real
+ * `engine-unsupported`. `queryReadOnly` exists on exactly three providers today
+ * (`providers/sql/postgres.ts`, `providers/sql/sqlite.ts`, `providers/sql/duckdb/`), and that probe stays the real
  * rule: replacing it with this list would let the list go stale against the drivers.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
@@ -26,4 +26,25 @@ import type { DatabaseType } from "@/lib/types";
  * Imports nothing but the type union on purpose. It is read by the unauthenticated login
  * hero, and a provider module here would drag `oracledb`/`mssql` toward that bundle.
  */
-export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = ["postgres", "sqlite"];
+export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = ["postgres", "sqlite", "duckdb"];
+
+/**
+ * Names, joined the way a sentence joins them: `a`, `a and b`, `a, b and c`.
+ *
+ * It lives here because the list this module publishes is what both callers print - the
+ * login hero (`src/components/login/hero-proof.tsx`) and the agent posture popover
+ * (`src/lib/agent/posture.ts`) - and each of them had written `join(" and ")`. That was
+ * indistinguishable from correct while the array held two engines and became
+ * "PostgreSQL and SQLite and DuckDB" on the login page the moment it held three. Shared
+ * rather than fixed twice, so the FOURTH engine cannot reopen it.
+ *
+ * Hand-rolled rather than `Intl.ListFormat`, deliberately: the formatter's output depends
+ * on the ICU locale data the runtime was built with (`en-US` inserts an Oxford comma,
+ * `en-GB` does not), and these strings are asserted in tests and read by users of an
+ * English-only interface. A join nobody can localise is the one that renders the same on
+ * a server, in a browser and in CI.
+ */
+export function namedList(names: readonly string[]): string {
+  if (names.length <= 2) return names.join(" and ");
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}

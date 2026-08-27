@@ -32,6 +32,8 @@
       <li>PostgreSQL</li>
       <li>MySQL, MariaDB and TiDB</li>
       <li>SQLite</li>
+      <li>libSQL and Turso Cloud</li>
+      <li>DuckDB</li>
       <li>Microsoft SQL Server</li>
       <li>Oracle Database</li>
       <li>MongoDB and FerretDB</li>
@@ -42,6 +44,7 @@
       <li>Elasticsearch (read-only)</li>
       <li>OpenSearch (read-only)</li>
       <li>Apache Trino</li>
+      <li>Apache Cassandra and ScyllaDB</li>
     </ul>
     <p>What you get:</p>
     <ul>

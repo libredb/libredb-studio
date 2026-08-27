@@ -7,6 +7,7 @@ import { couchbaseJsonStrategy } from "./couchbase-json";
 import { clickhouseJsonStrategy } from "./clickhouse-json";
 import { druidNativeStrategy } from "./druid-native";
 import { trinoJsonStrategy } from "./trino-json";
+import { duckdbJsonStrategy } from "./duckdb-json";
 
 export type { ExplainMode, ExplainStrategy } from "./types";
 export type { ExplainPlanInput } from "./types";
@@ -21,6 +22,7 @@ const registry: Record<ExplainFormat, ExplainStrategy> = {
   "clickhouse-json": clickhouseJsonStrategy,
   "druid-native": druidNativeStrategy,
   "trino-json": trinoJsonStrategy,
+  "duckdb-json": duckdbJsonStrategy,
 };
 
 export function getExplainStrategy(format: ExplainFormat | undefined): ExplainStrategy | null {

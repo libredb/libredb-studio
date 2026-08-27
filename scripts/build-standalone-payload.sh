@@ -12,6 +12,12 @@
 #                                      (self-contained since v13: N-API
 #                                      prebuilds live inside the package)
 #   - node_modules/@libredb/libredb -> lazy-imported, not seen by file tracing
+#   - node_modules/@duckdb          -> the DuckDB driver, all of it: the API
+#                                      package, the binding loader and the
+#                                      per-platform bindings package holding
+#                                      duckdb.node + libduckdb.so
+#   - node_modules/detect-libc      -> what the DuckDB binding loader uses to
+#                                      pick between a glibc and a musl package
 #   - seed-assets/                  -> vendored sample DB templates (fs-read
 #                                      at runtime, not seen by file tracing)
 #   - data/                         -> default SQLite storage directory
@@ -190,6 +196,33 @@ mkdir -p "$PAYLOAD_DIR/node_modules/@libredb"
 rm -rf "$PAYLOAD_DIR/node_modules/@libredb/libredb"
 cp -R node_modules/@libredb/libredb "$PAYLOAD_DIR/node_modules/@libredb/libredb"
 
+# The DuckDB driver: the whole @duckdb scope, never one directory of it.
+# @duckdb/node-bindings resolves the addon with a bare top-level
+# `require('@duckdb/node-bindings-<platform>-<arch>/duckdb.node')` executed at
+# module load - there is no lazy path and no graceful degradation - and that
+# addon has NEEDED libduckdb.so with RUNPATH $ORIGIN, so the ~70 MB library has
+# to travel in the same directory. Copying the scope wholesale is also the
+# arch-safe form: the install picks whichever optional bindings package matches
+# this platform. detect-libc is the loader's own dependency (see the Dockerfile
+# runner stage, which this mirrors).
+if [ ! -d node_modules/@duckdb/node-api ]; then
+  echo "node_modules/@duckdb/node-api not found - run 'bun install --frozen-lockfile' first" >&2
+  exit 1
+fi
+# Stat-ing the directory proves nothing here: the failure mode is a scope with
+# no bindings package for this platform, which only shows up on require.
+if ! node -e "require('@duckdb/node-api')" 2>/dev/null; then
+  TARGET="$(node -p 'process.platform')-$(node -p 'process.arch')"
+  echo "@duckdb/node-api does not load for ${TARGET} under $(node --version)." >&2
+  echo "The binding lives in a separate optional package (@duckdb/node-bindings-${TARGET}), so this" >&2
+  echo "normally means an incomplete node_modules - reinstall with 'bun install --frozen-lockfile'." >&2
+  exit 1
+fi
+rm -rf "${PAYLOAD_DIR:?}/node_modules/@duckdb"
+cp -R node_modules/@duckdb "$PAYLOAD_DIR/node_modules/@duckdb"
+rm -rf "${PAYLOAD_DIR:?}/node_modules/detect-libc"
+cp -R node_modules/detect-libc "$PAYLOAD_DIR/node_modules/detect-libc"
+
 # Vendored sample database templates (seed-assets/): read at runtime relative
 # to the payload root, so output file tracing never includes them — copy
 # explicitly (mirrors the Dockerfile runner stage COPY).
@@ -236,6 +269,13 @@ if [ "$RUN_SMOKE" = "true" ]; then
 
   echo "==> Smoke: better-sqlite3 native binding loads"
   (cd "$SMOKE_DIR" && NODE_PROBE_DB="$NODE_STORAGE_DIR/probe.db" node -e "const db = require('better-sqlite3')(process.env.NODE_PROBE_DB); db.exec('CREATE TABLE t (id INTEGER)'); db.close();")
+
+  # Same probe for the second native module, run against the EXTRACTED tarball
+  # rather than the staging dir: a copy that dropped libduckdb.so, or an archive
+  # step that dropped the platform bindings package, fails here and nowhere else
+  # until a user opens a DuckDB connection.
+  echo "==> Smoke: @duckdb/node-api native binding loads"
+  (cd "$SMOKE_DIR" && node -e "const { DuckDBInstance } = require('@duckdb/node-api'); DuckDBInstance.create(':memory:').then((i) => i.connect()).then((c) => c.runAndReadAll('SELECT 42 AS a')).then((r) => { if (r.getRowObjectsJson()[0].a !== 42) { throw new Error('unexpected DuckDB result'); } });")
 
   PORT=$(( (RANDOM % 20000) + 20001 ))
   echo "==> Smoke: booting node server.js on port $PORT"

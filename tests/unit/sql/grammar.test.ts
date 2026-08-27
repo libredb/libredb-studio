@@ -58,6 +58,11 @@ describe("resolveSqlGrammar", () => {
     // ask, and leaving it at the compatibility default would make every `#` run
     // ambiguous and prompt on a statement CQL refuses outright.
     ["cassandra", "code"],
+    // DuckDB, probed 2026-08-27 on v1.5.5: `SELECT 1 # x` is `Parser Error: syntax
+    // error at or near "#"`, so the rest of the line is not hidden. NOT read off the
+    // SQLite row it sits beside in this file - each of DuckDB's five facts was taken
+    // against the engine.
+    ["duckdb", "code"],
   ])("%s reads `#` as %s", (type, hash) => {
     expect(resolveSqlGrammar(type).hash).toBe(hash);
   });
@@ -110,12 +115,21 @@ describe("resolveSqlGrammar", () => {
     expect(resolveSqlGrammar("oracle").alternateQuoting).toBe(true);
   });
 
-  test.each<DatabaseType>(["mysql", "clickhouse", "postgres", "mssql", "sqlite", "libsql", "trino", "cassandra"])(
-    "%s does not read `q'…'` as a literal",
-    (type) => {
-      expect(resolveSqlGrammar(type).alternateQuoting).toBe(false);
-    },
-  );
+  test.each<DatabaseType>([
+    "mysql",
+    "clickhouse",
+    "postgres",
+    "mssql",
+    "sqlite",
+    "libsql",
+    "trino",
+    "cassandra",
+    // `SELECT q'[x]' AS a` on v1.5.5 is `Catalog Error: Type with name q does not
+    // exist!` - the `q` was read as a type name, so the form is not in the grammar.
+    "duckdb",
+  ])("%s does not read `q'…'` as a literal", (type) => {
+    expect(resolveSqlGrammar(type).alternateQuoting).toBe(false);
+  });
 
   test("a call that names no dialect does not read the form either", () => {
     // The compatibility default: before the channel existed no reader here had a
@@ -166,6 +180,12 @@ describe("resolveSqlGrammar", () => {
     // complaint - which the identifier reading, stopping at the first `]`, could not
     // do. CQL also subscripts a collection for real (`m['k']`).
     ["cassandra", "subscript"],
+    // DuckDB, probed on v1.5.5: `SELECT [1,2][1]` answers 1 - a LIST literal followed
+    // by a 1-based index. This is the one fact where copying the SQLite row would have
+    // been actively wrong, and the temptation to copy it is real: both engines open a
+    // local file through an in-process driver. The identifier reading would take an
+    // everyday DuckDB list literal for a name and lose the statement's bound.
+    ["duckdb", "subscript"],
   ])("%s reads `[…]` as %s", (type, bracket) => {
     expect(resolveSqlGrammar(type).bracket).toBe(bracket);
   });
@@ -225,6 +245,9 @@ describe("resolveSqlGrammar", () => {
     // id = 1` returns the row, so the FIRST `*/` closed the run. A nesting reader
     // would have seen an unterminated comment and refused to bound the statement.
     ["cassandra", "flat"],
+    // DuckDB, probed on v1.5.5: `/* a /* b */ still */ SELECT 1` runs, so the inner
+    // `*/` did NOT close the run - the opposite reading from the SQLite row above.
+    ["duckdb", "nesting"],
   ])("%s closes a block comment the %s way", (type, blockComment) => {
     expect(resolveSqlGrammar(type).blockComment).toBe(blockComment);
   });
@@ -286,6 +309,10 @@ describe("resolveSqlGrammar", () => {
     ["trino", false],
     ["sqlite", false],
     ["libsql", false],
+    // DuckDB, probed on v1.5.5: `SELECT 1 AS a // note` is `Parser Error: syntax error
+    // at or near "//"`, so the characters are refused where they stand rather than
+    // hiding the rest of the line.
+    ["duckdb", false],
   ])("%s reads `//` as a line comment: %s", (type, doubleSlashComment) => {
     expect(resolveSqlGrammar(type).doubleSlashComment).toBe(doubleSlashComment);
   });
@@ -355,6 +382,12 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   // answered the same way on sqld 0.24.33 (#, brackets, nesting, q'…'), which is why
   // the registry shares SQLite's grammar object.
   libsql: "established",
+  // Five facts probed 2026-08-27 against DuckDB v1.5.5 through `@duckdb/node-api`,
+  // and NOT inherited from either neighbour: the SQLite row's `[…]` reading is wrong
+  // here (a list literal, not a name quote) and the PostgreSQL object is not shared
+  // even though the five values coincide. See DUCKDB_GRAMMAR in `grammar.ts` for the
+  // statement behind each one.
+  duckdb: "established",
   oracle: "established",
   mssql: "established",
   clickhouse: "established",
@@ -400,6 +433,9 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   mysql: true,
   sqlite: true,
   libsql: true,
+  // SQL, and the statement text IS what the editor sends: the provider extends
+  // SQLBaseProvider and hands the text to `runAndReadAll`.
+  duckdb: true,
   oracle: true,
   mssql: true,
   clickhouse: true,

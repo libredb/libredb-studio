@@ -41,6 +41,7 @@ const SeedDatabaseType = z.enum([
   "trino",
   "cassandra",
   "libsql",
+  "duckdb",
 ]);
 
 export const SeedDefaultsSchema = z.object({

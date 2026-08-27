@@ -16,6 +16,7 @@ import {
   TrinoIcon,
   CassandraIcon,
   LibSQLIcon,
+  DuckDBIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 
@@ -70,6 +71,24 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     label: "SQLite",
     defaultPort: "",
     showConnectionStringToggle: false,
+    connectionFields: ["database"],
+  },
+  duckdb: {
+    icon: DuckDBIcon,
+    // DuckDB's own mark is a bright yellow (#FFF000), and `text-yellow-400` is already
+    // ClickHouse's. yellow-300 is the nearest free shade, and the distinct-colour
+    // assertion in tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
+    color: "text-yellow-300",
+    label: "DuckDB",
+    // Embedded: nothing is listening anywhere, so there is no port to default.
+    defaultPort: "",
+    // No URI scheme exists to paste - DuckDB's own tooling takes a path - so the
+    // provider declares `supportsConnectionString: false` and this toggle stays off.
+    showConnectionStringToggle: false,
+    // Exactly `["database"]`, which is the shape `isFileBased()` below tests for: it
+    // is what makes ConnectionModal render "Database File Path" instead of a
+    // host/user/password section. One extra field here would silently take the file
+    // input away.
     connectionFields: ["database"],
   },
   libsql: {

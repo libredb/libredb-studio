@@ -229,9 +229,9 @@ workflow including **Operate**.
 now two different sentences, and the difference is the whole of what changed:
 
 - **Grounding — every engine.** What a Plan run is TOLD about your database. It needs no read-only
-  statement path, because the provider reading sends no statement, so it reaches all sixteen engines.
-- **Agent mode — PostgreSQL and SQLite.** What a run may DO by itself. Its tools execute statements
-  and need a database-native read-only path, which only those two providers implement, so a
+  statement path, because the provider reading sends no statement, so it reaches all seventeen engines.
+- **Agent mode — PostgreSQL, SQLite and DuckDB.** What a run may DO by itself. Its tools execute
+  statements and need a database-native read-only path, which only those three providers implement, so a
   schema-workflow Agent run on any other engine still ends *"The agent cannot run on this database
   engine: it offers no read-only execution profile."* — after grounding has succeeded, which is
   slightly odd to watch and entirely honest: the run knows your schema and still may not read a row.
@@ -397,7 +397,7 @@ as an ordinary citable result.
 Two consequences you will notice:
 
 - **It runs on every engine.** The other workflows need a database-native read-only statement path,
-  which only PostgreSQL and SQLite have; this one needs none, so a run opened on MySQL, Oracle, SQL
+  which only PostgreSQL, SQLite and DuckDB have; this one needs none, so a run opened on MySQL, Oracle, SQL
   Server, MongoDB or Redis works rather than ending `engine-unsupported`.
 - **It has no free-form SQL, and its schema is a short list of names.** There is no `inspect_schema`
   and no `run_read_query` here, and the run is told so in its opening message rather than being left
@@ -913,18 +913,19 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   it. `/api/db/query` calls the provider directly (`src/app/api/db/query/route.ts:44`), so an editor
   query is neither policy-checked nor written to the agent audit trail. The controls above describe
   what the agent is held to, not a guarantee the whole product enforces.
-- **Agent mode runs on PostgreSQL and SQLite only.** The read-only profile has to be implemented by
-  the provider, and only two do: `queryReadOnly` exists on `postgres.ts:870` and `sqlite.ts:397`.
+- **Agent mode runs on PostgreSQL, SQLite and DuckDB only.** The read-only profile has to be
+  implemented by the provider, and only three do: `queryReadOnly` exists on `postgres.ts:915`,
+  `sqlite.ts:537` and `duckdb/index.ts:525`.
   Acquiring a profiled provider for any other engine raises `PROFILE_UNSUPPORTED_BY_PROVIDER`
-  (`src/lib/db/factory.ts:473`), which the runtime reports as `engine-unsupported`
-  (`src/lib/agent/runtime.ts:242`) — the rail says so in as many words
-  (`src/components/agent/timeline.ts:341`). So on MySQL, Oracle, SQL Server, MongoDB, Redis,
+  (`src/lib/db/factory.ts:649`), which the runtime reports as `engine-unsupported`
+  (`src/lib/agent/runtime.ts:273`) — the rail says so in as many words
+  (`src/components/agent/timeline.ts:341`). So on MySQL, Oracle, SQL Server, libSQL, MongoDB, Redis,
   ClickHouse, Druid, Trino and Couchbase an Agent-mode run cannot read anything. It also covers the bundled
   **LibreDB sample** connection, whose provider implements no `queryReadOnly`
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
   connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode still opens on
   every connection — the model is toolless there, so no profile has to be acquired for it — and since
-  #414 its **grounding** no longer takes this path at all on the other fourteen: it asks the provider to
+  #414 its **grounding** no longer takes this path at all on the other fifteen: it asks the provider to
   describe its schema, which needs no read-only statement profile, so a Plan run on MongoDB or MySQL
   is ordinarily grounded while an Agent run on the same connection still cannot read anything. Where
   the reading does fail — a provider that cannot describe itself, a description that overran its

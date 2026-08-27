@@ -22,7 +22,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1–D46, U17, U22 · 19
+- [Drivers and connections](#drivers-and-connections) — D1–D49, U17, U22 · 22
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U24 · 11
@@ -674,6 +674,116 @@ bundle `activeConnections` into the same sentence, so for that half they now cit
 **Done when:** the search provider omits `activeConnections` rather than sending 0, its two docs and its
 two test files move with it (the provider triad is per type-id even though one directory serves both),
 and no comment cites `mssql.ts` for an encoding it has stopped using.
+
+### D47. Nine outward-facing enumerations name the engines by hand, and nothing counts them
+
+Found 2026-08-27 while registering `duckdb` (issue #424). Not DuckDB's defect - DuckDB is the
+second engine in a row to walk into it, and the first (libSQL, #511) left nine files still
+naming the previous set. Measured on this branch's parent commit, every one of these was
+missing libSQL two weeks after it shipped everywhere the compiler looks:
+
+| File | What it said | True at the time |
+| --- | --- | --- |
+| `packaging/linux/nfpm.yaml` | "fourteen engines", 14 names | 15 external engines |
+| `packaging/winget/LibreDB.Studio.locale.en-US.yaml.tmpl` | 14 names in `Description` | 15 |
+| `packaging/chocolatey/libredb-studio.nuspec.tmpl` | 14 names in `<description>` | 15 |
+| `desktop/src-tauri/tauri.conf.json` | 14 names in `longDescription` | 15 |
+| `deploy/caprover/libredb-studio.yml` | "fourteen engines" twice | 15 |
+| `deploy/railway/template.json` | "fourteen engines" | 15 |
+| `deploy/azure/listing/listing-fields.md` | "14 engines" / "Fourteen engines" / "fourteen engines" | 15 |
+| `deploy/azure/listing/description.html` | "fourteen engines" | 15 |
+| `deploy/rancher/CATALOG_LISTING.md` (key-features bullet) | "Fourteen database engines" | 15 |
+
+All nine are corrected in this PR, which is the third consecutive PR to correct the same
+class by hand. `scripts/readme-check.mjs` proves the mechanism works - it locates the engine
+table structurally and fails when the three READMEs disagree - and `chart:check` proves a
+version can be pinned across files. Nothing does the equivalent for the catalog copy, and
+`docs/ADDING_A_PROVIDER.md` says so in as many words: *"nothing counts the engines in a
+catalog listing, so an engine can ship while three storefronts still name the previous set"*.
+
+The gate has to be tolerant of abridgement, because these files are not all exhaustive by
+design: the winget and chocolatey **summaries** deliberately name a few engines and "and
+more" (#445, so that no numeral goes stale), while their **descriptions** are exhaustive. So
+the check is not "every file names every engine" - it is "a file that publishes a NUMERAL
+must publish the right one, and a list introduced by that numeral must have that many names",
+with the numeral derived from `EXTERNAL_DATABASE_TYPES.length` and the names from
+`DB_UI_CONFIG` labels.
+
+**Done when:** one test walks a declared list of outward-facing copy files, extracts each
+English or digit numeral that qualifies the word "engines", compares it to
+`EXTERNAL_DATABASE_TYPES.length`, and - where that numeral introduces a list - counts the
+`DB_UI_CONFIG` labels in it; with a non-vacuity assertion that a fixture naming one engine
+too few fails.
+
+### D48. There is no `sessionsEmptyState`, so an engine with no session list cannot say so
+
+Found 2026-08-27 while registering `duckdb` (issue #424), and it is not DuckDB's defect.
+
+`ProviderLabels` carries `slowQueriesEmptyState` (#U12), so a provider whose engine keeps no store
+of finished statements replaces the Queries panel's PostgreSQL sentence - *"Enable
+pg_stat_statements extension to see query stats."* - with its own. **There is no equivalent for
+sessions.** `SessionsTab.tsx:160` and `OperationsTab.tsx:612` print the hardcoded *"No active
+sessions found."* for every provider that answers `getActiveSessions()` with an empty list. The
+`sessionsUnavailable` branch beside it is not a way in: it renders a reason only when the reading
+FAILED (`data.activeSessions === undefined`, the reason taken from `data.errors.activeSessions`),
+which is a different fact from an engine that has no sessions to publish.
+
+So the two halves of the same absence read differently on the same connection. On DuckDB the
+Queries panel says why in DuckDB's own words, and the Sessions panel says *"No active sessions
+found."* - which a reader takes as "nothing is running right now", when the truth is that
+`duckdb_connections()` does not exist and the panel can never show a row (measured: `Catalog Error:
+Table Function with name duckdb_connections does not exist!`). The same wrong reading is available
+today on every engine that publishes no session list.
+
+Not urgent, and deliberately not solved by making `getActiveSessions()` throw: an absence is not an
+error, and the failure branch already means something else.
+
+**Done when:** `ProviderLabels` gains an optional `sessionsEmptyState`, both panels prefer it over
+their hardcoded sentence, DuckDB declares one naming `duckdb_connections()`, and a component test
+pins both branches - a provider that declares the label and one that does not - so the fallback
+cannot quietly become the only path again. `docs/providers/duckdb.md` §3.7 states today's behaviour
+and must move with it.
+
+### D49. Per-table maintenance drops the schema, so every table outside the default one refuses
+
+Found 2026-08-27 in the BROWSER while registering `duckdb` (issue #424). Not DuckDB's defect - the
+provider is the half that behaves - and no gate could have caught it: the six local gates, 100%
+line coverage and a four-lens adversarial review all passed over it, because the two halves are
+correct in isolation and only the running product puts them together.
+
+`TablesTab.tsx:390` calls `handleMaintenance(type, table.tableName)` - the BARE table name - from a
+row whose very next line (`:350`) renders `table.schemaName` beside it. Every provider's
+`qualifyMaintenanceTarget` then supplies a default schema for an unqualified target:
+`postgres.ts:1285` returns `"public." + escapeIdentifier(target)`, and
+`duckdb/index.ts:712` returns `"main"."<target>"`. So the statement names a table that is not there.
+
+Measured on DuckDB v1.5.5, clicking **Analyze Table** on the `analytics.events` row:
+
+```
+Catalog Error: Table with name events does not exist! Did you mean "analytics.events"?
+LINE 1: ANALYZE "main"."events"
+```
+
+`POST /api/db/maintenance` answers 400 and the panel prints the engine's message, so it is visible
+rather than silent - but the button cannot succeed on any table outside the default schema, on any
+engine. It went unnoticed because the fixtures the other engines are exercised with keep their
+tables in the default schema; DuckDB is simply the first whose fixture carries a second one.
+
+This is #U9 one layer up. #U9 was an operation DECLARED in the wrong placement (Oracle offered
+`optimize` per table, and the target it sent was rejected); this is the right placement sending an
+under-qualified target.
+
+Deliberately not fixed in the provider PR that found it. The one-line repair - passing
+`` `${table.schemaName}.${table.tableName}` `` - changes the target string reaching all TWELVE
+providers that implement `runMaintenance` (postgres, mysql, mssql, oracle, sqlite, libsql, duckdb,
+clickhouse, cassandra, druid, trino, search), and each has its own qualification and its own
+statement grammar: SQLite has no user schemas, MySQL's `OPTIMIZE TABLE` takes `db.table`, and the
+HTTP engines build their own paths. That is a twelve-engine live verification, not a provider
+change.
+
+**Done when:** the row passes the qualified name, every one of the twelve providers has been
+measured against a table outside its default schema (or recorded as having no such concept), and a
+component test pins the target the row sends so it cannot silently revert to the bare name.
 
 ## Value interpolation
 

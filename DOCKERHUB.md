@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch and Apache Trino** from your browser — with AI-powered query assistance, interactive ER diagrams, schema diff, a virtualized data grid, RBAC, OIDC SSO, and a live monitoring dashboard. A lightweight, secure bridge between heavy desktop tools (DataGrip/DBeaver) and minimal CLIs.
+Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra** from your browser — with AI-powered query assistance, interactive ER diagrams, schema diff, a virtualized data grid, RBAC, OIDC SSO, and a live monitoring dashboard. A lightweight, secure bridge between heavy desktop tools (DataGrip/DBeaver) and minimal CLIs.
 
 ---
 
@@ -107,7 +107,7 @@ The network route is the one to prefer for a real deployment: put Studio and its
 
 ## Supported databases
 
-Fifteen external engines share one interface, and three of them are read-only because their own SQL is. The table below has sixteen rows: the sixteenth is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
+Sixteen external engines share one interface, and three of them are read-only because their own SQL is. The table below has seventeen rows: the seventeenth is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -117,6 +117,7 @@ Fifteen external engines share one interface, and three of them are read-only be
 | **SQL Server** | `mssql` | `OFFSET FETCH`, `sys.dm_*` DMVs, `DBCC CHECKDB`, Azure SQL auto-detect |
 | **SQLite** | `bun:sqlite` / `node:sqlite` | File-based or in-memory databases; the driver follows the runtime, with a `LIBREDB_SQLITE_DRIVER` override |
 | **libSQL** | none — HTTP | Full SQL IDE over the Hrana protocol against a libSQL server or Turso Cloud; SQLite's dialect across a network, with real per-table bytes from `dbstat` and an auth token instead of a password |
+| **DuckDB** | `@duckdb/node-api` (a native N-API addon) | Full SQL IDE against a local DuckDB file or `:memory:` on the server this image runs on; `EXPLAIN (FORMAT JSON)` plan trees, `duckdb_*` catalog introspection, real per-table bytes from `pragma_storage_info` block allocation, and cancellation through the driver's `interrupt()`. `VACUUM`, `ANALYZE` and `CHECKPOINT` only, and no slow-query or session panel, because DuckDB publishes neither. One operating-system process may hold the file, refused in read-only mode too |
 | **MongoDB** | `mongodb` | JSON query editor, find/aggregate/insert/update/delete |
 | **Redis** | `ioredis` | Command editor, non-blocking `SCAN` key browser, `INFO` monitoring, per-type command generation |
 | **Couchbase** | none — HTTP | SQL++ query editor, bucket/scope/collection browser, cluster health |
@@ -132,7 +133,7 @@ Fifteen external engines share one interface, and three of them are read-only be
 
 ### Engines with no provider of their own
 
-Twenty-six further engines speak the wire protocol of one of the fifteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has twenty-two rows rather than twenty-six because engines that behave identically share a row; all twenty-six are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Twenty-six further engines speak the wire protocol of one of the sixteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has twenty-two rows rather than twenty-six because engines that behave identically share a row; all twenty-six are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
@@ -168,7 +169,7 @@ Details, probed versions and each caveat: [`docs/providers/README.md`](https://g
 - **Professional SQL IDE** — Monaco editor (VS Code engine), schema-aware autocomplete, multi-tab workspace, Visual EXPLAIN.
 - **Interactive ER diagrams** — real FK edges, cardinality, auto-layout (ELK.js), PNG/SVG export.
 - **Schema diff & migration** — compare snapshots/connections and auto-generate migration SQL.
-- **Read-only database agent** — state an objective, and the run drafts SQL, reads the results and composes a report whose claims cite them. Three workflows (investigate / optimize / assess), a visible statement-and-time budget, and writes refused before the database is reached. **Agent mode reads PostgreSQL and SQLite only** — they are the only engines with a database-native read-only execution profile, and on any other engine an Agent-mode run ends `engine-unsupported`; Plan mode is toolless, runs no statement of yours, and is **grounded in your own schema on every engine** — it reads the inventory before the model's first turn and asks for one statement in that engine's own language, or refuses with `NO STATEMENT:` and the question that would unblock it. Standalone image only. [Guide](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_GUIDE.md) · [What leaves the machine](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_DATA_FLOW.md).
+- **Read-only database agent** — state an objective, and the run drafts SQL, reads the results and composes a report whose claims cite them. Three workflows (investigate / optimize / assess), a visible statement-and-time budget, and writes refused before the database is reached. **Agent mode reads PostgreSQL, SQLite and DuckDB only** — they are the only engines with a database-native read-only execution profile, and on any other engine an Agent-mode run ends `engine-unsupported`; Plan mode is toolless, runs no statement of yours, and is **grounded in your own schema on every engine** — it reads the inventory before the model's first turn and asks for one statement in that engine's own language, or refuses with `NO STATEMENT:` and the question that would unblock it. Standalone image only. [Guide](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_GUIDE.md) · [What leaves the machine](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_DATA_FLOW.md).
 - **Model-backed helpers** — query safety analysis, EXPLAIN-in-plain-English, AI-generated schema docs, data-profile summaries. Gemini / OpenAI / Ollama / custom; with no model configured — no `LLM_*` variables at all — no AI call is made. A key is required for Gemini and OpenAI only: Ollama and a custom endpoint count as a configured model without one, which enables the AI features — and the agent too, once its ledger path is writable.
 - **Pro data grid** — virtualized millions of rows, inline editing, per-column filters, pivot table, CSV/JSON export.
 - **Data visualization** — 8 chart types with aggregation and saved-chart dashboards.

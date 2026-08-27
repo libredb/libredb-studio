@@ -28,6 +28,7 @@ describe("fenceTagEngine", () => {
       "druid",
       "trino",
       "cassandra",
+      "duckdb",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);
@@ -46,6 +47,16 @@ describe("fenceTagEngine", () => {
     // The product name a model is likelier to write than the protocol's: a block
     // tagged `turso` holds a statement for a libSQL connection.
     expect(fenceTagEngine("turso")).toBe("libsql");
+  });
+
+  test("no alias is registered for duckdb, because every candidate names something else", () => {
+    // `ddb` is DynamoDB in most of the material a model has read and `duck` names no
+    // language at all. An alias that names the WRONG engine is worse here than a
+    // missing one: `fenceTagEngine` is what decides whether a plan's deliverable was
+    // written for this connection.
+    expect(fenceTagEngine("ddb")).toBeNull();
+    expect(fenceTagEngine("duck")).toBeNull();
+    expect(isQueryFenceTag("ddb")).toBe(false);
   });
 
   test("a generic tag and an absent one name no engine, so they contradict none", () => {

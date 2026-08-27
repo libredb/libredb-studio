@@ -69,10 +69,11 @@ caproverOneClickApp:
     instructions:
         start: |-
             LibreDB Studio is a modern, open-source, web-based SQL IDE for the cloud era.
-            Query fourteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server,
-            MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch,
-            OpenSearch, Apache Trino and Apache Cassandra - from your browser, with an
-            ERD viewer, schema diff and optional read-only AI on your own model key.
+            Query sixteen engines - PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle,
+            SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
+            Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra - from your
+            browser, with an ERD viewer, schema diff and optional read-only AI on your
+            own model key.
 
             What you can set below (defaults are sensible - you can usually just click Deploy):
               - Version: the image tag to deploy (a tested fixed version by default).
@@ -111,5 +112,5 @@ caproverOneClickApp:
             "App Configs" tab. See https://github.com/libredb/libredb-studio
     displayName: LibreDB Studio
     isOfficial: false
-    description: Open-source web-based SQL IDE. Query fourteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Apache Trino & Apache Cassandra - from your browser, with optional read-only AI on your own model key.
+    description: Open-source web-based SQL IDE. Query sixteen engines - PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Apache Trino & Apache Cassandra - from your browser, with optional read-only AI on your own model key.
     documentation: Image and docs - https://github.com/libredb/libredb-studio . Uses ghcr.io/libredb/libredb-studio. Deploys with SQLite persistence; supports OIDC SSO and multiple AI providers via extra env vars.

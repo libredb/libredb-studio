@@ -1046,6 +1046,7 @@ describe("useConnectionForm", () => {
     trino: true,
     cassandra: true,
     libsql: true,
+    duckdb: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

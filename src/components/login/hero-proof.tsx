@@ -1,4 +1,4 @@
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { LIVE_CHANNELS, LIVE_PLATFORMS } from "@/lib/distribution/channels.generated";
@@ -13,6 +13,10 @@ import { DEPLOY_GROUP_LABELS, DEPLOY_GROUP_ORDER } from "@/lib/distribution/depl
  * `AGENT_EXECUTION_ENGINES`, so an engine that gains that method updates this claim without
  * a copy edit - and the count below is this array's length, never a typed "2".
  *
+ * They are joined by `namedList` rather than by `join(" and ")`, which is what this file
+ * used to do: with three engines that printed "PostgreSQL and SQLite and DuckDB" on the
+ * login page. The helper is shared with the posture popover, which had the same join.
+ *
  * `tests/components/LoginPage.test.tsx` pins the claim rather than the wording: dropping a
  * mode, or naming an engine agent mode cannot execute on, fails CI.
  */
@@ -21,7 +25,7 @@ const AGENT_MODES: readonly { key: string; label: string; detail: string }[] = [
   {
     key: "agent",
     label: "agent mode",
-    detail: `runs read-only on ${AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label).join(" and ")}`,
+    detail: `runs read-only on ${namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label))}`,
   },
 ];
 
@@ -51,7 +55,7 @@ export const HERO_CLAIMS: readonly { key: string; value: number; unit: string; d
     // at, so counting it here claimed one external engine more than the product has and put
     // this page one out of step with the number README.md publishes. The pill for it stays -
     // it is a provider the connection picker offers - marked as embedded so the reader can
-    // see why sixteen pills sit under a claim of fifteen.
+    // see why seventeen pills sit under a claim of sixteen.
     value: EXTERNAL_DATABASE_TYPES.length,
     unit: "database engines",
     detail: "one client, one workspace, every one of them",

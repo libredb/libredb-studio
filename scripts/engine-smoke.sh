@@ -10,9 +10,13 @@
 #
 # Both tiers assert the SAME outcome - no launcher warning, everything works,
 # including STORAGE_PROVIDER=sqlite. That is the point of the node26 leg: the
-# payload is built on Node 24, so a green node26 run proves the payload's one
-# native module (better-sqlite3, N-API since v13) is genuinely ABI-independent.
-# Under v12's per-ABI binding this leg could not have passed.
+# payload is built on Node 24, so a green node26 run proves the payload's two
+# native modules - better-sqlite3 (N-API since v13) and the DuckDB driver's
+# @duckdb/node-bindings addon - are genuinely ABI-independent. Under
+# better-sqlite3 v12's per-ABI binding this leg could not have passed.
+#
+# Both are exercised, not just asserted in prose: STORAGE_PROVIDER=sqlite drives
+# the first and a DuckDB query drives the second.
 #
 # Runtimes below the floor are not a tier here: `npx` never reaches this script
 # on them. npm's version picker silently resolves the newest ENGINE-COMPATIBLE
@@ -131,10 +135,16 @@ check "embedded sample query returns seeded rows" "$SAMPLE_BODY" "Ada"
 
 SQLITE_BODY=$(curl -s -b "$WORK/cookies.txt" -X POST "$BASE/api/db/query" -H "Content-Type: application/json" \
   -d "{\"connection\":{\"id\":\"engine-smoke\",\"type\":\"sqlite\",\"name\":\"engine-smoke\",\"database\":\"$WORK/smoke.db\"},\"sql\":\"SELECT 41+1 AS a\"}")
+# The payload's second native module. sqlite above runs on node:sqlite, a
+# builtin, so without this the DuckDB binding would only be asserted in prose -
+# and the node26 tier is precisely where an ABI-bound addon would fail.
+DUCKDB_BODY=$(curl -s -b "$WORK/cookies.txt" -X POST "$BASE/api/db/query" -H "Content-Type: application/json" \
+  -d "{\"connection\":{\"id\":\"engine-smoke-duckdb\",\"type\":\"duckdb\",\"name\":\"engine-smoke-duckdb\",\"database\":\"$WORK/smoke.duckdb\"},\"sql\":\"SELECT 41+1 AS a\"}")
 LAUNCHER_LOG=$(cat "$LOG")
 
 check_absent "launcher prints no runtime warning" "$LAUNCHER_LOG" "STORAGE_PROVIDER=sqlite"
 check "sqlite connection works via node:sqlite" "$SQLITE_BODY" '"a":42'
+check "duckdb connection works via @duckdb/node-api" "$DUCKDB_BODY" '"a":42'
 
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
