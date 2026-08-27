@@ -510,6 +510,34 @@ describe("BaseDatabaseProvider", () => {
       expect(info).toBe("postgres://host/db?sslmode=verify-full&password=***&sslkey=***&token=***");
     });
 
+    test("masks a bracketed IPv6 authority without disturbing the brackets", () => {
+      // The authority parse finds the credential at the LAST `@` and the password at the
+      // authority's FIRST `:`. An IPv6 host puts colons inside `[...]`, which is the shape
+      // that would break a naive first-`:`-to-first-`@` mask. It does not break this one,
+      // and these pin why: with a credential the mask lands before the brackets, and with
+      // no credential the colons inside them are left alone rather than read as a password
+      // boundary - there is no `@`, so nothing is masked.
+      expect(infoFor("postgres://user:pw@[::1]:5432/db")).toBe("postgres://user:***@[::1]:5432/db");
+      expect(infoFor("postgres://user:pw@[2001:db8::1]:5432/db")).toBe("postgres://user:***@[2001:db8::1]:5432/db");
+      expect(infoFor("postgres://[::1]:5432/db")).toBe("postgres://[::1]:5432/db");
+      expect(infoFor("redis://[2001:db8::1]:6379")).toBe("redis://[2001:db8::1]:6379");
+      // An `@` in the password, with an IPv6 host behind it: masked whole, as elsewhere.
+      expect(infoFor("postgres://user:p@ss@[::1]:5432/db")).toBe("postgres://user:***@[::1]:5432/db");
+      // User name and no password, and an empty password: both verbatim, as they are for a
+      // named host - '***' over a value the string never carried would assert a secret.
+      expect(infoFor("postgres://user@[::1]:5432/db")).toBe("postgres://user@[::1]:5432/db");
+      expect(infoFor("postgres://user:@[::1]:5432/db")).toBe("postgres://user:@[::1]:5432/db");
+    });
+
+    test("the known limit: a bracketed host in the userinfo position is mangled", () => {
+      // Recorded rather than fixed. `postgres://[::1]:5432@host/db` is not a URI any driver
+      // or connection form produces - an IPv6 host cannot be followed by `@host` - and the
+      // parse reads the bracket's first `:` as the password boundary. Bracket-awareness
+      // would be a branch with no real caller, so the boundary is written down instead of
+      // being left for someone to rediscover as a defect.
+      expect(infoFor("postgres://[::1]:5432@host/db")).toBe("postgres://[:***@host/db");
+    });
+
     test("masks a credential in the authority and in the query string together", () => {
       const info = infoFor("libsql://admin:s3cret@db-org.turso.io?authToken=jwt");
 

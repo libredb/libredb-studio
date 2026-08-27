@@ -328,6 +328,17 @@ ioredis only authenticates as `default` when `username` is absent. A pasted
 ([`src/lib/connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)) decomposes the
 userinfo into `user` / `password` ([§4.2](#42-connection-string-nuance)).
 
+**A connection saved before the field was writable keeps authenticating as `default`, and there is
+nothing to migrate.** `connectionFields` in [`src/lib/db-ui-config.ts`](../../src/lib/db-ui-config.ts)
+decides what a save WRITES, and it omitted `user` for `redis` until the settlement round of
+2026-08-27 — so the ACL user a person typed was discarded between the box and the driver, and the
+value simply was never captured. No migration can restore a credential that was never stored: an
+existing connection authenticates as `default` until someone opens it and types a user name, which
+now persists. What the same change also stopped is an EDIT losing one: `user` is form-owned rather
+than preserved (`FIELD_OWNERSHIP` in [`src/hooks/use-connection-form.ts`](../../src/hooks/use-connection-form.ts)),
+so a connection that had a `user` from a pasted URL had it loaded into the box, shown, and then
+dropped on save. It is written now.
+
 Measured 2026-08-26 against `redis:latest`, with `default` left `on nopass ~* &* +@all` and a second
 user defined `on >probepw ~* +@all -info`, both arms:
 
