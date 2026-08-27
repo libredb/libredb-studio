@@ -47,6 +47,24 @@ happens every time somebody asks.
 | Hardware | Apple M5 Max, 64 GB unified memory |
 | Storage | 2 TB SSD |
 | Power | macOS high-power mode, on AC |
+| Serving engine | Ollama 0.32.13 and 0.33.0 — see below |
+
+### The serving engine is part of the measurement too
+
+A model's weights are not the only thing that decides what it does on a run: the server that
+loads them decides too, and it changes under you.
+
+`gemma4:12b` is the measured case. Its investigate cell read 5 of 5 at 9 seconds on Ollama
+0.32.13. On 0.33.0 — same model file, same digest, same objective, same code — it reads 1 of 5,
+and four of the five losses spend the entire turn without invoking a single tool before the clock
+ends them. Three configurations were measured before the engine was suspected: with per-model
+settings, without them, and with the context bound removed. All three read the same. The engine
+was the difference.
+
+So a figure on these pages is a claim about a model **on the engine named beside it**, and a
+reader whose numbers disagree should check their own version before concluding anything about the
+model. The models supported here were verified on 0.33.0 at their most marginal cell — the one
+whose settings exist — rather than assumed to carry over.
 
 **This is a fast machine, and that is a limitation of these pages rather than a feature of
 them.** Every timing here is a best case. A reader on a 16 GB laptop should treat the pass/fail
