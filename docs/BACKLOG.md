@@ -22,14 +22,14 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1–D41, U17, U22–U23 · 19
+- [Drivers and connections](#drivers-and-connections) — D1–D46, U17, U22 · 19
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 10
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U24 · 11
 - [Authentication and security headers](#authentication-and-security-headers) — AU4
 - [Tests](#tests) — T1–T5 · 4
 - [Dependencies](#dependencies) — P1–P5 · 5
-- [Documentation](#documentation) — DOC1, DOC3 · 2
+- [Documentation](#documentation) — DOC1, DOC3–DOC4 · 3
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1, N3 · 2
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H13 · 9
@@ -428,31 +428,6 @@ to ssh2 - and the mock was written from reading ssh2's source, which is the thin
 run against it, or a note beside the mock records that its fidelity to ssh2 is the assumption CI rests
 on and names the source it was derived from.
 
-### D36. The migration generator emits `ADD CONSTRAINT` for SQLite, which SQLite cannot parse
-
-Found 2026-08-27 while registering the `libsql` type-id (issue #424, Phase 5), and it is the
-`sqlite` dialect's own defect rather than the new one's.
-
-`generateMigrationSQL` declines a foreign key for `cassandra` and, since this run, for `libsql`.
-The `sqlite` dialect falls through to the generic branch and emits
-
-```sql
-ALTER TABLE "users" ADD CONSTRAINT "fk_users_dept_id" FOREIGN KEY ("dept_id") REFERENCES "departments"("id");
-```
-
-SQLite has no ALTER that adds a constraint - a foreign key is declarable only inside `CREATE TABLE` -
-so the statement is a syntax error wherever the file is run. Measured on the sibling engine, which
-shares the grammar exactly: `near CONSTRAINT ... syntax error` on sqld 0.24.33 (SQLite 3.47.0). The
-same file already declines the REMOVED direction for `sqlite` with a comment naming table
-recreation, so only the added half is wrong - which is why it reads as an oversight rather than a
-decision.
-
-Narrow, and it does not throw: the file generates, and the failure happens when someone runs it.
-
-**Done when:** `sqlite` declines an added foreign key the way `libsql` does, with a comment naming
-recreation rather than a statement, and a test pins both directions for it - the way
-`tests/unit/schema-diff/migration-generator.test.ts` now pins them for `libsql` and `cassandra`.
-
 ### D37. Five HTTP providers read the SSL mode and drop the rest of the TLS panel
 
 Found 2026-08-27 in the #511 review (issue #424, Phase 5). Not libSQL's - libSQL is the
@@ -479,26 +454,6 @@ discards, which is the kind of silence a security setting must not have.
 transports route TLS through it, and one test per transport pins that a supplied CA and a
 `verify-*` mode reach the request options - plus one that a `require` mode does not verify.
 
-### D38. `getConnectionInfo` masks a password in a connection string but not a token in a query string
-
-Found 2026-08-27 in the #511 review. Pre-existing, dead today, and cheap to close before it
-is not.
-
-`base-provider.ts`'s `protected getConnectionInfo()` returns
-`connectionString.replace(/:([^:@]+)@/, ":***@")`, which masks `:secret@` in an authority and
-nothing else. A libSQL connection string carries its credential in the query string instead -
-`libsql://db-org.turso.io?authToken=<jwt>` - so the whole token would survive the mask. The
-same is true of any `?password=`/`?sslkey=` form.
-
-It is currently unreachable: the only callers are in `tests/unit/db/base-provider.test.ts`, so
-no production path prints it. That is the reason this is a backlog entry rather than an issue,
-and also the reason it is worth doing - a future health-panel caller would inherit a leak that
-looks redacted.
-
-**Done when:** the mask also strips the value of every credential-shaped query parameter
-(`authToken`, `password`, `token`, `sslkey`), with a test per shape - or the method is deleted,
-since nothing in `src/` calls it.
-
 ### U22. The connection form renders fields the engine does not take, and a comment says otherwise
 
 Found 2026-08-27 in the browser while registering `libsql` (issue #424, Phase 5).
@@ -521,27 +476,6 @@ with the four engines above checked in a browser rather than in a mock - or, if 
 are deliberately universal, the comment in `use-connection-form.ts` says so instead. Either
 way `e2e/libsql-provider.spec.ts` has the assertion that pins today's behaviour and must
 move with it.
-
-### U23. The Storage tab names PostgreSQL internals on every engine
-
-Seen 2026-08-27 on a libSQL connection (issue #424, Phase 5), and it is not libSQL's.
-
-`src/components/monitoring/tabs/StorageTab.tsx:179` labels the remainder of the breakdown
-**"Other (TOAST, FSM)"** unconditionally. TOAST and the free space map are PostgreSQL
-storage structures. SQLite and libSQL have neither - what the remainder actually holds
-there is the schema, the freelist and page overhead - and neither do MySQL, Oracle, SQL
-Server, ClickHouse or any of the HTTP engines. On libSQL it read `4.00 KB` under that
-label against a real 64 KB database, so the number is right and the words are another
-engine's.
-
-The same shape as a shared provider's refusal naming the wrong product: the reading is
-sound, the vocabulary is borrowed. Narrow, cosmetic, and it misleads exactly the reader
-who is trying to account for the bytes.
-
-**Done when:** the label is engine-neutral ("Other" / "Overhead"), or comes from the
-provider's own labels the way the maintenance and slow-query wordings already do
-(`ProviderLabels`), with a component test pinning it for one PostgreSQL and one
-non-PostgreSQL engine.
 
 ---
 
@@ -587,64 +521,159 @@ queries" where the truth is that the profiler is off.
 provider answers a sentence as a row, and no provider answers `[]` for a read that failed - and the
 count of type-ids the type change touched is stated in the PR rather than discovered during it.
 
-### D40. The Overview panel still shows a fabricated zero for a connection count nobody could read
+### D42. The connection-string mask cannot cover a password holding a character RFC 3986 reserves
 
-Found 2026-08-27, one field over from the health fix in the same pass. `HealthInfo.activeConnections`
-is now absent rather than 0 on MSSQL, Oracle and MongoDB when the read is refused. The identical
-defect survives in `getOverview()` on the same three providers, against
-`DatabaseOverview.activeConnections`, which is optional for exactly the same stated reason
-(`src/lib/db/types.ts`, the D17 docblock):
+Found 2026-08-27 while closing the query-string half of the same mask (`getConnectionInfo`, PR
+round 17). The mask now covers the authority and every credential-shaped parameter, in any position.
+What it cannot cover is an authority password containing `@`, `/`, `?` or `#` unencoded:
+`postgres://user:p/w@host/db` is returned in the clear.
 
-- `src/lib/db/providers/sql/mssql.ts:1084` and `src/lib/db/providers/sql/oracle.ts:1160` -
-  `let activeConnections = 0`, with the read's failure swallowed into it.
-- `src/lib/db/providers/document/mongodb.ts:963` and `:975` - `|| 0` and a literal `0`.
+The reason is not an oversight and is written into `redactConnectionString`'s docblock
+(`src/lib/db/base-provider.ts`): `postgres://host:5432/tenant@acme` - a path holding an `@`, which
+carries no secret at all - has the identical shape, and no regular expression separates the two. The
+round chose the safe arm deliberately: drawing `***` over a port asserts a credential the string never
+carried, which is a fabricated reading rather than a mask, and this repo's absence rule (#477) forbids
+the fabrication more strongly than it forbids the miss. `tests/unit/db/base-provider.test.ts` pins the
+gap explicitly, so it is visible rather than assumed closed.
 
-What the user sees is not a hidden number: `src/components/admin/tabs/OverviewTab.tsx` renders `N/A`
-when the field is ABSENT and the figure when it is present, so a denied `VIEW SERVER STATE`, an
-unprivileged `V$SESSION` or a `serverStatus` with no `connections` section shows a confident
-**0 connections** on a server that has plenty. `src/lib/db/providers/sql/cassandra/introspect.ts` is
-the in-repo precedent for the shape, and `measuredNumber` (`src/lib/monitoring-cache-ratio.ts`) is
-the helper that keeps a real 0 while dropping an unanswered row.
+RFC 3986 §3.2.1 requires each of those characters to be percent-encoded in userinfo, so every string
+this misses is malformed - but the drivers accept them, which is why the gap is real rather than
+theoretical.
 
-Deliberately left out of the health fix: the lane that closed it owned `getHealth`, and this one
-drags the three monitoring-panel docs and the Overview component's own tests with it.
+**Done when:** the authority is masked by PARSING rather than by pattern - split on the last `@`
+before the first `/`, `?` or `#` that follows `://`, then mask between the first `:` and that `@` -
+with the two colliding shapes above pinned as separate cases, and the docblock's list of uncovered
+shapes reduced to what remains. The parameter half needs no change.
+### D43. SQLite gained `SET`/`DROP NOT NULL` in 3.53.0, and the generator declines it on both ids
 
-Whoever takes this must also move two OTHER providers' docs:
-[`docs/providers/elasticsearch.md:848`](providers/elasticsearch.md) and
-[`docs/providers/opensearch.md:855`](providers/opensearch.md) both read "`activeConnections` /
-`maxConnections` are 0, the same 'not published' encoding `mssql.ts` and Druid use" - a citation that
-becomes false the moment `mssql.ts` stops encoding it that way.
+Found 2026-08-27 while adding the foreign-key declines for `sqlite` and `libsql`
+(`src/lib/schema-diff/migration-generator.ts`). `NO_COLUMN_MODIFICATION` declines every column
+modification for `libsql`, and the `sqlite` branch beside it declines them too. That was exhaustive
+when it was written and is no longer: measured on SQLite 3.53.0 via `bun:sqlite`,
 
-**Done when:** an unmeasurable overview connection count is absent on all three providers, a real
-zero still reads as zero, each provider's doc records it, and the two search docs no longer cite an
-encoding that is gone.
+```sql
+ALTER TABLE "users" ALTER COLUMN "dept_id" SET NOT NULL
+```
 
-### D41. Two more surfaces read a capped list as a count, one of them to a person
+succeeds, rewrites the stored `CREATE TABLE` text to carry `NOT NULL`, and is enforced on the next
+insert (`NOT NULL constraint failed: users.dept_id`). `DROP NOT NULL` succeeds the same way. A column
+TYPE change is still `near "TYPE": syntax error`, so only nullability moved.
 
-Found 2026-08-27 by the review round that closed the same defect in the agent's curated health
-reading: the projection stopped counting a capped list, and the shape's remaining instances were then
-hunted for rather than assumed gone. Two survive.
+**The blocker is that the version is not a property of the id.** `libsql` reaches sqld 0.24.33, which
+ships SQLite 3.47.0, so the decline is still correct there. The `sqlite` provider runs on whichever
+SQLite its runtime bundles - `bun:sqlite` or `node:sqlite`, selected at runtime with
+`LIBREDB_SQLITE_DRIVER` as an override (`src/lib/db/providers/sql/sqlite.ts`) - so emitting the
+statement would generate a file that runs on one deployment and fails on another. A migration file is
+handed to a human to run elsewhere, which makes the guess worse than the decline.
 
-**The user-facing one.** `src/components/monitoring/tabs/QueriesTab.tsx:87` computes
-`totalQueries = slowQueries.reduce((sum, q) => sum + q.calls, 0)` and renders it on a card labelled
-*Queries*; `:89` computes `slowCount = slowQueries.filter((q) => q.avgTime > 1000).length` and
-renders it as *Slow*. `MonitoringData.slowQueries` is capped at 10 by every provider that fills it
-(`slowQueryLimit = 10` in `src/lib/db/base-provider.ts`, honoured by each `getSlowQueries`), so
-*Queries* is the call total of the ten heaviest digests presented as the database's query count, and
-*Slow* is bounded by 10 no matter how many slow statements the server has. On the MySQL server this
-was measured against - 59 digests for one schema - both cards are the cap wearing a measurement's
-label. The block's own comment reasons carefully about absence versus zero and says nothing about the
-ceiling, which is how it survived: the absence rule was applied, the cap was not.
+**Done when:** either the decline records the version boundary as its reason rather than the absence of
+the feature (cheap, and it is what the comment now does), or the generator learns the connected
+engine's version and emits the nullability change only above 3.53.0, with the emitted statement
+measured against both a 3.47 and a 3.53 build. The second is only worth it if something else needs the
+version too.
+### D44. `databaseSizeBytes` is fabricated as 0 wherever the size is unknown, in 14 of 16 type-ids
 
-**The provider-side one, reachable by the agent.** `TRINO_MAX_STATS_TABLES = 25`
-(`src/lib/db/providers/sql/trino/introspect.ts`) slices the table-stats read, so a Trino catalog with
-500 tables answers exactly 25 rows and the agent's reading reports `rowCount: 25`. Unlike the curated
-path's own row bound - which now refuses rather than truncating - this cut happens inside the provider,
-before the agent layer can see that anything was dropped, so no marker can be added above it.
+Found 2026-08-27 by the sweep that closed the overview connection count's fabricated zero (D40, PR
+round 17). `DatabaseOverview.activeConnections` and `DatabaseOverview.databaseSizeBytes` are optional
+for the SAME stated reason (`src/lib/db/types.ts`, the D17 docblock): absence and zero are different
+facts. The round closed the first field on three providers. The second is unclosed almost everywhere.
 
-**Done when:** neither figure can be read as a count - the cards name what they measure (or drop the
-total no cap-bounded list can supply), and a provider that truncates a reading says so in a way the
-reading's consumer can see.
+**Two providers get it right, and one of them wrote the argument down.**
+`src/lib/db/providers/sql/cassandra/introspect.ts:582` omits the key with the comment "a zero is a
+measurement, and the Storage tab read `?? 0` and rendered '0 B' with a 0.0% breakdown from it", and
+MongoDB's `getOverview()` catch now omits it too.
+
+**The rest fabricate.** Measured by reading every `databaseSizeBytes` assignment under
+`src/lib/db/providers/`:
+- Self-contradicting within one object, and the clearest cases, because the sibling string field
+  already says the figure is unavailable: `sql/trino/introspect.ts:621` pairs a literal `0` with
+  `databaseSize: TRINO_UNAVAILABLE_TEXT`, and `sql/search/index.ts:849` pairs `sizeBytes ?? 0` with
+  `databaseSize: SEARCH_UNKNOWN_TEXT` for both `elasticsearch` and `opensearch`.
+- Swallowed into an initialiser the way D40's connection counts were: `sql/mssql.ts:1111`,
+  `sql/oracle.ts:1178`, `sql/sqlite.ts:808`.
+- Coerced by a helper that returns 0 for an absent row: `sql/druid/introspect.ts:578` and
+  `sql/clickhouse/index.ts:833` through their local `asNumber`.
+- Coerced inline: `sql/postgres.ts:1397` and `sql/mysql.ts:1156` (`parseInt(... || "0")`),
+  `sql/libsql/introspect.ts:399` and `document/couchbase/index.ts:606` (`?? 0`),
+  `keyvalue/redis.ts:603`, and `embedded/libredb.ts:709`, whose `fileSizeBytes()` returns 0 when the
+  `statSync` throws.
+
+**The consumer makes it visible.** `src/components/monitoring/tabs/StorageTab.tsx` keys its entire
+breakdown off `overview?.databaseSizeBytes !== undefined`: present, and the card renders percentages
+against the total; absent, and it draws its own "No storage size information available." So a fabricated
+0 does not hide a number, it replaces an honest refusal with a breakdown over a zero-byte database.
+
+**Done when:** an unknown size is absent rather than 0 on every type-id, a real zero still reads as
+zero, each provider's doc records it, and each provider's test pins both arms - the same shape D40
+used, applied to the field beside it. The blast radius is why this is an entry and not part of that PR:
+14 provider files, 14 provider docs and 14 test files, plus `formatBytes` callers that assume a number.
+Doing it per family, one PR each, is the cheap ordering.
+### D45. On SQL Server 2019 and earlier the connection count is under-reported, not refused
+
+Found 2026-08-27 while making the overview connection count absent instead of 0 (D40, PR round 17).
+That fix is right for what it covers and covers less than the field's failure modes.
+
+`OVERVIEW_CONNECTIONS_SQL` (`src/lib/db/providers/sql/mssql.ts`) reads two objects in one statement:
+
+```sql
+SELECT COUNT(*) AS active_connections,
+       (SELECT CAST(value_in_use AS INT) FROM sys.configurations WHERE name = 'user connections') AS max_connections
+FROM sys.dm_exec_sessions
+WHERE is_user_process = 1
+```
+
+Microsoft Learn, fetched 2026-08-27:
+- `sys.dm_exec_sessions`, Permissions: "Everyone can see their own session information. In SQL Server
+  2019 (15.x) and earlier versions, requires `VIEW SERVER STATE` to see all sessions on the server. In
+  SQL Server 2022 (16.x) and later versions, requires `VIEW SERVER PERFORMANCE STATE` permission on the
+  server." So the DMV is **row-filtered, never refused**.
+- `sys.configurations`, Permissions: "Requires membership in the **public** role", and separately
+  "Permissions for SQL Server 2022 and later: Requires VIEW SERVER PERFORMANCE STATE permission on the
+  server."
+
+So the statement's behaviour splits on the server version, and only one half is an absence:
+- **2022 and later** - `sys.configurations` throws for an ungranted login, the whole statement fails,
+  and the count is now correctly absent. This is the case the round's fixture reproduces.
+- **2019 and earlier** - `sys.configurations` needs only `public` and the DMV filters rows instead of
+  refusing, so the statement SUCCEEDS and returns the caller's own sessions, about 1. A busy server
+  publishes "1 connection" as a measurement. Nothing in the provider can tell that from a real 1.
+
+Azure SQL Database is a third shape: the DMV needs `VIEW DATABASE STATE` to see all connections to the
+current database, and that permission cannot be granted in `master`.
+
+**Done when:** the provider can distinguish a filtered read from a complete one - the cheapest signal is
+`HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE')` alongside the count, with the version taken from
+`SERVERPROPERTY('ProductMajorVersion')` to pick the permission name - and an incomplete count is absent
+rather than published. Measured on a real instance with a login that has neither grant, because the
+whole entry rests on a permission boundary no fixture can prove.
+### D46. One fabricated connection zero survives the sweep, and five comments cite it as the pattern
+
+Found 2026-08-27 by the sweep that finished D40. After that round, `activeConnections` is honest almost
+everywhere: MSSQL, Oracle, MongoDB and Cassandra omit it when the read is refused; SQLite and the
+embedded LibreDB publish `1`, which is the measurement for a single-writer file; PostgreSQL, Redis,
+Couchbase, ClickHouse, Trino and Druid publish a real count.
+
+`src/lib/db/providers/sql/search/index.ts:846` is the exception, for both `elasticsearch` and
+`opensearch`: `activeConnections: 0` with a comment saying it means "not published". The field is
+optional and its docblock (`src/lib/db/types.ts`, D17) says absence is how "not published" is said, so
+this is the last site where the old encoding survives - and the comment's reason is sound, only its
+encoding is not. A search cluster counts open HTTP connections per node in a stats API this seam does
+not call, so nothing is knowable, which is precisely the case absence exists for.
+
+`maxConnections: 0` beside it stays correct: for that field the type says 0 and absence are the SAME
+fact, which is why Druid's and Trino's comments citing `mssql.ts` for the ceiling remain true.
+
+**The citations are the second half.** Before D40, "0 means not published" was a shared convention with
+`mssql.ts` as its reference, and five places say so:
+`src/lib/db/providers/sql/search/index.ts:840`, `sql/druid/introspect.ts:572`,
+`sql/trino/introspect.ts:612`, `docs/providers/elasticsearch.md` and `docs/providers/opensearch.md`.
+The Druid and Trino ones are about the ceiling and stay true. The search comment and the two search docs
+bundle `activeConnections` into the same sentence, so for that half they now cite an encoding
+`mssql.ts` no longer uses.
+
+**Done when:** the search provider omits `activeConnections` rather than sending 0, its two docs and its
+two test files move with it (the provider triad is per type-id even though one directory serves both),
+and no comment cites `mssql.ts` for an encoding it has stopped using.
 
 ## Value interpolation
 
@@ -886,6 +915,47 @@ is not a free read.
 
 **Done when:** an operation a provider declares globally runnable either has its own card copy or a
 recorded reason it is withheld.
+
+### U24. Two absences the Storage tab still renders as measurements
+
+Found 2026-08-27 while giving the tab the refused-`tables` arm it was missing (PR round 17). Both are
+narrow, both are in `src/components/monitoring/tabs/StorageTab.tsx`, and neither was introduced by that
+change.
+
+**A measured zero total draws the remainder bar full.** The breakdown computes
+
+```ts
+const tablePercent = totalSize > 0 && tableSizeKnown ? (totalTableSize / totalSize) * 100 : 0;
+const otherPercent = breakdownKnown ? Math.max(0, 100 - tablePercent - indexPercent) : 0;
+```
+
+so on a provider that reports a real `databaseSizeBytes` of 0 - Trino and Druid do, and the comment
+above the block names them as the case it handles - the `totalSize > 0` guard forces both shares to 0
+while `breakdownKnown` stays true, and the remainder becomes `100 - 0 - 0`. Measured in the DOM against
+the tab's own measured-zero fixture: the Tables and Indexes indicators read `translateX(-100%)` (empty)
+and the remainder reads `translateX(-0%)` - a full bar over a database with no bytes. Its figure beside
+it correctly reads `0 B`, so nothing numeric is fabricated; the overclaim is entirely in the bar, which
+is why no text assertion could see it.
+
+**A refused overview drops the engine's sentence.** The tab carries `errors.storage` for the
+Tablespaces panel and now `errors.tables` for Largest Tables, but there is no `overviewUnavailable`:
+with `data.overview` absent and `errors.overview` set, the DB Size card falls to `N/A` and the
+breakdown to "No storage size information available." Both are honest - no figure is invented - but the
+engine's own explanation is discarded in a file that surfaces it for two other panels.
+
+**And the same zero total can put `NaN undefined` in the cell beside it.** The remainder's bytes are
+`totalSize - totalTableSize - totalIndexSize`, so a provider reporting a 0 total while its table read
+answers with real per-table bytes makes that negative - and `formatBytes`
+(`src/lib/db/utils/pool-manager.ts`) does not survive a negative: `Math.log(-1536)` is `NaN`, `i` is
+`NaN`, and `sizes[NaN]` is `undefined`, so the cell renders the literal string **`NaN undefined`**
+(measured 2026-08-27). This is reachable wherever D44 is: 14 type-ids send 0 for an unknown size, and
+`getTableStats()` is a separate read that does not share the failure. `formatBytes` guarding its own
+input is the cheaper half of the fix and belongs with this entry rather than with D44.
+
+**Done when:** the remainder's bar is empty rather than full when there is no total to divide, with a
+component test asserting the indicator transform rather than the text (the figure is already right);
+`formatBytes` refuses a negative rather than rendering `NaN undefined`, with a unit test; and a refused
+overview carries its own sentence the way the two sibling panels do.
 
 ---
 
@@ -1148,6 +1218,35 @@ than a reviewer.
 
 **Done when:** each listing has been resubmitted through its own channel. Six submissions, five
 channels - the two Azure files travel together.
+
+### DOC4. 62 line citations in the provider docs are stale, and every checkable one is
+
+Found 2026-08-27 while re-anchoring `docs/providers/mssql.md` and `docs/providers/trino.md` to method
+names (PR round 17). The round established the policy - cite code by NAME, not by line - and pinned it
+with `tests/unit/provider-docs-monitoring-citations.test.ts`, whose scope statement says outright which
+files are not measured yet. This entry is that remainder.
+
+**Measured across `docs/providers/*.md`.** 291 `` `file.ts:N` `` citations before the round, 271 after.
+Of those, 69 were machine-checkable - a `` `method()` `` name paired with a line link, so the cited line
+can be compared with the real declaration - and **68 of the 69 were stale**, the single exception being
+Trino's `getCapabilities()`. After the round's 18 fixes, 62 checkable citations remain and **all 62 are
+stale**, spread over 12 docs. The other 209 point at expressions, comments, table rows and SQL fragments
+rather than a named declaration, so no heuristic can judge them and they were not checked by hand; given
+62 of 62, an inference is available but no figure is claimed for them.
+
+**Why they rot invisibly.** Two mechanisms, both measured:
+- **Stale at birth.** The eight seam rows in both search docs entered in one commit (`25712e68`, #429)
+  as 751/811/831/844/860/873/884/898 while the declarations in that same commit sat at
+  808/868/888/901/917/930/941/955 - a uniform +57. Being wrong by a constant is what hid it: the rows
+  stayed in ascending order and read as a consistent, plausible list. Today the offset is +65.
+- **A correction does not hold.** `docs/providers/redis.md` cited `base-provider.ts:102` (#89, true then),
+  was corrected to `:99` (#122, true then), and has rotted a second time since.
+
+**Done when:** each remaining doc cites declarations by name and is added to `NAMED_CITATIONS` in the
+guard, which is what makes the change stick - the guard bans the FORM, so a correct line number fails it
+too. Cheapest per doc, in descending count: `oracle.md` 16, `mongodb.md` 14, then the nine others. Both
+of those two were rewritten in round 17 and are the natural first pair; the round left them out because
+they were another lane's live files at the time, not because they are correct.
 
 ---
 
