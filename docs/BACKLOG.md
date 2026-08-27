@@ -21,22 +21,22 @@ None of it is a GitHub issue.
 
 **Sections**
 
-- [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1–D51, U17, U22 · 23
+- [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
+- [Drivers and connections](#drivers-and-connections) — D1–D51, U17, U22 · 21
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U26 · 12
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U26 · 10
 - [Authentication and security headers](#authentication-and-security-headers) — AU4
-- [Tests](#tests) — T1–T5 · 4
+- [Tests](#tests) — T1–T5 · 3
 - [Dependencies](#dependencies) — P1–P5 · 5
-- [Documentation](#documentation) — DOC1, DOC3–DOC4 · 3
+- [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1, N3 · 2
-- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H13 · 9
-- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
-- [Security Phase 3 deferrals](#security-phase-3-deferrals) — K2–K4 · 2
-- [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A6 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B79 · 44
+- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 4
+- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C10 · 8
+- [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
+- [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B79 · 40
 
 ---
 
@@ -106,13 +106,6 @@ Apache Cassandra 5.0.9, ScyllaDB 2026.2.4 and ClickHouse 26.7.1 (a line comment 
 refused on PostgreSQL 18, MySQL 26.7.0, SQLite, Oracle, SQL Server 2022 and Trino 476. It is undecided
 for elasticsearch and opensearch, and absent with the whole row for couchbase, druid and libredb -
 recorded in the table in `docs/editor/query-optimization.md`.
-
-### S7. A confirmation refinement that was considered and rejected
-
-Scanning an unreadable region for destructive vocabulary, and asking only when a write could
-plausibly be in there. Sound on its face. It substitutes a cleverer reading for the honesty rule #297
-pinned: the gate asks because it *cannot* read the text, not because it guessed what is in it.
-Revisit only with an explicit product decision.
 
 ---
 
@@ -186,26 +179,6 @@ Cassandra fixture does not close it.
 `e2e/cassandra-provider.spec.ts` exists or a written reason it cannot exist is recorded here.
 
 ---
-
-### D14. Three providers lost the buffer-pool gauge, because it was the cache hit ratio wearing a second name
-
-Removing the fabricated cache hit ratios exposed that `bufferPoolUsage` was not a second measurement.
-In Oracle and SQL Server it was literally assigned the ratio itself - the old tests even said "mirrors
-cacheHitRatio in Oracle impl" - so the Performance tab drew and rated one quantity as two independent
-gauges. In PostgreSQL it was `blks_hit / (blks_hit + blks_read)` from `pg_stat_database`, which is also
-a cache hit ratio and not pool occupancy, with a `: 100` fallback when both counters were 0. All three
-now omit the field, which the tab renders as unavailable.
-
-Real occupancy is reachable on each engine and none of the three is free: `pg_buffercache` is an
-extension not installed by default, `V$BUFFER_POOL_STATISTICS` needs the privilege the ratio already
-needs, and `sys.dm_os_buffer_descriptors` is a full descriptor scan on a large instance. So a gauge
-that reads a real pool has a cost the panel has never paid.
-
-**Done when:** each of the three either measures pool occupancy for real, at a cost written down next
-to the query, or its omission is recorded as the answer. Dropping the field outright is no longer one
-of the options: MySQL, MongoDB, Couchbase and ClickHouse all fill it with a real occupancy figure
-(`mysql.ts`, `mongodb.ts`, `couchbase/index.ts`, `clickhouse/index.ts`), so removing it would delete
-four working gauges to tidy away three absent ones.
 
 ---
 
@@ -544,33 +517,6 @@ theoretical.
 before the first `/`, `?` or `#` that follows `://`, then mask between the first `:` and that `@` -
 with the two colliding shapes above pinned as separate cases, and the docblock's list of uncovered
 shapes reduced to what remains. The parameter half needs no change.
-### D43. SQLite gained `SET`/`DROP NOT NULL` in 3.53.0, and the generator declines it on both ids
-
-Found 2026-08-27 while adding the foreign-key declines for `sqlite` and `libsql`
-(`src/lib/schema-diff/migration-generator.ts`). `NO_COLUMN_MODIFICATION` declines every column
-modification for `libsql`, and the `sqlite` branch beside it declines them too. That was exhaustive
-when it was written and is no longer: measured on SQLite 3.53.0 via `bun:sqlite`,
-
-```sql
-ALTER TABLE "users" ALTER COLUMN "dept_id" SET NOT NULL
-```
-
-succeeds, rewrites the stored `CREATE TABLE` text to carry `NOT NULL`, and is enforced on the next
-insert (`NOT NULL constraint failed: users.dept_id`). `DROP NOT NULL` succeeds the same way. A column
-TYPE change is still `near "TYPE": syntax error`, so only nullability moved.
-
-**The blocker is that the version is not a property of the id.** `libsql` reaches sqld 0.24.33, which
-ships SQLite 3.47.0, so the decline is still correct there. The `sqlite` provider runs on whichever
-SQLite its runtime bundles - `bun:sqlite` or `node:sqlite`, selected at runtime with
-`LIBREDB_SQLITE_DRIVER` as an override (`src/lib/db/providers/sql/sqlite.ts`) - so emitting the
-statement would generate a file that runs on one deployment and fails on another. A migration file is
-handed to a human to run elsewhere, which makes the guess worse than the decline.
-
-**Done when:** either the decline records the version boundary as its reason rather than the absence of
-the feature (cheap, and it is what the comment now does), or the generator learns the connected
-engine's version and emits the nullability change only above 3.53.0, with the emitted statement
-measured against both a 3.47 and a 3.53 build. The second is only worth it if something else needs the
-version too.
 ### D44. `databaseSizeBytes` is fabricated as 0 wherever the size is unknown, in 11 of 17 type-ids
 
 Found 2026-08-27 by the sweep that closed the overview connection count's fabricated zero (D40, PR
@@ -841,7 +787,6 @@ FIELD inside a successful response is a different question and needs its own mea
 optional fields are absent rather than 0 on the refusal, each provider's doc and test move with it, and
 `maxConnections` keeps its 0 - for that field the type says 0 and absence are one fact.
 
-
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -899,12 +844,6 @@ writers. `csv.ts` and `result-export.ts` are pure and hold no browser reference 
 can reuse them; `download.ts` is the only browser-bound module there. Worth costing against the
 agent's own export gap (B33, B34), which wants the same route.
 
-### X4. Four modals stay mounted while closed, so their code cannot be split
-
-`DataProfiler`, `CodeGenerator`, `TestDataGenerator` and `DataImportModal` render `null` when closed
-but are always mounted. Lazy-loading them buys nothing until the mount is gated, and gating the mount
-changes their semantics (state resets on close). A behaviour change, not a bundling one.
-
 ### X5. `Studio.tsx` re-renders its whole tree on every keystroke
 
 14 `useState`, no `useMemo`/`useCallback`, no memoized children, React Compiler off. #422's
@@ -913,12 +852,6 @@ it was not mixed into a correctness PR.
 
 `framer-motion` is also still in the first load: `Studio.tsx`, `ConnectionModal`, `SchemaExplorer`,
 `ConnectionItem` and `TableItem` all import it statically and all mount on arrival.
-
-### X6. 43 lists outside `SchemaDiff` are still keyed by index
-
-`VisualExplain`, `DatabaseDocs` and the monitoring/admin tabs. `SchemaDiff` was fixed in #422 because
-its rows are recomputed and reordered. The rest need reading one at a time, to tell the stable lists
-(where an index key is fine) from the rest.
 
 ### X9. What `columnTypes` still cannot name, measured
 
@@ -1142,7 +1075,6 @@ from the provider (absent when the provider published none), the total sums thos
 many connections it could not include rather than silently undercounting, and a test pins a TB-scale
 connection plus one with no byte figure at all.
 
-
 ---
 
 ## Authentication and security headers
@@ -1187,21 +1119,6 @@ zero tests. Line coverage cannot see a missing disjunct in a one-line predicate.
 the two readings *disagree* can pin it.
 
 **Done when:** deleting any single disjunct of `isStatementText` fails a test.
-
-### T3. `tests/security/image-proxy.test.ts` asserts a configuration invariant, not the threat
-
-The design it protects: `/_next/image?url=http://169.254.169.254/` (or any attacker-chosen URL) must
-be rejected, because `next/image`'s optimizer would otherwise perform an unauthenticated server-side
-fetch of it.
-
-What it asserts is narrower — `nextConfig.images` is `undefined`. That is sufficient today only
-because nothing in `src/` imports `next/image` at all, so the control is closed and correctly verified
-for the current codebase.
-
-The gap: the assertion is a proxy for the threat. A future, strictly safer configuration would fail
-it — `images: { unoptimized: true }` disables the optimizer's fetch entirely and would still trip
-`toBeUndefined()`. The real assertion belongs with the Playwright work, which can make an actual HTTP
-request against a running server. A unit test importing `next.config` cannot exercise the route.
 
 ---
 
@@ -1368,15 +1285,6 @@ so in `CLAUDE.md`, which today says nothing about it, or sweep the orphans and t
 component nothing renders. Reproduce the list with a per-file importer count over `src/components/ui/`.
 
 ## Documentation
-
-### DOC1. Provider-doc line references are stale across the board
-
-`docs/providers/mssql.md` puts `getCapabilities()` at :57 and `getSchema()` at :369, where they are at
-391 and 749. The drift predates any recent milestone and every provider doc uses the same
-line-anchoring style, so the fix is a convention change — anchor on symbol names, not line numbers — as
-much as a correction.
-
-The same disease is in this file. Prefer symbol names here too.
 
 ### DOC3. Six channel listings carry corrected copy that nobody has resubmitted
 
@@ -1605,15 +1513,6 @@ the channels that serve Studio from a small box.
 **Done when:** the measurement says the trade is worth it and the nonce ships, or the measurement is
 recorded here as the reason it does not.
 
-### H3. Audit events do not record a user agent
-
-`AuditEvent` (`src/lib/audit.ts`) deliberately has no `userAgent` field. It is attacker-controlled free
-text with marginal value for a single-operator product, and adding it means adding the redaction
-question the closed `AuditReason` union exists to avoid.
-
-**Done when:** a real investigation needs it, at which point it is added as a truncated, explicitly
-allowlisted field.
-
 ### H4. The `@libredb/studio/security` usage note is not in the published README
 
 An npm consumer reading `README.md` on npmjs.com sees nothing about `securityHeaders()`.
@@ -1626,43 +1525,6 @@ It is out of `README.md` because `README_zh.md` and `README_ja.md` (`scripts/rea
 heading.
 
 **Done when:** the note lands in all three READMEs together.
-
-### H5. No env var can turn HSTS off, and that is deliberate
-
-`readSecurityHeaderOptions()` always sends `Strict-Transport-Security`. Unlike `CSP_REPORT_ONLY` there
-is no `HSTS_DISABLE`, and one should not be added in the shape an operator would expect.
-
-An escape hatch that merely *stops sending* the header is useless against the failure it would be
-built for. A browser that already cached the HSTS pin keeps enforcing HTTPS-only for the remainder of
-the 180-day `max-age`, whatever the server does next. And a server that has reverted to plain HTTP may
-not be reachable by that browser at all, because HTTPS-only means the plain-HTTP origin is refused
-before any response body is read.
-
-The only hatch that works emits `Strict-Transport-Security: max-age=0` over a still-live HTTPS
-listener, which is what tells a visiting browser to drop the pin.
-
-**Done when:** a real report of a stuck pin needs this, at which point it is a `max-age=0` mode, never
-a header omission.
-
-### H6. A coverage phantom recurs wherever a rarely-covered function has a multi-line inline param type
-
-`scripts/merge-lcov.mjs` picks one "authority" record per source file — whichever test run has the most
-executed lines — to decide which lines are coverable (`docs/TOOLCHAIN.md`).
-
-A function with a multi-line inline parameter type (`function f(opts: { a?: string; b?: string; … })`)
-exercised by only one test file reads as fully covered, because that file wins the authority vote.
-Adding a second test file that exercises a large *new* surface in the same source file — without ever
-calling that function — can tip the vote. The new file's own run reports the old function as a coarse,
-never-executed block whose zero-hit lines include the parameter type's continuation lines. It looks
-like a coverage regression in code nobody touched.
-
-`src/lib/audit.ts`'s `AuditRingBuffer.filter` hit this during Phase 1. Extracting the inline type to a
-module-scope interface fixed it permanently, because module-scope type members are erased before any
-function's coverage span exists.
-
-**The general fix:** hoist a multi-line inline parameter or return type to a module-scope
-`interface`/`type`. Do not chase it by adding a test that calls the under-covered function for
-coverage's sake.
 
 ### H7. `sanitizeAuditInput` does not recurse, so a nested secret survives inside the coerced string
 
@@ -1709,65 +1571,12 @@ considered each introduced a worse flaw.
 **Done when:** a cheaper, audit-visible eviction policy is found that does not reopen the oldest-first
 bypass.
 
-### H11. `login_account`'s hard cap is an accepted denial-of-login handle on a known account
-
-The `login_account` bucket is keyed on `hmacHex(submittedEmail)`, which makes it immune to
-`X-Forwarded-For` spoofing. It throws before the credential comparison runs, and is cleared only by a
-*successful* login — which cannot happen while it is tripped.
-
-So anyone who knows or guesses a real address can lock that account out for the rest of the window with
-the bucket's default (20 wrong guesses), and renew the lockout indefinitely at roughly one guess per
-window. The published default `admin@libredb.org` when `ADMIN_EMAIL` is unset makes this free.
-
-`login_client`, the address-keyed bucket, does not help: it is bypassed in any topology where an
-attacker can set or rotate `X-Forwarded-For` — direct exposure, or a proxy that appends rather than
-overwrites (Caddy and Traefik defaults, and the common nginx `proxy_add_x_forwarded_for` recipe).
-
-This is inherent to a hard per-account cap. Bounding brute force against an operator-set password and
-bounding this lockout are in direct tension, and no design removes one side without giving up the
-other. `.env.example` documents `RATE_LIMIT_LOGIN_ACCOUNT_MAX=0` as the break-glass (verified:
-`decide()` returns `allowed: true` unconditionally for `max === 0`, for both `peekRateLimit` and
-`consumeRateLimit`, so the bucket is fully inert). Phase 1 narrowed the window from 900 to 300 seconds
-to shrink the blast radius without loosening the guess ceiling.
-
-**Done when:** a design keeps this bucket immune to header spoofing without also being a stranger's
-denial-of-login switch. Unknown at the time of writing.
-
-### H13. No rate-limit bucket is a global, unkeyed ceiling — on purpose
-
-Every bucket in `src/lib/api/rate-limit.ts` is keyed on something the caller supplies:
-`login_client`/`anon` on the derived client address (attacker-controlled in any topology without a
-correctly configured `TRUSTED_PROXY_HOPS`), `login_account` on a hash of the submitted email (fully
-attacker-chosen, see H11), `query`/`ai` on the session's username.
-
-A global, unkeyed ceiling is the one shape that cannot be evaded by picking a favourable key, because
-there is no key to pick. Phase 1 does not add one, deliberately: a global ceiling on `login_client` or
-`anon` turns one attacker's flood into a lockout for every other concurrent user of the same bucket,
-which is strictly worse than the keyed floods it would prevent. And getting the sizing right — loose
-enough not to bite a legitimate multi-tenant deployment, tight enough to bound an attacker — is its own
-design problem this wave did not scope.
-
-**Done when:** a real, measured flood makes the keyed buckets' residual insufficient and a global
-ceiling's sizing can be grounded in that data rather than guessed.
-
 ---
 
 ## Security Phase 2 deferrals
 
 Each was decided during Phase 2, not overlooked. Lettered `C` (supply **C**hain) because the SQL
 section already owns `S1`–`S8`.
-
-### C2. A failing scheduled scan notifies nobody but the owner
-
-`security-scan.yml`'s daily run fails when a critical fixable advisory lands, and GitHub emails the
-repository owner for a failed scheduled run. That is the whole notification path.
-
-`helm-index-check.yml` shows the alternative in this repository — a job with `issues: write` that
-maintains a single rolling issue. It was not copied here because an auto-filed issue per advisory is
-how a security label becomes noise.
-
-**Done when:** a real missed advisory shows the email is insufficient, at which point the rolling-issue
-pattern is the thing to copy.
 
 ### C3. The image SBOM is a 30-day workflow artifact, not a durable asset
 
@@ -1910,20 +1719,6 @@ by grepping the staged bundle for the version literal rather than trusting the l
 
 Each was decided during Phase 3, not overlooked.
 
-### K2. A legacy plaintext password shaped exactly like an envelope is treated as corruption
-
-`src/lib/storage/encryption.ts`'s `readSecret` treats a three-segment value whose first segment matches
-`/^v\d+$/` as an envelope. A password stored before this feature existed that happens to be literally
-`v1:<base64url>:<base64url>`, with a 12-byte first segment and a second of at least 16 bytes, is
-classified `undecryptable` and omitted.
-
-The compounded probability is negligible and the failure is recoverable: the connection survives and
-the user retypes the password once. The alternative — passing an unrecognised value through — would hand
-`v1:abc:def` to a driver as a password.
-
-**Done when:** the envelope format is versioned forward for an unrelated reason, at which point a
-longer, non-colliding prefix costs nothing.
-
 ### K4. Rotating the key back does not recover credentials once the app has written
 
 `decryptConnections` omits an unreadable secret and keeps the record, which is correct: dropping the
@@ -2011,47 +1806,9 @@ engine in the pipeline is the throwaway PostgreSQL container behind
 a multi-command escape are rejected through the profile under the resolved role. Cheapest path is
 extending the functional-smoke container, not adding a service to every CI test job.
 
-### A6. Druid's hand-written bigint serializer predates the Node 24 floor
-
-`druid/http-transport.ts` splices the parameters array into the query envelope by hand so a `bigint`
-literal reaches Druid unquoted. The reason recorded in `docs/providers/druid.md` was that
-`JSON.rawJSON` (ES2025, V8 12.4 / Node 22.2) could not be depended on while `engines.node` was
-`">=20.9.0"`.
-
-That constraint is gone: #326 raised the floor to `">=24.0.0"`. The hand-serializer is not wrong and is
-fully covered, so it was left alone rather than rewritten inside a runtime-baseline change — swapping a
-correctness-critical escaping path belongs in a change whose tests are about that path.
-
-**Done when:** the splice is replaced by `JSON.rawJSON` with the existing bigint fixtures still green,
-or this entry is deleted with a note that the hand-serializer is preferred.
-
-> TypeScript 7 was the seventh entry here. It is the same finding as P2, which now carries it.
-
 ---
 
 ## Agent M2 deferrals (#329)
-
-### B1. A module-private credential map would be invisible to the agent state guard
-
-`src/lib/agent/state-guard.ts` derives its credential key names from `SECRET_FIELD_MAPS` in
-`src/lib/storage/connection-secrets.ts`, so a field promoted to `secret` in one of the three
-classification maps is covered without an edit. The aggregate itself is a hand-maintained array: each
-individual map fails `bun run typecheck` when a field goes unclassified, but nothing makes a fourth MAP
-appear in the array.
-
-The direction that loses coverage silently is ADDING a map, not removing one — the storage layer would
-seal the new field while the guard happily persisted it. `tests/unit/lib/agent/state-guard.test.ts`
-closes that by reflection: it walks the storage module's exports, recognises a classification map
-structurally, and fails when one is not registered. Verified to fire by temporarily exporting a fourth.
-
-What remains is narrower. The check sees **exported** maps only. A map kept module-private and wired
-straight into `walkConnection` is invisible to it. All three existing maps are exported for consumers,
-so this is a convention rather than an enforced rule.
-
-**Done when:** a new classification map cannot be added without the guard learning about it — most
-directly by having `walkConnection` iterate a registry instead of three derived key lists. That
-registry has to carry each map's nesting location (root, `ssl`, `sshTunnel`), so it is a change to a
-security-critical encrypt/decrypt path with its own test obligations.
 
 ### B2. The Anthropic provider kind is ratified and installed, but not offered
 
@@ -2398,24 +2155,6 @@ provider whose SDK has no base-URL seam — a settings-surface change.
 
 **Done when:** a proxied Gemini endpoint is reachable from the configuration the user already entered,
 or the settings surface says plainly that the variable does not apply to that kind.
-
-### B21. The published package carries the agent-provenance branch as dormant markup
-
-`BottomPanel` is shared by both shells, and #329 T11 added its agent-provenance branch: an optional
-`agentArtifact` prop, the provenance badge and its test ids. `bun run build:lib` therefore emits that
-markup inside `dist/workspace.mjs`.
-
-It is inert and the package boundary is intact. The prop is optional, the embedded shell never passes
-it, no entry point exports `BottomPanel` (asserted through a transitive `export … from` closure in
-`tests/unit/agent-package-boundary.test.ts`), and the package gains no agent module, no agent type and
-none of the runtime packages.
-
-What remains is dead bytes in a consumer's bundle, and a small honesty cost: a reader grepping the
-published output finds strings suggesting an agent capability the embedded shell cannot reach.
-
-**Done when:** the provenance branch lives in a standalone-only component and `BottomPanel` takes it as
-children — or Phase 4's surface unification decides the embedded shell gets an agent surface after all,
-at which point this stops being dormant rather than being removed.
 
 ### B23. Seed eligibility is decided against a browser snapshot, not the live descriptor
 
@@ -2823,7 +2562,6 @@ shows). What is not intended is that a NEW run inherits it indefinitely.
 of the reading it reused, so a user who just added a collection is not silently planned against the
 database as it was.
 
-
 ### B57. A tuning document is refused whole, which is the wrong granularity for a catalog
 
 `parseOperatorTuning` refuses a document that fails anywhere. The argument for that is real and is
@@ -2858,21 +2596,6 @@ provenance is a property of the SOURCE rather than of the field.
 **Done when:** wording can arrive from a source whose authorship is established, and cannot arrive
 from one whose authorship is not — with the trust tier stated as a decision rather than implied by
 which loader happened to read the file.
-
-### B62. `schemaVersion` has no migration path, and the first bump breaks every mounted document
-
-`z.literal(TUNING_SCHEMA_VERSION)` on both schemas. An older Studio refusing a newer document is
-correct and deliberate. A newer Studio refusing an OLDER one is not: the day this moves to 2, every
-document in the field is refused whole and every model in it silently reverts to the defaults.
-
-Deliberately not fixed here. With one version in existence, an accepted range has exactly one member,
-and a migration written before anything needs migrating is a guess about a shape nobody has seen. The
-tolerant operator schema removes the pressure — Studio can add settings without moving the version —
-so this is a decision to take at the first real bump, not before.
-
-**Done when:** the first `schemaVersion` change ships with a rule for reading documents written for
-the version before it, and the release notes say what an operator has to do.
-
 
 ### B64. An unfenced plan statement with no terminator still carries prose into the SQL
 
@@ -2992,24 +2715,6 @@ against a small-context model.
 **Done when:** either a measurement shows truncation costing more than compression would, and a
 carried summary lands with the fallback stated; or this entry is deleted with the measurement that
 settled it.
-
-### B71. The workflow runtime's own durable agent is not used, and the reason is a deployment one
-
-`@ai-sdk/workflow`'s `WorkflowAgent` offers durable, resumable agents with automatic state
-persistence across restarts — which is what `run-store.ts`, `run-service.ts` and the resume rule in
-`investigation.ts` implement by hand. Anybody reading those three modules will eventually ask why.
-
-Because it requires the workflow runtime's programming model: `'use workflow'`, `'use step'`,
-`getWritable()`. This product's positioning is that it deploys next to the data — Docker, Helm,
-Kubernetes, air-gapped — so binding the agent's durability to a hosting runtime would cut the
-deployment story the rest of the product is built on. The hand-written ledger is also what makes the
-run auditable in this repository's own terms: append-only, one file per run, foldable by anything.
-
-Recorded so the question is answered once rather than reopened. It is not a defect and there is
-nothing to do; if the packaging ever separates the durability primitives from the hosting runtime,
-this is the entry to revisit.
-
-**Done when:** the packaging separates them, or this entry is deleted as permanently declined.
 
 ### B72. Three verifiers still judge a plan-only report by the emptiness census
 

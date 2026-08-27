@@ -1964,8 +1964,8 @@ model passed the capability probe**; for anybody else the answer is that there i
 | **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is never guessed at — since #414 it is read a different way instead of being refused. **A run whose workflow sends statements is refused on another engine before it opens**: `POST /api/agent/runs` answers 400 with the posture's own sentence when the mode is agent and `AGENT_WORKFLOW_SENDS_STATEMENTS` holds for the requested workflow, so no run id and no model turn are spent on a refusal the connection's type already decided. What an engine that IS admitted can then do differs by MODE. **Agent mode is still the two dialects**: its read-class tools reach the database through `provider.queryReadOnly`, which is the same fact the refusal reads. **Plan mode is now every engine**: its grounding acquires `agent-operations` and calls `provider.getSchema()` (`db.schema.read`), so a plan run on MongoDB is ordinarily grounded and is asked for one statement or command **in that engine's own language**, in a block still tagged with the canonical type-id. What the engine decides is no longer whether a plan is grounded but HOW — a composed catalog statement or a provider inventory, and whether estimated statistics exist at all — and the four prefaces say which. Where the reading itself fails, the run is steered to the `NO STATEMENT:` refusal with the capture's own diagnosis. **The `operations` workflow reaches every engine in both modes**, because it composes no SQL at all, and since #411 it is grounded under the same rule as everything else. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`, `captureFromProvider`, `packOperationsInventory`), `src/lib/db/operations/descriptors.ts` (`db.schema.read`); `tests/unit/lib/agent/context-snapshot.test.ts` — the provider path, its timeout and its refusals; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts` — a plan run whose provider cannot describe itself runs no statement and says it is ungrounded; `tests/isolated/agent-investigation.test.ts` — a plan run grounded through the engine's own schema inspection. |
 
 One of these has since been restored under its own workflow (the monitoring row, which closed both
-deferrals that tracked it), and the first row is Phase 1's own boundary rather than a defect (B21 is
-its one residual). The rest are consequences
+deferrals that tracked it), and the first row is Phase 1's own boundary rather than a defect, and its one
+residual is recorded in the module map. The rest are consequences
 of the removal rather than work in progress: they are what the product decided not to do, and that
 decision is only honest while they are written down where a maintainer will find them.
 
@@ -2374,7 +2374,7 @@ standalone-only. The reason is a comment above the interface, where a reader wou
 
 One residual: the shared `BottomPanel` component ships in the package with its agent-provenance
 branch present but inert — an optional prop the embedded shell never passes, on a component no entry
-point exports (B21).
+point exports.
 
 ## Module map
 
@@ -2433,7 +2433,6 @@ the role's own grants are the whole boundary (A3).
 
 **From this milestone:**
 
-- **B1** — a credential classification map kept module-private would be invisible to the state guard.
 - **B2** — the Anthropic kind is ratified and installed but not offered; serving it means giving the
   chat surface an Anthropic provider first.
 - **B3** — a scope allowlist on a target dimension denies every tool that cannot declare it.
@@ -2454,8 +2453,6 @@ the role's own grants are the whole boundary (A3).
   so it cannot load in the container image or the npx payload.
 - **B20** — a Gemini deployment behind a proxy is not configurable: `LLM_API_URL` is unread for that
   kind, in the chat surface as much as in the agent.
-- **B21** — the published package's `BottomPanel` carries the agent-provenance branch as dormant
-  markup.
 - **B23** — seed eligibility is decided against the browser's last descriptor fetch, so a seed
   repointed server-side mid-session is not seen until the next fetch.
 - **B29** — an identifier the model quotes back into its own tool arguments reaches the transcript
@@ -2496,9 +2493,6 @@ as they are fixed, and a numeral here goes stale silently.
   step's claims verbatim and truncates at a claim boundary; a model-written `carryForward` sentence
   was considered and declined, because a claim is evidence and a summary is a lossy compression of
   it.
-- **B71** — `@ai-sdk/workflow`'s `WorkflowAgent` offers the durability this repository implements by
-  hand, and is not used: it requires the workflow runtime's programming model, which would bind the
-  agent to a hosting runtime this product deliberately does not depend on.
 - **B39** — a data-analysis run has no honest way to conclude that the question is not about this
   database. Its only route to `answered` is a reading of the data, so a run that establishes the
   question is unanswerable fabricates one — the #356 shape again, in a new place.
@@ -2594,11 +2588,6 @@ as they are fixed, and a numeral here goes stale silently.
   gone: the document refuses wording and nothing else can populate it. Refusing unsigned prompt text
   is right; refusing it forever is a decision that has not been taken, and the two objections behind
   it — marker drift and authorship — come apart.
-- **B62** — `schemaVersion` is a literal on both schemas, so the first bump to 2 refuses every
-  document in the field and reverts every model in it to the defaults. Deliberately not fixed while
-  only one version exists: an accepted range with one member is a knob nothing turns, and the
-  tolerant operator schema removes the pressure by letting Studio add settings without moving it.
-
 - **B64** — an unfenced plan statement with NO terminator still carries prose into the SQL. The
   splitter closed the demonstrated case (a statement, then its explanation on the next line, came
   back as one statement with the prose in it) but has nothing to cut on without a semicolon, so

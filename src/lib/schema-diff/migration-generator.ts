@@ -83,8 +83,11 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
   // reach libSQL: SQLite gained `ALTER COLUMN ... SET/DROP NOT NULL` in 3.53.0 (measured
   // 2026-08-27 on 3.53.0 - it rewrites the stored schema and is enforced on insert),
   // while sqld 0.24.33 ships 3.47.0, so declining every modification is still right here.
-  // Whether the `sqlite` branch should emit it is docs/BACKLOG.md D43, not a decision to
-  // take in a comment: the provider runs on whichever SQLite its runtime bundles.
+  // The `sqlite` branch below declines it too, and deliberately: that provider runs on
+  // whichever SQLite its runtime bundles - `bun:sqlite` or `node:sqlite`, chosen at runtime
+  // with `LIBREDB_SQLITE_DRIVER` as an override - so emitting the statement would write a
+  // migration file that succeeds on one deployment and fails on another. A file handed to a
+  // human to run elsewhere makes that guess worse than the decline.
   libsql: {
     label: "libSQL",
     reason: "SQLite cannot retype a column; recreate the table and copy the rows.",

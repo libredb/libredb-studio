@@ -91,7 +91,7 @@ export const sqlExplainAnalyzeDescriptor: RegistrableOperationDescriptor = {
  *
  * A FOURTH descriptor, and that is a reversal of a product decision rather than an
  * oversight being corrected. Epic #325 pinned the canonical set at three, and
- * `docs/BACKLOG.md` B17 recorded profiling as deferred because of it; #330 T3
+ * the backlog recorded profiling as deferred because of it; #330 T3
  * instructs that profiling reach the database "as new descriptors in
  * `descriptors.ts` at R0/R1", which is the owner reopening that decision.
  *
