@@ -28,6 +28,79 @@ entries:
       artifacthub.io/prerelease: "false"
     apiVersion: v2
     appVersion: 0.13.4
+    created: "2026-08-27T16:57:48.760378616Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting sixteen engines
+      - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase,
+      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra
+      and libSQL
+    digest: a720b05e22eb1c73ef092af683cb306cc646ff7feb9abffc730fd5f7ea66ff50
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - libsql
+    - turso
+    - duckdb
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.54/libredb-studio-0.1.54.tgz
+    version: 0.1.54
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
+        - "config.authCookieSecure is now a first-class value: it writes AUTH_COOKIE_SECURE, the setting a browser reaching Studio over plain HTTP on a LAN or home-server address needs, which previously had to go through extraEnv. Three-state - leave it unset and nothing is written, so the app decides exactly as before"
+        - "MySQL: reads no longer go through the prepared protocol unconditionally, which had broken statements MySQL itself only answers on the text protocol - CHECK TABLE and its relatives returned an error instead of a result"
+        - "Monitoring: one refused read no longer costs the whole dashboard - the seven panels degrade individually, so a permission the user lacks hides that panel rather than blanking the page, and two panels stop reporting a fabricated zero"
+        - "ScyllaDB connections could not be created at all, and an Oracle query touching a LOB column failed in full rather than returning its rows"
+        - "The query agent carries measured settings for ten models rather than one default, records which model drove a run and where its settings came from, and no longer scores a plan run as answered while handing back prose glued to its SQL"
+        - "Track app release 0.13.4 (appVersion bump; default image tag follows)"
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:0.13.4
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 0.13.4
     created: "2026-08-27T11:01:47.84689874Z"
     dependencies:
     - condition: postgresql.enabled
@@ -3096,4 +3169,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-08-27T11:01:47.839373915Z"
+generated: "2026-08-27T16:57:48.751748413Z"
