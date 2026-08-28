@@ -9,26 +9,41 @@
  *   the limitation in a comment where an engine has no such statement (#269); the
  *   `ADD` / `DROP` keyword, which CQL spells without `COLUMN`; `CREATE TABLE`,
  *   which is refused outright for Cassandra (see CASSANDRA_NO_CREATE_TABLE); the
- *   transaction wrapper, which Cassandra and SQLite's two type ids each do
- *   without; and the foreign-key statements, which CQL has no grammar for at all
- *   and which SQLite's grammar takes only inside `CREATE TABLE` (see
- *   FOREIGN_KEY_ONLY_IN_CREATE_TABLE).
- * - Not yet: the transaction wrapper for everyone ELSE (`BEGIN;` / `COMMIT;` is
- *   only valid for PostgreSQL and MySQL — MSSQL spells it `BEGIN TRANSACTION`,
- *   Oracle opens a PL/SQL block and auto-commits DDL anyway, and five remaining
- *   type ids have no transactional DDL at all), the rest of `ADD COLUMN` and
- *   `DROP COLUMN`, and the index/FK fallbacks that emit `DROP INDEX IF EXISTS`.
+ *   transaction wrapper (see NO_TRANSACTION_WRAPPER), which twelve of the sixteen
+ *   type ids do without, each for its own named reason; and the foreign-key
+ *   statements, which CQL has no grammar for at all and which SQLite's grammar
+ *   takes only inside `CREATE TABLE` (see FOREIGN_KEY_ONLY_IN_CREATE_TABLE).
+ * - Not yet: MSSQL and Oracle's own transaction-wrapper forms (`BEGIN;` is not
+ *   `BEGIN TRANSACTION;`, and Oracle DDL auto-commits regardless of what wraps
+ *   it) — both still get today's PostgreSQL-shaped `BEGIN;`/`COMMIT;`, because
+ *   settling their real forms wants checking against a live server first, the
+ *   way #264 and #265 did, and that measurement is the tracked follow-up to this
+ *   fix rather than part of it.
  *
- * Cassandra is ahead of the others here for a reason worth stating: it is the one
- * dialect whose OTHER statements were each measured against a live server, so the
- * wrapper and the FK lines would have been the only unrunnable lines in an
- * otherwise runnable migration. Elsewhere they are one problem among several, and
- * the emitted forms still want checking against a live server first.
+ *   Two more MSSQL/Oracle questions surfaced while checking the rest of this
+ *   docstring's claims, and both belong in that same follow-up rather than
+ *   being guessed at here: the `ADD COLUMN` keyword — the modified-column path
+ *   a few lines below already spells Oracle's own ALTER as `MODIFY (...)`,
+ *   with no `COLUMN` keyword in its grammar at all, and MSSQL's documented
+ *   `ADD` clause has none either, yet the generic added-column branch hands
+ *   both the same literal `ADD COLUMN` every other engine gets; and whether
+ *   `DROP TABLE`/`DROP INDEX`/`DROP CONSTRAINT ... IF EXISTS` are valid there
+ *   at all — Oracle had no conditional DDL clause before 23ai. Both are
+ *   internal inconsistencies or open questions this pass surfaced rather than
+ *   fresh guesses, but neither is fixed here.
  *
- * So the output is correct for PostgreSQL, largely correct for MySQL and SQLite,
- * and can be unrunnable elsewhere. Tracked rather than fixed here because the
- * emitted forms want checking against a live MSSQL and Oracle before they are
- * settled, the way #264 and #265 did.
+ *   For every OTHER dialect, `ADD`/`DROP COLUMN` and the index/FK `IF EXISTS`
+ *   fallbacks were checked against the same questions and found to already
+ *   agree with each one's documented grammar via the existing
+ *   Cassandra/SQLite/libSQL/DuckDB/MySQL branches, so nothing there needed
+ *   changing in this pass.
+ *
+ * Cassandra is ahead of MSSQL and Oracle here for a reason worth stating (see
+ * NO_TRANSACTION_WRAPPER for the measurement): it is a dialect whose OTHER
+ * statements were each measured against a live server too, so its wrapper and FK
+ * lines would have been the only unrunnable lines in an otherwise runnable
+ * migration. For MSSQL and Oracle they are one problem among several, and the
+ * emitted forms still want checking against a live server first.
  */
 import type { DatabaseType } from "@/lib/types";
 // The shared quoter, which also escapes an embedded closing quote character — this
@@ -153,6 +168,56 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     reason: "The embedded engine speaks a JSON command grammar, not SQL DDL.",
   },
 };
+
+/**
+ * Canonical type ids whose migration text carries no transaction wrapper, because no
+ * `BEGIN;` this generator could emit would be both valid and meaningful for them (#284).
+ *
+ * `sqlite` runs its own transaction, and `libsql` is SQLite - the same reasoning, with
+ * one addition of its own: this provider closes its Hrana stream in the same request as
+ * each statement, so a BEGIN it emitted could not be continued by the app that generated
+ * the file. `cassandra` has no transaction at all - measured on 5.0.9, `BEGIN;` is "line
+ * 1:5 mismatched input ';' expecting K_BATCH" and `COMMIT;` is "no viable alternative at
+ * input 'COMMIT'". The only grouping CQL has is `BEGIN BATCH ... APPLY BATCH`, which is
+ * not a transaction and takes no DDL, so there is nothing to translate the wrapper INTO -
+ * it can only be left out. Unlike the other two, Cassandra's OTHER statements in this
+ * generator were each measured against a live server too, so the wrapper would have been
+ * the only unrunnable line in an otherwise runnable migration.
+ *
+ * The other nine are new, and each reuses a fact this module (or `src/lib/sql/grammar.ts`)
+ * already established for a different fallback rather than asserting a fresh one:
+ * `mongodb` and `redis` write no SQL text at all (`NON_SQL_DIALECTS` in `grammar.ts`), and
+ * wrapping non-SQL command text in SQL statements is wrong regardless of Mongo's own
+ * driver-level transaction API; `libredb` "speaks a JSON command grammar, not SQL DDL"
+ * (`NO_COLUMN_MODIFICATION`'s own words); `couchbase` and `druid` never receive column DDL
+ * from this generator in the first place (`NO_COLUMN_MODIFICATION`, and both providers
+ * report `supportsCreateTable: false`), so a wrapper would bracket nothing but comments;
+ * `elasticsearch` and `opensearch` are SQL-read-only (`NO_COLUMN_MODIFICATION`) for the
+ * same reason; `trino`'s transactional semantics are the CONNECTOR's answer, not a
+ * property of Trino itself (`NO_COLUMN_MODIFICATION`), so no portable `BEGIN;`/`COMMIT;`
+ * exists; and `clickhouse`'s transaction support is experimental and setting-gated rather
+ * than a safe default — this set is what removes it from the wrapper it used to inherit.
+ *
+ * `mssql` and `oracle` are deliberately ABSENT from this set — they still get the
+ * PostgreSQL-shaped wrapper, UNCHANGED, because their real forms (`BEGIN TRANSACTION;`
+ * for MSSQL; whether Oracle needs a wrapper at all, given DDL there auto-commits) want
+ * checking against a live server first, the way #264 and #265 were, and remain tracked
+ * in the module docstring above as the follow-up this PR does not attempt.
+ */
+const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
+  "sqlite",
+  "libsql",
+  "cassandra",
+  "mongodb",
+  "redis",
+  "libredb",
+  "couchbase",
+  "druid",
+  "clickhouse",
+  "elasticsearch",
+  "opensearch",
+  "trino",
+]);
 
 function generateColumnDef(col: ColumnDiff, dialect: DatabaseType): string {
   const type = col.targetType || col.sourceType || "TEXT";
@@ -526,20 +591,8 @@ export function generateMigrationSQL(diff: SchemaDiff, dialect: DatabaseType): s
 
   // ONE definition, read twice: the opening and the closing halves of this wrapper used
   // to be two independent conditions, which is a shape that can diverge into a `BEGIN;`
-  // with no `COMMIT;`.
-  //
-  // SQLite runs its own transaction, and libSQL is SQLite - the same reasoning, with
-  // one addition of its own: this provider closes its Hrana stream in the same request
-  // as each statement, so a BEGIN it emitted could not be continued by the app that
-  // generated the file. Cassandra has no transaction at all. Measured on
-  // 5.0.9: `BEGIN;` is "line 1:5 mismatched input ';' expecting K_BATCH" and `COMMIT;`
-  // is "no viable alternative at input 'COMMIT'". The only grouping CQL has is
-  // `BEGIN BATCH ... APPLY BATCH`, which is not a transaction and takes no DDL, so
-  // there is nothing to translate the wrapper INTO - it can only be left out. The
-  // wrapper is still wrong for the other engines named in the module docstring; that
-  // stays tracked there, and unlike them Cassandra emits DDL this generator was taught
-  // to spell correctly, so the wrapper would be the only unrunnable line in it.
-  const wrapsInTransaction = dialect !== "sqlite" && dialect !== "libsql" && dialect !== "cassandra";
+  // with no `COMMIT;`. See NO_TRANSACTION_WRAPPER for why each excluded id is excluded.
+  const wrapsInTransaction = !NO_TRANSACTION_WRAPPER.has(dialect);
 
   if (wrapsInTransaction) {
     sections.push("BEGIN;");

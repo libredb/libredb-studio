@@ -1181,6 +1181,65 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
   }
 });
 
+/**
+ * Exhaustive by construction, same spirit as `MODIFIED_COLUMN_COVERAGE` above: a new
+ * `DatabaseType` fails typecheck here until it is classified, so it cannot silently
+ * inherit the wrapper meant for PostgreSQL and MySQL (#284).
+ *
+ * `"wrapped"` — the dialect's DDL is bracketed in `BEGIN;` / `COMMIT;`.
+ * `"unwrapped"` — no wrapper reaches the migration text. mssql and oracle are
+ * deliberately absent from this table's classification of "unwrapped" — they still
+ * read `"wrapped"` here, UNCHANGED from today's behaviour, because the module
+ * docstring and the issue itself say their real wrapper forms (`BEGIN TRANSACTION;`
+ * for MSSQL; whether Oracle needs one at all, given DDL there auto-commits) want
+ * checking against a live server before they are settled, the way #264/#265 were -
+ * and this PR does not have one available. Tracked as the named follow-up rather than
+ * guessed here.
+ */
+const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "wrapped" | "unwrapped"> = {
+  postgres: "wrapped",
+  mysql: "wrapped",
+  // Measured live via @duckdb/node-api 1.5.5-r.4 (DuckDB v1.5.5, in-process, no server
+  // needed): `BEGIN;` / `BEGIN TRANSACTION;` both open a real transaction around DDL,
+  // and a `CREATE TABLE` issued inside one is undone by `ROLLBACK;` — pinned further in
+  // the "generateMigrationSQL: duckdb" describe block above.
+  duckdb: "wrapped",
+  // UNCHANGED — see this table's own doc comment above.
+  mssql: "wrapped",
+  oracle: "wrapped",
+  sqlite: "unwrapped", // runs its own transaction (module docstring)
+  libsql: "unwrapped", // SQLite fork, same reasoning, plus its own Hrana-stream note (module docstring)
+  cassandra: "unwrapped", // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
+  // The remaining nine already have their non-SQL or no-DDL status established
+  // elsewhere in this same module (`NO_COLUMN_MODIFICATION`) or in `src/lib/sql/grammar.ts`
+  // (`NON_SQL_DIALECTS`) — this table applies that same established fact to the wrapper
+  // fallback rather than asserting it fresh, so none of these nine need a new live probe.
+  mongodb: "unwrapped", // not SQL text at all (`NON_SQL_DIALECTS`); wrapping non-SQL in SQL statements is wrong regardless of Mongo's own transaction API
+  redis: "unwrapped", // same: command-line grammar, not SQL (`NON_SQL_DIALECTS`)
+  libredb: "unwrapped", // "a JSON command grammar, not SQL DDL" (NO_COLUMN_MODIFICATION's own words)
+  couchbase: "unwrapped", // this generator never emits column DDL for it (NO_COLUMN_MODIFICATION, supportsCreateTable: false) — a wrapper would bracket only comments
+  druid: "unwrapped", // "Druid SQL has no ALTER TABLE" and no transaction concept (NO_COLUMN_MODIFICATION)
+  clickhouse: "unwrapped", // ClickHouse's transaction support is experimental and setting-gated, not a safe default; today's code wraps it anyway, which this fixes
+  elasticsearch: "unwrapped", // "Elasticsearch SQL reads only" (NO_COLUMN_MODIFICATION) — no DDL is ever emitted for it
+  opensearch: "unwrapped", // same (NO_COLUMN_MODIFICATION)
+  trino: "unwrapped", // connector-dependent at best; no portable BEGIN/COMMIT (NO_COLUMN_MODIFICATION)
+};
+
+describe("generateMigrationSQL: transaction wrapper by dialect", () => {
+  for (const [dialect, expected] of Object.entries(TRANSACTION_WRAPPER_COVERAGE)) {
+    test(`${dialect}: ${expected === "wrapped" ? "wraps DDL in BEGIN;/COMMIT;" : "emits no transaction wrapper"}`, () => {
+      const sql = generateMigrationSQL(makeModifiedTableDiff(), dialect as DatabaseType);
+      if (expected === "wrapped") {
+        expect(sql).toContain("BEGIN;");
+        expect(sql).toContain("COMMIT;");
+      } else {
+        expect(sql).not.toContain("BEGIN;");
+        expect(sql).not.toContain("COMMIT;");
+      }
+    });
+  }
+});
+
 // ============================================================================
 // Multi-table diff
 // ============================================================================

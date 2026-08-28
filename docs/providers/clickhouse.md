@@ -1046,9 +1046,10 @@ database-wide statistics. Transaction and cancel routes do not apply — see
     (a bare `x String EPHEMERAL` has no expression, so it reaches the diff as no default at all and the
     generator never sees it); and `REMOVE DEFAULT`
     against a column that has none is itself an error (code `36`), so it is emitted only for a default
-    that existed. Still approximate: the generator wraps its output in `BEGIN` / `COMMIT`, which this
-    server has no transaction model for, so drop those two lines before running a generated migration
-    here.
+    that existed. Since [#284](https://github.com/libredb/libredb-studio/issues/284) the generator no
+    longer wraps ClickHouse's output in `BEGIN` / `COMMIT` at all — this server has no transaction model
+    for it (ClickHouse's own transaction support is experimental and setting-gated, not a safe default),
+    so a generated migration here is the bare DDL with nothing to strip.
 - **No native protocol.** Port `9000` and everything that needs it — the native wire format, some
   server-side settings only exposed there — is out of scope; see
   [§3.1](#31-http-transport-only--no-native-dependency).

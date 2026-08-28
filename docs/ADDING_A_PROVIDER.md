@@ -800,7 +800,11 @@ The integration points, all of which need an entry. This is the list the Strateg
       PostgreSQL-shaped, so check before assuming it fits
 - [ ] `src/lib/schema-diff/migration-generator.ts` — same shape, same hazard: the modified-column
       chain's trailing `else` is PostgreSQL DDL, so an unlisted id silently inherits it (#269). Give the
-      dialect a branch, or list it in `NO_COLUMN_MODIFICATION` to emit an honest comment instead
+      dialect a branch, or list it in `NO_COLUMN_MODIFICATION` to emit an honest comment instead. A new
+      id also needs a decision in `NO_TRANSACTION_WRAPPER` (#284): does `BEGIN;`/`COMMIT;` wrap this
+      engine's DDL at all, or does it belong in the set that gets no wrapper? An id absent from that
+      set inherits the PostgreSQL-shaped wrapper by default, which is silently wrong for a non-SQL or
+      non-transactional engine the same way the modified-column `else` used to be
 - [ ] `src/lib/sql/grammar.ts` — **two decisions, neither of which the compiler can force.** First,
       whether your engine's query text is SQL at all (`NON_SQL_DIALECTS`): an id absent from that set is
       declared to write SQL, and the confirmation gate then applies a SQL span reader to it — which for
@@ -859,7 +863,9 @@ connection-form test), so the compiler and those tests refuse to pass until each
 `tests/unit/lib/query-generators.test.ts`, `tests/unit/seed/types.test.ts`,
 `tests/hooks/use-connection-form.test.ts`,
 `tests/unit/schema-diff/migration-generator.test.ts` (`MODIFIED_COLUMN_COVERAGE` — classify the new id
-as having its own dialect branch or as unable to express a column modification),
+as having its own dialect branch or as unable to express a column modification; and
+`TRANSACTION_WRAPPER_COVERAGE` — classify it as `"wrapped"` or `"unwrapped"`, matching whatever you
+chose in `NO_TRANSACTION_WRAPPER`),
 `tests/unit/sql/grammar.test.ts` (`GRAMMAR_COVERAGE` and `SQL_TEXT_COVERAGE` — record whether the id
 has an established grammar or reads at the default, and whether its query text is SQL).
 
