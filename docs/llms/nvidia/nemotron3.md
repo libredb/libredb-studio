@@ -43,7 +43,7 @@ The optimization cell is **locked but marginal**, and every sweep since has said
 tool call running long, at 90.0 s, 106 s, 172.7 s, 244.6 s and 430.8 s against a 90-second turn,
 where the passing runs compose in 21 to 100.
 
-A 150-second turn was measured against it directly (`docs/BACKLOG.md` B66): five runs read 3/5
+A 150-second turn was measured against it directly (#500): five runs read 3/5
 again, but one of them composed at **114 s** — a run the shipped limit would have killed. So the
 limit is part of the answer and not all of it; what the runs actually show is a report turn whose
 length varies by a factor of twenty on identical input. Assess shows the same shape at 3/5 on the

@@ -36,7 +36,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C10 · 8
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B79 · 30
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B79 · 29
 
 ---
 
@@ -2152,24 +2152,6 @@ the entry cannot tell what the model is actually driven with.
 
 **Done when:** the gate tests the stopping text and the affected cells are re-measured, or the
 two switches become one setting whose name covers both stops.
-
-### B66. `nemotron3:33b`'s marginal cell has one per-model lever nobody has swept
-
-Its query-optimization cell reads 5/5, 5/5, 4/5, 4/5 across four sweeps with nothing in the entry
-changing between them, and both losses share one signature: the report-composing turn ran 172.7 s
-and 244.6 s against a 90-second turn, where every passing run composed in 24 to 93.
-
-`turnTimeoutMs` is the per-model setting for exactly that shape — `qwen3.5:9b` carries 150000 and
-the worked example in `docs/llms/model-tuning.example.json` argues the same bimodal case. Unlike
-`reasoning_effort`, it changes no wording and reaches no other model, so it cannot re-open the
-five surfaces this model already locks.
-
-The entry records a different lever (`reasoning_effort: "none"`) as deliberately not taken, for a
-sound reason — its other five cells were measured WITH reasoning. That reason does not apply here,
-and this one has simply not been tried.
-
-**Done when:** a sweep at a raised per-model turn limit either closes the cell or is recorded in
-the entry as having failed to.
 
 ---
 

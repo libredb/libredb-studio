@@ -2545,9 +2545,6 @@ the role's own grants are the whole boundary (A3).
   and never what it said, so an empty completion reaches it too and a model's recorded
   `retryEmptyTurn: false` decides nothing. Pinned as it behaves rather than narrowed, because the
   narrowing would move behaviour five passing runs were measured under.
-- **B66** — the one per-model lever `nemotron3:33b`'s marginal cell has never been swept at. Both
-  its losses are a report turn of 172.7 s and 244.6 s against a 90-second limit, which is the shape
-  `turnTimeoutMs` exists for, and unlike the lever the entry declines it reaches no other surface.
 
 ## Related documentation
 
