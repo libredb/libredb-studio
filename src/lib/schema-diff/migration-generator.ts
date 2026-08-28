@@ -9,8 +9,8 @@
  *   the limitation in a comment where an engine has no such statement (#269); the
  *   `ADD` / `DROP` keyword, which CQL spells without `COLUMN`; `CREATE TABLE`,
  *   which is refused outright for Cassandra (see CASSANDRA_NO_CREATE_TABLE); the
- *   transaction wrapper (see NO_TRANSACTION_WRAPPER), which twelve of the sixteen
- *   type ids do without, each for its own named reason; and the foreign-key
+ *   transaction wrapper (see NO_TRANSACTION_WRAPPER), which twelve of the
+ *   seventeen type ids do without, each for its own named reason; and the foreign-key
  *   statements, which CQL has no grammar for at all and which SQLite's grammar
  *   takes only inside `CREATE TABLE` (see FOREIGN_KEY_ONLY_IN_CREATE_TABLE).
  * - Not yet: MSSQL and Oracle's own transaction-wrapper forms (`BEGIN;` is not
@@ -189,14 +189,28 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
  * `mongodb` and `redis` write no SQL text at all (`NON_SQL_DIALECTS` in `grammar.ts`), and
  * wrapping non-SQL command text in SQL statements is wrong regardless of Mongo's own
  * driver-level transaction API; `libredb` "speaks a JSON command grammar, not SQL DDL"
- * (`NO_COLUMN_MODIFICATION`'s own words); `couchbase` and `druid` never receive column DDL
- * from this generator in the first place (`NO_COLUMN_MODIFICATION`, and both providers
- * report `supportsCreateTable: false`), so a wrapper would bracket nothing but comments;
- * `elasticsearch` and `opensearch` are SQL-read-only (`NO_COLUMN_MODIFICATION`) for the
- * same reason; `trino`'s transactional semantics are the CONNECTOR's answer, not a
+ * (`NO_COLUMN_MODIFICATION`'s own words); `couchbase` HAS distributed ACID transactions,
+ * but spells one `BEGIN TRANSACTION` and answers with a `txid` that every following
+ * statement has to carry as a request parameter (`docs/providers/couchbase.md` §13) - a
+ * shape a flat migration file cannot express at all, so `BEGIN;` is both the wrong
+ * keyword and the wrong mechanism; `druid` has no transaction concept to translate the
+ * wrapper into ("Druid SQL has no ALTER TABLE", `NO_COLUMN_MODIFICATION`; a datasource is
+ * rewritten by an MSQ task, not by a bracketed statement list); `elasticsearch` and
+ * `opensearch` do not have `BEGIN` in their grammar at all - the parse error quoted in
+ * `NO_COLUMN_MODIFICATION` lists every statement Elasticsearch SQL accepts and `BEGIN` is
+ * not among them, and OpenSearch 3.8.0 was measured separately
+ * (`docs/providers/opensearch.md` §9); `trino`'s transactional semantics are the CONNECTOR's answer, not a
  * property of Trino itself (`NO_COLUMN_MODIFICATION`), so no portable `BEGIN;`/`COMMIT;`
  * exists; and `clickhouse`'s transaction support is experimental and setting-gated rather
  * than a safe default — this set is what removes it from the wrapper it used to inherit.
+ *
+ * What none of these nine reasons is: "this generator emits nothing for that id anyway".
+ * It has no capability gate - `supportsCreateTable` is read by the schema explorer, not
+ * here - so its added-table branch emits a real `CREATE TABLE` for every id except
+ * `cassandra` (see CASSANDRA_NO_CREATE_TABLE). The wrapper this set removes was bracketing
+ * runnable DDL for these ids, not just comments, which is what makes removing it a fix.
+ * `tests/unit/schema-diff/migration-generator.test.ts` drives the coverage table over an
+ * added-table diff as well as a modified-table one so that stays measured.
  *
  * `mssql` and `oracle` are deliberately ABSENT from this set — they still get the
  * PostgreSQL-shaped wrapper, UNCHANGED, because their real forms (`BEGIN TRANSACTION;`
