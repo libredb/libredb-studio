@@ -11,10 +11,11 @@ comes from a run whose ledger is on disk.
 **Fifteen models are supported.** Each cleared all six surfaces — Investigate, Optimize, Assess,
 Operate, Analyze and Plan — five consecutive times: 450 runs, 450 passes.
 
-Ten of the fifteen cleared them at the 90-second per-turn limit the product ships. Four carry a
-150-second limit of their own — `qwen3.5:9b`, `nemotron-3.5-lightning:30b`, `muse-glimmer:latest`
-and `qwen3.6:27b` — because one turn of theirs does not fit inside 90 while every other surface
-does. The limit stays 90 for every other model, and each page says what its model needed.
+Ten of the fifteen cleared them at the 90-second per-turn limit the product ships. Five carry a
+150-second limit of their own — `qwen3.5:9b`, `gemma4:12b`, `nemotron-3.5-lightning:30b`,
+`muse-glimmer:latest` and `qwen3.6:27b` — because one turn of theirs does not fit inside 90 while
+every other surface does. The limit stays 90 for every other model, and each page says what its
+model needed.
 
 | Model | Served through | Disk | Median run | Slowest run |
 | --- | --- | --- | --- | --- |
