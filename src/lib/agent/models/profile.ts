@@ -112,11 +112,10 @@ export interface AgentModelProfile {
   /**
    * Whether this model's PLAN turn asks the endpoint for no reasoning at all.
    *
-   * Measured on `qwen3.5:4b`, whose five agent surfaces all pass as they are and whose plan
-   * cell was 0/5: every loss a `model-timeout` with an empty ledger, the turn spent thinking
-   * rather than answering. On a Studio-sized prompt it emits 13 188 characters of reasoning
-   * against 1 165 of content. With `reasoning_effort: "none"` the same five runs finish in 2
-   * to 6 seconds.
+   * Measured on `muse-glimmer:latest`, whose plan cell was 0/5 with every loss a `model-timeout`
+   * at exactly 90 seconds — an empty ledger, no tool invoked, the turn spent thinking rather than
+   * answering. With `reasoning_effort: "none"` the same five runs finish in 16 to 21 seconds.
+   * `qwen3.6:27b` and `gemma4:12b` were measured on the same shape and carry it too.
    *
    * PLAN ONLY, and gated on the run's MODE rather than on whether it was handed tools: an
    * agent run on the prompted protocol is toolless too, and that is the path four of the
@@ -137,8 +136,8 @@ export interface AgentModelProfile {
    * The same remedy as the field above, on the surfaces it deliberately does not reach, and a
    * separate switch rather than a widening of it: a model measured needing quiet on plan was not
    * measured needing it while holding tools, and reading one field for both would move cells
-   * nobody re-measured. `qwen3.5:4b` carries the plan one and must not acquire this by
-   * association.
+   * nobody re-measured. `muse-glimmer:latest` carried the plan one for a whole branch before a
+   * measurement earned it this one, and must not acquire either by association.
    *
    * Measured on `gemma4:12b`, whose investigate cell read 5/5 at 9 seconds and, on a later
    * serving engine, 1/5: four losses spending the whole turn without invoking a single tool

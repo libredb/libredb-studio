@@ -5029,7 +5029,7 @@ describe("a run is told to report only when it holds something to report from", 
 
 describe("a model that thinks instead of answering is told not to", () => {
   /*
-    `qwen3.5:4b` locks five surfaces at the defaults and lost the sixth to its own reasoning:
+    `muse-glimmer:latest` locks five surfaces with the settings it carries and lost the sixth to its own reasoning:
     asked for one statement it returns 13 188 characters of thinking against 1 165 of content,
     and the five plan runs spent 90, 170 and 179 seconds against a 90-second turn, each leaving
     an empty ledger.
@@ -5056,7 +5056,7 @@ describe("a model that thinks instead of answering is told not to", () => {
 
       await runInvestigation(run.runId, {
         service: b.service,
-        model: await modelOver(script.fetch, "https://api.openai.com/v1", "qwen3.5:4b", provider),
+        model: await modelOver(script.fetch, "https://api.openai.com/v1", "muse-glimmer:latest", provider),
         resources: b.resources,
       });
 
@@ -5099,7 +5099,7 @@ describe("a model that thinks instead of answering is told not to", () => {
 
       await runInvestigation(run.runId, {
         service: b.service,
-        model: await modelOver(script.fetch, "https://api.openai.com/v1", "qwen3.5:4b"),
+        model: await modelOver(script.fetch, "https://api.openai.com/v1", "muse-glimmer:latest"),
         resources: b.resources,
       });
 
@@ -5144,7 +5144,7 @@ describe("a model that thinks instead of CALLING is told not to, on its agent tu
   );
 
   test("a model measured needing quiet only on PLAN keeps its agent turns thinking", async () => {
-    // The two switches are separate, and this is the test that says so: `qwen3.5:4b` carries the
+    // The two switches are separate, and this is the test that says so: a model may carry the
     // plan one and must not acquire the agent one by association.
     const b = boot(freshDataDir());
     const run = await startRun(b, "agent");
@@ -5152,7 +5152,7 @@ describe("a model that thinks instead of CALLING is told not to, on its agent tu
 
     await runInvestigation(run.runId, {
       service: b.service,
-      model: await modelOver(script.fetch, "https://api.openai.com/v1", "qwen3.5:4b"),
+      model: await modelOver(script.fetch, "https://api.openai.com/v1", "muse-glimmer:latest"),
       resources: b.resources,
     });
 

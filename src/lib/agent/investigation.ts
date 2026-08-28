@@ -2308,9 +2308,7 @@ async function takeTurn(
   // Two switches, one per mode, and neither implies the other: a model measured needing quiet on
   // its plan turn was not measured needing it while holding tools. See both fields in `profile.ts`.
   const quiet =
-    mode === "agent"
-      ? suppressesAgentReasoning(agentModel.modelId)
-      : suppressesPlanReasoning(agentModel.modelId);
+    mode === "agent" ? suppressesAgentReasoning(agentModel.modelId) : suppressesPlanReasoning(agentModel.modelId);
   const stream = streamText({
     model: agentModel.model,
     temperature: sampling.temperature,

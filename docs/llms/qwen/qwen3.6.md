@@ -23,7 +23,7 @@ minutes. Plan at 20 seconds is the same cell that used to time out at 90, five t
 
 **no reasoning on the plan turn.** The plan cell was 0/5, and all five losses were one run
 repeated: `model-timeout` at exactly 90 seconds, no tool invoked, `no-plan`. The turn was spent
-thinking rather than answering. This is `qwen3.5:4b`'s measured case and `muse-glimmer:latest`'s
+thinking rather than answering. This is `muse-glimmer:latest`'s measured case and `gemma4:12b`'s
 after it; the same five runs then finish in 16 to 24 seconds.
 
 **a 150-second turn limit.** Optimize was 1/5 and assess 2/5, and every loss in both was a

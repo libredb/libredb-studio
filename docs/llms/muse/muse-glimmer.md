@@ -25,7 +25,7 @@ timeouts before it.
 **no reasoning on the plan turn.** The plan cell was 0/5, and all five losses were one run
 repeated: `model-timeout` at exactly 90 seconds, an empty ledger, no tool invoked, `no-plan`. The
 turn was spent thinking rather than answering. With reasoning suppressed the same five runs finish
-in 16 to 21 seconds. This is `qwen3.5:4b`'s measured case, character for character.
+in 16 to 21 seconds. The same shape closed the plan cell of two other models on this list.
 
 **a 150-second turn limit.** Two more cells lost to the clock and to nothing else: investigate
 4/5 with the single loss a `model-timeout` at 159s against passes at 102 to 116, and assess 4/5
