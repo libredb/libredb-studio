@@ -2712,7 +2712,7 @@ describe("AgentRail", () => {
     /*
       The bound is real and is stated where a user reads the citations rather than
       only when a click fails: results live in process memory and are released when
-      the run ends (`docs/BACKLOG.md` B15), so a report read after its run finished
+      the run ends, so a report read after its run finished
       cites rows the server no longer holds.
     */
     test("the report says that stored rows outlive nothing, next to the controls that ask for them", async () => {

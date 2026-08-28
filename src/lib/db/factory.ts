@@ -311,6 +311,15 @@ function fileIdentity(connection: DatabaseConnection): string | null {
  * Deliberately reads only the writable cache. The reverse direction - handing an
  * editor request a provider opened under an execution profile - stays forbidden, so
  * profiled entries are not offered here.
+ *
+ * The cost of that is real and is paid by the editor. If an agent run reaches a
+ * single-writer connection nobody has browsed yet, `acquireExecutionProfileProvider`
+ * opens the file and caches the handle under the PROFILED key; `getOrCreateProvider`
+ * then fails on the lock, so browsing that connection in the sidebar is refused until
+ * the profiled entry is evicted (30 minutes idle). Lifting it would mean serving an
+ * editor request a provider opened under an execution profile, which is the isolation
+ * invariant `acquireExecutionProfileProvider` exists to keep - so the lockout is the
+ * chosen side of that trade, not an oversight.
  */
 export function findOpenSingleWriterProvider(connection: DatabaseConnection): DatabaseProvider | null {
   const identity = fileIdentity(connection);

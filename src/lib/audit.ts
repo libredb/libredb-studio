@@ -313,6 +313,15 @@ function sanitizeAuditField(value: string): string {
  * every shape that can actually arrive from a JSON request body; the catch exists only for the
  * inputs JSON.stringify itself refuses (a circular reference, a BigInt), which a hand-built
  * AuditEvent could construct even though `JSON.parse` output never does.
+ *
+ * What this bounds and what it does NOT redact. Coercion is whole-value, so the result goes
+ * through `sanitizeAuditField` exactly as a real string would - length bounded, URI-shaped
+ * credentials stripped. It is not recursive per-key redaction: a nested secret under an
+ * arbitrary key name (`{"apiKey": "sk-live-..."}`) is not URI-shaped, so it survives, truncated,
+ * inside the stringified value. It no longer breaks the fixed-shape contract, which was the
+ * reachable half. Closing the rest means walking nested plain objects key-by-key at bounded
+ * depth - and worth saying plainly, because it reads like a gap being left open: no by-key-name
+ * scrutiny exists for ANY field today, top-level or nested. That would be a new capability.
  */
 function coerceToString(value: unknown): string {
   try {

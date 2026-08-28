@@ -83,8 +83,8 @@ const AGENT_ARTIFACT_TTL_MS =
  * rule means the run evicts its OWN earliest evidence — the results its first
  * drive read, which its report may still cite. Nothing about the ledger is wrong
  * afterwards: the claim and its citation are durable, and the artifact route
- * already answers "the rows are not here" for the run-ended and TTL-expired cases
- * (`docs/BACKLOG.md` B15). This just adds a third way to reach that answer while
+ * already answers "the rows are not here" for the run-ended and TTL-expired cases.
+ * This just adds a third way to reach that answer while
  * the run is still live. Recorded as `docs/BACKLOG.md` B35 rather than fixed
  * here: a bound that holds ACROSS drives is the same missing mechanism B6 names,
  * and inventing a second one for artifacts alone would be a second answer to one

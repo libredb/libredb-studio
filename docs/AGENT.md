@@ -247,7 +247,7 @@ Which connections qualify is decided in the browser before a run is opened, by
   database is reached and as whom is compared, the optional agent credentials included;
   presentation-only edits (name, colour, group, environment) do not disqualify it. Note what that
   sentence does *not* say: the comparison is against a snapshot, so an operator who repoints a seed
-  server-side is not seen until the browser fetches again (`docs/BACKLOG.md` B23);
+  server-side is not seen until the browser fetches again;
 - nothing else. A connection the user typed in reaches the rail as unresolvable, and so does a seed
   copy edited to point elsewhere; the rail says so rather than opening a run.
 
@@ -2205,7 +2205,7 @@ Two further rules govern it:
   (B11).
 - **The meter reports only what is actually enforced** — statements, database time, the run deadline,
   repair attempts — and states the SQLite non-preemption caveat rather than implying that an
-  overrunning statement is cut short. It reports no token budget because none is enforced (B10). A statement that
+  overrunning statement is cut short. It reports no token budget because none is enforced. A statement that
   failed at the database now carries the span the tracker charged for it, so the database-time figure
   no longer counts completed reads only, and a schema capture contributes the statements and the span
   the tracker charged it. What is left uncounted is the difference between an engine's elapsed time
@@ -2227,7 +2227,7 @@ wrong column draws a confident flat line rather than failing. A specification th
 second check is dropped and the view's own inference draws the chart instead. A hydrated result can be
 exported: the menu is retargeted rather than hidden, the file is named after the run that produced
 the rows, and the SQL forms are not attributed to the tab's own table. A run's stored results are
-still released when the run ends, so a report can outlive the rows its citations point at (B15).
+still released when the run ends, so a report can outlive the rows its citations point at.
 
 **Those results live in process memory, and the store that holds them is bounded.** It keeps 180
 entries at once — the largest statement ceiling any workflow may be given (45) times the four
@@ -2241,7 +2241,7 @@ zero-config backend below being single-instance.
 per drive (B6), while a resumed run keeps its `runId` and its artifacts are keyed by it — so a run
 driven three times may hold up to three times its statement ceiling here, and a long-lived run can
 pass 180 on its own. Run-fair eviction then takes that run's *own* earliest results, which its report
-may still cite: a third way to reach the "the rows are not here" answer B15 describes, this time while
+may still cite: a third way to reach the "the rows are not here" answer a released result gives, this time while
 the run is still live. The ledger is unaffected — the claim and its citation are durable — and the
 gap is recorded as **B35** rather than closed with an artifact-only bound, because a ceiling that
 holds across drives is the mechanism B6 already names.
@@ -2438,23 +2438,14 @@ the role's own grants are the whole boundary (A3).
 
 - **B2** — the Anthropic kind is ratified and installed but not offered; serving it means giving the
   chat surface an Anthropic provider first.
-- **B3** — a scope allowlist on a target dimension denies every tool that cannot declare it.
 - **B4** — a mapped database error discards the text distinguishing a timeout cancel from an operator
   cancel.
 - **B5** — the ledger assumes one writer per run and cannot enforce it.
 - **B6** — every cost ceiling is per-drive, so N resumes can cost up to N times one drive's budget.
 - **B9** — nothing enqueues a drive, so an interrupted run is resumable but never resumed.
-- **B10** — no token budget is enforced, so the meter reports none.
 - **B11** — the rail can stop a run but cannot pause or resume one.
-- **B79** — the re-pointed decline has never been reached from the UI: in the default storage mode
-  the only server-held connections are the seeds, and editing a seed makes it browser-local, which
-  the rail refuses before any thread check.
-- **B15** — a run's stored results are released when it ends, so a report's citations can outlive its
-  rows.
 - **B16** — the opt-in `@workflow/world-postgres` backend is not present in the standalone payload,
   so it cannot load in the container image or the npx payload.
-- **B23** — seed eligibility is decided against the browser's last descriptor fetch, so a seed
-  repointed server-side mid-session is not seen until the next fetch.
 - **B29** — an identifier the model quotes back into its own tool arguments reaches the transcript
   unfenced; an open injection path, bounded only by the server never handing it the raw marker.
 - **B31** — the Postgres durable backend is reported available without being contacted, so an
@@ -2480,9 +2471,6 @@ the role's own grants are the whole boundary (A3).
   step's claims verbatim and truncates at a claim boundary; a model-written `carryForward` sentence
   was considered and declined, because a claim is evidence and a summary is a lossy compression of
   it.
-- **B39** — a data-analysis run has no honest way to conclude that the question is not about this
-  database. Its only route to `answered` is a reading of the data, so a run that establishes the
-  question is unanswerable fabricates one — the #356 shape again, in a new place.
 - **B72** — plans are exempt from the emptiness census for `query-optimization` only. The
   investigation, database-assessment and data-analysis verifiers still judge a plan-only report by a
   row count that measures nothing, and `inspect_plan` is offered to all three. Closing it changes what
@@ -2535,12 +2523,6 @@ the role's own grants are the whole boundary (A3).
   gone: the document refuses wording and nothing else can populate it. Refusing unsigned prompt text
   is right; refusing it forever is a decision that has not been taken, and the two objections behind
   it — marker drift and authorship — come apart.
-- **B64** — an unfenced plan statement with NO terminator still carries prose into the SQL. The
-  splitter closed the demonstrated case (a statement, then its explanation on the next line, came
-  back as one statement with the prose in it) but has nothing to cut on without a semicolon, so
-  the blank line remains the only signal there. It matters because `plan-statement-drafted` is
-  recorded on the reader's verdict alone and the goal verifier reads that event as ANSWERED, so
-  the run is scored answered while its deliverable would not run.
 - **B65** — `retryUnreadStop` subsumes `retryEmptyTurn`. The gate asks what a stopping turn CALLED
   and never what it said, so an empty completion reaches it too and a model's recorded
   `retryEmptyTurn: false` decides nothing. Pinned as it behaves rather than narrowed, because the
@@ -2548,6 +2530,52 @@ the role's own grants are the whole boundary (A3).
 - **B66** — the one per-model lever `nemotron3:33b`'s marginal cell has never been swept at. Both
   its losses are a report turn of 172.7 s and 244.6 s against a 90-second limit, which is the shape
   `turnTimeoutMs` exists for, and unlike the lever the entry declines it reaches no other surface.
+
+**Settled as limits rather than as work.** The seven below have no entry in `docs/BACKLOG.md`, and
+that is the point: each is how the product behaves, stated where a reader of this document will meet
+it, rather than a queue item nobody was going to pick up. A limitation needs a record; it does not
+need a work item to hold that record.
+
+- **A scope allowlist on a target dimension denies every tool that cannot declare it.** No tool in
+  this layer declares the CATALOG dimension at all, and a selector-less `inspect_schema` declares no
+  schema, so a scope constraining either denies the natural first call — including the one the
+  run-start snapshot makes. It fails closed, which is the right direction. Nothing builds such a
+  scope today (`runtime.ts` calls `createTargetScope(connectionId)` with no dimensions), so this is
+  a property of the layer rather than a live defect, and the two ways out are written where the
+  declaration is made, in `src/lib/agent/tools.ts`.
+- **No token budget is enforced, so the meter reports none.** `AGENT_WORKFLOW_BUDGETS` is
+  statement-shaped, `maxModelTurns` bounds model TURNS rather than their size, and the run loop never
+  reads the SDK's `usage` at all. A token figure would be a number the server does not enforce shown
+  beside four that it does, which is the one thing the meter's bar forbids, so it states the turn
+  ceiling instead and says nothing about tokens.
+- **A run's stored results are released when it ends, so a report's citations can outlive its rows.**
+  `ExecutionArtifactStore` holds results in process memory and `releaseExecutionRun` drops everything
+  a run produced — the M1 decision that agent results never rest on disk. A report is composed as the
+  run's last step and usually read after the run has ended, so "Show result" on its citations answers
+  `410` with `reason: "released"` rather than rows, and the same is true of any run driven by another
+  replica. The route says which of the two happened, the rail offers "Show result" only while the run
+  is live, and the report section states the bound in words.
+- **Seed eligibility is decided against the browser's last descriptor fetch**, so a seed repointed
+  server-side mid-session is not seen until the next one. `resolveAgentRunConnectionId` compares
+  against the descriptors from the last `GET /api/connections/managed` while the run-start route
+  re-resolves `seed:<id>` through a loader with its own TTL (`SEED_CACHE_TTL_MS`, 60s by default). So
+  an operator who repoints a seed while a session is open leaves that session comparing against the
+  old descriptor: the rail still offers Start, and the run resolves the new target.
+- **A data-analysis run has no honest way to conclude that the question is not about this database.**
+  Its only route to `answered` is a reading of the data, so a run that establishes the question is
+  unanswerable fabricates one — driven live on 2026-08-15, a churn question against an employees
+  database was answered correctly, in 36 steps, by executing a `SELECT '<explanation>'` string
+  literal purely to produce the artifact `present_answer` requires.
+- **An unfenced plan statement with NO terminator still carries prose into the SQL.** The splitter
+  closed the demonstrated case (a statement, then its explanation on the next line, came back as one
+  statement with the prose in it) but has nothing to cut on without a semicolon, so the blank line
+  remains the only signal there. It matters because `plan-statement-drafted` is recorded on the
+  reader's verdict alone and the goal verifier reads that event as ANSWERED, so the run is scored
+  answered while its deliverable would not run.
+- **The re-pointed decline has never been reached from the UI.** In the default storage mode the only
+  server-held connections are the seeds, and editing a seed makes it browser-local, which the rail
+  refuses before any thread check. Reaching it takes a seed run, an edit of that seed's target on the
+  SERVER between two questions, and a second question with the rail mounted throughout.
 
 ## Related documentation
 

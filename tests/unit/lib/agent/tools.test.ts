@@ -4400,7 +4400,7 @@ describe("present_answer records which result IS the answer, and how to show it"
   });
 
   test("the numeric check reads the LIVE artifact store, so a released result refuses", () => {
-    // B15, pinned: the store is process memory released when the run ends, and
+    // Pinned: the store is process memory released when the run ends, and
     // `answer-composed` is written DURING the run — which is exactly why this check
     // can read rows at all. One instant later it cannot, and the honest answer then
     // is a refusal, never a spec that passed because nothing was there to check it.

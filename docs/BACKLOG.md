@@ -10,6 +10,12 @@ None of it is a GitHub issue.
   unscheduled defects, deliberate deferrals, open questions.
 - An entry says what is wrong, where, and what "done" looks like. Enough to pick it up cold.
 - **Delete an entry when the work lands.** No strikethrough, no DONE marker. Git history is the record.
+- **A limitation documented where it bites does not need an entry here.** An entry is a claim that
+  something should CHANGE. A limitation is a claim about how the product behaves, and its home is the
+  place a reader meets it: the docblock beside the code, the provider doc, `docs/AGENT.md`'s "Known
+  limitations". Recording one here as well made the two roles indistinguishable and the file
+  unshrinkable - a limit could not be settled without deleting the only record of it. So state it
+  where it bites, then delete the entry. Ten were settled that way on 2026-08-28.
 - Re-verify before acting. Line numbers and behaviour claims age.
 - Promote an entry to an issue when it needs discussion, an outside reporter, or a release note.
 - The reverse happens too. An issue that is understood, breaks nothing today and is not scheduled
@@ -22,21 +28,19 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D51, U17 · 14
+- [Drivers and connections](#drivers-and-connections) — D1–D51, U17 · 13
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U26 · 9
-- [Authentication and security headers](#authentication-and-security-headers) — AU4
-- [Tests](#tests) — T4
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1, N3 · 2
-- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 3
+- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 2
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C10 · 8
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B79 · 30
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B75 · 23
 
 ---
 
@@ -180,8 +184,6 @@ Cassandra fixture does not close it.
 
 ---
 
----
-
 ### D18. Two engines hand back a number that has already lost digits
 
 Measured 2026-08-24 against Oracle Free 23ai through the provider: `NUMBER(38,0)` holding
@@ -225,26 +227,6 @@ and a refusal sentence that has never been seen from the server is exactly what 
 **Done when:** a Couchbase panel a role may not read is absent with the cluster's own wording, and
 the counts it feeds carry the same distinction - measured against a live cluster with a document-only
 role, not inferred from the code.
-
-### D27. On a single-writer file, whichever handle opens first locks the other one out
-
-The reuse D3 and B49 landed runs one way only: `findOpenSingleWriterProvider` reads the **writable**
-cache, so a caller that would open a second handle borrows the editor's. The reverse is still open. If
-an agent run reaches a `libredb` connection nobody has browsed yet, `acquireExecutionProfileProvider`
-opens the file and caches that handle under the PROFILED key — and the editor's own
-`getOrCreateProvider` then fails on the lock, so browsing the connection in the sidebar is refused
-until the profiled entry is evicted (30 minutes idle).
-
-Deliberately left: closing it means letting an editor request be served a provider opened under an
-execution profile, which is the isolation invariant `acquireExecutionProfileProvider` exists to keep.
-On this engine that handle carries no actual privilege reduction — `createDatabaseProvider` passes no
-execution context for `libredb` — so the reuse would be safe *for this engine* and wrong as a declared
-rule. Not observed in the browser: the ordinary order is editor-first, because the connection has to be
-selected before a run can be started on it.
-
-**Done when:** either direction of the borrow is safe by construction — for instance a single-writer
-file has ONE cache entry that both callers key off, with the profile deciding how it is used rather
-than which handle it gets — or the agent-first order is refused with a sentence naming the lock.
 
 ### D30. `SHOW STATUS LIKE` costs two panels on an engine that answers `SHOW STATUS`
 
@@ -848,65 +830,6 @@ connection plus one with no byte figure at all.
 
 ---
 
-## Authentication and security headers
-
-### AU4. A sibling subdomain can time an authenticated endpoint, and the fix has nowhere to land
-
-Left open by the cross-origin header work in #512, which answered both headers it was filed for:
-`Cross-Origin-Opener-Policy: same-origin` is delivered from `securityHeaders()` and classified
-document-only in `next.config.ts`, and `Cross-Origin-Resource-Policy` is refused with the reason
-recorded beside the header rule. This entry is what the refusal gives up.
-
-`auth-token` is `SameSite=Lax` (`src/lib/auth.ts`), which withholds it from a cross-*site* no-cors
-subresource request but sends it to a same-*site*, cross-*origin* one. So a page on any host under
-the deployment's own registrable domain - an XSS on a sibling, a dangling subdomain - can load a
-Studio URL as an `<img>`, a `<script>` or a no-cors `fetch` and read the load-versus-error and
-coarse-timing signal against an authenticated response. `nosniff` stops execution, the Origin check
-stops state change, `X-Frame-Options` and `frame-ancestors` stop framing; none of them stops the
-oracle. Recorded in `docs/SECURITY.md` under Known limits.
-
-`Cross-Origin-Resource-Policy: same-origin` is the control, and #512 refused it for a structural
-reason rather than a doubt about the value: CORP acts only on subresources, `src/proxy.ts`'s matcher
-skips subresources, and the one path that does reach them - `next.config.ts`'s `headers()` - is baked
-at BUILD time. The correct value is the one header in the set that depends on deployment topology
-rather than on the application: `same-origin` blocks a second origin's document from reading this
-origin's subresources, cross-origin `importScripts` included, and `NEXT_PUBLIC_MONACO_VS_PATH`
-documents a topology where a host page loads Monaco from a Studio deployment. So a value an operator
-must be able to change cannot be delivered where it would act. Closing this starts with the delivery
-architecture, not with the header.
-
-**Done when:** a runtime-configurable header reaches `/monaco/vs/*` and `public/*` - which means
-admitting the header-only paths to `src/proxy.ts`'s matcher, returning before any auth decision -
-or the exposure is accepted in writing with the sibling-subdomain trust assumption stated.
-
-## Tests
-
----
-
-### T4. Eight backlog ids cited in `src/` name entries that no longer exist
-
-Measured 2026-08-26 by sweeping every `B*` id cited under `src/` against the entries in this file.
-Dangling, with the number of source files citing each: **B7** (2), **B8** (2), **B17** (1), **B18**
-(2), **B24** (3), **B27** (1), **B43** (8), **B47** (3). All of them predate this round -
-`git show HEAD:src/lib/agent/table-profile.ts` carries the B7 and B8 citations already.
-
-The mechanism is the asymmetry in the guard. `tests/unit/agent-documentation.test.ts` enforces the
-two-way invariant between `docs/AGENT.md` and this file, so a `B`-id cited by that document must
-exist and vice versa. Nothing checks a citation from a source comment. So the instruction this file
-opens with - delete an entry when the work lands - leaves every code comment pointing at it silently
-wrong, and those comments are not decoration: `table-profile.ts` cites B7 for "PostgreSQL expression
-indexes are absent" and B8 for "the catalog read returns composite keys as the cross product of both
-sides", which are behavioural limits a reader would act on.
-
-Not fixed in the round that found it, on purpose. Each of the eight needs its claim re-verified
-before it can be rewritten or restored, and the two possibilities are opposite: the entry may have
-been deleted because the limitation was fixed (in which case the comment is false), or deleted by
-mistake (in which case the entry should come back). Eight of those judgements is more than one round
-can do honestly.
-
-**Done when:** no id cited in `src/` is missing from this file, and the drift guard covers source
-citations the way it already covers `docs/AGENT.md`.
-
 ## Dependencies
 
 ### P1. The desktop shell's `glib` advisory has no reachable fix while Tauri v2 targets GTK 3
@@ -1257,29 +1180,6 @@ the channels that serve Studio from a small box.
 **Done when:** the measurement says the trade is worth it and the nonce ships, or the measurement is
 recorded here as the reason it does not.
 
-### H7. `sanitizeAuditInput` does not recurse, so a nested secret survives inside the coerced string
-
-`sanitizeAuditInput` used to sanitize a value only when `typeof value === "string"`, silently skipping
-everything else. That was corrected for I3 of the Phase 1 review: a top-level value that is neither a
-string nor `duration`'s legitimate number is now coerced to a string (`JSON.stringify`, then the same
-`sanitizeAuditField` a real string goes through).
-
-That fix mattered more than the original entry claimed. It said the risk was "bounded to the ring
-buffer, not stdout, because `toAuditLine`'s allowlist never re-serializes an unknown property". True
-for `details` specifically, false as a general rule: `target`, `user`, `action`, `connectionName`, `ip`
-and `bucket` are all allowlisted onto the stdout line, all string-typed, and all reachable with a
-non-string runtime value the same way `POST /api/db/maintenance`'s `target` was.
-
-The residual is narrower. Coercion is whole-value, not recursive per-key redaction.
-`sanitizeAuditField`'s credential pattern only recognizes a URI-shaped `scheme://user:pass@host`
-substring, so a nested secret under an arbitrary key name (`{"apiKey": "sk-live-…"}`) is bounded and no
-longer breaks the shape contract, but is not specifically redacted. It survives, truncated, inside the
-JSON-stringified value.
-
-**Done when:** nested plain objects are walked key-by-key, at bounded depth, so a non-URI-shaped nested
-secret gets the same by-key-name scrutiny a top-level one does. Note that no such scrutiny exists for
-any field today, top-level or nested — this is a new capability, not a gap being closed.
-
 ### H8. Lowest-count eviction lets an attacker buy back a `login_account` guess
 
 From `pruneIfAtCapacity`'s doc comment in `src/lib/api/rate-limit.ts`: an attacker can buy back one
@@ -1567,41 +1467,6 @@ ratified package, which that test's allowed-ignore set names explicitly.
 gains the matching adapter in the same change. The `Record<LLMProviderType, AgentProviderAdapter>` will
 not compile until it does.
 
-### B3. A scope allowlist on a target dimension denies every tool that cannot declare it
-
-`withinAllowlist` (`src/lib/db/operations/policy.ts`) refuses a call that does not DECLARE a dimension
-the scope constrains. That is the right direction — an undeclared target cannot be screened, so it fails
-closed. The consequence is that a scope carrying an allowlist silently narrows the tool set to the
-tools that happen to declare that dimension:
-
-- **A `schema` allowlist** admits only a NARROWED `inspect_schema` call, one that was given a selector.
-  The selector-less full inventory declares nothing and is denied (verified:
-  `createTargetScope("c", { schemas: ["public"] })` plus `inspectSchemaTool(ctx, {})` answers
-  `TARGET_OUT_OF_SCOPE`). That is the natural first call, and the one the run-start snapshot makes:
-  `captureContextSnapshot` asks for each catalog kind with no selector, so under a schema allowlist
-  every run's context capture is refused and the run proceeds with no snapshot at all. It fails closed
-  and the model is told to inspect the schema itself, but a run scoped to one schema never gets an
-  inventory. Narrowing the capture to the scope's own single-entry allowlist is the obvious repair.
-  Every `run_read_query` and `inspect_plan` call is denied outright, because a raw statement cannot
-  declare which schema it will touch without parsing it.
-- **A `catalog` allowlist** denies EVERY call in the layer: no tool declares that dimension at all.
-
-Nothing builds such a scope yet. `runtime.ts` calls `createTargetScope(connectionId)` with no
-dimensions, so no allowlist is ever constrained in production. This is a property of the layer rather
-than a live defect, and the tool layer records it at the `inspect_schema` target declaration.
-
-It matters because the failure looks like a policy bug rather than a scoping choice: the model gets
-`TARGET_OUT_OF_SCOPE` with advice to ask for an in-scope target, and for a raw read there is no way to
-comply.
-
-Two honest resolutions when a caller first needs scoping, and the choice is a product one: give
-`run_read_query` an optional declared-schema argument and require it when the scope constrains that
-dimension, or let the run service refuse to start a run whose scope constrains a dimension its tool set
-cannot declare — louder, and needs no per-tool argument.
-
-**Done when:** a scope with a schema or catalog allowlist produces a coherent outcome for every tool the
-mode offers, with a test per dimension.
-
 ### B4. `mapDatabaseError` discards the text that distinguishes a timeout cancel from an operator cancel
 
 `mapDatabaseError` matches `canceling statement` before its timeout branch and returns
@@ -1748,25 +1613,6 @@ Two things have to land together whenever a producer arrives, and neither is saf
 **Done when:** a run whose process died is picked up without a person asking, no step is performed
 twice while that happens, and B6's per-drive ceilings are accounted for across the resumes it causes.
 
-### B10. No token budget is enforced, so the rail's budget meter reports none
-
-Opened by #329 T10b. The task's bar names tokens among the figures the meter should report, and the
-meter deliberately does not show one: nothing here bounds an agent run's token spend.
-`AGENT_WORKFLOW_BUDGETS` is statement-shaped, `maxModelTurns` bounds model TURNS rather than their
-size, and the run loop never reads the SDK's `usage` at all — `investigation.ts` consumes `fullStream`
-parts and the assistant messages, nothing else.
-
-A token figure would be a number the server does not enforce, shown next to four that it does, which
-is the one thing that bar forbids. So the meter states the turn ceiling instead and says nothing about
-tokens.
-
-Closing it is two changes that land together: reading `usage` off each turn and recording it in the
-ledger (a new field on `run-finished`, or a new event kind — T2's union is closed, so this is a
-deliberate widening), and a ceiling in `execution-policy.ts` that the loop refuses on.
-
-**Done when:** a run that exceeds a configured token budget ends with a reason a user can read, and the
-meter shows the same number the loop enforced.
-
 ### B11. The rail can stop a run but cannot pause or resume one
 
 Opened by #329 T10b. `AgentRunService` has no pause: a run holds a provider and a budget while it is
@@ -1784,27 +1630,6 @@ is the path B6 already complicates.
 
 **Done when:** either control exists in the service with its own ledger record, and the rail renders it
 because the service can honour it.
-
-### B15. A run's stored results are gone once the run ends, so a report's citations can outlive its rows
-
-Surfaced by #329 T11 rather than introduced by it. `ExecutionArtifactStore` holds results in process
-memory and `releaseExecutionRun` drops everything a run produced at `finish` or `cancel` — the M1
-decision that agent results never rest on disk.
-
-The consequence: a report is composed as the run's LAST step and is usually read AFTER the run has
-ended, so "Show result" on its citations answers `410` with `reason: "released"` rather than rows. Same
-for any run driven by a different replica.
-
-The route says which of the two happened instead of reporting a missing artifact, and the rail offers
-"Show result" only while the run is live, with the report section stating the bound in words. So the
-show affordance on report CITATIONS is mostly dormant; what is reachable in practice is showing a
-result from a live run's timeline.
-
-Closing it properly means deciding where agent results may rest — encryption, retention and tenancy are
-exactly the questions #328 declined to answer. A product decision, not an implementation gap.
-
-**Done when:** a finished run's cited rows are readable for a stated retention window, or the surface
-states the window it has instead of offering a control that usually cannot be honoured.
 
 ### B16. The opt-in multi-replica backend cannot load in the container image or the npx payload
 
@@ -1834,29 +1659,6 @@ The remedy pattern already exists here: the explicit copies in `Dockerfile` and
 **Done when:** the Postgres world is present in both payloads with a test asserting it
 (`tests/unit/packaging-payload-prune.test.ts` is the nearest existing home), and `docs/AGENT.md`'s
 deployment section loses the caveat that points here.
-
-### B23. Seed eligibility is decided against a browser snapshot, not the live descriptor
-
-`resolveAgentRunConnectionId` (`src/hooks/use-connection-payload.ts`) decides whether an editable seed
-copy may start a run by comparing it against the descriptors in `useConnectionManager`'s `servedSeeds` —
-the response of the last `GET /api/connections/managed`. The run-start route then resolves `seed:<id>`
-again, through `getSeedConnectionById`, whose config loader re-reads the seed file after its own TTL
-(`SEED_CACHE_TTL_MS`, 60s by default).
-
-So there is a window. An operator who repoints a seed at a different database while a session is open
-leaves that session comparing against the OLD descriptor: the local copy still matches it, the rail
-still offers Start, and the run resolves the NEW target. The same silent wrong-database outcome the
-comparison exists to prevent, reached from the server side.
-
-Two things bound it. It needs a server-side seed change mid-session, not a user action. And the same
-staleness already applies to an admin-managed connection, which has always sent `seed:<id>` for every
-query while the sidebar showed whatever the last fetch returned. So this is a property of resolving by
-id at all — but the copy path is the one whose documentation promises a match, so it is the one that
-overstates.
-
-**Done when:** the run-start route validates the descriptor the browser believed it was starting
-against — a fingerprint sent with the request and compared server-side, refusing with a distinct reason
-when it has moved. Until then `docs/AGENT.md` says the comparison is against the last fetch.
 
 ### B28. A profile that times out reports nothing rather than falling back to catalog statistics
 
@@ -2007,31 +1809,6 @@ a run resumed often enough passes any constant.
 per-drive constant — most likely as part of B6 — with a test that drives one run twice past the cap and
 shows the first drive's cited results still readable, or the surface stating that they are not.
 
-### B39. An analysis run cannot say "this database cannot answer that" without fabricating a read
-
-Driven live on 2026-08-15. Asked "what is our customer churn rate this quarter?" against an employees
-database, the run answered honestly: the schema holds employee records, not customer records. To do so
-it executed
-
-```sql
-SELECT 'The database contains employee records (employee, department, dept_emp, salary, title) ...'
-```
-
-— a string literal, run purely to produce the `sql.query.read` artifact that `present_answer` requires
-and `agent-data-analysis.1` scores on. The run took 36 steps to get there.
-
-The user-visible outcome is correct and readable, which is why this is recorded rather than fixed in
-haste. The mechanism is not: the workflow's only route to `answered` is a reading of the data, so a
-question the data cannot answer has no honest route at all, and the model games the rule instead of
-reporting the finding.
-
-This is the #356 family — a bar only one kind of correct answer can clear — and the remedy is the same
-shape: a second arm. A run that establishes from the schema snapshot that the question is not about this
-database has answered it, and should be able to say so without inventing a query.
-
-**Done when:** a data-analysis run can conclude "not answerable here" and be scored `answered` for it,
-with the rule stated in `WORKFLOW_TOOL_RULES` and an eval asserting no fabricated statement is sent.
-
 ### B52. The grounding capture's row cap is reached by what the image ships, not by a wide user schema
 
 `composeCatalogRead` records a known limitation with a number: the PostgreSQL projection is one row per
@@ -2109,29 +1886,6 @@ provenance is a property of the SOURCE rather than of the field.
 **Done when:** wording can arrive from a source whose authorship is established, and cannot arrive
 from one whose authorship is not — with the trust tier stated as a decision rather than implied by
 which loader happened to read the file.
-
-### B64. An unfenced plan statement with no terminator still carries prose into the SQL
-
-`unfencedStatement` now makes two cuts: the blank line, then the SQL splitter. The splitter is
-what closed the demonstrated case — `SELECT 1;` followed by "This query returns one row." on the
-next line came back as one statement with the prose inside it, and `plan-statement-drafted` is
-recorded on `kind === "statement"` alone while `verifyPlanningGoal` reads that event as the run
-having ANSWERED. So a run was scored answered while its deliverable would not run.
-
-With NO terminator the splitter has nothing to cut on and returns the whole candidate, so the
-blank line is the only signal left. A model that writes `SELECT 1` without a semicolon and
-explains itself on the next line still gets its prose through, and is still scored answered.
-
-Narrower than the fixed case and not demonstrated on a real run, which is why it is pinned as it
-behaves (`tests/unit/lib/agent/plan-statement.test.ts`) rather than guessed at. The wider fix is
-not another line rule: it is gating the event on validation, which the reader's own header
-already names as the thing it deliberately does not do. That is a change to plan mode's pass
-bar — cells that pass today because a statement was drafted would have to be re-measured — so it
-belongs to whoever owns the measurement rather than to a defect fix.
-
-**Done when:** either the reader ends an unterminated statement without a blank line, or the
-verifier stops treating a drafted statement as an answer on its own — with the cells that moves
-re-measured either way.
 
 ### B65. `retryUnreadStop` subsumes `retryEmptyTurn`, so one entry's `false` decides nothing
 
@@ -2289,28 +2043,3 @@ so), and none of them has been measured.
 
 **Done when:** a resume onto a repointed connection does one stated thing, and the run's own record
 says which.
-
-### B79. The re-pointed decline cannot be reached from the UI in the default storage mode
-
-Measured 2026-08-27, driving the built app in Chrome. `declined: "repointed"` fires when a follow-up
-names a predecessor whose `connectionIdentity` differs from the connection's current one, and the
-server is the one that compares - so the connection has to be one the SERVER holds. In the default
-`STORAGE_PROVIDER=local` deployment the only server-held connections are the seeds, and the seeds are
-not editable: opening a seed in the connection dialog and saving it writes a browser-local copy under
-the same id. The rail then refuses the run before any thread check, with the eligibility sentence
-"`<name>` cannot be rebuilt on the server: its settings live in this browser."
-
-So the drive that produces the decline is: a seed run, an edit of that seed's target ON THE SERVER
-between two questions, and a second question with the rail mounted throughout. That is a server-side
-config change, not something a user does in the product. The decline is real - `tests/api/agent/runs.test.ts`
-drives it end to end, including that it lasts exactly one question - and the sentence the rail shows
-for it is pinned by a component test. What has never been observed is a person reaching it.
-
-Two readings, and they need deciding rather than guessing: either this is a deployment-shaped path
-that only `STORAGE_PROVIDER=sqlite|postgres` installations can hit, in which case the rail's sentence
-should say so; or a seed edit ought to stay server-held, which is a storage decision and not this
-entry's to make.
-
-**Done when:** the decline is observed from the UI in some supported configuration, or the rail's
-sentence names the configuration it belongs to.
-
