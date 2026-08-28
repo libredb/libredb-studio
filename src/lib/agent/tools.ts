@@ -2126,8 +2126,19 @@ async function readCatalog(
     label: CATALOG_LABELS[selector.kind ?? "columns"],
     // Declared, so a scope carrying a schema allowlist bounds which schema may be
     // inspected. A raw read cannot declare its schema, which is why an allowlist
-    // denies one — `docs/BACKLOG.md` B3 records that consequence and the two ways to
-    // resolve it; it is not worked around here.
+    // denies one, and it is not worked around here.
+    //
+    // That is a property of this layer rather than a live defect: nothing builds a
+    // constrained scope today - `runtime.ts` calls `createTargetScope(connectionId)`
+    // with no dimensions - so no allowlist is ever enforced in production. It matters
+    // because the failure would LOOK like a policy bug: the model gets
+    // `TARGET_OUT_OF_SCOPE` with advice to ask for an in-scope target, and for a raw
+    // read there is no way to comply. Two honest resolutions when a caller first needs
+    // scoping, and the choice between them is a product one: give `run_read_query` an
+    // optional declared-schema argument and require it wherever the scope constrains
+    // that dimension, or let the run service refuse to START a run whose scope
+    // constrains a dimension its tool set cannot declare - louder, and it needs no
+    // per-tool argument.
     // The CATALOG dimension is never declared by any tool in this layer, so a scope
     // built with a catalog allowlist denies every call here: `withinAllowlist`
     // refuses an undeclared dimension. That fails closed, which is the right

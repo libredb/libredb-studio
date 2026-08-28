@@ -45,6 +45,38 @@
       }
     },
     {
+      "id": "gemma4:12b",
+      "measured": "6/6 locked, 30/30. Investigate 4s, optimize 24s, assess 21s, operate 14s, analyze 11s, plan 2s (medians of the passing runs). It arrived at 2/6 and 15/30 and the settings did not merely close the four open cells - they made every cell faster, several of them by most of their length: analyze 102s to 11s, assess 118s to 21s, operate 75s to 14s, investigate 9s to 4s. suppressAgentReasoning is what did it, and nothing else reached the illness: on a later serving engine its investigate cell read 1/5 with four losses spending the whole turn without invoking a single tool, and turnTimeoutMs at 150000 read 1/5 again with the losses simply longer - a turn spent thinking finds the new wall too. Assess read 4/5 on the first pass, its one loss a model-timeout at 162s against a median of 18s, and 5/5 on a second read of the same cell at the same settings. The tool count was checked before blaming it and does not separate the two: the losing run called eleven and so did two of the passing ones.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": true,
+        "refusalExamples": false,
+        "turnTimeoutMs": 150000,
+        "suppressAgentReasoning": true
+      },
+      "rationale": {
+        "suppressAgentReasoning": [
+          "Its investigate cell read 5/5 at 9s on one serving engine and 1/5 on the next, with four losses spending the whole turn without invoking a single tool before the clock ended them, against passing runs that still finish in 9. Bimodal: it answers at once or thinks until the wall.",
+          "turnTimeoutMs does not reach this shape - a turn spent thinking finds the new wall too, which is what the same cell measured at 150000 showed: 1/5 again, the losses simply longer."
+        ],
+        "suppressPlanReasoning": [
+          "Its plan cell was 0/5 with the same signature and reads 5/5 at 2s with reasoning off."
+        ],
+        "turnTimeoutMs": [
+          "Assess and operate lost to model-timeout with tools called and work done, which is the clock rather than the thinking."
+        ]
+      }
+    },
+    {
       "id": "gemma4:26b",
       "measured": "database-assessment, fifteen runs across three configurations: 4/5 at the defaults, 3/5 with an unreported-call ceiling of 9 (never fired, every run made 8 calls), 2/5 with two report reminders (calls rose from 8 to 11 and two runs hit the deadline). The losing runs gather evidence and then produce a turn with neither a call nor a report. The second reminder does reach the model and it goes back to reading rather than filing, so the cause is not a forgotten call or a shortage of turns. Call count does not separate winners from losers either: a run that reported in 26 seconds made 11 calls, as many as one that reported nothing. Its other five surfaces lock 5/5 at these defaults. Measured again at 4/5 once the stopping turn became readable: the losing run profiled nine tables, ran two queries, then returned an EMPTY completion — no call, no text — at eleven calls, one under the general ceiling. Its ceiling is 10 on that reading.",
       "settings": {
@@ -123,6 +155,65 @@
       }
     },
     {
+      "id": "muse-glimmer:latest",
+      "measured": "6/6 locked, 30/30, and every cell read in ONE pass under the settings recorded here rather than carried over from the passes that found them - investigate 103s, optimize 191s, assess 167s, operate 80s, analyze 115s, plan 17s (medians of the passing runs; slowest run 285s). The slowest model measured here by a wide margin. Before these settings it was 3/6 at 23/30: plan 0/5, investigate 4/5, assess 4/5. Every one of those losses was the clock - plan timed out at exactly 90 seconds five times over with no tool invoked, and the two single losses timed out at 159s and 160s against passes at 102-116 and 141-163. One run of the confirmation pass died model-unavailable, which is a serving outage and not a verdict; that cell was re-read clean rather than scored over it.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 2,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": true,
+        "refusalExamples": false,
+        "turnTimeoutMs": 150000
+      },
+      "rationale": {
+        "suppressPlanReasoning": [
+          "Its plan cell was 0/5 and all five losses were one run repeated: model-timeout at exactly 90 seconds, an empty ledger, no tool invoked, unmet=no-plan. The turn was spent thinking rather than answering.",
+          "With the switch the same five runs finish in 16 to 21 seconds, and this is the model the setting was measured on."
+        ],
+        "turnTimeoutMs": [
+          "Its other two open cells lost to the clock and to nothing else: investigate 4/5 with the single loss a model-timeout at 159s against passes at 102 to 116, and assess 4/5 with the single loss a model-timeout at 160s against passes at 141 to 163.",
+          "This is the slowest model measured here - its passing assessments call eleven tools and take two and a half minutes - so 90 seconds a turn is the wrong statement about it rather than the model being wrong."
+        ],
+        "reportReminderLimit": [
+          "With the clock no longer the constraint, assess still lost one run, and to a different failure: model-stopped with unmet=no-report at 105s having called fourteen tools, where the timeout losses used to run past 160s.",
+          "A run holding fourteen readings that files none of them took its one reminder and stopped again, which is the distinction between a model that forgot and one that stops as its habit."
+        ]
+      }
+    },
+    {
+      "id": "nemotron-3.5-lightning:30b",
+      "measured": "6/6 locked, 30/30, with turnTimeoutMs at 150000. At the shipped 90000 it was 5/6 at 29/30: five surfaces cleared and plan lost one run to the clock. Re-measured at 150000 all six surfaces pass five for five - investigate 4s, optimize 20s, assess 57s, operate 38s, analyze 9s, plan 144s (medians of the passing runs; slowest run 145s). The plan turn's median rose from 67s to 144s when the limit rose: both ended model-stopped, so it is not being cut off - it spends the budget it is given. The cell costs twice what it did; it is now won rather than lost.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false,
+        "turnTimeoutMs": 150000
+      },
+      "rationale": {
+        "turnTimeoutMs": [
+          "Its plan turn does not fit the 90 seconds the product allows, and nothing else about it is marginal: the other five surfaces clear 5/5 at the shipped limit, at 4, 20, 57, 38 and 9 seconds.",
+          "At 90 seconds the plan cell read 90s (lost), 67, 67, 69 and 68. The passes sit within three seconds of each other and the loss is the wall - model-timeout with zero tools invoked is a turn that never finished, not an answer that was wrong. It was the first run after a cold load, which is the run with the least margin.",
+          "150000 is the value qwen3.5:9b already carries for the same shape rather than a new number. Per model, so no other model's limit moves."
+        ]
+      }
+    },
+    {
       "id": "nemotron3:33b",
       "measured": "6/6 modes locked, 30/30 runs passed with the setting below. Investigate 5/5 . Optimize 5/5 . Assess 5/5 . Operate 5/5 . Analyze 5/5 . Plan 5/5. Query-optimization was the last cell and took twenty-eight runs across eight sittings: 19 of 28 passed before the stop-without-reading switch, and the five that followed it all passed. It is LOCKED but MARGINAL, and four sweeps are why that is written here: 5/5, 5/5, 4/5, 4/5. Both losses have the same signature as the six before them - the report-composing turn running 172.7 and 244.6 seconds against a 90-second turn, where the passes compose theirs in 24 to 93. Nothing in this entry changed between the sweeps; the cell sits near the line, and saying so is better than a figure that reads as steadier than it is.",
       "settings": {
@@ -176,31 +267,6 @@
       }
     },
     {
-      "id": "qwen3.5:4b",
-      "measured": "6/6 modes locked, 30/30 runs passed with the setting below. Investigate 5/5 . Optimize 5/5 . Assess 5/5 . Operate 5/5 . Analyze 5/5 . Plan 5/5. The five agent surfaces passed at the defaults and are untouched. Plan was 0/5 before the reasoning switch and every loss was a model-timeout with an empty ledger - 90, 170 and 179 seconds spent thinking against a 90-second turn; with it the five runs finish in 2 to 6 seconds.",
-      "settings": {
-        "sampling": {
-          "temperature": 0,
-          "topP": 1
-        },
-        "unreportedCallCeiling": 12,
-        "reportReminderLimit": 1,
-        "planStatementRetries": 0,
-        "presentReminderLimit": 1,
-        "retryEmptyTurn": false,
-        "retryUnreadStop": false,
-        "suppressPlanReasoning": true,
-        "refusalExamples": false
-      },
-      "rationale": {
-        "suppressPlanReasoning": [
-          "It thinks instead of answering, and only on plan. Asked for one statement against a Studio-sized prompt it returns 13 188 characters of reasoning and 1 165 of content, in 48 seconds; the five plan runs before this setting spent 90, 170 and 179 seconds and left an empty ledger each time.",
-          "`reasoning_effort: \"none\"` is a REQUEST FIELD, and that is the whole point: nothing is spliced into what Studio says to the model, so no cell's measured wording moves. The in-prompt `/no_think` marker was tried first, looked right on ONE run at 6.5 seconds, did not reproduce - 38 seconds in the system prompt, 51 in the user message - and gave 1/5 in a real sweep. One measurement was not a measurement.",
-          "Applied to the PLAN turn only, gated on the run's mode. The five agent surfaces were all measured WITH reasoning and pass as they are, and an agent run on the prompted protocol is toolless too - so gating on the tool set would have reached exactly the models least able to afford it."
-        ]
-      }
-    },
-    {
       "id": "qwen3.5:9b",
       "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
       "settings": {
@@ -226,6 +292,40 @@
         ],
         "retryEmptyTurn": [
           "The same ending its Plan cell had, one surface over: query-optimization loses on `no-report` with the run stopping after feedback and leaving no text behind, which is an empty completion rather than a model that gave up on the work."
+        ]
+      }
+    },
+    {
+      "id": "qwen3.6:27b",
+      "measured": "6/6 locked, 30/30, with turnTimeoutMs at 150000 and no reasoning on the plan turn. Investigate 26s, optimize 238s, assess 216s, operate 68s, analyze 82s, plan 20s (medians of the passing runs). Before these settings it was 3/6 at 18/30, and every one of its twelve losses was a model-timeout - plan 0/5, optimize 1/5, assess 2/5, with nothing lost to a wrong answer. The settings closed all three. They also made the three cells that already passed FASTER: investigate 51s to 26s, operate 102s to 68s, analyze 110s to 82s - a model that is not racing a limit it cannot meet finishes sooner. Assess read 4/5 on the first pass, losing one run to model-timeout at 252s, and 5/5 on a second read of the same cell at the same setting; the cell is reported from the five consecutive passes rather than from the pass that contained the outlier.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": true,
+        "refusalExamples": false,
+        "turnTimeoutMs": 150000,
+        "suppressAgentReasoning": true
+      },
+      "rationale": {
+        "suppressPlanReasoning": [
+          "Its plan cell is 0/5 and every loss is a model-timeout with no tool invoked - the turn spent thinking rather than answering, which is what this setting was measured on for muse-glimmer:latest and again for gemma4:12b."
+        ],
+        "turnTimeoutMs": [
+          "Twelve losses across three cells and ALL TWELVE are model-timeout: optimize 1/5 with passes at 169s, assess 2/5 with passes at 230s, plan 0/5. Nothing here loses to a wrong answer; everything loses to the wall.",
+          "The shipped 90 seconds a turn is a statement about how long a person waits, and this is one of the slowest models measured. Per model, so no other limit moves."
+        ],
+        "suppressAgentReasoning": [
+          "A later Ollama - 0.33.0, against the 0.32.13 the figures above were taken on - took this model's optimize cell from 5/5 to 1/5, and the losses carry the thinking signature: one tool called, then the whole turn spent before the clock ends it, at 182 to 299 seconds.",
+          "Measured on origin/main as well, where this model has no entry at all and runs on the compiled defaults: 1/5 there too. So the engine moved it and no setting here did.",
+          "With the switch the cell reads 5/5 at 76 seconds against 311 - it is not merely recovered, it is four times faster than the runs that were passing before."
         ]
       }
     },

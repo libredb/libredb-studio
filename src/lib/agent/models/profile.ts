@@ -112,11 +112,10 @@ export interface AgentModelProfile {
   /**
    * Whether this model's PLAN turn asks the endpoint for no reasoning at all.
    *
-   * Measured on `qwen3.5:4b`, whose five agent surfaces all pass as they are and whose plan
-   * cell was 0/5: every loss a `model-timeout` with an empty ledger, the turn spent thinking
-   * rather than answering. On a Studio-sized prompt it emits 13 188 characters of reasoning
-   * against 1 165 of content. With `reasoning_effort: "none"` the same five runs finish in 2
-   * to 6 seconds.
+   * Measured on `muse-glimmer:latest`, whose plan cell was 0/5 with every loss a `model-timeout`
+   * at exactly 90 seconds — an empty ledger, no tool invoked, the turn spent thinking rather than
+   * answering. With `reasoning_effort: "none"` the same five runs finish in 16 to 21 seconds.
+   * `qwen3.6:27b` and `gemma4:12b` were measured on the same shape and carry it too.
    *
    * PLAN ONLY, and gated on the run's MODE rather than on whether it was handed tools: an
    * agent run on the prompted protocol is toolless too, and that is the path four of the
@@ -131,6 +130,25 @@ export interface AgentModelProfile {
    * an operator who sets it on a Gemini model is owed the sentence rather than the silence.
    */
   readonly suppressPlanReasoning?: boolean;
+  /**
+   * Whether this model's AGENT turns ask the endpoint for no reasoning at all.
+   *
+   * The same remedy as the field above, on the surfaces it deliberately does not reach, and a
+   * separate switch rather than a widening of it: a model measured needing quiet on plan was not
+   * measured needing it while holding tools, and reading one field for both would move cells
+   * nobody re-measured. `muse-glimmer:latest` carried the plan one for a whole branch before a
+   * measurement earned it this one, and must not acquire either by association.
+   *
+   * Measured on `gemma4:12b`, whose investigate cell read 5/5 at 9 seconds and, on a later
+   * serving engine, 1/5: four losses spending the whole turn without invoking a single tool
+   * before the clock ended them, against passing runs that still finish in 9. Bimodal — it
+   * either answers at once or thinks until the wall — which is the shape this addresses and
+   * `turnTimeoutMs` does not: a turn spent thinking finds the new wall too.
+   *
+   * Reaches the OPENAI-COMPATIBLE adapter only, exactly as its sibling does, and is silently a
+   * no-op on `gemini`.
+   */
+  readonly suppressAgentReasoning?: boolean;
   /**
    * How many times a report may be held to ask for the answer that belongs beside it.
    *
@@ -254,6 +272,14 @@ export const DEFAULT_RETRY_UNREAD_STOP = false;
  * won, so the switch stays per-model and per-mode.
  */
 export const DEFAULT_SUPPRESS_PLAN_REASONING = false;
+
+/**
+ * Off, for the same reason and with the same blast radius as its sibling above.
+ *
+ * Separate from it rather than one field read twice: a model measured needing quiet on plan was
+ * not measured needing it while holding tools, and the two populations are not the same one.
+ */
+export const DEFAULT_SUPPRESS_AGENT_REASONING = false;
 
 /**
  * One, which is what every locked answer-presenting cell was measured against.

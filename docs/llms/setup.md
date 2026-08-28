@@ -7,7 +7,7 @@ are environment variables read at server startup, which is how everything else i
 is configured. It keeps the choice with whoever operates the server rather than turning it into
 a permission to grant, revoke and audit per user.
 
-Twelve models are supported — every one of them clears all six agent surfaces five consecutive
+Fifteen models are supported — every one of them clears all six agent surfaces five consecutive
 times. They are listed with their measured durations in the [index](README.md).
 
 ## A local model, through Ollama

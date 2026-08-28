@@ -797,7 +797,7 @@ Investigate one, so a figure shown before the workflow is known would be a numbe
 enforcing. The gauges themselves wait for a run either way.
 
 **There is no token gauge, and its absence is deliberate**: this build enforces no token budget, so
-a figure would mean nothing (`docs/BACKLOG.md` B10).
+a figure would mean nothing.
 
 **A run that ends early was asked to stop.** When a run comes within 2 model turns or 20 seconds of
 either of those ceilings, the server tells it once — in its own words, not the database's — that this
@@ -950,8 +950,8 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   2.4 seconds after the Stop. That is the contract rather than a defect, so what changed in #356 is
   that the ending now says it: *"A stop was requested before this ending: the run took no further
   database step, and finished what it already had in hand."*
-- **A run's stored rows do not outlive it**, so a report can outlive the rows its citations point at
-  (`docs/BACKLOG.md` B15). A result opens in the grid, the explain view or the charts view — whichever
+- **A run's stored rows do not outlive it**, so a report can outlive the rows its citations point at.
+  A result opens in the grid, the explain view or the charts view — whichever
   the run's own record names — and cannot be exported from any of them, because Export writes the
   tab's own rows (B34).
 - **An interrupted run is resumable but is not resumed on its own** — nothing enqueues a drive yet

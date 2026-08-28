@@ -30,7 +30,7 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 const BACKLOG_PATH = "docs/BACKLOG.md";
 const BACKLOG = readFileSync(path.join(ROOT, BACKLOG_PATH), "utf8");
 
-/** `AU4` is prefix `AU` and number 4, not prefix `A`: the prefix match is greedy on purpose. */
+/** `REL3` is prefix `REL` and number 3, not prefix `R`: the prefix match is greedy on purpose. */
 const ID_PATTERN = /^([A-Z]+)(\d+)$/;
 
 interface BacklogId {

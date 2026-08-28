@@ -186,7 +186,7 @@ numbers below, but two things break if `maxStatementsPerRun` rises far:
   (`PLAN_RESULT_RELEASED`, `tools.ts:492-493`), and `verifiedAgainst` checks the ledger rather than
   the store (`tools.ts:1447-1458`), so a report can still cite an evicted artifact. What breaks is
   the promise the rail makes to the user: "Show result" is offered *while the run is live*
-  (`docs/AGENT_GUIDE.md`, and B15 for the after-the-run case), and an evicted artifact makes that
+  (`docs/AGENT_GUIDE.md`, which also states the after-the-run case), and an evicted artifact makes that
   button 404 mid-run.
 - **Eviction is not run-fair.** With more than one run in flight, a busy run evicts a quiet run's
   results. Nothing today notices; nothing today needs to, because 20 statements per run means
@@ -977,7 +977,7 @@ Two implementation notes that are easy to get wrong:
 - **The numeric check needs the rows, so it must run while the run is live.** The artifact store is
   process memory released when the run ends (`artifacts.ts:112-123`), which is exactly when
   `answer-composed` is written — during the run, so the rows are there. This is fine, and it is
-  worth pinning with a test, because B15 means it stops being true one instant later.
+  worth pinning with a test, because the release at run end makes it stop being true one instant later.
 - **`summary.columnNames` is engine-supplied text and is not fenced.** `tools.ts:904-906` says so
   explicitly: "anything that later puts an artifact summary INTO a prompt owes it the same fence the
   rows get." The refusal message for `CHART_COLUMN_NOT_IN_RESULT` should list the real column names
@@ -1341,7 +1341,7 @@ is stated rather than left as an omission.
 - **Timeline autoscroll.** Real, and a UI decision that has nothing to do with any of the above.
 - **Run history.** A run is observable only from its own ledger; nothing enqueues a drive (B9) and
   nothing lists past runs. Out of scope.
-- **Result retention after a run ends.** B15: a run's stored rows are released when it ends, so a
+- **Result retention after a run ends.** A run's stored rows are released when it ends, so a
   report's citations can outlive its rows, and "Show result" is offered only while the run is live.
   This design lives inside that constraint — the chart's validation happens while the run is live
   (§3.3) — and does not try to lift it.

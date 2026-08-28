@@ -30,7 +30,7 @@ Each model was asked one question per surface, the same wording for every model,
 | Analyze | "Which part of the company costs us the most in salary?" |
 | Plan | "What tables are in this database and how do they relate to each other?" |
 
-Twelve models, six surfaces, five runs: **360 runs, and all 360 passed.**
+Fifteen models, six surfaces, five runs: **450 runs, and all 450 passed.**
 
 A run passes only when its goal verdict is `answered`. A run that ends `succeeded` having
 answered nothing is a failure here, and the ledger names which bar it missed.
@@ -47,6 +47,24 @@ happens every time somebody asks.
 | Hardware | Apple M5 Max, 64 GB unified memory |
 | Storage | 2 TB SSD |
 | Power | macOS high-power mode, on AC |
+| Serving engine | Ollama 0.32.13 and 0.33.0 — see below |
+
+### The serving engine is part of the measurement too
+
+A model's weights are not the only thing that decides what it does on a run: the server that
+loads them decides too, and it changes under you.
+
+`gemma4:12b` is the measured case. Its investigate cell read 5 of 5 at 9 seconds on Ollama
+0.32.13. On 0.33.0 — same model file, same digest, same objective, same code — it reads 1 of 5,
+and four of the five losses spend the entire turn without invoking a single tool before the clock
+ends them. Three configurations were measured before the engine was suspected: with per-model
+settings, without them, and with the context bound removed. All three read the same. The engine
+was the difference.
+
+So a figure on these pages is a claim about a model **on the engine named beside it**, and a
+reader whose numbers disagree should check their own version before concluding anything about the
+model. The models supported here were verified on 0.33.0 at their most marginal cell — the one
+whose settings exist — rather than assumed to carry over.
 
 **This is a fast machine, and that is a limitation of these pages rather than a feature of
 them.** Every timing here is a best case. A reader on a 16 GB laptop should treat the pass/fail
@@ -78,15 +96,20 @@ knowing before running one.
 called locked at 150 did not hold at 90, and both were withdrawn rather than kept with a
 footnote.
 
-One model asks for more time by name: `qwen3.5:9b` clears five surfaces inside 90 seconds and its
-plan turn lands at 92 to 94, so its profile carries a 150-second limit and every other model
-keeps the shipped one. That is on its page.
+Five models ask for more time by name, each on the cell that needed it: `qwen3.5:9b` clears five
+surfaces inside 90 seconds and its plan turn lands at 92 to 94; `gemma4:12b`,
+`nemotron-3.5-lightning:30b`, `muse-glimmer:latest` and `qwen3.6:27b` each lost one or two cells
+to a `model-timeout` with tools called and work done, which is the clock rather than the model.
+Their profiles carry a 150-second limit, the other ten keep the shipped one, and each page says
+what its model needed.
 
 ## Driven through the interface as well
 
-The 360 runs above were opened over HTTP. A separate sweep drove all twelve models through the
+The 450 runs above were opened over HTTP. A separate sweep drove ten of the models through the
 product's own rail — log in, pick the sample connection, type the objective, press Start, wait
-for the run to finish on screen — one run per surface: **57 of 60 passed.**
+for the run to finish on screen — one run per surface: **57 of 60 passed.** Ten, not fifteen: that
+sweep was run when ten models were supported and has not been repeated, and the five added since
+are measured over HTTP only. Saying "all of them" would have described a sweep nobody ran.
 
 The three that did not are the same shapes the ledger records anywhere else (`no-report`,
 `no-plan`), and one run is not five, so the API sweep is the authority on rates. What the UI

@@ -2888,8 +2888,7 @@ export function AgentRail({
           Said where the results are listed, and keyed on this run having stored any
           plus the HOST's ability to show one — so it appears exactly when it explains
           something: while the run is live it states the bound in advance, and once the
-          run has ended it says why the controls that were there are gone
-          (`docs/BACKLOG.md` B15).
+          run has ended it says why the controls that were there are gone.
 
           It used to live inside the report section, which meant only a run that
           composed a report ever explained itself. The runs that most need the sentence

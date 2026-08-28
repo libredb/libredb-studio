@@ -31,6 +31,7 @@ import {
   retriesEmptyTurn,
   retriesUnreadStop,
   samplingFor,
+  suppressesAgentReasoning,
   suppressesPlanReasoning,
   turnTimeoutMsFor,
 } from "@/lib/agent/models";
@@ -59,6 +60,8 @@ interface ResolvedRow {
   readonly retriesUnreadStop?: boolean;
   /** Optional, and PLAN-only; see the field's own note in `profile.ts`. */
   readonly suppressesPlanReasoning?: boolean;
+  /** Optional, and AGENT-only; its sibling above does not imply it. */
+  readonly suppressesAgentReasoning?: boolean;
   readonly refusalExamples: boolean;
   readonly turnTimeoutMs: number | undefined;
   /** Only the surfaces that differ from `PINNED`; every other surface resolves to it. */
@@ -76,6 +79,20 @@ const RESOLVED: ResolvedRow[] = [
     retriesEmptyTurn: true,
     refusalExamples: false,
     turnTimeoutMs: undefined,
+  },
+  {
+    // The sixteenth entry and the fourth model closed on this branch. The only one carrying
+    // suppressAgentReasoning, which was written for it: nothing else reached its illness.
+    id: "gemma4:12b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    suppressesPlanReasoning: true,
+    suppressesAgentReasoning: true,
+    turnTimeoutMs: 150_000,
   },
   {
     id: "gemma4:26b",
@@ -128,6 +145,21 @@ const RESOLVED: ResolvedRow[] = [
     turnTimeoutMs: 150_000,
   },
   {
+    // Three settings, and the third was added a day after the other two: a serving-engine upgrade
+    // took its optimize cell from 5/5 to 1/5, and the quiet agent turn took it back at 76 seconds
+    // against 311.
+    id: "qwen3.6:27b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    suppressesPlanReasoning: true,
+    suppressesAgentReasoning: true,
+    turnTimeoutMs: 150_000,
+  },
+  {
     id: "qwen3.8:latest",
     unreportedCallCeiling: 12,
     reportReminderLimit: 1,
@@ -158,6 +190,31 @@ const RESOLVED: ResolvedRow[] = [
     turnTimeoutMs: undefined,
   },
   {
+    // The thirteenth model. Its only setting is the clock, and everything else is the compiled
+    // default: it was measured needing one thing, and a setting it did not earn is a guess.
+    id: "nemotron-3.5-lightning:30b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: 150_000,
+  },
+  {
+    // The fourteenth, and the widest set any model carries: three settings for three DIFFERENT
+    // failures, each measured on the cell it was added for.
+    id: "muse-glimmer:latest",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 2,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    suppressesPlanReasoning: true,
+    turnTimeoutMs: 150_000,
+  },
+  {
     id: "nemotron3:33b",
     unreportedCallCeiling: 12,
     reportReminderLimit: 1,
@@ -167,18 +224,6 @@ const RESOLVED: ResolvedRow[] = [
     // The one value this model does not share with the defaults, and the reason it has an entry.
     retriesUnreadStop: true,
     refusalExamples: true,
-    turnTimeoutMs: undefined,
-  },
-  {
-    id: "qwen3.5:4b",
-    unreportedCallCeiling: 12,
-    reportReminderLimit: 1,
-    planStatementRetries: 0,
-    presentReminderLimit: 1,
-    retriesEmptyTurn: false,
-    // The one value this model does not share with the defaults, and the reason it has an entry.
-    suppressesPlanReasoning: true,
-    refusalExamples: false,
     turnTimeoutMs: undefined,
   },
   {
@@ -239,6 +284,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
     expect(retriesEmptyTurn(row.id)).toBe(row.retriesEmptyTurn);
     expect(retriesUnreadStop(row.id)).toBe(row.retriesUnreadStop ?? false);
     expect(suppressesPlanReasoning(row.id)).toBe(row.suppressesPlanReasoning ?? false);
+    expect(suppressesAgentReasoning(row.id)).toBe(row.suppressesAgentReasoning ?? false);
     expect(offersRefusalExamples(row.id)).toBe(row.refusalExamples);
     expect(turnTimeoutMsFor(row.id)).toBe(row.turnTimeoutMs);
   });
@@ -255,7 +301,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
   test("the table covers every registered model, so a new one cannot arrive unpinned", () => {
     const pinned = new Set(RESOLVED.map((row) => row.id));
     for (const id of Object.keys(modelProfiles())) expect(pinned.has(id)).toBe(true);
-    expect(Object.keys(modelProfiles())).toHaveLength(12);
+    expect(Object.keys(modelProfiles())).toHaveLength(15);
   });
 });
 
@@ -307,8 +353,18 @@ describe("what each model records about the runs that earned its settings", () =
     "qwen3:8b": "3dd169b2c0718d77a0db8732d575bb4c863d78ed8343020c103c0f38e9cf016b",
     // The eleventh model, whose record is new rather than moved; see its entry for the runs.
     "nemotron3:33b": "c1693800c32d336e610590e909300df682479247a910a291c9913ba278f26a8d",
-    // The twelfth model, whose record is new too; the plan cell is what its setting bought.
-    "qwen3.5:4b": "5e873a71f788b8e5cd361dca67faf1397630fd4da43ac8bf6e570453d02aa811",
+    // The thirteenth. Its record is the only one that states a COST as well as a result: the plan
+    // turn's median doubled when the limit rose, and that sentence is load-bearing.
+    "nemotron-3.5-lightning:30b": "9a581f6838f604eaa3bf9fb0e2636635bd878f50d03b135205eac3e2ab7b0678",
+    // The fourteenth. Its record says its cells were read in ONE pass under the settings it
+    // ships with, which is the claim three settings on one model has to earn.
+    "muse-glimmer:latest": "32bf1643caa8ed550066a64c4a231585a3ddbd30286646bef45f5531198d06cb",
+    // The fifteenth. Its record states the outlier as well as the result: assess read 4/5 once
+    // and 5/5 on a second read of the same cell at the same setting.
+    "qwen3.6:27b": "d0ebde3fdf25b9c56ab7bcad4adc3b54510a413285e51edcb46aec261e661157",
+    // The fourth closed here, and the one the new switch was written for. Its record states the
+    // refuted hypothesis too: the tool count does not separate its passing runs from its loss.
+    "gemma4:12b": "9a49a9323c21ffe507698ca2ca852cc1b59647a206e73c448afeea7f1a0a674b",
   };
 
   test("every model's record survives the move, character for character", () => {

@@ -64,6 +64,7 @@ import {
   presentReminderLimitFor,
   retriesEmptyTurn,
   retriesUnreadStop,
+  suppressesAgentReasoning,
   suppressesPlanReasoning,
   turnTimeoutMsFor,
   planStatementRetriesFor,
@@ -2304,7 +2305,10 @@ async function takeTurn(
     provider's name passed the unit test - the scripted model is configured as `openai` - and
     sent nothing at all on the first real ollama run, which then timed out at 94 seconds.
   */
-  const quietPlan = mode !== "agent" && suppressesPlanReasoning(agentModel.modelId);
+  // Two switches, one per mode, and neither implies the other: a model measured needing quiet on
+  // its plan turn was not measured needing it while holding tools. See both fields in `profile.ts`.
+  const quiet =
+    mode === "agent" ? suppressesAgentReasoning(agentModel.modelId) : suppressesPlanReasoning(agentModel.modelId);
   const stream = streamText({
     model: agentModel.model,
     temperature: sampling.temperature,
@@ -2319,7 +2323,7 @@ async function takeTurn(
     instructions,
     messages: [...messages],
     ...(tools === undefined ? {} : { tools }),
-    ...(quietPlan ? { providerOptions: { openai: { reasoningEffort: PLAN_NO_REASONING_EFFORT } } } : {}),
+    ...(quiet ? { providerOptions: { openai: { reasoningEffort: PLAN_NO_REASONING_EFFORT } } } : {}),
     maxRetries: 0,
     // Real-time backstop for ONE call, sized by what the run has left. The
     // deadline object remains the authority — it is what the loop reads between
