@@ -4,6 +4,86 @@ entries:
   - annotations:
       artifacthub.io/category: database
       artifacthub.io/changes: |
+        - "Security: the SSH tunnel verified no host key at all - ssh2 was given no hostVerifier and has no default, so the tunnel completed its handshake with whatever answered on the bastion's address. Host keys are now trust-on-first-use, pinned per connection, and a changed key is refused naming both fingerprints"
+        - "Security: the destructive-command confirmation gate spoke SQL only, so Redis FLUSHALL and a MongoDB deleteMany with an empty filter ran with no confirmation while DELETE FROM on every SQL engine asked. The vocabulary is now per engine type, and a payload the reader cannot parse asks rather than staying silent"
+        - "Security: POST /api/db/maintenance validated that an operation exists rather than that it could take the target it was given, so a direct request naming one table could vacuum a whole SQLite file. The route now derives the placement from the same per-provider declaration both UI surfaces already gate on"
+        - "New engine - DuckDB, as an embedded file engine with the read-only boundary the engine itself enforces rather than a name denylist"
+        - "New engine - libSQL over the Hrana protocol, one connection type for a self-hosted sqld and for Turso Cloud alike, with no added runtime dependency"
+        - "An unknown reading is now absent rather than zero, across the Overview, Monitoring, Queries and Storage tabs. A denied DMV, an unprivileged V$SESSION or a serverStatus with no connections section drew a confident zero on a busy server; a capped list drew its own ceiling as the database's query count; and the Storage tab divided three figures by a total it did not have, rendering negative percentages"
+        - "Schema diff no longer wraps generated migrations in BEGIN;/COMMIT; for dialects that cannot run DDL in a transaction, which had made the script fail on the engines it was generated for"
+        - "Redis connections carry their ACL username through to the driver, and the active session's user is read from the CLIENT LIST user field rather than inferred"
+        - "The query agent carries measured settings for more models, binds each run to the conversation it belongs to, and declines a follow-up whose connection now addresses a different database instead of answering from the earlier run's snapshot"
+        - "The row limiter no longer reads a bound mentioned inside a comment or a string literal as a bound the statement already carries, which had let an unlimited statement return every row of a table"
+        - "Four defects at 390px, starting with a light-theme toggle that could not be reached on a phone"
+        - "Compatibility registry: Apache Doris, Garnet, both Percona distributions, ParadeDB and OrioleDB are recorded as measured relatives; Databend is query-only and QuestDB is refused a row, each for a measured reason"
+        - "Track app release 0.13.5 (appVersion bump; default image tag follows)"
+      artifacthub.io/containsSecurityUpdates: "true"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:0.13.5
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 0.13.5
+    created: "2026-08-29T20:10:15.280679233Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting sixteen engines
+      - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase,
+      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra
+      and libSQL
+    digest: 0a90cb0d99129e7335bfff6041f4523c1a7e10e1e94b7699ac706e355719b08a
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - libsql
+    - turso
+    - duckdb
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.55/libredb-studio-0.1.55.tgz
+    version: 0.1.55
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
         - "config.authCookieSecure is now a first-class value: it writes AUTH_COOKIE_SECURE, the setting a browser reaching Studio over plain HTTP on a LAN or home-server address needs, which previously had to go through extraEnv. Three-state - leave it unset and nothing is written, so the app decides exactly as before"
         - "MySQL: reads no longer go through the prepared protocol unconditionally, which had broken statements MySQL itself only answers on the text protocol - CHECK TABLE and its relatives returned an error instead of a result"
         - "Monitoring: one refused read no longer costs the whole dashboard - the seven panels degrade individually, so a permission the user lacks hides that panel rather than blanking the page, and two panels stop reporting a fabricated zero"
@@ -3169,4 +3249,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-08-27T16:57:48.751748413Z"
+generated: "2026-08-29T20:10:15.271427459Z"
