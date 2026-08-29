@@ -654,7 +654,7 @@ export class RedisProvider extends BaseDatabaseProvider {
 
         sessions.push({
           pid: fields.id || "0",
-          user: fields.name || "default",
+          user: fields.user || "default",
           database: fields.db || "0",
           state: fields.flags || "N",
           query: fields.cmd || "idle",

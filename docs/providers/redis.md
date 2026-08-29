@@ -86,20 +86,18 @@ though `CLIENT LIST` itself answers correctly - the session list is right while 
 is not.
 
 **Every `CLIENT LIST` field is optional, and the absent ones surface as defaults.**
-`getActiveSessions()` ([`redis.ts:623`](../../src/lib/db/providers/keyvalue/redis.ts)) splits each
+`getActiveSessions()` ([`redis.ts:640`](../../src/lib/db/providers/keyvalue/redis.ts)) splits each
 line into `key=value` pairs and substitutes a default for anything missing: the session's user is
-`name` falling back to `default`, its pid `id` falling back to `0`, its state `flags` falling back
+`user` falling back to `default`, its pid `id` falling back to `0`, its state `flags` falling back
 to `N`, its command `cmd` falling back to `idle`. A relative that omits a field therefore produces a
-plausible-looking row rather than an error. Note that the user column reads `name`, not the `user`
-field Redis also publishes, and `name=` is empty until a client calls `CLIENT SETNAME` — so
-`default` is what every engine here shows, Redis included, rather than a relative's quirk.
+plausible-looking row rather than an error.
 
 Three relatives diverge, all measured on the versions above:
 
-- **Dragonfly fills `name` with the connection id**, so the user column shows a number (`8`) rather
-  than falling back to `default` — the fallback is never reached. Its line also carries no `cmd=`
-  and no `flags=` at all, so the query column reads `idle` and the state column `N` for every
-  session, whatever that session is doing.
+- **Dragonfly publishes no `user=` field at all**, so the user column reads `default` regardless of
+  which ACL user the connection authenticated as — the fallback is always the answer there, not the
+  exception. Its line also carries no `cmd=` and no `flags=` at all, so the query column reads
+  `idle` and the state column `N` for every session, whatever that session is doing.
 - **KeyDB reports a command without its subcommand** (`cmd=client` where Redis and Valkey both send
   `cmd=client|list`), which the query column shows verbatim.
 - **Garnet answers `CLIENT LIST` in full** - the session row is complete and correct - so the

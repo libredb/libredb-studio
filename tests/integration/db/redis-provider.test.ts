@@ -33,8 +33,11 @@ const MOCK_INFO_STRING = [
   "",
 ].join("\n");
 
+// `name=` is the connection name (empty until a client calls CLIENT SETNAME) and is
+// deliberately left blank here, distinct from `user=` (the authenticated ACL user) - the
+// two used to be conflated in getActiveSessions(), which read `name` for the user column.
 const MOCK_CLIENT_LIST =
-  "id=1 addr=127.0.0.1:6379 name=app1 db=0 flags=N cmd=get idle=5\nid=2 addr=127.0.0.1:6380 name=app2 db=0 flags=N cmd=set idle=10";
+  "id=1 addr=127.0.0.1:6379 name= db=0 flags=N cmd=get idle=5 user=studio\nid=2 addr=127.0.0.1:6380 name= db=0 flags=N cmd=set idle=10 user=default";
 
 // SLOWLOG GET entries: [id, timestamp, duration-in-microseconds, args, clientAddr, clientName]
 // The second entry carries a non-array args payload to exercise the String() fallback.
@@ -967,6 +970,12 @@ describe("RedisProvider", () => {
       expect(sessions).toBeArray();
       expect(sessions.length).toBe(2);
       expect(sessions[0].user).toBeDefined();
+    });
+
+    test("reads the user column from CLIENT LIST's user field, not its name field", async () => {
+      const sessions = await provider.getActiveSessions();
+      expect(sessions[0].user).toBe("studio");
+      expect(sessions[1].user).toBe("default");
     });
   });
 
