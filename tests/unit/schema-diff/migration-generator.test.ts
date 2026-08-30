@@ -1164,6 +1164,49 @@ describe("generateMigrationSQL: duckdb", () => {
       instance.closeSync();
     }
   });
+
+  /*
+    The wrapper's half of the same measurement, and the reason `duckdb` reads `"wrapped"` in
+    TRANSACTION_WRAPPER_COVERAGE below while twelve other ids read `"unwrapped"` (#284).
+
+    Accepting `BEGIN;` and running a transaction are two different things, and only a pair of
+    arms tells them apart: the same generated `CREATE TABLE` is run twice, and the engine has
+    to forget it after the ROLLBACK arm and keep it after the COMMIT one. The lines executed
+    are the generator's own, sliced out of its output rather than typed again here, so a
+    generator that stopped emitting them would fail this test instead of quietly passing it.
+  */
+  test("the emitted BEGIN;/COMMIT; bracket a transaction the engine really runs", async () => {
+    const sql = generateMigrationSQL(makeAddedTableDiff(), "duckdb");
+
+    const wrapper = sql.split("\n").filter((line) => line === "BEGIN;" || line === "COMMIT;");
+    expect(wrapper).toEqual(["BEGIN;", "COMMIT;"]);
+    const [begin, commit] = wrapper;
+    // Only the table body: `run` takes one statement, and the trailing CREATE INDEX and the
+    // comment lines are not the subject here.
+    const createTable = sql.slice(sql.indexOf('CREATE TABLE "users"'), sql.indexOf("\n);") + 3);
+
+    const { DuckDBInstance } = await import("@duckdb/node-api");
+    const instance = await DuckDBInstance.create(":memory:");
+    const connection = await instance.connect();
+    const usersTables = async () =>
+      (
+        await connection.runAndReadAll("SELECT count(*) AS n FROM duckdb_tables() WHERE table_name = 'users'")
+      ).getRowObjectsJson();
+    try {
+      await connection.run(begin);
+      await connection.run(createTable);
+      await connection.run("ROLLBACK;");
+      expect(await usersTables()).toEqual([{ n: "0" }]);
+
+      await connection.run(begin);
+      await connection.run(createTable);
+      await connection.run(commit);
+      expect(await usersTables()).toEqual([{ n: "1" }]);
+    } finally {
+      connection.disconnectSync();
+      instance.closeSync();
+    }
+  });
 });
 
 describe("generateMigrationSQL: dialects that cannot modify a column", () => {
@@ -1200,9 +1243,10 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "wrapped" | "unwrapped"
   postgres: "wrapped",
   mysql: "wrapped",
   // Measured live via @duckdb/node-api 1.5.5-r.4 (DuckDB v1.5.5, in-process, no server
-  // needed): `BEGIN;` / `BEGIN TRANSACTION;` both open a real transaction around DDL,
-  // and a `CREATE TABLE` issued inside one is undone by `ROLLBACK;` — pinned further in
-  // the "generateMigrationSQL: duckdb" describe block above.
+  // needed): `BEGIN;` opens a real transaction around DDL, so a `CREATE TABLE` issued
+  // inside one is undone by `ROLLBACK;` and kept by `COMMIT;`. Both arms are EXECUTED in
+  // the "generateMigrationSQL: duckdb" describe block above, which is where that
+  // measurement is pinned; this line only classifies it.
   duckdb: "wrapped",
   // UNCHANGED — see this table's own doc comment above.
   mssql: "wrapped",
