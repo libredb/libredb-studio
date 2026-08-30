@@ -42,6 +42,7 @@ export const LIVE_CHANNELS: readonly ShowcaseChannel[] = [
   { id: "winget", label: "winget", group: "packages" },
   { id: "chocolatey", label: "Chocolatey", group: "packages" },
   { id: "flatpark", label: "FlatPark (Flatpak)", group: "packages" },
+  { id: "appimagehub", label: "AppImageHub", group: "packages" },
 ];
 
 export const LIVE_PLATFORMS: readonly ShowcasePlatform[] = [

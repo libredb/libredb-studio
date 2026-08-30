@@ -34,9 +34,9 @@ channel count.
 
 ## Coverage snapshot
 
-**33 channels · 25 live · 7 pending · 1 deprecated**
+**33 channels · 26 live · 6 pending · 1 deprecated**
 
-Live channels by platform: **Linux 7 · macOS 3 · Windows 4 · Container 4 · Kubernetes 2 · Cloud 10**
+Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 4 · Kubernetes 2 · Cloud 10**
 
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
@@ -44,7 +44,7 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 4 · Container 4 · K
 | Containers | 2 | 0 | 0 |
 | Kubernetes & operators | 2 | 1 | 0 |
 | Package managers | 5 | 0 | 1 |
-| OS / desktop packages | 2 | 1 | 0 |
+| OS / desktop packages | 3 | 0 | 0 |
 | PaaS catalogs (listed) | 8 | 4 | 0 |
 | Deploy recipes | 3 | 0 | 0 |
 | Cloud marketplaces | 1 | 1 | 0 |
@@ -71,8 +71,8 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 4 · Container 4 · K
 | [winget](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/LibreDB/Studio) | Package managers | Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | Flathub | Package managers | Linux | deprecated | — | [packaging/flatpak/README.md](../packaging/flatpak/README.md) |
 | [Desktop app (AppImage, .deb)](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [desktop/README.md](../desktop/README.md) |
+| [AppImageHub](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Manual, on demand | [desktop/README.md](../desktop/README.md) |
 | [Linux .deb / .rpm](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| [AppImageHub](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | pending | Manual, on demand | [desktop/README.md](../desktop/README.md) |
 | [CapRover official](https://github.com/caprover/one-click-apps) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/caprover/README.md](../deploy/caprover/README.md) |
 | [Cosmos servapp marketplace](https://github.com/azukaar/cosmos-servapps-official) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/cosmos/README.md](../deploy/cosmos/README.md) |
 | [Dokploy template catalog](https://templates.dokploy.com) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/dokploy/README.md](../deploy/dokploy/README.md) |

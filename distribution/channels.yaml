@@ -877,7 +877,7 @@ channels:
   - id: appimagehub
     name: AppImageHub catalog (appimage.github.io)
     short_name: AppImageHub
-    status: pending
+    status: live
     category: os-desktop
     platforms: [linux]
     runtime: channel_supplied
@@ -893,8 +893,10 @@ channels:
       docs: desktop/README.md
     pin:
       strategy: none
-      note: One line in the catalog's data/LibreDB_Studio naming this repository - their worker reads
-        the releases API, takes the first AppImage asset matching x64 and re-reads it on every
+      note: Live since 2026-08-30 - AppImage/appimage.github.io#3861 merged and the listing serves at
+        https://appimage.github.io/LibreDB_Studio/, linking the releases page rather than a frozen
+        asset URL. One line in the catalog's data/LibreDB_Studio names this repository - their
+        worker reads the releases API, takes the first AppImage asset matching x64 and re-reads it on every
         catalog rebuild, so no release bumps anything here and there is no served version to pin.
         What the listing depends on instead is the x64 AppImage staying startable for someone other
         than its builder - the review CI runs it under firejail --appimage on ubuntu-22.04 and fails
