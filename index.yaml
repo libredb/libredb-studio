@@ -4,6 +4,75 @@ entries:
   - annotations:
       artifacthub.io/category: database
       artifacthub.io/changes: |
+        - "The sign-in page no longer shows a bare Encrypted badge beside the SSO button. It named no subject, and on the default local storage provider it had no referent beyond the TLS the browser already indicates - saved connections live in the browser localStorage in plaintext by design, and the at-rest AES-256-GCM covers the sqlite and postgres server store only"
+        - "Track app release 0.13.6 (appVersion bump; default image tag follows)"
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:0.13.6
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 0.13.6
+    created: "2026-08-30T06:27:10.527727666Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting sixteen engines
+      - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase,
+      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra
+      and libSQL
+    digest: 1503deab29c60dbaf2c4ab2768370c0df330d1848e6803a88b293b19bbd02f04
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - libsql
+    - turso
+    - duckdb
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.56/libredb-studio-0.1.56.tgz
+    version: 0.1.56
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
         - "Security: the SSH tunnel verified no host key at all - ssh2 was given no hostVerifier and has no default, so the tunnel completed its handshake with whatever answered on the bastion's address. Host keys are now trust-on-first-use, pinned per connection, and a changed key is refused naming both fingerprints"
         - "Security: the destructive-command confirmation gate spoke SQL only, so Redis FLUSHALL and a MongoDB deleteMany with an empty filter ran with no confirmation while DELETE FROM on every SQL engine asked. The vocabulary is now per engine type, and a payload the reader cannot parse asks rather than staying silent"
         - "Security: POST /api/db/maintenance validated that an operation exists rather than that it could take the target it was given, so a direct request naming one table could vacuum a whole SQLite file. The route now derives the placement from the same per-provider declaration both UI surfaces already gate on"
@@ -3249,4 +3318,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-08-29T20:10:15.271427459Z"
+generated: "2026-08-30T06:27:10.520216726Z"
