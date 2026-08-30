@@ -1958,6 +1958,26 @@ describe("planning mode runs no statement of the user's", () => {
       // Rationale AFTER the statement, so the deliverable is the first thing in the
       // answer rather than the conclusion of an essay.
       expect(rules).toContain("Put the rationale AFTER the statement");
+      /*
+        And the refusal is introduced by ONE spelling, because these rules teach the marker and a
+        second phrase beside it gets written instead.
+
+        Measured on `qwen3.5:4b`: its plan cell read 1/5 across five attempts, every loss
+        `no-statement`, and its refusals were right in substance — it named the two tables whose
+        columns the inventory could not derive and asked the one question that would have
+        unblocked it. It opened them `NO STATEMENT AT ALL:`.
+
+        That string was ours. The rule read "write NO STATEMENT AT ALL: begin a line with `NO
+        STATEMENT:`" — English followed by a colon, set immediately against a literal introduced
+        the same way. The model took the first as the thing to write. It obeyed the instruction
+        and scored as having answered nothing.
+
+        Pinned on the RULES rather than on the reader: widening the reader would accept this one
+        spelling and leave the sentence that produced it in place, and the next model would invent
+        a different one.
+      */
+      expect(rules).toContain("begin a line with `NO STATEMENT:`");
+      expect(rules).not.toContain("NO STATEMENT AT ALL");
       expect(rules).toContain("Use no table name and no column name that is not in that inventory");
       // The honest limit of item 6: an inventory records what EXISTS, not what this
       // user's role may select from, so a validated statement is not a statement that
@@ -1993,6 +2013,25 @@ describe("planning mode runs no statement of the user's", () => {
       // and to refuse in the same breath is how a model splits the difference and
       // invents a schema.
       expect(rules).not.toContain("Produce ONE runnable statement");
+      /*
+        And the rules contain NO second phrase a model could read as the marker.
+
+        Measured on `qwen3.5:4b`, whose plan cell read 1/5 across five attempts, every loss
+        `no-statement`. Its refusals were correct in substance — it said which two tables had no
+        derivable columns and asked the one question that would have unblocked it — and it opened
+        them with `NO STATEMENT AT ALL:`.
+
+        That string was ours. The rule read "write NO STATEMENT AT ALL: begin a line with `NO
+        STATEMENT:`", where the first phrase is English and the second is the literal. Followed by
+        a colon and set against a marker introduced the same way, the first reads as the thing to
+        write, and the model wrote it. It obeyed the instruction and was scored as having answered
+        nothing.
+
+        Asserted on the rules rather than on the reader, because widening the reader would accept
+        this one spelling and leave the instruction that produced it in place — and the next model
+        would invent a different one.
+      */
+      expect(rules).not.toContain("NO STATEMENT AT ALL");
     });
 
     /*

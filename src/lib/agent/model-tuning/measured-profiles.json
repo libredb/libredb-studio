@@ -12,6 +12,7 @@
       "reportReminderLimit": 1,
       "planStatementRetries": 0,
       "presentReminderLimit": 1,
+      "verdictHoldLimit": 2,
       "retryEmptyTurn": false,
       "retryUnreadStop": false,
       "suppressPlanReasoning": false,
@@ -155,6 +156,25 @@
       }
     },
     {
+      "id": "granite4.2:8b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults, and no setting was needed for any of them. Investigate 34s · Optimize 67s · Assess 140s · Operate 26s · Analyze 37s · Plan 33s (medians of the passing runs). It is the only model measured on this machine that closed every surface on its first reading with nothing carried over, which is why the entry states the defaults rather than omitting the model: an absent entry records no measurement, and this one is the measurement. Its database-assessment cell is the thin one and a later sweep says so: re-read on a second sitting it came back 4/5, one run lost to the clock against a 140-second median that is the slowest assess cell here. That is the shape gemma4:12b and qwen3.6:27b both recorded on the same surface and both re-read clean, and it is written down rather than smoothed away.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      },
+      "rationale": {}
+    },
+    {
       "id": "muse-glimmer:latest",
       "measured": "6/6 locked, 30/30, and every cell read in ONE pass under the settings recorded here rather than carried over from the passes that found them - investigate 103s, optimize 191s, assess 167s, operate 80s, analyze 115s, plan 17s (medians of the passing runs; slowest run 285s). The slowest model measured here by a wide margin. Before these settings it was 3/6 at 23/30: plan 0/5, investigate 4/5, assess 4/5. Every one of those losses was the clock - plan timed out at exactly 90 seconds five times over with no tool invoked, and the two single losses timed out at 159s and 160s against passes at 102-116 and 141-163. One run of the confirmation pass died model-unavailable, which is a serving outage and not a verdict; that cell was re-read clean rather than scored over it.",
       "settings": {
@@ -184,6 +204,31 @@
         "reportReminderLimit": [
           "With the clock no longer the constraint, assess still lost one run, and to a different failure: model-stopped with unmet=no-report at 105s having called fourteen tools, where the timeout losses used to run past 160s.",
           "A run holding fourteen readings that files none of them took its one reminder and stopped again, which is the distinction between a model that forgot and one that stops as its habit."
+        ]
+      }
+    },
+    {
+      "id": "nemotron-3-nano:30b",
+      "measured": "6/6 modes locked, 30/30 runs passed with turnTimeoutMs at 150000. Five surfaces cleared the shipped 90-second turn on the first reading and untouched; query-optimization read 3/5 there, both losses model-timeout at 147s and 90s, and the raised limit took the cell.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false,
+        "turnTimeoutMs": 150000
+      },
+      "rationale": {
+        "turnTimeoutMs": [
+          "One cell of six, and only the clock. Five surfaces clear the shipped 90 seconds untouched; query-optimization read 3/5 there and both losses were model-timeout - 147s and 90s - against passes that finish well inside the limit. A turn cut off mid-work is not an answer the verdict rejected.",
+          "150000 is the value qwen3.5:9b and nemotron-3.5-lightning:30b already carry for the same shape rather than a new number, and it is the ceiling the eval protocol was measured against. The default stays 90 for every other model: it is a promise about how long a person waits, not a fact about any model."
         ]
       }
     },
@@ -263,6 +308,31 @@
         "planStatementRetries": [
           "Its last open cell, and the loss is `no-statement` twice over.",
           "The closing prose is not a bad plan — it names all eight tables, their columns and their keys, correctly. What it never writes is a runnable statement or the explicit `NO STATEMENT:` refusal, and plan mode's bar is one of those two. `qwen3:14b` lost the same cell the same way and the extra turn won it."
+        ]
+      }
+    },
+    {
+      "id": "qwen3.5:4b",
+      "measured": "6/6 locked, 30/30. Five surfaces cleared at the shipped defaults and were never touched; plan was the whole of the work and took two separate fixes. At the defaults its plan turns ended model-timeout with a zero-event ledger - the turn spent thinking, and plan mode holds no tools, so thinking time is the only thing that can fail. suppressPlanReasoning turned every one of those into a finished turn and the cell moved 0/5 to 1/5. The remaining four losses were not settings at all: the run wrote a correct refusal, naming the two views whose columns the inventory cannot derive and asking the one question that would unblock it, and opened it `NO STATEMENT AT ALL:` - a phrase this product's own planning rule put in front of the marker it was teaching. With that wording corrected the cell read 5/5 on its first pass. LOCKED but MARGINAL on data-analysis, and a later sweep is why that is written here: the same cell re-read 3/5 on a second sitting, its two losses `answer-uncited` and `no-answer`. The passing runs answer in two or three tool calls and the losing ones wander to ten and eleven, so the cell turns on whether the run settles early rather than on any setting. Recorded rather than re-measured away, because a figure that reads steadier than the model is worse than one that says where it is thin.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": true,
+        "refusalExamples": false
+      },
+      "rationale": {
+        "suppressPlanReasoning": [
+          "Its plan cell was 0/5 and every loss was the same run: model-timeout at the turn limit with an empty ledger, no tool invoked, unmet=no-plan. Plan mode has no tools, so a turn that produces nothing spent itself thinking.",
+          "With the switch every one of those five turns finishes, and the cell moved 0/5 to 1/5 on the attempt that set it - the losses that remained were a different fault, in this product's own wording rather than in this model.",
+          "The other five surfaces clear 5/5 at the shipped defaults and are not given it: this is scoped to the one mode whose failure it was measured on."
         ]
       }
     },

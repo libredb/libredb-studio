@@ -88,6 +88,13 @@ const settingsShape = {
   reportReminderLimit: countSchema,
   planStatementRetries: countSchema,
   presentReminderLimit: countSchema,
+  /**
+   * Absent means the compiled two, which is what every entry written before this bound became
+   * per-model was measured under. Optional for the reason `suppressAgentReasoning` is: making
+   * it required would write the default into seventeen entries to say what their absence
+   * already says, and not one of those measurements would change.
+   */
+  verdictHoldLimit: countSchema.optional(),
   retryEmptyTurn: z.boolean(),
   retryUnreadStop: z.boolean(),
   suppressPlanReasoning: z.boolean(),
@@ -148,6 +155,7 @@ const measuredAgainstSchema = z.strictObject({
     reportReminderLimit: countSchema,
     planStatementRetries: countSchema,
     presentReminderLimit: countSchema,
+    verdictHoldLimit: countSchema,
     retryEmptyTurn: z.boolean(),
     retryUnreadStop: z.boolean(),
     suppressPlanReasoning: z.boolean(),

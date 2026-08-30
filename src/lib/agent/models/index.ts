@@ -41,6 +41,7 @@ import {
   DEFAULT_REPORT_REMINDER_LIMIT,
   DEFAULT_REFUSAL_EXAMPLES,
   DEFAULT_PRESENT_REMINDER_LIMIT,
+  DEFAULT_VERDICT_HOLD_LIMIT,
   DEFAULT_RETRY_EMPTY_TURN,
   DEFAULT_RETRY_UNREAD_STOP,
   DEFAULT_SUPPRESS_AGENT_REASONING,
@@ -177,6 +178,17 @@ export function threadContextMaxCharsFor(modelId: string): number {
  */
 export function presentReminderLimitFor(modelId: string): number {
   return resolve(modelId, "presentReminderLimit") ?? DEFAULT_PRESENT_REMINDER_LIMIT;
+}
+
+/**
+ * How many times this model may be held on a report its own verifier would reject.
+ *
+ * Two everywhere, because no model has yet been measured recovering on a third. The bound used
+ * to be a constant in `investigation.ts`, which answered a model that needs another ask as
+ * though it were a model that will never comply.
+ */
+export function verdictHoldLimitFor(modelId: string): number {
+  return resolve(modelId, "verdictHoldLimit") ?? DEFAULT_VERDICT_HOLD_LIMIT;
 }
 
 /**

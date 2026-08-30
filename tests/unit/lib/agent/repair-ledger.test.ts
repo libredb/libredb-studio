@@ -188,6 +188,62 @@ describe("AgentRepairLedger — the repair budget", () => {
     expect(ledger.attemptsUsed).toBe(0);
   });
 
+  test("nor does a database error the SERVER answered, though it is still unrepeatable", () => {
+    /*
+      Measured, and it is the whole of why this class exists. Five `lfm2:24b` data-analysis runs
+      were driven at one sitting and all five ended identically: three `no such column` errors,
+      the budget spent, and the FOURTH statement — the correct one in the run that was read in
+      full — refused before it reached the database. Not one of the five produced a single
+      successful read, so every report rested on a table profile and every verdict said
+      `no-answer`.
+
+      The budget is right and stays at three. What was wrong is counting these against it. This
+      layer's own rule is that a boundary decision costs nothing because "nothing ran, and a
+      boundary decision is not a defect in a statement the model could fix" — and a statement
+      whose error the server answered with the columns that DO exist is the same shape seen from
+      the other side: the model is not guessing again, it is applying a correction this server
+      dictated. What the budget exists to bound is a model inventing spellings, and it still does.
+
+      Deliberately NOT decided by reading the engine's message. That text is untrusted input
+      everywhere else in this system, and control flow that parsed it would be trusting a database
+      to say how many attempts a run has left. The caller decides on ITS OWN state — whether it
+      could build the advice from the inventory this process is holding — and passes the answer in.
+
+      The fingerprint is still recorded, so the same statement can never be sent twice. That half
+      is what stops a loop, and it is untouched.
+    */
+    const ledger = new AgentRepairLedger();
+    const answered = ["SELECT a FROM t", "SELECT b FROM t", "SELECT c FROM t", "SELECT d FROM t"];
+    for (const sql of answered) ledger.recordFailure(fingerprintStatement(sql), "database-error-answered");
+
+    expect(ledger.attemptsUsed).toBe(0);
+    // The fifth spelling still runs: four answered failures have not closed the door.
+    expect(ledger.admit(fingerprintStatement("SELECT e FROM t"))).toEqual({ admitted: true });
+    // But none of the four may be sent again.
+    for (const sql of answered) {
+      expect(ledger.admit(fingerprintStatement(sql))).toEqual({
+        admitted: false,
+        reasonCode: "STATEMENT_ALREADY_FAILED",
+      });
+    }
+  });
+
+  test("an unanswered database error still costs one, so a guessing model is still bounded", () => {
+    // The half that must not move. The budget's purpose is a model inventing spellings the
+    // server cannot help with, and that model reaches the same wall it always did.
+    const ledger = new AgentRepairLedger();
+    ledger.recordFailure(fingerprintStatement("SELECT 1"), "database-error-answered");
+    for (const sql of ["SELECT 2", "SELECT 3", "SELECT 4"]) {
+      ledger.recordFailure(fingerprintStatement(sql), "database-error");
+    }
+
+    expect(ledger.attemptsUsed).toBe(3);
+    expect(ledger.admit(fingerprintStatement("SELECT 5"))).toEqual({
+      admitted: false,
+      reasonCode: "REPAIR_BUDGET_EXHAUSTED",
+    });
+  });
+
   test("a denied statement is still never re-asked — the fingerprint is recorded regardless of class", () => {
     const ledger = new AgentRepairLedger();
     const fingerprint = fingerprintStatement("DELETE FROM orders");

@@ -150,6 +150,30 @@ export interface AgentModelProfile {
    */
   readonly suppressAgentReasoning?: boolean;
   /**
+   * How many times a report whose own verdict would REJECT it may be held and told why.
+   *
+   * The third of the reminder bounds and the last to become per-model. Its two siblings have
+   * been per-model since they were written; this one was a module constant, so a model whose
+   * ledgers showed a third ask landing had nowhere to record that.
+   *
+   * Two stays the default and the argument for it is untouched: measured in the eval scripts
+   * rather than reasoned about, at three a run that will not comply pays three wasted turns
+   * before the same verdict it was always going to get, and the gate evals had to be extended
+   * twice to see it. That argument is about what EVERY model should get by default. It says
+   * nothing about a model measured recovering on the third — and until this field there was no
+   * way to tell those two apart, so the second case was answered as though it were the first.
+   *
+   * Safe in the way the bound itself is safe: this hold fires only where a report is being
+   * submitted that its own verifier would reject, so a run about to pass cannot reach it. What
+   * a raised limit can cost is turns on a run that has already lost; what it can buy is the
+   * turn on which a model finally does the thing it was asked for.
+   *
+   * Nobody carries anything but the default yet. It is written so a measurement CAN be
+   * recorded, not because one has been.
+   */
+  readonly verdictHoldLimit?: number;
+
+  /**
    * How many times a report may be held to ask for the answer that belongs beside it.
    *
    * One is enough for a model that forgot. One evaluated model did not forget: held once
@@ -288,6 +312,19 @@ export const DEFAULT_SUPPRESS_AGENT_REASONING = false;
  * turn spent arguing with a model that has already declined, so it stays per-model.
  */
 export const DEFAULT_PRESENT_REMINDER_LIMIT = 1;
+
+/**
+ * Two, and the number is the eval scripts' rather than an argument's.
+ *
+ * At three, a run that will not comply pays three wasted turns before the same verdict it was
+ * always going to get, and the gate evals had to be extended twice to see that. Two changes the
+ * behaviour the ledgers complain about — a model that ignored one ask gets a second — at half
+ * the cost to a model that will never comply.
+ *
+ * It moved out of `investigation.ts` and into a default so a model CAN be measured needing a
+ * third; the value it moved with is the value it had.
+ */
+export const DEFAULT_VERDICT_HOLD_LIMIT = 2;
 
 /**
  * Deterministic, and the setting five locked cells were won on.

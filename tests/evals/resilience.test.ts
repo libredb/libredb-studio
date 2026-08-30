@@ -241,8 +241,26 @@ describe("a failed statement is told what the table actually holds", () => {
     expect(told).toContain("name");
   });
 
-  test("a model that has not earned it gets the engine's words and nothing more", async () => {
-    // The rule every behaviour added today obeys: off by default, on where a ledger earned it.
+  test("a model carrying no settings at all is told the same thing", async () => {
+    /*
+      This used to assert the opposite, under the rule every behaviour added that day obeyed: off
+      by default, on where a ledger earned it. That rule is right for a WORKED EXAMPLE — a whole
+      tool call built from the run's own events, long enough to crowd a small model's turn, which
+      is why the three of those stay behind `refusalExamples`. It was wrong here, and the entry
+      that proved it was `lfm2:24b` on data-analysis.
+
+      Five runs, 0/5, and every one is the same three steps: draft
+      `... JOIN department ON employee.dept_no = department.dept_no`, be told `no such column:
+      employee.dept_no` and nothing else, call `inspect_schema` twice, then draft the SAME
+      statement again. It is not a model ignoring advice. It is a model that was never given any,
+      going back to the schema and failing to spot the one column it was wrong about.
+
+      What this sentence carries is a FACT about the operator's own database — which columns that
+      table has, and which table holds the one that was asked for — and it is one line. Withholding
+      it made the product worse for fourteen of sixteen shipped models and for every model nobody
+      has measured yet, which is most of them. So it goes to all of them, and the lever above keeps
+      gating only the thing the lever was measured on.
+    */
     const run = await open({
       answer: async () => {
         throw new QueryError("no such column: engineering.dept_no");
@@ -257,11 +275,12 @@ describe("a failed statement is told what the table actually holds", () => {
       answersProse("done"),
     );
 
+    // No model id, so no profile and no `refusalExamples` — the case that used to get nothing.
     await run.driveModel(await modelOver(scripted.fetch));
 
     const told = scripted.turns.at(-1)?.transcript ?? "";
     expect(told).toContain("no such column");
-    expect(told).not.toContain("has no dept_no");
+    expect(told).toContain("has no dept_no");
   });
 });
 

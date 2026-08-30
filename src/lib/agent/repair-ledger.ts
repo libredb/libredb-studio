@@ -75,8 +75,23 @@ export type AgentRepairDenyCode = "STATEMENT_ALREADY_FAILED" | "REPAIR_BUDGET_EX
  * module doc for why a boundary decision does not, and note that `reading-refused`
  * is on that side of the line too: the server declined to deliver a curated reading,
  * which no rewording of the request would change.
+ *
+ * `database-error-answered` is the same failure with one thing added: the server was able to
+ * say what would have worked. It is unrepeatable like every other class and costs nothing,
+ * for the reason a boundary decision costs nothing — the next statement is not another guess.
+ * Measured on `lfm2:24b`, which spent all three attempts on `no such column` errors the server
+ * answered and had the correct statement refused as its fourth.
+ *
+ * The CALLER decides which of the two it is, from its own state — whether it could build the
+ * advice out of the inventory this process holds. Never from the engine's message: that text is
+ * untrusted everywhere else here, and a run's remaining attempts must not be decided by it.
  */
-export type AgentRepairFailureClass = "database-error" | "policy-denied" | "approval-required" | "reading-refused";
+export type AgentRepairFailureClass =
+  | "database-error"
+  | "database-error-answered"
+  | "policy-denied"
+  | "approval-required"
+  | "reading-refused";
 
 export type AgentRepairAdmission =
   | { readonly admitted: true }

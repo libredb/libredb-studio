@@ -32,6 +32,7 @@ import {
   retriesUnreadStop,
   samplingFor,
   suppressesAgentReasoning,
+  verdictHoldLimitFor,
   suppressesPlanReasoning,
   turnTimeoutMsFor,
 } from "@/lib/agent/models";
@@ -63,6 +64,8 @@ interface ResolvedRow {
   /** Optional, and AGENT-only; its sibling above does not imply it. */
   readonly suppressesAgentReasoning?: boolean;
   readonly refusalExamples: boolean;
+  /** Optional: two everywhere, because no model has been measured recovering on a third hold. */
+  readonly verdictHoldLimit?: number;
   readonly turnTimeoutMs: number | undefined;
   /** Only the surfaces that differ from `PINNED`; every other surface resolves to it. */
   readonly samplingOverrides?: Readonly<Partial<Record<AgentRunWorkflowType, { temperature: number; topP: number }>>>;
@@ -202,6 +205,54 @@ const RESOLVED: ResolvedRow[] = [
     turnTimeoutMs: 150_000,
   },
   {
+    // The seventeenth, and the second closed by the autonomous runner rather than by hand. Five
+    // of its six cells locked on the first reading at the compiled defaults; query-optimization
+    // read 3/5 there, both losses `model-timeout`, and the clock took the cell. One setting,
+    // because one is what it was measured needing.
+    id: "nemotron-3-nano:30b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: 150_000,
+  },
+  {
+    // The eighteenth, and the only one whose open cell was closed by fixing THIS PRODUCT'S WORDING
+    // rather than by a setting. Five surfaces cleared at the compiled defaults untouched. Plan
+    // timed out on every run with an empty ledger until `suppressPlanReasoning`, which finished
+    // the turns and moved it 0/5 to 1/5; the four losses left were a correct refusal opened
+    // `NO STATEMENT AT ALL:`, which is the phrase the planning rule itself put in front of the
+    // marker it was teaching. One setting, because the rest was ours.
+    // The nineteenth row and the only one whose entry states nothing but the defaults. It closed
+    // all six surfaces on its first reading with no setting carried over, and the entry exists
+    // BECAUSE of that rather than in spite of it: an absent entry records no measurement, and a
+    // model nobody can see was measured is a model nobody can trust.
+    id: "granite4.2:8b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  {
+    id: "qwen3.5:4b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    suppressesPlanReasoning: true,
+    // The compiled limit, stated as undefined like every model that was never measured needing
+    // its own: this one's plan turns stopped timing out because the thinking stopped, not because
+    // they were given longer.
+    turnTimeoutMs: undefined,
+  },
+  {
     // The fourteenth, and the widest set any model carries: three settings for three DIFFERENT
     // failures, each measured on the cell it was added for.
     id: "muse-glimmer:latest",
@@ -286,6 +337,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
     expect(suppressesPlanReasoning(row.id)).toBe(row.suppressesPlanReasoning ?? false);
     expect(suppressesAgentReasoning(row.id)).toBe(row.suppressesAgentReasoning ?? false);
     expect(offersRefusalExamples(row.id)).toBe(row.refusalExamples);
+    expect(verdictHoldLimitFor(row.id)).toBe(row.verdictHoldLimit ?? 2);
     expect(turnTimeoutMsFor(row.id)).toBe(row.turnTimeoutMs);
   });
 
@@ -301,7 +353,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
   test("the table covers every registered model, so a new one cannot arrive unpinned", () => {
     const pinned = new Set(RESOLVED.map((row) => row.id));
     for (const id of Object.keys(modelProfiles())) expect(pinned.has(id)).toBe(true);
-    expect(Object.keys(modelProfiles())).toHaveLength(15);
+    expect(Object.keys(modelProfiles())).toHaveLength(18);
   });
 });
 
@@ -365,6 +417,9 @@ describe("what each model records about the runs that earned its settings", () =
     // The fourth closed here, and the one the new switch was written for. Its record states the
     // refuted hypothesis too: the tool count does not separate its passing runs from its loss.
     "gemma4:12b": "9a49a9323c21ffe507698ca2ca852cc1b59647a206e73c448afeea7f1a0a674b",
+    "nemotron-3-nano:30b": "20cca3398ec9a7ff927f014a212784f38d6b36e74be49fe2b74fb223a7d56eec",
+    "qwen3.5:4b": "204b6f6beb8710155508938a2271cbf34013235fa612b40ecebf98ff5dcff061",
+    "granite4.2:8b": "c9e47190c44d1fda45bf035831dcb17ba21621e98a455259a438710775600ae0",
   };
 
   test("every model's record survives the move, character for character", () => {

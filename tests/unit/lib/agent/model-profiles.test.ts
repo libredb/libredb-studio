@@ -9,6 +9,7 @@ import {
   reportReminderLimitFor,
   samplingFor,
   threadContextMaxCharsFor,
+  verdictHoldLimitFor,
 } from "@/lib/agent/models";
 import { AGENT_THREAD_CONTEXT_MAX_CHARS } from "@/lib/agent/execution-policy";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
@@ -206,6 +207,26 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(presentReminderLimitFor("qwen3:8b")).toBe(1);
     expect(presentReminderLimitFor("gemma4:26b")).toBe(1);
     expect(presentReminderLimitFor("some-model-released-tomorrow:70b")).toBe(1);
+  });
+
+  test("how many times a losing report may be held is a per-model number, and two for everyone", () => {
+    /*
+      The third reminder bound, and the last of the three to become per-model. Its two
+      siblings — `reportReminderLimit` and `presentReminderLimit` — have been per-model since
+      they were written; this one was a module constant, so a model measured needing a third
+      ask had nowhere to record it.
+
+      Two remains the default and the reasoning for it is unchanged: at three, a run that will
+      not comply pays three wasted turns before the same verdict it was always going to get.
+      That argument is about the DEFAULT. It says nothing about a model whose ledgers show the
+      third ask landing, and until now there was no way to tell those two cases apart.
+
+      Every shipped model resolves to two, because none has been measured needing otherwise.
+    */
+    for (const modelId of Object.keys(modelProfiles())) {
+      expect(verdictHoldLimitFor(modelId)).toBe(2);
+    }
+    expect(verdictHoldLimitFor("some-model-released-tomorrow:70b")).toBe(2);
   });
 
   test("every profile states what measured it", () => {

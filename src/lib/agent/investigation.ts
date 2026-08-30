@@ -62,6 +62,7 @@ import { BASELINE_NOTICES } from "./models/notices";
 import {
   ceilingFor,
   presentReminderLimitFor,
+  verdictHoldLimitFor,
   retriesEmptyTurn,
   retriesUnreadStop,
   suppressesAgentReasoning,
@@ -903,8 +904,23 @@ const PLANNING_TOOLLESS_RULE =
  * success against a verifier that accepted any non-empty prose; saying only "write a
  * statement" leaves a model that cannot write one to fall back on precisely that.
  */
+/*
+  ONE spelling of the refusal, and the sentence introducing it must not read as a second one.
+
+  This said "write NO STATEMENT AT ALL: begin a line with `NO STATEMENT:`" — English, a colon, and
+  then the literal introduced the same way one clause later. Measured on `qwen3.5:4b`, whose plan
+  cell read 1/5 across five attempts with every loss `no-statement`: its refusals were correct in
+  substance, naming the two tables whose columns the inventory could not derive and asking the one
+  question that would have unblocked it, and every one of them opened `NO STATEMENT AT ALL:`.
+
+  The model did not misread the rule. It read the first colon-terminated phrase as the marker,
+  which is what the sentence made it look like, and was then scored as having answered nothing for
+  obeying us. Fixed in the WORDING rather than by widening the reader: a tolerant reader would
+  accept this one spelling and leave the sentence that produced it in place for the next model to
+  invent a different one from.
+*/
 const PLANNING_NO_STATEMENT_RULE = [
-  `If what you were given does not support the objective, write NO STATEMENT AT ALL: begin a line with \`${PLAN_NO_STATEMENT_MARKER}\`, say exactly what is missing, and then ask the ONE question that would let you write it.`,
+  `If what you were given does not support the objective, do not write a statement: begin a line with \`${PLAN_NO_STATEMENT_MARKER}\`, say exactly what is missing, and then ask the ONE question that would let you write it.`,
   "That is a complete answer here, and it is expected whenever the inventory does not reach the objective.",
   "A general inspection plan is not an answer here: a plan that would read identically against any database in the world says nothing about this one.",
 ].join(" ");
@@ -2085,28 +2101,26 @@ interface ModelTurn {
   STOPS talking, and a model reading itself out of budget never stops.
 */
 
-/**
- * How many times a report may be held for the verdict it would earn before it is let through.
- *
- * Was once, and five repeats on three models say once is not enough. `qwen3:8b`, `qwen3:14b`
- * and another lose `database-assessment` 5 times out of 5, and every ledger has the same
- * shape: the notice fires, the run is narrowed to the two tools its verdict accepts, and the
- * model reports again anyway. Fifteen consecutive losses is not variance.
- *
- * TWO, not three, and the difference was measured in the eval scripts rather than reasoned
- * about: at three, a run that will not comply pays three wasted turns before its report is
- * allowed through, and the gate evals had to be extended twice to see it. Two changes the
- * behaviour the ledgers complain about — a model that ignored one ask gets a second — at half
- * the cost to a model that will never comply.
- *
- * The bound is also what separates this from the repeated-ask on SILENCE reverted
- * earlier today. That one sat on a path every run passes through, and eighteen tests failed
- * because every run gained two turns. This fires only where a report is being submitted that
- * its own verdict would reject — a run that is already losing — so a run about to pass cannot
- * reach it at all. What an uncooperative model pays is two extra turns before the same
- * verdict it was going to get.
- */
-const AGENT_VERDICT_HOLD_LIMIT = 2;
+/*
+  How many times a report may be held for the verdict it would earn is per-model now, and the
+  number lives with the other two reminder bounds in `models/profile.ts`.
+
+  It was a constant here. Its history is worth keeping where the mechanism is: it was once, and
+  five repeats on three models said once was not enough — `qwen3:8b`, `qwen3:14b` and another
+  lose `database-assessment` 5 times out of 5, every ledger the same shape, the notice firing,
+  the run narrowed to the two tools its verdict accepts, and the model reporting again anyway.
+  Fifteen consecutive losses is not variance.
+
+  Two rather than three was measured in the eval scripts: at three a run that will not comply
+  pays three wasted turns before its report is allowed through. That reasoning is about the
+  DEFAULT and it still holds, so `DEFAULT_VERDICT_HOLD_LIMIT` is two. What it never covered is a
+  model measured recovering on the third, and a constant answered that model as though it were
+  one that will never comply. `verdictHoldLimitFor` tells them apart.
+
+  The safety argument is unchanged and belongs to the mechanism rather than the number: this
+  fires only where a report is being submitted that its own verdict would reject — a run that is
+  already losing — so a run about to pass cannot reach it at all.
+*/
 
 /**
  * What a narrowed run keeps BESIDES `compose_report`: whatever its own verdict requires.
@@ -3523,7 +3537,7 @@ export async function runInvestigation(
           it would have been given cannot be acted on, and the run has more to show with the
           report than without it.
         */
-        if (call.toolName === "compose_report" && previewHolds < AGENT_VERDICT_HOLD_LIMIT && !noTimeToHold) {
+        if (call.toolName === "compose_report" && previewHolds < verdictHoldLimitFor(model.modelId) && !noTimeToHold) {
           const { record: sofar } = await service.resume(context.runId);
           const would = shortfallsIfReported(record, sofar.events, previewClaims(call.input));
           // A name from the inventory the run was handed, so the notice can point at a real
