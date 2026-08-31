@@ -154,10 +154,23 @@ export async function loadNodeSQLiteDriver(
   return createNodeSQLiteDriver(sqlite.DatabaseSync);
 }
 
+/** The real loader for a driver name — the default behind the seam below. */
+async function importDriverForName(name: SQLiteDriverName): Promise<SQLiteConstructor> {
+  return name === "bun" ? loadBunDriver() : loadNodeSQLiteDriver();
+}
+
 /**
  * Load the runtime-appropriate SQLite driver (lazily, cached per driver).
+ *
+ * The loader is injectable for the same reason `loadNodeSQLiteDriver`'s importer is:
+ * the failure arm is otherwise reachable only on a runtime that lacks the module, so a
+ * test asserting it is really asserting a property of the installed Bun. It was written
+ * that way once and went quietly unexercised the day Bun 1.4.0 shipped `node:sqlite`.
+ * Callers outside tests pass nothing.
  */
-export async function loadSQLiteDriver(): Promise<SQLiteConstructor> {
+export async function loadSQLiteDriver(
+  loadDriver: (name: SQLiteDriverName) => Promise<SQLiteConstructor> = importDriverForName,
+): Promise<SQLiteConstructor> {
   const name = resolveSQLiteDriverName();
 
   const cached = loadedDrivers.get(name);
@@ -170,7 +183,7 @@ export async function loadSQLiteDriver(): Promise<SQLiteConstructor> {
   }
 
   try {
-    const driver = name === "bun" ? await loadBunDriver() : await loadNodeSQLiteDriver();
+    const driver = await loadDriver(name);
     loadedDrivers.set(name, driver);
     return driver;
   } catch (error) {

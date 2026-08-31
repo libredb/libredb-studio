@@ -14,6 +14,17 @@
  * ESM in a .js file: bin/package.json sets "type": "module" for this
  * directory only - the root package.json must stay typeless because the
  * library dist ships CJS .js files consumed via require().
+ *
+ * The `#!/usr/bin/env node` shebang above is load-bearing, not decoration.
+ * `bunx` honours it and spawns a real node process, which is why `bunx
+ * @libredb/studio` works; the server below is then started with
+ * `process.execPath`, so it inherits that node. Drop the shebang and a bunx
+ * user gets Bun instead, where `better-sqlite3` - the STORAGE_PROVIDER=sqlite
+ * backend - segfaults rather than failing cleanly (oven-sh/bun#4290, open
+ * since 2023: Bun implements N-API but not the V8 C++ API these NAN addons
+ * link against). `assessNodeRuntime` cannot catch it either, because Bun
+ * reports a `process.versions.node` well above the floor - 26.3.0 on Bun
+ * 1.4.0. Only `bunx --bun` reaches that path, and that is the caller asking.
  */
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";

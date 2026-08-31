@@ -131,6 +131,27 @@ describe("sqlite-driver", () => {
     db.close();
   });
 
+  test("loadNodeSQLiteDriver() falls back to the real node:sqlite import", async () => {
+    // Bun implements node:sqlite from 1.4.0 - the version this repo pins - so the default
+    // importer resolves in-process instead of throwing, and this is the first time the
+    // adapter can be driven against the REAL DatabaseSync rather than a stand-in. On Bun
+    // 1.3.14 only the injected path above was reachable here.
+    const Driver = await loadNodeSQLiteDriver();
+    const db = new Driver(":memory:");
+
+    db.exec("CREATE TABLE t (a INTEGER)");
+    db.prepare("INSERT INTO t VALUES (?)").run(7);
+
+    // The three bridges the adapter promises, against the real module: get() maps a miss
+    // to null (node returns undefined), run() narrows bigint changes to number, and all()
+    // hands back plain rows.
+    expect(db.prepare("SELECT a FROM t").all()).toEqual([{ a: 7 }]);
+    expect(db.prepare("SELECT a FROM t WHERE a = ?").get(999)).toBeNull();
+    expect(db.prepare("DELETE FROM t").run()).toEqual({ changes: 1 });
+
+    db.close();
+  });
+
   describe("loadSQLiteDriver()", () => {
     test("returns the cached constructor on repeat loads", async () => {
       process.env.LIBREDB_SQLITE_DRIVER = "bun";
@@ -139,29 +160,37 @@ describe("sqlite-driver", () => {
       expect(second).toBe(first);
     });
 
-    test("wraps an unavailable driver in DatabaseConfigError and caches the failure", async () => {
+    // This asserted the failure path by relying on the runtime NOT implementing
+    // node:sqlite, and skipped itself when the import resolved. Bun 1.4.0 implements it,
+    // so on the pinned runtime the test passed while the whole catch below went
+    // unexercised - a green test and an eight-line hole in a 100% gate. The loader is
+    // injected instead, the way `loadNodeSQLiteDriver` already injects its importer, so
+    // the arm is a property of this test rather than of whichever Bun is installed.
+    test("wraps a driver that cannot load in DatabaseConfigError and caches the failure", async () => {
       process.env.LIBREDB_SQLITE_DRIVER = "node";
-      let firstError: unknown;
-      try {
-        // Bun does not implement node:sqlite, so the real import path fails here.
-        // (If a future Bun adds node:sqlite this resolves instead - then the
-        // error-path assertions below are simply skipped.)
-        await loadSQLiteDriver();
-      } catch (error) {
-        firstError = error;
-      }
-      if (firstError === undefined) return;
+
+      const firstError = await loadSQLiteDriver(() => Promise.reject(new Error("node:sqlite is not available"))).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
 
       expect(firstError).toBeInstanceOf(DatabaseConfigError);
       expect((firstError as Error).message).toContain('SQLite driver "node" is not available');
+      // The underlying reason is carried, not swallowed.
+      expect((firstError as Error).message).toContain("node:sqlite is not available");
 
-      let secondError: unknown;
-      try {
-        await loadSQLiteDriver();
-      } catch (error) {
-        secondError = error;
-      }
+      // The cached failure is rethrown without consulting the loader a second time.
+      let secondAttempts = 0;
+      const secondError = await loadSQLiteDriver(() => {
+        secondAttempts += 1;
+        return Promise.reject(new Error("must not be reached"));
+      }).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
       expect(secondError).toBe(firstError);
+      expect(secondAttempts).toBe(0);
     });
   });
 });

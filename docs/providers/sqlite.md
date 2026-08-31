@@ -380,6 +380,26 @@ the same seeded database (200 rows of 4 KB text in `big` with an index on it, 20
 | `bun:sqlite` (Bun 1.3.14, SQLite 3.53.0) | `no such table: dbstat` |
 | `node:sqlite` (Node 24.14.0, SQLite 3.51.2) | `big 823296`, `idx_big 929792`, `small 4096` |
 
+**The divergence closed on Bun 1.4.0.** That Bun bundles SQLite 3.53.2 with
+`SQLITE_ENABLE_DBSTAT_VTAB` compiled in, so `bun:sqlite` answers where 1.3.14 raised
+`no such table: dbstat`, and the pinned runtime moved to it on 2026-08-31. Re-measured
+that day on a freshly seeded file (200 rows of a 4096-character payload in `big` with an
+index on `payload`, 200 short rows in `small`), the two drivers returned **byte-identical**
+`getTableStats()` output under the same Bun 1.4.0:
+
+```
+# both LIBREDB_SQLITE_DRIVER unset (bun:sqlite) and LIBREDB_SQLITE_DRIVER=node
+{"tableName":"big","rowCount":200,"tableSize":"904 KB","tableSizeBytes":925696,
+ "indexSize":"908 KB","indexSizeBytes":929792,"totalSize":"1.77 MB","totalSizeBytes":1855488}
+{"tableName":"small","rowCount":200,"tableSize":"4 KB","tableSizeBytes":4096,
+ "indexSize":"0 B","indexSizeBytes":0,"totalSize":"4 KB","totalSizeBytes":4096}
+```
+
+The bytes differ from the 2026-08-24 row above because the seed is not the same file, not
+because the drivers disagree — that comparison is a separate measurement, kept as the
+record of what Bun 1.3.14 did. The 1.3.14 row is not history: an install pinned to an
+older image still behaves that way, which is why the absent-field arm below stays.
+
 `LIBREDB_SQLITE_DRIVER` is what a user changes to move between them ([§2](#runtime--driver-selection)),
 so both answers ship, and the same connection reports different things depending on it — verbatim
 from `getTableStats()`:

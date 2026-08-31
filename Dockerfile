@@ -6,7 +6,7 @@
 # Bun for fast dependency installation, Node.js for build
 # Bun's JIT compiler segfaults under QEMU emulation (ARM64 cross-build),
 # so we use Node.js for the Next.js build step.
-FROM oven/bun:1.3.14 AS deps
+FROM oven/bun:1.4.0 AS deps
 WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommends && rm -rf /var/lib/apt/lists/*
 COPY package.json bun.lock ./
