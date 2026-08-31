@@ -115,9 +115,11 @@ Every one is optional. What you do not state resolves to the compiled default in
 | `reportReminderLimit` | integer 0–5 | how many times a turn with no call and no report may be answered with the report reminder | `1` |
 | `planStatementRetries` | integer 0–5 | extra turns a PLAN run gets when its prose named neither a statement nor a refusal | `0` |
 | `presentReminderLimit` | integer 0–5 | how many times a report may be held to ask for the answer that belongs beside it | `1` |
+| `verdictHoldLimit` | integer 0–5 | how many times a report whose own verdict would REJECT it may be held and told why — the third of the reminder bounds. A run about to pass never reaches this hold, so raising it costs turns only on a run that has already lost | `2` |
 | `retryEmptyTurn` | boolean | whether a turn that came back EMPTY is asked once more before the run is ended | `false` |
 | `retryUnreadStop` | boolean | whether a run that stopped having CALLED NOTHING is told once to read the database itself, instead of being ended — it subsumes `retryEmptyTurn`, since the gate asks what was called and not what was said | `false` |
 | `suppressPlanReasoning` | boolean | whether this model's PLAN turn asks the endpoint for no reasoning at all — reaches the OpenAI-compatible adapter only (`openai`, `ollama`, `custom`), so it is a no-op on `gemini` | `false` |
+| `suppressAgentReasoning` | boolean | the same, for this model's AGENT turns — for a model that either answers at once or thinks until the wall, which `turnTimeoutMs` does not address because a turn spent thinking finds the new wall too. Same adapters, same no-op on `gemini` | `false` |
 | `refusalExamples` | boolean | whether a refused call is handed a worked example built from this run's ledger | `false` |
 | `turnTimeoutMs` | integer 1000–179999 | how long ONE turn of this model may take, where the product's own limit does not fit it | the product's limit |
 | `threadContextMaxChars` | integer 200–32000 | how much of a CONVERSATION this model may be handed — the earlier steps' objectives and the most recent step's report, when a follow-up continues a previous run | the product's budget (4000) |

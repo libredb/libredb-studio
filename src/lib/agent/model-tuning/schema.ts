@@ -164,6 +164,17 @@ const measuredAgainstSchema = z.strictObject({
   }),
 });
 
+/**
+ * Every key an entry's `settings` may carry, in the order the schema declares them.
+ *
+ * Exported for ONE job: `docs/llms/model-tuning.md` calls its settings table "the document's own
+ * contract — every setting, its bounds", and that sentence was a claim nothing checked. Two keys
+ * had already reached this shape without reaching the table, so an operator could set neither, and
+ * a misspelling of either lands silently in `ignoredKeys`. Derived here rather than written out in
+ * the test, because a list maintained beside the schema drifts exactly the way the table did.
+ */
+export const TUNING_SETTING_KEYS = Object.keys(settingsShape) as readonly string[];
+
 const documentSchema = z.strictObject({
   schemaVersion: z.literal(TUNING_SCHEMA_VERSION),
   measuredAgainst: measuredAgainstSchema,

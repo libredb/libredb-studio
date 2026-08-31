@@ -751,7 +751,7 @@ actually records** (gauges built in `timeline.ts`):
 | --- | --- | --- |
 | **Statements** | `used / 30` on an investigation | `maxStatementsPerRun`. Every statement the pipeline allowed and invoked — catalog reads, drafts and repairs alike |
 | **Database time** | `used / 90.0 s` on an investigation | `maxTotalRunMs`. **Database time only** — the elapsed time completed reads reported, not the wall clock |
-| **Repair attempts** | `used / 3` | `AGENT_MAX_REPAIR_ATTEMPTS`. Only statements that failed **at the database** consume one; a policy denial does not |
+| **Repair attempts** | `used / 3` | `AGENT_MAX_REPAIR_ATTEMPTS`. Only a statement that failed **at the database in a way this server could not answer** consumes one. A policy denial does not, and neither does a failure the server answered by naming the columns that do exist — the next statement there applies a correction this server dictated rather than another guess. A row-budget overrun **does** consume one: that statement ran to completion and returned rows, and making it cheaper is a rewrite. Either way the statement is never re-sent |
 
 Under them, three ⓘ controls carry the claims that qualify those figures — **What is counted**,
 **Ceilings** and **Report reserve** — each on the figure it is about, each opening the same sentence

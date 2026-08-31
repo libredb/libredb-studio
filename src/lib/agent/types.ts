@@ -568,6 +568,24 @@ export type AgentToolRefusal =
       readonly statementFingerprint: string;
       readonly message: string;
       readonly elapsedMs?: number;
+      /**
+       * Whether this server ANSWERED the failure — and therefore whether it consumed one of the
+       * three repair attempts. `true` means it did not.
+       *
+       * Here because the answer is not derivable by a reader of the ledger, and the gauge it
+       * explains is on screen. Whether the inventory that answers a `no such column` is in hand is
+       * decided by `heldSnapshots`, a process-wide map of sixteen with insertion-order eviction: a
+       * burst of traffic on other connections can evict this connection's reading between one
+       * statement and the next. So two runs with the same objective, the same connection and the
+       * same failing statement can spend a different number of attempts, and nothing the run can
+       * observe says why. A `used / 3` sitting still through three failures, or moving through
+       * three that look identical to the previous run's, is otherwise inferable only from cache
+       * pressure nobody records.
+       *
+       * Optional, like `elapsedMs` and for the same reason: every refusal written before this
+       * field existed carries none, and absent means unrecorded rather than `false`.
+       */
+      readonly answered?: boolean;
     }
   | { readonly class: "reading-refused"; readonly reasonCode: AgentReadingDenyCode; readonly elapsedMs?: number };
 

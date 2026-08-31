@@ -205,10 +205,10 @@ const RESOLVED: ResolvedRow[] = [
     turnTimeoutMs: 150_000,
   },
   {
-    // The seventeenth, and the second closed by the autonomous runner rather than by hand. Five
-    // of its six cells locked on the first reading at the compiled defaults; query-optimization
-    // read 3/5 there, both losses `model-timeout`, and the clock took the cell. One setting,
-    // because one is what it was measured needing.
+    // The first of the three this branch added, and the second model ever closed by the autonomous
+    // runner rather than by hand. Five of its six cells locked on the first reading at the compiled
+    // defaults; query-optimization read 3/5 there, both losses `model-timeout`, and the clock took
+    // the cell. One setting, because one is what it was measured needing.
     id: "nemotron-3-nano:30b",
     unreportedCallCeiling: 12,
     reportReminderLimit: 1,
@@ -219,16 +219,11 @@ const RESOLVED: ResolvedRow[] = [
     turnTimeoutMs: 150_000,
   },
   {
-    // The eighteenth, and the only one whose open cell was closed by fixing THIS PRODUCT'S WORDING
-    // rather than by a setting. Five surfaces cleared at the compiled defaults untouched. Plan
-    // timed out on every run with an empty ledger until `suppressPlanReasoning`, which finished
-    // the turns and moved it 0/5 to 1/5; the four losses left were a correct refusal opened
-    // `NO STATEMENT AT ALL:`, which is the phrase the planning rule itself put in front of the
-    // marker it was teaching. One setting, because the rest was ours.
-    // The nineteenth row and the only one whose entry states nothing but the defaults. It closed
-    // all six surfaces on its first reading with no setting carried over, and the entry exists
-    // BECAUSE of that rather than in spite of it: an absent entry records no measurement, and a
-    // model nobody can see was measured is a model nobody can trust.
+    // The second of the three this branch added, and the only entry in the table that states
+    // nothing but the defaults. It closed all six surfaces on its first reading with no setting
+    // carried over, and the entry exists BECAUSE of that rather than in spite of it: an absent
+    // entry records no measurement, and a model nobody can see was measured is a model nobody can
+    // trust.
     id: "granite4.2:8b",
     unreportedCallCeiling: 12,
     reportReminderLimit: 1,
@@ -239,6 +234,13 @@ const RESOLVED: ResolvedRow[] = [
     turnTimeoutMs: undefined,
   },
   {
+    // The third of the three this branch added, and the only model in the table whose open cell
+    // was closed by fixing THIS PRODUCT'S WORDING rather than by a setting. Five surfaces cleared
+    // at the compiled defaults untouched. Plan timed out on every run with an empty ledger until
+    // `suppressPlanReasoning`, which finished the turns and moved it 0/5 to 1/5; the four losses
+    // left were a correct refusal opened `NO STATEMENT AT ALL:`, which is the phrase the planning
+    // rule itself put in front of the marker it was teaching. One setting, because the rest was
+    // ours.
     id: "qwen3.5:4b",
     unreportedCallCeiling: 12,
     reportReminderLimit: 1,

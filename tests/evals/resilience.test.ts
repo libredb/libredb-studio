@@ -162,6 +162,43 @@ describe("a failed statement is told what the table actually holds", () => {
     expect(told).toContain("name");
   });
 
+  test("and the ledger records that answering it is what made the attempt free", async () => {
+    /*
+      The other half of the same decision, and the half a reader of the ledger could not see.
+
+      Whether the inventory is in hand decides what a `no such column` COSTS: answered from our own
+      snapshot it consumes none of the three attempts, unanswered it consumes one. But the hold is
+      `heldSnapshots`, a process-wide map of sixteen with insertion-order eviction, so traffic on
+      other connections can move the same run from the free path to the charged one between one
+      statement and the next. Two runs with the same objective, the same connection and the same
+      failing statement can then spend a different number of attempts, and the gauge on screen
+      reads `used / 3` either way with nothing beside it saying which happened.
+
+      Driven rather than unit-tested for the same reason as its neighbours: `holdSnapshotForConnection`
+      verifies a snapshot's fingerprint before keeping it, so only a real capture puts a real
+      inventory in hand.
+    */
+    const run = await open({
+      answer: async () => {
+        throw new QueryError("no such column: engineering.dept_no");
+      },
+    });
+    const scripted = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT dept_no FROM engineering", rationale: "count" }),
+      answersProse("I could not read that."),
+      answersProse("done"),
+    );
+
+    const drive = await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "granite4.1:8b"));
+
+    const refusals = drive.events.filter((event) => event.kind === "tool-refused");
+    expect(refusals).toHaveLength(1);
+    const refusal = refusals[0].refusal;
+    if (refusal.class !== "database-error") throw new Error(`expected database-error, got ${refusal.class}`);
+    // The inventory was in hand, the columns went back, and the flag says the attempt was free.
+    expect(refusal.answered).toBe(true);
+  });
+
   test("and where that column actually lives, when the inventory has it elsewhere", async () => {
     /*
       Naming what a table holds does not answer a model looking for a join key. Measured:

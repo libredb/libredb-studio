@@ -396,8 +396,8 @@ function fingerprintTables(tables: readonly TableSchema[]): string {
  * code alone says "somebody said no" where the numbers say "narrow the capture".
  *
  * Anchored on the whole phrase, so the `200` in the advice sentence the tool layer
- * appends ("add LIMIT 200") cannot be mistaken for a measurement. `statementAdvice` in
- * `tools.ts` reads the same message with the same anchor; the duplication is deliberate
+ * appends ("add LIMIT 200") cannot be mistaken for a measurement. `otherStatementAdvice`
+ * in `tools.ts` reads the same message with the same anchor; the duplication is deliberate
  * rather than shared, because the two answer different questions — one composes advice
  * for a model, the other records a fact — and either may be given a different source.
  *

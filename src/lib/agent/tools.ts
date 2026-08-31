@@ -1546,10 +1546,18 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
   return `"${table.name}" has no ${missing}. Its columns are ${named.join(", ")}.${found}`;
 }
 
-function statementAdvice(message: string, engine: string, connection: DatabaseConnection): string | undefined {
-  // First, because it is the largest family and the most specific thing this layer can say.
-  const columns = columnsThatExist(message, connection);
-  if (columns !== undefined) return columns;
+/**
+ * The other two things this layer can say about a failed statement.
+ *
+ * Split from `columnsThatExist` because the CLASS is decided separately from the sentence, and
+ * only that one earns the free class — see the call site. Both branches here are a rewrite the
+ * model has to author: a narrower query, or a different way of asking for the catalog. The
+ * inventory branch is not, which is the whole distinction.
+ *
+ * Takes no connection: neither branch reads our own state. They are derived from the shape of the
+ * engine's message and from the engine this connection IS, which is why neither can be free.
+ */
+function otherStatementAdvice(message: string, engine: string): string | undefined {
   const overBudget = /row budget: \d+ rows > (\d+) allowed/.exec(message);
   if (overBudget !== null) {
     return `Ask for fewer rows: add LIMIT ${overBudget[1]} (or an aggregate that returns one row) and run it again.`;
@@ -1710,11 +1718,22 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
       spelling to trying three and landing on the right one — and each convergent step was being
       charged as though it were a guess.
 
-      `statementAdvice` is computed once here and reused below rather than called twice: the two
-      must agree, since one decides the cost and the other is the sentence that justifies it.
+      The COST and the SENTENCE are deliberately two different decisions, and reading one off the
+      other is what made the class too wide. Only the inventory branch is free: there the server
+      held the answer, handed it over, and the next statement applies a correction it dictated.
+      `otherStatementAdvice`'s two branches — the row budget, the foreign catalog — are advice
+      about a REWRITE the model still has to author, and a rewrite is exactly what the budget of
+      three exists to bound. A row-budget overrun in particular is the most expensive failure a run
+      can produce: the statement ran to completion at the engine and returned rows before it blew
+      the cap, and making it cheaper is not a correction anyone dictated.
+
+      So `columns` decides the cost, and the advice the model reads is still whichever of the three
+      applies. `columnsThatExist` is computed once and used for both rather than called twice.
     */
-    const advice = statementAdvice(error.message, context.connection.type, context.connection);
-    context.repairs.recordFailure(fingerprint, advice === undefined ? "database-error" : "database-error-answered");
+    const columns = columnsThatExist(error.message, context.connection);
+    const advice = columns ?? otherStatementAdvice(error.message, context.connection.type);
+    const answered = columns !== undefined;
+    context.repairs.recordFailure(fingerprint, answered ? "database-error-answered" : "database-error");
     return {
       kind: "refused",
       // `elapsedMs` is the tracker's own charge for this failed execution, recorded so
@@ -1726,6 +1745,10 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
         statementFingerprint: fingerprint,
         message: error.message,
         elapsedMs: context.tracker.usage(context.runId).totalElapsedMs - chargedBeforeMs,
+        // Recorded rather than left to be inferred: whether the inventory was in hand decides what
+        // this failure cost, and it depends on a process-wide cache a run cannot see. See the
+        // field's own note in `types.ts`.
+        answered,
       },
       // The engine's own words: untrusted, so fenced. The fingerprint stands in for
       // a correlation id, which a failed execution never produced.

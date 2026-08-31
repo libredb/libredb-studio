@@ -35,8 +35,16 @@ export PWSLOWMO="${PWSLOWMO:-350}"
 # the second grep found no file, and the server came up with no model at all — measuring an empty
 # configuration while looking like it measured Gemini. Fetch it from the main checkout instead of
 # assuming it is here.
-if [ ! -f .env.gemini.local ] && [ -f /Users/yusuf/projects/libredb/libredb-studio/.env.gemini.local ]; then
-  cp /Users/yusuf/projects/libredb/libredb-studio/.env.gemini.local .env.gemini.local
+#
+# The checkout is DERIVED, not named. This guard first shipped with one machine's absolute home
+# path in it, which meant the `-f` test simply failed everywhere else — reinstating, for every
+# environment but its author's, the exact silent-empty-configuration bug the guard exists to
+# prevent. `--git-common-dir` resolves to the primary checkout's `.git` from inside a worktree, so
+# its parent is the checkout git itself considers primary; `LIBREDB_MAIN_CHECKOUT` overrides it for
+# a layout git cannot derive.
+MAIN_CHECKOUT="${LIBREDB_MAIN_CHECKOUT:-$(cd "$(dirname "$(git rev-parse --git-common-dir)")" && pwd)}"
+if [ ! -f .env.gemini.local ] && [ -f "$MAIN_CHECKOUT/.env.gemini.local" ]; then
+  cp "$MAIN_CHECKOUT/.env.gemini.local" .env.gemini.local
 fi
 
 # The settings a model was MEASURED with, when an operator document is holding them.
@@ -77,6 +85,15 @@ do
   [ -n "$PREVIOUS" ] && ollama stop "$PREVIOUS" >/dev/null 2>&1
 
   if [ "$MODEL" = "gemini-3.5-flash-lite" ]; then
+    # Loud rather than silent. With no file the append below contributes nothing, the server boots
+    # with no model configured, and the sweep reports a measurement of an empty configuration — the
+    # failure the fetch above exists to prevent. A sweep that cannot configure a model has to stop.
+    if [ ! -f .env.gemini.local ]; then
+      echo "!!!! .env.gemini.local not found here or in $MAIN_CHECKOUT." >&2
+      echo "!!!! Put the file in the checkout, or set LIBREDB_MAIN_CHECKOUT to where it lives." >&2
+      echo "!!!! Refusing to measure a server with no model configured." >&2
+      exit 1
+    fi
     # The hosted one: provider, key and model all change together, so its own file is swapped in
     # whole rather than one line being rewritten.
     grep -vE '^(LLM_PROVIDER|LLM_MODEL|LLM_API_KEY|LLM_API_URL)=' "$BACKUP" > .env.local

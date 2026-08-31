@@ -750,7 +750,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       expect(bothArms(outcome.modelText)).toEqual(["artifact", "context-snapshot"]);
     });
 
-    test("a citation whose SOURCE is a word nobody implements is told the two that work", () => {
+    test("a union issue reaches the ledger unnamed, and the model still reads both arms", () => {
       /*
         Measured on `granite4.1:3b`, database-assessment, five runs at one sitting: three answered
         and two did not, and the two that lost are one shape — `compose_report` refused THREE
@@ -765,7 +765,14 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
 
         The permitted values are in the schema and in hand: a union reports each branch's own
         failure, and the branch that failed on the discriminant carries the literal it wanted.
-        Two words, and the model had never been shown either.
+
+        `describeIssues` is nevertheless left SILENT on `invalid_union`, deliberately — see the
+        comment at its `invalid_union` case. Reading the branch issues back would name the two
+        arms a second time in the ledger line, and the model already reads them from the contract
+        appended to every refusal this tool gives. So this test pins the SPLIT rather than a fix:
+        the ledger line stays the raw union code, and the model's text carries both arms. It fails
+        if either half moves — if the contract stops reaching the model, or if the ledger line
+        starts claiming to name what it does not.
       */
       const h = harness();
 
@@ -779,9 +786,13 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
 
       if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
       expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
-      // What the MODEL reads already names both arms — the contract is appended to every refusal
-      // this tool gives. Pinned here because the ledger line beside it does NOT, and a reader who
-      // saw only `source: invalid union` in the ledger would conclude the model was told nothing.
+      // The LEDGER half: still the raw union code, naming neither arm. This is the assertion that
+      // makes the test bite — a reader who saw only this line would conclude the model was told
+      // nothing, and that conclusion has to stay wrong for the reason below and not by accident.
+      expect(outcome.detail).toContain("claims.0.evidence.0.source");
+      expect(outcome.detail).toContain("invalid union");
+      expect(outcome.detail).not.toContain("context-snapshot");
+      // The MODEL half: both arms, from the contract appended to every refusal this tool gives.
       expect(bothArms(outcome.modelText)).toEqual(["artifact", "context-snapshot"]);
     });
 
@@ -1733,6 +1744,85 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
     const outcome = await runReadQueryTool(h.context, { sql: "SELECT * FROM information_schema.columns" });
 
     expect(outcome.modelText).toContain("inspect_schema");
+  });
+
+  describe("what an advised failure COSTS is narrower than what it is advised about", () => {
+    /*
+      The free class and the sentence are two different decisions, and they were one.
+
+      `database-error-answered` was justified on one branch only: the server holds the inventory,
+      hands the model the columns that DO exist, and the next statement is therefore not another
+      guess but the correction this server dictated. Charging that was charging the model for our
+      own earlier silence.
+
+      Deciding the class from "did any advice come back" widened it to two branches it was never
+      argued for. `row budget: N rows > M allowed` is the loud one: that statement RAN, at the
+      engine, to completion, and returned rows before it blew the cap — the most expensive failure
+      a run can produce. Making a query cheaper is a rewrite, and a rewrite is what attempts exist
+      to bound. With the cost removed, the only remaining bound is `unreportedCallCeiling` (10–12),
+      so a run could pay for a dozen full scans where it used to pay for three.
+
+      So: the ADVICE still goes back on all three branches — it is one line of fact about the
+      operator's own database either way — and only the inventory branch is free.
+    */
+    test("a row-budget overrun is advised and still charged, because the fix is a rewrite", async () => {
+      const h = harness({}, async () => {
+        throw new QueryError("Read-only execution exceeded the row budget: 1000 rows > 200 allowed", "postgres");
+      });
+
+      const outcome = await runReadQueryTool(h.context, { sql: "SELECT * FROM orders" });
+
+      // Unchanged: the model is still told the number that would have worked.
+      expect(outcome.modelText).toContain("LIMIT 200");
+      // Changed: it costs one of the three again.
+      expect(h.repairs.attemptsUsed).toBe(1);
+      if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+      if (outcome.refusal.class !== "database-error") throw new Error("expected a database-error refusal");
+      expect(outcome.refusal.answered).toBe(false);
+    });
+
+    test("a catalog belonging to another engine is charged too", async () => {
+      const h = harness({}, async () => {
+        throw new QueryError("no such table: information_schema.columns", "sqlite");
+      });
+
+      const outcome = await runReadQueryTool(h.context, { sql: "SELECT * FROM information_schema.columns" });
+
+      expect(outcome.modelText).toContain("inspect_schema");
+      expect(h.repairs.attemptsUsed).toBe(1);
+    });
+
+    test("three of them exhaust the budget, so an unbounded scan cannot repeat forever", async () => {
+      // The consequence the split exists for. Under the wide class these four all cost nothing and
+      // the fourth reached the database; the budget is three, and it means three again.
+      const h = harness({}, async () => {
+        throw new QueryError("Read-only execution exceeded the row budget: 1000 rows > 200 allowed", "postgres");
+      });
+
+      for (const table of ["orders", "customers", "shipments"]) {
+        await runReadQueryTool(h.context, { sql: `SELECT * FROM ${table}` });
+      }
+      expect(h.repairs.attemptsUsed).toBe(3);
+
+      const fourth = await runReadQueryTool(h.context, { sql: "SELECT * FROM invoices" });
+      if (fourth.kind !== "unavailable") throw new Error(`expected unavailable, got ${fourth.kind}`);
+      expect(fourth.reasonCode).toBe("REPAIR_BUDGET_EXHAUSTED");
+    });
+
+    test("a failure this server could say nothing about is charged and says so", async () => {
+      // The unadvised path, pinned beside the others so the flag cannot quietly become "always
+      // false": every branch writes it, and this is the one with no advice at all.
+      const h = harness({}, async () => {
+        throw new QueryError('relation "employees" does not exist', "postgres");
+      });
+
+      const outcome = await runReadQueryTool(h.context, { sql: "SELECT 1 FROM employees" });
+
+      expect(h.repairs.attemptsUsed).toBe(1);
+      if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+      if (outcome.refusal.class !== "database-error") throw new Error("expected a database-error refusal");
+      expect(outcome.refusal.answered).toBe(false);
+    });
   });
 
   test("a model with no profile at all is told it too, and still outside the fence", async () => {

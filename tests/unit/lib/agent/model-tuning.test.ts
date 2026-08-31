@@ -15,6 +15,7 @@ import bundled from "@/lib/agent/model-tuning/measured-profiles.json";
 import {
   ModelTuningError,
   TUNING_SCHEMA_VERSION,
+  TUNING_SETTING_KEYS,
   parseOperatorTuning,
   parseTuning,
 } from "@/lib/agent/model-tuning/schema";
@@ -738,5 +739,35 @@ describe("a document an operator supplies", () => {
     resetTuning();
     const first = activeTuning();
     expect(activeTuning()).toBe(first);
+  });
+});
+
+describe("the settings table documents every key the schema accepts", () => {
+  /*
+    `docs/AGENT.md` calls the settings table in `docs/llms/model-tuning.md` "the document's own
+    contract — every setting, its bounds", and nothing checked that sentence. Two keys had reached
+    the schema without reaching the table — `verdictHoldLimit`, added with this branch's per-model
+    reminder bound, and `suppressAgentReasoning` before it — so an operator had no way to learn
+    either exists, and a misspelling of either lands silently in `ignoredKeys` rather than being
+    refused.
+
+    Asserted rather than argued, because the next key added will be added by somebody who did not
+    read this comment.
+  */
+  const TABLE = readFileSync(resolve(import.meta.dir, "../../../../docs/llms/model-tuning.md"), "utf8");
+
+  // Spread because `test.each` takes a mutable array and the export is readonly — the export is
+  // read-only on purpose, since nothing may edit the schema's key list through it.
+  test.each([...TUNING_SETTING_KEYS])("`%s` has a row", (key) => {
+    // The leading pipe and backtick are what make this a TABLE ROW rather than a mention in the
+    // prose around it: `turnTimeoutMs` is discussed in three paragraphs, and a test satisfied by
+    // prose would not have caught either of the two keys that were missing.
+    expect(TABLE).toContain(`| \`${key}\` |`);
+  });
+
+  test("and `perWorkflow`, which is a row without being a key of its own", () => {
+    // The one row that is not in `settingsShape`: it is a field of `sampling`'s sibling object
+    // rather than a setting, and it is in the table because an operator sets it by name.
+    expect(TABLE).toContain("| `perWorkflow` |");
   });
 });
