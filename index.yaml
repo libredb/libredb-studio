@@ -4,6 +4,75 @@ entries:
   - annotations:
       artifacthub.io/category: database
       artifacthub.io/changes: |
+        - "The published npm package now declares its licence. package.json carried no license field, so @libredb/studio rendered on npm as unlicensed even though the project has been MIT since its first release and the LICENSE file was always inside the tarball - npm includes it regardless of the files list. The declaration is what package managers, mirrors and licence scanners read, and only a new release can carry it. No chart template, value or image behaviour moves"
+        - "Track app release 0.13.7 (appVersion bump; default image tag follows)"
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:0.13.7
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 0.13.7
+    created: "2026-08-31T20:48:24.852589254Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting sixteen engines
+      - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase,
+      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra
+      and libSQL
+    digest: 620c23b6e7dcaaae7b47c4d9a7de35d96be765d0c5a7380cc273e728a9d04fc0
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - libsql
+    - turso
+    - duckdb
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.58/libredb-studio-0.1.58.tgz
+    version: 0.1.58
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
         - "The sign-in page no longer shows a bare Encrypted badge beside the SSO button. It named no subject, and on the default local storage provider it had no referent beyond the TLS the browser already indicates - saved connections live in the browser localStorage in plaintext by design, and the at-rest AES-256-GCM covers the sqlite and postgres server store only"
         - "Track app release 0.13.6 (appVersion bump; default image tag follows)"
       artifacthub.io/containsSecurityUpdates: "false"
@@ -3387,4 +3456,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-08-31T16:42:10.130745575Z"
+generated: "2026-08-31T20:48:24.844808714Z"
