@@ -120,9 +120,13 @@ const STATS_TABLES_SQL = `
     `;
 
 // Per-object page bytes. `dbstat` is a virtual table behind the compile-time
-// SQLITE_ENABLE_DBSTAT_VTAB option: node:sqlite carries it, bun:sqlite does not
-// ("no such table: dbstat", measured 2026-08-24 on Bun 1.3.14 / SQLite 3.53.0
-// against a working row from node:sqlite 3.51.2 / Node 24.14.0). It is the only
+// SQLITE_ENABLE_DBSTAT_VTAB option, so whether it answers is a property of the BUILD
+// behind the driver rather than of the driver's name: node:sqlite has carried it
+// throughout, bun:sqlite raised "no such table: dbstat" through Bun 1.3.14 (measured
+// 2026-08-24 on SQLite 3.53.0 against a working row from node:sqlite 3.51.2 /
+// Node 24.14.0) and answers from 1.4.0 / 3.53.2 on the Linux and Windows builds
+// (re-measured 2026-08-31 on Linux x86_64). Both arms stay live - see readDbstatSizes.
+// It is the only
 // per-table size SQLite publishes at all - there is no catalog column for it - and
 // reading it costs a scan of the whole database file, which is acceptable on the
 // monitoring tab and is why nothing else calls it.
@@ -966,9 +970,10 @@ export class SQLiteProvider extends SQLBaseProvider {
         isUnique: indexMeta?.unique === 1,
         isPrimary: false, // SQLite auto-creates rowid, explicit PKs are shown differently
         // SQLite publishes no per-index size: `dbstat` would give page counts but it
-        // is a compile-time option, present on node:sqlite (ENABLE_DBSTAT_VTAB) and
-        // absent on bun:sqlite ("no such table: dbstat", measured 2026-08-23), so it
-        // cannot be relied on. The size string already said so; the companion byte
+        // is a compile-time option (ENABLE_DBSTAT_VTAB) the build decides - always there
+        // on node:sqlite, absent on bun:sqlite through Bun 1.3.14 ("no such table:
+        // dbstat", measured 2026-08-23) - so it cannot be relied on for every install.
+        // The size string already said so; the companion byte
         // count said 0, and the Storage tab summed those zeroes into an index total
         // that read as "every index is empty". The field is optional for this case.
         indexSize: "N/A",

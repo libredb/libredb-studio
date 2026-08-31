@@ -104,7 +104,8 @@ async function loadBunDriver(): Promise<SQLiteConstructor> {
  * - `run()` reports `changes` as `number | bigint`; normalize to `number`.
  *
  * Exported (with the injectable ctor) so the adapter semantics are unit-testable
- * in-process under Bun, where node:sqlite itself cannot be imported.
+ * in-process against a stand-in, on any runtime, rather than only where node:sqlite
+ * happens to resolve - Bun could not import it before 1.4.0.
  */
 export function createNodeSQLiteDriver(DatabaseSyncCtor: NodeSQLiteModule["DatabaseSync"]): SQLiteConstructor {
   class NodeSQLiteDatabase implements SQLiteDatabase {
@@ -143,9 +144,11 @@ async function importNodeSQLite(): Promise<NodeSQLiteModule> {
 }
 
 /**
- * Load the node:sqlite-backed driver. The module import is injectable so the
- * success path is unit-testable under Bun (which lacks node:sqlite); callers
- * outside tests use the default importer.
+ * Load the node:sqlite-backed driver. The module import is injectable for deterministic
+ * test isolation: the success path is then driven the same way on every runtime instead
+ * of only where node:sqlite resolves. Bun gained it in 1.4.0, so the real module is
+ * exercised too - both arms are asserted rather than whichever one the toolchain allows.
+ * Callers outside tests use the default importer.
  */
 export async function loadNodeSQLiteDriver(
   importModule: () => Promise<NodeSQLiteModule> = importNodeSQLite,
