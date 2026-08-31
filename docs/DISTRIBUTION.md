@@ -26,7 +26,7 @@ starting with the first release that includes the release-artifacts workflow —
 have Docker images only.
 
 > **Runtime note:** every channel here runs the production server under Node (`node server.js`),
-> including the Docker image — its runner stage is `node:24.16.0-trixie-slim` and `CMD` execs
+> including the Docker image — its runner stage is `node:26.8.1-trixie-slim` and `CMD` execs
 > `node server.js`; Bun is only used to install dependencies during the Docker build and for local
 > development (`bun dev`). The SQLite DB provider adapts to whichever runtime it finds
 > (`bun:sqlite` under Bun, `node:sqlite` under Node) — see

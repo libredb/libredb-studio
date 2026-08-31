@@ -51,7 +51,7 @@ for a web-based editor:
   connect time — see [Runtime & driver selection](#runtime--driver-selection). All packaged
   distribution channels — the official Docker image, `npx @libredb/studio`, the Homebrew tap, the
   `.deb`/`.rpm` packages, and the standalone tarballs — run the built app with `node server.js` (the
-  Docker image's runner stage is `node:24.16.0-trixie-slim`; the other channels bundle their own pinned
+  Docker image's runner stage is `node:26.8.1-trixie-slim`; the other channels bundle their own pinned
   Node 24 runtime), so they all use `node:sqlite`. `bun:sqlite` is used for local development
   (`bun dev`) and the test suite, where Next.js runs directly under Bun. Only on a runtime with
   neither driver does `connect()` throw a `DatabaseConfigError`.
