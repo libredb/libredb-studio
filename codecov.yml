@@ -1,0 +1,30 @@
+# Codecov is a reporting surface here, not a gate.
+#
+# The authoritative coverage rule is `bun run coverage:check`
+# (scripts/check-coverage.mjs) in the "Unit & Integration Tests" job: the merged
+# lcov must be at 100% lines, and that job is a required check. A second gate
+# that can disagree with it would be worse than none - Codecov computes its own
+# base via carry-forward and can report a delta on a run where the required gate
+# is green, which would block merges for a reason no local command reproduces.
+#
+# So every status below is informational: Codecov annotates the diff and renders
+# the badge, and never fails a pull request.
+#
+# There is deliberately no `ignore:` list. Path filtering happens upstream, in
+# scripts/merge-lcov.mjs, which keeps only `src/` records and drops
+# `src/components/ui/` (mirroring sonar.exclusions) before the report is written.
+# Restating that here would be configuration that cannot have an effect, and the
+# next person would have to prove that rather than read it.
+
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment:
+  behavior: default
+  require_changes: true

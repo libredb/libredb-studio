@@ -165,6 +165,27 @@ jobs:
           name: coverage
           path: coverage/lcov.info
 
+      # Codecov publishes the same merged lcov for PR annotations and the README
+      # badge. It is NOT the coverage gate: `coverage:check` above is, and it runs
+      # first. Two consequences are deliberate here:
+      #   - always(), so a run that trips the gate still ships the report that
+      #     shows which lines regressed, matching the artifact step above.
+      #   - fail_ci_if_error stays false. This job is a required check, and a
+      #     Codecov outage - or a fork PR, which gets no secrets and so no token -
+      #     must not be able to block a merge. Codecov's own PR statuses are
+      #     informational for the same reason (see codecov.yml).
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/lcov.info
+          # The merged lcov is the only report worth sending; without this the
+          # action walks the tree and uploads the per-file intermediates that
+          # `merge-lcov.mjs` already folded in.
+          disable_search: true
+          fail_ci_if_error: false
+
   e2e:
     name: E2E Tests
     needs: [lint-and-build]
