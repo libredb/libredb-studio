@@ -13,6 +13,7 @@
 | **Database type id** | `mongodb` |
 | **Family** | Document |
 | **Driver** | `mongodb` (official Node.js driver) |
+| **Server floor** | **MongoDB 4.4** — the driver removed 4.2 support in 7.6.0 and now *throws* when it connects to a server of 4.2 or older, so this is a hard floor rather than a degraded surface ([release notes](https://github.com/mongodb/node-mongodb-native/releases/tag/v7.6.0)) |
 | **Query language** | `json` (MQL — Mongo Query Language as a JSON object) |
 | **Default port** | `27017` |
 | **Connection pooling** | Yes — the driver's built-in `MongoClient` pool |
