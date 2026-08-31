@@ -937,6 +937,21 @@ _Be the first to sponsor libredb-studio!_
 
 ---
 
+## Supporters
+
+Distinct from the sponsors above: these are open-source programmes that cover a
+running cost of the project. A place here cannot be bought, and nothing here is
+an endorsement of libredb-studio by the company named. The full list, what each
+one covers and what attribution is owed in return are at
+[libredb.org/supporters](https://libredb.org/supporters/).
+
+- **[Tailscale](https://tailscale.com/opensource)** — the Community on GitHub
+  plan behind the private network maintainers use to reach the database probe
+  hosts, so testing against real engines does not mean exposing database ports
+  to the internet. Since 2026-09-01.
+
+---
+
 ## Contributing
 
 We welcome contributions from the community! Whether it's a bug fix, a new feature, or documentation improvements:
