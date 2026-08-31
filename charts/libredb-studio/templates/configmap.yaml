@@ -24,9 +24,19 @@ data:
          over plain http). `false` is the operator's answer for a browser reaching a
          non-loopback host over plain http, where a Secure cookie is rejected and login
          silently loops. kindIs "invalid" rather than truthiness, because `false` is the
-         value that matters most here and an `if` would drop it. */}}
-  {{- if not (kindIs "invalid" (get .Values.config "authCookieSecure")) }}
-  AUTH_COOKIE_SECURE: {{ get .Values.config "authCookieSecure" | quote }}
+         value that matters most here and an `if` would drop it.
+
+         The empty string is tested BESIDE nil because the two spellings of "unset" are
+         not the same across Helm versions: 4.1 leaves the `authCookieSecure: null` in
+         values.yaml as nil, and 4.2 coerces it to "", which passes `kindIs "invalid"`
+         and writes `AUTH_COOKIE_SECURE: ""` on a default install. The app reads that
+         back as unset, so nothing about the cookie changed — but the ConfigMap then
+         carries a key nobody set, which an operator reading it takes as a decision
+         somebody made. `--set config.authCookieSecure=null` still produced a true nil
+         on both, which is why only the default install broke and only on 4.2. */}}
+  {{- $cookieSecure := get .Values.config "authCookieSecure" }}
+  {{- if and (not (kindIs "invalid" $cookieSecure)) (ne (toString $cookieSecure) "") }}
+  AUTH_COOKIE_SECURE: {{ $cookieSecure | quote }}
   {{- end }}
   STORAGE_PROVIDER: {{ include "libredb-studio.storageProvider" . | quote }}
   {{- if eq (include "libredb-studio.storageProvider" .) "sqlite" }}

@@ -20,7 +20,7 @@
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DuckDBProvider, assertReadOnlyStatementIsBounded } from "@/lib/db/providers/sql/duckdb";
@@ -676,7 +676,13 @@ describe("monitoring", () => {
     const [main] = await provider.getStorageStats();
 
     expect(main.name).toBe("Main Database");
-    expect(main.location).toBe(dbPath);
+    // Both sides through `realpathSync`, because the location is DUCKDB's answer and DuckDB
+    // canonicalises it. A no-op wherever the temp directory is a real directory, which is why
+    // this read as portable: on macOS `os.tmpdir()` is `/var/folders/...`, a symlink to
+    // `/private/var/folders/...`, so the engine returns a path that names the same file by a
+    // different route and a string comparison fails on a correct answer.
+    expect(main.location).toBeDefined();
+    expect(realpathSync(main.location!)).toBe(realpathSync(dbPath));
     expect(main.sizeBytes).toBeGreaterThan(0);
   });
 

@@ -40,6 +40,23 @@ function makeSQLiteConfig(overrides: Partial<DatabaseConnection> = {}): Database
   };
 }
 
+/**
+ * Whether the SQLite build behind the running driver carries `dbstat`.
+ *
+ * `dbstat` sits behind SQLITE_ENABLE_DBSTAT_VTAB, a COMPILE-TIME option, so its presence
+ * is a property of the build and not of the driver's name: two Bun releases on two
+ * platforms disagree about it. Asked here rather than assumed, so the size tests pin the
+ * arm the build is actually on instead of the arm one machine happened to be on.
+ */
+async function hasDbstat(db: SQLiteProvider): Promise<boolean> {
+  try {
+    await db.query("SELECT 1 FROM dbstat LIMIT 1");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -555,10 +572,18 @@ describe("SQLiteProvider", () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       await provider.connect();
 
-      // The pragma the old code derived 95% from still answers; it is a page
-      // budget in KiB (negative) or pages (positive), never a hit count.
+      // The pragma the old code derived 95% from still answers; it is a page budget in
+      // KiB (negative) or pages (positive), never a hit count. BOTH signs are the same
+      // fact about the same setting, so the sign is not asserted: pinning the -2000 this
+      // was written against pinned one build's default (SQLite's compiled default is
+      // -2000, and a build or a driver may set its own), and a build answering 2000
+      // failed a test whose subject is that the number is not a ratio.
       const cacheSize = await provider.query("PRAGMA cache_size");
-      expect(cacheSize.rows[0].cache_size).toBe(-2000);
+      const budget = cacheSize.rows[0].cache_size;
+      expect(typeof budget).toBe("number");
+      expect(budget).not.toBe(0);
+      // The reading is a budget, and no budget is the 95 the old code reported as a
+      // percentage - which is the regression this case exists to catch.
       expect((await provider.getPerformanceMetrics()).cacheHitRatio).toBeUndefined();
     });
   });
@@ -618,14 +643,19 @@ describe("SQLiteProvider", () => {
       expect(usersStats!.rowCount).toBe(2);
     });
 
-    // The size used to be `rowCount * 100` ("Assume 100 bytes average per row"),
-    // and the Storage tab summed it into the Data figure it draws beside the measured
-    // database size. The real answer is `dbstat`, a compile-time virtual table that
-    // bun:sqlite does not carry - "no such table: dbstat", measured 2026-08-24 on Bun
-    // 1.3.14 / SQLite 3.53.0 against a working row from node:sqlite 3.51.2 - so under
-    // this driver there is no per-table size to report and the fields are omitted.
-    // A `0` would be the same fabrication in a different digit.
-    test("omits the size under bun:sqlite, where dbstat does not exist", async () => {
+    // The size used to be `rowCount * 100` ("Assume 100 bytes average per row"), and the
+    // Storage tab summed it into the Data figure it draws beside the measured database
+    // size. The real answer is `dbstat`, a virtual table behind a COMPILE-TIME option.
+    //
+    // Which arm runs is therefore a property of the SQLite build behind the driver, not
+    // of the driver's name, and this test asserted the empty arm unconditionally under a
+    // heading that named bun:sqlite. That held on the build it was written against
+    // ("no such table: dbstat", Bun 1.3.14 / SQLite 3.53.0, 2026-08-24) and fails on a
+    // Bun whose SQLite carries dbstat - a correct answer, reported as a regression. So
+    // the build is asked, and whichever arm it is on is the one pinned. Both are real:
+    // measured bytes when dbstat answers, absent fields when it does not, and the
+    // fabricated `rowCount * 100` on neither.
+    test("reports dbstat's measured bytes where it exists, and omits the size where it does not", async () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       await provider.connect();
 
@@ -636,6 +666,17 @@ describe("SQLiteProvider", () => {
       const wide = stats.find((s) => s.tableName === "wide")!;
 
       expect(wide.rowCount).toBe(1);
+      // The guessed value, on both arms, in case a regression reinstates the multiplication.
+      expect(wide.tableSizeBytes).not.toBe(100);
+
+      if (await hasDbstat(provider)) {
+        // Real page bytes: a one-row table still occupies at least one page.
+        expect(wide.tableSizeBytes).toBeGreaterThan(0);
+        expect(wide.tableSize).toBeDefined();
+        expect(wide.totalSizeBytes).toBe(wide.tableSizeBytes! + wide.indexSizeBytes!);
+        return;
+      }
+
       expect(wide.tableSizeBytes).toBeUndefined();
       expect(wide.tableSize).toBeUndefined();
       expect(wide.indexSizeBytes).toBeUndefined();
@@ -644,8 +685,6 @@ describe("SQLiteProvider", () => {
       // tab keys off the ABSENT `tableSizeBytes` and draws neither.
       expect(wide.totalSize).toBe("N/A");
       expect(wide.totalSizeBytes).toBe(0);
-      // The guessed value, in case a regression reinstates the multiplication.
-      expect(wide.tableSizeBytes).not.toBe(100);
     });
 
     // The populated branch cannot be reached through the bun driver at all - it has no
@@ -728,10 +767,11 @@ describe("SQLiteProvider", () => {
       expect(Object.hasOwn(stats, "tableSize")).toBe(false);
     });
 
-    // The absence is per call, not per row: every table in the list loses its byte
-    // fields together, so the Storage tab's `every()` gate sees a uniform answer
-    // rather than a partial one.
-    test("omits the size for every table in the list, not just the first", async () => {
+    // The answer is per CALL, not per row: one dbstat scan decides for the whole list, so
+    // every table gains its byte fields together or loses them together. What the Storage
+    // tab's `every()` gate must never see is a partial answer - some tables sized and
+    // others not - and that is the invariant here, on whichever arm the build is on.
+    test("answers uniformly for every table in the list, never some sized and some not", async () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       await provider.connect();
 
@@ -740,7 +780,12 @@ describe("SQLiteProvider", () => {
 
       const stats = await provider.getTableStats();
       expect(stats.map((s) => s.tableName).sort()).toEqual(["a", "b"]);
-      expect(stats.every((s) => s.tableSizeBytes === undefined)).toBe(true);
+
+      const sized = stats.filter((s) => s.tableSizeBytes !== undefined).length;
+      expect(sized === 0 || sized === stats.length).toBe(true);
+      // And the arm is the one the build is actually on, so a provider that started
+      // dropping every size on a dbstat-carrying build would still be caught.
+      expect(sized === stats.length).toBe(await hasDbstat(provider));
     });
   });
 

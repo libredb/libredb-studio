@@ -199,7 +199,13 @@ export interface SQLiteTableSizeBytes {
  * figure it drew beside the measured database size.
  *
  * Takes the database handle as a parameter, and is exported, so that BOTH answers are
- * testable in-process under Bun - whose driver can only ever produce the `null` one.
+ * testable in-process under Bun with a stand-in handle, whichever one the running build
+ * happens to give. `dbstat` sits behind SQLITE_ENABLE_DBSTAT_VTAB, a COMPILE-TIME option,
+ * so its presence is a property of the BUILD and not of the driver's name: this was
+ * written believing bun:sqlite could only ever answer `null`, and a Bun whose SQLite
+ * carries dbstat answers the other one. Nothing here changes - both answers were already
+ * right - but a test that reads the driver's name to predict which arm it is on is
+ * reading the wrong thing.
  */
 export function readDbstatSizes(db: SQLiteDatabase): Map<string, SQLiteTableSizeBytes> | null {
   let pages: { name: string; bytes: number }[];

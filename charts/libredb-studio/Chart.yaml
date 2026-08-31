@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting sixteen engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and libSQL
 type: application
-version: 0.1.56
+version: 0.1.57
 appVersion: "0.13.6"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -46,6 +46,13 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
+  # False: 0.1.57 changes only what a DEFAULT install renders, and only on Helm 4.2+.
+  # `authCookieSecure: null` in values.yaml stayed nil under Helm 4.1 and is coerced to ""
+  # under 4.2, which passed the template's `kindIs "invalid"` guard and wrote
+  # AUTH_COOKIE_SECURE: "" into the ConfigMap of an install that configured nothing. The app
+  # reads an empty value as unset, so no cookie behaviour changed on any install - what
+  # changed is that the ConfigMap stopped carrying a key nobody set, which an operator
+  # reading it takes as a decision somebody made. Explicit `true`/`false` are untouched.
   # False: 0.1.56 tracks app release 0.13.6, which removes a claim rather than fixing a
   # weakness. The sign-in page carried an "Encrypted" badge that named no subject; on the
   # default STORAGE_PROVIDER=local it had no referent beyond the TLS the browser already
