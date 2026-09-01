@@ -173,19 +173,27 @@ jobs:
           echo "Image name (lowercase): ${IMAGE_NAME_LOWER}"
 
       # Build the list of target images. GHCR is always included; Docker Hub
-      # (docker.io/<DOCKER_HUB_USERNAME>/<repo>) is added only when enabled.
+      # (docker.io/<DOCKER_HUB_ORGANIZATION>/<repo>) is added only when enabled.
+      #
+      # The namespace is NOT the login user. `libredb` was a Docker Hub user
+      # account until 2026-09-01 and one variable answered both questions; the
+      # conversion to an organization split them, because an organization cannot
+      # sign in. DOCKER_HUB_USERNAME is now the owner who logs in, and the image
+      # must still be published under the organization everyone pulls from.
+      # Using the login name here does not fail - it publishes to a real
+      # repository nobody reads while the mirror goes stale.
       - name: Compose registry image list
         id: images
         env:
           GHCR_IMAGE: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
           REPO_NAME: ${{ steps.image.outputs.name }}
           DH_ENABLED: ${{ steps.dockerhub.outputs.enabled }}
-          DH_USERNAME: ${{ vars.DOCKER_HUB_USERNAME }}
+          DH_ORGANIZATION: ${{ vars.DOCKER_HUB_ORGANIZATION }}
         run: |
           IMAGES="$GHCR_IMAGE"
-          if [ "$DH_ENABLED" = "true" ] && [ -n "$DH_USERNAME" ]; then
+          if [ "$DH_ENABLED" = "true" ] && [ -n "$DH_ORGANIZATION" ]; then
             SHORT_NAME="${REPO_NAME##*/}"
-            IMAGES="$(printf '%s\ndocker.io/%s/%s' "$IMAGES" "$DH_USERNAME" "$SHORT_NAME")"
+            IMAGES="$(printf '%s\ndocker.io/%s/%s' "$IMAGES" "$DH_ORGANIZATION" "$SHORT_NAME")"
           fi
           {
             echo "list<<EOF"

@@ -1202,7 +1202,7 @@ setups still publish the rest:
 |---|---|---|
 | `TAP_GITHUB_TOKEN` | Rendering and pushing the Homebrew formula to `libredb/homebrew-tap` (needs write access to that repo) | Tap update skipped; tarballs still attach to the release |
 | `SNAPCRAFT_STORE_CREDENTIALS` | The entire snap build/publish job (exported via `snapcraft export-login`) | Snap job skipped |
-| `DOCKER_HUB_TOKEN` (+ `DOCKER_HUB_USERNAME` variable) | The Docker Hub mirror push | GHCR-only publish |
+| `DOCKER_HUB_TOKEN` (+ `DOCKER_HUB_USERNAME` and `DOCKER_HUB_ORGANIZATION` variables) | The Docker Hub mirror push. Two variables, not one: `DOCKER_HUB_USERNAME` is the **owner who logs in** (an organization cannot sign in), `DOCKER_HUB_ORGANIZATION` is the **namespace the image is published under**. They were the same value while `libredb` was a user account; converting it to an organization on 2026-09-01 split them | GHCR-only publish |
 | `CHOCO_API_KEY` | The chocolatey job: `choco pack` + `choco push` to `https://push.chocolatey.org/` (API key of the `libredb` community account) | Chocolatey publish skipped; the win32 zip still attaches to the release |
 | — | Every row above whose channel is switchable also needs `update.ci_enabled: true` in [`distribution/channels.yaml`](../distribution/channels.yaml): the secret says CI *can* publish, the flag says it *should*. See [Turning a channel's automation off](#turning-a-channels-automation-off) | Channel skipped with a notice; the release publishes normally |
 | `WINGETCREATE_GITHUB_TOKEN` | The winget job: `wingetcreate update --submit` PRs to `microsoft/winget-pkgs`. Classic PAT with `public_repo` scope — wingetcreate does not support fine-grained PATs | winget submission skipped |
