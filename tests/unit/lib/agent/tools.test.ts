@@ -796,6 +796,313 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       expect(bothArms(outcome.modelText)).toEqual(["artifact", "context-snapshot"]);
     });
 
+    describe("present_answer is shown ITS shape too, and it is the biggest refusal there is", () => {
+      /*
+        Counted across every data-analysis and query-optimization LOSS on record — 423 runs, the
+        two surfaces that block every model still short of 30/30:
+
+          INVALID_TOOL_INPUT   1887      present_answer 1023 · compose_report 621 · recommend 389
+          UNVERIFIABLE_EVIDENCE 306
+
+        `present_answer` alone is more than half. Its details, normalised:
+
+          409  artifact: expected string
+          184  the arguments object: remove presentation
+          154  evidence: expected array
+
+        All three are the OUTER call, and `AGENT_ANSWER_CONTRACT` describes only the INNER
+        `presentation` object — chart types, y columns, when a table is the right answer, in
+        detail — while never saying that the call itself is `{artifact, presentation}` and that
+        `artifact` is a plain string id. A model that put the id in the wrong shape reads a
+        careful explanation of the part it got right, exactly as `compose_report` did before its
+        claim skeleton was added.
+
+        Same fix, same split: one line stating the call's shape, ungated, on structural failures
+        only; `exampleAnswerCall` stays behind `refusalExamples` because it rebuilds a whole call
+        from this run's ledger.
+      */
+      const artifactEvent2: AgentRunEvent = {
+        kind: "tool-completed",
+        atMs: 1,
+        stepId: "step_1",
+        artifact: {
+          correlationId: "corr-real",
+          operationId: "sql.query.read",
+          connectionId: "conn-1",
+          createdAtMs: 1,
+          summary: { rowCount: 2, columns: ["dept", "total"], truncated: false },
+        },
+      } as unknown as AgentRunEvent;
+
+      test("an artifact sent as something other than a string is shown the call's shape", () => {
+        const h = harness();
+
+        const outcome = presentAnswerTool(
+          h.context,
+          { runId: h.context.runId, autoExecute: false, events: [artifactEvent2] },
+          { artifact: { id: "corr-real" }, presentation: { kind: "table" } },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+        // The path, as it already did — asserted WITH its issue text. The bare word "artifact"
+        // is in `AGENT_EVIDENCE_CONTRACT`, which is appended to refusals on this path, so a
+        // `toContain("artifact")` would pass even if the path were never named.
+        expect(outcome.modelText).toContain("artifact: expected string");
+        // And now the shape of the call it belongs to.
+        expect(outcome.modelText).toContain('"presentation"');
+        expect(outcome.modelText).toContain("plain string");
+      });
+
+      test("the skeleton stays out of the ledger line", () => {
+        const h = harness();
+
+        const outcome = presentAnswerTool(
+          h.context,
+          { runId: h.context.runId, autoExecute: false, events: [artifactEvent2] },
+          { artifact: ["corr-real"], presentation: { kind: "table" } },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.detail).toContain("artifact");
+        expect(outcome.detail).not.toContain("plain string");
+      });
+
+      test("a chart spec that is merely wrong is NOT shown the call skeleton", () => {
+        // The guard: the outer call was built correctly and the fault is inside `presentation`,
+        // which the contract already explains at length. Repeating the wrapper there would bury
+        // the part that has to change.
+        const h = harness();
+
+        const outcome = presentAnswerTool(
+          h.context,
+          { runId: h.context.runId, autoExecute: false, events: [artifactEvent2] },
+          {
+            artifact: "corr-real",
+            presentation: { kind: "chart", spec: { type: "sunburst", x: "dept", y: ["total"] } },
+          },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.modelText).not.toContain("plain string");
+      });
+    });
+
+    describe("a STRUCTURAL shape failure is shown the shape, whatever model sent it", () => {
+      /*
+        The largest refusal in the measured corpus, and it was invisible until the surfaces were
+        counted side by side. `INVALID_TOOL_INPUT` per run:
+
+          analyze 4.3   investigate 3.2   optimize 1.5   assess 1.1   operate 0.1   plan 0.0
+
+        973 of them across 225 data-analysis runs. It is not one surface's protocol problem — it
+        is `compose_report`'s claim shape, and it lands hardest on the two surfaces with the worst
+        scores. The two dominant details are structural rather than typographic: `claims.0:
+        expected object` (66) and `claims.0.evidence.0.locator: expected string` (43) — a model
+        sending prose where an object goes.
+
+        The paths were already named. What was gated was the SHAPE: `exampleReportCall` rebuilds a
+        whole call from the run's ledger and sits behind `refusalExamples`, which two of twenty-two
+        shipped models carry. Everyone else reads "expected object" and has to guess the object.
+
+        So this splits the two, on the rule the column advice was split on: a one-line skeleton is
+        a statement of the contract and goes to every model, while the rebuilt call — long, and
+        carrying this run's real ids — stays behind the lever it was measured on.
+      */
+      const snapshotEvent: AgentRunEvent = {
+        kind: "context-captured",
+        atMs: 1,
+        fingerprint: "ctx_1",
+        tableCount: 1,
+      } as unknown as AgentRunEvent;
+
+      test("a claim sent as prose is shown the object it should have been", () => {
+        const h = harness();
+
+        const outcome = composeReportTool(
+          h.context,
+          { runId: h.context.runId, events: [snapshotEvent, artifactEvent] },
+          { claims: ["Engineering is the largest department."] },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+        // The path, as before — with its issue text, so the assertion cannot be satisfied by a
+        // path-shaped string appearing anywhere else in the refusal.
+        expect(outcome.modelText).toContain("claims.0: expected object");
+        // And now the shape, to a model carrying no lever at all. Both fields of the skeleton
+        // and nothing that `AGENT_EVIDENCE_CONTRACT` also carries: a `"source"` assertion here
+        // would be green on the appended contract alone, which is the defect the previous
+        // review named in this file.
+        expect(outcome.modelText).toContain('{"claim"');
+        expect(outcome.modelText).toContain('"evidence"');
+      });
+
+      test("the skeleton stays out of the LEDGER line, which counts paths", () => {
+        // `detail` is what a reader tallies refusals by. A skeleton repeated into every entry
+        // would make the same failure look like many different ones.
+        const h = harness();
+
+        const outcome = composeReportTool(
+          h.context,
+          { runId: h.context.runId, events: [snapshotEvent] },
+          { claims: ["Prose again."] },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.detail).toContain("claims.0");
+        expect(outcome.detail).not.toContain('"evidence"');
+      });
+
+      test("a merely mistyped field is NOT shown the skeleton, because the shape was right", () => {
+        // The guard on the sentence. `locator` wanting a string is a typo inside an object the
+        // model already built correctly; answering it with the whole skeleton would bury the one
+        // word that has to change.
+        const h = harness();
+
+        const outcome = composeReportTool(
+          h.context,
+          { runId: h.context.runId, events: [snapshotEvent, artifactEvent] },
+          {
+            claims: [
+              {
+                claim: "Engineering is largest.",
+                evidence: [{ source: "artifact", correlationId: "corr-real", locator: 3 }],
+              },
+            ],
+          },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        // The FULL path, not the bare word. `AGENT_EVIDENCE_CONTRACT` is appended to every
+        // refusal on this path and its last sentence contains "locator", so `toContain("locator")`
+        // passes whether or not the issue was named at all — green on a total regression. The
+        // previous review caught exactly that shape in another test on this file.
+        expect(outcome.modelText).toContain("claims.0.evidence.0.locator: expected string");
+        expect(outcome.modelText).not.toContain('"claim":');
+      });
+    });
+
+    describe("an unverifiable citation is named, and a misfiled id is told where it belongs", () => {
+      /*
+        Measured on `cogito:8b`, database-investigation, five runs at one sitting: all five
+        ended `turn-limit` with `no-report`, and each holds the SAME call sent about forty
+        times. The model was not confused about the database — its two claims are correct —
+        it was sending this:
+
+          claims[0].evidence[0]  {source: "context-snapshot", fingerprint: "ctx_f2b7…"}   ✓
+          claims[1].evidence[0]  {source: "artifact",         correlationId: "ctx_f2b7…"}  ✗
+
+        One right, one wrong, and the same id in both. What came back was "At least one
+        evidence reference does not match anything this run produced" plus "this run produced
+        the schema snapshot ctx_f2b7…" — which names the id the model was ALREADY using and
+        never says which of the two citations is the bad one. There is nothing in that answer
+        to act on, so it resent the identical call until the turns ran out.
+
+        Both halves are here: WHICH reference failed, and — when the id names something this
+        run really did produce, under the other source — the source it belongs under. The
+        second half is the whole of this model's failure and needs no example to carry it.
+      */
+      const snapshotEvent: AgentRunEvent = {
+        kind: "context-captured",
+        atMs: 1,
+        fingerprint: "ctx_1",
+        tableCount: 1,
+      } as unknown as AgentRunEvent;
+
+      test("compose_report names the failing claim and evidence position", () => {
+        const h = harness();
+
+        const outcome = composeReportTool(
+          h.context,
+          { runId: h.context.runId, events: [snapshotEvent, artifactEvent] },
+          {
+            claims: [
+              { claim: "First.", evidence: [{ source: "context-snapshot", fingerprint: "ctx_1" }] },
+              { claim: "Second.", evidence: [{ source: "artifact", correlationId: "nothing-like-this" }] },
+            ],
+          },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.reasonCode).toBe("UNVERIFIABLE_EVIDENCE");
+        // The SECOND claim, not "at least one".
+        expect(outcome.detail).toContain("claims.1.evidence.0");
+        // And the first is not blamed, because it verified.
+        expect(outcome.detail).not.toContain("claims.0.evidence.0");
+      });
+
+      test("a snapshot cited as an artifact is told which source it belongs under", () => {
+        const h = harness();
+
+        const outcome = composeReportTool(
+          h.context,
+          { runId: h.context.runId, events: [snapshotEvent] },
+          {
+            claims: [
+              { claim: "The database has one table.", evidence: [{ source: "artifact", correlationId: "ctx_1" }] },
+            ],
+          },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.reasonCode).toBe("UNVERIFIABLE_EVIDENCE");
+        // The remedy, in the words of the object the model has to send.
+        expect(outcome.detail).toContain("context-snapshot");
+        expect(outcome.detail).toContain("fingerprint");
+        expect(outcome.detail).toContain("ctx_1");
+        // And it reaches the MODEL, not only the ledger — the ledger half is what a reader
+        // diagnoses with afterwards, and the model half is what ends the loop. Asserted on the
+        // REMEDY, not on the source name: `AGENT_EVIDENCE_CONTRACT` names both sources and is
+        // appended here, so `toContain("context-snapshot")` would pass with the remedy removed.
+        expect(outcome.modelText).toContain("belongs under a different source");
+        expect(outcome.modelText).toContain("ctx_1");
+      });
+
+      test("an artifact cited as a snapshot is told the same thing, the other way round", () => {
+        // The mirror, because the two sources are symmetrical and a fix that only knew one
+        // direction would leave the other model looping.
+        const h = harness();
+
+        const outcome = composeReportTool(
+          h.context,
+          { runId: h.context.runId, events: [snapshotEvent, artifactEvent] },
+          {
+            claims: [
+              {
+                claim: "Engineering is largest.",
+                evidence: [{ source: "context-snapshot", fingerprint: "corr-real" }],
+              },
+            ],
+          },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.detail).toContain("artifact");
+        expect(outcome.detail).toContain("correlationId");
+        expect(outcome.detail).toContain("corr-real");
+      });
+
+      test("an id the run never produced is still just named, with no invented remedy", () => {
+        // The guard on the sentence above: it may only fire when the id really does name
+        // something this run holds. A model that invented an id is told what IS citable, as
+        // before, and nothing is claimed about where its invention belongs.
+        const h = harness();
+
+        const outcome = composeReportTool(
+          h.context,
+          { runId: h.context.runId, events: [snapshotEvent] },
+          { claims: [{ claim: "Invented.", evidence: [{ source: "artifact", correlationId: "no-such-id" }] }] },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.detail).toContain("claims.0.evidence.0");
+        expect(outcome.detail).not.toContain("belongs under");
+        // Still offers what this run has, which is the behaviour that was already there.
+        expect(outcome.detail).toContain("ctx_1");
+      });
+    });
+
     test("and it hands over a call this run could make, built from its own ledger", () => {
       /*
         Naming the failing field was the previous step, and it was measured as not enough:

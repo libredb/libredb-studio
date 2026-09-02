@@ -290,6 +290,60 @@ const RESOLVED: ResolvedRow[] = [
     turnTimeoutMs: undefined,
     samplingOverrides: { "query-optimization": { temperature: 0.8, topP: 0.9 } },
   },
+  // The nineteenth, and Mistral's first entry: the roster before it came from six vendors and
+  // none of them was Mistral. All four rows this branch adds are identical because all four
+  // locked every surface on the FIRST attempt with no lever spent. Pinning a row of defaults is
+  // not redundant — it asserts that a later change to the defaults cannot silently move a model
+  // that was measured under the old ones.
+  {
+    id: "ministral-3:8b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  // The twentieth. Measured because its 8b sibling had just locked everything, on the one
+  // rule with evidence behind it — the larger member of a family that has already won —
+  // and it is the only prediction this work has made that then held.
+  {
+    id: "ministral-3:14b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  // The twenty-first, and the fastest six-surface sweep on record here: all thirty runs in
+  // ten minutes. Its 8b sibling reads 0/5 on investigation and its 32b loses planning, so
+  // this is the one size of the family that is supported.
+  {
+    id: "cogito:14b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  // The twenty-second, and the oldest model generation on the roster. Three newer Qwen
+  // entries each needed a setting written for them; this one arrived on the defaults,
+  // which is the counter-example to choosing by generation.
+  {
+    id: "qwen2.5:14b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
   // Not a model anybody has run: the defaults, which is the honest treatment of one nobody
   // has measured.
   {
@@ -355,7 +409,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
   test("the table covers every registered model, so a new one cannot arrive unpinned", () => {
     const pinned = new Set(RESOLVED.map((row) => row.id));
     for (const id of Object.keys(modelProfiles())) expect(pinned.has(id)).toBe(true);
-    expect(Object.keys(modelProfiles())).toHaveLength(18);
+    expect(Object.keys(modelProfiles())).toHaveLength(22);
   });
 });
 
@@ -422,6 +476,15 @@ describe("what each model records about the runs that earned its settings", () =
     "nemotron-3-nano:30b": "20cca3398ec9a7ff927f014a212784f38d6b36e74be49fe2b74fb223a7d56eec",
     "qwen3.5:4b": "204b6f6beb8710155508938a2271cbf34013235fa612b40ecebf98ff5dcff061",
     "granite4.2:8b": "c9e47190c44d1fda45bf035831dcb17ba21621e98a455259a438710775600ae0",
+    // The four this branch adds, and the only group whose records are identical in shape: every
+    // one locked all six surfaces on its FIRST attempt with no lever spent, so every one states
+    // the compiled defaults and nothing else. That is a measurement rather than an omission —
+    // and it is how every 30/30 model on this roster arrived, which is why the four are here
+    // and the models that absorbed a hundred lever attempts between them are not.
+    "ministral-3:8b": "282d7f01c554b5bed006533190e2392330256b67f46ffee8a1462d5b254424ab",
+    "ministral-3:14b": "23ef778193d6d714d7f3bb95523172d1e0f68520f0f9b2d20806b129a84a33c1",
+    "cogito:14b": "2c2fcded189b2123048e5c789844d3d8e392d7e19951e428695afa852eddd473",
+    "qwen2.5:14b": "51ea773ff735a6f9d7f7f930b97c40ec70b5dc531dea65fa1594935a2471e991",
   };
 
   test("every model's record survives the move, character for character", () => {

@@ -669,6 +669,35 @@ export const AGENT_ANSWER_CONTRACT = [
   "When the objective asks for a chart and the result can carry one, chart it: the user named the shape of the answer they wanted.",
 ].join(" ");
 
+/**
+ * The one-line skeleton of the `present_answer` CALL, for failures in the wrapper rather than
+ * in the presentation inside it.
+ *
+ * `AGENT_ANSWER_CONTRACT` above describes `presentation` in full — chart types, y columns, when
+ * a table is the right answer — and never says what the call itself looks like. Measured across
+ * every data-analysis and query-optimization loss on record (423 runs): `present_answer` is 1023
+ * of 1887 `INVALID_TOOL_INPUT` refusals, more than `compose_report` and `recommend_change`
+ * together, and its three commonest details are all the wrapper: `artifact: expected string`
+ * (409), `the arguments object: remove presentation` (184), `evidence: expected array` (154). A
+ * model that misplaced the id was answered with a careful explanation of the half it got right.
+ *
+ * Ungated, on the same split `AGENT_CLAIM_SHAPE` makes: one line stating the contract goes to
+ * every model, while `exampleAnswerCall` — a whole call rebuilt from this run's ledger — stays
+ * behind `refusalExamples`.
+ */
+const AGENT_ANSWER_SHAPE =
+  'The call is ONE object: {"artifact": "<the id a completed step reported>", "presentation": { ... }} — "artifact" is that id as a plain string, and nothing else belongs beside these two fields.';
+
+/**
+ * Whether the arguments failed in the WRAPPER rather than inside `presentation`.
+ *
+ * A wrong chart type is a fault in the object the contract already explains at length, and
+ * answering it with the wrapper's shape would bury the one word that has to change.
+ */
+function isAnswerShapeFailure(problems: string): boolean {
+  return /\bartifact:|arguments object:|^presentation: |\bpresentation: expected/.test(problems);
+}
+
 const recommendationSchema = z.strictObject({
   change: z.enum(["index", "rewrite"]),
   statement: z.string().min(1),
@@ -1097,6 +1126,36 @@ function unavailable(
  * `UNVERIFIABLE_EVIDENCE` carries the contract in `UNAVAILABLE_TEXT` itself, because
  * only these same two tools can produce it.
  */
+/**
+ * The one-line skeleton of a CLAIM, for the failures where the model sent the wrong kind of
+ * thing rather than a wrong value inside the right one.
+ *
+ * `AGENT_EVIDENCE_CONTRACT` describes an evidence object in full and never says that a claim
+ * is an object at all — so a model sending `claims: ["some prose"]` is answered with a
+ * careful explanation of the part it did not get wrong. Measured: `claims.N: expected object`
+ * is the single most repeated refusal detail in the corpus (66 occurrences), inside the
+ * largest refusal there is — `INVALID_TOOL_INPUT` runs at 4.3 per run on data-analysis and
+ * 3.2 on investigation, against 0.1 on operations.
+ *
+ * Ungated, unlike `exampleReportCall`, and the split is the one the column advice already
+ * makes: this is ONE line stating the contract, the same for every run, while the worked call
+ * is rebuilt from a run's own ledger and stays behind `refusalExamples`.
+ */
+const AGENT_CLAIM_SHAPE =
+  'Each claim is ONE object: {"claim": "<the sentence>", "evidence": [ ... ]} — a bare string is not a claim.';
+
+/**
+ * Whether the arguments failed STRUCTURALLY — the wrong kind of thing in a position — rather
+ * than on a value inside a well-formed one.
+ *
+ * The distinction decides whether the skeleton helps or buries: a model that built the object
+ * correctly and typed `locator: 3` needs the one word `locator`, and answering it with the
+ * whole shape hides that word in a sentence it has already satisfied.
+ */
+function isShapeFailure(problems: string): boolean {
+  return /claims(\.\d+)?: expected (object|array)/.test(problems) || /claims: expected array/.test(problems);
+}
+
 function invalidEvidenceInput(problems: string, example?: string): AgentToolOutcome & { kind: "unavailable" } {
   return {
     kind: "unavailable",
@@ -1123,6 +1182,9 @@ function invalidEvidenceInput(problems: string, example?: string): AgentToolOutc
     */
     modelText: [
       `${UNAVAILABLE_TEXT.INVALID_TOOL_INPUT} (${problems})`,
+      // Before the evidence contract, because a run that sent prose where an object goes has
+      // not reached the evidence yet — and the contract answers a question it did not ask.
+      ...(isShapeFailure(problems) ? [AGENT_CLAIM_SHAPE] : []),
       AGENT_EVIDENCE_CONTRACT,
       ...(example === undefined ? [] : [`A call this run could make right now: ${example}`]),
     ].join(" "),
@@ -3032,8 +3094,12 @@ export function recommendChangeTool(
   }
   if (!parsed.value.evidence.every((reference) => verifiedAgainst(run.events, reference))) {
     // Both evidence-bearing tools name what is citable, because a model that guessed an id
-    // here will guess the same one at `compose_report` a turn later.
-    return unavailable("UNVERIFIABLE_EVIDENCE", citableEvidence(run.events));
+    // here will guess the same one at `compose_report` a turn later — and both now name
+    // WHICH citation failed, for the same reason.
+    return unavailable(
+      "UNVERIFIABLE_EVIDENCE",
+      unverifiableCitation(run.events, [{ evidence: parsed.value.evidence }]),
+    );
   }
 
   return {
@@ -3164,6 +3230,67 @@ function citableEvidence(events: readonly AgentRunEvent[]): string | undefined {
 function verifiedAgainst(events: readonly AgentRunEvent[], reference: AgentEvidenceReference): boolean {
   if (reference.source === "artifact") return producedArtifact(events, reference.correlationId) !== null;
   return events.some((event) => event.kind === "context-captured" && event.fingerprint === reference.fingerprint);
+}
+
+/**
+ * The id is one this run produced — under the OTHER source. Says which, in the words of
+ * the object that would have worked.
+ *
+ * Measured on `cogito:8b`: five database-investigation runs, all five `turn-limit` with
+ * `no-report`, each holding the same `compose_report` call sent about forty times. Its two
+ * claims were correct and its two citations carried the SAME id, one filed as a
+ * `context-snapshot` and one as an `artifact`. The refusal said "at least one evidence
+ * reference does not match" and then offered the id the model was already using, so nothing
+ * in the answer distinguished the good citation from the bad one and the model resent it
+ * until the turns ran out.
+ *
+ * Deliberately narrow: it fires only when the id names something this run REALLY holds
+ * under the other source. An invented id gets the offer of what is citable and no sentence
+ * about where it belongs, because there is nowhere it belongs.
+ */
+function misfiledSource(events: readonly AgentRunEvent[], reference: AgentEvidenceReference): string | undefined {
+  if (reference.source === "artifact") {
+    const snapshot = events.find(
+      (event) => event.kind === "context-captured" && event.fingerprint === reference.correlationId,
+    );
+    if (snapshot === undefined) return undefined;
+    return `that id is this run's schema snapshot and belongs under a different source: {"source": "context-snapshot", "fingerprint": "${reference.correlationId}"}`;
+  }
+  if (producedArtifact(events, reference.fingerprint) === null) return undefined;
+  return `that id is a result this run read and belongs under a different source: {"source": "artifact", "correlationId": "${reference.fingerprint}"}`;
+}
+
+/**
+ * WHICH citation failed, and what to do about it — the two halves a run stuck here needs.
+ *
+ * `citableEvidence` alone answers neither: it names what the run holds, which a model that
+ * has already cited one of those ids reads as agreement. The path is what makes the answer
+ * actionable when a report carries several claims, and `misfiledSource` is what ends the
+ * loop when the id was right all along.
+ */
+function unverifiableCitation(
+  events: readonly AgentRunEvent[],
+  claims: readonly { readonly evidence: readonly AgentEvidenceReference[] }[],
+): string | undefined {
+  for (const [claimIndex, claim] of claims.entries()) {
+    for (const [evidenceIndex, reference] of claim.evidence.entries()) {
+      if (verifiedAgainst(events, reference)) continue;
+      // One path per refusal, the FIRST that failed: a model fixes one citation per turn,
+      // and a list of every fault reads as a wall rather than a next step. Always spelled
+      // as a path, even for a single claim — it is the field name the model has to look at,
+      // and "the citation" would leave a two-claim report guessing again.
+      const path = `claims.${claimIndex}.evidence.${evidenceIndex}`;
+      const misfiled = misfiledSource(events, reference);
+      const offer = citableEvidence(events);
+      return [
+        `${path} does not match anything this run produced`,
+        misfiled ?? (offer === undefined ? undefined : offer),
+      ]
+        .filter((part) => part !== undefined)
+        .join(" — ");
+    }
+  }
+  return citableEvidence(events);
 }
 
 /**
@@ -3474,6 +3601,9 @@ export function presentAnswerTool(
       detail: parsed.problems,
       modelText: [
         `${UNAVAILABLE_TEXT.INVALID_TOOL_INPUT} (${parsed.problems})`,
+        // Before the contract, because a run that misplaced the id has not reached the
+        // presentation yet — and the contract answers a question it did not ask.
+        ...(isAnswerShapeFailure(parsed.problems) ? [AGENT_ANSWER_SHAPE] : []),
         AGENT_ANSWER_CONTRACT,
         ...(example === undefined ? [] : [`A call this run could make right now: ${example}`]),
       ].join(" "),
@@ -3576,7 +3706,9 @@ export function composeReportTool(
     // shared with `recommend_change`: two would be two things to keep equal, and the
     // one that drifted would be the one letting an uncited claim through.
     if (!claim.evidence.every((reference) => verifiedAgainst(run.events, reference))) {
-      return unavailable("UNVERIFIABLE_EVIDENCE", citableEvidence(run.events));
+      // Asked of the WHOLE claim list rather than this one claim, so the path it names is
+      // the one the model sent — a per-claim reader would say `claims.0` for every claim.
+      return unavailable("UNVERIFIABLE_EVIDENCE", unverifiableCitation(run.events, parsed.value.claims));
     }
     claims.push({
       claim: claim.claim,

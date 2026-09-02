@@ -21,6 +21,24 @@
   },
   "models": [
     {
+      "id": "cogito:14b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults, every cell on its first attempt and the whole model in ten minutes. Investigate 4s · Optimize 13s · Assess 18s · Operate 13s · Analyze 8s · Plan 6s (medians of the passing runs) — the fastest six-surface sweep on record here. Its 8b sibling reads 0/5 on investigation and is not supported: it loops on one refusal until the turns run out, which the fix in this branch did not rescue. The family is supported at 14b and not below it.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      }
+    },
+    {
       "id": "gemini-3.5-flash-lite",
       "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
       "settings": {
@@ -175,6 +193,42 @@
       "rationale": {}
     },
     {
+      "id": "ministral-3:14b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults, every cell on its first attempt. Investigate 19s · Optimize 27s · Assess 34s · Operate 13s · Analyze 15s · Plan 8s (medians of the passing runs). Measured because its 8b sibling had just locked everything, on the one rule with evidence behind it — the larger member of a family that has already won — and it is the only prediction this work has made that then held.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      }
+    },
+    {
+      "id": "ministral-3:8b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults, and every cell closed on its FIRST attempt with no setting carried over. Investigate 16s · Optimize 22s · Assess 4s · Operate 14s · Analyze 13s · Plan 5s (medians of the passing runs); the whole model took twelve minutes to measure. Mistral's first entry here, and the vendor breadth is the point: the roster before it came from six vendors and none of them was Mistral.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      }
+    },
+    {
       "id": "muse-glimmer:latest",
       "measured": "6/6 locked, 30/30, and every cell read in ONE pass under the settings recorded here rather than carried over from the passes that found them - investigate 103s, optimize 191s, assess 167s, operate 80s, analyze 115s, plan 17s (medians of the passing runs; slowest run 285s). The slowest model measured here by a wide margin. Before these settings it was 3/6 at 23/30: plan 0/5, investigate 4/5, assess 4/5. Every one of those losses was the clock - plan timed out at exactly 90 seconds five times over with no tool invoked, and the two single losses timed out at 159s and 160s against passes at 102-116 and 141-163. One run of the confirmation pass died model-unavailable, which is a serving outage and not a verdict; that cell was re-read clean rather than scored over it.",
       "settings": {
@@ -309,6 +363,24 @@
           "Its last open cell, and the loss is `no-statement` twice over.",
           "The closing prose is not a bad plan — it names all eight tables, their columns and their keys, correctly. What it never writes is a runnable statement or the explicit `NO STATEMENT:` refusal, and plan mode's bar is one of those two. `qwen3:14b` lost the same cell the same way and the extra turn won it."
         ]
+      }
+    },
+    {
+      "id": "qwen2.5:14b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults, every cell on its first attempt. Investigate 17s · Optimize 35s · Assess 1:03 · Operate 18s · Analyze 13s · Plan 1s (medians of the passing runs). An older Qwen generation than anything else on the roster and it needs nothing, which is worth recording: the newer qwen3 line is represented at four sizes and this one arrived on the defaults alongside them.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
       }
     },
     {

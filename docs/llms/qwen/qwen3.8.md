@@ -3,7 +3,7 @@
 `ollama pull qwen3.8:<size>` · sizes supported: latest
 
 Every size listed here runs **all six agent surfaces**, five consecutive times each: 30 of 30
-runs. The slowest of the ten, and it reaches the same verdicts as models six times faster.
+runs. Among the slowest on this list, and it reaches the same verdicts as models six times faster.
 
 ## What it does, and how long it takes
 

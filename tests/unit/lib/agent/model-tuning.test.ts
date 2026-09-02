@@ -93,7 +93,7 @@ afterEach(() => {
 describe("the document Studio ships with", () => {
   test("passes its own contract", () => {
     const tuning = parseTuning(bundled, "test");
-    expect(Object.keys(tuning.models)).toHaveLength(18);
+    expect(Object.keys(tuning.models)).toHaveLength(22);
   });
 
   test("argues for every value it changed", () => {
@@ -563,7 +563,7 @@ describe("a document an operator supplies", () => {
     process.env[ENV] = writeDocument("{ not json");
     resetTuning();
     expect(ceilingFor("gemma4:26b")).toBe(10);
-    expect(Object.keys(activeTuning().models)).toHaveLength(18);
+    expect(Object.keys(activeTuning().models)).toHaveLength(22);
   });
 
   test("reports that it ignored a document, naming the file and the reason", () => {
@@ -717,13 +717,13 @@ describe("a document an operator supplies", () => {
   test("is ignored when it breaks the contract, not partially applied", () => {
     process.env[ENV] = writeDocument(document({ schemaVersion: 99 }));
     resetTuning();
-    expect(Object.keys(activeTuning().models)).toHaveLength(18);
+    expect(Object.keys(activeTuning().models)).toHaveLength(22);
   });
 
   test("is ignored when the file is not there at all", () => {
     process.env[ENV] = "/nonexistent/models.json";
     resetTuning();
-    expect(Object.keys(activeTuning().models)).toHaveLength(18);
+    expect(Object.keys(activeTuning().models)).toHaveLength(22);
   });
 
   test("an unset or blank variable is simply no operator document", () => {
@@ -731,7 +731,7 @@ describe("a document an operator supplies", () => {
     // reading it as a path would warn on every boot of an install that configured nothing.
     process.env[ENV] = "   ";
     resetTuning();
-    expect(Object.keys(activeTuning().models)).toHaveLength(18);
+    expect(Object.keys(activeTuning().models)).toHaveLength(22);
   });
 
   test("is read once, so a run cannot see the table change under it", () => {
