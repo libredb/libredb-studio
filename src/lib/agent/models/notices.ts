@@ -36,6 +36,12 @@ export const BASELINE_NOTICES: AgentNotices = Object.freeze({
     "Call compose_report now with what you established.",
     CITATION_RULE,
   ].join(" "),
+  turnCutOff: [
+    "Your last turn was cut off at this server's per-call limit and nothing from it was kept: whatever you were working out has not reached this run, and this run cannot see it.",
+    "The run itself is not over. It has most of its time and nearly all of its steps left, and it ends only when you file something.",
+    "Do not work that turn out again — a turn cut for taking too long will be cut again. Act in ONE short move now: if you already know what you would say, call compose_report with what this conversation established; otherwise make one tool call and nothing else.",
+    CITATION_RULE,
+  ].join(" "),
   planStatement: [
     "Your plan describes the database but names no statement, and a plan is scored on what the user can run: it must end either with a fenced code block holding one statement for this engine, or with an explicit refusal.",
     `Write the statement in a fenced block now, or begin a line with ${PLAN_NO_STATEMENT_MARKER} and say what the database does not support.`,

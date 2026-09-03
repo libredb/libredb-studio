@@ -3021,6 +3021,77 @@ describe("the run loop is bounded", () => {
     expect(finished).toMatchObject({ status: "failed", stopReason: "model-timeout" });
   });
 
+  describe("a turn the ceiling cut is given back, because the RUN still has its time", () => {
+    /*
+      `AGENT_MODEL_TURN_TIMEOUT_MS` says what it bounds in as many words — "It bounds ONE call,
+      never the run" — and this branch ended the run anyway. It computed the distinction,
+      `turnBudgetMs < remainingMs`, and spent it on choosing a WORD while taking the same action
+      either way: the branch that PROVES the run still has time was the branch that threw it away.
+
+      Measured on `qwen3.6:35b`, query-optimization: nine losses, every one `model-timeout` with
+      `no-report`, every one ending between 96.9s and 117.2s of a 450000ms deadline — 333 to 353
+      seconds unspent, on turn 2 or 3 of 36. The same cell's longest PASSING run took 183.1s,
+      longer than the total spend of any loss. The premise that licensed the ending ("a ceiling
+      this far above them is only ever reached by a call that is not coming back") holds for a
+      hosted API and is false on a local model: this cell's passing turns run 56.5s and 63.1s.
+
+      It was also the only stop shape in the drive with no recovery path. An empty turn is
+      re-asked, an unread stop is answered with the instruments, the call ceiling is narrowed and
+      reminded, a premature report is held with the next call named — and three of that cell's
+      seven passes are runs one of those paths rescued. This one got silence.
+    */
+    test("the run keeps going, is told what happened, and can still file", async () => {
+      const b = boot(freshDataDir());
+      const run = await startRun(b);
+      /*
+        A read, then a call that never comes back, then a report. The middle turn is the one the
+        ceiling cuts, and the run holds a reading at that moment — which is the losing arc:
+        `qwen3.6:35b` was cut having already called tools, with its report never filed.
+
+        The deadline is five minutes and the ceiling is 200ms, so the run's own clock is untouched
+        when the call is cut, and `turnBudgetMs < remainingMs` is true.
+      */
+      const script = scriptedModel(
+        callsTool("run_read_query", { sql: "SELECT id FROM orders" }),
+        unansweredCall,
+        reportOn(),
+      );
+
+      const result = await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+        turnTimeoutMs: 200,
+      });
+
+      expect(result.status).toBe("succeeded");
+      const events = await eventsOf(b.store, run.runId);
+      expect(events.filter((event) => event.kind === "guidance-issued").map((event) => event.notice)).toContain(
+        "turn-cut-off",
+      );
+      // The THIRD turn: the read was turn 1, the cut call turn 2, and the notice rides turn 3.
+      expect(script.turns[2]?.transcript).toContain("cut off at this server's per-call limit");
+    });
+
+    test("once only, so an endpoint that is genuinely gone still fails fast", async () => {
+      // The bound. A second cut ends the run, with the reason it always had.
+      const b = boot(freshDataDir());
+      const run = await startRun(b);
+      const script = scriptedModel(unansweredCall, unansweredCall);
+
+      const result = await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+        turnTimeoutMs: 200,
+      });
+
+      expect(result.status).toBe("failed");
+      expect(result.stopReason).toBe("model-timeout");
+      expect(script.turns).toHaveLength(2);
+    });
+  });
+
   test("a run that runs out of time is still reported as out of time, not as a slow call", async () => {
     // The turn ceiling must not relabel the run deadline: when less time remains than
     // a turn is allowed, the shorter bound is the run's own, and the reason follows it.

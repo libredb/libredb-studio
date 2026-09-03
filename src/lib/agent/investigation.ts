@@ -2456,6 +2456,7 @@ export function guidanceDelivered(events: readonly AgentRunEvent[]): Readonly<Re
   const counts: Record<AgentGuidanceNotice, number> = {
     "report-reminder": 0,
     "plan-statement": 0,
+    "turn-cut-off": 0,
     "report-reserve": 0,
     "unread-stop": 0,
     "present-before-report": 0,
@@ -2635,6 +2636,20 @@ export async function runInvestigation(
     let narrowedAtEvent = Number.POSITIVE_INFINITY;
     /** Whether this drive has already re-asked an empty turn; see `retryEmptyTurn`. */
     let emptyTurnRetried = false;
+    /**
+     * Whether this drive has already given back a turn the per-call ceiling cut; once per run.
+     *
+     * The ceiling is documented as bounding one call and it ended the run. Measured on
+     * `qwen3.6:35b`, query-optimization: nine losses, all `model-timeout` with `no-report`, all
+     * ending near 100s of a 450s deadline with 34 of 36 turns unspent — while the same cell's
+     * longest PASSING run took 183s. Those calls were coming back; the loop stopped waiting and
+     * threw away the run instead of the call.
+     *
+     * Every other failed turn in this loop has a recovery path and this one had none. Granted only
+     * where the run has already lost anyway — it filed no report, so it has earned `no-report` and
+     * the turn cannot cost a pass — and once, so a genuinely hung endpoint still fails fast.
+     */
+    let turnCutOffRetried = false;
     /*
     Every notice this run has already been delivered, read once (B51). The counters it
     seeds are declared in two places — this one and the block before the turn loop — and
@@ -3309,7 +3324,29 @@ export async function runInvestigation(
         record.mode,
       );
       text = turn.text;
-      if (turn.aborted) return conclude("failed", turnBudgetMs < remainingMs ? "model-timeout" : "deadline-exceeded");
+      if (turn.aborted) {
+        /*
+          See the note above `turnCutOffRetried`. `turnBudgetMs < remainingMs` is not only the word
+          this ending gets — it is a FACT about the run: the run's own clock is untouched, so what
+          ended is one call, which is exactly what this ceiling says it bounds.
+        */
+        const cutByTurnCeiling = turnBudgetMs < remainingMs;
+        if (
+          cutByTurnCeiling &&
+          !turnCutOffRetried &&
+          record.mode === "agent" &&
+          turns < maxTurns &&
+          resources.deadline.remainingMs() > AGENT_REPORT_RESERVE_MS
+        ) {
+          turnCutOffRetried = true;
+          // No assistant message is pushed: `takeTurn` returns none on abort, and a cut-off
+          // partial must not enter the transcript as a completed turn.
+          messages.push({ role: "user", content: notice(BASELINE_NOTICES.turnCutOff) });
+          await issueGuidance("turn-cut-off");
+          return null;
+        }
+        return conclude("failed", cutByTurnCeiling ? "model-timeout" : "deadline-exceeded");
+      }
       /*
         On the prompted path the call arrives as a JSON object inside ordinary text, so it is
         read out here and from here on the turn is indistinguishable from a native one.

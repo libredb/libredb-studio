@@ -235,6 +235,14 @@ export interface AgentNotices {
   readonly reportReminder: string;
   /** A PLAN run whose prose carried neither a runnable statement nor an explicit refusal. */
   readonly planStatement: string;
+  /**
+   * A turn the per-call ceiling cut off, on a run whose own deadline still has room.
+   *
+   * The one stop shape in the drive that had no recovery path. Measured on `qwen3.6:35b`: nine
+   * losses, every one cut at the ceiling with 333 to 353 seconds of a 450-second deadline and 34
+   * of 36 turns unspent, while the same cell's longest PASSING run took 183 seconds.
+   */
+  readonly turnCutOff: string;
   /** An answer-presenting run about to report a result it read but never presented. */
   readonly presentBeforeReport: string;
   /** A run that stopped without calling anything, having asked for what it could have read. */

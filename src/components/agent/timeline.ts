@@ -74,6 +74,9 @@ type PlanStatementEvent = Extract<AgentRunEvent, { kind: "plan-statement-drafted
 const GUIDANCE_HEADLINE: Record<Extract<AgentRunEvent, { kind: "guidance-issued" }>["notice"], string> = {
   "report-reminder": "Asked to file its report",
   "plan-statement": "Asked for a runnable statement",
+  // Named for what the reader can see happened rather than for the limit that did it: the turn
+  // produced nothing and the run kept going.
+  "turn-cut-off": "A turn ran long and was cut; asked again",
   "report-reserve": "Told this is its last turn",
   "unread-stop": "Asked to read the database itself",
   /*

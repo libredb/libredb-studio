@@ -631,6 +631,16 @@ export type AgentGuidanceNotice =
    */
   | "plan-statement"
   /**
+   * A turn the per-call ceiling cut off, on a run whose own clock still has room. Delivered as a
+   * `user` message and the turn is taken again; once per run.
+   *
+   * The ceiling is documented as bounding one call and it ended the run instead. Measured on
+   * `qwen3.6:35b`, query-optimization: nine losses, all `model-timeout` with `no-report`, all
+   * near 100s of a 450s deadline with 34 of 36 turns unspent, while the same cell's longest
+   * PASSING run took 183s.
+   */
+  | "turn-cut-off"
+  /**
    * A run within the turn or time reserve of a ceiling. Delivered as a `user` message
    * riding the turn about to be taken; once per run.
    */
