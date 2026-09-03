@@ -110,14 +110,15 @@ describe("a run can cite using only what it was shown", () => {
   test("a planning run is offered no citation, because it can produce none", async () => {
     const offered: unknown[][] = [];
     const run = await open({ mode: "planning" });
-    await run.drive([
-      (turn) => {
-        offered.push(offeredCitationsIn(turn));
-        return answersProse("First, read the plan of the report query.")(turn);
-      },
-    ]);
+    const prose = (turn: Parameters<typeof offeredCitationsIn>[0]) => {
+      offered.push(offeredCitationsIn(turn));
+      return answersProse("First, read the plan of the report query.")(turn);
+    };
+    // Two turns, because a grounded plan run that named no statement is now asked for one — and
+    // the offer is checked on BOTH, which is stronger than checking the first alone.
+    await run.drive([prose, prose]);
 
-    expect(offered).toEqual([[]]);
+    expect(offered).toEqual([[], []]);
   });
 
   test("the placeholder in the rules is not mistaken for a real id", async () => {

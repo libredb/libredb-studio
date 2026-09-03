@@ -534,7 +534,7 @@ describe("a fresh run drives the investigation arc", () => {
   test("the model is offered exactly the four read-class tools", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b);
-    const script = scriptedModel(answersProse("nothing to do"));
+    const script = scriptedModel(answersProse("nothing to do"), answersProse("nothing to do"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -556,7 +556,7 @@ describe("a fresh run drives the investigation arc", () => {
   test("the objective and the untrusted-content rule are both stated to the model", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b);
-    const script = scriptedModel(answersProse("ok"));
+    const script = scriptedModel(answersProse("ok"), answersProse("ok"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -604,7 +604,7 @@ describe("the model is told what a citation IS, not only that it must cite (#350
   test("the run's rules carry both arms of the evidence contract", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b);
-    const script = scriptedModel(answersProse("ok"));
+    const script = scriptedModel(answersProse("ok"), answersProse("ok"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -622,7 +622,7 @@ describe("the model is told what a citation IS, not only that it must cite (#350
   test("the snapshot's own fingerprint is offered as a citation when it is captured", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b);
-    const script = scriptedModel(answersProse("ok"));
+    const script = scriptedModel(answersProse("ok"), answersProse("ok"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -679,7 +679,7 @@ describe("the model is told what a citation IS, not only that it must cite (#350
     ).rejects.toThrow();
 
     const second = boot(dataDir);
-    const resumed = scriptedModel(answersProse("ok"));
+    const resumed = scriptedModel(answersProse("ok"), answersProse("ok"));
     await runInvestigation(run.runId, {
       service: second.service,
       model: await modelOver(resumed.fetch),
@@ -701,7 +701,7 @@ describe("the model is told what a citation IS, not only that it must cite (#350
   test("planning mode is not told to cite anything, because it has nothing to cite", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
-    const script = scriptedModel(answersProse("a plan"));
+    const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -743,7 +743,7 @@ describe("planning mode runs no statement of the user's", () => {
   test("the model is handed no tools, only the server's catalog reads are sent, and the prose is returned", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
-    const script = scriptedModel(answersProse("First ", "look at the index."));
+    const script = scriptedModel(answersProse("First ", "look at the index."), answersProse("First ", "look at the index."));
 
     const result = await runInvestigation(run.runId, {
       service: b.service,
@@ -777,7 +777,7 @@ describe("planning mode runs no statement of the user's", () => {
   test("an operations plan reads its own inventory, is told what it holds, and is told of no tool", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning", "operations");
-    const script = scriptedModel(answersProse("I would read the wait events."));
+    const script = scriptedModel(answersProse("I would read the wait events."), answersProse("I would read the wait events."));
 
     const result = await runInvestigation(run.runId, {
       service: b.service,
@@ -866,7 +866,7 @@ describe("planning mode runs no statement of the user's", () => {
     };
     const b = boot(freshDataDir(), { answer: catalog });
     const operationsRun = await startRun(b, "agent", "operations");
-    const operationsScript = scriptedModel(answersProse("nothing to add"));
+    const operationsScript = scriptedModel(answersProse("nothing to add"), answersProse("nothing to add"));
     await runInvestigation(operationsRun.runId, {
       service: b.service,
       model: await modelOver(operationsScript.fetch),
@@ -875,7 +875,7 @@ describe("planning mode runs no statement of the user's", () => {
     const catalogReadsSoFar = b.queryReadOnly.mock.calls.length;
 
     const laterRun = await startRun(b, "planning", "investigation");
-    const laterScript = scriptedModel(answersProse("```postgres\nSELECT id FROM orders\n```"));
+    const laterScript = scriptedModel(answersProse("```postgres\nSELECT id FROM orders\n```"), answersProse("```postgres\nSELECT id FROM orders\n```"));
     await runInvestigation(laterRun.runId, {
       service: b.service,
       model: await modelOver(laterScript.fetch),
@@ -936,7 +936,7 @@ describe("planning mode runs no statement of the user's", () => {
     for (const mode of ["agent", "planning"] as const) {
       const b = boot(freshDataDir(), { answer: wide });
       const run = await startRun(b, mode, "operations");
-      const script = scriptedModel(answersProse("understood"));
+      const script = scriptedModel(answersProse("understood"), answersProse("understood"));
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -957,7 +957,7 @@ describe("planning mode runs no statement of the user's", () => {
     for (const mode of ["agent", "planning"] as const) {
       const b = boot(freshDataDir());
       const run = await startRun(b, mode, "operations");
-      const script = scriptedModel(answersProse("understood"));
+      const script = scriptedModel(answersProse("understood"), answersProse("understood"));
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -981,7 +981,7 @@ describe("planning mode runs no statement of the user's", () => {
   test("the plan reaches the ledger, not just the caller", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
-    const script = scriptedModel(answersProse("Start with ", "the salary index."));
+    const script = scriptedModel(answersProse("Start with ", "the salary index."), answersProse("Start with ", "the salary index."));
 
     const result = await runInvestigation(run.runId, {
       service: b.service,
@@ -1000,7 +1000,7 @@ describe("planning mode runs no statement of the user's", () => {
   test("the ledger records how the loop ended, not only that it did", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
-    const script = scriptedModel(answersProse("a plan"));
+    const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -1015,7 +1015,7 @@ describe("planning mode runs no statement of the user's", () => {
   test("a run that says nothing writes no empty closing statement", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
-    const script = scriptedModel(answersProse(""));
+    const script = scriptedModel(answersProse(""), answersProse(""));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -1057,7 +1057,7 @@ describe("planning mode runs no statement of the user's", () => {
   test("a tool the run was never offered is refused without reaching the database", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
-    const script = scriptedModel(callsTool("run_read_query", { sql: "SELECT 1" }), answersProse("understood"));
+    const script = scriptedModel(callsTool("run_read_query", { sql: "SELECT 1" }), answersProse("understood"), answersProse("understood"));
 
     const result = await runInvestigation(run.runId, {
       service: b.service,
@@ -1145,7 +1145,7 @@ describe("planning mode runs no statement of the user's", () => {
     /** One agent run, which is what puts this connection's inventory in the process. */
     const readTheCatalogOnce = async (b: Boot): Promise<void> => {
       const run = await startRun(b, "agent");
-      const script = scriptedModel(answersProse("understood"));
+      const script = scriptedModel(answersProse("understood"), answersProse("understood"));
       await runInvestigation(run.runId, {
         service: b.service,
         model: await modelOver(script.fetch),
@@ -1159,7 +1159,7 @@ describe("planning mode runs no statement of the user's", () => {
 
       const b = boot(freshDataDir(), { answer: catalog });
       const run = await startRun(b, "planning");
-      const script = scriptedModel(answersProse("a plan"));
+      const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
 
       const result = await runInvestigation(run.runId, {
         service: b.service,
@@ -1207,7 +1207,7 @@ describe("planning mode runs no statement of the user's", () => {
       const capturedAtMs = 1_000_000;
       const reader = boot(freshDataDir(), { answer: catalog });
       const readerRun = await startRun(reader, "agent");
-      const readerScript = scriptedModel(answersProse("understood"));
+      const readerScript = scriptedModel(answersProse("understood"), answersProse("understood"));
       await runInvestigation(readerRun.runId, {
         service: reader.service,
         model: await modelOver(readerScript.fetch),
@@ -1219,7 +1219,7 @@ describe("planning mode runs no statement of the user's", () => {
 
       const b = boot(freshDataDir(), { answer: catalog });
       const run = await startRun(b, "planning");
-      const script = scriptedModel(answersProse("a plan"));
+      const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
       await runInvestigation(run.runId, {
         service: b.service,
         model: await modelOver(script.fetch),
@@ -1251,7 +1251,7 @@ describe("planning mode runs no statement of the user's", () => {
 
       const b = boot(freshDataDir(), { answer: catalog });
       const run = await startRun(b, "planning");
-      const script = scriptedModel(answersProse("a plan"));
+      const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -1292,7 +1292,7 @@ describe("planning mode runs no statement of the user's", () => {
     test("a run on an engine this server cannot ground is told so rather than left to invent a schema", async () => {
       const b = boot(freshDataDir(), { answer: catalog });
       const run = await startRun(b, "planning");
-      const script = scriptedModel(answersProse("a plan"));
+      const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -1352,7 +1352,7 @@ describe("planning mode runs no statement of the user's", () => {
       ): Promise<{ readonly rules: string; readonly transcript: string }> => {
         const b = boot(freshDataDir(), { describesSchema: async () => PROVIDER_INVENTORY });
         const run = await startRun(b, "planning");
-        const script = scriptedModel(answersProse("a plan"));
+        const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
 
         await runInvestigation(run.runId, {
           service: b.service,
@@ -1563,7 +1563,7 @@ describe("planning mode runs no statement of the user's", () => {
       test("a composed reading keeps its own two sentences", async () => {
         const first = boot(freshDataDir(), { answer: catalog });
         const firstRun = await startRun(first, "planning");
-        const firstScript = scriptedModel(answersProse("a plan"));
+        const firstScript = scriptedModel(answersProse("a plan"), answersProse("a plan"));
         await runInvestigation(firstRun.runId, {
           service: first.service,
           model: await modelOver(firstScript.fetch),
@@ -1575,7 +1575,7 @@ describe("planning mode runs no statement of the user's", () => {
         // The same connection, a second process: the reading is now the hold's.
         const second = boot(freshDataDir(), { answer: catalog });
         const secondRun = await startRun(second, "planning");
-        const secondScript = scriptedModel(answersProse("a plan"));
+        const secondScript = scriptedModel(answersProse("a plan"), answersProse("a plan"));
         await runInvestigation(secondRun.runId, {
           service: second.service,
           model: await modelOver(secondScript.fetch),
@@ -1622,7 +1622,7 @@ describe("planning mode runs no statement of the user's", () => {
       }> => {
         const b = boot(freshDataDir(), { describesSchema: async () => KEY_PREFIXES });
         const run = await startRun(b, "planning", workflowType);
-        const script = scriptedModel(answersProse("a plan"));
+        const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
 
         await runInvestigation(run.runId, {
           service: b.service,
@@ -1720,7 +1720,7 @@ describe("planning mode runs no statement of the user's", () => {
       test("an engine that declares neither the noun nor the grouping is untouched", async () => {
         const b = boot(freshDataDir(), { answer: catalog });
         const run = await startRun(b, "planning");
-        const script = scriptedModel(answersProse("a plan"));
+        const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
         await runInvestigation(run.runId, {
           service: b.service,
           model: await modelOver(script.fetch),
@@ -1768,7 +1768,7 @@ describe("planning mode runs no statement of the user's", () => {
         connectionId: "conn_2",
         objective: OBJECTIVE,
       });
-      const script = scriptedModel(answersProse("a plan"));
+      const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
 
       await runInvestigation(run.runId, {
         service: other.service,
@@ -1855,7 +1855,7 @@ describe("planning mode runs no statement of the user's", () => {
     const firstTurnOf = async (mode: "agent" | "planning"): Promise<string> => {
       const b = boot(freshDataDir(), { answer: wideCatalog });
       const run = await startRun(b, mode);
-      const script = scriptedModel(answersProse("understood"));
+      const script = scriptedModel(answersProse("understood"), answersProse("understood"));
       await runInvestigation(run.runId, {
         service: b.service,
         model: await modelOver(script.fetch),
@@ -1915,7 +1915,7 @@ describe("planning mode runs no statement of the user's", () => {
     const planRulesFor = async (workflowType: AgentRunWorkflowType): Promise<string> => {
       const b = boot(freshDataDir());
       const run = await startRun(b, "planning", workflowType);
-      const script = scriptedModel(answersProse("a plan"));
+      const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
       await runInvestigation(run.runId, {
         service: b.service,
         model: await modelOver(script.fetch),
@@ -1923,6 +1923,72 @@ describe("planning mode runs no statement of the user's", () => {
       });
       return rulesOfTurn(script.turns[0] as Turn);
     };
+
+    describe("a run that named neither statement nor refusal is ASKED, whoever it is", () => {
+      /*
+        The ask existed and was unreachable for anyone nobody had measured.
+
+        `askForPlanStatement` tested the model's `planStatementRetries` — 0 unless a profile says
+        otherwise — BEFORE it tested whether the run had fallen short. So the server read the
+        closing prose, learned through `readPlanStatement` that it held neither a fenced statement
+        nor the `NO STATEMENT:` marker, held the sentence written for exactly that shape, and
+        returned false on the line above: because of who the model was, not what the run did.
+
+        The order was the whole defect. The reader below is the same reader, with the same dialect,
+        that `verifyPlanningGoal` is about to score `no-statement` on, so the branch is reachable
+        only on a run already earning that verdict; a run that clears the bar returns non-absent
+        and is never touched. The turn provably cannot cost a pass.
+
+        Measured. `cogito:32b` and `qwen2.5:32b` each hold five surfaces and lose plan 4/5, every
+        loss `no-statement` with the model stopping on its own after prose that describes the
+        schema correctly and names no statement — and neither has a row in the document, so
+        neither was ever told. `ornith:9b` and `qwen3:14b` lost that cell in that exact shape and
+        BOTH were won by this one sentence, recorded as a number against their names rather than
+        as a rule.
+      */
+      test("a model with no measured profile is sent the sentence, and given the turn to act on it", async () => {
+        const b = boot(freshDataDir());
+        const run = await startRun(b, "planning");
+        // Two turns of prose, neither naming a statement — the losing shape, twice.
+        const script = scriptedModel(answersProse("The database holds orders and customers."), answersProse("Still prose."));
+
+        await runInvestigation(run.runId, {
+          service: b.service,
+          // A model nobody has measured, which is the case the ask could not reach.
+          model: await modelOver(script.fetch, undefined, "some-model-nobody-measured:9b"),
+          resources: b.resources,
+        });
+
+        const events = await eventsOf(b.store, run.runId);
+        expect(events.filter((event) => event.kind === "guidance-issued").map((event) => event.notice)).toContain(
+          "plan-statement",
+        );
+        // The sentence itself reached the model, on a turn it could still act on.
+        expect(script.turns[1]?.transcript).toContain("names no statement");
+      });
+
+      test("a run whose prose already holds a refusal is not asked", async () => {
+        // The guard, and the reason the reader runs where it does: a run that ended correctly
+        // must not be told it failed. `NO STATEMENT:` IS a correct ending.
+        const b = boot(freshDataDir());
+        const run = await startRun(b, "planning");
+        const script = scriptedModel(
+          answersProse("NO STATEMENT: the inventory cannot derive the columns this question needs."),
+          answersProse("unused"),
+        );
+
+        await runInvestigation(run.runId, {
+          service: b.service,
+          model: await modelOver(script.fetch, undefined, "some-model-nobody-measured:9b"),
+          resources: b.resources,
+        });
+
+        const events = await eventsOf(b.store, run.runId);
+        expect(events.filter((event) => event.kind === "guidance-issued").map((event) => event.notice)).not.toContain(
+          "plan-statement",
+        );
+      });
+    });
 
     test("a grounded plan is asked for one runnable statement, fenced and tagged with this engine", async () => {
       const rules = await planRulesFor("investigation");
@@ -1973,7 +2039,7 @@ describe("planning mode runs no statement of the user's", () => {
     test("an ungrounded plan is told to refuse with NO STATEMENT: rather than invent one", async () => {
       const b = boot(freshDataDir());
       const run = await startRun(b, "planning");
-      const script = scriptedModel(answersProse("a plan"));
+      const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -2071,7 +2137,7 @@ describe("planning mode runs no statement of the user's", () => {
     test("an operations plan on an engine this server cannot ground is told it has seen nothing", async () => {
       const b = boot(freshDataDir());
       const run = await startRun(b, "planning", "operations");
-      const script = scriptedModel(answersProse("a plan"));
+      const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -2119,7 +2185,7 @@ describe("planning mode runs no statement of the user's", () => {
     test("an ungrounded operations plan may still write the engine's own reporting reading as a statement", async () => {
       const b = boot(freshDataDir());
       const run = await startRun(b, "planning", "operations");
-      const script = scriptedModel(answersProse("a plan"));
+      const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -2164,7 +2230,7 @@ describe("planning mode runs no statement of the user's", () => {
         },
       });
       const run = await startRun(b, "planning", "operations");
-      const script = scriptedModel(answersProse("a plan"));
+      const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -2268,7 +2334,7 @@ describe("planning mode runs no statement of the user's", () => {
       ): Promise<{ readonly rules: string; readonly transcript: string }> => {
         const b = boot(freshDataDir(), options);
         const run = await startRun(b, "planning", "operations");
-        const script = scriptedModel(answersProse("a plan"));
+        const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
 
         await runInvestigation(run.runId, {
           service: b.service,
@@ -2415,7 +2481,10 @@ describe("planning mode runs no statement of the user's", () => {
     ): Promise<readonly AgentRunEvent[]> => {
       const b = boot(freshDataDir(), { answer: catalog });
       const run = await startRun(b, "planning", options.workflowType);
-      const script = scriptedModel(answersProse(closing));
+      // Two turns of the same prose: the drive now asks a grounded plan run that named no
+      // statement to write one, and a model with nothing new to say repeats itself. The
+      // verdict, the ledger and every assertion below are unchanged by the extra turn.
+      const script = scriptedModel(answersProse(closing), answersProse(closing));
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -2693,7 +2762,7 @@ describe("a run survives the process driving it dying", () => {
     await first.service.cancel(run.runId, ACTOR);
 
     const second = boot(dataDir);
-    const resumed = scriptedModel(answersProse("I would look at the index."));
+    const resumed = scriptedModel(answersProse("I would look at the index."), answersProse("I would look at the index."));
     const result = await runInvestigation(run.runId, {
       service: second.service,
       model: await modelOver(resumed.fetch),
@@ -3085,7 +3154,7 @@ describe("a run reserves its last turns for its report", () => {
     // inside its reserve before its first turn.
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
-    const script = scriptedModel(answersProse("I would start with the orders table."));
+    const script = scriptedModel(answersProse("I would start with the orders table."), answersProse("I would start with the orders table."));
 
     const result = await runInvestigation(run.runId, {
       service: b.service,
@@ -3157,7 +3226,7 @@ describe("a run reserves its last turns for its report", () => {
 
     const b = boot(freshDataDir());
     const run = await startRun(b);
-    const script = scriptedModel(answersProse("nothing to add"));
+    const script = scriptedModel(answersProse("nothing to add"), answersProse("nothing to add"));
     await runInvestigation(run.runId, {
       service: b.service,
       model: await modelOver(script.fetch),
@@ -3306,7 +3375,7 @@ describe("a run that used its tools and then narrated is reminded once", () => {
     // for reaching outside its set is not evidence that it used one.
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
-    const script = scriptedModel(callsTool("run_read_query", { sql: "SELECT 1" }), answersProse("understood"));
+    const script = scriptedModel(callsTool("run_read_query", { sql: "SELECT 1" }), answersProse("understood"), answersProse("understood"));
 
     const result = await runInvestigation(run.runId, {
       service: b.service,
@@ -3700,7 +3769,7 @@ describe("prior progress is described from the ledger alone", () => {
     });
 
     const second = boot(dataDir);
-    const resumed = scriptedModel(answersProse("continuing"));
+    const resumed = scriptedModel(answersProse("continuing"), answersProse("continuing"));
     await runInvestigation(run.runId, {
       service: second.service,
       model: await modelOver(resumed.fetch),
@@ -3727,7 +3796,7 @@ describe("prior progress is described from the ledger alone", () => {
     });
 
     const second = boot(dataDir);
-    const resumed = scriptedModel(answersProse("continuing"));
+    const resumed = scriptedModel(answersProse("continuing"), answersProse("continuing"));
     await runInvestigation(run.runId, {
       service: second.service,
       model: await modelOver(resumed.fetch),
@@ -3793,7 +3862,7 @@ describe("prior progress is described from the ledger alone", () => {
     }
 
     const second = boot(dataDir);
-    const resumed = scriptedModel(answersProse("continuing"));
+    const resumed = scriptedModel(answersProse("continuing"), answersProse("continuing"));
     await runInvestigation(run.runId, {
       service: second.service,
       model: await modelOver(resumed.fetch),
@@ -3823,7 +3892,7 @@ describe("the run reads its schema context through the catalog tool", () => {
   test("captures the inventory before the first turn, through the audited tool path", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b);
-    const script = scriptedModel(answersProse("understood"));
+    const script = scriptedModel(answersProse("understood"), answersProse("understood"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -3868,7 +3937,7 @@ describe("the run reads its schema context through the catalog tool", () => {
   test("the capture records the statements the tracker charged it, and not a count of its plan", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b);
-    const script = scriptedModel(answersProse("understood"));
+    const script = scriptedModel(answersProse("understood"), answersProse("understood"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -3895,7 +3964,7 @@ describe("the run reads its schema context through the catalog tool", () => {
       },
     });
     const run = await startRun(b);
-    const script = scriptedModel(answersProse("understood"));
+    const script = scriptedModel(answersProse("understood"), answersProse("understood"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -3911,7 +3980,7 @@ describe("the run reads its schema context through the catalog tool", () => {
   test("the packed inventory reaches the model fenced, carrying the fingerprint a claim can cite", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b);
-    const script = scriptedModel(answersProse("understood"));
+    const script = scriptedModel(answersProse("understood"), answersProse("understood"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -3970,7 +4039,7 @@ describe("the run reads its schema context through the catalog tool", () => {
     ).rejects.toThrow();
 
     const second = boot(dataDir);
-    const resumed = scriptedModel(answersProse("continuing"));
+    const resumed = scriptedModel(answersProse("continuing"), answersProse("continuing"));
     await runInvestigation(run.runId, {
       service: second.service,
       model: await modelOver(resumed.fetch),
@@ -3996,7 +4065,7 @@ describe("the run reads its schema context through the catalog tool", () => {
     await first.service.recordEvent(run.runId, { kind: "context-captured", fingerprint: "ctx_old", tableCount: 2 });
 
     const second = boot(dataDir);
-    const resumed = scriptedModel(answersProse("continuing"));
+    const resumed = scriptedModel(answersProse("continuing"), answersProse("continuing"));
     await runInvestigation(run.runId, {
       service: second.service,
       model: await modelOver(resumed.fetch),
@@ -4025,7 +4094,7 @@ describe("the run reads its schema context through the catalog tool", () => {
   test("a planning run on a cold process captures its own context, and still sends no statement of the user's", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
-    const script = scriptedModel(answersProse("I would start with the index."));
+    const script = scriptedModel(answersProse("I would start with the index."), answersProse("I would start with the index."));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -4059,7 +4128,7 @@ describe("the run reads its schema context through the catalog tool", () => {
       },
     });
     const run = await startRun(b);
-    const script = scriptedModel(answersProse("I will inspect it myself."));
+    const script = scriptedModel(answersProse("I will inspect it myself."), answersProse("I will inspect it myself."));
 
     const result = await runInvestigation(run.runId, {
       service: b.service,
@@ -4091,7 +4160,7 @@ describe("a run opened with auto-execute is told what the gate needs", () => {
   test("the rule names the plan the gate reads, and the bound the editor does not have", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "agent", "data-analysis", true);
-    const script = scriptedModel(answersProse("ok"));
+    const script = scriptedModel(answersProse("ok"), answersProse("ok"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -4108,7 +4177,7 @@ describe("a run opened with auto-execute is told what the gate needs", () => {
   test("a run opened without it is told nothing: a rule about what cannot happen is noise", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "agent", "data-analysis");
-    const script = scriptedModel(answersProse("ok"));
+    const script = scriptedModel(answersProse("ok"), answersProse("ok"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -4130,7 +4199,7 @@ describe("a run opened with auto-execute is told what the gate needs", () => {
     for (const workflowType of ["investigation", "query-optimization", "database-assessment", "operations"] as const) {
       const b = boot(freshDataDir());
       const run = await startRun(b, "agent", workflowType, true);
-      const script = scriptedModel(answersProse("ok"));
+      const script = scriptedModel(answersProse("ok"), answersProse("ok"));
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -4696,7 +4765,7 @@ describe("a run that will not record what it read is narrowed to what would fini
   test("a run that took no readings is not narrowed, because it has nothing to report yet", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b);
-    const script = scriptedModel(answersProse("I will not be reading anything today."));
+    const script = scriptedModel(answersProse("I will not be reading anything today."), answersProse("I will not be reading anything today."));
 
     const result = await runInvestigation(run.runId, {
       service: b.service,
@@ -5081,7 +5150,7 @@ describe("a model that thinks instead of answering is told not to", () => {
       */
       const b = boot(freshDataDir());
       const run = await startRun(b, "planning");
-      const script = scriptedModel(answersProse("```sqlite\nSELECT 1\n```"));
+      const script = scriptedModel(answersProse("```sqlite\nSELECT 1\n```"), answersProse("```sqlite\nSELECT 1\n```"));
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -5098,7 +5167,7 @@ describe("a model that thinks instead of answering is told not to", () => {
     // cells it had already won.
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
-    const script = scriptedModel(answersProse("```sqlite\nSELECT 1\n```"));
+    const script = scriptedModel(answersProse("```sqlite\nSELECT 1\n```"), answersProse("```sqlite\nSELECT 1\n```"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -5124,7 +5193,7 @@ describe("a model that thinks instead of answering is told not to", () => {
       */
       const b = boot(freshDataDir());
       const run = await startRun(b, "agent", undefined, undefined, protocol);
-      const script = scriptedModel(answersProse("nothing to add"));
+      const script = scriptedModel(answersProse("nothing to add"), answersProse("nothing to add"));
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -5160,7 +5229,7 @@ describe("a model that thinks instead of CALLING is told not to, on its agent tu
       // indistinguishable from a planning turn at the gate.
       const b = boot(freshDataDir());
       const run = await startRun(b, "agent", undefined, undefined, protocol);
-      const script = scriptedModel(answersProse("nothing to add"));
+      const script = scriptedModel(answersProse("nothing to add"), answersProse("nothing to add"));
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -5177,7 +5246,7 @@ describe("a model that thinks instead of CALLING is told not to, on its agent tu
     // plan one and must not acquire the agent one by association.
     const b = boot(freshDataDir());
     const run = await startRun(b, "agent");
-    const script = scriptedModel(answersProse("nothing to add"));
+    const script = scriptedModel(answersProse("nothing to add"), answersProse("nothing to add"));
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -5191,7 +5260,7 @@ describe("a model that thinks instead of CALLING is told not to, on its agent tu
   test("a model nobody measured is left thinking on both", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "agent");
-    const script = scriptedModel(answersProse("nothing to add"));
+    const script = scriptedModel(answersProse("nothing to add"), answersProse("nothing to add"));
 
     await runInvestigation(run.runId, {
       service: b.service,

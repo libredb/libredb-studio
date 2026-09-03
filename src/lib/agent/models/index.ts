@@ -111,6 +111,33 @@ export function planStatementRetriesFor(modelId: string): number {
 }
 
 /**
+ * The same question, asked for a model NOBODY HAS MEASURED: one ask rather than none.
+ *
+ * The distinction the drive needs and `planStatementRetriesFor` cannot make. That resolver folds
+ * "this profile states 0" and "there is no profile" onto the same number, which is right for a
+ * setting and wrong for a decision: a stated 0 is a measurement, and an absent profile is the
+ * absence of one.
+ *
+ * The gate it feeds fires only where `readPlanStatement` scores the closing prose `absent` — the
+ * same reader, with the same dialect, that `verifyPlanningGoal` is about to score `no-statement`
+ * on. So the ask is reachable only on a run already earning that verdict and provably cannot cost
+ * a pass; what it costs an unmeasured model is one turn on a run it had already lost.
+ *
+ * Measured. `cogito:32b` and `qwen2.5:32b` each hold five surfaces and lose plan 4/5, every loss
+ * `no-statement` with the model stopping on its own after prose that describes the schema
+ * correctly and names no statement. Neither has a row in `measured-profiles.json`, so both were
+ * told nothing. `ornith:9b` and `qwen3:14b` lost that cell in exactly that shape and BOTH were won
+ * by this one sentence — recorded as a number against their names rather than as a rule. The
+ * mechanism has now been found four times.
+ *
+ * A measured model is untouched, including the twenty whose profiles state 0: their plan cells
+ * locked without the ask, and a number somebody measured is not this function's to overrule.
+ */
+export function planStatementAsksFor(modelId: string): number {
+  return resolve(modelId, "planStatementRetries") ?? 1;
+}
+
+/**
  * Whether an empty turn is asked again before this model's run is ended.
  *
  * False everywhere but the model measured returning nothing with its readings already taken,

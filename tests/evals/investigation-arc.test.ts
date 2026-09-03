@@ -150,12 +150,19 @@ describe("a planning run is judged by what planning mode can produce", () => {
     // user can run. Every field on this ledger called it answered until `no-statement`.
     const run = await open("postgres", { mode: "planning" });
 
-    const drive = await run.drive([answersProse("First I would ", "read the employees table.")]);
+    const drive = await run.drive([
+      answersProse("First I would ", "read the employees table."),
+      answersProse("I would still read the employees table."),
+    ]);
 
+    // `guidance-issued` is new and is the fix: a grounded plan run that named neither a statement
+    // nor a refusal is now told so while it still holds a turn, instead of being failed in
+    // silence. The verdict below is unchanged — prose twice is still `no-statement`.
     expect(drive.kinds).toEqual([
       "run-started",
       "driver-resolved",
       "context-captured",
+      "guidance-issued",
       "closing-statement",
       "run-finished",
     ]);
@@ -264,7 +271,10 @@ describe("a planning run is judged by what planning mode can produce", () => {
     // restarted process, a second replica, or a user who has never run agent mode.
     const run = await open("postgres", { mode: "planning" });
 
-    const drive = await run.drive([answersProse("I would begin with the engineering table.")]);
+    const drive = await run.drive([
+      answersProse("I would begin with the engineering table."),
+      answersProse("I would begin with the engineering table."),
+    ]);
 
     expect(drive.kinds).toContain("context-captured");
     expect(drive.modelStatements).toEqual([]);
@@ -297,7 +307,10 @@ describe("the planning-grounded case can fail on the defect it was written for",
   test("opening the case grounds its run, without the case sending anything itself", async () => {
     const run = await openCase();
 
-    const drive = await run.drive([answersProse("I would start with the engineering table.")]);
+    const drive = await run.drive([
+      answersProse("I would start with the engineering table."),
+      answersProse("I would start with the engineering table."),
+    ]);
 
     // The warm-up read the catalog, so the case's own run re-read none of it: it
     // sent nothing of the model's, and only the statistics read the hold cannot

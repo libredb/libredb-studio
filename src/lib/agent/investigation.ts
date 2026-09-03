@@ -68,6 +68,7 @@ import {
   suppressesAgentReasoning,
   suppressesPlanReasoning,
   turnTimeoutMsFor,
+  planStatementAsksFor,
   planStatementRetriesFor,
   reportReminderLimitFor,
   samplingFor,
@@ -3129,19 +3130,45 @@ export async function runInvestigation(
     /**
      * Gives a PLAN run one more turn when its prose named neither statement nor refusal.
      *
-     * Bounded by the model's own `planStatementRetries`, which is 0 for every model but the one
-     * whose ledgers earned it. The other bounds are the same three `remindToReport` applies and
-     * load-bearing for the same reasons: an agent run has no plan deliverable to miss, an
-     * operations plan is prose by decision (`verifyPlanningGoal` exempts it), and a run with no
-     * turn left cannot act on what it is told.
+     * The other bounds are the same three `remindToReport` applies and load-bearing for the same
+     * reasons: an agent run has no plan deliverable to miss, an operations plan is prose by
+     * decision (`verifyPlanningGoal` exempts it), and a run with no turn left cannot act on what
+     * it is told.
      *
      * The reading is `readPlanStatement`, the same reader `recordPlanStatement` and the verifier
      * use, so this cannot ask for a statement the run already wrote — a disagreement between the
      * notice and the verdict would spend a turn telling a passing run it had failed.
+     *
+     * THE FIRST ASK IS THE SERVER'S OWN, NOT A PER-MODEL FAVOUR.
+     *
+     * It was gated behind `planStatementRetries`, which defaults to 0, so a model with no row in
+     * `measured-profiles.json` was told nothing at all: the server read the closing prose, learned
+     * it held neither a fenced statement nor the refusal marker, held the sentence written for
+     * exactly that shape — and returned false on the line above, because of who the model was
+     * rather than what the run did.
+     *
+     * The order was the whole defect. The reader below decides whether the run FELL SHORT, and it
+     * is the same reader, with the same dialect, that `verifyPlanningGoal` is about to score
+     * `no-statement` on. So this branch is reachable only on a run already earning that verdict,
+     * and a run that clears the bar returns non-absent and is never touched. The turn provably
+     * cannot cost a pass, which is the standard the unread-stop retry is already granted under.
+     *
+     * Measured: `cogito:32b` and `qwen2.5:32b` each lost their plan cell 4/5 with every single
+     * loss `no-statement` / `model-stopped`, prose describing the schema correctly and no
+     * statement. `ornith:9b` and `qwen3:14b` lost the same cell the same way and BOTH were won by
+     * this very sentence, filed as a number in a document. The mechanism was discovered three
+     * times; the third and fourth models got nothing.
+     *
+     * `Math.max` rather than a raised default: the two models measured with this mechanism live
+     * keep exactly one ask and see byte-identical drives, and a profile may still RAISE the bound.
+     * It may no longer silence a sentence the server is holding for a run it has already failed.
      */
     const askForPlanStatement = async (assistant: readonly ModelMessage[]): Promise<boolean> => {
       if (record.mode === "agent" || record.workflowType === "operations") return false;
-      if (planStatementAsks >= planStatementRetriesFor(model.modelId)) return false;
+      if (planStatementAsks >= planStatementAsksFor(model.modelId)) return false;
+      // Grounded runs only. A run shown no inventory has nothing to write a statement FROM,
+      // and asking it for one is the impossible ask this file records having paid for before.
+      if (planningInventory === null || planningInventory.length === 0) return false;
       if (turns >= maxTurns || resources.deadline.remainingMs() <= 0) return false;
       if (text.length === 0 || readPlanStatement(text, context.connection.type).kind !== "absent") return false;
       planStatementAsks += 1;
