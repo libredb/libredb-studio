@@ -1156,7 +1156,43 @@ function isShapeFailure(problems: string): boolean {
   return /claims(\.\d+)?: expected (object|array)/.test(problems) || /claims: expected array/.test(problems);
 }
 
-function invalidEvidenceInput(problems: string, example?: string): AgentToolOutcome & { kind: "unavailable" } {
+/**
+ * `recommend_change`'s own call shape — the one evidence-bearing tool that never stated it.
+ *
+ * `compose_report` has `AGENT_CLAIM_SHAPE` and `present_answer` has `AGENT_ANSWER_SHAPE`, both
+ * ungated. This tool had neither: `isShapeFailure` tests for a `claims` path and this call has no
+ * `claims` field, so that branch could never fire for it, and the only place its shape could reach
+ * a model was `exampleRecommendCall` behind the `refusalExamples` lever.
+ *
+ * Measured on `qwen2.5:7b`, query-optimization, 25 runs: the 9 that passed recorded a `statement`,
+ * the 16 that lost recorded none — and nothing else separated them. What the losing runs sent was
+ * `{"change","evidence","rationale"}`, three keys and never a fourth, while the SAME TURN wrote
+ * the value the missing field wants as prose: "Here is the SQL statement for creating the index:
+ * ```sql CREATE INDEX idx_employee_name ON employee(first_name, last_name); ```". The passing runs
+ * carry that exact string in `statement`. The model did not know the field existed.
+ *
+ * What it read instead was `statement: expected string` followed by a paragraph about `evidence` —
+ * the one field it had got right on all 134 attempts.
+ */
+const AGENT_RECOMMENDATION_SHAPE =
+  'The call is ONE object: {"change": "index", "statement": "<the CREATE INDEX or the rewritten SELECT, as SQL text>", "rationale": "<why it answers the objective>", "evidence": [ ... ]} — "statement" is that SQL itself, as a plain string in this call; SQL written only in your reply is not part of it.';
+
+/**
+ * Whether a `recommend_change` call failed on one of its OWN top-level fields.
+ *
+ * Whole-path tokens only, the same restraint `isShapeFailure` shows: a fault inside an evidence
+ * item (`evidence.0.source`) is a one-word correction, and answering it with the whole wrapper
+ * would bury the word that has to change.
+ */
+function isRecommendationShapeFailure(problems: string): boolean {
+  return /(^|[\s,])(change|statement|rationale|evidence): /.test(problems);
+}
+
+function invalidEvidenceInput(
+  problems: string,
+  example?: string,
+  shape?: string,
+): AgentToolOutcome & { kind: "unavailable" } {
   return {
     kind: "unavailable",
     reasonCode: "INVALID_TOOL_INPUT",
@@ -1185,6 +1221,9 @@ function invalidEvidenceInput(problems: string, example?: string): AgentToolOutc
       // Before the evidence contract, because a run that sent prose where an object goes has
       // not reached the evidence yet — and the contract answers a question it did not ask.
       ...(isShapeFailure(problems) ? [AGENT_CLAIM_SHAPE] : []),
+      // The caller's own shape, on the same rule and in the same position: only
+      // `recommendChangeTool` passes one, so no other tool's refusal changes a character.
+      ...(shape === undefined ? [] : [shape]),
       AGENT_EVIDENCE_CONTRACT,
       ...(example === undefined ? [] : [`A call this run could make right now: ${example}`]),
     ].join(" "),
@@ -3078,6 +3117,11 @@ export function recommendChangeTool(
     return invalidEvidenceInput(
       parsed.problems,
       offersRefusalExamples(context.modelId) ? exampleRecommendCall(run.events) : undefined,
+      // The only site that passes a shape, and the reason this parameter exists: see
+      // `AGENT_RECOMMENDATION_SHAPE`. The worked call above stays behind the lever it was
+      // measured on; the one line stating the contract goes to every model, as it does for
+      // this tool's two evidence-bearing siblings.
+      isRecommendationShapeFailure(parsed.problems) ? AGENT_RECOMMENDATION_SHAPE : undefined,
     );
   }
   if (!matchesCard(parsed.value.change, parsed.value.statement)) {

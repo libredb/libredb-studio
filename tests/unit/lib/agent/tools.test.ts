@@ -1304,6 +1304,79 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       expect(outcome.modelText).toContain("<table>");
     });
 
+    describe("recommend_change states its OWN call shape, which it never did", () => {
+      /*
+        Measured on `qwen2.5:7b`, query-optimization, 25 runs read from their ledgers: the 9 that
+        passed recorded a `statement`, the 16 that lost recorded none, and nothing else separated
+        them — the two sides are step-for-step identical up to that point.
+
+        What the losing runs sent was three keys, `{"change","evidence","rationale"}`, never a
+        fourth. In the SAME turn they wrote the value the missing field wants as prose: "Here is
+        the SQL statement for creating the index: ```sql CREATE INDEX idx_employee_name ON
+        employee(first_name, last_name); ```" — and eight of the nine passing runs carry that
+        string, character for character, in `statement`. The model was not failing to write the
+        SQL. It did not know the field existed.
+
+        It could not have learned it here. `compose_report` is answered with `AGENT_CLAIM_SHAPE`
+        and `present_answer` with `AGENT_ANSWER_SHAPE`, both ungated; this tool had neither, and
+        `isShapeFailure` tests for a `claims` path that this call does not have, so that branch
+        could never fire for it. Its shape existed only inside `exampleRecommendCall`, behind the
+        `refusalExamples` lever — which `qwen2.5:7b` does not carry, having no profile row at all.
+      */
+      test("a call missing `statement` is shown the object it should have been", () => {
+        const h = harness();
+
+        const outcome = recommendChangeTool(
+          h.context,
+          { runId: h.context.runId, events: [artifactEvent] },
+          { change: "index", rationale: "the read scans", evidence: [{ source: "artifact", correlationId: "corr-real" }] },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+        // The failing path, as it already did.
+        expect(outcome.modelText).toContain("statement: expected string");
+        // And now the field it never knew about, named in the object it belongs to.
+        expect(outcome.modelText).toContain('"statement"');
+        expect(outcome.modelText).toContain("SQL written only in your reply is not part of it");
+      });
+
+      test("the shape stays out of the ledger line, which counts paths", () => {
+        const h = harness();
+
+        const outcome = recommendChangeTool(
+          h.context,
+          { runId: h.context.runId, events: [artifactEvent] },
+          { change: "index", rationale: "the read scans", evidence: [{ source: "artifact", correlationId: "corr-real" }] },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.detail).toContain("statement");
+        expect(outcome.detail).not.toContain("SQL written only in your reply");
+      });
+
+      test("a fault INSIDE an evidence item is not buried under the wrapper", () => {
+        // The guard on the sentence, and the same restraint `isShapeFailure` shows: a model that
+        // built the call correctly and mistyped one field inside a citation needs that field
+        // named, not the whole object it already got right.
+        const h = harness();
+
+        const outcome = recommendChangeTool(
+          h.context,
+          { runId: h.context.runId, events: [artifactEvent] },
+          {
+            change: "index",
+            statement: "CREATE INDEX i ON orders (id)",
+            rationale: "the read scans",
+            evidence: [{ source: "artifact", correlationId: 7 }],
+          },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.modelText).not.toContain("SQL written only in your reply");
+      });
+    });
+
     test("recommend_change tells a wrong-shaped citation what the shape is", () => {
       const h = harness();
 
