@@ -30,7 +30,7 @@ import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptor
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { KEY_PATTERN_LABELS, SEARCH_INDEX_LABELS, TABLE_LABELS } from "../fixtures/provider-labels";
-import { LLMAuthError } from "@/lib/llm/types";
+import { LLMAuthError, LLMStreamError } from "@/lib/llm/types";
 import type { ColumnSchema, DatabaseConnection, DatabaseType, QueryResult, TableSchema } from "@/lib/types";
 import {
   type Turn,
@@ -3019,6 +3019,66 @@ describe("the run loop is bounded", () => {
 
     const finished = (await eventsOf(b.store, run.runId)).find((event) => event.kind === "run-finished");
     expect(finished).toMatchObject({ status: "failed", stopReason: "model-timeout" });
+  });
+
+  describe("a turn whose STREAM broke is re-asked, because the model did not fail", () => {
+    /*
+      `isRetryableError` is this repository's own reading of an `LLMStreamError`, and
+      `base-provider.ts` already acts on it three times over on the chat surface against these
+      same endpoints. This loop held that judgement and spent runs anyway.
+
+      Measured on `gpt-oss:20b`, database-assessment: runs died on a broken frame a median of 17
+      seconds into a 630-second budget, having called a median of four tools — indistinguishable,
+      up to the break, from the runs that answered. Nothing about the model had failed.
+
+      Re-asked rather than ended because nothing was written: `takeTurn` copies the transcript and
+      never mutates the caller's array, and every ledger write for a call happens downstream in
+      `handleCall`, so the re-ask sends byte-identical bytes.
+    */
+    test("a broken frame costs the turn, not the run", async () => {
+      const b = boot(freshDataDir());
+      const run = await startRun(b);
+      /*
+        A read, then a broken frame, then a report — the measured arc: gpt-oss:20b was cut having
+        already called a median of four tools, holding readings it never filed.
+      */
+      const script = scriptedModel(
+        callsTool("run_read_query", { sql: "SELECT id FROM orders" }),
+        () => {
+          throw new LLMStreamError("terminated", "openai");
+        },
+        reportOn(),
+      );
+
+      const result = await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+      });
+
+      // Three turns asked: the read, the frame that broke, and the re-ask that filed.
+      expect(script.turns).toHaveLength(3);
+      expect(result.status).not.toBe("failed");
+    });
+
+    test("an auth failure is not re-asked, because it is not the connection", async () => {
+      // The bound `isRetryableError` draws: a misconfigured server still fails on its first turn.
+      const b = boot(freshDataDir());
+      const run = await startRun(b);
+      const script = scriptedModel(() => {
+        throw new LLMAuthError("no key", "openai");
+      }, reportOn());
+
+      await expect(
+        runInvestigation(run.runId, {
+          service: b.service,
+          model: await modelOver(script.fetch),
+          resources: b.resources,
+        }),
+      ).rejects.toThrow();
+      // One turn only: the second scripted entry is never reached.
+      expect(script.turns).toHaveLength(1);
+    });
   });
 
   describe("a turn the ceiling cut is given back, because the RUN still has its time", () => {

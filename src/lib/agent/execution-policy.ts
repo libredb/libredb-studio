@@ -411,6 +411,20 @@ export const AGENT_REPORT_RESERVE_TURNS = 2;
 export const AGENT_REPORT_RESERVE_MS = 20_000;
 
 /**
+ * How many times one turn may be re-asked when its STREAM broke, rather than the model.
+ *
+ * Two, matching the chat surface: `base-provider.ts` retries a retryable `LLMStreamError` three
+ * times against these same endpoints, and an agent turn is far more expensive than a chat one, so
+ * this is the same judgement spent more carefully.
+ *
+ * It bounds a fault in the connection, never one in the model. `isRetryableError` refuses auth,
+ * safety and config errors, so a misconfigured server still fails on its first turn; what this
+ * covers is the broken frame measured on `gpt-oss:20b`, where runs died a median of 17 seconds
+ * into a 630-second budget having already called four tools.
+ */
+export const AGENT_TRANSPORT_TURN_RETRIES = 2;
+
+/**
  * How many statements that FAILED AT THE DATABASE a run may try to repair.
  *
  * Policy denials and approval requirements deliberately do not consume one — they

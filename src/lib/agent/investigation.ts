@@ -44,6 +44,8 @@
  */
 
 import { createHash } from "node:crypto";
+import { logger } from "@/lib/logger";
+import { isRetryableError } from "@/lib/llm/types";
 import { type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
 import { z } from "zod";
 import {
@@ -89,6 +91,7 @@ import { packSchemaStatistics, readSchemaStatistics } from "./schema-stats";
 import {
   AGENT_MODEL_TURN_TIMEOUT_MS,
   AGENT_REPORT_RESERVE_MS,
+  AGENT_TRANSPORT_TURN_RETRIES,
   AGENT_REPORT_RESERVE_TURNS,
   AGENT_WORKFLOW_BUDGETS,
 } from "./execution-policy";
@@ -2650,6 +2653,19 @@ export async function runInvestigation(
      * the turn cannot cost a pass — and once, so a genuinely hung endpoint still fails fast.
      */
     let turnCutOffRetried = false;
+    /**
+     * Turns re-asked because the STREAM broke rather than the model.
+     *
+     * `isRetryableError` is this repository's own reading of an `LLMStreamError`, and
+     * `base-provider.ts` already acts on it three times over on the chat surface against the same
+     * endpoints. This loop held that judgement and spent runs anyway: measured on `gpt-oss:20b`,
+     * database-assessment, runs died on a broken frame a median of 17s into a 630s budget having
+     * called a median of four tools — indistinguishable, up to the break, from the runs that
+     * answered.
+     *
+     * Bounded, so a provider that is genuinely down still ends the run rather than looping.
+     */
+    let transportRetries = 0;
     /*
     Every notice this run has already been delivered, read once (B51). The counters it
     seeds are declared in two places — this one and the block before the turn loop — and
@@ -3306,8 +3322,10 @@ export async function runInvestigation(
       // Built after the context, because in planning mode the rules depend on whether
       // there WAS one: a run told to plan against an inventory it was not given is the
       // same defect as a run given one and never told to use it (#350).
-      const turn = await takeTurn(
-        model,
+      let turn: ModelTurn;
+      try {
+        turn = await takeTurn(
+          model,
         // The engine is the fence tag a plan run is told to write, so the prompt reads
         // it from the connection this drive was given rather than from the record: the
         // resources are what a statement would actually be run against.
@@ -3319,10 +3337,39 @@ export async function runInvestigation(
         // Constraint measured and REVERTED; see the commit that removes it. Left unset here
         // rather than deleted from `takeTurn`, because the seam is correct and the cost was in
         // the model, not the wiring.
-        undefined,
-        record.workflowType,
-        record.mode,
-      );
+          undefined,
+          record.workflowType,
+          record.mode,
+        );
+      } catch (error) {
+        /*
+          A turn that broke in TRANSPORT is not a turn the model failed, and this loop's other
+          re-asks all cover the model.
+
+          Re-asked rather than ended because nothing was written: `takeTurn` copies the transcript
+          (`messages: [...messages]`) and never mutates the caller's array, and every ledger write
+          for a call happens downstream in `handleCall`. So the re-ask sends byte-identical bytes —
+          no second result for a `tool_call_id`, none of the wedging hazards the comments around
+          `toolResultMessage` guard.
+
+          Bounded by the run's own clock and by a small count, so a provider that is genuinely down
+          still ends the run — with its own error, finally meaning it.
+        */
+        if (
+          !isRetryableError(error) ||
+          transportRetries >= AGENT_TRANSPORT_TURN_RETRIES ||
+          resources.deadline.remainingMs() <= 0
+        ) {
+          throw error;
+        }
+        transportRetries += 1;
+        logger.warn(`agent run ${runId} re-asking a turn whose stream failed`, {
+          runId,
+          attempt: transportRetries,
+          modelId: model.modelId,
+        });
+        return null;
+      }
       text = turn.text;
       if (turn.aborted) {
         /*
