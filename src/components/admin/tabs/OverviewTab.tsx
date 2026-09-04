@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
 import { getDBIcon, getDBColor } from "@/lib/db-ui-config";
+import { formatBytes } from "@/lib/db/utils/pool-manager";
 import {
   type DatabaseType,
   type DatabaseConnection,
@@ -323,15 +324,7 @@ export function OverviewTab({ user }: OverviewTabProps) {
       if (typeof item.databaseSizeBytes === "number") totalBytes += item.databaseSizeBytes;
       else excluded++;
     }
-    const formatted =
-      totalBytes === 0
-        ? "0"
-        : totalBytes >= 1024 * 1024 * 1024
-          ? `${(totalBytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-          : totalBytes >= 1024 * 1024
-            ? `${(totalBytes / (1024 * 1024)).toFixed(0)} MB`
-            : `${(totalBytes / 1024).toFixed(0)} KB`;
-    return { totalDBSize: formatted, dbSizeExcluded: excluded };
+    return { totalDBSize: formatBytes(totalBytes), dbSizeExcluded: excluded };
   }, [fleetHealth]);
 
   // Activity feed: merge audit events + recent history

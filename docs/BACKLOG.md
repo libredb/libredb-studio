@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D51, U17 · 13
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U26 · 9
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 8
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -794,39 +794,6 @@ is not a free read.
 
 **Done when:** an operation a provider declares globally runnable either has its own card copy or a
 recorded reason it is withheld.
-
-### U26. The fleet total sums display strings, so a terabyte counts as one byte
-
-Found 2026-08-27 in the #517 review. `totalDBSize` in `src/components/admin/tabs/OverviewTab.tsx`
-builds the admin dashboard's total by RE-PARSING each connection's formatted size:
-
-```ts
-const s = item.databaseSize.toLowerCase();
-const num = parseFloat(s);
-if (isNaN(num)) continue;
-if (s.includes("gb")) totalBytes += num * 1024 * 1024 * 1024;
-else if (s.includes("mb")) totalBytes += num * 1024 * 1024;
-else if (s.includes("kb")) totalBytes += num * 1024;
-else totalBytes += num;
-```
-
-`tb` is not a branch, so a `"1 TB"` database falls to `else` and contributes **1 byte** to the fleet
-total - and #517 added `PB` and `EB` to the shared formatter's ladder, so two more spellings now reach
-this parser and land in the same arm. The `else` arm is right for a bare `"512"` and cannot tell it from
-a truncated unit, which is the whole problem with parsing a string that was built for a human.
-
-The `"N/A"` handling is correct by accident and worth keeping: `parseFloat("n/a")` is `NaN`, so a
-refusal is skipped rather than counted as zero.
-
-**The real defect is that there is no numeric channel to sum.** `FleetHealthItem`
-(`src/app/api/admin/fleet-health/route.ts`) carries `databaseSize?: string` and nothing else, because
-`HealthInfo.databaseSize` is a required string. So the fix is not a `tb` branch - it is carrying the
-bytes the providers already have, which is also what makes an honest absence expressible here.
-
-**Done when:** `FleetHealthItem` carries an optional byte count beside the string, the route projects it
-from the provider (absent when the provider published none), the total sums those numbers and shows how
-many connections it could not include rather than silently undercounting, and a test pins a TB-scale
-connection plus one with no byte figure at all.
 
 ---
 

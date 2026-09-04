@@ -432,9 +432,9 @@ describe("OverviewTab", () => {
     const { queryByText } = renderResult!;
 
     await waitFor(() => {
-      // 1 TB correctly reflected as 1024.0 GB, not the old bug's "1 B" (parseFloat("1 tb")
-      // falls through every gb/mb/kb branch to a bare byte read).
-      expect(queryByText("1024.0 GB")).not.toBeNull();
+      // 1 TB correctly reflected as "1 TB" via the shared formatBytes ladder, not the old bug's
+      // "1 B" (parseFloat("1 tb") falls through every gb/mb/kb branch to a bare byte read).
+      expect(queryByText("1 TB")).not.toBeNull();
       // The connection with no databaseSizeBytes is excluded from the sum, not zeroed into it.
       expect(queryByText("(1 excluded)")).not.toBeNull();
     });
