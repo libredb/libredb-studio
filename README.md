@@ -984,7 +984,8 @@ We welcome contributions from the community! Whether it's a bug fix, a new featu
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+Distributed under the MIT License. See `LICENSE` for more information. One direct dependency ships
+under different terms — see [`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PARTY_LICENSES.md).
 
 ---
 
