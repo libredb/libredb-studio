@@ -1,3 +1,8 @@
+# Normalize every text file to LF on checkout so byte-for-byte checks (e.g.
+# channels:showcase:check) don't break on Windows clones with core.autocrlf=true
+# (#554). Binaries are auto-detected and left untouched.
+* text=auto eol=lf
+
 # Executable text sources must check out LF on every platform (#114): the
 # windows-latest release runner's git converts text files to CRLF by default
 # (core.autocrlf=true), which makes gofmt -l flag Go sources in the launcher

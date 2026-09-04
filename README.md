@@ -984,7 +984,8 @@ We welcome contributions from the community! Whether it's a bug fix, a new featu
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+Distributed under the MIT License. See `LICENSE` for more information. One direct dependency,
+`elkjs`, is under the reciprocal EPL-2.0; see [`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PARTY_LICENSES.md).
 
 ---
 

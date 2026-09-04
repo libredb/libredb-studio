@@ -100,7 +100,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
         <div className="absolute right-0 top-0 bottom-0 w-px bg-fill-strong" />
 
         {/* Content */}
-        <div className="relative z-10 flex flex-col p-12 xl:p-16 w-full overflow-y-auto">
+        <div className="relative z-10 flex flex-col p-12 w-full overflow-y-auto">
           {/* Top: Logo */}
           <a
             href="https://libredb.org"
@@ -127,9 +127,9 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
             pushed the sign-in card itself below the fold). The content now ends with the
             community row, so one auto margin above it is the whole layout.
           */}
-          <div className="space-y-8 mt-auto">
+          <div className="space-y-6 mt-auto">
             <div className="space-y-4 max-w-xl">
-              <h1 className="text-4xl font-bold text-white tracking-tight leading-[1.1]">
+              <h1 className="text-4xl font-bold text-white tracking-tight leading-none">
                 The open-source SQL IDE that
                 <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
                   {" "}
@@ -151,15 +151,16 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
             <ConnectionSignature />
 
             {/*
-              The pills and the relatives line are ONE block with a 12px gap, not two
+              The pills and the relatives line are ONE block with an 8px gap, not two
               siblings in the 32px rhythm above. Two reasons, and the second is a measurement:
               the line is the second half of the engine list rather than a fourth claim, so it
               belongs to the pills; and this column had no room to give. At 1280x800 the hero
               measured exactly 800px before this change - zero slack - so every pixel added
-              here scrolls the page. Folding the two into one block buys back 20px of the 32
-              the standalone gap would have cost.
+              here scrolls the page. Folding the two into one block buys back most of the 32
+              the standalone gap would have cost; issue #541 tightened the fold itself from
+              12px to 8px to close the overflow the relatives line later reopened.
             */}
-            <div className="space-y-3">
+            <div className="space-y-2">
               <DatabaseShowcase variant="desktop" />
               <WireCompatibleLine variant="desktop" />
             </div>

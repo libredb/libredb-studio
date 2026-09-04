@@ -201,4 +201,28 @@ test.describe("Login showcase", () => {
     await expect(page.getByTestId("database-showcase-desktop")).toBeHidden();
     await expect(page.getByTestId("hero-proof")).toBeHidden();
   });
+
+  // Issue #541: the relatives line above pushed the hero column past 800px at 1280x800 with
+  // zero slack to absorb it, scrolling the whole page. Pinned at the sizes #541 measured as
+  // "no scroll" before that line existed, so a future addition to the hero that
+  // reopens the gap fails here instead of shipping unnoticed.
+  const NO_SCROLL_DESKTOP_VIEWPORTS = [
+    { width: 1280, height: 800 },
+    { width: 1366, height: 768 },
+    { width: 1440, height: 900 },
+    { width: 1920, height: 1080 },
+  ];
+
+  test("hero fits without a vertical scrollbar at every no-scroll desktop size", async ({ page }) => {
+    for (const viewport of NO_SCROLL_DESKTOP_VIEWPORTS) {
+      await page.setViewportSize(viewport);
+      const scrollHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+      expect(scrollHeight, `${viewport.width}x${viewport.height}`).toBeLessThanOrEqual(viewport.height);
+
+      // The sign-in card is the page's one interactive element; it staying reachable without
+      // scrolling is the actual user-facing consequence of the hero overflowing.
+      const emailBox = await page.locator('input[type="email"]').first().boundingBox();
+      expect(emailBox?.y, `${viewport.width}x${viewport.height}`).toBeLessThan(viewport.height);
+    }
+  });
 });
