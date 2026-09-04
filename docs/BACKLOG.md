@@ -37,7 +37,7 @@ None of it is a GitHub issue.
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1, N3 · 2
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 2
-- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C10 · 8
+- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C10 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B76 · 22
@@ -1256,23 +1256,6 @@ a CC BY-SA database with no note connecting them.
 **Done when:** a generated `NOTICE` (or `THIRD_PARTY_LICENSES`) ships at the root of the image and the
 tarballs, names the sample database's separate terms explicitly, and is regenerated from the lockfile
 rather than hand-maintained.
-
-### C9. `elkjs` is EPL-2.0 and a direct production dependency
-
-Every other direct production dependency is permissive. `elkjs@^0.12.0` is EPL-2.0 — a file-level
-reciprocal license with a patent-retaliation clause — and it is ours by choice rather than transitive:
-the schema diagram's layout worker imports it at
-`src/components/schema-diagram/elk.worker.ts`.
-
-It is used unmodified, which is the case EPL-2.0 is comfortable with, so nothing is wrong today. But
-the distributed bundle is MIT-plus-EPL rather than MIT, and that is a question an acquirer's counsel
-asks rather than overlooks.
-
-Recorded rather than acted on because the alternatives are worse: ELK is the only layout engine in the
-ecosystem that produces the layered orthogonal routing the ER diagram depends on.
-
-**Done when:** the mixed terms are stated openly (alongside C8, the natural place), or a permissive
-layout engine proves it can match the output.
 
 ### C10. The last DOMPurify advisories are held open by Monaco's pin
 
