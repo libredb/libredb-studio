@@ -24,6 +24,13 @@ export interface FleetHealthItem {
   latencyMs: number;
   activeConnections?: number;
   databaseSize?: string;
+  /**
+   * The provider's own byte figure from `getOverview()`, or absent when the provider publishes
+   * none (same absence-vs-zero contract as `DatabaseOverview.databaseSizeBytes`). The dashboard
+   * sums this directly instead of re-parsing `databaseSize`'s display string, which had no branch
+   * for "1 TB" or larger and silently counted such a database as 1 byte.
+   */
+  databaseSizeBytes?: number;
   error?: string;
 }
 
@@ -70,6 +77,14 @@ export async function POST(request: Request) {
           const health = await provider.getHealth();
           const latencyMs = Date.now() - start;
 
+          // Best-effort and outside the latency measurement above: getOverview() is a second
+          // round-trip this route did not previously make, and a provider that cannot answer it
+          // (or has none of this data) must not turn a working connection into an error result.
+          const databaseSizeBytes = await provider
+            .getOverview()
+            .then((overview) => overview.databaseSizeBytes)
+            .catch(() => undefined);
+
           return {
             connectionId: conn.id,
             connectionName: conn.name,
@@ -79,6 +94,7 @@ export async function POST(request: Request) {
             latencyMs,
             activeConnections: health.activeConnections,
             databaseSize: health.databaseSize,
+            databaseSizeBytes,
           };
         } catch (err) {
           return {

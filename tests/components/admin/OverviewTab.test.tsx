@@ -370,6 +370,7 @@ describe("OverviewTab", () => {
               status: "healthy",
               latencyMs: 150,
               databaseSize: "512 kb",
+              databaseSizeBytes: 524288,
               activeConnections: 5,
             },
           ],
@@ -388,6 +389,54 @@ describe("OverviewTab", () => {
       expect(queryByText("150")).not.toBeNull();
       // totalDBSize aggregation: "kb" branch
       expect(queryByText("512 KB")).not.toBeNull();
+    });
+  });
+
+  // Issue #540: databaseSize's display string had no "tb" branch, so re-parsing it counted a
+  // 1 TB database as 1 byte. totalDBSize now sums databaseSizeBytes directly - this pins a
+  // TB-scale connection plus one with no byte figure at all, and asserts the total is correct
+  // and the excluded connection is called out rather than silently zeroed into the sum.
+  test("sums a TB-scale byte figure correctly and excludes a connection with none", async () => {
+    fetchMock = mockGlobalFetch({
+      "/api/admin/audit": { json: { events: [] } },
+      "/api/admin/fleet-health": {
+        json: {
+          results: [
+            {
+              connectionId: "c1",
+              connectionName: "Archive",
+              type: "postgres",
+              status: "healthy",
+              latencyMs: 100,
+              databaseSize: "1 TB",
+              databaseSizeBytes: 1099511627776,
+              activeConnections: 3,
+            },
+            {
+              connectionId: "c2",
+              connectionName: "ScyllaDB Node",
+              type: "cassandra",
+              status: "healthy",
+              latencyMs: 90,
+              activeConnections: 2,
+            },
+          ],
+        },
+      },
+    });
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    const { queryByText } = renderResult!;
+
+    await waitFor(() => {
+      // 1 TB correctly reflected as 1024.0 GB, not the old bug's "1 B" (parseFloat("1 tb")
+      // falls through every gb/mb/kb branch to a bare byte read).
+      expect(queryByText("1024.0 GB")).not.toBeNull();
+      // The connection with no databaseSizeBytes is excluded from the sum, not zeroed into it.
+      expect(queryByText("(1 excluded)")).not.toBeNull();
     });
   });
 

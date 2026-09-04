@@ -117,6 +117,70 @@ describe("POST /api/admin/fleet-health", () => {
     expect(data.results[0].latencyMs).toBeDefined();
   });
 
+  // Issue #540: the fleet total used to re-parse `databaseSize`'s display string, which had no
+  // "tb" branch and counted a 1 TB database as 1 byte. The route now projects the provider's own
+  // byte figure from getOverview() instead, so the dashboard never has to parse a string at all.
+  test("carries the provider's byte figure from getOverview alongside the display string", async () => {
+    const req = createMockRequest("/api/admin/fleet-health", {
+      method: "POST",
+      body: { connections },
+    });
+
+    const res = await POST(req);
+    const data = await parseResponseJSON<{
+      results: { connectionId: string; databaseSize?: string; databaseSizeBytes?: number }[];
+    }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.results[0].databaseSize).toBe("256 MB");
+    expect(data.results[0].databaseSizeBytes).toBe(268435456);
+  });
+
+  test("omits databaseSizeBytes, not a fabricated 0, when the provider publishes no byte figure", async () => {
+    const noByteProvider = createMockProvider({
+      overview: {
+        version: "Cassandra 4.1",
+        uptime: "10 days",
+        maxConnections: 100,
+        databaseSize: "1 MiB",
+        tableCount: 5,
+        indexCount: 2,
+      },
+    });
+    mockGetOrCreateProvider.mockImplementation(async () => noByteProvider);
+
+    const req = createMockRequest("/api/admin/fleet-health", {
+      method: "POST",
+      body: { connections: [connections[0]] },
+    });
+
+    const res = await POST(req);
+    const data = await parseResponseJSON<{ results: { databaseSizeBytes?: number }[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.results[0].databaseSizeBytes).toBeUndefined();
+  });
+
+  test("a getOverview failure omits the byte figure without turning a healthy connection into an error", async () => {
+    const throwingProvider = createMockProvider();
+    (throwingProvider.getOverview as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new Error("overview query timed out");
+    });
+    mockGetOrCreateProvider.mockImplementation(async () => throwingProvider);
+
+    const req = createMockRequest("/api/admin/fleet-health", {
+      method: "POST",
+      body: { connections: [connections[0]] },
+    });
+
+    const res = await POST(req);
+    const data = await parseResponseJSON<{ results: { status: string; databaseSizeBytes?: number }[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.results[0].status).toBe("healthy");
+    expect(data.results[0].databaseSizeBytes).toBeUndefined();
+  });
+
   test("returns 403 for non-admin user", async () => {
     mockGetSession.mockResolvedValueOnce({ role: "user", username: "user" });
 

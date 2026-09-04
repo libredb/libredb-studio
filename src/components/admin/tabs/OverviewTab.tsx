@@ -312,22 +312,26 @@ export function OverviewTab({ user }: OverviewTabProps) {
     return Math.round(healthy.reduce((sum, h) => sum + h.latencyMs, 0) / healthy.length);
   }, [fleetHealth]);
 
-  const totalDBSize = useMemo(() => {
+  // Sums the provider's own byte figure instead of re-parsing `databaseSize`'s display string,
+  // which had no "tb" branch and silently counted a 1 TB database as 1 byte. A connection with no
+  // byte figure (provider doesn't publish one, or the connection errored) is excluded from the
+  // sum rather than treated as zero, and the count says so instead of the total going quiet.
+  const { totalDBSize, dbSizeExcluded } = useMemo(() => {
     let totalBytes = 0;
+    let excluded = 0;
     for (const item of fleetHealth) {
-      if (!item.databaseSize) continue;
-      const s = item.databaseSize.toLowerCase();
-      const num = parseFloat(s);
-      if (isNaN(num)) continue;
-      if (s.includes("gb")) totalBytes += num * 1024 * 1024 * 1024;
-      else if (s.includes("mb")) totalBytes += num * 1024 * 1024;
-      else if (s.includes("kb")) totalBytes += num * 1024;
-      else totalBytes += num;
+      if (typeof item.databaseSizeBytes === "number") totalBytes += item.databaseSizeBytes;
+      else excluded++;
     }
-    if (totalBytes === 0) return "0";
-    if (totalBytes >= 1024 * 1024 * 1024) return `${(totalBytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-    if (totalBytes >= 1024 * 1024) return `${(totalBytes / (1024 * 1024)).toFixed(0)} MB`;
-    return `${(totalBytes / 1024).toFixed(0)} KB`;
+    const formatted =
+      totalBytes === 0
+        ? "0"
+        : totalBytes >= 1024 * 1024 * 1024
+          ? `${(totalBytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+          : totalBytes >= 1024 * 1024
+            ? `${(totalBytes / (1024 * 1024)).toFixed(0)} MB`
+            : `${(totalBytes / 1024).toFixed(0)} KB`;
+    return { totalDBSize: formatted, dbSizeExcluded: excluded };
   }, [fleetHealth]);
 
   // Activity feed: merge audit events + recent history
@@ -380,6 +384,7 @@ export function OverviewTab({ user }: OverviewTabProps) {
         todayQueries={todayQueries}
         yesterdayQueries={yesterdayQueries}
         totalDBSize={totalDBSize}
+        dbSizeExcluded={dbSizeExcluded}
         user={user}
         fleetLoading={fleetLoading}
         onRefresh={refreshFleetHealth}
@@ -416,6 +421,7 @@ function HeroStatusBanner({
   todayQueries,
   yesterdayQueries,
   totalDBSize,
+  dbSizeExcluded,
   user,
   fleetLoading,
   onRefresh,
@@ -427,6 +433,7 @@ function HeroStatusBanner({
   todayQueries: number;
   yesterdayQueries: number;
   totalDBSize: string;
+  dbSizeExcluded: number;
   user: AdminUser | null;
   fleetLoading: boolean;
   onRefresh: () => void;
@@ -568,7 +575,7 @@ function HeroStatusBanner({
                 icon={HardDrive}
                 label="DB Size"
                 value={totalDBSize}
-                suffix=""
+                suffix={dbSizeExcluded > 0 ? `(${dbSizeExcluded} excluded)` : ""}
                 color="text-emerald-400"
                 isString
               />
