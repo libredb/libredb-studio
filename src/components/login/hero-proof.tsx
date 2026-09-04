@@ -90,7 +90,7 @@ export function HeroProof() {
   const claims = HERO_CLAIMS;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       <dl data-testid="hero-proof" className="grid grid-cols-3 gap-x-6 gap-y-2 select-none">
         {claims.map((claim) => (
           <div key={claim.key} className="space-y-1">

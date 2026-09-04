@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D51, U17 · 13
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U26 · 9
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U26 · 8
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -737,48 +737,6 @@ file's ratio is not the tree's.
 
 **Done when:** the scope is widened with the benign sites made explicit, or the decision not to is
 recorded here with the number that justified it.
-
-### U18. The login hero has no vertical slack left, and the relatives line spends 56px it does not have
-
-Measured on the built app (`next start`, Chromium), before and after the change that added the
-wire-compatible relatives line:
-
-| Viewport | Before | After | Sign-in card |
-| --- | --- | --- | --- |
-| 1440x900 | page 900px, no scroll | page 900px, no scroll | above the fold in both |
-| 1280x800 | page 800px, no scroll | **page 856px, scrolls 56px** | above the fold in both |
-| 1920x1080 | page 1080px, no scroll | page 1080px, no scroll | above the fold in both |
-| 390x844 | page 991px (already scrolls) | page 1062px | above the fold in both |
-
-The cause is not the line's height alone. At 1280x800 the hero column measured **exactly 800px before
-the change** — the content block was 489px and the chrome took the rest — so the column had **zero
-slack** and the `mt-auto` above it had nothing to absorb. Any block added anywhere in that column
-scrolls the page at that height. One more row of engine pills would do it too.
-
-**Re-measured with the nineteenth relative, and the figures did not move.** ScyllaDB joining
-`WIRE_COMPATIBLE_ENGINES` adds a name to this same line, and at 1280x800 on the built app the page is
-still 856px against an 800px viewport, still 56px of overflow, the line itself still 50px — the new
-name fell inside the two-line box the eighteen already occupied rather than starting a third line. The
-table above still holds; the next name is the one to re-measure.
-
-Already spent to reduce it: folding the relatives line into the pills' own block instead of the hero's
-32px rhythm (20px), `leading-snug` instead of `leading-relaxed` (12px), and a shorter lead sentence
-(16px). 104px of overflow brought down to 56px.
-
-Reaching zero means taking height out of a block that is not the relatives line — a decision about
-what the hero says. The candidates are the `platform-line` ("Runs on Linux · macOS · Windows", 20px
-plus its gap), the h1's two-line setting at 1280px, and the `connection-signature`'s `text-xl` at
-that width.
-
-The harm is bounded. The sign-in card is unaffected at every measured size. What falls below the fold
-at 1280x800 is the bottom of the hero (the community row) plus the column's own top padding, which
-collapses first. It is not the failure `login-form.tsx`'s comment records — a hero that measured
-1294px in a 900px viewport and pushed the sign-in card itself down.
-
-**Done when:** the hero fits at 1280x800 with the relatives line intact, or scrolling at that height
-is accepted deliberately.
-
----
 
 ### U21. Two global maintenance cards exist for operations that have no card copy
 
