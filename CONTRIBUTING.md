@@ -63,24 +63,29 @@ Feature suggestions are welcome! Please provide:
    as `README.md` and quote install commands verbatim; `bun run readme:check` enforces it.
 7. **Follow the coding style**, write clear commit messages, and update documentation with the code.
 
-### Hacktoberfest
+### Contributor programs
 
-LibreDB Studio takes part in Hacktoberfest each October. The repository carries the `hacktoberfest`
-topic, and the issues we have vetted for outside pickup are labeled
-[`hacktoberfest`](https://github.com/libredb/libredb-studio/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest):
-each states what is wrong, where to look, and what "done" looks like, and none needs a live database
-cluster or a cloud account. `good first issue` marks the small ones, `help wanted` the medium ones.
+The issues we have vetted for outside pickup are labeled
+[`good first issue`](https://github.com/libredb/libredb-studio/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+(small) and
+[`help wanted`](https://github.com/libredb/libredb-studio/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+(medium). Each states what is wrong, where to look and what "done" looks like, and none needs a live
+database cluster or a cloud account. That list is the one to pick from during Hacktoberfest, Social
+Winter of Code, GSSoC or any other contributor program. Entries in `docs/BACKLOG.md` that carry no
+label have not been vetted for outside pickup; ask in an issue first if one interests you.
 
-- **Claim before you start.** Comment on the issue so two people do not build the same fix. If a
-  claimed issue shows no activity for two weeks it is open again.
-- **What counts.** A PR that references its issue, includes tests, and passes the gate above. We
-  label accepted PRs `hacktoberfest-accepted` once merged.
+- **Claim before you start.** Comment on the issue so two people do not build the same fix. A
+  claimed issue with no activity for two weeks is open again.
+- **What counts.** A PR that references its issue, includes tests and passes the gate above. During
+  October we also add `hacktoberfest-accepted` to merged PRs from the labeled list, for participants
+  whose program still looks for it.
 - **What does not count.** PRs that only reformat, rename, fix a typo without an issue, add a
-  trailing comment, or bump a version are closed with the `spam` or `invalid` label, which also
-  excludes them from Hacktoberfest's count. Machine-generated PRs that do not run the tests fall in
-  the same bin.
-- **Pick from the labeled list.** Entries in `docs/BACKLOG.md` that are not labeled have not been
-  vetted for outside pickup; ask in an issue first if one of them interests you.
+  trailing comment or bump a version are closed with the `spam` or `invalid` label. Machine-generated
+  PRs that do not run the tests fall in the same bin.
+
+The repository keeps the `hacktoberfest` topic for discoverability. Note that Hacktoberfest 2026
+itself is organised around in-person and online events and no longer counts pull requests; the
+labels above are how this repository welcomes contributors in any month.
 
 ## Development Setup
 
