@@ -37,11 +37,50 @@ Feature suggestions are welcome! Please provide:
 
 ### Pull Requests
 
-1. **Fork the repository** and create your branch from `main`
-2. **Follow the coding style** of the project
-3. **Write clear commit messages**
-4. **Update documentation** if needed
-5. **Test your changes** thoroughly
+1. **Start from an issue.** Open one or comment on an existing one before you write code, and
+   reference it from the PR (`Closes #123`). A PR with no linked issue is hard to review and, during
+   Hacktoberfest, does not count.
+2. **Fork the repository** and create your branch from `main`.
+3. **Write the failing test first, then the fix.** Every change that adds or alters executable
+   lines lands with its tests in the same PR. The CI gate is 100% line coverage
+   (`scripts/check-coverage.mjs` fails the required `Unit & Integration Tests` job below it), so a
+   PR without tests cannot merge no matter how small the change.
+4. **Run the local gate before pushing.** It mirrors the required CI checks:
+
+   ```bash
+   bun run format && bun run lint && bun run typecheck && bun run knip \
+     && bun run readme:check && bun run chart:check && bun run channels:showcase:check \
+     && bun run security:check && bun run test && bun run build
+   ```
+
+   Always `bun run test`, never bare `bun test`: component tests need the isolated execution groups
+   the script sets up. `bun run test:coverage && bun run coverage:check` prints the exact uncovered
+   `file:line` ranges.
+5. **Keep the provider triad in lockstep.** Anything under `src/lib/db/providers/**` has a matching
+   `docs/providers/<type-id>.md` and `tests/integration/db/<type-id>-provider.test.ts`; a change to
+   one moves the other two in the same PR.
+6. **Localized READMEs are guarded.** `README_zh.md` and `README_ja.md` must list the same engines
+   as `README.md` and quote install commands verbatim; `bun run readme:check` enforces it.
+7. **Follow the coding style**, write clear commit messages, and update documentation with the code.
+
+### Hacktoberfest
+
+LibreDB Studio takes part in Hacktoberfest each October. The repository carries the `hacktoberfest`
+topic, and the issues we have vetted for outside pickup are labeled
+[`hacktoberfest`](https://github.com/libredb/libredb-studio/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest):
+each states what is wrong, where to look, and what "done" looks like, and none needs a live database
+cluster or a cloud account. `good first issue` marks the small ones, `help wanted` the medium ones.
+
+- **Claim before you start.** Comment on the issue so two people do not build the same fix. If a
+  claimed issue shows no activity for two weeks it is open again.
+- **What counts.** A PR that references its issue, includes tests, and passes the gate above. We
+  label accepted PRs `hacktoberfest-accepted` once merged.
+- **What does not count.** PRs that only reformat, rename, fix a typo without an issue, add a
+  trailing comment, or bump a version are closed with the `spam` or `invalid` label, which also
+  excludes them from Hacktoberfest's count. Machine-generated PRs that do not run the tests fall in
+  the same bin.
+- **Pick from the labeled list.** Entries in `docs/BACKLOG.md` that are not labeled have not been
+  vetted for outside pickup; ask in an issue first if one of them interests you.
 
 ## Development Setup
 
@@ -127,10 +166,20 @@ src/
 ### Available Scripts
 
 ```bash
-bun dev        # Start development server
-bun build      # Build for production
-bun start      # Start production server
-bun lint       # Run ESLint
+bun dev                  # development server (Turbopack)
+bun run build            # production build
+bun start                # production server
+bun run format           # Biome formatter check (format:fix to write)
+bun run lint             # oxlint, then ESLint 9
+bun run typecheck        # TypeScript strict
+bun run knip             # unused files, exports and dependencies
+bun run test             # every test layer; never bare `bun test`
+bun run test:coverage    # coverage report (merged lcov)
+bun run coverage:check   # enforce 100% line coverage on the merged lcov
+bun run readme:check     # localized README drift guard
+bun run chart:check      # Helm chart version sync guard
+bun run security:check   # security posture drift guard
+bun run build:lib        # @libredb/studio package dist (after changing anything under src/exports/)
 ```
 
 ### Security Scanning
