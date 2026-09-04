@@ -203,11 +203,12 @@ test.describe("Login showcase", () => {
   });
 
   // Issue #541: the relatives line above pushed the hero column past 800px at 1280x800 with
-  // zero slack to absorb it, scrolling the whole page. Pinned at the three sizes docs/BACKLOG.md
-  // U18 measured as "no scroll" before that line existed, so a future addition to the hero that
+  // zero slack to absorb it, scrolling the whole page. Pinned at the sizes #541 measured as
+  // "no scroll" before that line existed, so a future addition to the hero that
   // reopens the gap fails here instead of shipping unnoticed.
   const NO_SCROLL_DESKTOP_VIEWPORTS = [
     { width: 1280, height: 800 },
+    { width: 1366, height: 768 },
     { width: 1440, height: 900 },
     { width: 1920, height: 1080 },
   ];
