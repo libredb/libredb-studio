@@ -40,6 +40,34 @@ import { DatabaseConfigError, QueryError, ConnectionError } from "../../errors";
 // JSON query payload: { "command": "GET", "args": ["key"] }
 type RedisJsonCommand = { command: string; args?: string[] };
 
+/**
+ * Vendor-specific version fields a Redis-protocol server publishes beside `redis_version`,
+ * the Redis compatibility level every relative in this family reports. Three of the four
+ * relatives (Valkey, DragonflyDB, Garnet) name themselves in a field of their own; KeyDB
+ * does not, so its `redis_version` (`6.3.4`) already is its real version and needs no
+ * relabeling. All four measured live 2026-09-04: `valkey_version:9.1.1`,
+ * `dragonfly_version:df-v1.40.1`, `garnet_version:2.1.5` (Valkey and Garnet also publish a
+ * matching `server_name`, which this does not need to key on).
+ */
+const VENDOR_VERSION_FIELDS: Array<{ field: string; vendor: string }> = [
+  { field: "valkey_version", vendor: "Valkey" },
+  { field: "dragonfly_version", vendor: "Dragonfly" },
+  { field: "garnet_version", vendor: "Garnet" },
+];
+
+/**
+ * How the overview names the server: `<vendor> <version> (Redis <compat level>)` when the
+ * `INFO` reply names itself, the bare compat level when it does not (KeyDB) - the same
+ * self-naming-wins rule the MySQL provider's `labelServerVersion()` applies to `VERSION()`.
+ */
+function labelServerVersion(parsed: Record<string, string>): string {
+  for (const { field, vendor } of VENDOR_VERSION_FIELDS) {
+    const version = parsed[field];
+    if (version) return `${vendor} ${version} (Redis ${parsed.redis_version || "unknown"})`;
+  }
+  return parsed.redis_version || "unknown";
+}
+
 // ============================================================================
 // Redis Provider
 // ============================================================================
@@ -595,10 +623,12 @@ export class RedisProvider extends BaseDatabaseProvider {
     const dbsize = await this.client!.dbsize();
 
     return {
-      version: parsed.redis_version || "unknown",
+      version: labelServerVersion(parsed),
       uptime: this.formatDuration(parseInt(parsed.uptime_in_seconds || "0") * 1000),
       activeConnections: parseInt(parsed.connected_clients || "0"),
-      maxConnections: parseInt(parsed.maxclients || "0"),
+      // Dragonfly publishes this limit as `max_clients` (underscored); every other relative
+      // that publishes one (Redis, Valkey, KeyDB) uses `maxclients`.
+      maxConnections: parseInt(parsed.maxclients || parsed.max_clients || "0"),
       databaseSize: parsed.used_memory_human || "0B",
       databaseSizeBytes: parseInt(parsed.used_memory || "0"),
       tableCount: dbsize,

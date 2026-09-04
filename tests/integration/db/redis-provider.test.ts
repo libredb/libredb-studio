@@ -93,6 +93,13 @@ const capturedRedisOptions: Record<string, unknown>[] = [];
  */
 let infoRefusal: string | null = null;
 
+/**
+ * When set, `info()` answers with this string instead of `MOCK_INFO_STRING` - lets a test
+ * simulate a relative that publishes an extra field (e.g. `dragonfly_version`) without a
+ * second mock module.
+ */
+let infoOverride: string | null = null;
+
 mock.module("ioredis", () => {
   class MockRedis {
     private _config: unknown;
@@ -112,7 +119,7 @@ mock.module("ioredis", () => {
 
     async info() {
       if (infoRefusal !== null) throw new Error(infoRefusal);
-      return MOCK_INFO_STRING;
+      return infoOverride ?? MOCK_INFO_STRING;
     }
 
     async dbsize() {
@@ -900,9 +907,37 @@ describe("RedisProvider", () => {
       expect(typeof overview.uptime).toBe("string");
       expect(typeof overview.activeConnections).toBe("number");
       expect(overview.activeConnections).toBe(12);
+      expect(overview.maxConnections).toBe(10000);
       expect(typeof overview.databaseSize).toBe("string");
       expect(typeof overview.databaseSizeBytes).toBe("number");
       expect(typeof overview.tableCount).toBe("number");
+    });
+
+    test("labels a self-naming vendor version ahead of the plain compatibility level", async () => {
+      const cases: Array<{ field: string; value: string; expected: string }> = [
+        { field: "valkey_version", value: "9.1.1", expected: "Valkey 9.1.1 (Redis 7.2.4)" },
+        { field: "dragonfly_version", value: "df-v1.40.1", expected: "Dragonfly df-v1.40.1 (Redis 7.2.4)" },
+        { field: "garnet_version", value: "2.1.5", expected: "Garnet 2.1.5 (Redis 7.2.4)" },
+      ];
+      try {
+        for (const { field, value, expected } of cases) {
+          infoOverride = `${MOCK_INFO_STRING}${field}:${value}\n`;
+          const overview = await provider.getOverview();
+          expect(overview.version).toBe(expected);
+        }
+      } finally {
+        infoOverride = null;
+      }
+    });
+
+    test("reads the connection limit under Dragonfly's underscored max_clients", async () => {
+      infoOverride = MOCK_INFO_STRING.replace("maxclients:10000", "max_clients:64000");
+      try {
+        const overview = await provider.getOverview();
+        expect(overview.maxConnections).toBe(64000);
+      } finally {
+        infoOverride = null;
+      }
     });
   });
 

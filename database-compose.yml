@@ -1044,9 +1044,9 @@ services:
   # Microsoft Garnet, the fourth RESP relative. Single container, no configuration, and it
   # needs no password - it starts with none, like the `redis` service above.
   #
-  # PINNED to 2.1.5: Garnet is the one relative here that publishes its own version
-  # (`garnet_version` in INFO), so the tag and the caveat about which version the product
-  # displays have to stay in step.
+  # PINNED to 2.1.5: Garnet publishes its own version (`garnet_version` in INFO), as Valkey
+  # and DragonflyDB do, so the tag and the caveat about which version the product displays
+  # have to stay in step.
   #
   # No volume, deliberately: Garnet holds everything in memory here and a restart empties it
   # (measured - `dbsize` 71 before a `docker stop`, 0 after), so re-run the key seeding from

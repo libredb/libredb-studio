@@ -59,25 +59,25 @@ been measured against, from the same data
 [`README.md`](./README.md#wire-compatible-engines); three behaviours belong here because they are
 this provider's code, not the engine's.
 
-**The overview reports the emulation level, not the product.** `getOverview()` reads
-`parsed.redis_version` ([`redis.ts:581`](../../src/lib/db/providers/keyvalue/redis.ts)) — the one
-version field this whole family publishes — and passes it through as the server gave it. Valkey
-9.1.1 therefore shows **7.2.4** and DragonflyDB df-v1.40.1 shows **7.4.0**: each server's declared
-Redis compatibility level rather than its own release. KeyDB 6.3.4 publishes no version field of its
-own at all, so its overview cannot be told apart from a Redis 6 server. **Garnet 2.1.5 is the one
-relative where the real version WAS available and goes unread**: its `INFO` carries
-`garnet_version:2.1.5` and `server_name:garnet` beside `redis_version:7.4.3`, and this read takes
-the compatibility level like everywhere else, so the overview says Redis 7.4.3. On the other three
-the displayed version is the best reading available; here it is a choice, and the reason it stays
-that way is the sentence below - a per-engine branch is what this provider does not do. Nothing here renames the
-server, for the same reason the MySQL provider does not
-([mysql.md §1.1](./mysql.md#11-mariadb-and-the-other-mysql-protocol-engines)): the alternative is
-asserting a product the `INFO` reply never claimed.
+**The overview names the server when `INFO` names itself.** `getOverview()` calls
+`labelServerVersion()` ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts), in
+`getOverview()`), the same self-naming-wins rule the MySQL provider's own `labelServerVersion()`
+applies to `VERSION()` ([mysql.md §1.1](./mysql.md#11-mariadb-and-the-other-mysql-protocol-engines)):
+when the reply names a vendor, show that name; `redis_version` alone is the fallback for when it
+does not. Three of the four relatives publish a version field of their own beside
+`redis_version` — Valkey 9.1.1 publishes `valkey_version:9.1.1` and `server_name:valkey`,
+DragonflyDB df-v1.40.1 publishes `dragonfly_version:df-v1.40.1`, and Garnet 2.1.5 publishes
+`garnet_version:2.1.5` and `server_name:garnet` — and the overview shows each labeled ahead of the
+compat level, e.g. **"Garnet 2.1.5 (Redis 7.4.3)"**. KeyDB 6.3.4 publishes no version field of its
+own at all, so `redis_version` there already is the real version and the overview shows it bare,
+same as a stock Redis 6.
 
-**`maxclients` is not universal.** `maxConnections` comes from `parsed.maxclients` and falls back to
-`0`. Redis, Valkey and KeyDB each publish `maxclients:10000`; neither Dragonfly's nor
-Garnet's `INFO` carries a `maxclients` line at all, so the panel reads 0 — an absent limit shown as
-a zero, not a measured one. **Garnet extends that to two more numbers**: it publishes no
+**`maxclients` is not universal.** `maxConnections` reads `parsed.maxclients`, falling back to
+`parsed.max_clients` (Dragonfly's underscored name for the same limit — `max_clients:64000`
+measured live), and `0` when neither is present. Redis, Valkey and KeyDB each publish
+`maxclients:10000`; Dragonfly publishes the limit under the underscored name instead. Garnet's
+`INFO` carries no client-limit field under either name at all, so its panel reads 0 — an absent
+limit shown as a zero, not a measured one. **Garnet extends that to two more numbers**: it publishes no
 `used_memory`, so `getOverview().databaseSize` and the memory storage panel read `0 B` for a
 populated server, and neither `keyspace_hits` nor `keyspace_misses`, so the cache hit ratio reads
 the `: 100` fallback and the dashboard rates it *Excellent* (recorded as D14 in

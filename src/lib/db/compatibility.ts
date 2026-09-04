@@ -464,7 +464,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     via: "redis",
     tier: "full",
     probedVersion: "Valkey 9.1.1",
-    caveats: ["The overview shows Valkey's Redis emulation level (7.2.4), not the Valkey version."],
+    caveats: [],
   },
   {
     name: "DragonflyDB",
@@ -472,9 +472,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     tier: "full",
     probedVersion: "DragonflyDB df-v1.40.1",
     caveats: [
-      "The overview shows DragonflyDB's Redis emulation level (7.4.0), not the Dragonfly version.",
-      "Max connections reads 0, because Dragonfly's INFO reports no usable maxclients.",
-      "Active sessions show a numeric id instead of a username: Dragonfly's CLIENT LIST sets name= to the connection id.",
+      "Every active session's user reads default, whatever ACL user authenticated: Dragonfly's CLIENT LIST publishes no user= field at all.",
       "Every active session reads idle with state N: Dragonfly's CLIENT LIST carries no cmd= or flags= field.",
     ],
   },
@@ -489,20 +487,20 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     ],
   },
   {
-    // The fourth Redis relative and the only one that publishes its own version while the
-    // product shows the emulation level anyway: `garnet_version` and `server_name` are both
-    // in its INFO output. Valkey and DragonflyDB publish only an emulation level, and KeyDB
-    // publishes nothing of its own, so on those three the displayed version is the best
-    // available reading. Here it is not.
+    // The fourth Redis relative. Valkey, DragonflyDB and Garnet all publish a version field
+    // of their own beside the emulation level (`valkey_version`, `dragonfly_version`,
+    // `garnet_version` in INFO), and the provider reads it, labeling the overview ahead of
+    // the emulation level (e.g. "Garnet 2.1.5 (Redis 7.4.3)"). KeyDB alone publishes nothing
+    // of its own, so it is the only one of the four where the emulation level is the real
+    // version.
     name: "Garnet",
     via: "redis",
     tier: "full",
     probedVersion: "Garnet 2.1.5 (advertises Redis 7.4.3)",
     caveats: [
-      "The overview shows the Redis emulation level (7.4.3), not Garnet's version. Unlike the other Redis relatives, Garnet does publish its own - garnet_version:2.1.5 and server_name:garnet in INFO - and the provider reads redis_version instead.",
       "Every size reads 0 B: Garnet's INFO publishes no used_memory field at all, so the database size and the memory storage panel are a derived zero rather than a measurement.",
       "The cache hit ratio reads 100%: Garnet publishes neither keyspace_hits nor keyspace_misses, and 100 is the fallback both counters being absent produces (D14).",
-      "Max connections reads 0, as on DragonflyDB: Garnet publishes no maxclients.",
+      "Max connections reads 0: Garnet's INFO publishes no client-limit field at all, unlike Dragonfly, which publishes one under the underscored max_clients.",
       "Connected clients reads 0 even with a client attached, because Garnet's connected_clients stays 0; the session list itself is correct and shows the connection.",
       "Key prefixes group as expected: 71 keys across user:*, session:* and queue:* were read back as three patterns.",
     ],

@@ -171,27 +171,27 @@ describe("wire-compatibility registry", () => {
     expect(refusedSection).toContain("pg_backend_pid()");
   });
 
-  test("Garnet is a full Redis relative whose own version the product does not show", () => {
+  test("Garnet is a full Redis relative whose own version the product now shows", () => {
     // Probed 2026-08-26 against `ghcr.io/microsoft/garnet:2.1.5` (#424 Phase 0). Every Redis
     // surface answers, so `full` by this registry's own definition - the numbers that are
     // wrong are recorded as caveats, the way Citus's are.
     //
-    // What separates this row from the other three Redis relatives: Valkey and DragonflyDB
-    // show an emulation level because that is all they publish, and KeyDB publishes nothing
-    // of its own at all. Garnet DOES publish `garnet_version:2.1.5` and `server_name:garnet`
-    // in INFO, and the product still shows Redis 7.4.3 - the one place where the real
-    // version was there to be read and went unread.
+    // Valkey, DragonflyDB and Garnet all publish a version field of their own
+    // (`valkey_version`, `dragonfly_version`, `garnet_version` in INFO) beside the Redis
+    // compatibility level, re-measured live 2026-09-04, and `labelServerVersion()` reads it -
+    // so the overview shows "Garnet 2.1.5 (Redis 7.4.3)", not the compat level alone. KeyDB
+    // alone publishes nothing of its own, so no caveat here names a version problem.
     const garnet = compatibleEnginesFor("redis").find((engine) => engine.name === "Garnet");
     expect(garnet).toBeDefined();
     expect(garnet?.tier).toBe("full");
     expect(garnet?.probedVersion).toBe("Garnet 2.1.5 (advertises Redis 7.4.3)");
     const caveats = garnet?.caveats.join(" ") ?? "";
-    expect(caveats).toContain("garnet_version");
     // The two numbers a reader must not trust, both from INFO fields Garnet does not publish
     // at all: no `used_memory` (so every size reads 0 B) and no keyspace counters (so the
     // cache hit ratio is the `: 100` fallback D14 already records).
     expect(caveats).toContain("used_memory");
     expect(caveats).toContain("cache hit ratio");
+    expect(caveats).not.toContain("garnet_version");
   });
 
   test("both Percona distributions are full relatives, and they differ in one thing only", () => {
