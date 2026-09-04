@@ -264,7 +264,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     tier: "partial",
     probedVersion: "PostgreSQL 14.4 (Apache Cloudberry 2.1.0-incubating)",
     caveats: [
-      'The monitoring dashboard, table statistics and index statistics are unavailable: all three fail with the same engine error, "query plan with multiple segworker groups is not supported", which is Cloudberry\'s MPP planner restriction rather than a missing catalog.',
+      "Table statistics and index statistics are unavailable: both fail with the same engine error, \"query plan with multiple segworker groups is not supported\", which is Cloudberry's MPP planner restriction rather than a missing catalog. The monitoring dashboard itself answers - its overview and performance tabs read connections, database size, table count, deadlocks and checkpoint stats normally - and it is specifically the Tables tab's per-table breakdown and the Storage tab's largest-tables list that fail. Each failing panel says \"This database could not answer this panel\" and prints the engine's error under it, so the planner restriction is not presented as a connection fault.",
       "Row counts and sizes read after ANALYZE are correct - 2000 rows for 2000 rows and 576 KB for 589824 bytes - so the object browser here is not the kind that misleads; what they read before ANALYZE was not probed.",
       "Two internal tables appear in the object browser, pg_ext_aux.pg_pax_fastsequence and pg_ext_aux.pg_pax_tables, so it lists 4 objects for 2 user tables.",
       "A foreign key is read back as if it were enforced but is not: Cloudberry accepts ALTER TABLE ... ADD CONSTRAINT with a warning that referential integrity constraints are not supported, and an orphan insert then succeeds.",
