@@ -97,8 +97,11 @@ mock.module("@/lib/llm/types", () => ({
     stream is retryable, which is the case this file's subjects never reach but its importers hold.
   */
   isRetryableError: (error: unknown): boolean =>
-    !(error instanceof MockLLMAuthError || error instanceof MockLLMSafetyError || error instanceof MockLLMConfigError) &&
-    error instanceof MockLLMError,
+    !(
+      error instanceof MockLLMAuthError ||
+      error instanceof MockLLMSafetyError ||
+      error instanceof MockLLMConfigError
+    ) && error instanceof MockLLMError,
 }));
 
 const { guardRoute } = await import("@/lib/api/require-session");
