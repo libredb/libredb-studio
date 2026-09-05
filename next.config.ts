@@ -215,6 +215,18 @@ const nextConfig: NextConfig = {
   // `@duckdb/node-bindings` is listed next to `@duckdb/node-api` on purpose: it is
   // the loader that does a bare top-level `require('@duckdb/node-bindings-<platform>-
   // <arch>/duckdb.node')`, so it is the module that must never be bundled.
+  // `oracledb` is external for a reason that only shows up in Thick mode (#538).
+  // The driver is pure JS in its default Thin mode, so bundling it looked free.
+  // It is not: node-oracledb locates its native addon relative to its own
+  // `__dirname`, and Turbopack rewrites that to the literal string
+  // `/ROOT/node_modules/oracledb/lib`. `initOracleClient()` then looked for
+  // `/ROOT/node_modules/oracledb/build/Release/oracledb-<ver>-<platform>.node`,
+  // found nothing, and threw NJS-045 before the Instant Client was consulted -
+  // measured through /api/db/test-connection on the published 0.13.4 and 0.13.7
+  // images. Externalizing removes every `/ROOT/node_modules/oracledb` reference
+  // from `.next/server/chunks`. The addon itself is still a file-tracing blind
+  // spot; the Dockerfile runner stage and scripts/build-standalone-payload.sh
+  // copy the package for that.
   serverExternalPackages: [
     "pg",
     "mysql2",
@@ -222,6 +234,7 @@ const nextConfig: NextConfig = {
     "better-sqlite3",
     "ssh2",
     "cassandra-driver",
+    "oracledb",
     "@duckdb/node-api",
     "@duckdb/node-bindings",
   ],

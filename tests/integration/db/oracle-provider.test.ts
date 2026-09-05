@@ -2388,6 +2388,29 @@ describe("OracleProvider", () => {
       expect((caught as Error).message).toContain("ORACLE_CLIENT_LIB_DIR");
       expect((caught as Error).message).toContain("/nonexistent/instantclient");
       expect((caught as Error).message).toContain("DPI-1047");
+      // The old message said "verify the path" for every failure. DPI-1047 on
+      // Linux is usually not a path problem at all: libclntsh has no RUNPATH,
+      // so the directory has to be on the loader path too (#538).
+      expect((caught as Error).message).toContain("ldconfig");
+    });
+
+    test("reports a missing Thick-mode binary (NJS-045) as a packaging defect, not a bad path", () => {
+      process.env.ORACLE_CLIENT_LIB_DIR = "/opt/oracle/instantclient_19_28";
+      mockInitOracleClientFn.mockImplementationOnce(() => {
+        throw new Error("NJS-045: cannot load a node-oracledb Thick mode binary for Node.js");
+      });
+
+      let caught: unknown;
+      try {
+        new OracleProvider(baseConfig);
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(DatabaseConfigError);
+      expect((caught as Error).message).toContain("NJS-045");
+      expect((caught as Error).message).toContain(`${process.platform}-${process.arch}`);
+      expect((caught as Error).message).toContain("packaging");
     });
 
     test("calls initOracleClient with libDir at most once, even across multiple providers", () => {

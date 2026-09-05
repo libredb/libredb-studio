@@ -70,7 +70,7 @@ A clean local pass is still not a guarantee: the same job also runs `build:lib` 
 
 ## Architecture
 
-- **DB drivers:** `pg`, `mysql2`, `cassandra-driver`, `oracledb`, `mssql`, `mongodb`, `ioredis` — all external in both build configs. Two traps: SQLite is **`bun:sqlite`/`node:sqlite`** for the DB provider (runtime-selected, `LIBREDB_SQLITE_DRIVER` overrides) but `better-sqlite3` for the storage layer; `@duckdb/node-api` is a native N-API addon (~68 MB of bindings per libc variant), external too.
+- **DB drivers:** the two build configs do NOT externalize the same set, so read [`next.config.ts`](next.config.ts) and [`tsup.config.ts`](tsup.config.ts) rather than any prose list. `pg`, `mysql2`, `cassandra-driver`, `mongodb` and `oracledb` are external in both; `mssql` and `ioredis` are external in the library build only and Turbopack bundles them into the server chunk. That is not always harmless: `oracledb` was in exactly that position until #538, and bundling rewrote its `__dirname` to `/ROOT/...`, so Thick mode could never load its native addon. Two traps: SQLite is **`bun:sqlite`/`node:sqlite`** for the DB provider (runtime-selected, `LIBREDB_SQLITE_DRIVER` overrides) but `better-sqlite3` for the storage layer; `@duckdb/node-api` is a native N-API addon (~68 MB of bindings per libc variant), external too.
 - **Layout:** tree + data flow in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Key dirs: `src/lib/db` (providers), `src/lib/llm`, `src/lib/storage`, `src/workspace` + `src/exports` (the npm-package library surface), `src/proxy.ts` (RBAC middleware).
 
 ### Rules & patterns

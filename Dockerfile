@@ -111,6 +111,27 @@ COPY --from=builder /usr/src/app/node_modules/@libredb/libredb ./node_modules/@l
 COPY --from=builder /usr/src/app/node_modules/@duckdb ./node_modules/@duckdb
 COPY --from=builder /usr/src/app/node_modules/detect-libc ./node_modules/detect-libc
 
+# Copy the Oracle driver (#538). It is pure JavaScript in its default Thin mode,
+# which is why it was never copied before, but Thick mode
+# (ORACLE_CLIENT_LIB_DIR) makes node-oracledb load a native addon and that addon
+# is missed by BOTH build stages, for two separate reasons.
+# 1. Bundling: node-oracledb resolves the addon relative to its own __dirname,
+#    and Turbopack rewrote that to the literal string /ROOT/node_modules/
+#    oracledb/lib, so initOracleClient() died with NJS-045 before it ever looked
+#    at the Instant Client. That is why the package is now in
+#    serverExternalPackages (next.config.ts); this COPY is what makes "external"
+#    resolvable at runtime.
+# 2. Tracing: even externalized, Next's output file tracing copies index.js,
+#    lib/ and package.json but not build/Release/*.node, because the addon is
+#    reached through a computed require(path) rather than a literal specifier -
+#    the same blind spot as @libredb/libredb and the @duckdb scope.
+# The whole package directory, never one file: build/ holds a binary per
+# platform and arch (~3 MB total), and naming one would break the ARM64 leg.
+# This image stays Thin-only - no Instant Client, no libaio - so the addon sits
+# unused until an operator layers a client on top; see docs/providers/oracle.md.
+# Keep in sync with scripts/build-standalone-payload.sh.
+COPY --from=builder /usr/src/app/node_modules/oracledb ./node_modules/oracledb
+
 # Vendored sample database templates (the SQLite employees sample). Read at
 # runtime via fs relative to process.cwd() (/app), so output file tracing
 # never sees them — copy explicitly (keep scripts/build-standalone-payload.sh

@@ -15,6 +15,8 @@ import {
   isAuthenticationError,
   isRetryableError,
   mapDatabaseError,
+  describeOracleThinModeRefusal,
+  describeOracleClientLoadFailure,
 } from "@/lib/db/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 
@@ -359,6 +361,59 @@ describe("mapDatabaseError", () => {
     expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
   });
 
+  // NJS-138 was the first Thin-mode refusal to get this treatment (#228). The
+  // rest fell through to the generic retryable ConnectionError until #538,
+  // which is the same defect class: a DBA-visible "you must use Thick mode"
+  // arriving as "try again later".
+  test("Oracle NJS-116 (10G-only password verifier) maps to non-retryable DatabaseConfigError", () => {
+    const err = new Error("NJS-116: password verifier type 0x939 is not supported by node-oracledb in Thin mode");
+    const result = mapDatabaseError(err, "oracle");
+    // The driver's own text contains "password", so the generic authentication
+    // branch would swallow this one if the Oracle check did not run first.
+    expect(result).toBeInstanceOf(DatabaseConfigError);
+    expect(isRetryableError(result)).toBe(false);
+    expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
+    // The DBA-side way out, which needs no Instant Client at all.
+    expect(result.message).toContain("12C");
+  });
+
+  test("Oracle NJS-533 (native network encryption) maps to non-retryable DatabaseConfigError", () => {
+    const err = new Error(
+      "NJS-533: Advanced Networking Option service negotiation failed. Native Network Encryption " +
+        "and DataIntegrity are only supported in node-oracledb thick mode",
+    );
+    const result = mapDatabaseError(err, "oracle");
+    expect(result).toBeInstanceOf(DatabaseConfigError);
+    expect(isRetryableError(result)).toBe(false);
+    expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
+  });
+
+  test("Oracle NJS-089 (unimplemented Thin-mode feature) maps to non-retryable DatabaseConfigError", () => {
+    const err = new Error("NJS-089: Kerberos authentication is not supported by node-oracledb in Thin mode");
+    const result = mapDatabaseError(err, "oracle");
+    expect(result).toBeInstanceOf(DatabaseConfigError);
+    expect(isRetryableError(result)).toBe(false);
+    expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
+  });
+
+  test("Oracle NJS-529 (sso-only wallet) maps to non-retryable DatabaseConfigError", () => {
+    // The driver's own text (ERR_WALLET_TYPE_NOT_SUPPORTED) says nothing about
+    // Thin mode, so the generic substring branch never sees it.
+    const err = new Error("NJS-529: Invalid wallet content format. Supported format is PEM");
+    const result = mapDatabaseError(err, "oracle");
+    expect(result).toBeInstanceOf(DatabaseConfigError);
+    expect(isRetryableError(result)).toBe(false);
+    expect(result.message).toContain("PEM");
+    expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
+  });
+
+  test('a bare "not supported by node-oracledb in Thin mode" with no NJS code still maps to DatabaseConfigError', () => {
+    const err = new Error("LDAP naming is not supported by node-oracledb in Thin mode");
+    const result = mapDatabaseError(err, "oracle");
+    expect(result).toBeInstanceOf(DatabaseConfigError);
+    expect(isRetryableError(result)).toBe(false);
+  });
+
   test('MSSQL "login failed" maps to AuthenticationError', () => {
     const err = new Error('Login failed for user "sa"');
     const result = mapDatabaseError(err, "mssql");
@@ -409,5 +464,71 @@ describe("mapDatabaseError", () => {
     const result = mapDatabaseError(error, "mysql");
     expect(result).toBeInstanceOf(QueryCancelledError);
     expect(result.message).toBe("Query was cancelled");
+  });
+});
+
+// ============================================================================
+// Oracle Thick-mode diagnostics (#538)
+// ============================================================================
+
+describe("describeOracleThinModeRefusal", () => {
+  test("returns null for an error that has nothing to do with Thin mode", () => {
+    expect(describeOracleThinModeRefusal("ora-00942: table or view does not exist")).toBeNull();
+  });
+
+  test("names the pre-12.1 server for NJS-138", () => {
+    expect(describeOracleThinModeRefusal("njs-138: ...")).toContain("12.1");
+  });
+
+  test("names the verifier for NJS-116", () => {
+    expect(describeOracleThinModeRefusal("njs-116: password verifier type 0x939")).toContain("verifier");
+  });
+
+  test("names native network encryption for NJS-533", () => {
+    expect(describeOracleThinModeRefusal("njs-533: ...")).toContain("Native Network Encryption");
+  });
+
+  test("names both ways out of an sso-only wallet for NJS-529", () => {
+    const reason = describeOracleThinModeRefusal("njs-529: invalid wallet content format");
+    // Thin mode reads PEM only, so converting the wallet is a real alternative
+    // to installing an Instant Client.
+    expect(reason).toContain("PEM");
+    expect(reason).toContain("ewallet.pem");
+  });
+});
+
+describe("describeOracleClientLoadFailure", () => {
+  test("NJS-045 is reported as a packaging defect of the build, naming platform and arch", () => {
+    const message = describeOracleClientLoadFailure(
+      "/opt/oracle/instantclient_19_28",
+      "Error: NJS-045: cannot load a node-oracledb Thick mode binary for Node.js",
+    );
+
+    expect(message).toContain("NJS-045");
+    expect(message).toContain(`${process.platform}-${process.arch}`);
+    // The operator must not go hunting for a path problem that is not one.
+    expect(message).toContain("packaging");
+  });
+
+  test("DPI-1047 points at the loader path, libaio and the recipe", () => {
+    const message = describeOracleClientLoadFailure(
+      "/opt/oracle/instantclient_19_28",
+      'Error: DPI-1047: Cannot locate a 64-bit Oracle Client library: "libnnz19.so: cannot open shared object file"',
+    );
+
+    expect(message).toContain("/opt/oracle/instantclient_19_28");
+    expect(message).toContain("ldconfig");
+    expect(message).toContain("LD_LIBRARY_PATH");
+    expect(message).toContain("libaio.so.1");
+    expect(message).toContain("docs/providers/oracle.md");
+  });
+
+  test("any other failure keeps a generic message that still names the variable", () => {
+    const message = describeOracleClientLoadFailure("/tmp/ic", "Error: something else entirely");
+
+    expect(message).toContain("ORACLE_CLIENT_LIB_DIR");
+    expect(message).toContain("/tmp/ic");
+    expect(message).toContain("something else entirely");
+    expect(message).not.toContain("NJS-045");
   });
 });
