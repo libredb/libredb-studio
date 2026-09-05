@@ -352,21 +352,36 @@ The server version is not the only reason to leave Thin mode, and "my DBA says I
 12.2" is a real and common case (#538). Thin mode covers 12.1 and later *as a version*, but it
 refuses a connection when the server demands something it does not implement:
 
-| What the server requires | Driver error |
-|--------------------------|--------------|
+The codes below are read out of node-oracledb 6.10.0's own source (`lib/thin/`, `lib/errors.js`),
+not inferred from the symptom, because the driver does **not** report every one of these as a Thin
+mode refusal and some are not the driver's error at all:
+
+| What the server or connection requires | What you actually see |
+|----------------------------------------|-----------------------|
 | Oracle Native Network Encryption or data integrity checksumming | `NJS-533` |
 | An account whose only password verifier is the 10G one | `NJS-116` |
-| Kerberos, RADIUS, operating-system or other external authentication | `NJS-089` |
-| LDAP (directory) naming for the connect identifier | `NJS-089` |
-| A wallet available only as `cwallet.sso` | `NJS-089` |
+| A wallet available only as `cwallet.sso` | `NJS-529` — *Invalid wallet content format. Supported format is PEM* |
+| Kerberos, RADIUS, operating-system or other external authentication | **No single driver code.** Thin mode implements `externalAuth` for token-based authentication (`lib/thin/protocol/messages/auth.js`) but has no Kerberos, RADIUS or OS-auth implementation, and raises nothing of its own for them — the *server* refuses the logon, so what arrives is an `ORA-` logon error. Thick mode only. |
+| LDAP (directory) naming for the connect identifier | **Not a Thin-mode refusal.** There is no LDAP code anywhere under `lib/thin`, so an `ldap://` identifier fails during connect-string resolution instead, typically `NJS-516` (*no configuration directory set or available to search for tnsnames.ora*) or a connect-string parse error. Thick mode only. |
 
-Each of those maps to a non-retryable `DatabaseConfigError` naming `ORACLE_CLIENT_LIB_DIR`
-([§11](#11-error-handling)) rather than to a retryable connection failure.
+The three rows that *are* driver codes map to a non-retryable `DatabaseConfigError` naming
+`ORACLE_CLIENT_LIB_DIR` ([§11](#11-error-handling)) rather than to a retryable connection failure.
+The last two rows do not, and cannot: nothing in their text identifies the cause.
 
-`NJS-116` has a Thin-mode way out that needs no Instant Client at all: the account simply has no 12C
-verifier, and a DBA resetting its password writes one (given a server
-`SQLNET.ALLOWED_LOGON_VERSION_SERVER` that permits it). The provider's error message says so. The
-other rows have no Thin-mode alternative.
+Two of them have a way out that needs no Instant Client, and the provider's error message says so in
+both cases:
+
+- **`NJS-116`** — the account simply has no 12C verifier. A DBA resetting its password writes one
+  (given a server `SQLNET.ALLOWED_LOGON_VERSION_SERVER` that permits it).
+- **`NJS-529`** — Thin mode reads only PEM. Converting the wallet to `ewallet.pem`
+  (`orapki wallet pkcs12_to_pem`, or openssl against the PKCS#12) is enough; Thick mode reads the
+  `cwallet.sso` as it stands.
+
+`NJS-089` is **not** in the table on purpose. In Thin mode the driver raises it for client-side
+features it has not implemented — heterogeneous pooling (`lib/thin/pool.js`), some database object
+types (`lib/thin/dbObject.js`), Advanced Queuing (`lib/thin/protocol/messages/aqArray.js`,
+`aqBase.js`) and a few protocol features — none of which is something a server can demand at
+connect time. It is still mapped ([§11](#11-error-handling)), because the remedy is the same.
 
 #### Building an image with Instant Client (works for both cases above)
 
@@ -384,7 +399,10 @@ USER root
 # Instant Client 19c — reaches Oracle 11.2; 21c/23ai do not. Pin to a specific
 # 19.x build; check https://www.oracle.com/database/technologies/instant-client/linux-x86-64-downloads.html
 # for the current file name and update the version folder in ORACLE_CLIENT_LIB_DIR to match.
-RUN apt-get update && apt-get install -y --no-install-recommends libaio1t64 unzip curl \
+# ca-certificates is not optional: the base image does not have it (and has no
+# curl either), and --no-install-recommends will not pull it in, so without it
+# the download below fails with curl (77) setting the certificate file.
+RUN apt-get update && apt-get install -y --no-install-recommends libaio1t64 unzip curl ca-certificates \
     && mkdir -p /opt/oracle && cd /opt/oracle \
     && curl -fsSLO https://download.oracle.com/otn_software/linux/instantclient/1928000/instantclient-basic-linux.x64-19.28.0.0.0dbru.zip \
     && unzip -q instantclient-basic-linux.x64-*.zip \
@@ -1075,7 +1093,9 @@ DBA can act on.
 | `NJS-138` (server predates Oracle 12.1, Thin-mode incompatible) | `DatabaseConfigError`, **not retryable** — see [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir) |
 | `NJS-116` (account has only a 10G password verifier) | `DatabaseConfigError`, **not retryable**. Checked *before* the generic *password* branch, which would otherwise report it as an authentication failure. The message also names the DBA-side fix (a password reset writes a 12C verifier) |
 | `NJS-533` (server requires Native Network Encryption or checksumming) | `DatabaseConfigError`, **not retryable** |
-| `NJS-089` (a feature Thin mode does not implement: Kerberos, LDAP naming, `cwallet.sso`, …), or any message containing *not supported by node-oracledb in Thin mode* | `DatabaseConfigError`, **not retryable** |
+| `NJS-529` (wallet is not PEM, typically an sso-only `cwallet.sso`) | `DatabaseConfigError`, **not retryable**. Caught by code, not by substring: the driver's text says nothing about Thin mode. The message names both ways out — convert the wallet to `ewallet.pem`, or use Thick mode |
+| `NJS-089` (a **client-side** feature Thin mode does not implement: heterogeneous pooling, some database object types, Advanced Queuing) | `DatabaseConfigError`, **not retryable** |
+| Any other message containing *not supported by node-oracledb in Thin mode* | `DatabaseConfigError`, **not retryable** |
 | `NJS-045` from `initOracleClient()` (no Thick-mode addon in this build) | `DatabaseConfigError` from the constructor, worded as a **packaging defect** naming the platform and arch, not as a bad path |
 | `DPI-1047` from `initOracleClient()` (client libraries not loadable) | `DatabaseConfigError` from the constructor, pointing at the loader path (`/etc/ld.so.conf.d/` + `ldconfig`, or `LD_LIBRARY_PATH`) and `libaio.so.1` |
 | Driver message contains *timeout* / *timed out* | `TimeoutError` |
@@ -1204,7 +1224,7 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   declaration is checked against the driver only by the live probes and the integration mock, so a
   driver upgrade that changes a shape will not be caught by `tsc` alone.
 - **Every Thin-mode refusal is a non-retryable configuration error, not a transient one.**
-  `mapDatabaseError()` maps `NJS-138`, `NJS-116`, `NJS-533` and `NJS-089` (plus any message saying
+  `mapDatabaseError()` maps `NJS-138`, `NJS-116`, `NJS-533`, `NJS-529` and `NJS-089` (plus any message saying
   *not supported by node-oracledb in Thin mode*) to `DatabaseConfigError` instead of the generic
   retryable `ConnectionError` every other `connect()` failure produces — see
   [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir) and [§11](#11-error-handling). Each message

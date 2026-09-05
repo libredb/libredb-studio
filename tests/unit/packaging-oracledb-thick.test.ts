@@ -81,5 +81,10 @@ describe("Oracle Thick-mode packaging", () => {
     // Debian 13 ships libaio.so.1t64 only; the SONAME the client needs is
     // libaio.so.1.
     expect(doc).toContain("libaio.so.1");
+    // Measured by building the recipe verbatim: neither the published image nor
+    // node:26-trixie-slim has ca-certificates installed (dpkg reports `un`), and
+    // --no-install-recommends does not pull it in with curl, so the Instant
+    // Client download dies with curl (77) before anything else can be tested.
+    expect(doc).toContain("ca-certificates");
   });
 });

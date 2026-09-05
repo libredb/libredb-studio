@@ -286,8 +286,28 @@ export function describeOracleThinModeRefusal(message: string): string | null {
       "which Thin mode does not implement"
     );
   }
-  if (message.includes("njs-089") || message.includes("not supported by node-oracledb in thin mode")) {
-    return "the server requires a feature Thin mode does not implement";
+  if (message.includes("njs-529")) {
+    // ERR_WALLET_TYPE_NOT_SUPPORTED in the driver's lib/errors.js. Its text says
+    // nothing about Thin mode, so the generic substring below never catches it,
+    // and it is the one refusal here with a way out that costs nothing: Thin
+    // mode reads PEM, so converting the wallet is enough.
+    return (
+      "Thin mode reads only a PEM wallet, and this one is not PEM (typically an sso-only " +
+      "cwallet.sso). Converting it to ewallet.pem avoids Thick mode entirely " +
+      "(orapki wallet pkcs12_to_pem, or openssl against the PKCS#12); otherwise use Thick mode, " +
+      "which reads the sso wallet as it stands"
+    );
+  }
+  if (message.includes("njs-089")) {
+    // Measured against node-oracledb 6.10.0's own source rather than assumed:
+    // NJS-089 is raised for CLIENT-side features (heterogeneous pooling in
+    // lib/thin/pool.js, some database object types in lib/thin/dbObject.js,
+    // Advanced Queuing in aqArray.js and aqBase.js, a few protocol features in
+    // withData.js). It is not the code for Kerberos, LDAP naming or a wallet.
+    return "this uses a client-side feature Thin mode does not implement";
+  }
+  if (message.includes("not supported by node-oracledb in thin mode")) {
+    return "the driver reports a feature Thin mode does not implement";
   }
   return null;
 }

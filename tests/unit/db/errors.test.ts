@@ -396,6 +396,17 @@ describe("mapDatabaseError", () => {
     expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
   });
 
+  test("Oracle NJS-529 (sso-only wallet) maps to non-retryable DatabaseConfigError", () => {
+    // The driver's own text (ERR_WALLET_TYPE_NOT_SUPPORTED) says nothing about
+    // Thin mode, so the generic substring branch never sees it.
+    const err = new Error("NJS-529: Invalid wallet content format. Supported format is PEM");
+    const result = mapDatabaseError(err, "oracle");
+    expect(result).toBeInstanceOf(DatabaseConfigError);
+    expect(isRetryableError(result)).toBe(false);
+    expect(result.message).toContain("PEM");
+    expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
+  });
+
   test('a bare "not supported by node-oracledb in Thin mode" with no NJS code still maps to DatabaseConfigError', () => {
     const err = new Error("LDAP naming is not supported by node-oracledb in Thin mode");
     const result = mapDatabaseError(err, "oracle");
@@ -475,6 +486,14 @@ describe("describeOracleThinModeRefusal", () => {
 
   test("names native network encryption for NJS-533", () => {
     expect(describeOracleThinModeRefusal("njs-533: ...")).toContain("Native Network Encryption");
+  });
+
+  test("names both ways out of an sso-only wallet for NJS-529", () => {
+    const reason = describeOracleThinModeRefusal("njs-529: invalid wallet content format");
+    // Thin mode reads PEM only, so converting the wallet is a real alternative
+    // to installing an Instant Client.
+    expect(reason).toContain("PEM");
+    expect(reason).toContain("ewallet.pem");
   });
 });
 
