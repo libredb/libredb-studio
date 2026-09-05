@@ -418,11 +418,29 @@ function toHealthSlowQuery(stats: SlowQueryStats): SlowQuery {
 const SELF_IDENTIFYING_VERSION = /mariadb|tidb|vitess|oceanbase/i;
 
 /**
- * How the overview names the server: the string as the server gave it when that
- * already names a vendor, `MySQL <version>` when it does not.
+ * Doris is absent from `SELF_IDENTIFYING_VERSION` for the same reason as
+ * StarRocks and SingleStore - `VERSION()` answers a fixed, fictitious MySQL
+ * number (`5.7.99`) with nothing to key on - but unlike those two, Doris does
+ * put its own build string in `@@version_comment`: `"doris version
+ * doris-4.1.3-rc02-7126cf65d96"`, measured against
+ * `apache/doris:all-in-one-4.1.3`. Real MySQL's own `@@version_comment`
+ * ("MySQL Community Server - GPL") and MariaDB's ("mariadb.org binary
+ * distribution") do not match this shape, so keying on it does not misfire on
+ * the engine this provider is named for.
  */
-function labelServerVersion(version: string): string {
-  return SELF_IDENTIFYING_VERSION.test(version) ? version : `MySQL ${version}`;
+const DORIS_VERSION_COMMENT = /doris version (?:doris-)?(\S+)/i;
+
+/**
+ * How the overview names the server: the string as the server gave it when
+ * that already names a vendor, Doris's own build string extracted from
+ * `@@version_comment` when the fictitious `VERSION()` number is the only
+ * other option, `MySQL <version>` otherwise.
+ */
+function labelServerVersion(version: string, versionComment?: string): string {
+  if (SELF_IDENTIFYING_VERSION.test(version)) return version;
+  const doris = versionComment?.match(DORIS_VERSION_COMMENT);
+  if (doris) return `Apache Doris ${doris[1]}`;
+  return `MySQL ${version}`;
 }
 
 function round2(value: number): number {
@@ -1135,8 +1153,12 @@ export class MySQLProvider extends SQLBaseProvider {
     const conn = await this.pool!.getConnection();
     try {
       // Get version
-      const [versionRows] = await runStatement(conn, "SELECT VERSION() as version");
+      const [versionRows] = await runStatement(
+        conn,
+        "SELECT VERSION() as version, @@version_comment as version_comment",
+      );
       const version = versionRows[0]?.version || "Unknown";
+      const versionComment = versionRows[0]?.version_comment as string | undefined;
 
       // Get uptime
       const [uptimeRows] = await runStatement(conn, "SHOW STATUS LIKE 'Uptime'");
@@ -1161,7 +1183,7 @@ export class MySQLProvider extends SQLBaseProvider {
       const [tableCountRows] = await runStatement(conn, OVERVIEW_TABLE_COUNT_SQL, [this.config.database]);
 
       return {
-        version: labelServerVersion(version),
+        version: labelServerVersion(version, versionComment),
         uptime,
         startTime: new Date(Date.now() - uptimeSeconds * 1000),
         activeConnections,

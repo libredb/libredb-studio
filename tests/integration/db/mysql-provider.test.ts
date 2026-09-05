@@ -1504,6 +1504,43 @@ describe("MySQLProvider", () => {
       expect(overview.version).toBe("MySQL 8.0.35");
     });
 
+    test("reads Doris's real build from @@version_comment when VERSION() is the fictitious compat number", async () => {
+      // Measured against apache/doris:all-in-one-4.1.3: VERSION() answers the
+      // fixed "5.7.99" and has nothing to key on, but @@version_comment carries
+      // Doris's own build string.
+      mockExecuteFn = (sql: string) =>
+        sql.trim().toLowerCase().includes("version()")
+          ? Promise.resolve([
+              [{ version: "5.7.99", version_comment: "doris version doris-4.1.3-rc02-7126cf65d96" }],
+              [{ name: "version" }, { name: "version_comment" }],
+            ])
+          : defaultMockExecute(sql);
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect(overview.version).toBe("Apache Doris 4.1.3-rc02-7126cf65d96");
+    });
+
+    test("does not mistake a generic @@version_comment for Doris's", async () => {
+      // Measured against mysql:latest 26.7.0: @@version_comment answers
+      // "MySQL Community Server - GPL", which must not match the Doris pattern.
+      mockExecuteFn = (sql: string) =>
+        sql.trim().toLowerCase().includes("version()")
+          ? Promise.resolve([
+              [{ version: "8.0.35", version_comment: "MySQL Community Server - GPL" }],
+              [{ name: "version" }, { name: "version_comment" }],
+            ])
+          : defaultMockExecute(sql);
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect(overview.version).toBe("MySQL 8.0.35");
+    });
+
     test("formats uptime correctly", async () => {
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
