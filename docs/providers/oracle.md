@@ -47,7 +47,7 @@ providers, with several Oracle-isms that are worth knowing before reading the co
 
 ### Thin mode
 
-The constructor ([oracle.ts:186](../../src/lib/db/providers/sql/oracle.ts)) uses pure-JS Thin mode by
+The constructor ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) uses pure-JS Thin mode by
 default, sets `outFormat = OUT_FORMAT_OBJECT` (rows as objects), and `autoCommit = true` globally.
 Thin mode means **no native Oracle client** has to be installed in the container — a real deployment
 win.
@@ -75,7 +75,7 @@ them: `getCapabilities()`, `getLabels()`, and `prepareQuery()` (Oracle paginatio
 
 ### Registration
 
-Loaded on demand by the factory ([`factory.ts:77`](../../src/lib/db/factory.ts)):
+Loaded on demand by the factory ([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'oracle': {
@@ -91,14 +91,14 @@ case 'oracle': {
 ### 3.1 EZConnect connect string (service name, not database)
 
 Oracle connects to a **service**, not a database name. `getConnectString()`
-([oracle.ts:103](../../src/lib/db/providers/sql/oracle.ts)) returns the raw `connectionString` if
+([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) returns the raw `connectionString` if
 given, otherwise builds `host:port/serviceName` where `serviceName = config.serviceName ??
 config.database ?? 'ORCL'`. Accordingly, `validate()` requires only `host` (not `database`) when no
 connection string is present.
 
 ### 3.2 `FETCH FIRST` instead of `LIMIT`
 
-Oracle has no `LIMIT`, so `prepareQuery()` ([oracle.ts:225](../../src/lib/db/providers/sql/oracle.ts))
+Oracle has no `LIMIT`, so `prepareQuery()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
 overrides the base and appends `FETCH FIRST n ROWS ONLY` (or `OFFSET m ROWS FETCH NEXT n ROWS ONLY`
 when an offset is set) to bare `SELECT`s that don't already have a limit. Default page size
 `DEFAULT_QUERY_LIMIT = 500`; unlimited caps at `MAX_UNLIMITED_ROWS = 100000`.
@@ -156,7 +156,7 @@ deliberately stricter than node-oracledb's tokenizer, which opens a q-string at 
 
 ### 3.3 Owner-scoped, five-query schema introspection
 
-`getSchema()` ([oracle.ts:323](../../src/lib/db/providers/sql/oracle.ts)) runs **five bulk queries**
+`getSchema()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) runs **five bulk queries**
 over the `ALL_*` data-dictionary views — tables, columns, primary keys, foreign keys, indexes —
 all filtered by `OWNER = :1` (the connecting user, upper-cased) and then **grouped in memory** by
 table. This is neither the Postgres single-CTE approach nor MySQL's per-table N+1: it is a fixed
@@ -167,7 +167,7 @@ table. This is neither the Postgres single-CTE approach nor MySQL's per-table N+
 ### 3.4 No transaction auto-rollback timeout
 
 Unlike the Postgres and MySQL providers (which arm a 5-minute auto-rollback timer),
-`beginTransaction()` ([oracle.ts:258](../../src/lib/db/providers/sql/oracle.ts)) simply checks out a
+`beginTransaction()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) simply checks out a
 connection and marks the transaction active — **there is no timeout**. An abandoned transaction
 holds its connection (and locks) until explicitly committed/rolled back or the connection is
 reclaimed by the pool.
@@ -213,12 +213,12 @@ const b = { id: 'or-1', name: 'XE', type: 'oracle',
   user: 'app', password: 'secret', createdAt: new Date() };
 ```
 
-`validate()` ([oracle.ts:89](../../src/lib/db/providers/sql/oracle.ts)) requires `host` only when no
+`validate()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) requires `host` only when no
 `connectionString` is given; `database` is **not** required (Oracle uses the service name).
 
 ### 4.2 Connection pooling
 
-`connect()` builds an `oracledb` pool ([oracle.ts:121](../../src/lib/db/providers/sql/oracle.ts)):
+`connect()` builds an `oracledb` pool ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)):
 
 | `oracledb` pool option | Value | Source |
 |------------------------|-------|--------|
@@ -230,13 +230,13 @@ const b = { id: 'or-1', name: 'XE', type: 'oracle',
 > `ProviderOptions` option, defaulting to `DEFAULT_QUERY_TIMEOUT`) are **not** mapped — there is no
 > provider-driven server-side query timeout (cancellation is explicit, [§5.2](#52-query-cancellation)).
 
-`connect()` is idempotent; `getPoolStats()` ([oracle.ts:651](../../src/lib/db/providers/sql/oracle.ts))
+`connect()` is idempotent; `getPoolStats()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
 exposes `{ total: connectionsOpen, idle, active: connectionsInUse, waiting: 0 }`.
 
 ### 4.3 SSL / TLS
 
 `getConnectString()` and `buildTLSAttributes()`
-([oracle.ts:271](../../src/lib/db/providers/sql/oracle.ts)) map `connection.ssl` onto the three
+([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) map `connection.ssl` onto the three
 things the driver understands:
 
 | `ssl.mode` | Connect string | `sslServerDNMatch` | Chain verified |
@@ -338,7 +338,7 @@ the derived image above is the supported path.
 
 ### 5.1 Execution
 
-`query(sql, params?, queryId?)` ([oracle.ts:162](../../src/lib/db/providers/sql/oracle.ts)) checks
+`query(sql, params?, queryId?)` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) checks
 out a pooled connection, optionally stores the **connection object** under `queryId` for
 cancellation, runs `conn.execute(sql, binds, { outFormat: OUT_FORMAT_OBJECT, autoCommit: true, fetchTypeHandler })`
 ([§5.3](#53-what-each-oracle-type-arrives-as) says what the handler is for),
@@ -380,7 +380,7 @@ Native errors are normalised through `mapDatabaseError()` (see [§11](#11-error-
 ### 5.2 Query cancellation
 
 A query issued with a `queryId` stores its connection in a `Map`. `cancelQuery(queryId)`
-([oracle.ts:208](../../src/lib/db/providers/sql/oracle.ts)) calls `connection.break()` on it —
+([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) calls `connection.break()` on it —
 interrupting the in-flight OCI call — and returns `true` on success (it does not verify a query was
 actually running). Exposed via `POST /api/db/cancel`.
 
@@ -720,9 +720,10 @@ survive an export, because it did not survive the driver.**
 
 ## 6. Transactions
 
-Explicit lifecycle on a dedicated connection checked out from the pool ([oracle.ts:258](../../src/lib/db/providers/sql/oracle.ts)).
-Oracle starts a transaction implicitly on the first DML, so `beginTransaction()` just holds the
-connection. **No auto-rollback timeout** (see [§3.4](#34-no-transaction-auto-rollback-timeout)).
+Explicit lifecycle on a dedicated connection checked out from the pool (`beginTransaction()`,
+[`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)). Oracle starts a transaction implicitly on
+the first DML, so `beginTransaction()` just holds the connection. **No auto-rollback timeout** (see
+[§3.4](#34-no-transaction-auto-rollback-timeout)).
 Surfaced via `POST /api/db/transaction`.
 
 | Method | Behaviour |
@@ -861,7 +862,7 @@ that shared block precisely so a refused ceiling cannot carry a measured count a
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([oracle.ts:586](../../src/lib/db/providers/sql/oracle.ts)):
+`runMaintenance(type, target?)` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)):
 
 | Type | With target | Without target |
 |------|-------------|----------------|
@@ -951,7 +952,7 @@ is what lets the Operations tab render those words and send an operation Oracle 
 
 ## 10. Capabilities & labels
 
-### `getCapabilities()` ([oracle.ts:61](../../src/lib/db/providers/sql/oracle.ts))
+### `getCapabilities()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
 
 | Capability | Value |
 |------------|-------|
@@ -968,7 +969,7 @@ is what lets the Operations tab render those words and send an operation Oracle 
 | `defaultPort` | `1521` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 
-### Labels — overridden ([oracle.ts:71](../../src/lib/db/providers/sql/oracle.ts))
+### Labels — overridden (`getLabels()`, [`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
 
 Oracle **overrides** the default SQL labels so the UI uses Oracle vocabulary:
 `analyzeAction` → *"Gather Statistics"*, `vacuumAction` → *"Rebuild Indexes"*, and the matching

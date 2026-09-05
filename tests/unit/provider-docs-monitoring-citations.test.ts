@@ -73,6 +73,25 @@ const NAMED_CITATIONS = [
     source: "src/lib/db/providers/sql/trino/index.ts",
     methods: ["getCapabilities", "getLabels"],
   },
+  {
+    doc: "docs/providers/oracle.md",
+    source: "src/lib/db/providers/sql/oracle.ts",
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "validate",
+      "getConnectString",
+      "connect",
+      "query",
+      "cancelQuery",
+      "prepareQuery",
+      "beginTransaction",
+      "getSchema",
+      "runMaintenance",
+      "getPoolStats",
+      "buildTLSAttributes",
+    ],
+  },
 ] as const;
 
 const SEARCH_DOCS = ["docs/providers/elasticsearch.md", "docs/providers/opensearch.md"] as const;
