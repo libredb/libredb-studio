@@ -57,7 +57,11 @@ answered. MySQL returns a bare number (`8.0.35`), so `labelServerVersion()` supp
 MariaDB, TiDB, Vitess and OceanBase return a build string that already names themselves
 (`12.3.2-MariaDB-ubu2404`), and that string is passed through unchanged. Prefixing it would assert a
 vendor the server never claimed. StarRocks and SingleStore are deliberately not in that list: both
-answer with a plain MySQL number and give nothing to key on.
+answer with a plain MySQL number and give nothing to key on. Apache Doris is the same on `VERSION()`
+(a fixed `5.7.99`), but it does put its real build in `@@version_comment`
+(`doris version doris-4.1.3-rc02-7126cf65d96`), which the same query now reads alongside `VERSION()`,
+so `labelServerVersion()` shows `Apache Doris 4.1.3-rc02-7126cf65d96` there instead of the fictitious
+number.
 
 **`performance_schema` is OFF by default on MariaDB.** Measured on `mariadb:12.3`
 (`@@performance_schema` = 0, build `12.3.2-MariaDB-ubu2404`): the `performance_schema` tables exist,

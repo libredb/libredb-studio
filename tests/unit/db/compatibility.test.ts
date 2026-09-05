@@ -125,12 +125,13 @@ describe("wire-compatibility registry", () => {
     expect(doris?.via).toBe("mysql");
     expect(doris?.tier).toBe("partial");
     expect(doris?.probedVersion).toBe("Apache Doris 4.1.3-rc02-7126cf65d96 (version() reports 5.7.99)");
-    // The caveat set has to name the two failures and the two traps, because each one is a
-    // thing a reader would otherwise believe works: the fictitious version, the invisible
-    // foreign key, the absent indexes, and the statement form that costs two panels.
+    // The caveat set has to name the failures and the traps that remain, because each one is a
+    // thing a reader would otherwise believe works: the invisible foreign key, the absent
+    // indexes, and the statement form that costs two panels. The fictitious version() number is
+    // deliberately absent from this list: the overview reads @@version_comment instead and shows
+    // the real build, so it is no longer something a reader would be misled by.
     const caveats = doris?.caveats.join(" ") ?? "";
     expect(caveats).toContain("SHOW STATUS");
-    expect(caveats).toContain("5.7.99");
     expect(caveats).toContain("KEY_COLUMN_USAGE");
     expect(caveats).toContain("information_schema.statistics");
   });
