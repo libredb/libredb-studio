@@ -344,6 +344,77 @@ const RESOLVED: ResolvedRow[] = [
     refusalExamples: false,
     turnTimeoutMs: undefined,
   },
+  // The five measured after the run-loop fixes, and the only five rows here that state
+  // `planStatementRetries: 1` without a plan cell that lost. They were driven with no entry of
+  // their own, so the drive answered its own 1 and every plan run of the thirty had the ask
+  // available; three of them spent it. The number records what they ran under. Writing the 0
+  // their sweeps call "the default" would remove the ask from a model that passed with it.
+  {
+    // Twenty-five weeks recorded as unsupported for one cell, and the cell was the server's:
+    // planning read 0/5 across five configurations because the notice for `no-statement` was
+    // offered only to a model whose profile asked for it, and this one had no profile.
+    id: "cogito:32b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 1,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  {
+    // The only code-specialised model here. The class was excluded by reasoning about what the
+    // surfaces ask for, and this row is the measurement that falsified it.
+    id: "qwen2.5-coder:14b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 1,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  {
+    // Held at 29/30 for days on the same plan cell and the same loss as `cogito:32b`, and opened
+    // by the same change.
+    id: "qwen2.5:32b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 1,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  {
+    // The fastest model in the table: a six-second median and a 21-second slowest run of thirty.
+    // Its optimize cell was the one that would not close while `recommend_change` refused calls
+    // without stating what shape one takes.
+    id: "qwen2.5:7b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 1,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  {
+    // The only one of the five that is not a defaults model, and the slowest supported model here.
+    // Both suppressions, because the plan-turn switch alone left its plan cell at 0/5 and the pair
+    // closed it — and the four surfaces that had already cleared at the defaults were measured
+    // again under the pair rather than inheriting settings no run of theirs had used.
+    id: "ornith:35b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 1,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    suppressesPlanReasoning: true,
+    suppressesAgentReasoning: true,
+    turnTimeoutMs: undefined,
+  },
   // Not a model anybody has run: the defaults, which is the honest treatment of one nobody
   // has measured.
   {
@@ -409,7 +480,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
   test("the table covers every registered model, so a new one cannot arrive unpinned", () => {
     const pinned = new Set(RESOLVED.map((row) => row.id));
     for (const id of Object.keys(modelProfiles())) expect(pinned.has(id)).toBe(true);
-    expect(Object.keys(modelProfiles())).toHaveLength(22);
+    expect(Object.keys(modelProfiles())).toHaveLength(27);
   });
 });
 
@@ -449,42 +520,33 @@ describe("what each model records about the runs that earned its settings", () =
     lock 6/6 at 30/30 with them.
   */
   const MEASURED_DIGESTS: Readonly<Record<string, string>> = {
+    "cogito:14b": "2c2fcded189b2123048e5c789844d3d8e392d7e19951e428695afa852eddd473",
+    "cogito:32b": "5564b00061b8615b9d25778ac1d69924e43c24e85dbe7d33c2ea98c99a1c1306",
     "gemini-3.5-flash-lite": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
+    "gemma4:12b": "9a49a9323c21ffe507698ca2ca852cc1b59647a206e73c448afeea7f1a0a674b",
     "gemma4:26b": "d8124e9d5b0929364129274fd4f80dea2640773147fdfd834cf2c68a5a08dd76",
     "granite4.1:30b": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
     "granite4.1:8b": "a3eea21447a81fbe058e3c18a0f7194c357e5d5f22db9acfe13e6139d9198874",
+    "granite4.2:8b": "c9e47190c44d1fda45bf035831dcb17ba21621e98a455259a438710775600ae0",
+    "ministral-3:14b": "23ef778193d6d714d7f3bb95523172d1e0f68520f0f9b2d20806b129a84a33c1",
+    "ministral-3:8b": "282d7f01c554b5bed006533190e2392330256b67f46ffee8a1462d5b254424ab",
+    "muse-glimmer:latest": "32bf1643caa8ed550066a64c4a231585a3ddbd30286646bef45f5531198d06cb",
+    "nemotron-3-nano:30b": "20cca3398ec9a7ff927f014a212784f38d6b36e74be49fe2b74fb223a7d56eec",
+    "nemotron-3.5-lightning:30b": "9a581f6838f604eaa3bf9fb0e2636635bd878f50d03b135205eac3e2ab7b0678",
+    "nemotron3:33b": "c1693800c32d336e610590e909300df682479247a910a291c9913ba278f26a8d",
+    "ornith:35b": "7ed7fad29552be880f2eefaaad3aa5258898820a1b617059da9f8055f1ce1d8b",
     "ornith:9b": "4e14e79cb5fd6572748df90786778ce72280c2bae79a27b5f8636d4eac1dbee7",
+    "qwen2.5-coder:14b": "d0e6f9ae86ee128fe709c66efcf75d89d8fa7ecaea9cf96692d23f9c514da231",
+    "qwen2.5:14b": "51ea773ff735a6f9d7f7f930b97c40ec70b5dc531dea65fa1594935a2471e991",
+    "qwen2.5:32b": "71885a95b0d717ca4f6814cfa4575bfa5f3cc20b7086c4de44f79835be3bcb1a",
+    "qwen2.5:7b": "09631668500b307a79ca06e1a7de2dfdffc1632f4bd5bb4a460abab6caf09857",
+    "qwen3.5:4b": "204b6f6beb8710155508938a2271cbf34013235fa612b40ecebf98ff5dcff061",
     "qwen3.5:9b": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
+    "qwen3.6:27b": "d0ebde3fdf25b9c56ab7bcad4adc3b54510a413285e51edcb46aec261e661157",
     "qwen3.8:latest": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
-    "qwen3:14b": "b1a344db5ee6b5f78780925657fee571eae510a7b8507bcb8badabaf01718aa3",
+    "qwen3:14b": "96e0d729224168eff3eddc16ed1bd588dd28cd133441c85790670ffd3e36dddd",
     "qwen3:4b": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
     "qwen3:8b": "3dd169b2c0718d77a0db8732d575bb4c863d78ed8343020c103c0f38e9cf016b",
-    // The eleventh model, whose record is new rather than moved; see its entry for the runs.
-    "nemotron3:33b": "c1693800c32d336e610590e909300df682479247a910a291c9913ba278f26a8d",
-    // The thirteenth. Its record is the only one that states a COST as well as a result: the plan
-    // turn's median doubled when the limit rose, and that sentence is load-bearing.
-    "nemotron-3.5-lightning:30b": "9a581f6838f604eaa3bf9fb0e2636635bd878f50d03b135205eac3e2ab7b0678",
-    // The fourteenth. Its record says its cells were read in ONE pass under the settings it
-    // ships with, which is the claim three settings on one model has to earn.
-    "muse-glimmer:latest": "32bf1643caa8ed550066a64c4a231585a3ddbd30286646bef45f5531198d06cb",
-    // The fifteenth. Its record states the outlier as well as the result: assess read 4/5 once
-    // and 5/5 on a second read of the same cell at the same setting.
-    "qwen3.6:27b": "d0ebde3fdf25b9c56ab7bcad4adc3b54510a413285e51edcb46aec261e661157",
-    // The fourth closed here, and the one the new switch was written for. Its record states the
-    // refuted hypothesis too: the tool count does not separate its passing runs from its loss.
-    "gemma4:12b": "9a49a9323c21ffe507698ca2ca852cc1b59647a206e73c448afeea7f1a0a674b",
-    "nemotron-3-nano:30b": "20cca3398ec9a7ff927f014a212784f38d6b36e74be49fe2b74fb223a7d56eec",
-    "qwen3.5:4b": "204b6f6beb8710155508938a2271cbf34013235fa612b40ecebf98ff5dcff061",
-    "granite4.2:8b": "c9e47190c44d1fda45bf035831dcb17ba21621e98a455259a438710775600ae0",
-    // The four this branch adds, and the only group whose records are identical in shape: every
-    // one locked all six surfaces on its FIRST attempt with no lever spent, so every one states
-    // the compiled defaults and nothing else. That is a measurement rather than an omission —
-    // and it is how every 30/30 model on this roster arrived, which is why the four are here
-    // and the models that absorbed a hundred lever attempts between them are not.
-    "ministral-3:8b": "282d7f01c554b5bed006533190e2392330256b67f46ffee8a1462d5b254424ab",
-    "ministral-3:14b": "23ef778193d6d714d7f3bb95523172d1e0f68520f0f9b2d20806b129a84a33c1",
-    "cogito:14b": "2c2fcded189b2123048e5c789844d3d8e392d7e19951e428695afa852eddd473",
-    "qwen2.5:14b": "51ea773ff735a6f9d7f7f930b97c40ec70b5dc531dea65fa1594935a2471e991",
   };
 
   test("every model's record survives the move, character for character", () => {

@@ -19,7 +19,7 @@ MODELS=("$@")
 if [ ${#MODELS[@]} -eq 0 ]; then
   # Fastest first, so the run reports something early, and the hosted model last because it needs
   # its own environment file swapped in rather than a line rewritten.
-  MODELS=(granite4.1:8b granite4.2:8b granite4.1:30b ornith:9b qwen3.5:9b qwen3:8b gemma4:12b gemma4:26b qwen3:14b nemotron3:33b nemotron-3.5-lightning:30b nemotron-3-nano:30b qwen3.6:27b qwen3.8:latest muse-glimmer:latest qwen3:4b gemini-3.5-flash-lite)
+  MODELS=(qwen2.5:7b cogito:14b ministral-3:8b granite4.1:8b ministral-3:14b qwen2.5:14b qwen3.5:4b qwen2.5-coder:14b qwen2.5:32b cogito:32b granite4.2:8b granite4.1:30b ornith:9b ornith:35b qwen3.5:9b qwen3:8b gemma4:12b gemma4:26b qwen3:14b nemotron3:33b nemotron-3.5-lightning:30b nemotron-3-nano:30b qwen3.6:27b qwen3.8:latest muse-glimmer:latest qwen3:4b gemini-3.5-flash-lite)
 fi
 
 # Watchable by default: the browser opens on screen and every click is visible, and a video of

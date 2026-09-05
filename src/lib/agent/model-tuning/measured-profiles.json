@@ -39,6 +39,30 @@
       }
     },
     {
+      "id": "cogito:32b",
+      "measured": "6/6 modes locked, 30/30 runs passed, every cell on its first attempt. Investigate 21s · Optimize 23s · Assess 32s · Operate 31s · Analyze 23s · Plan 4s (medians of the passing runs), slowest run 39s. This size was recorded here at 25/30 with its plan cell at 0/5 across five configurations, always losing `no-statement`. No setting reached it because the notice that would have was offered only to models whose profile asked for it, and this one had no profile. The cell reads 5/5 now, and one of those five runs is a run that was asked.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 1,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      },
+      "rationale": {
+        "planStatementRetries": [
+          "One plan run in five was asked, and wrote its statement only then. The other four fenced one unprompted.",
+          "So this number is load-bearing rather than nominal: at 0 the cell is 4/5 and the model is not supported. It was measured with the ask because it was driven with no entry of its own, and it is recorded with the ask for the same reason it passed."
+        ]
+      }
+    },
+    {
       "id": "gemini-3.5-flash-lite",
       "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
       "settings": {
@@ -342,6 +366,39 @@
       }
     },
     {
+      "id": "ornith:35b",
+      "measured": "6/6 modes locked, 30/30 runs passed with the two suppressions below. Investigate 97s · Optimize 55s · Assess 50s · Operate 16s · Analyze 28s · Plan 37s (medians of the passing runs), slowest run 150s. Its plan cell read 0/5 twice at the defaults and locked on the third attempt once both suppressions were on. The other four surfaces had cleared at the defaults, and were read AGAIN under the same pair rather than shipped under a configuration no run had used: assess, operate and analyze read 5/5 on that pass, and optimize read 4/5 and then 5/5 on the re-roll. The slowest model here that still clears every surface.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 1,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": true,
+        "refusalExamples": false,
+        "suppressAgentReasoning": true
+      },
+      "rationale": {
+        "planStatementRetries": [
+          "One plan run in five was asked, and wrote its statement only then. The other four fenced one unprompted.",
+          "So the number is load-bearing rather than nominal: at 0 the cell is 4/5 and this size is not supported. It was measured with the ask because it was driven with no entry of its own, and it is recorded with the ask for the same reason it passed."
+        ],
+        "suppressPlanReasoning": [
+          "Its plan cell read 0/5 twice at the defaults, and the loss was the clock rather than the plan: the model spends the turn thinking and the deliverable never arrives.",
+          "Quiet, it answers in 37 seconds. This is the setting that opened the cell, and it reaches plan turns only."
+        ],
+        "suppressAgentReasoning": [
+          "The plan-turn switch alone did not close the cell; the pair did, on the third attempt.",
+          "So it ships on both, and the four surfaces that had cleared at the defaults were measured again with it on rather than inheriting a setting they were never run under. Investigate is the cost: 97 seconds, the slowest of any supported model."
+        ]
+      }
+    },
+    {
       "id": "ornith:9b",
       "measured": "2/6 modes locked, 25/30 runs passed on an EARLIER ROUND. Investigate 4/5 · Optimize 3/5 · Assess 4/5 · Operate 5/5 · Analyze 5/5 · Plan 4/5. The plan cell is what the extra turn below was added for. What moved the other four is not recorded here and is not claimed: what is known is that the model now locks 6/6 and passes 30/30, every surface 5/5.",
       "settings": {
@@ -366,6 +423,30 @@
       }
     },
     {
+      "id": "qwen2.5-coder:14b",
+      "measured": "6/6 modes locked, 30/30 runs passed, every cell on its first attempt. Investigate 29s · Optimize 34s · Assess 21s · Operate 17s · Analyze 10s · Plan 1s (medians of the passing runs), slowest run 37s. A code-specialised model clearing all six surfaces is the finding worth recording: the surfaces are not code generation — they are reading a database and citing what was read — and a family set aside on that reasoning matches its general-purpose sibling of the same size, cell for cell.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 1,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      },
+      "rationale": {
+        "planStatementRetries": [
+          "Recorded as one because that is the configuration the thirty runs were taken under: driven with no entry of its own, the resolver answers one and every plan run had the ask available.",
+          "No run of its five spent it — its plans fence a statement unprompted — so the turn costs this model nothing and is recorded rather than removed. Writing 0 would describe a configuration nothing was measured in."
+        ]
+      }
+    },
+    {
       "id": "qwen2.5:14b",
       "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults, every cell on its first attempt. Investigate 17s · Optimize 35s · Assess 1:03 · Operate 18s · Analyze 13s · Plan 1s (medians of the passing runs). An older Qwen generation than anything else on the roster and it needs nothing, which is worth recording: the newer qwen3 line is represented at four sizes and this one arrived on the defaults alongside them.",
       "settings": {
@@ -381,6 +462,54 @@
         "retryUnreadStop": false,
         "suppressPlanReasoning": false,
         "refusalExamples": false
+      }
+    },
+    {
+      "id": "qwen2.5:32b",
+      "measured": "6/6 modes locked, 30/30 runs passed, every cell on its first attempt. Investigate 19s · Optimize 28s · Assess 29s · Operate 28s · Analyze 16s · Plan 3s (medians of the passing runs), slowest run 36s. It stood at 29/30 for days on the same plan cell and the same `no-statement` loss as `cogito:32b`, and opened for the same reason. One of its five passing plan runs is a run that was asked.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 1,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      },
+      "rationale": {
+        "planStatementRetries": [
+          "One plan run in five was asked, and wrote its statement only then. The other four fenced one unprompted.",
+          "So this number is load-bearing rather than nominal: at 0 the cell is 4/5 and the model is not supported. It was measured with the ask because it was driven with no entry of its own, and it is recorded with the ask for the same reason it passed."
+        ]
+      }
+    },
+    {
+      "id": "qwen2.5:7b",
+      "measured": "6/6 modes locked, 30/30 runs passed, every cell on its first attempt. Investigate 6s · Optimize 10s · Assess 5s · Operate 9s · Analyze 5s · Plan 2s (medians of the passing runs) — the fastest model measured here, and nothing it did on thirty runs took longer than 21s. Its optimize cell had been the one that would not close, losing while `recommend_change` refused calls without ever saying what shape one takes; it locked on the first attempt once the tool stated its own.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 1,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      },
+      "rationale": {
+        "planStatementRetries": [
+          "Recorded as one because that is the configuration the thirty runs were taken under: driven with no entry of its own, the resolver answers one and every plan run had the ask available.",
+          "No run of its five spent it — its plans fence a statement unprompted — so the turn costs this model nothing and is recorded rather than removed. Writing 0 would describe a configuration nothing was measured in."
+        ]
       }
     },
     {
@@ -492,7 +621,7 @@
     },
     {
       "id": "qwen3:14b",
-      "measured": "5/6 modes locked, 29/30 runs passed. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 4/5. The single loss is no-statement on plan: the run described all eight tables, both join tables and the key each relation travels on, then stopped without a fenced statement or the NO STATEMENT refusal that plan mode scores. Its other four plan runs fenced a statement, so it gets one extra turn to be asked for the deliverable — a planning run costs 15 seconds, and no other model is offered it.",
+      "measured": "5/6 modes locked, 29/30 runs passed. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 4/5. The single loss is no-statement on plan: the run described all eight tables, both join tables and the key each relation travels on, then stopped without a fenced statement or the NO STATEMENT refusal that plan mode scores. Its other four plan runs fenced a statement, so it gets one extra turn to be asked for the deliverable — a planning run costs 15 seconds. It is no longer the only model offered the turn: five models measured since state the same number, and a model with no profile is asked once, because absence is not a measurement.",
       "settings": {
         "sampling": {
           "temperature": 0,

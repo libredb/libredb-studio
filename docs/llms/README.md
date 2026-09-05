@@ -8,10 +8,10 @@ writes beautiful prose about a database and never calls a tool answers nothing h
 question these pages answer is not what a model knows but what it DOES on a run, and every figure
 comes from a run whose ledger is on disk.
 
-**Twenty-two models are supported.** Each cleared all six surfaces — Investigate, Optimize, Assess,
-Operate, Analyze and Plan — five consecutive times: 660 runs, 660 passes.
+**Twenty-seven models are supported.** Each cleared all six surfaces — Investigate, Optimize, Assess,
+Operate, Analyze and Plan — five consecutive times: 810 runs, 810 passes.
 
-Sixteen of the twenty-two cleared them at the 90-second per-turn limit the product ships. Six carry a
+Twenty-one of the twenty-seven cleared them at the 90-second per-turn limit the product ships. Six carry a
 150-second limit of their own — `qwen3.5:9b`, `gemma4:12b`, `nemotron-3.5-lightning:30b`,
 `nemotron-3-nano:30b`, `muse-glimmer:latest` and `qwen3.6:27b` — because one turn of theirs does
 not fit inside 90 while every other surface does. The limit stays 90 for every other model, and
@@ -19,6 +19,7 @@ each page says what its model needed.
 
 | Model | Served through | Disk | Median run | Slowest run |
 | --- | --- | --- | --- | --- |
+| [`qwen2.5:7b`](qwen/qwen2.5.md) | Ollama | 4.7 GB | 6s | 21s |
 | [`gemini-3.5-flash-lite`](gemini/gemini-3.5.md) | Gemini API | — | 10s | 21s |
 | [`gemma4:12b`](gemma/gemma4.md) | Ollama | 7.6 GB | 11s | 63s |
 | [`granite4.1:8b`](granite/granite4.1.md) | Ollama | 5.3 GB | 11s | 22s |
@@ -27,12 +28,16 @@ each page says what its model needed.
 | [`ministral-3:8b`](mistral/ministral-3.md) | Ollama | 6.0 GB | 13s | 26s |
 | [`ministral-3:14b`](mistral/ministral-3.md) | Ollama | 9.1 GB | 16s | 56s |
 | [`qwen2.5:14b`](qwen/qwen2.5.md) | Ollama | 9.0 GB | 18s | 65s |
+| [`qwen2.5-coder:14b`](qwen/qwen2.5-coder.md) | Ollama | 9.0 GB | 20s | 37s |
+| [`qwen2.5:32b`](qwen/qwen2.5.md) | Ollama | 19 GB | 20s | 36s |
+| [`cogito:32b`](cogito/cogito.md) | Ollama | 19 GB | 23s | 39s |
 | [`granite4.1:30b`](granite/granite4.1.md) | Ollama | 17 GB | 26s | 52s |
 | [`nemotron3:33b`](nvidia/nemotron3.md) | Ollama | 27 GB | 21s | 119s |
 | [`nemotron-3.5-lightning:30b`](nvidia/nemotron-3.5-lightning.md) | Ollama | 25 GB | 29s | 145s |
 | [`ornith:9b`](ornith/ornith.md) | Ollama | 5.5 GB | 31s | 118s |
 | [`qwen3.5:9b`](qwen/qwen3.5.md) | Ollama | 5.8 GB | 33s | 98s |
 | [`gemma4:26b`](gemma/gemma4.md) | Ollama | 16 GB | 36s | 92s |
+| [`ornith:35b`](ornith/ornith.md) | Ollama | 21 GB | 36s | 150s |
 | [`qwen3:8b`](qwen/qwen3.md) | Ollama | 5.2 GB | 36s | 108s |
 | [`qwen3:14b`](qwen/qwen3.md) | Ollama | 9.3 GB | 41s | 303s |
 | [`granite4.2:8b`](granite/granite4.2.md) | Ollama | 5.3 GB | 46s | 116s |
@@ -44,8 +49,8 @@ each page says what its model needed.
 
 The durations are from one machine and are comparable with each other rather than portable: every
 figure was taken the same way, on the same database, through the same six surfaces. What they are
-for is choosing between these twenty-two — the fastest reaches the same verdicts as the slowest in
-a twelfth of the time.
+for is choosing between these twenty-seven — the fastest reaches the same verdicts as the slowest in
+a nineteenth of the time.
 
 One page per model version. Sizes are rows inside it, because `ollama pull qwen3:4b` is how a
 size is chosen and because the interesting fact is usually the difference between two sizes of
