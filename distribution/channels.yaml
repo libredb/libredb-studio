@@ -419,6 +419,7 @@ channels:
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/56
       first_pr: https://github.com/caprover/one-click-apps/pull/1303
+      last_bump_pr: https://github.com/caprover/one-click-apps/pull/1315
       upstream_repo: https://github.com/caprover/one-click-apps
       docs: deploy/caprover/README.md
     pin:
@@ -447,6 +448,7 @@ channels:
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/171
       first_pr: https://github.com/Dokploy/templates/pull/931
+      last_bump_pr: https://github.com/Dokploy/templates/pull/1039
       catalog: https://templates.dokploy.com
       upstream_repo: https://github.com/Dokploy/templates
       docs: deploy/dokploy/README.md
@@ -454,7 +456,9 @@ channels:
       strategy: remote_file
       url: https://raw.githubusercontent.com/Dokploy/templates/main/blueprints/libredb-studio/docker-compose.yml
       extract: 'libredb-studio:(\d+\.\d+\.\d+)'
-      note: Bump from 0.9.27 to the current release is tracked in issue 175.
+      note: The blueprint serves 0.9.59, bumped there by Dokploy/templates#1039 (merged 2026-08-03).
+        Every bump is an upstream pull request a maintainer has to merge, so this pin drifts behind
+        the release by design and the drift row is the reminder to open the next one.
 
   - id: cosmos
     name: Cosmos servapp marketplace
@@ -743,6 +747,54 @@ channels:
     pin:
       strategy: none
 
+  - id: gcp-marketplace
+    name: Google Cloud Marketplace
+    short_name: Google Cloud Marketplace
+    status: live
+    category: cloud-marketplaces
+    platforms: [kubernetes, cloud]
+    runtime: channel_supplied
+    tier: 4
+    kind: marketplace
+    update:
+      # Producer Portal, not a pull request: the listing, its version and its
+      # Terraform module are submitted through Google's console and each change
+      # goes through Google's own review, so nothing here can be CI-driven.
+      method: manual_ui
+      sla: on_demand
+    links:
+      catalog: https://console.cloud.google.com/marketplace/product/libredb-public/libredb-studio
+      docs: docs/DISTRIBUTION.md
+    pin:
+      # The listed version is held in Google's Producer Portal and the artifacts
+      # live in a private Artifact Registry, so there is no public file to read a
+      # version out of. It is checked by hand against the portal.
+      strategy: none
+
+  - id: azure-marketplace
+    name: Microsoft Azure Marketplace
+    short_name: Azure Marketplace
+    status: pending
+    category: cloud-marketplaces
+    platforms: [cloud]
+    runtime: channel_supplied
+    tier: 4
+    kind: marketplace
+    update:
+      method: manual_ui
+      sla: on_demand
+    links:
+      docs: deploy/azure/README.md
+    pin:
+      strategy: none
+      note: The offer is submitted and in Microsoft's certification review, so nothing is listed
+        yet. It is recorded here rather than left out because the submission exists and its whole
+        descriptor does too - deploy/azure/ holds the solution template, the ARM assets and the
+        Partner Center listing texts - which is the same reason the four open catalog submissions
+        carry an entry. On publication, flip to live and add the offer's public listing URL as
+        links.catalog; there is no pin to add, because the listed version lives in Partner Center
+        the way Google's lives in the Producer Portal.
+
   - id: winget
     name: winget community repository (LibreDB.Studio)
     short_name: winget
@@ -805,9 +857,10 @@ channels:
       extract: '<d:Version>(\d+\.\d+\.\d+)</d:Version>'
       note: Listed since 0.9.59 (choco install libredb-studio), approved 2026-08-24. The community
         feed publishes no floating "latest" document, so the pin filters the OData package list to
-        IsLatestVersion - one document, one match, whatever the published version count. It reads
-        0.9.59 until the next release publishes through the now-enabled job, which is real lag and
-        not a broken pin. The feed lists APPROVED versions only, so a drift row here means the
+        IsLatestVersion - one document, one match, whatever the published version count. It sat at
+        0.9.59 while the job was disabled and has moved with every release since; it reads 0.13.6
+        today, one behind, which is moderation lag and not a broken pin. The feed lists APPROVED
+        versions only, so a drift row here means the
         version is waiting on human moderation rather than that the push failed; the release run's
         job summary reports the push outcome and that version's PackageStatus. Trusted status is
         what removes the wait - docs/BACKLOG.md REL3.
