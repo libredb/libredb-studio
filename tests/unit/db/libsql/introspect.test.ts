@@ -323,7 +323,7 @@ describe("readOverview", () => {
     const overview = await readOverview(twoTableTransport([[/page_count/, REFUSED]]));
 
     expect(overview.databaseSize).toBe("N/A");
-    expect(overview.databaseSizeBytes).toBe(0);
+    expect(overview.databaseSizeBytes).toBeUndefined();
   });
 });
 

@@ -396,7 +396,7 @@ export async function readOverview(transport: LibSQLTransport): Promise<Database
     // provider counting itself.
     maxConnections: 0,
     databaseSize: sizeBytes === undefined ? "N/A" : formatBytes(sizeBytes),
-    databaseSizeBytes: sizeBytes ?? 0,
+    ...(sizeBytes === undefined ? {} : { databaseSizeBytes: sizeBytes }),
     tableCount: readNumber(firstRow(outcomes[2])?.table_count) ?? 0,
     indexCount: readNumber(firstRow(outcomes[3])?.index_count) ?? 0,
   };

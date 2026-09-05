@@ -351,6 +351,7 @@ Measured through the provider against both deployments (fixture: 2 tables, 3 and
 |---|---|
 | Version | `sqld 0.24.33 (f8fb14f3 2026-08-11) (SQLite 3.47.0)` / `SQLite 3.47.0` on Turso Cloud |
 | Database size | `64 KB` (65536 bytes), from `page_count × page_size` |
+| Database size unavailable | `databaseSize` is `"N/A"`; `databaseSizeBytes` is omitted, not zeroed |
 | Tables / indexes | 2 / 1 |
 | Uptime | `N/A` — libSQL publishes none |
 | Max connections | `0` — no limit published |
