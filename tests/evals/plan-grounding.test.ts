@@ -277,15 +277,17 @@ describe("a refused capture records why it was refused", () => {
   });
 });
 
-describe("a plan that names no statement is asked for one, where its model was measured needing it", () => {
+describe("a plan that names no statement is asked for one, whoever the model is", () => {
   /*
     `qwen3:14b`, plan, 4 of 5. Its losing run answered the objective completely — all eight
     tables, both join tables, the key every relation travels on — and never wrote the
     deliverable, so the verdict was `no-statement`. Planning had no notice for that: the prose
     arrived, `conclude` filed it as the closing statement, and the run was over.
 
-    The turn is offered per model (`planStatementRetries`, 0 everywhere else), so this is
-    driven through `modelOver`'s model name rather than the fixture default.
+    Who gets the turn is what these cases pin. A measured profile's number decides for the model
+    it was written about — 0 means that model was watched declining the ask — and a model with no
+    profile is asked once, because absence is not a measurement. So the drive is run through
+    `modelOver`'s model name rather than the fixture default, and both sides are asserted.
   */
   const PROSE = "The department table holds dept_no and dept_name, and dept_emp joins it to employee.";
   const FENCED = "Here is the plan.\n\n```sql\nSELECT dept_no, COUNT(*) FROM dept_emp GROUP BY dept_no;\n```";

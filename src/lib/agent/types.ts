@@ -627,12 +627,14 @@ export type AgentGuidanceNotice =
   | "report-reminder"
   /**
    * A plan run whose prose named neither statement nor refusal. Delivered as a `user`
-   * message; bounded by the model's own `planStatementRetries`.
+   * message; bounded by the model's own `planStatementRetries` where it has a profile, and by
+   * one ask where it has none — absence is not a measurement, so an unmeasured model is asked.
    */
   | "plan-statement"
   /**
    * A turn the per-call ceiling cut off, on a run whose own clock still has room. Delivered as a
-   * `user` message and the turn is taken again; once per run.
+   * `user` message and the turn is taken again; once per drive, so a resumed run is granted one
+   * again.
    *
    * The ceiling is documented as bounding one call and it ended the run instead. Measured on
    * `qwen3.6:35b`, query-optimization: nine losses, all `model-timeout` with `no-report`, all

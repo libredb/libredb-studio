@@ -71,7 +71,6 @@ import {
   suppressesPlanReasoning,
   turnTimeoutMsFor,
   planStatementAsksFor,
-  planStatementRetriesFor,
   reportReminderLimitFor,
   samplingFor,
 } from "./models";
@@ -364,8 +363,11 @@ function planningEngine(context: AgentToolContext): PlanningEngine {
  * only for SQL would push a model whose inventory cannot answer into inventing a table name
  * to satisfy it, which is the failure `verifyPlanningGoal` accepts refusals to avoid.
  *
- * Offered only where a profile asks for it (`planStatementRetriesFor`, 0 for every model but
- * one), so introducing it changed no other model's run.
+ * Offered to whoever needs it, because the ask is the server's own: `planStatementAsksFor` reads a
+ * measured profile's number when there is one and answers 1 when there is not, so a model nobody
+ * has measured is asked once rather than being refused a turn on the strength of its absence. A
+ * profile that states 0 is a measurement — that model was watched declining the ask — and it still
+ * decides for the model it was written about.
  */
 /**
  * What an answer-presenting run is told once when it would report without presenting.
@@ -2640,7 +2642,9 @@ export async function runInvestigation(
     /** Whether this drive has already re-asked an empty turn; see `retryEmptyTurn`. */
     let emptyTurnRetried = false;
     /**
-     * Whether this drive has already given back a turn the per-call ceiling cut; once per run.
+     * Whether this drive has already given back a turn the per-call ceiling cut; once per DRIVE,
+     * which is what this local declares — a resumed run opens a new drive and is granted one
+     * again, deliberately, because a resume is a second decision to spend on this run.
      *
      * The ceiling is documented as bounding one call and it ended the run. Measured on
      * `qwen3.6:35b`, query-optimization: nine losses, all `model-timeout` with `no-report`, all
@@ -3326,17 +3330,17 @@ export async function runInvestigation(
       try {
         turn = await takeTurn(
           model,
-        // The engine is the fence tag a plan run is told to write, so the prompt reads
-        // it from the connection this drive was given rather than from the record: the
-        // resources are what a statement would actually be run against.
-        systemPrompt(record, grounding, engine),
-        messages,
-        // Narrowed once the run has been told to finish; see `AGENT_NARROWED_EXTRA_TOOLS`.
-        narrowed && !prompted ? narrowedTools(ledger, narrowedAtEvent) : tools,
-        turnBudgetMs,
-        // Constraint measured and REVERTED; see the commit that removes it. Left unset here
-        // rather than deleted from `takeTurn`, because the seam is correct and the cost was in
-        // the model, not the wiring.
+          // The engine is the fence tag a plan run is told to write, so the prompt reads
+          // it from the connection this drive was given rather than from the record: the
+          // resources are what a statement would actually be run against.
+          systemPrompt(record, grounding, engine),
+          messages,
+          // Narrowed once the run has been told to finish; see `AGENT_NARROWED_EXTRA_TOOLS`.
+          narrowed && !prompted ? narrowedTools(ledger, narrowedAtEvent) : tools,
+          turnBudgetMs,
+          // Constraint measured and REVERTED; see the commit that removes it. Left unset here
+          // rather than deleted from `takeTurn`, because the seam is correct and the cost was in
+          // the model, not the wiring.
           undefined,
           record.workflowType,
           record.mode,

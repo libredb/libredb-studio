@@ -2986,6 +2986,7 @@ describe("an answer reads as the app's decision, with the model's caption quoted
     test.each([
       "report-reminder",
       "plan-statement",
+      "turn-cut-off",
       "report-reserve",
       "unread-stop",
       // The three delivered as a tool result (B51). They reach a reader through the

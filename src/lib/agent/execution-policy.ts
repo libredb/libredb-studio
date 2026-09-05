@@ -361,8 +361,13 @@ export const AGENT_WORKFLOW_BUDGETS: Readonly<Record<AgentRunWorkflowType, Agent
  * showed what that costs: an unanswered call ended a run at exactly 300.0s — the whole
  * investigation deadline of the day — with a two-event ledger, having spent a budget
  * meant to cover a whole investigation, and a user watched it do so with no feedback.
- * Turns on this workload land in seconds, so a ceiling this far above them is only ever
- * reached by a call that is not coming back. It is deliberately NOT per workflow: the
+ * Most turns on this workload land in seconds, and this ceiling was written on the assumption
+ * that anything reaching it was a call that would never come back. A local model falsifies that:
+ * measured on `qwen3.6:35b`, query-optimization, nine losses were cut near 100s of a 450s deadline
+ * with 34 of 36 turns unspent, while the same cell's longest PASSING run took 183s. So the ceiling
+ * is a bound on ONE CALL and the drive treats it as one — a cut turn is asked again rather than
+ * ending the run — which is what makes the sentence below true rather than aspirational. It is
+ * deliberately NOT per workflow: the
  * decision table varies what a RUN may spend, and how long one request may hang before
  * it is written off is a property of the transport, not of the question being asked.
  *

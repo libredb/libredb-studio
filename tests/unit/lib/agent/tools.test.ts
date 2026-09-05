@@ -1329,7 +1329,11 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
         const outcome = recommendChangeTool(
           h.context,
           { runId: h.context.runId, events: [artifactEvent] },
-          { change: "index", rationale: "the read scans", evidence: [{ source: "artifact", correlationId: "corr-real" }] },
+          {
+            change: "index",
+            rationale: "the read scans",
+            evidence: [{ source: "artifact", correlationId: "corr-real" }],
+          },
         );
 
         if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
@@ -1347,7 +1351,11 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
         const outcome = recommendChangeTool(
           h.context,
           { runId: h.context.runId, events: [artifactEvent] },
-          { change: "index", rationale: "the read scans", evidence: [{ source: "artifact", correlationId: "corr-real" }] },
+          {
+            change: "index",
+            rationale: "the read scans",
+            evidence: [{ source: "artifact", correlationId: "corr-real" }],
+          },
         );
 
         if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
