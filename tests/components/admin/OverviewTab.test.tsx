@@ -408,7 +408,7 @@ describe("OverviewTab", () => {
               type: "postgres",
               status: "healthy",
               latencyMs: 100,
-              databaseSize: "1 TB",
+              databaseSize: "1.00 TB",
               databaseSizeBytes: 1099511627776,
               activeConnections: 3,
             },
