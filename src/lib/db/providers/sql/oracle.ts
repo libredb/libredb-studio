@@ -28,7 +28,13 @@ import {
   type PreparedQuery,
   type QueryPrepareOptions,
 } from "../../types";
-import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
+import {
+  DatabaseConfigError,
+  ConnectionError,
+  QueryError,
+  mapDatabaseError,
+  describeOracleClientLoadFailure,
+} from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
@@ -366,16 +372,13 @@ export class OracleProvider extends SQLBaseProvider {
       try {
         oracledb.initOracleClient({ libDir });
       } catch (error) {
-        // A bad ORACLE_CLIENT_LIB_DIR (e.g. no Instant Client at that path) makes
-        // node-oracledb throw a raw driver error (DPI-1047). Surface it as a
-        // non-retryable configuration error that names the offending env var, so it
-        // is actionable rather than looking like a transient failure.
-        throw new DatabaseConfigError(
-          `Failed to load the Oracle Instant Client from ORACLE_CLIENT_LIB_DIR=${libDir}: ${String(error)}. ` +
-            "Verify the path points at an installed Oracle Instant Client 'lib' directory " +
-            "(Instant Client 19c is required to reach Oracle 11.2 servers).",
-          "oracle",
-        );
+        // node-oracledb throws a raw driver error here, and the two that
+        // actually happen mean opposite things: NJS-045 is a missing Thick-mode
+        // addon in THIS build (nothing the operator configured), DPI-1047 is the
+        // client libraries failing to load from a directory that is very likely
+        // correct but not on the loader path. Surface either as a non-retryable
+        // configuration error carrying the diagnosis, not one generic sentence.
+        throw new DatabaseConfigError(describeOracleClientLoadFailure(libDir, String(error)), "oracle");
       }
       thickClientInitialized = true;
     }

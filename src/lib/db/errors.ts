@@ -243,6 +243,103 @@ export function isRetryableError(error: unknown): boolean {
   return true;
 }
 
+// ============================================================================
+// Oracle Thick-mode diagnostics (#538)
+// ============================================================================
+
+/**
+ * The one remedy every Thin-mode refusal shares, written once. Both the reason
+ * strings below and the constructor's load failures point at the same place, and
+ * two prose copies of one instruction drift.
+ */
+const ORACLE_THICK_MODE_REMEDY =
+  "Thick mode is the remedy: set ORACLE_CLIENT_LIB_DIR to an installed Oracle Instant Client " +
+  "directory (on Linux the directory must also be on the loader path). See " +
+  "docs/providers/oracle.md section 4.4.";
+
+/**
+ * Why node-oracledb's Thin mode refused this connection, or `null` if the error
+ * is not a Thin-mode refusal at all.
+ *
+ * These are the messages a DBA turns into "you must use Thick mode", and until
+ * #538 only `NJS-138` was recognised. The rest fell through to the generic
+ * retryable `ConnectionError`, which tells the operator to try again for a
+ * condition that will never clear on its own - the exact defect #228 fixed for
+ * `NJS-138`.
+ *
+ * `message` is expected already lower-cased (mapDatabaseError does that once).
+ */
+export function describeOracleThinModeRefusal(message: string): string | null {
+  if (message.includes("njs-138")) {
+    return "Oracle server version predates 12.1, which Thin mode does not support";
+  }
+  if (message.includes("njs-116")) {
+    return (
+      "the account's password verifier is 10G-only, and Thin mode can only use a 12C verifier. " +
+      "A DBA can fix this without Thick mode by resetting the account's password, which writes " +
+      "a 12C verifier (given a suitable SQLNET.ALLOWED_LOGON_VERSION_SERVER)"
+    );
+  }
+  if (message.includes("njs-533")) {
+    return (
+      "the server requires Oracle Native Network Encryption or data integrity checksumming, " +
+      "which Thin mode does not implement"
+    );
+  }
+  if (message.includes("njs-089") || message.includes("not supported by node-oracledb in thin mode")) {
+    return "the server requires a feature Thin mode does not implement";
+  }
+  return null;
+}
+
+/**
+ * What to tell the operator when `initOracleClient({ libDir })` throws.
+ *
+ * The old message said one thing for every failure - "verify the path points at
+ * an installed Instant Client 'lib' directory" - and for the two failures that
+ * actually happen that advice is wrong in both directions:
+ *
+ * - `NJS-045` is not about the path at all. It means this build has no
+ *   node-oracledb Thick-mode addon to load, which is a defect of how the app was
+ *   packaged, not of anything the operator configured. The operator can stare at
+ *   a perfectly good Instant Client directory forever.
+ * - `DPI-1047` means the addon loaded and then could not pull in the client
+ *   libraries. On Linux that is almost never a wrong path: `libclntsh.so` has no
+ *   RUNPATH, so its siblings (`libnnz*.so`, `libclntshcore.so`) are found only
+ *   through the system library search path, and node-oracledb's own
+ *   documentation says never to rely on `libDir` there.
+ *
+ * Exported so the mapping is testable without constructing a provider.
+ */
+export function describeOracleClientLoadFailure(libDir: string, detail: string): string {
+  const lower = detail.toLowerCase();
+  if (lower.includes("njs-045")) {
+    return (
+      `This build has no node-oracledb Thick mode binary for ${process.platform}-${process.arch}, ` +
+      `so ORACLE_CLIENT_LIB_DIR=${libDir} could not be used: ${detail}. ` +
+      "This is a packaging defect of the build, not a problem with the path - the driver's native " +
+      "addon is missing or was resolved from a rewritten directory. Report it with the platform and " +
+      "architecture above; see docs/providers/oracle.md section 4.4."
+    );
+  }
+  if (lower.includes("dpi-1047")) {
+    return (
+      `The Oracle Client libraries in ORACLE_CLIENT_LIB_DIR=${libDir} could not be loaded: ${detail}. ` +
+      "On Linux the directory must ALSO be on the system library search path - add it to a file under " +
+      "/etc/ld.so.conf.d/ and run ldconfig, or set LD_LIBRARY_PATH before Node starts - because " +
+      "libclntsh has no RUNPATH and cannot find its own siblings otherwise. On Debian 13 also check " +
+      "that libaio.so.1 resolves (the distribution ships libaio.so.1t64 and the client asks for " +
+      "libaio.so.1). See docs/providers/oracle.md section 4.4."
+    );
+  }
+  return (
+    `Failed to load the Oracle Instant Client from ORACLE_CLIENT_LIB_DIR=${libDir}: ${detail}. ` +
+    "Verify the path points at an installed Oracle Instant Client directory " +
+    "(Instant Client 19c is required to reach Oracle 11.2 servers); see " +
+    "docs/providers/oracle.md section 4.4."
+  );
+}
+
 /**
  * Map native database errors to our error types
  */
@@ -265,6 +362,16 @@ export function mapDatabaseError(error: unknown, provider: DatabaseType, query?:
     message.includes("getaddrinfo")
   ) {
     return new ConnectionError(`Failed to connect to ${provider} database: ${error.message}`, provider);
+  }
+
+  // Oracle Thin-mode refusals. This runs BEFORE the authentication branch on
+  // purpose: NJS-116's own text is "password verifier type 0x... is not
+  // supported by node-oracledb in Thin mode", so the generic `password` match
+  // below would otherwise turn a configuration problem into "wrong credentials"
+  // and send the operator to reset something that is not broken.
+  const thinModeRefusal = describeOracleThinModeRefusal(message);
+  if (thinModeRefusal) {
+    return new DatabaseConfigError(`${thinModeRefusal}: ${error.message}. ${ORACLE_THICK_MODE_REMEDY}`, provider);
   }
 
   // Authentication errors
@@ -302,13 +409,8 @@ export function mapDatabaseError(error: unknown, provider: DatabaseType, query?:
   if (message.includes("ora-00942")) {
     return new QueryError(`Table or view does not exist: ${error.message}`, provider, query);
   }
-  if (message.includes("njs-138")) {
-    return new DatabaseConfigError(
-      `Oracle server version predates 12.1, which Thin mode does not support: ${error.message}. ` +
-        "Set ORACLE_CLIENT_LIB_DIR to an installed Oracle Instant Client directory to enable Thick mode for older servers.",
-      provider,
-    );
-  }
+  // NJS-138 and its siblings are handled above, before the authentication
+  // branch - see describeOracleThinModeRefusal().
 
   // MSSQL errors
   if (message.includes("login failed")) {
