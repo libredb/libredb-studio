@@ -225,4 +225,29 @@ test.describe("Login showcase", () => {
       expect(emailBox?.y, `${viewport.width}x${viewport.height}`).toBeLessThan(viewport.height);
     }
   });
+  // Issue #553: every pixel number above is measured in whatever face the page actually renders,
+  // so those numbers only mean something if that face is Geist. Before the @theme inline fix,
+  // globals.css mapped --font-sans inside a plain @theme block, which Tailwind emits at :root,
+  // where next/font's body-scoped --font-geist-sans does not exist; the reference resolved to
+  // nothing, both faces sat at "unloaded", and body rendered Tailwind's preflight system stack.
+  test("hero renders in Geist, not the system font", async ({ page }) => {
+    const fonts = await page.evaluate(async () => {
+      await document.fonts.ready;
+      const status: Record<string, string> = {};
+      document.fonts.forEach((face) => {
+        status[face.family] = face.status;
+      });
+      const heading = document.querySelector("h1");
+      if (!heading) throw new Error("login page has no h1");
+      return {
+        status,
+        body: getComputedStyle(document.body).fontFamily,
+        heading: getComputedStyle(heading).fontFamily,
+      };
+    });
+    expect(fonts.status.GeistSans).toBe("loaded");
+    expect(fonts.status.GeistMono).toBe("loaded");
+    expect(fonts.body).toMatch(/^GeistSans\b/);
+    expect(fonts.heading).toMatch(/^GeistSans\b/);
+  });
 });
