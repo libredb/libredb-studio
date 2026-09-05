@@ -274,7 +274,7 @@ the same string to `tls.createSecureContext()` as `cert`, `key` **and** `ca`.
 
 | Env var | Required | Effect |
 |---------|----------|--------|
-| `ORACLE_CLIENT_LIB_DIR` | No (default: unset, Thin mode) | Absolute path to an installed Oracle Instant Client `lib` directory. When set, the constructor calls `oracledb.initOracleClient({ libDir })` and the driver runs in Thick mode instead of Thin. |
+| `ORACLE_CLIENT_LIB_DIR` | No (default: unset, Thin mode) | Absolute path to an installed Oracle Instant Client directory. When set, the constructor calls `oracledb.initOracleClient({ libDir })` and the driver runs in Thick mode instead of Thin. **On Linux this variable alone is not enough** — see [below](#on-linux-the-variable-alone-is-not-enough). |
 
 ```bash
 # Only needed against a pre-12.1 Oracle server (see the Thin-mode caveat above).
@@ -288,8 +288,52 @@ process-level env var rather than a per-connection config field: every `OraclePr
 process shares one driver mode. The constructor guards the call with a module-level flag so it runs
 at most once regardless of how many `OracleProvider` instances (i.e. connections) are created. The
 Oracle Instant Client itself must already be installed at the given path — this provider does not
-download or bundle it. If the path is wrong (no client library there), the constructor fails fast
-with a `DatabaseConfigError` naming `ORACLE_CLIENT_LIB_DIR`, not a cryptic driver error.
+download or bundle it. If the client cannot be loaded, the constructor fails fast with a
+`DatabaseConfigError` that names `ORACLE_CLIENT_LIB_DIR` and says which of the three failures it is
+(`describeOracleClientLoadFailure()` in [errors.ts](../../src/lib/db/errors.ts) decides the wording;
+[§11](#11-error-handling) lists the codes).
+
+#### On Linux the variable alone is not enough
+
+Setting `ORACLE_CLIENT_LIB_DIR` makes the driver call `initOracleClient({ libDir })`, and on Linux
+that call **cannot** load Instant Client on its own. `libclntsh.so.19.1` is built with no RUNPATH, so
+the dynamic loader has no way to find the libraries it depends on (`libnnz19.so`,
+`libclntshcore.so.19.1`) even though they sit right next to it. The call fails with:
+
+```
+DPI-1047: Cannot locate a 64-bit Oracle Client library: "libnnz19.so: cannot open shared object file"
+```
+
+node-oracledb's own documentation is explicit about this: *"Never set libDir on Linux and related
+platforms. Instead you must configure the system library search path to include the directory before
+starting Node.js."* This provider still passes `libDir` on every platform (it is the documented
+mechanism on Windows and macOS, and it is harmless on Linux once the directory is on the loader
+path), so on Linux you need **both**:
+
+1. `ORACLE_CLIENT_LIB_DIR=<dir>`, and
+2. `<dir>` on the system library search path — either a file under `/etc/ld.so.conf.d/` followed by
+   `ldconfig`, or `LD_LIBRARY_PATH=<dir>` exported **before** Node starts (the loader reads it at
+   process start; setting it from inside the app is too late).
+
+Measured with Instant Client 19.28 against Oracle Free 23ai: with either of those two in place,
+`initOracleClient({ libDir })` succeeds (`oracledb.thin === false`, client 19.28.0.0.0) and
+`v$session_connect_info.client_driver` reports `node-oracledb : 6.10.0 thk`. Without them, only
+`DPI-1047`.
+
+There is a second Linux prerequisite on Debian 13 (the runtime base): the client links against
+`libaio.so.1`, but trixie's `libaio1t64` package installs only `libaio.so.1t64`, so
+`ldd libclntsh.so.19.1` reports `libaio.so.1 => not found`. A symlink fixes it, and the recipe below
+creates one.
+
+> **Before this fix, Thick mode could not be entered at all in a real build.** Measured on the
+> published images 0.13.4 and 0.13.7: with `ORACLE_CLIENT_LIB_DIR` set, `POST /api/db/test-connection`
+> returned HTTP 400 `CONFIG_ERROR` quoting `NJS-045` and paths under `/ROOT/node_modules/oracledb`.
+> The driver was bundled into the server chunk, which rewrote its `__dirname`, so it looked for its
+> own native addon at a path that does not exist and never got as far as reading the Instant Client.
+> The recipes in this section could not have worked on those images. `oracledb` is now in
+> `serverExternalPackages` ([next.config.ts](../../next.config.ts)) and the package is copied
+> explicitly by the Dockerfile runner stage and `scripts/build-standalone-payload.sh`, the same way
+> the other native drivers are.
 
 #### Pick the right Instant Client version
 
@@ -302,13 +346,36 @@ by [Oracle client/server interoperability](https://docs.oracle.com/en/database/o
 | **Oracle 11.2** (11g) | **19c** — the newest client that still reaches 11.2 (11.2.0.3 / 11.2.0.4). **21c and 23ai cannot connect to 11.2.** |
 | Oracle 12.1+ | Any current Instant Client (19c / 21c / 23ai). Thin mode already covers these, so Thick is rarely needed. |
 
-#### Connecting to a pre-12.1 server (build your own image)
+#### A 12.1+ server can still force Thick mode
+
+The server version is not the only reason to leave Thin mode, and "my DBA says I need Thick mode on
+12.2" is a real and common case (#538). Thin mode covers 12.1 and later *as a version*, but it
+refuses a connection when the server demands something it does not implement:
+
+| What the server requires | Driver error |
+|--------------------------|--------------|
+| Oracle Native Network Encryption or data integrity checksumming | `NJS-533` |
+| An account whose only password verifier is the 10G one | `NJS-116` |
+| Kerberos, RADIUS, operating-system or other external authentication | `NJS-089` |
+| LDAP (directory) naming for the connect identifier | `NJS-089` |
+| A wallet available only as `cwallet.sso` | `NJS-089` |
+
+Each of those maps to a non-retryable `DatabaseConfigError` naming `ORACLE_CLIENT_LIB_DIR`
+([§11](#11-error-handling)) rather than to a retryable connection failure.
+
+`NJS-116` has a Thin-mode way out that needs no Instant Client at all: the account simply has no 12C
+verifier, and a DBA resetting its password writes one (given a server
+`SQLNET.ALLOWED_LOGON_VERSION_SERVER` that permits it). The provider's error message says so. The
+other rows have no Thin-mode alternative.
+
+#### Building an image with Instant Client (works for both cases above)
 
 The published image (`ghcr.io/libredb/libredb-studio`) ships **Thin only** — it does not bundle the
 Oracle Instant Client, because the native client is ~100 MB and only a minority of deployments need
-it. To reach an 11g server, build a derived image that layers Instant Client 19c on top and sets the
-env var. The runtime base is Debian 13 (`node:*-trixie-slim`), so install `libaio1t64` (trixie's
-renamed `libaio1`) and unpack the Basic package:
+it. What the image does carry (since #538) is the driver's own Thick-mode addon, so layering a client
+on top is all that is left to do. The runtime base is Debian 13 (`node:*-trixie-slim`), so the recipe
+installs `libaio1t64` (trixie's renamed `libaio1`), symlinks the SONAME the client actually asks for,
+unpacks the Basic package, and puts the directory on the loader path:
 
 ```dockerfile
 FROM ghcr.io/libredb/libredb-studio:latest
@@ -322,15 +389,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends libaio1t64 unzi
     && curl -fsSLO https://download.oracle.com/otn_software/linux/instantclient/1928000/instantclient-basic-linux.x64-19.28.0.0.0dbru.zip \
     && unzip -q instantclient-basic-linux.x64-*.zip \
     && rm instantclient-basic-linux.x64-*.zip \
+    # Debian 13 ships libaio.so.1t64; the client links against libaio.so.1.
+    && ln -sf libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 \
+    # Required, not optional: libclntsh has no RUNPATH, so without this the
+    # driver fails with DPI-1047 no matter what ORACLE_CLIENT_LIB_DIR says.
+    && echo /opt/oracle/instantclient_19_28 > /etc/ld.so.conf.d/oracle-instantclient.conf \
+    && ldconfig \
     && rm -rf /var/lib/apt/lists/*
 ENV ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient_19_28
 USER nextjs
 ```
 
-Instead of rebuilding, you can also mount an Instant Client directory from the host into the stock
-image and point `ORACLE_CLIENT_LIB_DIR` at the mount — whichever your deployment prefers. A
-first-class, separately-published Thick-mode image variant is a possible future addition; until then
-the derived image above is the supported path.
+Instead of rebuilding, you can mount an Instant Client directory from the host into the stock image
+and point `ORACLE_CLIENT_LIB_DIR` at the mount — but then the loader-path step has to be done on the
+container too, and `ldconfig` is not available to you at that point, so set `LD_LIBRARY_PATH` to the
+same directory in the container's environment (`docker run -e`, or `env:` in the pod spec). The
+`libaio.so.1` symlink is needed either way; on the stock image that means the mount has to supply it
+or the container has to run as root long enough to create it, which is why the derived image above is
+the supported path. A first-class, separately-published Thick-mode image variant is a possible future
+addition.
 
 ---
 
@@ -996,6 +1073,11 @@ DBA can act on.
 | `ORA-12541` / `ORA-12154` / `TNS:` | `ConnectionError` |
 | `ORA-00942` (table or view does not exist) | `QueryError` |
 | `NJS-138` (server predates Oracle 12.1, Thin-mode incompatible) | `DatabaseConfigError`, **not retryable** — see [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir) |
+| `NJS-116` (account has only a 10G password verifier) | `DatabaseConfigError`, **not retryable**. Checked *before* the generic *password* branch, which would otherwise report it as an authentication failure. The message also names the DBA-side fix (a password reset writes a 12C verifier) |
+| `NJS-533` (server requires Native Network Encryption or checksumming) | `DatabaseConfigError`, **not retryable** |
+| `NJS-089` (a feature Thin mode does not implement: Kerberos, LDAP naming, `cwallet.sso`, …), or any message containing *not supported by node-oracledb in Thin mode* | `DatabaseConfigError`, **not retryable** |
+| `NJS-045` from `initOracleClient()` (no Thick-mode addon in this build) | `DatabaseConfigError` from the constructor, worded as a **packaging defect** naming the platform and arch, not as a bad path |
+| `DPI-1047` from `initOracleClient()` (client libraries not loadable) | `DatabaseConfigError` from the constructor, pointing at the loader path (`/etc/ld.so.conf.d/` + `ldconfig`, or `LD_LIBRARY_PATH`) and `libaio.so.1` |
 | Driver message contains *timeout* / *timed out* | `TimeoutError` |
 | `connection.break()`-interrupted query | maps via the generic path (the driver's `ORA-01013` / "user requested cancel"); other `ORA-*` codes fall through to `QueryError`/`DatabaseError` with the original message |
 
@@ -1121,10 +1203,19 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   declares the members this provider actually uses instead of the blanket `any` it used to; that
   declaration is checked against the driver only by the live probes and the integration mock, so a
   driver upgrade that changes a shape will not be caught by `tsc` alone.
-- **`NJS-138` (pre-12.1 server) is a non-retryable configuration error, not a transient one.**
-  `mapDatabaseError()` maps it to `DatabaseConfigError` instead of the generic retryable
-  `ConnectionError` every other `connect()` failure produces — see [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir)
-  and [§11](#11-error-handling). The error message points the operator at `ORACLE_CLIENT_LIB_DIR`.
+- **Every Thin-mode refusal is a non-retryable configuration error, not a transient one.**
+  `mapDatabaseError()` maps `NJS-138`, `NJS-116`, `NJS-533` and `NJS-089` (plus any message saying
+  *not supported by node-oracledb in Thin mode*) to `DatabaseConfigError` instead of the generic
+  retryable `ConnectionError` every other `connect()` failure produces — see
+  [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir) and [§11](#11-error-handling). Each message
+  points the operator at `ORACLE_CLIENT_LIB_DIR`. Only `NJS-138` was recognised before #538; the
+  others reached the user as "try again later" for a condition that never clears.
+- **Thick mode needs the operator to configure the loader, and the stock image ships no client.**
+  On Linux `ORACLE_CLIENT_LIB_DIR` alone produces `DPI-1047`: the directory must also be on the
+  system library search path, and `libaio.so.1` must resolve on Debian 13. That is a documented
+  two-step recipe ([§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir)), not something the provider
+  can do for the operator — the loader reads `LD_LIBRARY_PATH` before Node starts, and `ldconfig`
+  needs root. *Future:* a separately-published image variant with Instant Client already layered in.
 - **`EXPLAIN` is intentionally disabled for Oracle until a dialect wrapper exists.**
   `getCapabilities().supportsExplain` is `false`, so the UI hides the *Explain* action. The UI's
   EXPLAIN builder only handles Postgres/MySQL; before the flag was flipped, the *Explain* action
