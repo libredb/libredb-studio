@@ -93,6 +93,14 @@ labels above are how this repository welcomes contributors in any month.
 
 - [Bun](https://bun.sh/) (recommended) or Node.js 24+
 - Git
+- [Helm](https://helm.sh/) 4.1.3 (the version CI runs). Twelve unit files under `tests/unit/` (`helm-chart-*.test.ts`, `distribution-check.test.ts`, `generate-channel-showcase.test.ts`) spawn the `helm` binary. Without it on `PATH`, `bun run test` fails with many `error: Executable not found in $PATH: "helm"` errors. The PostgreSQL subchart tarball is gitignored (`*.tgz`), so a fresh clone also needs:
+
+  ```bash
+  helm repo add bitnami https://charts.bitnami.com/bitnami
+  helm dependency build charts/libredb-studio --skip-refresh
+  ```
+
+  Trap: a stale `docker login` can make that build fail with `401 Unauthorized` from `registry-1.docker.io` even though the chart is anonymously pullable. `docker logout` fixes it.
 
 ### Getting Started
 
@@ -178,7 +186,8 @@ bun run format           # Biome formatter check (format:fix to write)
 bun run lint             # oxlint, then ESLint 9
 bun run typecheck        # TypeScript strict
 bun run knip             # unused files, exports and dependencies
-bun run test             # every test layer; never bare `bun test`
+bun run test             # every test layer; never bare `bun test`. Chart tests need Helm + the built subchart (see Prerequisites); without Helm you get ~166 `Executable not found in $PATH: "helm"` failures. Prefer `bun run test:ci` for a CI-matching green run (the interactive `test` script still has a separate single-process flake tracked outside this docs fix).
+bun run test:ci          # CI unit/integration lane (green when Prerequisites are met)
 bun run test:coverage    # coverage report (merged lcov)
 bun run coverage:check   # enforce 100% line coverage on the merged lcov
 bun run readme:check     # localized README drift guard
