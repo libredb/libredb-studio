@@ -6,7 +6,35 @@ So this is not a thank-you wall. Each entry links to the change itself, so a rea
 
 Nothing here is counted. Not merged pull requests, not changed lines, not closed issues. A count sees how often somebody showed up and misses everything that matters about it: the care taken, the bug nobody else found, the answer written out for a stranger. So the rungs below are judgements rather than totals, and where one is not obvious the reason is written beside the name — [CONTRIBUTING.md](CONTRIBUTING.md#the-contributor-ladder) says what each rung means.
 
-Within each rung, people are in the order they first landed a change. Bots are not listed, and the maintainers' own day-to-day work belongs in `git shortlog -sn` rather than on this page.
+Everyone whose work is in `main` is here, maintainers included. Bots and coding agents are not — `dependabot`, `Copilot` and `claude` all appear in the repository's commit history and none of them is a person, so listing them beside people would blur the only thing this page is for. `git shortlog -sn` shows the whole history including theirs.
+
+Within each rung, people are in the order they first landed a change.
+
+## Maintainer
+
+The people who carry the project: the releases, the review, and the decisions nobody else can make.
+
+### @cevheri
+
+Wrote the thing. The engine set, the agent, the storage layer and the release machinery are his, and so is the standard the rest of this page is measured against.
+
+- [Brought libSQL in over the Hrana protocol, one type-id for sqld and Turso Cloud](https://github.com/libredb/libredb-studio/pull/511)
+- [Added DuckDB as an embedded file engine, with the boundary the engine itself enforces](https://github.com/libredb/libredb-studio/pull/516)
+- [Found that Oracle Thick mode had never once loaded in a built image](https://github.com/libredb/libredb-studio/pull/575)
+
+### @yusuf-gundogdu
+
+Owns the question "which local model can actually drive an agent run", and answers it by running them rather than by reading their cards. Also keeps the distribution inventory honest about what is live.
+
+- [Ran ten models across every agent surface, 300 for 300](https://github.com/libredb/libredb-studio/pull/465)
+- [Found two cloud marketplaces the inventory did not know about](https://github.com/libredb/libredb-studio/pull/577)
+
+### @kaya-abdullah
+
+Lives where the wire-compatible engines disagree with the engine they claim to be, which is the least glamorous and most easily faked part of this product. The first localized READMEs are his too.
+
+- [Caught Trino handing back every bigint past 2^53 rounded](https://github.com/libredb/libredb-studio/pull/460)
+- [Added the Simplified Chinese and Japanese READMEs](https://github.com/libredb/libredb-studio/pull/317)
 
 ## Trusted contributor
 
@@ -55,6 +83,11 @@ Went wherever the work was: the login page, the admin fleet view, a license noti
 - [Did the same for `mongodb.md`](https://github.com/libredb/libredb-studio/pull/581)
 
 ## Contributor
+
+### @hbasria
+
+- [Added Zitadel OIDC integration support](https://github.com/libredb/libredb-studio/commit/d8227cbc)
+- [Covered `OIDC_ROLE_CLAIM` in the Zitadel logout URL test](https://github.com/libredb/libredb-studio/commit/09d36a4d)
 
 ### @ucmazmehmet
 

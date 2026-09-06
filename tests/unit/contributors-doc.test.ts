@@ -175,7 +175,7 @@ describe("the contributor ladder", () => {
 
   test("CONTRIBUTING.md defines the rungs as a ladder a reader can climb", () => {
     const defining = read(CONTRIBUTING);
-    for (const rung of ["Contributor", "Trusted contributor", "Area owner"]) {
+    for (const rung of ["Contributor", "Trusted contributor", "Area owner", "Maintainer"]) {
       expect(defining.includes(rung), `CONTRIBUTING.md does not define the ${rung} rung`).toBe(true);
     }
   });

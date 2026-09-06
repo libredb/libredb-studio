@@ -112,6 +112,15 @@ maintainers and written down where you can read them and disagree.
   `src/lib/db/providers/`, the doc under `docs/providers/` and the tests under
   `tests/integration/db/` move together, and a change to your area is reviewed with you. Offered by
   the maintainers, and offered to people who have already been answering questions about that area.
+- **Maintainer** — carries the project: the releases, the review, and the decisions nobody else can
+  make. Not a rung you climb to from the ones above it, which is why it is listed separately rather
+  than at the top of the same ladder.
+
+Maintainers are on [`CONTRIBUTORS.md`](CONTRIBUTORS.md) alongside everyone else. Keeping their work
+off the page would make it read as a guest list rather than a record, and the standard the page holds
+people to is one they are held to as well. Bots and coding agents are not listed: `dependabot`,
+`Copilot` and `claude` all appear in the commit history, none of them is a person, and putting them
+beside people would blur the only thing the page is for.
 
 Falling off a rung is not a thing. If you stop contributing, you keep what you earned.
 
