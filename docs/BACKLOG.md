@@ -37,7 +37,7 @@ None of it is a GitHub issue.
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1, N3 · 2
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 2
-- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C10 · 7
+- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 8
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B76 · 22
@@ -1192,6 +1192,41 @@ nothing in `src/` uses `next/image`.
 
 **Done when:** Monaco ships a dompurify at or past 3.4.13. Re-check on each Monaco release, and verify
 by grepping the staged bundle for the version literal rather than trusting the lockfile.
+
+### C11. The published SBOM carries no component for the bundled Node.js runtime
+
+#584 gave `SECURITY.md` a hand-maintained **Bundled Node.js runtime** table: the pinned version, the
+dist URL, the three artefact filenames, both fetch scripts, the sha256 digests pinned in-repo, the
+licence, and which artefacts ship it and which do not. That closed C7, whose Done-when accepted "a
+sibling document" or "a hand-maintained component entry", and a person reading the policy now finds
+the runtime.
+
+A machine still does not. The `sbom` job in `.github/workflows/release-artifacts.yml` runs
+`trivy fs --scanners license` over the repository, and its own verify step names the three ecosystems
+it expects to find: `bun.lock`, `packaging/windows/launcher/go.mod` and
+`desktop/src-tauri/Cargo.lock`. A shell script that curls a tarball is not a lockfile and appears in
+none of them. So anything that consumes the document rather than the prose - a downstream policy
+gate, a procurement questionnaire, a customer's own Dependency-Track - still sees a distribution
+whose largest single binary is absent. `SECURITY.md` scopes its claim honestly, to "the dependency
+closure of" those artefacts, so this is missing coverage rather than a false statement.
+
+Two seams already exist, which is why this is small. The version and the digests are machine-readable
+in one place per platform, `NODE_VERSION` and `NODE_SHA256_*` in `packaging/linux/fetch-node.sh` and
+`packaging/windows/fetch-node.sh`, and #584's drift guard
+`tests/unit/bundled-node-runtime-docs.test.ts` already reads them, so a generator needs no new source
+of truth. The job also already rewrites the generated document with Node, in "Name and version the
+SBOM's root component", and then asserts properties of it in "Verify the SBOM describes something" -
+so both the injection point and the place a guard belongs are written.
+
+One shape question is open rather than settled: whether the runtime becomes a `library` component
+with a `pkg:generic` purl and a sha256 `hash`, or a nested component under the root. Decide it
+against what a consumer keys on, because the root-component patch above exists for exactly that
+reason - it was written because Dependency-Track keys a project by name plus version, and an
+unversioned root collapsed every release into one project.
+
+**Done when:** the published SBOM carries the bundled runtime as a component with its version and
+sha256, read from the `fetch-node.sh` pins rather than typed a third time, and the release job fails
+when those scripts move and the document does not.
 
 ---
 
