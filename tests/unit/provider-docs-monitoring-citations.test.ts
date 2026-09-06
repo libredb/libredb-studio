@@ -74,6 +74,23 @@ const NAMED_CITATIONS = [
     methods: ["getCapabilities", "getLabels"],
   },
   {
+    doc: "docs/providers/mysql.md",
+    source: "src/lib/db/providers/sql/mysql.ts",
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "validate",
+      "buildPoolConfig",
+      "buildSSLConfig",
+      "query",
+      "cancelQuery",
+      "beginTransaction",
+      "getSchema",
+      "runMaintenance",
+      "getAllTablesForMaintenance",
+    ],
+  },
+  {
     doc: "docs/providers/oracle.md",
     source: "src/lib/db/providers/sql/oracle.ts",
     methods: [

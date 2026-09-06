@@ -101,7 +101,7 @@ that matter most here:
 
 ### Registration
 
-Loaded on demand by the factory ([`factory.ts:67`](../../src/lib/db/factory.ts)):
+Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'mysql': {
@@ -116,7 +116,7 @@ case 'mysql': {
 
 ### 3.1 N+1 schema introspection (no MATERIALIZED CTEs, no two-phase split)
 
-Unlike PostgreSQL, `getSchema()` ([mysql.ts:326](../../src/lib/db/providers/sql/mysql.ts)) runs one
+Unlike PostgreSQL, `getSchema()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)) runs one
 query for the table list and then **three queries per table** (columns, foreign keys, indexes) —
 the classic `1 + N*3` pattern. MySQL also does **not** implement `getSchemaList()` /
 `getSchemaRelations()`, so the two-phase fast-tree loading that PostgreSQL uses is unavailable; the
@@ -260,7 +260,7 @@ already done.
 
 ### 3.5 No server-side query timeout
 
-The pool config ([mysql.ts:114](../../src/lib/db/providers/sql/mysql.ts)) intentionally sets only
+The pool config, built by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)), intentionally sets only
 mysql2-specific options and **does not** translate `ProviderOptions.queryTimeout` into a server-side
 timeout (MySQL has no direct `statement_timeout` pool option like Postgres). A runaway query is not
 auto-killed by the provider; cancellation is explicit via [`cancelQuery()`](#53-query-cancellation).
@@ -268,7 +268,7 @@ auto-killed by the provider; cancellation is explicit via [`cancelQuery()`](#53-
 ### 3.6 Maintenance over all tables when no target
 
 `analyze`/`optimize`/`check` without a target run against **all base tables** in the database
-(`getAllTablesForMaintenance()`, capped at **50** tables, [mysql.ts:577](../../src/lib/db/providers/sql/mysql.ts)),
+(`getAllTablesForMaintenance()`, capped at **50** tables, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)),
 each name quoted via `escapeIdentifier()`. With a target, the single quoted table is used.
 
 ---
@@ -277,7 +277,7 @@ each name quoted via `escapeIdentifier()`. With a target, the single quoted tabl
 
 ### 4.1 Configuration
 
-Two forms (`validate()`, [mysql.ts:66](../../src/lib/db/providers/sql/mysql.ts)). `validate()`
+Two forms (`validate()`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). `validate()`
 requires `host` **and** `database` only when no `connectionString` is given — it does not reject
 supplying both; if both are present the connection string is used (passed to the pool as `uri`).
 
@@ -295,7 +295,7 @@ const b = { id: 'my-1', name: 'App DB', type: 'mysql',
 ### 4.2 Connection pooling
 
 `connect()` builds a `mysql2` pool and validates it by acquiring/releasing one connection. The pool
-options ([mysql.ts:114](../../src/lib/db/providers/sql/mysql.ts)):
+options set by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)):
 
 | mysql2 option | Value | Source |
 |---------------|-------|--------|
@@ -318,7 +318,7 @@ options ([mysql.ts:114](../../src/lib/db/providers/sql/mysql.ts)):
 
 ### 4.3 SSL
 
-`buildSSLConfig()` ([mysql.ts:142](../../src/lib/db/providers/sql/mysql.ts)) — applied **only in the
+`buildSSLConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)) — applied **only in the
 discrete-fields form** (the `connectionString` path bypasses it entirely). Note `disable` returns
 `undefined` (mysql2's "off"), not `false`:
 
@@ -375,7 +375,7 @@ yourself in the SSL / TLS panel.
 
 ### 5.1 Execution
 
-`query(sql, params?, queryId?)` ([mysql.ts:185](../../src/lib/db/providers/sql/mysql.ts)) acquires a
+`query(sql, params?, queryId?)` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)) acquires a
 pooled connection, optionally records its `threadId` for cancellation, runs the statement over the
 protocol its parameters imply ([§3.4](#34-which-wire-protocol-a-statement-takes)), and returns the
 standard envelope with the driver's own values
@@ -451,7 +451,7 @@ UI reports a truncated result set. A trailing `-- note` was always bounded norma
 ### 5.3 Query cancellation
 
 A query issued with a `queryId` records its connection `threadId`. `cancelQuery(queryId)`
-([mysql.ts:215](../../src/lib/db/providers/sql/mysql.ts)) issues `KILL QUERY <threadId>` and returns
+([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)) issues `KILL QUERY <threadId>` and returns
 `true` on success (it does not verify the target was actually mid-query). The killed query surfaces
 to its caller as a `QueryCancelledError` (MySQL emits *"Query execution was interrupted"*, which
 `mapDatabaseError()` classifies as cancellation). Exposed via `POST /api/db/cancel`.
@@ -546,7 +546,7 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | `pool.getConnection()` + `beginTransaction()`, arms a **5-minute auto-rollback** timer ([mysql.ts:41](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active. |
+| `beginTransaction()` | `pool.getConnection()` + `beginTransaction()`, arms a **5-minute auto-rollback** timer (`TX_TIMEOUT_MS`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active. |
 | `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same non-SELECT envelope as §5.1). Throws if none active. |
 | `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. Throws if none active. |
 | `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks. |
@@ -799,7 +799,7 @@ that is what MySQL itself calls index bytes.
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([mysql.ts:525](../../src/lib/db/providers/sql/mysql.ts)); targets
+`runMaintenance(type, target?)` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)); targets
 are backtick-quoted via `escapeIdentifier()`:
 
 | Type | With target | Without target |
@@ -881,7 +881,7 @@ gated on the literal `vacuum`, so MySQL's own wording was written and never show
 
 ## 10. Capabilities & labels
 
-### `getCapabilities()` ([mysql.ts:52](../../src/lib/db/providers/sql/mysql.ts))
+### `getCapabilities()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts))
 
 | Capability | Value |
 |------------|-------|
@@ -914,7 +914,7 @@ are analyze/optimize/check/kill — and because that card was gated on the liter
 wording MySQL could have declared would have been shown (#U9,
 [§9](#where-each-operation-may-be-offered-maintenanceoperationspecs)).
 
-**And one monitoring field** ([mysql.ts:346](../../src/lib/db/providers/sql/mysql.ts)):
+**And one monitoring field**, `slowQueriesEmptyState`, returned by `getLabels()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)):
 `slowQueriesEmptyState` → *"Query stats come from
 performance_schema.events_statements_summary_by_digest - enable the Performance Schema to see them."*
 The monitoring Queries panel's empty state was hardcoded to PostgreSQL's `pg_stat_statements` advice
