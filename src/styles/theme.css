@@ -74,6 +74,118 @@
   --studio-fg-subtle: #a1a1aa;
   /* Below the ramp: decoration and hints — separator dots, empty-state subtext. */
   --studio-fg-faint: #d4d4d8;
+
+  /*
+   * ── Accents: state ────────────────────────────────────────────────────
+   * #402. The neutral ramp was tokenised in #384; the accents were not, so they
+   * kept values selected against a near-black ground and were then asked to serve
+   * two. `text-blue-300` on `bg-blue-500/15` reads at 9.5:1 over `#0a0a0a` and at
+   * 1.46:1 over `#fafafa` — the same two class names, a chip you can see and a
+   * word you cannot read.
+   *
+   * Four roles, each with two text steps. `-bright` is the emphasised one, and it
+   * inverts exactly like `fg-bright` does: brighter than its base in dark, darker
+   * in light. Both directions mean "further from the ground".
+   *
+   * `-tint` is the wash the roles are painted over (`bg-accent-tint/15`), and it is
+   * the SAME value in both palettes on purpose — a wash is alpha over whatever is
+   * behind it, so it already adapts, and the text step above is what has to move.
+   * `-solid` and `-solid-hover` are the filled-button grounds, mode-independent for
+   * the same reason: a button's label sits on the button, not on the page.
+   *
+   * Every value here was selected by measurement, not by eye, and
+   * `tests/unit/theme-accent-contrast.test.ts` re-measures it on every run.
+   */
+  --studio-accent: #1447e6;
+  --studio-accent-bright: #193cb8;
+  --studio-accent-tint: #2b7fff;
+  --studio-accent-solid: #155dfc;
+  --studio-accent-solid-hover: #2b7fff;
+
+  --studio-warning: #973c00;
+  --studio-warning-bright: #7b3306;
+  --studio-warning-tint: #fe9a00;
+  --studio-warning-solid: #e17100;
+  --studio-warning-solid-hover: #fe9a00;
+
+  --studio-success: #006045;
+  --studio-success-bright: #004f3b;
+  --studio-success-tint: #00bc7d;
+  --studio-success-solid: #009966;
+  --studio-success-solid-hover: #00bc7d;
+
+  --studio-danger: #9f0712;
+  --studio-danger-bright: #82181a;
+  --studio-danger-tint: #fb2c36;
+  --studio-danger-solid: #e7000b;
+  --studio-danger-solid-hover: #fb2c36;
+
+  /*
+   * ── Accents: identity ─────────────────────────────────────────────────
+   * Colour that answers WHICH THING, not what state: which engine, which bottom
+   * panel, added vs removed, primary key vs foreign key, number vs boolean. Folding
+   * these into the four state roles would repaint nineteen engines in four colours,
+   * so they get their own family — SELECTED per mode, the way `charts/palette.ts`
+   * selects rather than flipping a ramp, and for the same reason: the two modes run
+   * out of room in different places. Dark's tightest pair is amber/yellow; light's
+   * is blue/indigo.
+   *
+   * `-alt` is a second step of the same hue. For sky, yellow, emerald and teal it
+   * is a second IDENTITY — there are more engines than there are hues, and
+   * `db-ui-config`'s own test asserts every engine colour differs — and those four
+   * therefore join the separation set. Elsewhere it is emphasis on one identity.
+   *
+   * Two deviations from "the lightest step that clears AA", both forced by
+   * separation rather than by contrast: amber sits at -900 because -800 is already
+   * an orange at that lightness and collides with orange itself, and yellow's alt
+   * drops to -950 for the same reason. The warm hues converge as they darken; the
+   * cold ones do not.
+   */
+  --studio-hue-blue: #1447e6;
+  --studio-hue-blue-alt: #193cb8;
+  --studio-hue-blue-tint: #2b7fff;
+  --studio-hue-sky: #00598a;
+  --studio-hue-sky-alt: #024a70;
+  --studio-hue-sky-tint: #00a6f4;
+  --studio-hue-indigo: #432dd7;
+  --studio-hue-indigo-alt: #372aac;
+  --studio-hue-indigo-tint: #615fff;
+  --studio-hue-violet: #7008e7;
+  --studio-hue-violet-alt: #5d0ec0;
+  --studio-hue-violet-tint: #8e51ff;
+  --studio-hue-purple: #8200db;
+  --studio-hue-purple-alt: #6e11b0;
+  --studio-hue-purple-tint: #ad46ff;
+  --studio-hue-pink: #a3004c;
+  --studio-hue-pink-alt: #861043;
+  --studio-hue-pink-tint: #f6339a;
+  --studio-hue-rose: #a50036;
+  --studio-hue-rose-alt: #8b0836;
+  --studio-hue-rose-tint: #ff2056;
+  --studio-hue-red: #9f0712;
+  --studio-hue-red-alt: #82181a;
+  --studio-hue-red-tint: #fb2c36;
+  --studio-hue-orange: #9f2d00;
+  --studio-hue-orange-alt: #7e2a0c;
+  --studio-hue-orange-tint: #ff6900;
+  --studio-hue-amber: #7b3306;
+  --studio-hue-amber-alt: #461901;
+  --studio-hue-amber-tint: #fe9a00;
+  --studio-hue-yellow: #894b00;
+  --studio-hue-yellow-alt: #432004;
+  --studio-hue-yellow-tint: #f0b100;
+  --studio-hue-green: #016630;
+  --studio-hue-green-alt: #0d542b;
+  --studio-hue-green-tint: #00c950;
+  --studio-hue-emerald: #006045;
+  --studio-hue-emerald-alt: #004f3b;
+  --studio-hue-emerald-tint: #00bc7d;
+  --studio-hue-teal: #005f5a;
+  --studio-hue-teal-alt: #022f2e;
+  --studio-hue-teal-tint: #00bba7;
+  --studio-hue-cyan: #005f78;
+  --studio-hue-cyan-alt: #104e64;
+  --studio-hue-cyan-tint: #00b8db;
 }
 
 .dark {
@@ -108,6 +220,85 @@
   --studio-fg-muted: #71717a;
   --studio-fg-subtle: #52525b;
   --studio-fg-faint: #3f3f46;
+
+  /*
+   * ── Accents ───────────────────────────────────────────────────────────
+   * Every value below is the literal the components carried before #402 — the -400
+   * step for a base, -300 for `-bright` and `-alt` — reproduced exactly. Switching
+   * a component onto an accent token must not change how it looks in dark, and
+   * `tests/unit/theme-accent-contrast.test.ts` resolves these against the installed
+   * Tailwind palette rather than against transcribed hexes, so a Tailwind upgrade
+   * that restyles `blue-400` reports itself as the dark-mode change it is.
+   */
+  --studio-accent: #51a2ff;
+  --studio-accent-bright: #8ec5ff;
+  --studio-accent-tint: #2b7fff;
+  --studio-accent-solid: #155dfc;
+  --studio-accent-solid-hover: #2b7fff;
+
+  --studio-warning: #ffb900;
+  --studio-warning-bright: #ffd230;
+  --studio-warning-tint: #fe9a00;
+  --studio-warning-solid: #e17100;
+  --studio-warning-solid-hover: #fe9a00;
+
+  --studio-success: #00d492;
+  --studio-success-bright: #5ee9b5;
+  --studio-success-tint: #00bc7d;
+  --studio-success-solid: #009966;
+  --studio-success-solid-hover: #00bc7d;
+
+  --studio-danger: #ff6467;
+  --studio-danger-bright: #ffa2a2;
+  --studio-danger-tint: #fb2c36;
+  --studio-danger-solid: #e7000b;
+  --studio-danger-solid-hover: #fb2c36;
+
+  --studio-hue-blue: #51a2ff;
+  --studio-hue-blue-alt: #8ec5ff;
+  --studio-hue-blue-tint: #2b7fff;
+  --studio-hue-sky: #00bcff;
+  --studio-hue-sky-alt: #74d4ff;
+  --studio-hue-sky-tint: #00a6f4;
+  --studio-hue-indigo: #7c86ff;
+  --studio-hue-indigo-alt: #a3b3ff;
+  --studio-hue-indigo-tint: #615fff;
+  --studio-hue-violet: #a684ff;
+  --studio-hue-violet-alt: #c4b4ff;
+  --studio-hue-violet-tint: #8e51ff;
+  --studio-hue-purple: #c27aff;
+  --studio-hue-purple-alt: #dab2ff;
+  --studio-hue-purple-tint: #ad46ff;
+  --studio-hue-pink: #fb64b6;
+  --studio-hue-pink-alt: #fda5d5;
+  --studio-hue-pink-tint: #f6339a;
+  --studio-hue-rose: #ff637e;
+  --studio-hue-rose-alt: #ffa1ad;
+  --studio-hue-rose-tint: #ff2056;
+  --studio-hue-red: #ff6467;
+  --studio-hue-red-alt: #ffa2a2;
+  --studio-hue-red-tint: #fb2c36;
+  --studio-hue-orange: #ff8904;
+  --studio-hue-orange-alt: #ffb86a;
+  --studio-hue-orange-tint: #ff6900;
+  --studio-hue-amber: #ffb900;
+  --studio-hue-amber-alt: #ffd230;
+  --studio-hue-amber-tint: #fe9a00;
+  --studio-hue-yellow: #fdc700;
+  --studio-hue-yellow-alt: #ffdf20;
+  --studio-hue-yellow-tint: #f0b100;
+  --studio-hue-green: #05df72;
+  --studio-hue-green-alt: #7bf1a8;
+  --studio-hue-green-tint: #00c950;
+  --studio-hue-emerald: #00d492;
+  --studio-hue-emerald-alt: #5ee9b5;
+  --studio-hue-emerald-tint: #00bc7d;
+  --studio-hue-teal: #00d5be;
+  --studio-hue-teal-alt: #46ecd5;
+  --studio-hue-teal-tint: #00bba7;
+  --studio-hue-cyan: #00d3f2;
+  --studio-hue-cyan-alt: #53eafd;
+  --studio-hue-cyan-tint: #00b8db;
 }
 
 /*
@@ -144,4 +335,74 @@
   --color-fg-muted: var(--studio-fg-muted);
   --color-fg-subtle: var(--studio-fg-subtle);
   --color-fg-faint: var(--studio-fg-faint);
+
+  --color-accent: var(--studio-accent);
+  --color-accent-bright: var(--studio-accent-bright);
+  --color-accent-tint: var(--studio-accent-tint);
+  --color-accent-solid: var(--studio-accent-solid);
+  --color-accent-solid-hover: var(--studio-accent-solid-hover);
+
+  --color-warning: var(--studio-warning);
+  --color-warning-bright: var(--studio-warning-bright);
+  --color-warning-tint: var(--studio-warning-tint);
+  --color-warning-solid: var(--studio-warning-solid);
+  --color-warning-solid-hover: var(--studio-warning-solid-hover);
+
+  --color-success: var(--studio-success);
+  --color-success-bright: var(--studio-success-bright);
+  --color-success-tint: var(--studio-success-tint);
+  --color-success-solid: var(--studio-success-solid);
+  --color-success-solid-hover: var(--studio-success-solid-hover);
+
+  --color-danger: var(--studio-danger);
+  --color-danger-bright: var(--studio-danger-bright);
+  --color-danger-tint: var(--studio-danger-tint);
+  --color-danger-solid: var(--studio-danger-solid);
+  --color-danger-solid-hover: var(--studio-danger-solid-hover);
+
+  --color-hue-blue: var(--studio-hue-blue);
+  --color-hue-blue-alt: var(--studio-hue-blue-alt);
+  --color-hue-blue-tint: var(--studio-hue-blue-tint);
+  --color-hue-sky: var(--studio-hue-sky);
+  --color-hue-sky-alt: var(--studio-hue-sky-alt);
+  --color-hue-sky-tint: var(--studio-hue-sky-tint);
+  --color-hue-indigo: var(--studio-hue-indigo);
+  --color-hue-indigo-alt: var(--studio-hue-indigo-alt);
+  --color-hue-indigo-tint: var(--studio-hue-indigo-tint);
+  --color-hue-violet: var(--studio-hue-violet);
+  --color-hue-violet-alt: var(--studio-hue-violet-alt);
+  --color-hue-violet-tint: var(--studio-hue-violet-tint);
+  --color-hue-purple: var(--studio-hue-purple);
+  --color-hue-purple-alt: var(--studio-hue-purple-alt);
+  --color-hue-purple-tint: var(--studio-hue-purple-tint);
+  --color-hue-pink: var(--studio-hue-pink);
+  --color-hue-pink-alt: var(--studio-hue-pink-alt);
+  --color-hue-pink-tint: var(--studio-hue-pink-tint);
+  --color-hue-rose: var(--studio-hue-rose);
+  --color-hue-rose-alt: var(--studio-hue-rose-alt);
+  --color-hue-rose-tint: var(--studio-hue-rose-tint);
+  --color-hue-red: var(--studio-hue-red);
+  --color-hue-red-alt: var(--studio-hue-red-alt);
+  --color-hue-red-tint: var(--studio-hue-red-tint);
+  --color-hue-orange: var(--studio-hue-orange);
+  --color-hue-orange-alt: var(--studio-hue-orange-alt);
+  --color-hue-orange-tint: var(--studio-hue-orange-tint);
+  --color-hue-amber: var(--studio-hue-amber);
+  --color-hue-amber-alt: var(--studio-hue-amber-alt);
+  --color-hue-amber-tint: var(--studio-hue-amber-tint);
+  --color-hue-yellow: var(--studio-hue-yellow);
+  --color-hue-yellow-alt: var(--studio-hue-yellow-alt);
+  --color-hue-yellow-tint: var(--studio-hue-yellow-tint);
+  --color-hue-green: var(--studio-hue-green);
+  --color-hue-green-alt: var(--studio-hue-green-alt);
+  --color-hue-green-tint: var(--studio-hue-green-tint);
+  --color-hue-emerald: var(--studio-hue-emerald);
+  --color-hue-emerald-alt: var(--studio-hue-emerald-alt);
+  --color-hue-emerald-tint: var(--studio-hue-emerald-tint);
+  --color-hue-teal: var(--studio-hue-teal);
+  --color-hue-teal-alt: var(--studio-hue-teal-alt);
+  --color-hue-teal-tint: var(--studio-hue-teal-tint);
+  --color-hue-cyan: var(--studio-hue-cyan);
+  --color-hue-cyan-alt: var(--studio-hue-cyan-alt);
+  --color-hue-cyan-tint: var(--studio-hue-cyan-tint);
 }
