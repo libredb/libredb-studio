@@ -109,7 +109,8 @@ describe("wire-compatibility registry", () => {
     // Probed 2026-08-26 against `apache/doris:all-in-one-4.1.3` (#424 Phase 0). The entry
     // exists because StarRocks - already registered here - is a FORK of Doris, and this
     // registry had been carrying the fork while missing the original. It is not a copy of
-    // that row: every one of the fifteen surfaces answers where StarRocks manages eleven,
+    // that row: every one of the fifteen surfaces answers where StarRocks still loses health and
+    // the session panel to its missing information_schema.PROCESSLIST,
     // and the numbers are the sharp difference. StarRocks reports hard zeros; Doris reports
     // 2000 rows and 10187 bytes for a table holding exactly that, so the object browser and
     // the table-statistics panel are trustworthy here.
