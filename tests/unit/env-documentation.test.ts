@@ -90,9 +90,7 @@ describe("environment variable documentation", () => {
   });
 
   test("every variable read under src/ is documented or allowlisted", () => {
-    const undocumented = readNames().filter(
-      (name) => !isDocumented(name) && !(name in ALLOWLIST),
-    );
+    const undocumented = readNames().filter((name) => !isDocumented(name) && !(name in ALLOWLIST));
     expect(undocumented).toEqual([]);
   });
 
@@ -101,10 +99,7 @@ describe("environment variable documentation", () => {
     // NODE_ENV-dependent defaults is the part that makes the entry useful
     // rather than merely present.
     expect(isDocumented("LOG_LEVEL")).toBe(true);
-    const block = ENV_EXAMPLE.slice(
-      ENV_EXAMPLE.indexOf("─── Logging"),
-      ENV_EXAMPLE.indexOf("# LOG_LEVEL="),
-    );
+    const block = ENV_EXAMPLE.slice(ENV_EXAMPLE.indexOf("─── Logging"), ENV_EXAMPLE.indexOf("# LOG_LEVEL="));
     for (const level of ["debug", "info", "warn", "error"]) {
       expect(block).toContain(level);
     }
