@@ -806,13 +806,11 @@ describe("useQueryExecution", () => {
     expect("params" in body).toBe(false);
   });
 
-  test("executeQuery asks for no background plan when the statement carries parameters", async () => {
-    // The statement is no longer prefixed here: the route builds the EXPLAIN from
-    // the connected provider (#574) and refuses an explain request that also carries
-    // `params`, because an explain run describes a statement rather than running one
-    // with values in it. So a parameterized run makes no plan request at all instead
-    // of making one the server would answer with a 400 (this replaces the bound
-    // background explain of PR #304).
+  test("executeQuery binds the same parameters in the background explain request", async () => {
+    // The server prefixes the statement to build the EXPLAIN (#574), so its
+    // placeholders are the same ones in the same order. Sending the plan request
+    // without the values would run it unbound: the request fails and the panel keeps
+    // the previous plan (PR #304 review).
     const fetchMock = mockGlobalFetch({
       "/api/db/query": { ok: true, json: mockQueryResult },
     });
@@ -825,11 +823,14 @@ describe("useQueryExecution", () => {
       });
     });
 
-    const calls = fetchMock.mock.calls.filter(
-      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
-    );
-    expect(calls.length).toBe(1);
-    expect(JSON.parse((calls[0][1] as RequestInit).body as string).explain).toBeUndefined();
+    const explainCall = fetchMock.mock.calls.find((call) => {
+      const body = JSON.parse((call[1] as RequestInit).body as string);
+      return body.explain !== undefined;
+    });
+    expect(explainCall).toBeDefined();
+    const explainBody = JSON.parse((explainCall![1] as RequestInit).body as string);
+    expect(explainBody.sql).toBe("SELECT * FROM users WHERE id = $1");
+    expect(explainBody.params).toEqual([7]);
   });
 
   test("executeQuery keeps a parameterized statement off the multi-statement route", async () => {
@@ -1467,7 +1468,13 @@ describe("useQueryExecution", () => {
     });
   });
 
-  test("a format the response names but this build does not register falls back to the static one", async () => {
+  // "constructor" is the second case on purpose: the registry is an object literal,
+  // so an inherited key resolves to a truthy value that is not a strategy, and
+  // reading `.format` or `.extractPlan` off it would throw.
+  test.each([
+    ["a format this build does not register", "oracle-hierarchy"],
+    ["an inherited key", "constructor"],
+  ])("%s falls back to the static strategy", async (_label, explainFormat) => {
     mockGlobalFetch({
       "/api/db/query": {
         ok: true,
@@ -1476,7 +1483,7 @@ describe("useQueryExecution", () => {
           fields: ["QUERY PLAN"],
           rowCount: 1,
           executionTime: 5,
-          explainFormat: "oracle-hierarchy",
+          explainFormat,
         },
       },
     });

@@ -68,18 +68,18 @@ export async function POST(req: NextRequest) {
     if (!explain.valid) {
       return NextResponse.json({ error: explain.message }, { status: 400 });
     }
-    // An explain run describes a statement, it does not run one with values in it,
-    // so the two fields are mutually exclusive rather than combined. Refused before
-    // the provider is reached: nothing about the connection changes the answer.
-    if (explain.explain && bound.params !== undefined && bound.params.length > 0) {
-      return NextResponse.json({ error: "An explain request binds no parameters" }, { status: 400 });
-    }
 
     const provider = await getOrCreateProvider(connection);
 
     // The statement that actually runs. For an explain request it is the one the
     // CONNECTED provider's strategy builds, never the caller's own SQL: falling
     // back to that would execute e.g. an UPDATE the user only asked to see (#201).
+    //
+    // Bound `params` may come with it and are bound to the BUILT statement: every
+    // strategy only prefixes the statement, so the placeholders are the same ones
+    // in the same order, which is what the background plan request of PR #304
+    // relies on. Refusing them would take the plan away from every generated
+    // statement that sends its values separately (#290).
     let statement = sql;
     let explainFormat: ExplainFormat | undefined;
     if (explain.explain) {

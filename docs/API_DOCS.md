@@ -361,14 +361,16 @@ statement, so a client reads the plan with the strategy that really produced it:
 }
 ```
 
-Three refusals, each a 400 that runs nothing:
+A `params` array may accompany an explain request. The strategies only prefix the statement, so the
+placeholders are the same ones in the same order and the values bind the built statement, which is how a
+generated statement that sends its values separately still gets a plan.
+
+Two refusals, each a 400 that runs nothing:
 
 - `This server does not support EXPLAIN` when the provider declares `supportsExplain: false` or no plan
   format at all.
 - `Only SELECT statements can be explained` when the dialect's strategy declines the statement. The
   original `sql` is never run as a fallback.
-- `An explain request binds no parameters` when `explain` arrives beside a non-empty `params` array: an
-  explain run describes a statement rather than running one with values bound into it.
 
 **Response (400 Bad Request):**
 ```json

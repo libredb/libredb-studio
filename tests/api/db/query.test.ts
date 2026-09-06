@@ -610,36 +610,35 @@ describe("POST /api/db/query with an explain request", () => {
     expect(provider.query).not.toHaveBeenCalled();
   });
 
-  test("returns 400 when an explain request carries bound parameters", async () => {
+  test("binds an explain request's parameters to the statement the strategy built", async () => {
+    // The strategies only PREFIX the statement, so the built statement carries the
+    // same placeholders in the same order and the same values bind them. This is the
+    // contract PR #304 relied on when the browser still built the EXPLAIN itself:
+    // without it, every generated statement that sends its values separately would
+    // lose its plan.
+    const provider = explainCapableProvider();
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+
     const req = createMockRequest("/api/db/query", {
       method: "POST",
       body: {
         connection: validConnection,
         sql: "SELECT * FROM users WHERE id = $1",
+        options: {},
         params: [7],
         explain: { mode: "estimate" },
       },
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string }>(res);
+    const data = await parseResponseJSON<{ explainFormat: string }>(res);
 
-    expect(res.status).toBe(400);
-    expect(data.error).toBe("An explain request binds no parameters");
-    expect(mockProvider.query).not.toHaveBeenCalled();
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
-  });
-
-  test("accepts an explain request beside an empty parameter array", async () => {
-    const provider = explainCapableProvider();
-    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
-
-    const req = createMockRequest("/api/db/query", {
-      method: "POST",
-      body: { connection: validConnection, sql: "SELECT 1", params: [], explain: { mode: "estimate" } },
-    });
-
-    expect((await POST(req as never)).status).toBe(200);
+    expect(res.status).toBe(200);
+    expect(provider.query).toHaveBeenCalledWith(
+      "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users WHERE id = $1 LIMIT 50",
+      [7],
+    );
+    expect(data.explainFormat).toBe("postgres-json");
   });
 
   test.each([

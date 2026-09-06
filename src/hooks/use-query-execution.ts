@@ -80,7 +80,12 @@ function planStrategy(payload: unknown, fallback: ExplainStrategy): ExplainStrat
     typeof payload === "object" && payload !== null
       ? (payload as { explainFormat?: unknown }).explainFormat
       : undefined;
-  return (typeof named === "string" ? getExplainStrategy(named as ExplainFormat) : null) ?? fallback;
+  if (typeof named !== "string") return fallback;
+  // `getExplainStrategy` indexes an object literal, so an inherited key such as
+  // "constructor" resolves to a value that is truthy and is not a strategy. Every
+  // registered strategy names itself, so that identity is the guard.
+  const namedStrategy = getExplainStrategy(named as ExplainFormat);
+  return namedStrategy?.format === named ? namedStrategy : fallback;
 }
 
 /**
@@ -394,12 +399,7 @@ export function useQueryExecution({
         // query settles, and a plan request that fails first — or is aborted with
         // its run — would be an unhandled rejection until then.
         let explainPromise: Promise<Response | null> | null = null;
-        // A parameterized statement gets no pre-warmed plan: the route refuses an
-        // explain request that also carries `params`, because an explain run
-        // describes a statement rather than running one with values bound into it.
-        // Asked here so a run that cannot have a plan makes no request for one
-        // (this replaces the bound background explain of PR #304).
-        if (!isExplain && !isLoadMore && explainStrategy && !params) {
+        if (!isExplain && !isLoadMore && explainStrategy) {
           // Asked of the STATIC strategy, which is all this side has before a
           // response: whether a statement is explainable at all is a question about
           // the statement, and every strategy answers it the same way. The
@@ -413,6 +413,11 @@ export function useQueryExecution({
                 sql: queryToExecute,
                 options: {},
                 explain: { mode: "estimate" },
+                // The server prefixes the statement to build the EXPLAIN, so its
+                // placeholders are the same ones in the same order and the same
+                // values bind them. Without this the plan request would run
+                // unbound and the panel would keep the previous plan (PR #304).
+                ...(params && { params }),
               }),
               // The plan belongs to this run, so it dies with it. Without the
               // signal, cancelling the query — or unmounting the studio — leaves
