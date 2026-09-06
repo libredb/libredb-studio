@@ -19,7 +19,7 @@ generated on the buyer's own instance at first boot.
 | `ami/scripts/90-cleanup.sh` | Marketplace compliance step — runs LAST, and asserts its own invariants |
 | `ami/files/` | Everything that ships inside the image |
 | `listing/` | Every portal field, the description, and the usage instructions |
-| `../../.github/workflows/aws-ami-build.yml` | Manual build: resolves the digest, runs Packer, prints the AMI ID |
+| `../../.github/workflows/aws-ami-build.yml` | The build: resolves the digest, runs Packer, prints the AMI ID |
 
 `90-cleanup.sh` is ours. The DigitalOcean build downloads its `90-cleanup.sh`
 from `digitalocean/marketplace-partners` at a pinned commit; **AWS publishes no
@@ -29,11 +29,28 @@ keep in sync.
 
 ## Build
 
-Normally through the **AWS AMI Build** workflow (Actions -> Run workflow ->
-version). It resolves the tag to a digest, assumes the OIDC build role and
-prints the AMI ID, the base image and the next portal steps in the job summary.
+Through the **AWS AMI Build** workflow: Actions -> AWS AMI Build -> Run
+workflow, with the version, or empty to use the `package.json` version at the
+ref. It resolves the tag to a digest, waits for the image if the push is still
+in flight, assumes the OIDC build role and prints the AMI ID, the base image and
+the next portal steps in the job summary.
 
-It refuses to start unless all three repository variables are set:
+The workflow also declares `release: published`, but that trigger fires only
+when a human publishes a draft by hand: `release-artifacts.yml` publishes with
+`GITHUB_TOKEN`, and a GITHUB_TOKEN-created event starts no workflow. Making
+every release build an AMI means adding `gh workflow run aws-ami-build.yml
+--ref "refs/tags/$TAG"` to that file's `dispatch-downstream` job. That is safe to
+add whenever somebody wants it: a chained run names no version, so the preflight
+job below stands down quietly and the run is a green no-op until the repository
+variables exist. It is left out here only because it edits the release pipeline,
+which is outside what this change touches.
+
+A preflight job decides whether there is anything to build, on every path, so
+that the chain dispatch above behaves like a release rather than like a person:
+a dispatch that NAMES a version fails loudly when something is wrong, and every
+other path stands down quietly. It refuses to build a chart release, a
+prerelease, a tag that disagrees with `package.json`, or anything at all until
+these three repository variables are set:
 `AWS_SUPPORT_EMAIL` (the monitored mailbox printed in every buyer's banner),
 `AWS_AMI_BUILD_ROLE_ARN` (the OIDC role Packer assumes) and
 `AWS_AMI_INGESTION_ROLE_ARN` (the role AWS assumes to read the AMI, echoed into

@@ -1,22 +1,131 @@
 name: AWS AMI Build
 
+# Same trigger pair as npm-publish.yml. Note what `release: published` does and
+# does not buy here: release-artifacts.yml publishes the release with
+# GITHUB_TOKEN, and a GITHUB_TOKEN-created event starts no workflow, so this
+# trigger fires only when a human publishes a draft by hand. Tracking every
+# release means joining the explicit `dispatch-downstream` chain in
+# release-artifacts.yml - see deploy/aws/README.md - and that chain arrives as a
+# `workflow_dispatch`, which is why every decision below lives in the preflight
+# job rather than in a release-only `if:` that a dispatch would walk straight
+# past.
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release tag to ship — must exist on ghcr.io/libredb/libredb-studio (e.g. 0.14.0)'
-        required: true
+        description: 'Release tag to ship - must exist on ghcr.io/libredb/libredb-studio (e.g. 0.14.0). Leave empty to use package.json.'
+        required: false
+        type: string
+
+# One AMI namespace in one AWS account, so the group is constant rather than
+# per-ref: a release run and a manual dispatch would otherwise land in different
+# groups and each register a chargeable AMI. Never cancel one in flight - a
+# killed Packer run leaves the build instance, its key pair and its security
+# group behind.
+concurrency:
+  group: aws-ami-build
+  cancel-in-progress: false
 
 permissions:
   contents: read
-  id-token: write # OIDC — no long-lived AWS access keys anywhere
 
 jobs:
-  build:
+  # Decides whether there is anything to build, on every path: a published
+  # release, a dispatch from the release chain, and a human dispatch. A human
+  # who names a version gets a loud failure when something is wrong; every other
+  # path stands down quietly, because none of them should be able to turn
+  # somebody else's release red.
+  preflight:
     runs-on: ubuntu-latest
+    # The concurrency group is constant and never cancels, so a hung preflight
+    # would block every later run.
+    timeout-minutes: 10
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      version: ${{ steps.decide.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - id: decide
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          SUPPORT_EMAIL: ${{ vars.AWS_SUPPORT_EMAIL }}
+          BUILD_ROLE_ARN: ${{ vars.AWS_AMI_BUILD_ROLE_ARN }}
+          INGESTION_ROLE_ARN: ${{ vars.AWS_AMI_INGESTION_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          stand_down() { echo "::notice::$1 - nothing to build"; echo "run=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          # An explicit input is a person asking for this build by name, so a
+          # problem with it is an error. Everything else is a machine path.
+          explicit=$([ -n "$INPUT_VERSION" ] && echo yes || echo no)
+          refuse() {
+            if [ "$explicit" = yes ]; then echo "::error::$1"; exit 1; fi
+            stand_down "$1"
+          }
+
+          # Chart releases (libredb-studio-<chart version>) emit release:published
+          # too and are not product releases. npm-publish.yml and
+          # docker-build-push.yml filter them the same way.
+          case "$RELEASE_TAG" in
+            libredb-studio-*) stand_down "chart release $RELEASE_TAG" ;;
+          esac
+
+          VERSION="$INPUT_VERSION"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(node -p 'require(process.env.GITHUB_WORKSPACE + "/package.json").version')
+          fi
+
+          # A marketplace version is a product release. Prereleases ship here
+          # (release-artifacts.yml triggers on `0.0.0-*` tags) and they are NOT
+          # flagged `prerelease` on the GitHub release, so the tag shape - not
+          # the flag - is what tells them apart.
+          case "$VERSION" in
+            *[!0-9.]*|*..*|.*|*.) refuse "version is not a product release: $VERSION" ;;
+          esac
+          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            refuse "version is not a product release: $VERSION"
+          fi
+
+          # On a release run the tag and package.json must agree, the way
+          # docker-build-push.yml checks it: a mismatch would register a
+          # marketplace AMI under a version nobody released.
+          if [ -n "$RELEASE_TAG" ] && [ "$RELEASE_TAG" != "$VERSION" ]; then
+            echo "::error::release tag $RELEASE_TAG does not match package.json version $VERSION"
+            exit 1
+          fi
+
+          # All three are repository variables rather than secrets: the support
+          # address is printed in every buyer's banner by design, and the two
+          # role ARNs are only useful to someone who can already assume them.
+          for name in SUPPORT_EMAIL BUILD_ROLE_ARN INGESTION_ROLE_ARN; do
+            if [ -z "${!name}" ]; then
+              refuse "repository variable for $name is not set"
+            fi
+          done
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: preflight
+    if: needs.preflight.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC - no long-lived AWS access keys anywhere
+    # The build is ~15 minutes; the digest wait below can add 30 when it races
+    # docker-build-push, whose arm64 half runs under emulation.
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: deploy/aws/ami
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
@@ -26,47 +135,25 @@ jobs:
 
       - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3
 
-      - name: Validate version format
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::version must be semver (e.g. 0.14.0), got: $VERSION"
-            exit 1
-          fi
-
-      # The support address is printed in every buyer's first-boot banner, so it
-      # is a repository variable rather than a secret — and the build fails loudly
-      # when it is unset instead of shipping a placeholder.
-      # Fail before the fifteen-minute build rather than after it: an unset
-      # support address ships a placeholder to every buyer, an unset build role
-      # cannot assume anything, and an unset ingestion role leaves the operator
-      # with a summary that does not say what to paste into the portal.
-      - name: Require the build configuration
-        env:
-          SUPPORT_EMAIL: ${{ vars.AWS_SUPPORT_EMAIL }}
-          BUILD_ROLE_ARN: ${{ vars.AWS_AMI_BUILD_ROLE_ARN }}
-          INGESTION_ROLE_ARN: ${{ vars.AWS_AMI_INGESTION_ROLE_ARN }}
-        run: |
-          for name in SUPPORT_EMAIL BUILD_ROLE_ARN INGESTION_ROLE_ARN; do
-            if [ -z "${!name}" ]; then
-              echo "::error::repository variable for $name is not set"
-              exit 1
-            fi
-          done
-
       # Resolve the tag to a digest here, so the AMI and the job summary agree on
-      # exactly which image shipped. Buildx is present on GitHub runners.
+      # exactly which image shipped (Buildx is present on GitHub runners), and
+      # wait for the tag rather than assuming it exists: on a release path
+      # docker-build-push.yml may still be pushing it, and its arm64 build runs
+      # under QEMU inside a 60-minute budget. Failing on that race would blame
+      # this workflow for another job's timing.
       - name: Resolve image digest
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
-          DIGEST="$(docker buildx imagetools inspect \
-            "ghcr.io/libredb/libredb-studio:${VERSION}" --format '{{.Manifest.Digest}}')"
+          for attempt in $(seq 1 60); do
+            DIGEST="$(docker buildx imagetools inspect \
+              "ghcr.io/libredb/libredb-studio:${VERSION}" --format '{{.Manifest.Digest}}' 2>/dev/null || true)"
+            [ -n "$DIGEST" ] && break
+            echo "image not on ghcr yet (attempt $attempt/60), waiting"
+            sleep 30
+          done
           # Exact shape, not a prefix: this value is interpolated into the image
           # ref the AMI is built from, so "starts with sha256:" is not a check.
           if ! [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "::error::digest resolution failed, got: $DIGEST"
+            echo "::error::digest resolution failed for ${VERSION}, got: $DIGEST"
             exit 1
           fi
           echo "IMAGE_REF=ghcr.io/libredb/libredb-studio@${DIGEST}" >> "$GITHUB_ENV"
@@ -89,7 +176,6 @@ jobs:
 
       - name: Packer init & validate
         env:
-          VERSION: ${{ inputs.version }}
           SUPPORT_EMAIL: ${{ vars.AWS_SUPPORT_EMAIL }}
         run: |
           packer init .
@@ -100,7 +186,6 @@ jobs:
 
       - name: Packer build
         env:
-          VERSION: ${{ inputs.version }}
           SUPPORT_EMAIL: ${{ vars.AWS_SUPPORT_EMAIL }}
         run: |
           packer build \
@@ -108,10 +193,9 @@ jobs:
             -var "image_ref=$IMAGE_REF" \
             -var "support_email=$SUPPORT_EMAIL" .
 
-      # amazon-ebs artifact_id is "region:ami-id" — the ID is after the colon.
+      # amazon-ebs artifact_id is "region:ami-id" - the ID is after the colon.
       - name: AMI ID to job summary
         env:
-          VERSION: ${{ inputs.version }}
           INGESTION_ROLE_ARN: ${{ vars.AWS_AMI_INGESTION_ROLE_ARN }}
         run: |
           AMI_ID=$(jq -r '.builds[-1].artifact_id' packer-manifest.json | cut -d: -f2)

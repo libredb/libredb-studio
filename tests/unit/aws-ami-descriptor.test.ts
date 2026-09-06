@@ -344,38 +344,194 @@ describe("AWS AMI SSH policy", () => {
 
 describe("AWS AMI build workflow", () => {
   const workflow = fs.readFileSync(path.join(AMI, "../../../.github/workflows/aws-ami-build.yml"), "utf8");
+  const readme = fs.readFileSync(path.join(AMI, "../README.md"), "utf8");
+  /** The preflight step that decides whether there is anything to build. */
+  const decide = workflow.slice(workflow.indexOf("- id: decide"), workflow.indexOf("  build:\n"));
 
-  test("authenticates with OIDC and carries no long-lived credentials", () => {
-    expect(workflow).toContain("id-token: write");
-    expect(workflow).toContain("contents: read");
-    expect(workflow).not.toMatch(/aws-access-key-id|aws-secret-access-key|secrets\./);
-  });
-
-  test("the checkout does not leave a token behind for the rest of the job", () => {
-    expect(workflow).toContain("persist-credentials: false");
-  });
-
-  test("every action is pinned to a full commit sha", () => {
-    const uses = workflow.match(/uses: \S+/g) ?? [];
-    expect(uses.length).toBeGreaterThan(0);
-    for (const line of uses) expect(line).toMatch(/@[0-9a-f]{40}$/);
-  });
-
-  test("runs only when a human dispatches it", () => {
-    expect(workflow).toMatch(/^on:\n {2}workflow_dispatch:/m);
+  test("runs on a published release or a manual dispatch, never on a pull request", () => {
+    // Same trigger pair as npm-publish.yml, order not pinned. A pull_request
+    // trigger would hand the OIDC role to a fork's branch.
+    expect(workflow).toMatch(/^ {2}release:\n {4}types: \[published\]$/m);
+    expect(workflow).toMatch(/^ {2}workflow_dispatch:$/m);
     expect(workflow).not.toMatch(/pull_request(_target)?:/);
   });
 
-  test("the resolved digest is constrained to its exact shape", () => {
-    // "starts with sha256:" is not a check on a value that becomes the image the
-    // AMI is built from.
-    expect(workflow).toContain("^sha256:[0-9a-f]{64}$");
+  test("every decision lives in preflight, which runs on all three paths", () => {
+    // A release-only `if:` is walked straight past by the dispatch the release
+    // chain would send, so the gates cannot live there - and preflight itself
+    // must carry no `if:` at all, or the same hole reopens one level up.
+    expect(workflow).toMatch(/^ {2}preflight:$/m);
+    const preflight = workflow.slice(workflow.indexOf("  preflight:"), workflow.indexOf("  build:\n"));
+    expect(preflight).not.toMatch(/^ {4}if:/m);
+    // Without these outputs the build job can never run, and every test below
+    // would still pass.
+    expect(preflight).toMatch(/^ {4}outputs:\n {6}run: \$\{\{ steps\.decide\.outputs\.run \}\}/m);
+    expect(preflight).toMatch(/^ {6}version: \$\{\{ steps\.decide\.outputs\.version \}\}/m);
+    expect(workflow).toContain("needs: preflight");
+    expect(workflow).toContain("if: needs.preflight.outputs.run == 'true'");
   });
 
-  test("the build refuses to start with an unset repository variable", () => {
-    for (const name of ["SUPPORT_EMAIL", "BUILD_ROLE_ARN", "INGESTION_ROLE_ARN"]) {
-      expect(workflow).toContain(name);
+  test("a machine path stands down where a named dispatch fails loudly", () => {
+    expect(decide).toMatch(/stand_down\(\)[^\n]*run=false/);
+    expect(decide).toMatch(/explicit=\$\(\[ -n "\$INPUT_VERSION" \]/);
+    expect(decide).toMatch(/if \[ "\$explicit" = yes \]; then echo "::error::\$1"; exit 1; fi/);
+  });
+
+  test("chart releases never build a product AMI", () => {
+    // libredb-studio-<chart version> tags emit release:published too.
+    expect(decide).toMatch(/libredb-studio-\*\) stand_down/);
+  });
+
+  test("a prerelease is recognised by its tag shape, not by the release flag", () => {
+    // release-artifacts.yml publishes prerelease tags without --prerelease, so
+    // github.event.release.prerelease is false for them and testing it is a
+    // no-op. The version string is what tells them apart.
+    expect(workflow).not.toContain("github.event.release.prerelease");
+    // Scoped to the semver block itself: a slice spanning the whole step lets a
+    // lazy match walk past a downgraded check and find the next one's exit.
+    const semver = decide.slice(decide.indexOf("if ! [["), decide.indexOf("# On a release run"));
+    // Anchored, three parts, and no leading zeros - `01.2.3` is not a version
+    // anything published.
+    expect(semver).toContain("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$");
+    expect(semver).toMatch(/refuse "version is not a product release/);
+    expect(semver).not.toContain("::warning::");
+    // And the shape check above it, which catches an rc tag before the regex.
+    const shape = decide.slice(decide.indexOf('case "$VERSION"'), decide.indexOf("if ! [["));
+    expect(shape).toMatch(/refuse "version is not a product release/);
+  });
+
+  test("a release tag that disagrees with package.json stops the build", () => {
+    expect(workflow).toContain("RELEASE_TAG: ${{ github.event.release.tag_name }}");
+    expect(decide).toMatch(/does not match package\.json version[\s\S]{0,80}?exit 1/);
+  });
+
+  test("all three AWS variables are required before anything is built", () => {
+    for (const name of ["AWS_SUPPORT_EMAIL", "AWS_AMI_BUILD_ROLE_ARN", "AWS_AMI_INGESTION_ROLE_ARN"]) {
+      expect(decide).toContain(name);
     }
-    expect(workflow).toMatch(/for name in SUPPORT_EMAIL BUILD_ROLE_ARN INGESTION_ROLE_ARN/);
+    expect(decide).toMatch(/for name in SUPPORT_EMAIL BUILD_ROLE_ARN INGESTION_ROLE_ARN/);
+    expect(decide).toMatch(/refuse "repository variable for \$name is not set"/);
+  });
+
+  test("run=true is written after every check, never before one", () => {
+    const go = decide.indexOf('echo "run=true"');
+    expect(go).toBeGreaterThan(0);
+    for (const check of ["libredb-studio-*", "is not a product release", "does not match package.json", "is not set"]) {
+      expect(decide.indexOf(check)).toBeLessThan(go);
+    }
+    expect(decide.lastIndexOf("exit 1")).toBeLessThan(go);
+  });
+
+  test("no workflow input is interpolated into any shell body", () => {
+    // ${{ inputs.* }} inside a `run:` is the template-injection shape. Bodies are
+    // taken by indentation rather than by a lazy match to a lookahead: an earlier
+    // revision of this test captured zero characters and looped over six empty
+    // strings, which is a guard that cannot fail.
+    const lines = workflow.split("\n");
+    const bodies: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      // Eight spaces or more: a step's `run:`. A job's `outputs:` mapping can
+      // legitimately hold a key called `run`, at six.
+      const start = /^( {8,})run: \|?/.exec(lines[i]);
+      if (!start) continue;
+      const indent = start[1].length;
+      const body: string[] = [lines[i].slice(start[0].length)];
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j].trim() !== "" && lines[j].search(/\S/) <= indent) break;
+        body.push(lines[j]);
+      }
+      bodies.push(body.join("\n"));
+    }
+    expect(bodies.length).toBeGreaterThan(4);
+    // A guard that captured nothing would pass the loop below vacuously.
+    expect(bodies.join("").length).toBeGreaterThan(2000);
+    for (const body of bodies) {
+      expect({ head: body.trim().slice(0, 45), hit: /\$\{\{/.exec(body)?.[0] ?? null }).toEqual({
+        head: body.trim().slice(0, 45),
+        hit: null,
+      });
+    }
+  });
+
+  test("the build job takes its version from preflight, not from the raw input", () => {
+    // ${{ inputs.version }} here would ship an empty version on every release
+    // path, because a release run has no input.
+    const buildJob = workflow.slice(workflow.indexOf("  build:\n"));
+    expect(buildJob).toMatch(/env:\n {6}VERSION: \$\{\{ needs\.preflight\.outputs\.version \}\}/);
+  });
+
+  test("only the build job may mint an AWS credential, with exactly two scopes", () => {
+    // A job-level permissions block REPLACES the workflow-level one, so reading
+    // the top block alone would miss a widened job.
+    expect(workflow).toMatch(/^permissions:\n {2}contents: read\n\n/m);
+    const buildJob = workflow.slice(workflow.indexOf("  build:\n"));
+    const jobPerms = buildJob.slice(buildJob.indexOf("permissions:"));
+    // Values, not just names: `contents: write` on this job is a widening a
+    // name-only comparison would wave through.
+    const scopes = (jobPerms.slice(0, jobPerms.indexOf("\n    timeout")).match(/^ {6}[a-z-]+: [a-z]+/gm) ?? []).map(
+      (line) => line.trim(),
+    );
+    expect(scopes).toEqual(["contents: read", "id-token: write"]);
+    expect(workflow.slice(0, workflow.indexOf("  build:\n"))).not.toContain("id-token: write");
+  });
+
+  test("the credential is minted after the wait, not held through it", () => {
+    // configure-aws-credentials above the digest step would hold a live AWS
+    // credential for the length of a thirty-minute wait.
+    const buildJob = workflow.slice(workflow.indexOf("  build:\n"));
+    expect(buildJob.indexOf("Resolve image digest")).toBeLessThan(buildJob.indexOf("configure-aws-credentials@"));
+  });
+
+  test("preflight cannot hold the lane open", () => {
+    // Constant concurrency group plus cancel-in-progress: false means a hung
+    // preflight would block every later run.
+    const preflight = workflow.slice(workflow.indexOf("  preflight:"), workflow.indexOf("  build:\n"));
+    expect(preflight).toMatch(/timeout-minutes: \d+/);
+  });
+
+  test("every action is pinned to a full commit sha and drops its token", () => {
+    const uses = workflow.match(/uses: \S+/g) ?? [];
+    expect(uses.length).toBeGreaterThan(0);
+    for (const line of uses) expect(line).toMatch(/@[0-9a-f]{40}$/);
+    const checkouts = workflow.match(/actions\/checkout@/g) ?? [];
+    const persist = workflow.match(/persist-credentials: false/g) ?? [];
+    expect(persist.length).toBe(checkouts.length);
+  });
+
+  test("carries no long-lived credentials", () => {
+    expect(workflow).not.toMatch(/aws-access-key-id|aws-secret-access-key|secrets\./);
+  });
+
+  test("the digest step waits half an hour rather than racing the push", () => {
+    // docker-build-push builds arm64 under emulation inside a 60-minute budget;
+    // a ten-minute wait would usually expire before the tag lands.
+    expect(workflow).toMatch(/for attempt in \$\(seq 1 60\)/);
+    expect(workflow).toMatch(/sleep 30/);
+    expect(workflow).toContain("^sha256:[0-9a-f]{64}$");
+    expect(workflow).toMatch(/timeout-minutes: 90/);
+  });
+
+  test("one AMI build at a time, across refs, and never cancelled mid-flight", () => {
+    // The protected resource is one AMI namespace in one account, so the group
+    // must not be per-ref: a release run and a dispatch would each register one.
+    expect(workflow).toMatch(/concurrency:\n {2}group: aws-ami-build\n {2}cancel-in-progress: false/);
+  });
+
+  test("the README describes the triggers the workflow actually declares", () => {
+    // The repo has drift guards for exactly this class; this file had none, and
+    // the README went stale the moment the trigger changed.
+    expect(readme).toContain("release: published");
+    expect(readme).toContain("dispatch-downstream");
+    expect(readme).toContain("gh workflow run aws-ami-build.yml");
+    expect(workflow).toMatch(/^ {2}release:$/m);
+    // Substrings alone let the README say the OPPOSITE of the code and stay
+    // green - which is exactly how a sentence claiming a chain dispatch would
+    // "fail on the unset variables" survived two reviews. Assert the claim.
+    const chain = readme.slice(readme.indexOf("dispatch-downstream"), readme.indexOf("A preflight job"));
+    expect(chain).toMatch(/stands down/);
+    expect(chain).not.toMatch(/would\s+fail/);
+    const preflightPara = readme.slice(readme.indexOf("A preflight job"));
+    expect(preflightPara).toMatch(/NAMES a version fails loudly/);
+    expect(preflightPara).toMatch(/stands down quietly/);
   });
 });
