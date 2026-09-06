@@ -36,17 +36,36 @@ const CONTRIBUTORS = "CONTRIBUTORS.md";
 const CONTRIBUTING = "CONTRIBUTING.md";
 
 /**
- * Evidence is a pull request OR a commit, and the second is not a fallback.
+ * Evidence is a pull request OR a commit in THIS repository, and the second is not a fallback.
  *
  * The two earliest outside changes reached `main` by rebase rather than through the merge button,
  * so GitHub records pull requests 8 and 12 as closed with `mergedAt: null` even though the code has
  * been in the tree since 2025-12-25. Linking those would show a stranger a rejected pull request as
  * proof of a contribution. The commit is the honest citation there.
+ *
+ * Matched on the parsed origin and path rather than as a substring of the entry, which CodeQL
+ * flagged (`js/incomplete-url-substring-sanitization`) on the first version of this file. The alert
+ * is not a security finding here - nothing is fetched or trusted - but the weakness it names is
+ * real for a page whose whole claim is that its links are checkable: a substring test accepts
+ * `https://evil.example/https://github.com/libredb/libredb-studio/pull/12`, where our prefix is
+ * somebody else's path. On a credential page that is the one link that must not pass.
  */
-const EVIDENCE_URLS = [
-  "https://github.com/libredb/libredb-studio/pull/",
-  "https://github.com/libredb/libredb-studio/commit/",
-];
+const EVIDENCE_ORIGIN = "https://github.com";
+const EVIDENCE_PATHS = ["/libredb/libredb-studio/pull/", "/libredb/libredb-studio/commit/"];
+
+/** Markdown link targets in a block: the `target` of every `[text](target)`. */
+const linkTargets = (body: string): string[] => [...body.matchAll(/\]\(([^)\s]+)\)/g)].map((match) => match[1]);
+
+/** Whether a link target is a pull request or commit in this repository, by origin and path. */
+const isEvidence = (target: string): boolean => {
+  let url: URL;
+  try {
+    url = new URL(target);
+  } catch {
+    return false;
+  }
+  return url.origin === EVIDENCE_ORIGIN && EVIDENCE_PATHS.some((prefix) => url.pathname.startsWith(prefix));
+};
 
 /**
  * The `## <rung>` headings people are actually grouped under.
@@ -94,9 +113,9 @@ describe("CONTRIBUTORS.md", () => {
     expect(entries(contributors).length).toBeGreaterThan(0);
   });
 
-  test("every person links to a pull request or a commit by full URL", () => {
+  test("every person links to a pull request or a commit in this repository", () => {
     const withoutEvidence = entries(contributors)
-      .filter(({ body }) => !EVIDENCE_URLS.some((prefix) => body.includes(prefix)))
+      .filter(({ body }) => !linkTargets(body).some(isEvidence))
       .map(({ login }) => login);
     expect(withoutEvidence).toEqual([]);
   });
@@ -120,6 +139,26 @@ describe("CONTRIBUTORS.md", () => {
   test("nobody is listed twice", () => {
     const logins = entries(contributors).map(({ login }) => login);
     expect(logins).toEqual([...new Set(logins)]);
+  });
+});
+
+describe("what counts as evidence", () => {
+  // Paired positive and negative, because an accept-everything predicate would make the assertion
+  // above pass on any page at all, and a reject-everything one would be caught by that same test.
+  test("accepts a pull request and a commit in this repository", () => {
+    expect(isEvidence("https://github.com/libredb/libredb-studio/pull/579")).toBe(true);
+    expect(isEvidence("https://github.com/libredb/libredb-studio/commit/ff22a5dd")).toBe(true);
+  });
+
+  test("rejects a link that only carries our path on somebody else's host", () => {
+    // The substring test this replaced accepted the FIRST of these, which is the defect CodeQL
+    // named. The rest were already rejected by it and are here so the predicate cannot be loosened
+    // in a way that lets a fork, a plain-HTTP host or a lookalike domain through unnoticed.
+    expect(isEvidence("https://evil.example/https://github.com/libredb/libredb-studio/pull/579")).toBe(false);
+    expect(isEvidence("https://github.evil.example/libredb/libredb-studio/pull/579")).toBe(false);
+    expect(isEvidence("http://github.com/libredb/libredb-studio/pull/579")).toBe(false);
+    expect(isEvidence("https://github.com/someone-else/fork/pull/579")).toBe(false);
+    expect(isEvidence("../../src/lib/db/types.ts")).toBe(false);
   });
 });
 
