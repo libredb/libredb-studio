@@ -331,6 +331,45 @@ The `pagination` object reports the auto-limiting applied by the server (default
 
 Each element must be a string, number, boolean or `null`; anything else is rejected with 400 rather than handed to the driver. `POST /api/db/transaction` accepts the same field for its `query` action.
 
+**Query plan (optional):**
+```json
+{
+  "connection": { "type": "mysql", "host": "localhost", "database": "mydb" },
+  "sql": "SELECT id, name FROM users WHERE active = true",
+  "explain": { "mode": "estimate" }
+}
+```
+
+`explain` asks for a PLAN of `sql` rather than a run of it, and the server builds the EXPLAIN statement
+from the connected provider's own plan format. `mode` is `"estimate"` (describe the statement) or
+`"analyze"` (the deeper form, where the dialect has one); it is required, and any other shape is a 400.
+The client never sends EXPLAIN text of its own: on the MySQL wire family the accepted form is only
+knowable once connected, and `POST /api/db/provider-meta` answers without connecting, so the statement
+is built where the connection is.
+
+The 200 response is an ordinary query response plus `explainFormat`, naming the strategy that built the
+statement, so a client reads the plan with the strategy that really produced it:
+
+```json
+{
+  "rows": [{ "EXPLAIN": "{ \"query_block\": { \"select_id\": 1 } }" }],
+  "fields": ["EXPLAIN"],
+  "rowCount": 1,
+  "executionTime": 3,
+  "explainFormat": "mysql-json",
+  "pagination": { "limit": 500, "offset": 0, "hasMore": false, "totalReturned": 1, "wasLimited": false }
+}
+```
+
+Three refusals, each a 400 that runs nothing:
+
+- `This server does not support EXPLAIN` when the provider declares `supportsExplain: false` or no plan
+  format at all.
+- `Only SELECT statements can be explained` when the dialect's strategy declines the statement. The
+  original `sql` is never run as a fallback.
+- `An explain request binds no parameters` when `explain` arrives beside a non-empty `params` array: an
+  explain run describes a statement rather than running one with values bound into it.
+
 **Response (400 Bad Request):**
 ```json
 {
