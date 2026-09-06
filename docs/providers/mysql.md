@@ -537,23 +537,23 @@ All monitoring reads from `SHOW STATUS`/`SHOW VARIABLES`, `information_schema`, 
 | `getHealth()` | one bare `SHOW STATUS` (`Threads_connected` picked client-side), `information_schema.TABLES`/`PROCESSLIST`, `performance_schema` | connections, size (MB), InnoDB buffer hit %, top-5 slow queries, 10 sessions |
 | `getOverview()` | `VERSION()`, one bare `SHOW STATUS` (`Uptime` and `Threads_connected` out of the same result), `SHOW VARIABLES LIKE 'max_connections'`, `information_schema` | version, uptime, conns, max_conns, size, table/index counts |
 | `getPerformanceMetrics()` | `performance_schema.global_status`, one bare `SHOW STATUS` (`Innodb_deadlocks` picked client-side) | cache-hit %, **queries/sec** (`Queries`/`Uptime`), buffer-pool %, deadlocks. Every field optional — see the degradation note below |
+| `getSlowQueries()` | `performance_schema.events_statements_summary_by_digest` | per-digest stats |
+| `getActiveSessions()` | `information_schema.PROCESSLIST` | pid, user, db, host, command, duration |
+| `getTableStats()` | `information_schema.TABLES` | sizes; bloat **estimated from `DATA_FREE`** (no live/dead tuples, no last-vacuum/analyze) |
+| `getIndexStats()` | `information_schema.STATISTICS` + `mysql.innodb_index_stats` | columns, unique/primary; **`scans` = `CARDINALITY`** (a proxy, not a real scan counter); per-index size, or **absent** — see the index-size note below |
+| `getStorageStats()` | `information_schema.TABLES`, `SHOW BINARY LOGS` | Data size, Binary Logs (if enabled), InnoDB data file (size `N/A`) |
 
 **No monitoring read sends `SHOW STATUS LIKE '…'`, and that is a portability fix, not a style
 choice.** The whole list is read once per method and the wanted variables are picked out of it by
 `Variable_name`, matched case-insensitively, which is how the server-side `LIKE` matched. Measured
 2026-09-06 over mysql2 3.24.2's text protocol against `apache/doris:all-in-one-4.1.3`: `SHOW STATUS
 LIKE 'Uptime'` answers `errno=1105 code=ER_UNKNOWN_ERROR sqlState=HY000`, *mismatched input 'LIKE'
-expecting {&lt;EOF&gt;, ';'}(line 1, pos 12)* — the Doris grammar has no `LIKE` clause on this
-statement — while a bare `SHOW STATUS` is accepted there. So the Overview and Health panels failed
+expecting {&lt;EOF&gt;, ';'}(line 1, pos 12)*, because the Doris grammar has no `LIKE` clause on this
+statement, while a bare `SHOW STATUS` is accepted there. So the Overview and Health panels failed
 outright on Doris for a filter the statement does not need ([#573](https://github.com/libredb/libredb-studio/issues/573)).
 `SHOW VARIABLES LIKE 'max_connections'` **stays**: Doris rejects the clause on `SHOW STATUS` only,
 and the narrowest fix changes only what a grammar refuses. `getOverview()` also costs one round trip
 fewer than before, reading uptime and connections out of the same result set.
-| `getSlowQueries()` | `performance_schema.events_statements_summary_by_digest` | per-digest stats |
-| `getActiveSessions()` | `information_schema.PROCESSLIST` | pid, user, db, host, command, duration |
-| `getTableStats()` | `information_schema.TABLES` | sizes; bloat **estimated from `DATA_FREE`** (no live/dead tuples, no last-vacuum/analyze) |
-| `getIndexStats()` | `information_schema.STATISTICS` + `mysql.innodb_index_stats` | columns, unique/primary; **`scans` = `CARDINALITY`** (a proxy, not a real scan counter); per-index size, or **absent** — see the index-size note below |
-| `getStorageStats()` | `information_schema.TABLES`, `SHOW BINARY LOGS` | Data size, Binary Logs (if enabled), InnoDB data file (size `N/A`) |
 
 **Graceful degradation — note the *different* failure modes:**
 - `getHealth()` slow-queries: the digest rows, or **an empty list** — never a placeholder row, and
@@ -592,15 +592,15 @@ fewer than before, reading uptime and connections out of the same result set.
   99` it once did. This is the rule #448 and #452 settled: ABSENCE and
   ZERO are different inputs, and only the first is invisible to the panels.
 - `deadlocks` reads the `Innodb_deadlocks` row of `SHOW STATUS`, which is **MariaDB's** status
-  variable. MySQL does not publish it — re-measured 2026-09-06, MySQL 26.7.0's 528 status rows carry
-  no such name where MariaDB 12.3.2's 571 do — so the field is absent on MySQL and present on
+  variable. MySQL does not publish it: re-measured 2026-09-06, MySQL 26.7.0's 528 status rows carry
+  no such name where MariaDB 12.3.2's 571 do, so the field is absent on MySQL and present on
   MariaDB. It is the one metric that survives `performance_schema` being off.
 - **An unpublished status variable is an ABSENT reading, never a zero.** A bare `SHOW STATUS` is
   accepted on every MySQL-wire engine measured 2026-09-06 but the lists differ wildly: MySQL 26.7.0
   528 rows, MariaDB 12.3.2 571, SingleStore 9.1.1 75, TiDB 8.5.1 13, StarRocks 3.3.22 0 and Apache
   Doris 4.1.3 0. TiDB publishes `Uptime` and not `Threads_connected`; StarRocks and Doris publish
   neither. So `activeConnections` is **omitted** from both `HealthInfo` and `DatabaseOverview` when
-  the row is missing, and `startTime` is omitted with `uptime: "N/A"` when `Uptime` is — the panels
+  the row is missing, and `startTime` is omitted with `uptime: "N/A"` when `Uptime` is. The panels
   render *N/A / not published* rather than a confident `0`, which is what they showed before (#477
   and the docblocks in [`types.ts`](../../src/lib/db/types.ts)). `maxConnections` is the documented
   exception and stays a required number: `0` there **means** "no limit published", so absence and
