@@ -110,6 +110,19 @@ const NAMED_CITATIONS = [
     ],
   },
   {
+    doc: "docs/providers/sqlite.md",
+    source: "src/lib/db/providers/sql/sqlite.ts",
+    methods: [
+      "getDatabasePath",
+      "connect",
+      "query",
+      "validate",
+      "getSchema",
+      "runMaintenance",
+      "getCapabilities",
+    ],
+  },
+  {
     doc: "docs/providers/mongodb.md",
     source: "src/lib/db/providers/document/mongodb.ts",
     methods: [
@@ -226,6 +239,13 @@ describe("provider docs rewritten this round: code cited by name, whole file", (
       "`createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts))",
     );
     expect(read(FACTORY)).toMatch(/^export async function createDatabaseProvider\(/m);
+  });
+
+  test("libredb.md names the factory's entry point rather than a line inside it", () => {
+    expect(read("docs/providers/libredb.md")).toContain(
+      "`createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts))",
+    );
+    expect(read("docs/providers/libredb.md")).not.toMatch(/factory\.ts:\d/);
   });
 });
 

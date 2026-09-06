@@ -106,8 +106,8 @@ out in parallel.
 ### 2.4 Registration & lifecycle
 
 The factory wires LibreDB in via a dynamic import so the `@libredb/libredb` driver is only loaded
-when a LibreDB connection is actually opened
-([`factory.ts:100`](../../src/lib/db/factory.ts)):
+when a LibreDB connection is actually opened by
+`createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'libredb': {
