@@ -343,9 +343,11 @@ Each element must be a string, number, boolean or `null`; anything else is rejec
 `explain` asks for a PLAN of `sql` rather than a run of it, and the server builds the EXPLAIN statement
 from the connected provider's own plan format. `mode` is `"estimate"` (describe the statement) or
 `"analyze"` (the deeper form, where the dialect has one); it is required, and any other shape is a 400.
-The client never sends EXPLAIN text of its own: on the MySQL wire family the accepted form is only
-knowable once connected, and `POST /api/db/provider-meta` answers without connecting, so the statement
-is built where the connection is.
+The client never sends EXPLAIN text of its own: on the MySQL and PostgreSQL wire families alike the
+accepted form is only knowable once connected - the relatives do not share `EXPLAIN FORMAT=JSON` (#574)
+or `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` (#597) - and `POST /api/db/provider-meta` answers without
+connecting, so the statement is built where the connection is. Which means `explainFormat` can differ
+between two connections of the same `type`, and is the field to read rather than the type id.
 
 The 200 response is an ordinary query response plus `explainFormat`, naming the strategy that built the
 statement, so a client reads the plan with the strategy that really produced it:
