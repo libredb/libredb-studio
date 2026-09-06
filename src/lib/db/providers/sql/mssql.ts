@@ -1107,8 +1107,25 @@ export class MSSQLProvider extends SQLBaseProvider {
       // maxConnections stays a required number: 0 MEANS "no limit published" here,
       // so unlike the count above, 0 and absence are the SAME fact for the ceiling.
       let maxConnections = 0;
-      let databaseSize = "0 bytes";
-      let databaseSizeBytes = 0;
+      // Left UNDEFINED and spread conditionally too, for the reason the count above is:
+      // `DatabaseOverview.databaseSizeBytes` is optional because absence and zero are
+      // different facts, and a `sys.database_files` read that does not answer says
+      // nothing about the database's size. Unlike the count above this is NOT a
+      // permission story - that view is database-scoped, so §7.2's server-level
+      // refusal does not gate it, and no failure of this statement has been measured
+      // on a live instance; whatever reaches the catch, the catch cannot name it.
+      // StorageTab.tsx keys its whole breakdown off `databaseSizeBytes !== undefined`,
+      // so the old `0` initialiser drew that breakdown over a database it never
+      // measured, instead of "No storage size information available." - and drew it
+      // against per-table bytes from getTableStats(), a separate read that does not
+      // share this statement's failure, so the rows contradicted the total they were
+      // shares of. `databaseSize` moves with the figure for the same reason: both
+      // monitoring tabs render that string as the headline size, so a leftover
+      // "0 bytes" printed a confident zero beside that message. "N/A" while the bytes
+      // are unknown is the shape merged for libSQL (#569) and the search provider
+      // (#517). See docs/providers/mssql.md section 7.3.
+      let databaseSize = "N/A";
+      let databaseSizeBytes: number | undefined;
       let tableCount = 0;
       let indexCount = 0;
 
@@ -1162,10 +1179,14 @@ export class MSSQLProvider extends SQLBaseProvider {
       // Database size
       try {
         const sizeRes = await this.pool!.request().query(OVERVIEW_DATABASE_SIZE_SQL);
+        // `|| 0`, not measuredNumber: SUM over no row answers NULL and that is a
+        // measured zero here, so unlike the count above this reading keeps its falsy
+        // fold. Only the catch below leaves the figure absent.
         databaseSizeBytes = Number(sizeRes.recordset[0]?.size_bytes || 0);
         databaseSize = formatBytes(databaseSizeBytes);
       } catch {
-        /* ignore */
+        /* The size stays absent, never 0, and `databaseSize` keeps the "N/A" it was
+           initialised with. */
       }
 
       // Table/index counts
@@ -1184,7 +1205,7 @@ export class MSSQLProvider extends SQLBaseProvider {
         ...(activeConnections === undefined ? {} : { activeConnections }),
         maxConnections,
         databaseSize,
-        databaseSizeBytes,
+        ...(databaseSizeBytes === undefined ? {} : { databaseSizeBytes }),
         tableCount,
         indexCount,
       };
