@@ -916,7 +916,8 @@ wording MySQL could have declared would have been shown (#U9,
 
 **And one monitoring field**, `slowQueriesEmptyState`, returned by `getLabels()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)):
 `slowQueriesEmptyState` → *"Query stats come from
-performance_schema.events_statements_summary_by_digest - enable the Performance Schema to see them."*
+performance_schema.events_statements_summary_by_digest for this database. An empty list means it
+recorded nothing - the Performance Schema is off, or nothing has run against this database yet."*
 The monitoring Queries panel's empty state was hardcoded to PostgreSQL's `pg_stat_statements` advice
 on every engine (#463) — an extension MySQL does not have under any name, while the
 digest table this provider actually reads ([§8](#8-monitoring--health)) is a server switch a DBA can

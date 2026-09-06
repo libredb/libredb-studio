@@ -228,3 +228,40 @@ describe("provider docs rewritten this round: code cited by name, whole file", (
     expect(read(FACTORY)).toMatch(/^export async function createDatabaseProvider\(/m);
   });
 });
+
+/**
+ * A quoted VALUE rots exactly the way a line number does, and nothing above measures it.
+ *
+ * `docs/providers/mysql.md` presented `slowQueriesEmptyState` as *"... enable the Performance
+ * Schema to see them."* — the pre-#463 wording. #463 (e8b0056d) replaced that sentence in
+ * `getLabels()` because it named the one cause that never reaches the failure path, and §8 of the
+ * same doc says so in the past tense five hundred lines above. The quotation below it was never
+ * updated, so one file asserted both that the wording had changed and that it had not. A name
+ * survives an insertion above it; a value copied into prose survives nothing.
+ *
+ * A doc may still quote a superseded value deliberately, in the past tense, to explain why it
+ * changed — mysql.md does. So this pins the PRESENCE of the declared value, never the absence of
+ * the old one. Whitespace is collapsed on both sides because prose wraps and a string literal
+ * does not.
+ */
+const QUOTED_LABELS = [
+  {
+    doc: "docs/providers/mysql.md",
+    source: "src/lib/db/providers/sql/mysql.ts",
+    field: "slowQueriesEmptyState",
+  },
+];
+
+const collapse = (text: string): string => text.replace(/\s+/g, " ");
+
+describe("provider docs that quote a label value verbatim", () => {
+  for (const { doc, source, field } of QUOTED_LABELS) {
+    test(`${doc} quotes the ${field} that ${source} declares`, () => {
+      const declared = new RegExp(`\\b${field}:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(read(source));
+      expect(declared, `${field} is not declared as a string literal in ${source}`).not.toBeNull();
+      expect(collapse(read(doc)), `${doc} quotes a ${field} that ${source} no longer declares`).toContain(
+        collapse(declared![1]),
+      );
+    });
+  }
+});
