@@ -80,19 +80,19 @@ describe("evaluateThreshold (direction=below)", () => {
 // ============================================================================
 
 describe("getThresholdColor", () => {
-  test("healthy returns green CSS class", () => {
+  test("healthy returns the success border token", () => {
     const color = getThresholdColor("healthy");
-    expect(color).toContain("green");
+    expect(color).toBe("border-success-tint/30");
   });
 
-  test("warning returns yellow CSS class", () => {
+  test("warning returns the warning border token", () => {
     const color = getThresholdColor("warning");
-    expect(color).toContain("yellow");
+    expect(color).toBe("border-warning-tint/50");
   });
 
-  test("critical returns red CSS class", () => {
+  test("critical returns the danger border token", () => {
     const color = getThresholdColor("critical");
-    expect(color).toContain("red");
+    expect(color).toBe("border-danger-tint/50");
   });
 });
 

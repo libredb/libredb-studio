@@ -2,15 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import {
-  composite,
-  contrast,
-  deltaEOk,
-  parseColor,
-  tailwindPalette,
-  tailwindStep,
-  toHex,
-} from "../helpers/contrast";
+import { composite, contrast, deltaEOk, parseColor, tailwindPalette, tailwindStep, toHex } from "../helpers/contrast";
 
 /**
  * #402: the accents kept dark-tuned values on light grounds.
@@ -53,10 +45,7 @@ function declarations(selector: string): Map<string, string> {
   const end = css.indexOf("\n}", start);
   expect(end).toBeGreaterThan(start);
   return new Map(
-    Array.from(css.slice(start, end).matchAll(/(--studio-[a-z0-9-]+)\s*:\s*([^;]+);/g), (m) => [
-      m[1],
-      m[2].trim(),
-    ]),
+    Array.from(css.slice(start, end).matchAll(/(--studio-[a-z0-9-]+)\s*:\s*([^;]+);/g), (m) => [m[1], m[2].trim()]),
   );
 }
 
@@ -91,19 +80,15 @@ const GROUNDS = {
 } as const;
 const TINT_ALPHAS = [0.05, 0.1, 0.15, 0.2];
 const ACCENT_TILE: ReadonlyArray<readonly [string, number]> = [
-  ["--studio-accent-tint", 0.05],
-  ["--studio-accent-tint", 0.1],
-  ["--studio-accent-solid", 0.1],
+  ["--studio-brand-tint", 0.05],
+  ["--studio-brand-tint", 0.1],
+  ["--studio-brand-solid", 0.1],
 ];
 
 const AA = 4.5;
 
 /** The worst ratio `token` reaches anywhere it is allowed to be painted. */
-function worstGround(
-  palettes: Map<string, string>,
-  token: string,
-  ownTint: string,
-): { ratio: number; where: string } {
+function worstGround(palettes: Map<string, string>, token: string, ownTint: string): { ratio: number; where: string } {
   const foreground = rgb(palettes, token);
   let ratio = Number.POSITIVE_INFINITY;
   let where = "";
@@ -141,8 +126,8 @@ function worstGround(
  * literal a component carried before this migration.
  */
 const TEXT_TOKENS: ReadonlyArray<{ token: string; light: string; dark: string; tint: string }> = [
-  { token: "--studio-accent", light: "blue-700", dark: "blue-400", tint: "--studio-accent-tint" },
-  { token: "--studio-accent-bright", light: "blue-800", dark: "blue-300", tint: "--studio-accent-tint" },
+  { token: "--studio-brand", light: "blue-700", dark: "blue-400", tint: "--studio-brand-tint" },
+  { token: "--studio-brand-bright", light: "blue-800", dark: "blue-300", tint: "--studio-brand-tint" },
   { token: "--studio-warning", light: "amber-800", dark: "amber-400", tint: "--studio-warning-tint" },
   { token: "--studio-warning-bright", light: "amber-900", dark: "amber-300", tint: "--studio-warning-tint" },
   { token: "--studio-success", light: "emerald-800", dark: "emerald-400", tint: "--studio-success-tint" },
@@ -165,13 +150,14 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
   { hue: "pink", light: "pink-800", lightAlt: "pink-900" },
   { hue: "rose", light: "rose-800", lightAlt: "rose-900" },
   { hue: "red", light: "red-800", lightAlt: "red-900" },
-  { hue: "orange", light: "orange-800", lightAlt: "orange-900" },
-  { hue: "amber", light: "amber-900", lightAlt: "amber-950" },
-  { hue: "yellow", light: "yellow-800", lightAlt: "yellow-950" },
+  { hue: "orange", light: "orange-900", lightAlt: "orange-950" },
+  { hue: "amber", light: "amber-800", lightAlt: "amber-900" },
+  { hue: "yellow", light: "yellow-800", lightAlt: "yellow-900" },
   { hue: "green", light: "green-800", lightAlt: "green-900" },
   { hue: "emerald", light: "emerald-800", lightAlt: "emerald-900" },
   { hue: "teal", light: "teal-800", lightAlt: "teal-950" },
   { hue: "cyan", light: "cyan-800", lightAlt: "cyan-900" },
+  { hue: "fuchsia", light: "fuchsia-800", lightAlt: "fuchsia-900" },
 ];
 
 /**
@@ -180,6 +166,26 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
  * `tests/unit/lib/db-ui-config.test.ts`, which asserts every engine colour differs.
  */
 const IDENTITY_ALTS = ["sky", "yellow", "emerald", "teal"] as const;
+
+/**
+ * What theme.css actually declares, and what each declaration is supposed to be.
+ *
+ * Driven from the file rather than from the table above, in both directions: a
+ * token the table does not know about fails, and a token the table needs but the
+ * file no longer has fails too. A table alone would go quietly stale the first time
+ * an unused token was pruned — which is exactly what happened while writing this.
+ */
+const declaredHue = new Set([...light.keys()].filter((token) => token.startsWith("--studio-hue-")));
+const declaredHueText = [...declaredHue].filter((token) => !token.endsWith("-tint") && !/-solid(-hover)?$/.test(token));
+
+const expectedSteps = new Map<string, { light: string; dark: string }>();
+for (const { hue, light: base, lightAlt } of HUES) {
+  expectedSteps.set(`--studio-hue-${hue}`, { light: base, dark: `${hue}-400` });
+  expectedSteps.set(`--studio-hue-${hue}-alt`, { light: lightAlt, dark: `${hue}-300` });
+  expectedSteps.set(`--studio-hue-${hue}-tint`, { light: `${hue}-500`, dark: `${hue}-500` });
+  expectedSteps.set(`--studio-hue-${hue}-solid`, { light: `${hue}-600`, dark: `${hue}-600` });
+  expectedSteps.set(`--studio-hue-${hue}-solid-hover`, { light: `${hue}-500`, dark: `${hue}-500` });
+}
 
 describe("accent text clears WCAG AA on every ground it can land on", () => {
   for (const { token, tint } of TEXT_TOKENS) {
@@ -198,14 +204,15 @@ describe("accent text clears WCAG AA on every ground it can land on", () => {
     });
   }
 
-  for (const { hue } of HUES) {
-    for (const suffix of ["", "-alt"]) {
-      const token = `--studio-hue-${hue}${suffix}`;
-      test(`${token} in both palettes`, () => {
-        expect(worstGround(light, token, `--studio-hue-${hue}-tint`).ratio).toBeGreaterThanOrEqual(AA);
-        expect(worstGround(dark, token, `--studio-hue-${hue}-tint`).ratio).toBeGreaterThanOrEqual(AA);
-      });
-    }
+  for (const token of declaredHueText) {
+    const hue = /--studio-hue-([a-z]+)/.exec(token)![1];
+    test(`${token} in both palettes`, () => {
+      // A hue with no wash of its own is only ever painted on a studio ground or
+      // the accent tile; `worstGround` falls back to the accent tint for it.
+      const ownTint = light.has(`--studio-hue-${hue}-tint`) ? `--studio-hue-${hue}-tint` : "--studio-brand-tint";
+      expect(worstGround(light, token, ownTint).ratio).toBeGreaterThanOrEqual(AA);
+      expect(worstGround(dark, token, ownTint).ratio).toBeGreaterThanOrEqual(AA);
+    });
   }
 });
 
@@ -217,15 +224,15 @@ describe("accent text clears WCAG AA on every ground it can land on", () => {
 describe("the pairing from the issue", () => {
   test("an accent word on an accent chip is readable in light, not just in dark", () => {
     for (const palettes of [light, dark]) {
-      const chip = composite(rgb(palettes, "--studio-accent-tint"), rgb(palettes, "--studio-surface"), 0.15);
-      expect(contrast(rgb(palettes, "--studio-accent-bright"), chip)).toBeGreaterThanOrEqual(AA);
+      const chip = composite(rgb(palettes, "--studio-brand-tint"), rgb(palettes, "--studio-surface"), 0.15);
+      expect(contrast(rgb(palettes, "--studio-brand-bright"), chip)).toBeGreaterThanOrEqual(AA);
     }
   });
 
   test("the value that failed is gone from the light palette", () => {
     // blue-300 over blue-500/15 over #fafafa measured 1.46:1. Not a floor test —
     // this asserts the specific value is no longer what light mode paints.
-    expect(value(light, "--studio-accent-bright")).not.toBe(toHex(tailwindStep(palette, "blue-300")));
+    expect(value(light, "--studio-brand-bright")).not.toBe(toHex(tailwindStep(palette, "blue-300")));
   });
 });
 
@@ -236,24 +243,45 @@ describe("the dark palette reproduces the literals the components carried", () =
     });
   }
 
-  for (const { hue } of HUES) {
-    test(`--studio-hue-${hue} is still ${hue}-400, and its -alt still ${hue}-300`, () => {
-      expect(value(dark, `--studio-hue-${hue}`)).toBe(toHex(tailwindStep(palette, `${hue}-400`)));
-      expect(value(dark, `--studio-hue-${hue}-alt`)).toBe(toHex(tailwindStep(palette, `${hue}-300`)));
+  test("every declared identity hue is the step it claims, in both palettes", () => {
+    const wrong = [...declaredHue].filter((token) => {
+      const expected = expectedSteps.get(token);
+      if (!expected) return true;
+      return (
+        value(light, token) !== toHex(tailwindStep(palette, expected.light)) ||
+        value(dark, token) !== toHex(tailwindStep(palette, expected.dark))
+      );
     });
+    expect(wrong).toEqual([]);
+  });
 
-    /**
-     * A wash is the -500 step at some alpha in both palettes — the value the
-     * components already carried as `bg-<hue>-500/10`. Transcribing thirty of these
-     * by hand got `green-500` wrong by one digit on the first attempt; resolving
-     * them is what caught it.
-     */
-    test(`--studio-hue-${hue}-tint is ${hue}-500 in both palettes`, () => {
+  /**
+   * The reverse direction. Without it, deleting `--studio-hue-teal-alt` would leave
+   * every remaining assertion green — the suite would simply stop checking the
+   * token that keeps Elasticsearch from looking like Druid.
+   */
+  test("every hue the identity palette is built on is declared", () => {
+    const missing = HUES.flatMap(({ hue }) => (light.has(`--studio-hue-${hue}`) ? [] : [hue]));
+    expect(missing).toEqual([]);
+    for (const hue of IDENTITY_ALTS) expect(light.has(`--studio-hue-${hue}-alt`)).toBe(true);
+  });
+
+  /**
+   * A wash is the -500 step at some alpha in both palettes — the value the
+   * components already carried as `bg-<hue>-500/10`. Transcribing thirty of these
+   * by hand got `green-500` wrong by one digit on the first attempt; resolving them
+   * against the installed palette is what caught it.
+   */
+  test("every declared hue wash is that hue's -500 step, in both palettes", () => {
+    const tints = [...declaredHue].filter((token) => token.endsWith("-tint"));
+    expect(tints.length).toBeGreaterThan(5);
+    for (const token of tints) {
+      const hue = /--studio-hue-([a-z]+)-tint/.exec(token)![1];
       const step = toHex(tailwindStep(palette, `${hue}-500`));
-      expect(value(dark, `--studio-hue-${hue}-tint`)).toBe(step);
-      expect(value(light, `--studio-hue-${hue}-tint`)).toBe(step);
-    });
-  }
+      expect(value(dark, token)).toBe(step);
+      expect(value(light, token)).toBe(step);
+    }
+  });
 
   /**
    * The tints and the solid grounds are the same value in both palettes on purpose:
@@ -262,7 +290,7 @@ describe("the dark palette reproduces the literals the components carried", () =
    * what the palette-parity test requires; declaring them DIFFERENTLY would be a
    * silent dark-mode change.
    */
-  for (const role of ["accent", "warning", "success", "danger"]) {
+  for (const role of ["brand", "warning", "success", "danger"]) {
     for (const suffix of ["tint", "solid", "solid-hover"]) {
       test(`--studio-${role}-${suffix} is mode-independent`, () => {
         expect(value(light, `--studio-${role}-${suffix}`)).toBe(value(dark, `--studio-${role}-${suffix}`));
@@ -278,12 +306,10 @@ describe("the light values are the ones that were selected", () => {
     });
   }
 
-  for (const { hue, light: step, lightAlt } of HUES) {
-    test(`--studio-hue-${hue} is ${step}, its -alt ${lightAlt}`, () => {
-      expect(value(light, `--studio-hue-${hue}`)).toBe(toHex(tailwindStep(palette, step)));
-      expect(value(light, `--studio-hue-${hue}-alt`)).toBe(toHex(tailwindStep(palette, lightAlt)));
-    });
-  }
+  test("the identity table covers every declared hue token", () => {
+    const unaccounted = [...declaredHue].filter((token) => !expectedSteps.has(token));
+    expect(unaccounted).toEqual([]);
+  });
 });
 
 describe("the identity hues stay tellable apart", () => {
@@ -305,6 +331,11 @@ describe("the identity hues stay tellable apart", () => {
   const identitySet = HUES.map(({ hue }) => `--studio-hue-${hue}`).concat(
     IDENTITY_ALTS.map((hue) => `--studio-hue-${hue}-alt`),
   );
+
+  test("the separation set is the whole identity palette (guard against a shrinking set)", () => {
+    expect(identitySet.every((token) => light.has(token))).toBe(true);
+    expect(identitySet.length).toBeGreaterThan(15);
+  });
 
   /**
    * The bar is the SHIPPED dark set's own minimum, not a number chosen here. Dark is
@@ -335,11 +366,10 @@ describe("the identity hues stay tellable apart", () => {
    * was added, and does it invisibly: both still clear AA.
    */
   test("every -alt is distinguishable from its own base, in both palettes", () => {
-    for (const { hue } of HUES) {
+    for (const token of [...declaredHue].filter((t) => t.endsWith("-alt"))) {
+      const base = token.replace(/-alt$/, "");
       for (const palettes of [light, dark]) {
-        expect(deltaEOk(rgb(palettes, `--studio-hue-${hue}`), rgb(palettes, `--studio-hue-${hue}-alt`))).toBeGreaterThan(
-          0.05,
-        );
+        expect(deltaEOk(rgb(palettes, base), rgb(palettes, token))).toBeGreaterThan(0.05);
       }
     }
   });
@@ -350,7 +380,7 @@ describe("the identity hues stay tellable apart", () => {
    * already makes, and the reason the token is not called `-light`.
    */
   test("every state -bright is distinguishable from its own base, in both palettes", () => {
-    for (const role of ["accent", "warning", "success", "danger"]) {
+    for (const role of ["brand", "warning", "success", "danger"]) {
       for (const palettes of [light, dark]) {
         expect(deltaEOk(rgb(palettes, `--studio-${role}`), rgb(palettes, `--studio-${role}-bright`))).toBeGreaterThan(
           0.05,

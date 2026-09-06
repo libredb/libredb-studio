@@ -93,8 +93,8 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
         />
 
         {/* Ambient glow orbs — blue accent family */}
-        <div className="absolute top-1/4 -left-20 w-80 h-80 bg-blue-500/[0.07] rounded-full blur-3xl" />
-        <div className="absolute bottom-1/3 right-10 w-64 h-64 bg-cyan-500/[0.05] rounded-full blur-3xl" />
+        <div className="absolute top-1/4 -left-20 w-80 h-80 bg-brand-tint/[0.07] rounded-full blur-3xl" />
+        <div className="absolute bottom-1/3 right-10 w-64 h-64 bg-hue-cyan-tint/[0.05] rounded-full blur-3xl" />
 
         {/* Right edge separator */}
         <div className="absolute right-0 top-0 bottom-0 w-px bg-fill-strong" />
@@ -109,9 +109,9 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
             className="flex items-center gap-3 group w-fit"
           >
             <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-fill-strong border border-hairline-strong group-hover:bg-fill-strong group-hover:border-hairline-strong transition-all duration-200">
-              <LibreDBLogo className="h-9 w-9 text-blue-400" />
+              <LibreDBLogo className="h-9 w-9 text-brand" />
             </div>
-            <span className="text-xl font-semibold text-white tracking-tight group-hover:text-blue-400 transition-colors duration-200">
+            <span className="text-xl font-semibold text-white tracking-tight group-hover:text-brand transition-colors duration-200">
               LibreDB Studio
             </span>
           </a>
@@ -186,13 +186,13 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
             className="flex flex-col items-center gap-4 lg:hidden group"
           >
             <div className="relative">
-              <div className="absolute -inset-2 rounded-full bg-blue-500/20 blur-lg" />
-              <div className="relative flex h-20 w-20 items-center justify-center rounded-2xl bg-raised border border-hairline-strong shadow-lg shadow-blue-500/10 group-hover:border-blue-500/20 transition-all duration-200">
-                <LibreDBLogo className="h-12 w-12 text-blue-400" />
+              <div className="absolute -inset-2 rounded-full bg-brand-tint/20 blur-lg" />
+              <div className="relative flex h-20 w-20 items-center justify-center rounded-2xl bg-raised border border-hairline-strong shadow-lg shadow-blue-500/10 group-hover:border-brand-tint/20 transition-all duration-200">
+                <LibreDBLogo className="h-12 w-12 text-brand" />
               </div>
             </div>
             <div className="text-center space-y-1">
-              <h2 className="text-2xl font-bold tracking-tight group-hover:text-blue-400 transition-colors duration-200">
+              <h2 className="text-2xl font-bold tracking-tight group-hover:text-brand transition-colors duration-200">
                 LibreDB Studio
               </h2>
               <p className="text-sm text-muted-foreground">Open-source SQL IDE for cloud-native teams</p>

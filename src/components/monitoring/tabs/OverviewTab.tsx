@@ -114,7 +114,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
         <Card className={`p-0 border-2 transition-colors ${getThresholdColor(connThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Connections</CardTitle>
-            <Zap strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500" />
+            <Zap strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-yellow" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div
@@ -142,7 +142,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">DB Size</CardTitle>
-            <Database strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500" />
+            <Database strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-blue" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{overview?.databaseSize || "N/A"}</div>
@@ -154,7 +154,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
         <Card className={`p-0 border-2 transition-colors ${getThresholdColor(cacheThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Cache Hit</CardTitle>
-            <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
+            <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-green" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             {cacheHitRatio === undefined ? (
@@ -180,7 +180,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Tables</CardTitle>
-            <Table2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-purple-500" />
+            <Table2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-purple" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{overview?.tableCount ?? 0}</div>

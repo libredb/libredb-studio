@@ -675,22 +675,22 @@ describe("SchemaDiff", () => {
       expect(getByText("Type changed: varchar(100) -> varchar(255)")).toBeTruthy();
     });
 
-    test("added column row has green background", () => {
+    test("added column row has the green hue tint background", () => {
       const { getByText } = renderAndSelectTable("new_table");
       const colRow = getByText("id").closest('div[class*="rounded"]');
-      expect(colRow?.className).toContain("bg-green-500/5");
+      expect(colRow?.className).toContain("bg-hue-green-tint/5");
     });
 
-    test("removed column row has red background", () => {
+    test("removed column row has the red hue tint background", () => {
       const { getByText } = renderAndSelectTable("old_table");
       const colRow = getByText("name").closest('div[class*="rounded"]');
-      expect(colRow?.className).toContain("bg-red-500/5");
+      expect(colRow?.className).toContain("bg-hue-red-tint/5");
     });
 
-    test("modified column row has yellow background", () => {
+    test("modified column row has the yellow hue tint background", () => {
       const { getByText } = renderAndSelectTable("users");
       const colRow = getByText("email").closest('div[class*="rounded"]');
-      expect(colRow?.className).toContain("bg-yellow-500/5");
+      expect(colRow?.className).toContain("bg-hue-yellow-tint/5");
     });
 
     // ── Indexes ──
@@ -713,11 +713,11 @@ describe("SchemaDiff", () => {
     test("index rows have correct backgrounds", () => {
       const { getByText } = renderAndSelectTable("users");
       const addedIdx = getByText("idx_email").closest('div[class*="rounded"]');
-      expect(addedIdx?.className).toContain("bg-green-500/5");
+      expect(addedIdx?.className).toContain("bg-hue-green-tint/5");
       const removedIdx = getByText("idx_old").closest('div[class*="rounded"]');
-      expect(removedIdx?.className).toContain("bg-red-500/5");
+      expect(removedIdx?.className).toContain("bg-hue-red-tint/5");
       const modifiedIdx = getByText("idx_name").closest('div[class*="rounded"]');
-      expect(modifiedIdx?.className).toContain("bg-yellow-500/5");
+      expect(modifiedIdx?.className).toContain("bg-hue-yellow-tint/5");
     });
 
     test('does not render "Indexes" heading when no indexes', () => {
@@ -743,9 +743,9 @@ describe("SchemaDiff", () => {
     test("FK rows have correct backgrounds", () => {
       const { getByText } = renderAndSelectTable("users");
       const addedFK = getByText("org_id").closest('div[class*="rounded"]');
-      expect(addedFK?.className).toContain("bg-green-500/5");
+      expect(addedFK?.className).toContain("bg-hue-green-tint/5");
       const removedFK = getByText("dept_id").closest('div[class*="rounded"]');
-      expect(removedFK?.className).toContain("bg-red-500/5");
+      expect(removedFK?.className).toContain("bg-hue-red-tint/5");
     });
 
     test('does not render "Foreign Keys" heading when no FKs', () => {
@@ -1015,28 +1015,28 @@ describe("SchemaDiff", () => {
       return result;
     }
 
-    test("added badge has green styling", () => {
+    test("added badge has the green hue tint styling", () => {
       const { container } = renderWithDiff();
       const badges = container.querySelectorAll('[data-testid="badge"]');
       const addedBadge = Array.from(badges).find((b) => b.textContent?.includes("Added"));
       expect(addedBadge).toBeTruthy();
-      expect(addedBadge!.className).toContain("bg-green-500/20");
+      expect(addedBadge!.className).toContain("bg-hue-green-tint/20");
     });
 
-    test("removed badge has red styling", () => {
+    test("removed badge has the red hue tint styling", () => {
       const { container } = renderWithDiff();
       const badges = container.querySelectorAll('[data-testid="badge"]');
       const removedBadge = Array.from(badges).find((b) => b.textContent?.includes("Removed"));
       expect(removedBadge).toBeTruthy();
-      expect(removedBadge!.className).toContain("bg-red-500/20");
+      expect(removedBadge!.className).toContain("bg-hue-red-tint/20");
     });
 
-    test("modified badge has yellow styling", () => {
+    test("modified badge has the yellow hue tint styling", () => {
       const { container } = renderWithDiff();
       const badges = container.querySelectorAll('[data-testid="badge"]');
       const modifiedBadge = Array.from(badges).find((b) => b.textContent?.includes("Modified"));
       expect(modifiedBadge).toBeTruthy();
-      expect(modifiedBadge!.className).toContain("bg-yellow-500/20");
+      expect(modifiedBadge!.className).toContain("bg-hue-yellow-tint/20");
     });
   });
 });

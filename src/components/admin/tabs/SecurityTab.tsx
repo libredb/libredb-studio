@@ -31,21 +31,21 @@ export function SecurityTab() {
         <TabsList className="bg-transparent border-b border-hairline rounded-none p-0 h-10 w-full justify-start">
           <TabsTrigger
             value="masking"
-            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-fg-muted text-xs px-4"
+            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-brand data-[state=active]:bg-transparent data-[state=active]:text-brand text-fg-muted text-xs px-4"
           >
             <EyeOff className="h-3.5 w-3.5" />
             {MASKING_TAB_LABEL}
           </TabsTrigger>
           <TabsTrigger
             value="access"
-            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-fg-muted text-xs px-4"
+            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-brand data-[state=active]:bg-transparent data-[state=active]:text-brand text-fg-muted text-xs px-4"
           >
             <Lock className="h-3.5 w-3.5" />
             {ACCESS_TAB_LABEL}
           </TabsTrigger>
           <TabsTrigger
             value="thresholds"
-            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-fg-muted text-xs px-4"
+            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-brand data-[state=active]:bg-transparent data-[state=active]:text-brand text-fg-muted text-xs px-4"
           >
             <Activity className="h-3.5 w-3.5" />
             {THRESHOLDS_TAB_LABEL}
@@ -73,7 +73,7 @@ function AccessSummary() {
     <div className="grid gap-6 md:grid-cols-2">
       <div className="rounded-xl border border-hairline bg-panel p-5 space-y-3">
         <h3 className="text-sm font-bold text-fg-secondary flex items-center gap-2">
-          <Lock className="h-4 w-4 text-blue-400" />
+          <Lock className="h-4 w-4 text-brand" />
           {ACCESS_CARD_TITLE}
         </h3>
         <div className="space-y-3 text-sm">
@@ -92,11 +92,11 @@ function AccessSummary() {
           <Separator className="bg-fill" />
           <div className="flex items-center justify-between">
             <span className="text-fg-muted">Admin Access</span>
-            <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">ENABLED</Badge>
+            <Badge className="bg-success-tint/10 text-success border border-success-tint/20 text-xs">ENABLED</Badge>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-fg-muted">User Access</span>
-            <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">ENABLED</Badge>
+            <Badge className="bg-success-tint/10 text-success border border-success-tint/20 text-xs">ENABLED</Badge>
           </div>
         </div>
       </div>
@@ -160,16 +160,16 @@ function ThresholdSettings() {
 
   const getSliderColors = (threshold: ThresholdConfig) => {
     if (threshold.direction === "above") {
-      return { warn: "text-amber-400", crit: "text-red-400" };
+      return { warn: "text-warning", crit: "text-danger" };
     }
-    return { warn: "text-amber-400", crit: "text-red-400" };
+    return { warn: "text-warning", crit: "text-danger" };
   };
 
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-hairline bg-panel p-5">
         <h3 className="text-sm font-bold text-fg-secondary mb-4 flex items-center gap-2">
-          <Activity className="h-4 w-4 text-blue-400" />
+          <Activity className="h-4 w-4 text-brand" />
           {THRESHOLDS_CARD_TITLE}
         </h3>
         <p className="text-xs text-fg-muted mb-6">{THRESHOLDS_DESCRIPTION}</p>
@@ -203,7 +203,7 @@ function ThresholdSettings() {
                       onValueChange={(v) => updateThreshold(index, "warning", v[0])}
                       max={max}
                       step={1}
-                      className="[&_[role=slider]]:bg-amber-500 [&_[role=slider]]:border-amber-500"
+                      className="[&_[role=slider]]:bg-warning-tint [&_[role=slider]]:border-warning-tint"
                     />
                   </div>
 
@@ -220,7 +220,7 @@ function ThresholdSettings() {
                       onValueChange={(v) => updateThreshold(index, "critical", v[0])}
                       max={max}
                       step={1}
-                      className="[&_[role=slider]]:bg-red-500 [&_[role=slider]]:border-red-500"
+                      className="[&_[role=slider]]:bg-danger-tint [&_[role=slider]]:border-danger-tint"
                     />
                   </div>
                 </div>
@@ -238,7 +238,7 @@ function ThresholdSettings() {
           </Button>
           <Button
             size="sm"
-            className="bg-blue-600 hover:bg-blue-500 text-white"
+            className="bg-brand-solid hover:bg-brand-solid-hover text-white"
             onClick={handleSave}
             disabled={!hasChanges}
           >

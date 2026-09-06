@@ -596,17 +596,17 @@ describe("SchemaDiagram", () => {
     expect(view.queryByText("Compact")).not.toBeNull();
   });
 
-  test("compact button has blue text class when compact mode is active", () => {
+  test("compact button has the accent text token when compact mode is active", () => {
     const props = createDefaultProps();
     const { container } = render(<SchemaDiagram {...props} />);
     const view = within(container);
 
     const compactButton = view.getByText("Compact").closest("button")!;
-    expect(compactButton.className).not.toContain("text-blue-400");
+    expect(compactButton.className).not.toContain("text-brand");
 
     fireEvent.click(compactButton);
     const detailButton = view.getByText("Detail").closest("button")!;
-    expect(detailButton.className).toContain("text-blue-400");
+    expect(detailButton.className).toContain("text-brand");
   });
 
   // ── No FK warning ───────────────────────────────────────────────────────
@@ -994,7 +994,7 @@ describe("SchemaDiagram", () => {
       expect(view.queryByText("Selected:")).toBeNull();
       // ...and the surviving table does not inherit any highlight.
       const ordersNode = container.querySelector('[data-node-id="orders"]')!;
-      expect(ordersNode.querySelector(".border-blue-500\\/60")).toBeNull();
+      expect(ordersNode.querySelector(".border-brand-tint\\/60")).toBeNull();
 
       // The drop is permanent: clearing the filter brings the table back to
       // the canvas but must NOT resurrect a selection the user already lost.
@@ -1026,7 +1026,7 @@ describe("SchemaDiagram", () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   describe("Node/Edge highlighting", () => {
-    test("selected node gets highlighted (blue border)", () => {
+    test("selected node gets highlighted (brand-tint border)", () => {
       const props = createDefaultProps();
       const { container } = render(<SchemaDiagram {...props} />);
 
@@ -1034,8 +1034,8 @@ describe("SchemaDiagram", () => {
       const usersNode = container.querySelector('[data-node-id="users"]')!;
       fireEvent.click(usersNode);
 
-      // The TableNode's root div inside the data-node-id div should have blue border
-      const innerDiv = usersNode.querySelector(".border-blue-500\\/60");
+      // The TableNode's root div inside the data-node-id div should carry the brand-tint highlight border
+      const innerDiv = usersNode.querySelector(".border-brand-tint\\/60");
       expect(innerDiv).not.toBeNull();
     });
 
@@ -1049,7 +1049,7 @@ describe("SchemaDiagram", () => {
 
       // The 'users' table should also be highlighted (FK target)
       const usersNode = container.querySelector('[data-node-id="users"]')!;
-      const usersInner = usersNode.querySelector(".border-blue-500\\/60");
+      const usersInner = usersNode.querySelector(".border-brand-tint\\/60");
       expect(usersInner).not.toBeNull();
     });
 
@@ -1063,7 +1063,7 @@ describe("SchemaDiagram", () => {
 
       // The 'orders' table should be highlighted (it references users via FK)
       const ordersNode = container.querySelector('[data-node-id="orders"]')!;
-      const ordersInner = ordersNode.querySelector(".border-blue-500\\/60");
+      const ordersInner = ordersNode.querySelector(".border-brand-tint\\/60");
       expect(ordersInner).not.toBeNull();
     });
 
@@ -1077,7 +1077,7 @@ describe("SchemaDiagram", () => {
 
       // Products should NOT be highlighted
       const productsNode = container.querySelector('[data-node-id="products"]')!;
-      const productsInner = productsNode.querySelector(".border-blue-500\\/60");
+      const productsInner = productsNode.querySelector(".border-brand-tint\\/60");
       expect(productsInner).toBeNull();
       // Products should have default border
       const productsDefault = productsNode.querySelector(".border-hairline-strong");
@@ -1546,8 +1546,10 @@ describe("SchemaDiagram", () => {
 
       // Select users while no FK data exists
       fireEvent.click(container.querySelector('[data-node-id="users"]')!);
-      expect(container.querySelector('[data-node-id="users"]')!.querySelector(".border-blue-500\\/60")).not.toBeNull();
-      expect(container.querySelector('[data-node-id="posts"]')!.querySelector(".border-blue-500\\/60")).toBeNull();
+      expect(
+        container.querySelector('[data-node-id="users"]')!.querySelector(".border-brand-tint\\/60"),
+      ).not.toBeNull();
+      expect(container.querySelector('[data-node-id="posts"]')!.querySelector(".border-brand-tint\\/60")).toBeNull();
 
       // Relations arrive: posts now references users
       const withFk: TableSchema[] = [
@@ -1564,7 +1566,9 @@ describe("SchemaDiagram", () => {
       });
 
       // posts is now a neighbor of the still-selected users -> highlighted
-      expect(container.querySelector('[data-node-id="posts"]')!.querySelector(".border-blue-500\\/60")).not.toBeNull();
+      expect(
+        container.querySelector('[data-node-id="posts"]')!.querySelector(".border-brand-tint\\/60"),
+      ).not.toBeNull();
     });
 
     test("node internals re-measure when FK anchors appear on existing tables", async () => {
@@ -1848,11 +1852,11 @@ describe("SchemaDiagram", () => {
 
       // 'users' should be highlighted (orders has FK to users)
       const usersNode = container.querySelector('[data-node-id="users"]')!;
-      expect(usersNode.querySelector(".border-blue-500\\/60")).not.toBeNull();
+      expect(usersNode.querySelector(".border-brand-tint\\/60")).not.toBeNull();
 
       // 'items' should be highlighted (items has FK to orders)
       const itemsNode = container.querySelector('[data-node-id="items"]')!;
-      expect(itemsNode.querySelector(".border-blue-500\\/60")).not.toBeNull();
+      expect(itemsNode.querySelector(".border-brand-tint\\/60")).not.toBeNull();
     });
 
     test("no-FK warning shown for schema with undefined foreignKeys", () => {

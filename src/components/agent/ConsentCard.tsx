@@ -129,7 +129,7 @@ export function ConsentCard({
       aria-labelledby="agent-consent-workflow"
       aria-describedby="agent-consent-terms"
       data-testid="agent-consent"
-      className="mt-2 rounded border border-blue-400/30 bg-blue-500/5 p-2 space-y-1 focus:outline-none focus:ring-1 focus:ring-blue-400/50"
+      className="mt-2 rounded border border-brand/30 bg-brand-tint/5 p-2 space-y-1 focus:outline-none focus:ring-1 focus:ring-brand/50"
     >
       {/*
         The default, first. The pill says what the run is with the box untouched, which is
@@ -143,7 +143,7 @@ export function ConsentCard({
         Start this run
         <span
           data-testid="agent-consent-pill"
-          className="rounded px-1 py-px text-[0.625rem] normal-case tracking-normal bg-emerald-500/10 text-emerald-400/90"
+          className="rounded px-1 py-px text-[0.625rem] normal-case tracking-normal bg-success-tint/10 text-success/90"
         >
           read-only
         </span>
@@ -228,7 +228,7 @@ export function ConsentCard({
                 key={chip.text}
                 className={cn(
                   "rounded px-1 py-px text-[0.625rem] bg-fill",
-                  chip.tone === "warn" ? "text-amber-400/90" : "text-fg-tertiary",
+                  chip.tone === "warn" ? "text-warning/90" : "text-fg-tertiary",
                 )}
               >
                 {chip.text}
@@ -245,7 +245,7 @@ export function ConsentCard({
           decides whether a second, unbounded read joins the run's own.
         */}
         {isSqlite && (
-          <p data-testid="agent-auto-execute-sqlite" className="ml-5 text-[0.625rem] text-amber-400/70">
+          <p data-testid="agent-auto-execute-sqlite" className="ml-5 text-[0.625rem] text-warning/70">
             {SQLITE_COST}
           </p>
         )}
@@ -255,7 +255,7 @@ export function ConsentCard({
           type="button"
           data-testid="agent-consent-open"
           onClick={onOpen}
-          className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 transition-colors"
+          className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-brand-tint/15 text-brand-bright hover:bg-brand-tint/25 transition-colors"
         >
           <Play strokeWidth={1.5} className="w-3 h-3" aria-hidden="true" />
           Start run

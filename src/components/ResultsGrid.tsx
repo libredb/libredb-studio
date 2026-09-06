@@ -257,7 +257,7 @@ export function ResultsGrid({
               )}
               {isSensitive && (
                 <span title="Masked column">
-                  <Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400 shrink-0" />
+                  <Lock strokeWidth={1.5} className="w-3 h-3 text-hue-purple shrink-0" />
                 </span>
               )}
               <div className="flex-shrink-0 opacity-0 group-hover/header:opacity-100 transition-opacity">
@@ -270,7 +270,7 @@ export function ResultsGrid({
               className={cn(
                 "shrink-0 p-0.5 rounded transition-colors",
                 hasFilter
-                  ? "text-blue-400"
+                  ? "text-brand"
                   : "opacity-0 group-hover/header:opacity-100 text-fg-muted hover:text-fg-secondary",
               )}
               onClick={(e) => {
@@ -300,11 +300,11 @@ export function ResultsGrid({
                   onKeyDown={(e) => {
                     if (e.key === "Escape" || e.key === "Enter") setActiveFilterCol(null);
                   }}
-                  className="w-full bg-canvas border border-hairline-strong rounded px-2 py-1 text-xs text-fg outline-none focus:border-blue-500/30"
+                  className="w-full bg-canvas border border-hairline-strong rounded px-2 py-1 text-xs text-fg outline-none focus:border-brand-tint/30"
                 />
                 {hasFilter && (
                   <button
-                    className="mt-1 text-xs text-red-400 hover:text-red-300"
+                    className="mt-1 text-xs text-danger hover:text-danger-bright"
                     onClick={() => {
                       const next = new Map(columnFilters);
                       next.delete(field);
@@ -330,7 +330,7 @@ export function ResultsGrid({
             <div role="presentation" className="flex items-center gap-1 w-full" onClick={(e) => e.stopPropagation()}>
               <input
                 autoFocus
-                className="w-full bg-overlay border border-blue-500 rounded px-1 py-0.5 text-fg outline-none"
+                className="w-full bg-overlay border border-brand-tint rounded px-1 py-0.5 text-fg outline-none"
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={(e) => {
@@ -375,14 +375,14 @@ export function ResultsGrid({
               <span className="text-fg-muted italic">{masked}</span>
               {userCanReveal && (
                 <button
-                  className="opacity-0 group-hover/cell:opacity-100 transition-opacity p-0.5 rounded hover:bg-purple-500/10"
+                  className="opacity-0 group-hover/cell:opacity-100 transition-opacity p-0.5 rounded hover:bg-hue-purple-tint/10"
                   onClick={(e) => {
                     e.stopPropagation();
                     revealCell(cellKey);
                   }}
                   title="Reveal value (10s)"
                 >
-                  <Eye className="w-3 h-3 text-purple-400" />
+                  <Eye className="w-3 h-3 text-hue-purple" />
                 </button>
               )}
             </div>
@@ -395,7 +395,7 @@ export function ResultsGrid({
           return (
             <div className="truncate w-full h-full flex items-center gap-1">
               <span className={className}>{display}</span>
-              <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-purple-400/50 shrink-0" />
+              <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-purple/50 shrink-0" />
             </div>
           );
         }
@@ -410,21 +410,21 @@ export function ResultsGrid({
         // editing at all (issue #269).
         if (!editingEnabled) {
           return (
-            <div className={cn("truncate w-full h-full", pendingChange && "bg-amber-500/10 rounded px-0.5")}>
-              <span className={cn(className, pendingChange && "text-amber-400")}>{display}</span>
+            <div className={cn("truncate w-full h-full", pendingChange && "bg-warning-tint/10 rounded px-0.5")}>
+              <span className={cn(className, pendingChange && "text-warning")}>{display}</span>
             </div>
           );
         }
 
         return (
           <div
-            className={cn("truncate w-full h-full cursor-text", pendingChange && "bg-amber-500/10 rounded px-0.5")}
+            className={cn("truncate w-full h-full cursor-text", pendingChange && "bg-warning-tint/10 rounded px-0.5")}
             onDoubleClick={() => {
               setEditingCell({ rowIndex: row.index, columnId: column.id });
               setEditValue(pendingChange ? pendingChange.newValue : String(val ?? ""));
             }}
           >
-            <span className={cn(className, pendingChange && "text-amber-400")}>{display}</span>
+            <span className={cn(className, pendingChange && "text-warning")}>{display}</span>
           </div>
         );
       },
@@ -505,7 +505,7 @@ export function ResultsGrid({
         </div>
         <p className="text-xs font-medium text-fg-tertiary">Query returned no data</p>
         {emptyWarnings.length > 0 && (
-          <div className="mt-3 max-w-[280px] text-xs text-amber-400 leading-relaxed">
+          <div className="mt-3 max-w-[280px] text-xs text-warning leading-relaxed">
             <p className="font-medium">{ENGINE_WARNINGS_LABEL}</p>
             <ul className="mt-1 space-y-1">
               {emptyWarnings.map((warning, idx) => (
@@ -596,7 +596,7 @@ export function ResultsGrid({
                       unreliable for assistive tech, so the type also ships as
                       screen-reader text - same treatment as the warnings badge. */}
                   {declaredType && <span className="sr-only">, {declaredType}</span>}
-                  {isSensitive && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-purple-400" />}
+                  {isSensitive && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-purple" />}
                 </div>
               );
             })}
@@ -622,7 +622,7 @@ export function ResultsGrid({
                     height: `${virtualRow.size}px`,
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
-                  className="flex hover:bg-blue-500/[0.03] transition-colors border-b border-hairline cursor-pointer text-left"
+                  className="flex hover:bg-brand-tint/[0.03] transition-colors border-b border-hairline cursor-pointer text-left"
                   onClick={() => setSelectedRow({ row, index: virtualRow.index })}
                 >
                   {result.fields.map((field, idx) => {
@@ -671,8 +671,8 @@ export function ResultsGrid({
                     onMouseDown={header.getResizeHandler()}
                     onTouchStart={header.getResizeHandler()}
                     className={cn(
-                      "absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-blue-500/50 transition-colors",
-                      header.column.getIsResizing() ? "bg-blue-500 w-1" : "bg-transparent",
+                      "absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-brand-tint/50 transition-colors",
+                      header.column.getIsResizing() ? "bg-brand-tint w-1" : "bg-transparent",
                     )}
                   />
                 </div>
@@ -694,7 +694,7 @@ export function ResultsGrid({
                     top: 0,
                     left: 0,
                   }}
-                  className="flex group hover:bg-blue-500/[0.03] transition-colors border-b border-hairline"
+                  className="flex group hover:bg-brand-tint/[0.03] transition-colors border-b border-hairline"
                 >
                   {row.getVisibleCells().map((cell) => (
                     <div

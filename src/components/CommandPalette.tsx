@@ -113,7 +113,7 @@ export function CommandPalette({
         {/* Quick Actions */}
         <CommandGroup heading="Actions">
           <CommandItem onSelect={() => runAction(onExecuteQuery)}>
-            <Play strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
+            <Play strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-blue" />
             <span>Run Query</span>
             <CommandShortcut>Ctrl+Enter</CommandShortcut>
           </CommandItem>
@@ -132,30 +132,30 @@ export function CommandPalette({
               carries the editor's statement in with it (review of #331 T3).
             */
             <CommandItem onSelect={() => runAction(onAskAgent)}>
-              <Bot strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
+              <Bot strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-blue" />
               <span>Ask the agent about this query</span>
             </CommandItem>
           )}
           <CommandItem onSelect={() => runAction(onAddConnection)}>
-            <Plus strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />
+            <Plus strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-emerald" />
             <span>New Connection</span>
           </CommandItem>
           <CommandItem onSelect={() => runAction(onNavigateHealth)}>
-            <Activity strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />
+            <Activity strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-emerald" />
             <span>Health Dashboard</span>
           </CommandItem>
           <CommandItem onSelect={() => runAction(onNavigateMonitoring)}>
-            <Gauge strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-400" />
+            <Gauge strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-purple" />
             <span>Monitoring</span>
           </CommandItem>
           {activeConnection && (
             <CommandItem onSelect={() => runAction(onShowDiagram)}>
-              <Layers strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
+              <Layers strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-cyan" />
               <span>Schema Diagram (ERD)</span>
             </CommandItem>
           )}
           <CommandItem onSelect={() => runAction(onLogout)}>
-            <LogOut strokeWidth={1.5} className="w-3.5 h-3.5 text-red-400" />
+            <LogOut strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-red" />
             <span>Logout</span>
           </CommandItem>
         </CommandGroup>
@@ -170,7 +170,7 @@ export function CommandPalette({
                   <Icon className="w-3.5 h-3.5" />
                   <span>{conn.name}</span>
                   {activeConnection?.id === conn.id && (
-                    <span className="ml-auto text-xs text-emerald-500 font-medium">Active</span>
+                    <span className="ml-auto text-xs text-success font-medium">Active</span>
                   )}
                 </CommandItem>
               );
@@ -199,7 +199,7 @@ export function CommandPalette({
           <CommandGroup heading="Saved Queries">
             {savedQueries.map((sq: SavedQuery) => (
               <CommandItem key={sq.id} onSelect={() => runAction(() => onLoadSavedQuery(sq.query))}>
-                <Bookmark strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-400" />
+                <Bookmark strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-purple" />
                 <span>{sq.name}</span>
                 <span className="ml-auto text-xs text-fg-subtle truncate max-w-[150px]">
                   {sq.query.substring(0, 40)}...

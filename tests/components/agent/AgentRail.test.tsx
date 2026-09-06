@@ -1324,7 +1324,7 @@ describe("AgentRail", () => {
 
   /**
    * Small print is print (#100). `text-fg-muted` — zinc-500 in the dark palette — on
-   * this rail's `bg-surface` (#0a0a0a), under the alert's own `bg-red-500/5`, computes
+   * this rail's `bg-surface` (#0a0a0a), under the alert's own `bg-danger-tint/5`, computes
    * to 3.98:1 against WCAG AA's 4.5:1 — measured from the installed Tailwind 4 palette,
    * not estimated — and this text is 10px, so the large-text allowance does not apply.
    * `text-fg-tertiary` (zinc-400) is 7.33:1.

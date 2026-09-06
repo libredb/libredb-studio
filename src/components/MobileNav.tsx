@@ -36,11 +36,11 @@ export function MobileNav({ activeTab, onTabChange, onOpenAgent }: MobileNavProp
             onClick={() => onTabChange(tab.id)}
             className={cn(
               "flex flex-col items-center gap-1 transition-all duration-200 relative",
-              isActive ? "text-blue-400" : "text-fg-muted",
+              isActive ? "text-brand" : "text-fg-muted",
             )}
           >
             <div
-              className={cn("p-2 rounded-xl transition-all", isActive ? "bg-blue-500/10 scale-110" : "hover:bg-fill")}
+              className={cn("p-2 rounded-xl transition-all", isActive ? "bg-brand-tint/10 scale-110" : "hover:bg-fill")}
             >
               {/* strokeWidth 1.5 matches the shared icon contract; the row's new agent
                   icon would otherwise render visibly thinner than its siblings. */}
@@ -49,7 +49,7 @@ export function MobileNav({ activeTab, onTabChange, onOpenAgent }: MobileNavProp
             {/* `font-mediumr` was a typo Tailwind emitted nothing for; the agent
                 label added below would otherwise render at a different weight. */}
             <span className="text-xs font-medium">{tab.label}</span>
-            {isActive && <div className="absolute -top-1 w-1 h-1 bg-blue-400 rounded-full" />}
+            {isActive && <div className="absolute -top-1 w-1 h-1 bg-brand rounded-full" />}
           </button>
         );
       })}

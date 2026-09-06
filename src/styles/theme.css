@@ -87,7 +87,7 @@
    * inverts exactly like `fg-bright` does: brighter than its base in dark, darker
    * in light. Both directions mean "further from the ground".
    *
-   * `-tint` is the wash the roles are painted over (`bg-accent-tint/15`), and it is
+   * `-tint` is the wash the roles are painted over (`bg-brand-tint/15`), and it is
    * the SAME value in both palettes on purpose — a wash is alpha over whatever is
    * behind it, so it already adapts, and the text step above is what has to move.
    * `-solid` and `-solid-hover` are the filled-button grounds, mode-independent for
@@ -96,11 +96,17 @@
    * Every value here was selected by measurement, not by eye, and
    * `tests/unit/theme-accent-contrast.test.ts` re-measures it on every run.
    */
-  --studio-accent: #1447e6;
-  --studio-accent-bright: #193cb8;
-  --studio-accent-tint: #2b7fff;
-  --studio-accent-solid: #155dfc;
-  --studio-accent-solid-hover: #2b7fff;
+  --studio-brand: #1447e6;
+  --studio-brand-bright: #193cb8;
+  --studio-brand-tint: #2b7fff;
+  --studio-brand-solid: #155dfc;
+  --studio-brand-solid-hover: #2b7fff;
+  /*
+   * The three standalone error pages hover the other way — they darken rather than
+   * lighten. Flattening them onto `-solid-hover` inverted the direction AND took
+   * white-on-hover from 6.8:1 to 3.8:1, so they keep a step of their own.
+   */
+  --studio-brand-solid-active: #1447e6;
 
   --studio-warning: #973c00;
   --studio-warning-bright: #7b3306;
@@ -135,47 +141,38 @@
    * `db-ui-config`'s own test asserts every engine colour differs — and those four
    * therefore join the separation set. Elsewhere it is emphasis on one identity.
    *
-   * Two deviations from "the lightest step that clears AA", both forced by
-   * separation rather than by contrast: amber sits at -900 because -800 is already
-   * an orange at that lightness and collides with orange itself, and yellow's alt
-   * drops to -950 for the same reason. The warm hues converge as they darken; the
-   * cold ones do not.
+   * One deviation from "the lightest step that clears AA", forced by separation
+   * rather than by contrast: orange sits at -900, because Tailwind's amber ramp
+   * rotates toward orange as it darkens and amber-800 / orange-800 land 0.029
+   * apart in Oklab — under the shipped dark set's own tightest pair. Teal's alt
+   * drops to -950 against emerald's for the same reason. The warm hues and the
+   * greens converge as they darken; nothing else does.
    */
   --studio-hue-blue: #1447e6;
   --studio-hue-blue-alt: #193cb8;
   --studio-hue-blue-tint: #2b7fff;
   --studio-hue-sky: #00598a;
   --studio-hue-sky-alt: #024a70;
-  --studio-hue-sky-tint: #00a6f4;
   --studio-hue-indigo: #432dd7;
-  --studio-hue-indigo-alt: #372aac;
   --studio-hue-indigo-tint: #615fff;
   --studio-hue-violet: #7008e7;
-  --studio-hue-violet-alt: #5d0ec0;
-  --studio-hue-violet-tint: #8e51ff;
   --studio-hue-purple: #8200db;
   --studio-hue-purple-alt: #6e11b0;
   --studio-hue-purple-tint: #ad46ff;
   --studio-hue-pink: #a3004c;
-  --studio-hue-pink-alt: #861043;
-  --studio-hue-pink-tint: #f6339a;
   --studio-hue-rose: #a50036;
   --studio-hue-rose-alt: #8b0836;
   --studio-hue-rose-tint: #ff2056;
   --studio-hue-red: #9f0712;
-  --studio-hue-red-alt: #82181a;
   --studio-hue-red-tint: #fb2c36;
-  --studio-hue-orange: #9f2d00;
-  --studio-hue-orange-alt: #7e2a0c;
+  --studio-hue-orange: #7e2a0c;
   --studio-hue-orange-tint: #ff6900;
-  --studio-hue-amber: #7b3306;
-  --studio-hue-amber-alt: #461901;
+  --studio-hue-amber: #973c00;
   --studio-hue-amber-tint: #fe9a00;
   --studio-hue-yellow: #894b00;
-  --studio-hue-yellow-alt: #432004;
+  --studio-hue-yellow-alt: #733e0a;
   --studio-hue-yellow-tint: #f0b100;
   --studio-hue-green: #016630;
-  --studio-hue-green-alt: #0d542b;
   --studio-hue-green-tint: #00c950;
   --studio-hue-emerald: #006045;
   --studio-hue-emerald-alt: #004f3b;
@@ -184,8 +181,24 @@
   --studio-hue-teal-alt: #022f2e;
   --studio-hue-teal-tint: #00bba7;
   --studio-hue-cyan: #005f78;
-  --studio-hue-cyan-alt: #104e64;
   --studio-hue-cyan-tint: #00b8db;
+  /*
+   * Two identity hues carry a filled control of their own: Database Docs' "AI
+   * Describe" button is teal because the panel is, and VisualExplain's AI tab is
+   * purple for the same reason. Added on demand rather than sixteen times over —
+   * the other fourteen hues have no solid, and a third one that needs it can ask.
+   *
+   * White on teal-600 measures 3.66:1, and on purple's hover step 4.12:1 — both
+   * under AA. Those are the values the buttons already carried, in both themes, so
+   * they are not this migration's to change; they are filed separately along with
+   * the state solids, which fail the same way.
+   */
+  --studio-hue-teal-solid: #009689;
+  --studio-hue-teal-solid-hover: #00bba7;
+  --studio-hue-purple-solid: #9810fa;
+  --studio-hue-purple-solid-hover: #ad46ff;
+
+  --studio-hue-fuchsia: #8a0194;
 }
 
 .dark {
@@ -230,11 +243,17 @@
    * Tailwind palette rather than against transcribed hexes, so a Tailwind upgrade
    * that restyles `blue-400` reports itself as the dark-mode change it is.
    */
-  --studio-accent: #51a2ff;
-  --studio-accent-bright: #8ec5ff;
-  --studio-accent-tint: #2b7fff;
-  --studio-accent-solid: #155dfc;
-  --studio-accent-solid-hover: #2b7fff;
+  --studio-brand: #51a2ff;
+  --studio-brand-bright: #8ec5ff;
+  --studio-brand-tint: #2b7fff;
+  --studio-brand-solid: #155dfc;
+  --studio-brand-solid-hover: #2b7fff;
+  /*
+   * The three standalone error pages hover the other way — they darken rather than
+   * lighten. Flattening them onto `-solid-hover` inverted the direction AND took
+   * white-on-hover from 6.8:1 to 3.8:1, so they keep a step of their own.
+   */
+  --studio-brand-solid-active: #1447e6;
 
   --studio-warning: #ffb900;
   --studio-warning-bright: #ffd230;
@@ -259,36 +278,26 @@
   --studio-hue-blue-tint: #2b7fff;
   --studio-hue-sky: #00bcff;
   --studio-hue-sky-alt: #74d4ff;
-  --studio-hue-sky-tint: #00a6f4;
   --studio-hue-indigo: #7c86ff;
-  --studio-hue-indigo-alt: #a3b3ff;
   --studio-hue-indigo-tint: #615fff;
   --studio-hue-violet: #a684ff;
-  --studio-hue-violet-alt: #c4b4ff;
-  --studio-hue-violet-tint: #8e51ff;
   --studio-hue-purple: #c27aff;
   --studio-hue-purple-alt: #dab2ff;
   --studio-hue-purple-tint: #ad46ff;
   --studio-hue-pink: #fb64b6;
-  --studio-hue-pink-alt: #fda5d5;
-  --studio-hue-pink-tint: #f6339a;
   --studio-hue-rose: #ff637e;
   --studio-hue-rose-alt: #ffa1ad;
   --studio-hue-rose-tint: #ff2056;
   --studio-hue-red: #ff6467;
-  --studio-hue-red-alt: #ffa2a2;
   --studio-hue-red-tint: #fb2c36;
   --studio-hue-orange: #ff8904;
-  --studio-hue-orange-alt: #ffb86a;
   --studio-hue-orange-tint: #ff6900;
   --studio-hue-amber: #ffb900;
-  --studio-hue-amber-alt: #ffd230;
   --studio-hue-amber-tint: #fe9a00;
   --studio-hue-yellow: #fdc700;
   --studio-hue-yellow-alt: #ffdf20;
   --studio-hue-yellow-tint: #f0b100;
   --studio-hue-green: #05df72;
-  --studio-hue-green-alt: #7bf1a8;
   --studio-hue-green-tint: #00c950;
   --studio-hue-emerald: #00d492;
   --studio-hue-emerald-alt: #5ee9b5;
@@ -297,8 +306,13 @@
   --studio-hue-teal-alt: #46ecd5;
   --studio-hue-teal-tint: #00bba7;
   --studio-hue-cyan: #00d3f2;
-  --studio-hue-cyan-alt: #53eafd;
   --studio-hue-cyan-tint: #00b8db;
+  --studio-hue-teal-solid: #009689;
+  --studio-hue-teal-solid-hover: #00bba7;
+  --studio-hue-purple-solid: #9810fa;
+  --studio-hue-purple-solid-hover: #ad46ff;
+
+  --studio-hue-fuchsia: #ed6aff;
 }
 
 /*
@@ -336,11 +350,12 @@
   --color-fg-subtle: var(--studio-fg-subtle);
   --color-fg-faint: var(--studio-fg-faint);
 
-  --color-accent: var(--studio-accent);
-  --color-accent-bright: var(--studio-accent-bright);
-  --color-accent-tint: var(--studio-accent-tint);
-  --color-accent-solid: var(--studio-accent-solid);
-  --color-accent-solid-hover: var(--studio-accent-solid-hover);
+  --color-brand: var(--studio-brand);
+  --color-brand-bright: var(--studio-brand-bright);
+  --color-brand-tint: var(--studio-brand-tint);
+  --color-brand-solid: var(--studio-brand-solid);
+  --color-brand-solid-hover: var(--studio-brand-solid-hover);
+  --color-brand-solid-active: var(--studio-brand-solid-active);
 
   --color-warning: var(--studio-warning);
   --color-warning-bright: var(--studio-warning-bright);
@@ -365,36 +380,26 @@
   --color-hue-blue-tint: var(--studio-hue-blue-tint);
   --color-hue-sky: var(--studio-hue-sky);
   --color-hue-sky-alt: var(--studio-hue-sky-alt);
-  --color-hue-sky-tint: var(--studio-hue-sky-tint);
   --color-hue-indigo: var(--studio-hue-indigo);
-  --color-hue-indigo-alt: var(--studio-hue-indigo-alt);
   --color-hue-indigo-tint: var(--studio-hue-indigo-tint);
   --color-hue-violet: var(--studio-hue-violet);
-  --color-hue-violet-alt: var(--studio-hue-violet-alt);
-  --color-hue-violet-tint: var(--studio-hue-violet-tint);
   --color-hue-purple: var(--studio-hue-purple);
   --color-hue-purple-alt: var(--studio-hue-purple-alt);
   --color-hue-purple-tint: var(--studio-hue-purple-tint);
   --color-hue-pink: var(--studio-hue-pink);
-  --color-hue-pink-alt: var(--studio-hue-pink-alt);
-  --color-hue-pink-tint: var(--studio-hue-pink-tint);
   --color-hue-rose: var(--studio-hue-rose);
   --color-hue-rose-alt: var(--studio-hue-rose-alt);
   --color-hue-rose-tint: var(--studio-hue-rose-tint);
   --color-hue-red: var(--studio-hue-red);
-  --color-hue-red-alt: var(--studio-hue-red-alt);
   --color-hue-red-tint: var(--studio-hue-red-tint);
   --color-hue-orange: var(--studio-hue-orange);
-  --color-hue-orange-alt: var(--studio-hue-orange-alt);
   --color-hue-orange-tint: var(--studio-hue-orange-tint);
   --color-hue-amber: var(--studio-hue-amber);
-  --color-hue-amber-alt: var(--studio-hue-amber-alt);
   --color-hue-amber-tint: var(--studio-hue-amber-tint);
   --color-hue-yellow: var(--studio-hue-yellow);
   --color-hue-yellow-alt: var(--studio-hue-yellow-alt);
   --color-hue-yellow-tint: var(--studio-hue-yellow-tint);
   --color-hue-green: var(--studio-hue-green);
-  --color-hue-green-alt: var(--studio-hue-green-alt);
   --color-hue-green-tint: var(--studio-hue-green-tint);
   --color-hue-emerald: var(--studio-hue-emerald);
   --color-hue-emerald-alt: var(--studio-hue-emerald-alt);
@@ -403,6 +408,10 @@
   --color-hue-teal-alt: var(--studio-hue-teal-alt);
   --color-hue-teal-tint: var(--studio-hue-teal-tint);
   --color-hue-cyan: var(--studio-hue-cyan);
-  --color-hue-cyan-alt: var(--studio-hue-cyan-alt);
   --color-hue-cyan-tint: var(--studio-hue-cyan-tint);
+  --color-hue-fuchsia: var(--studio-hue-fuchsia);
+  --color-hue-teal-solid: var(--studio-hue-teal-solid);
+  --color-hue-teal-solid-hover: var(--studio-hue-teal-solid-hover);
+  --color-hue-purple-solid: var(--studio-hue-purple-solid);
+  --color-hue-purple-solid-hover: var(--studio-hue-purple-solid-hover);
 }

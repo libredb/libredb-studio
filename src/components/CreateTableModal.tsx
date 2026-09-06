@@ -107,8 +107,8 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
       <DialogContent className="max-w-3xl bg-surface border-hairline-strong text-fg p-0 overflow-hidden flex flex-col max-h-[90vh]">
         <DialogHeader className="px-6 py-4 border-b border-hairline bg-panel">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/20">
-              <TableIcon strokeWidth={1.5} className="w-5 h-5 text-blue-400" />
+            <div className="p-2 rounded-lg bg-brand-tint/10 border border-brand-tint/20">
+              <TableIcon strokeWidth={1.5} className="w-5 h-5 text-brand" />
             </div>
             <div>
               <DialogTitle className="text-xs font-medium">Create New Table</DialogTitle>
@@ -121,7 +121,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
           {/* Table Name Section */}
           <div className="space-y-4">
             <div className="flex items-center gap-2">
-              <Settings2 strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-500/50" />
+              <Settings2 strokeWidth={1.5} className="w-3.5 h-3.5 text-brand/50" />
               <Label className="text-xs font-medium text-fg-muted">General Settings</Label>
             </div>
             <div className="grid gap-2">
@@ -133,7 +133,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                 placeholder="e.g. customers, orders, analytics_logs"
                 value={tableName}
                 onChange={(e) => setTableName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_"))}
-                className="bg-raised border-hairline focus-visible:ring-blue-500/50"
+                className="bg-raised border-hairline focus-visible:ring-brand-tint/50"
               />
             </div>
           </div>
@@ -142,14 +142,14 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Type strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-500/50" />
+                <Type strokeWidth={1.5} className="w-3.5 h-3.5 text-success/50" />
                 <Label className="text-xs font-medium text-fg-muted">Column Definitions</Label>
               </div>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={addColumn}
-                className="h-7 text-xs font-medium gap-2 hover:bg-emerald-500/10 hover:text-emerald-400"
+                className="h-7 text-xs font-medium gap-2 hover:bg-success-tint/10 hover:text-success"
               >
                 <Plus strokeWidth={1.5} className="w-3 h-3" /> Add Column
               </Button>
@@ -186,7 +186,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                           </SelectItem>
                         ))}
                         {col.isPrimary && (
-                          <SelectItem value="SERIAL" className="text-xs text-yellow-500">
+                          <SelectItem value="SERIAL" className="text-xs text-hue-yellow">
                             SERIAL (Auto-Inc)
                           </SelectItem>
                         )}
@@ -205,7 +205,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                             isNullable: checked ? false : col.isNullable,
                           })
                         }
-                        className="border-edge data-[state=checked]:bg-yellow-500 data-[state=checked]:border-yellow-500"
+                        className="border-edge data-[state=checked]:bg-hue-yellow-tint data-[state=checked]:border-hue-yellow-tint"
                       />
                     </div>
                     <div className="flex flex-col items-center gap-1.5" title="Nullable">
@@ -213,7 +213,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                       <Checkbox
                         checked={col.isNullable}
                         onCheckedChange={(checked) => updateColumn(index, { isNullable: !!checked })}
-                        className="border-edge data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
+                        className="border-edge data-[state=checked]:bg-hue-blue-tint data-[state=checked]:border-hue-blue-tint"
                       />
                     </div>
                     <div className="flex flex-col items-center gap-1.5" title="Unique">
@@ -221,7 +221,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                       <Checkbox
                         checked={col.isUnique}
                         onCheckedChange={(checked) => updateColumn(index, { isUnique: !!checked })}
-                        className="border-edge data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
+                        className="border-edge data-[state=checked]:bg-hue-purple-tint data-[state=checked]:border-hue-purple-tint"
                       />
                     </div>
                   </div>
@@ -229,7 +229,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-fg-subtle hover:text-red-400 hover:bg-red-500/10 mb-0.5"
+                    className="h-8 w-8 text-fg-subtle hover:text-danger hover:bg-danger-tint/10 mb-0.5"
                     onClick={() => removeColumn(index)}
                   >
                     <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5" />
@@ -243,12 +243,12 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
           <div className="p-4 rounded-lg bg-black border border-hairline font-mono">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-blue-500" />
+                <div className="w-2 h-2 rounded-full bg-brand-tint" />
                 <span className="text-xs font-medium text-fg-muted">SQL Preview</span>
               </div>
               <span className="text-[0.625rem] text-fg-faint">Auto-generated</span>
             </div>
-            <pre className="text-xs text-blue-400/80 whitespace-pre-wrap leading-relaxed">
+            <pre className="text-xs text-brand/80 whitespace-pre-wrap leading-relaxed">
               {generateSQL() || "-- Name your table to see SQL"}
             </pre>
           </div>
@@ -261,7 +261,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
           <Button
             onClick={handleCreate}
             disabled={isSubmitting || !tableName}
-            className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium gap-2 px-6"
+            className="bg-brand-solid hover:bg-brand-solid-hover text-white text-xs font-medium gap-2 px-6"
           >
             {isSubmitting ? (
               <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" />

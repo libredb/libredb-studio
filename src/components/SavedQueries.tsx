@@ -55,7 +55,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
             placeholder="Search saved queries..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-8 h-8 bg-fill border-hairline-strong text-xs focus:ring-blue-500/20"
+            className="pl-8 h-8 bg-fill border-hairline-strong text-xs focus:ring-brand-tint/20"
           />
         </div>
       </div>
@@ -81,7 +81,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
                           whole card clickable while nested action buttons stay above it */}
                       <button
                         type="button"
-                        className="text-blue-400 group-hover:text-blue-300 transition-colors cursor-pointer text-left after:absolute after:inset-0"
+                        className="text-brand group-hover:text-brand-bright transition-colors cursor-pointer text-left after:absolute after:inset-0"
                         onClick={() => onSelectQuery(q.query)}
                       >
                         {q.name}
@@ -103,7 +103,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
                       variant="ghost"
                       size="icon"
                       aria-label={`Delete ${q.name}`}
-                      className="h-6 w-6 text-fg-muted hover:text-red-400"
+                      className="h-6 w-6 text-fg-muted hover:text-danger"
                       onClick={(e) => handleDelete(q.id, e)}
                     >
                       <Trash2 strokeWidth={1.5} className="w-3 h-3" />
@@ -117,7 +117,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
 
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-[0.625rem] font-medium text-blue-400">
+                    <span className="px-1.5 py-0.5 rounded bg-brand-tint/10 border border-brand-tint/20 text-[0.625rem] font-medium text-brand">
                       {q.connectionType}
                     </span>
                     {q.tags?.map((tag) => (

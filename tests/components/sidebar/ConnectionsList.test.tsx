@@ -54,8 +54,8 @@ mock.module("@/lib/db-ui-config", () => ({
     MockDBIcon.displayName = "MockDBIcon";
     return MockDBIcon;
   },
-  getDBConfig: () => ({ icon: () => null, color: "text-blue-400", label: "PostgreSQL", defaultPort: "5432" }),
-  getDBColor: () => "text-blue-400",
+  getDBConfig: () => ({ icon: () => null, color: "text-hue-blue", label: "PostgreSQL", defaultPort: "5432" }),
+  getDBColor: () => "text-hue-blue",
 }));
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
@@ -154,10 +154,10 @@ describe("ConnectionsList", () => {
     const pgItem = Array.from(items).find((el) => el.textContent?.includes("Test PostgreSQL"));
     const mysqlItem = Array.from(items).find((el) => el.textContent?.includes("Test MySQL"));
 
-    // Active item should have bg-blue-600/10 class
-    expect(pgItem?.className.includes("bg-blue-600/10")).toBe(true);
+    // Active item should have bg-brand-solid/10 class
+    expect(pgItem?.className.includes("bg-brand-solid/10")).toBe(true);
     // Inactive item should not
-    expect(mysqlItem?.className.includes("bg-blue-600/10")).toBeFalsy();
+    expect(mysqlItem?.className.includes("bg-brand-solid/10")).toBeFalsy();
   });
 
   test("onAddConnection fires from empty state button", () => {

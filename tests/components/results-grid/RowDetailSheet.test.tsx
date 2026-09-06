@@ -177,8 +177,8 @@ describe("results-grid/RowDetailSheet", () => {
     // Click the first copy button (for "id" field)
     fireEvent.click(copyButtons[0]!);
 
-    // After copy, the Check icon (emerald-400 colored) should replace the Copy icon
-    await waitFor(() => expect(container.querySelector(".text-emerald-400")).not.toBeNull());
+    // After copy, the Check icon (success token) should replace the Copy icon
+    await waitFor(() => expect(container.querySelector(".text-success")).not.toBeNull());
   });
 
   // B43: both of these labels used to flip in the same statement that started the write,
@@ -202,8 +202,8 @@ describe("results-grid/RowDetailSheet", () => {
     );
     fireEvent.click(copyButtons[0]!);
 
-    await waitFor(() => expect(container.querySelector(".text-amber-400")).not.toBeNull());
-    expect(container.querySelector(".text-emerald-400")).toBeNull();
+    await waitFor(() => expect(container.querySelector(".text-warning")).not.toBeNull());
+    expect(container.querySelector(".text-success")).toBeNull();
   });
 
   test("Copy JSON says Copied once the write has reported one", async () => {

@@ -208,7 +208,7 @@ export function DataProfiler({
         */}
         <div className="relative z-10 shrink-0 flex items-center justify-between gap-2 px-5 py-3 border-b border-hairline">
           <div className="flex min-w-0 items-center gap-2">
-            <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
+            <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0 text-hue-cyan" />
             <span className="text-xs font-medium text-fg shrink-0">Data Profiler</span>
             <span className="text-xs text-fg-muted font-mono truncate">{tableName}</span>
           </div>
@@ -231,7 +231,7 @@ export function DataProfiler({
           )}
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-400 flex items-center gap-2">
+            <div className="bg-danger-tint/10 border border-danger-tint/20 rounded-lg p-3 text-xs text-danger flex items-center gap-2">
               <CircleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
               {error}
             </div>
@@ -267,12 +267,12 @@ export function DataProfiler({
                   <div key={col.name} className="bg-surface rounded-lg p-3 border border-hairline">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <Hash strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
+                        <Hash strokeWidth={1.5} className="w-3 h-3 text-hue-blue" />
                         <span className="text-xs font-medium text-fg">{col.name}</span>
                         {col.type && <span className="text-xs text-fg-muted font-mono">{col.type}</span>}
                         {sensitiveColumnNames.has(col.name) && (
                           <span title="Sensitive column - values masked">
-                            <Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400" />
+                            <Lock strokeWidth={1.5} className="w-3 h-3 text-hue-purple" />
                           </span>
                         )}
                       </div>
@@ -280,7 +280,7 @@ export function DataProfiler({
                     </div>
 
                     {col.error ? (
-                      <p className="text-xs text-amber-400">{col.error}</p>
+                      <p className="text-xs text-warning">{col.error}</p>
                     ) : (
                       <>
                         {/* Null bar */}
@@ -290,10 +290,10 @@ export function DataProfiler({
                               className={cn(
                                 "h-full rounded-full transition-all",
                                 col.nullPercent > 50
-                                  ? "bg-red-500"
+                                  ? "bg-danger-tint"
                                   : col.nullPercent > 20
-                                    ? "bg-amber-500"
-                                    : "bg-emerald-500",
+                                    ? "bg-warning-tint"
+                                    : "bg-success-tint",
                               )}
                               style={{ width: `${100 - col.nullPercent}%` }}
                             />
@@ -302,10 +302,10 @@ export function DataProfiler({
                             className={cn(
                               "text-xs font-mono w-10 text-right",
                               col.nullPercent > 50
-                                ? "text-red-400"
+                                ? "text-danger"
                                 : col.nullPercent > 20
-                                  ? "text-amber-400"
-                                  : "text-emerald-400",
+                                  ? "text-warning"
+                                  : "text-success",
                             )}
                           >
                             {col.nullPercent}% null
@@ -370,11 +370,11 @@ export function DataProfiler({
 
               {/* AI Summary */}
               {(aiSummary || isAiLoading) && (
-                <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-lg p-4">
+                <div className="bg-hue-cyan-tint/5 border border-hue-cyan-tint/10 rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-2">
-                    <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
-                    <span className="text-xs font-medium text-cyan-400">AI Analysis</span>
-                    {isAiLoading && <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin text-cyan-400" />}
+                    <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-cyan" />
+                    <span className="text-xs font-medium text-hue-cyan">AI Analysis</span>
+                    {isAiLoading && <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin text-hue-cyan" />}
                   </div>
                   {aiSummary && (
                     <div className="text-xs text-fg-tertiary leading-relaxed whitespace-pre-wrap">{aiSummary}</div>

@@ -38,7 +38,7 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
       <DialogContent className="bg-raised border-hairline-strong text-fg-secondary sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle className="text-fg flex items-center gap-2">
-            <Bookmark strokeWidth={1.5} className="w-5 h-5 text-blue-500" /> Save Query
+            <Bookmark strokeWidth={1.5} className="w-5 h-5 text-brand" /> Save Query
           </DialogTitle>
           <DialogDescription className="text-fg-muted">
             Give your query a name and description to find it easily later.
@@ -55,7 +55,7 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Monthly Active Users"
-              className="bg-fill border-hairline-strong focus:ring-blue-500/20"
+              className="bg-fill border-hairline-strong focus:ring-brand-tint/20"
             />
           </div>
           <div className="grid gap-2">
@@ -67,7 +67,7 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="What does this query do?"
-              className="bg-fill border-hairline-strong focus:ring-blue-500/20 min-h-[80px]"
+              className="bg-fill border-hairline-strong focus:ring-brand-tint/20 min-h-[80px]"
             />
           </div>
           <div className="grid gap-2">
@@ -79,7 +79,7 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
               value={tagsInput}
               onChange={(e) => setTagsInput(e.target.value)}
               placeholder="reports, analytics, users"
-              className="bg-fill border-hairline-strong focus:ring-blue-500/20"
+              className="bg-fill border-hairline-strong focus:ring-brand-tint/20"
             />
           </div>
           <div className="mt-2">
@@ -99,7 +99,7 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
           <Button
             onClick={handleSave}
             disabled={!name}
-            className="bg-blue-600 hover:bg-blue-500 text-white font-medium"
+            className="bg-brand-solid hover:bg-brand-solid-hover text-white font-medium"
           >
             Save Query
           </Button>

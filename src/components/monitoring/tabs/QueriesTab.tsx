@@ -63,7 +63,7 @@ const STAT_CARDS: readonly StatCard[] = [
     title: "Listed queries over 1s",
     icon: ({ overOneSecond }) => (
       <TriangleAlert
-        className={`h-3 w-3 sm:h-4 sm:w-4 ${overOneSecond > 0 ? "text-yellow-500" : "text-muted-foreground"}`}
+        className={`h-3 w-3 sm:h-4 sm:w-4 ${overOneSecond > 0 ? "text-hue-yellow" : "text-muted-foreground"}`}
       />
     ),
     value: ({ statsKnown, overOneSecond }) => (statsKnown ? String(overOneSecond) : "N/A"),

@@ -27,9 +27,9 @@ interface CommunitySectionProps {
  */
 const SOCIAL_ANCHOR_CLASSES = {
   desktop:
-    "flex h-8 w-8 items-center justify-center rounded-lg bg-fill border border-hairline text-fg-tertiary hover:bg-fill-strong hover:border-hairline-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 transition-all duration-200",
+    "flex h-8 w-8 items-center justify-center rounded-lg bg-fill border border-hairline text-fg-tertiary hover:bg-fill-strong hover:border-hairline-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-tint/50 transition-all duration-200",
   mobile:
-    "flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 transition-colors",
+    "flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-tint/50 transition-colors",
 } as const;
 
 /**
@@ -79,7 +79,7 @@ function DesktopCommunity() {
             href={REPO_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 rounded-sm transition-colors duration-200"
+            className="hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-tint/50 rounded-sm transition-colors duration-200"
           >
             github.com/libredb/libredb-studio
           </a>
@@ -105,7 +105,7 @@ function MobileCommunity() {
           href={REPO_URL}
           target="_blank"
           rel="noopener noreferrer"
-          className="hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 rounded-sm transition-colors"
+          className="hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-tint/50 rounded-sm transition-colors"
         >
           github.com/libredb/libredb-studio
         </a>

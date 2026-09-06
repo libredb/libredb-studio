@@ -168,9 +168,9 @@ describe("DataProfiler", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  // ── Null bar coloring: emerald for <20% ──────────────────────────────────
+  // ── Null bar coloring: the success token for <20% ────────────────────────
 
-  test("null bar uses emerald color when nullPercent < 20", async () => {
+  test("null bar uses the success token when nullPercent < 20", async () => {
     const profileWithLowNull = {
       tableName: "users",
       totalRows: 100,
@@ -202,19 +202,19 @@ describe("DataProfiler", () => {
       expect(within(container).queryByText("Column Profiles")).not.toBeNull();
     });
 
-    // The null bar inner div should have emerald class
-    const nullBar = container.querySelector(".bg-emerald-500");
+    // The null bar inner div should carry the success tint
+    const nullBar = container.querySelector(".bg-success-tint");
     expect(nullBar).not.toBeNull();
 
-    // The percent label should also be emerald
+    // The percent label should also carry the success token
     const nullLabel = within(container).queryByText("10% null");
     expect(nullLabel).not.toBeNull();
-    expect(nullLabel!.className).toContain("text-emerald-400");
+    expect(nullLabel!.className).toContain("text-success");
   });
 
-  // ── Null bar coloring: amber for 20-50% ──────────────────────────────────
+  // ── Null bar coloring: the warning token for 20-50% ──────────────────────
 
-  test("null bar uses amber color when nullPercent is between 20 and 50", async () => {
+  test("null bar uses the warning token when nullPercent is between 20 and 50", async () => {
     const profileWithMidNull = {
       tableName: "users",
       totalRows: 100,
@@ -246,17 +246,17 @@ describe("DataProfiler", () => {
       expect(within(container).queryByText("Column Profiles")).not.toBeNull();
     });
 
-    const nullBar = container.querySelector(".bg-amber-500");
+    const nullBar = container.querySelector(".bg-warning-tint");
     expect(nullBar).not.toBeNull();
 
     const nullLabel = within(container).queryByText("35% null");
     expect(nullLabel).not.toBeNull();
-    expect(nullLabel!.className).toContain("text-amber-400");
+    expect(nullLabel!.className).toContain("text-warning");
   });
 
-  // ── Null bar coloring: red for >50% ──────────────────────────────────────
+  // ── Null bar coloring: the danger token for >50% ─────────────────────────
 
-  test("null bar uses red color when nullPercent > 50", async () => {
+  test("null bar uses the danger token when nullPercent > 50", async () => {
     const profileWithHighNull = {
       tableName: "users",
       totalRows: 100,
@@ -288,12 +288,12 @@ describe("DataProfiler", () => {
       expect(within(container).queryByText("Column Profiles")).not.toBeNull();
     });
 
-    const nullBar = container.querySelector(".bg-red-500");
+    const nullBar = container.querySelector(".bg-danger-tint");
     expect(nullBar).not.toBeNull();
 
     const nullLabel = within(container).queryByText("75% null");
     expect(nullLabel).not.toBeNull();
-    expect(nullLabel!.className).toContain("text-red-400");
+    expect(nullLabel!.className).toContain("text-danger");
   });
 
   // ── Min/Max value display ────────────────────────────────────────────────
@@ -431,8 +431,8 @@ describe("DataProfiler", () => {
       expect(view.queryByText("Connection refused")).not.toBeNull();
     });
 
-    // Error should be in a red-styled container
-    const errorDiv = container.querySelector(".bg-red-500\\/10");
+    // Error should be in a danger-styled container
+    const errorDiv = container.querySelector(".bg-danger-tint\\/10");
     expect(errorDiv).not.toBeNull();
   });
 
@@ -469,10 +469,10 @@ describe("DataProfiler", () => {
       expect(view.queryByText("Permission denied for column")).not.toBeNull();
     });
 
-    // Error text should have amber color class
+    // Error text should carry the warning token
     const errorEl = view.queryByText("Permission denied for column");
     expect(errorEl).not.toBeNull();
-    expect(errorEl!.className).toContain("text-amber-400");
+    expect(errorEl!.className).toContain("text-warning");
   });
 
   // ── Sensitive column masking (lock icon + masked values) ─────────────────

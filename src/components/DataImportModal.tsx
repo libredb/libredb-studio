@@ -300,7 +300,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
       <DialogContent className="bg-surface border-hairline-strong text-fg max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Upload strokeWidth={1.5} className="w-5 h-5 text-blue-400" />
+            <Upload strokeWidth={1.5} className="w-5 h-5 text-brand" />
             {"Import Data"}
             {fileName && <span className="text-xs text-fg-muted font-normal ml-2">{fileName}</span>}
           </DialogTitle>
@@ -314,9 +314,9 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                 className={cn(
                   "flex items-center gap-1.5 text-xs font-mediumr",
                   step === s
-                    ? "text-blue-400"
+                    ? "text-brand"
                     : idx < ["upload", "preview", "configure", "ready"].indexOf(step)
-                      ? "text-emerald-400"
+                      ? "text-success"
                       : "text-fg-subtle",
                 )}
               >
@@ -324,9 +324,9 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   className={cn(
                     "w-5 h-5 rounded-full flex items-center justify-center text-[0.625rem]",
                     step === s
-                      ? "bg-blue-500/20 border border-blue-500/40"
+                      ? "bg-brand-tint/20 border border-brand-tint/40"
                       : idx < ["upload", "preview", "configure", "ready"].indexOf(step)
-                        ? "bg-emerald-500/20 border border-emerald-500/40"
+                        ? "bg-success-tint/20 border border-success-tint/40"
                         : "bg-fill border border-hairline-strong",
                   )}
                 >
@@ -354,7 +354,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
                 onClick={() => fileInputRef.current?.click()}
-                className="w-full border-2 border-dashed border-hairline-strong rounded-xl p-12 text-center cursor-pointer hover:border-blue-500/30 hover:bg-blue-500/5 transition-all"
+                className="w-full border-2 border-dashed border-hairline-strong rounded-xl p-12 text-center cursor-pointer hover:border-brand-tint/30 hover:bg-brand-tint/5 transition-all"
               >
                 <Upload strokeWidth={1.5} className="w-10 h-10 text-fg-subtle mx-auto mb-4" />
                 <p className="text-xs text-fg-tertiary mb-1">Drop a file here or click to browse</p>
@@ -381,9 +381,9 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                 }}
               />
               {error && (
-                <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2">
-                  <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                  <span className="text-xs text-red-400">{error}</span>
+                <div className="mt-4 p-3 rounded-lg bg-danger-tint/10 border border-danger-tint/20 flex items-center gap-2">
+                  <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-danger shrink-0" />
+                  <span className="text-xs text-danger">{error}</span>
                 </div>
               )}
             </div>
@@ -395,9 +395,9 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   {fileType === "json" ? (
-                    <FileBraces strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
+                    <FileBraces strokeWidth={1.5} className="w-5 h-5 text-hue-amber" />
                   ) : (
-                    <FileText strokeWidth={1.5} className="w-5 h-5 text-emerald-400" />
+                    <FileText strokeWidth={1.5} className="w-5 h-5 text-hue-emerald" />
                   )}
                   <div>
                     <p className="text-xs font-medium">{fileName}</p>
@@ -458,7 +458,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
               <div className="flex justify-end">
                 <Button
                   size="sm"
-                  className="bg-blue-600 hover:bg-blue-500 h-8 text-xs gap-1"
+                  className="bg-brand-solid hover:bg-brand-solid-hover h-8 text-xs gap-1"
                   onClick={() => setStep("configure")}
                 >
                   Configure Import <ArrowRight strokeWidth={1.5} className="w-3 h-3" />
@@ -478,7 +478,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                     className={cn(
                       "flex-1 px-3 py-2 rounded-lg border text-xs text-left transition-all",
                       !createNewTable
-                        ? "border-blue-500/40 bg-blue-500/10 text-blue-400"
+                        ? "border-brand-tint/40 bg-brand-tint/10 text-brand"
                         : "border-hairline-strong text-fg-muted hover:bg-fill",
                     )}
                     onClick={() => setCreateNewTable(false)}
@@ -490,7 +490,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                     className={cn(
                       "flex-1 px-3 py-2 rounded-lg border text-xs text-left transition-all",
                       createNewTable
-                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                        ? "border-success-tint/40 bg-success-tint/10 text-success"
                         : "border-hairline-strong text-fg-muted hover:bg-fill",
                     )}
                     onClick={() => setCreateNewTable(true)}
@@ -523,7 +523,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                     id="import-target-table"
                     value={targetTable}
                     onChange={(e) => setTargetTable(e.target.value)}
-                    className="w-full mt-1 bg-overlay border border-hairline-strong rounded-md px-3 py-2 text-xs text-fg-secondary outline-none focus:border-blue-500/40"
+                    className="w-full mt-1 bg-overlay border border-hairline-strong rounded-md px-3 py-2 text-xs text-fg-secondary outline-none focus:border-brand-tint/40"
                   >
                     <option value="">-- Select a table --</option>
                     {tables.map((t) => (
@@ -576,7 +576,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                 </Button>
                 <Button
                   size="sm"
-                  className="bg-blue-600 hover:bg-blue-500 h-8 text-xs gap-1"
+                  className="bg-brand-solid hover:bg-brand-solid-hover h-8 text-xs gap-1"
                   onClick={() => setStep("ready")}
                   disabled={!createNewTable && !targetTable}
                 >
@@ -633,7 +633,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   />
                   <Button
                     size="sm"
-                    className="bg-emerald-600 hover:bg-emerald-500 h-8 text-xs gap-1"
+                    className="bg-success-solid hover:bg-success-solid-hover h-8 text-xs gap-1"
                     onClick={handleImport}
                     disabled={isImporting}
                   >

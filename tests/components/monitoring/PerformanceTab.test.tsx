@@ -82,7 +82,7 @@ describe("PerformanceTab", () => {
     expect(card.textContent).toContain("%");
     expect(card.querySelectorAll('[data-slot="progress"]').length).toBe(1);
     expect(card.textContent).toContain("Excellent");
-    expect(card.querySelector("svg")?.getAttribute("class")).toContain("text-green-500");
+    expect(card.querySelector("svg")?.getAttribute("class")).toContain("text-success");
   });
 
   test("reports an unmeasured cache hit ratio as unavailable instead of 0%", () => {
@@ -105,10 +105,10 @@ describe("PerformanceTab", () => {
     for (const rating of ["Excellent", "Good", "Fair", "Poor"]) {
       expect(card.textContent).not.toContain(rating);
     }
-    // Absence is not a fault: no red icon, no red or yellow border, no advice.
+    // Absence is not a fault: no danger icon, no danger or warning border, no advice.
     expect(card.querySelector("svg")?.getAttribute("class")).toContain("text-muted-foreground");
-    expect(card.className).not.toContain("red");
-    expect(card.className).not.toContain("yellow");
+    expect(card.className).not.toContain("danger");
+    expect(card.className).not.toContain("warning");
     expect(queryByText("Low Cache Hit")).toBeNull();
     expect(queryByText("Performing well!")).toBeNull();
   });
@@ -176,10 +176,10 @@ describe("PerformanceTab", () => {
     for (const rating of ["Excellent", "Good", "Fair", "Poor"]) {
       expect(card.textContent).not.toContain(rating);
     }
-    // Absence is not a fault: no red icon, no red or yellow border.
+    // Absence is not a fault: no danger icon, no danger or warning border.
     expect(card.querySelector("svg")?.getAttribute("class")).toContain("text-muted-foreground");
-    expect(card.className).not.toContain("red");
-    expect(card.className).not.toContain("yellow");
+    expect(card.className).not.toContain("danger");
+    expect(card.className).not.toContain("warning");
   });
 
   test("reports unmeasured deadlocks as unavailable instead of a healthy zero", () => {
@@ -193,10 +193,10 @@ describe("PerformanceTab", () => {
     expect(card.textContent).not.toContain("None detected");
     expect(card.textContent).not.toContain("Healthy");
     expect(card.textContent).not.toContain("Attention");
-    // A green icon is a verdict too.
+    // A success-coloured icon is a verdict too.
     expect(card.querySelector("svg")?.getAttribute("class")).toContain("text-muted-foreground");
-    expect(card.className).not.toContain("red");
-    expect(card.className).not.toContain("yellow");
+    expect(card.className).not.toContain("danger");
+    expect(card.className).not.toContain("warning");
   });
 
   // The pin that keeps absence and zero from being collapsed back together: mongodb.ts:856,
@@ -219,7 +219,7 @@ describe("PerformanceTab", () => {
     expect(deadlocks.textContent).toContain("None detected");
     expect(deadlocks.textContent).toContain("Healthy");
     expect(deadlocks.textContent).not.toContain("N/A");
-    expect(deadlocks.querySelector("svg")?.getAttribute("class")).toContain("text-green-500");
+    expect(deadlocks.querySelector("svg")?.getAttribute("class")).toContain("text-success");
   });
 
   test("renders the buffer and deadlock trends as not measured when no sample carries them", () => {

@@ -97,8 +97,8 @@ describe("QueryHistory", () => {
     const props = createDefaultProps();
     const { container } = render(<QueryHistory {...props} />);
 
-    const successIndicators = container.querySelectorAll(".bg-emerald-500\\/10");
-    const errorIndicators = container.querySelectorAll(".bg-red-500\\/10");
+    const successIndicators = container.querySelectorAll(".bg-success-tint\\/10");
+    const errorIndicators = container.querySelectorAll(".bg-danger-tint\\/10");
 
     expect(successIndicators.length).toBeGreaterThan(0);
     expect(errorIndicators.length).toBeGreaterThan(0);
@@ -427,7 +427,7 @@ describe("QueryHistory", () => {
 
   // ── Duration > 500ms amber styling ────────────────────────────────────────
 
-  test("duration greater than 500ms shows amber styling", () => {
+  test("duration greater than 500ms shows the warning token styling", () => {
     const slowHistory = [
       {
         id: "h-slow",
@@ -446,10 +446,10 @@ describe("QueryHistory", () => {
     const props = createDefaultProps();
     const { container } = render(<QueryHistory {...props} />);
 
-    // The 750ms duration cell should have amber styling
-    const amberBadge = container.querySelector(".text-amber-400.bg-amber-400\\/10");
-    expect(amberBadge).not.toBeNull();
-    expect(amberBadge!.textContent).toBe("750ms");
+    // The 750ms duration cell should carry the warning token styling
+    const warningBadge = container.querySelector(".text-warning.bg-warning\\/10");
+    expect(warningBadge).not.toBeNull();
+    expect(warningBadge!.textContent).toBe("750ms");
   });
 
   // ── Error message display for failed queries ──────────────────────────────

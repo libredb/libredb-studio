@@ -18,7 +18,7 @@
  *     what browsers do, and what makes the result equal Tailwind's own published
  *     hexes. Skipping the clip silently shifts every ratio.
  *
- *  2. An opacity modifier (`bg-accent-tint/15`) is not a colour, it is a colour
+ *  2. An opacity modifier (`bg-brand-tint/15`) is not a colour, it is a colour
  *     that has to be composited over whatever is behind it before it can be
  *     measured. `text-x on bg-y/15` is a question about the COMPOSITE, and it is
  *     the question #402 turned on: blue-300 over `blue-500/15` is 9.48:1 on the
@@ -37,12 +37,10 @@ export type Rgb = readonly [number, number, number];
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 
 /** sRGB transfer function, gamma-encoded → linear. */
-const toLinear = (channel: number) =>
-  channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+const toLinear = (channel: number) => (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
 
 /** sRGB transfer function, linear → gamma-encoded. */
-const toGamma = (channel: number) =>
-  channel <= 0.0031308 ? 12.92 * channel : 1.055 * channel ** (1 / 2.4) - 0.055;
+const toGamma = (channel: number) => (channel <= 0.0031308 ? 12.92 * channel : 1.055 * channel ** (1 / 2.4) - 0.055);
 
 /**
  * Oklab → linear sRGB (Björn Ottosson's matrices). Kept separate from the oklch
@@ -70,9 +68,22 @@ export function toOklab([r, g, b]: Rgb): Rgb {
   const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
   return [
     0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
-    1.9779984951 * l - 0.2429228246 * m - 0.4505937099 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
     0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
   ];
+}
+
+/**
+ * A round trip through the two matrices above, so a transcription slip in either
+ * one fails loudly instead of quietly measuring distance in a space that is not
+ * Oklab. The a-row cost this file a day: `-2.4285922050` was typed as
+ * `-0.2429228246` and the sign on the s term flipped, which left every ratio
+ * correct (they never touch Oklab) and every separation figure wrong.
+ */
+export function oklabRoundTripError(rgb: Rgb): number {
+  const [L, a, b] = toOklab(rgb);
+  const back = oklabToLinearSrgb(L, a, b).map((channel) => toGamma(clamp01(channel))) as unknown as Rgb;
+  return Math.max(...rgb.map((channel, i) => Math.abs(channel - back[i])));
 }
 
 /**
@@ -90,16 +101,18 @@ export function deltaEOk(a: Rgb, b: Rgb): number {
 /** oklch(L% C H) → gamma-encoded sRGB, clipped to gamut the way a browser clips. */
 export function oklchToRgb(lightnessPercent: number, chroma: number, hueDegrees: number): Rgb {
   const hue = (hueDegrees * Math.PI) / 180;
-  const linear = oklabToLinearSrgb(
-    lightnessPercent / 100,
-    chroma * Math.cos(hue),
-    chroma * Math.sin(hue),
-  );
+  const linear = oklabToLinearSrgb(lightnessPercent / 100, chroma * Math.cos(hue), chroma * Math.sin(hue));
   return linear.map((channel) => toGamma(clamp01(channel))) as unknown as Rgb;
 }
 
 export const toHex = (rgb: Rgb): string =>
-  `#${rgb.map((channel) => Math.round(channel * 255).toString(16).padStart(2, "0")).join("")}`;
+  `#${rgb
+    .map((channel) =>
+      Math.round(channel * 255)
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
 
 /**
  * Parse the colour syntaxes the token layer actually writes: `#rgb`, `#rrggbb`,
