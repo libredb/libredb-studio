@@ -719,6 +719,18 @@ function AIExplainTab({
 
 type ExplainTab = "insights" | "tree" | "raw" | "ai";
 
+/**
+ * The raw tab shows what the engine sent. That is JSON for every format but one:
+ * `mysql-text` stores the plan as PLAIN TEXT, because the MySQL-wire relatives that
+ * refuse `EXPLAIN FORMAT=JSON` print a text or tabular plan instead (measured
+ * 2026-09-06: StarRocks 3.3.22 `EXPLAIN SELECT 1` answers 13 rows of one text column,
+ * Apache Doris 4.1.3 answers 17). Stringifying that would show one quoted line with
+ * escaped newlines instead of the plan.
+ */
+function formatRawPlan(raw: unknown): string {
+  return typeof raw === "string" ? raw : JSON.stringify(raw, null, 2);
+}
+
 // First entry is the kind's default tab. No "insights" for tree plans —
 // analyzePlan's heuristics key off postgres-only fields (Actual Rows, Total
 // Cost, buffer stats) that sqlite-queryplan and friends never produce.
@@ -976,7 +988,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
         {activeTab === "raw" && (
           <div className="p-4">
             <pre className="text-xs font-mono text-fg-tertiary bg-fill-subtle rounded-lg p-4 overflow-auto border border-hairline">
-              {JSON.stringify(input.kind === "tree" ? input.raw : postgresPlan, null, 2)}
+              {formatRawPlan(input.kind === "tree" ? input.raw : postgresPlan)}
             </pre>
           </div>
         )}

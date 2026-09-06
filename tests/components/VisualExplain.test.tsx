@@ -911,6 +911,21 @@ describe("tree render model (sqlite-queryplan)", () => {
     expect(getByText(/"detail": "SCAN employee"/)).toBeTruthy();
   });
 
+  test("raw tab prints a string raw plan verbatim (mysql-text)", () => {
+    // mysql-text stores the plan as the engine printed it, not as JSON: measured
+    // 2026-09-06, `EXPLAIN SELECT 1` on StarRocks 3.3.22 answers one column of plain
+    // text. JSON.stringify would show it wrapped in quotes with escaped newlines.
+    const textPlan = {
+      kind: "tree" as const,
+      root: { label: "EXPLAIN", children: [{ label: "PLAN FRAGMENT 0", children: [] }] },
+      raw: "PLAN FRAGMENT 0\n  RESULT SINK",
+    };
+    const { getByText, queryByText } = render(<VisualExplain plan={textPlan} query="SELECT 1" databaseType="mysql" />);
+    fireEvent.click(queryByText("raw")!);
+    const pre = getByText(/PLAN FRAGMENT 0/);
+    expect(pre.textContent).toBe("PLAN FRAGMENT 0\n  RESULT SINK");
+  });
+
   test("legacy array prop still renders the postgres pipeline", () => {
     // reuse the file's existing postgres plan fixture through the UNCHANGED array prop
     // and assert the insights tab is present — proves the widening is additive.

@@ -172,6 +172,7 @@ export function maintenanceControl(
 export type ExplainFormat =
   | "postgres-json"
   | "mysql-json"
+  | "mysql-text"
   | "sqlite-queryplan"
   | "couchbase-json"
   | "clickhouse-json"

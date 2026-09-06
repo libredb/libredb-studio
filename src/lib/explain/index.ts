@@ -2,6 +2,7 @@ import type { ExplainFormat } from "@/lib/db/types";
 import type { ExplainPlanInput, ExplainStrategy, StoredExplainPlan } from "./types";
 import { postgresJsonStrategy } from "./postgres-json";
 import { mysqlJsonStrategy } from "./mysql-json";
+import { mysqlTextStrategy } from "./mysql-text";
 import { sqliteQueryplanStrategy } from "./sqlite-queryplan";
 import { couchbaseJsonStrategy } from "./couchbase-json";
 import { clickhouseJsonStrategy } from "./clickhouse-json";
@@ -17,6 +18,7 @@ export type { ExplainPlanInput } from "./types";
 const registry: Record<ExplainFormat, ExplainStrategy> = {
   "postgres-json": postgresJsonStrategy,
   "mysql-json": mysqlJsonStrategy,
+  "mysql-text": mysqlTextStrategy,
   "sqlite-queryplan": sqliteQueryplanStrategy,
   "couchbase-json": couchbaseJsonStrategy,
   "clickhouse-json": clickhouseJsonStrategy,

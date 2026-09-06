@@ -10,6 +10,10 @@ describe("getExplainStrategy", () => {
     expect(getExplainStrategy("mysql-json")?.format).toBe("mysql-json");
   });
 
+  test("resolves mysql-text", () => {
+    expect(getExplainStrategy("mysql-text")?.format).toBe("mysql-text");
+  });
+
   test("returns null for undefined (provider without explain support)", () => {
     expect(getExplainStrategy(undefined)).toBeNull();
   });
