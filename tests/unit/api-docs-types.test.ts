@@ -130,11 +130,13 @@ describe("docs/API_DOCS.md Data Types blocks match the source interfaces", () =>
     expect(API_DOCS).toContain("## Data Types");
   });
 
-  test.each(SHAPES)("$name doc fields equal $source", ({ name, source }) => {
-    const fromDocs = topLevelFields(DATA_TYPES, name);
-    const fromSource = topLevelFields(read(source), name);
-    expect(fromDocs.length).toBeGreaterThan(0);
-    expect(fromSource.length).toBeGreaterThan(0);
-    expect(fromDocs).toEqual(fromSource);
-  });
+  for (const { name, source } of SHAPES) {
+    test(`${name} doc fields equal ${source}`, () => {
+      const fromDocs = topLevelFields(DATA_TYPES, name);
+      const fromSource = topLevelFields(read(source), name);
+      expect(fromDocs.length).toBeGreaterThan(0);
+      expect(fromSource.length).toBeGreaterThan(0);
+      expect(fromDocs).toEqual(fromSource);
+    });
+  }
 });

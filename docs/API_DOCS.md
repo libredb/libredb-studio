@@ -1267,10 +1267,10 @@ Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ 
 
 The object is one shape on the wire. Fields the server reads from a request body — and that
 change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
-`host`, `port`, `user`, `password`, `database`, `connectionString`, `createdAt`), plus `ssl`,
+`host`, `port`, `user`, `password`, `database`, `connectionString`), plus `ssl`,
 `sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
 `authSource` (MongoDB), `agentUser`, and `agentPassword`. `color`, `environment`, `group`,
-`managed`, and `seedId` are client-side bookkeeping that travel in the same object.
+`managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
 
 ```typescript
 interface DatabaseConnection {
