@@ -911,6 +911,24 @@ describe("tree render model (sqlite-queryplan)", () => {
     expect(getByText(/"detail": "SCAN employee"/)).toBeTruthy();
   });
 
+  test("a tree node's detail is shown, so a text plan's attributes are not dropped", () => {
+    // CockroachDB v26.2.5 prints a plan node's attributes on their own lines under it
+    // (`table: orders@orders_pkey`, `spans: FULL SCAN`), and `postgres-text` folds them
+    // into the node they describe rather than nesting an operator under one of them.
+    // A renderer that shows only the label would throw away most of that plan - and
+    // TiDB's extra EXPLAIN columns with it, which is the same field (#597).
+    const withDetail = {
+      kind: "tree" as const,
+      root: {
+        label: "EXPLAIN",
+        children: [{ label: "\u2022 scan", detail: "table: orders@orders_pkey, spans: FULL SCAN", children: [] }],
+      },
+      raw: "\u2022 scan",
+    };
+    const { getByText } = render(<VisualExplain plan={withDetail} query="SELECT 1" databaseType="postgres" />);
+    expect(getByText("table: orders@orders_pkey, spans: FULL SCAN")).toBeTruthy();
+  });
+
   test("raw tab prints a string raw plan verbatim (mysql-text)", () => {
     // mysql-text stores the plan as the engine printed it, not as JSON: measured
     // 2026-09-06, `EXPLAIN SELECT 1` on StarRocks 3.3.22 answers one column of plain
