@@ -167,7 +167,8 @@ export interface WireCompatibleEngine {
  * on 2026-08-26, and ParadeDB, OrioleDB and Databend from an eighth on 2026-08-27.
  * The nine MySQL-wire relatives were re-measured together on 2026-09-06 for issues
  * #573 and #574, at the wire and then in a browser against the built app, and the
- * outcome per engine is recorded in `docs/providers/mysql.md` section 5.5.
+ * outcome per engine is recorded in `docs/providers/mysql.md` section 5.5 for the
+ * EXPLAIN grammar and section 8 for the SHOW STATUS reads.
  * Names still awaiting an instance are tracked in issue #424, never here: there
  * is no "pending" state on purpose, because a reader cannot tell a pending entry
  * from a probed one. A name that WAS probed and did not earn an entry has no
@@ -369,7 +370,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     caveats: [
       "The version shown is MySQL 5.1: version() returns a fictitious compatibility number, and the real build is only in current_version(), which the provider does not call.",
       "The overview panel renders but publishes no uptime and no connection count: StarRocks answers a bare SHOW STATUS with zero rows and SHOW VARIABLES LIKE 'max_connections' with zero rows, so both read N/A, not published, where they used to read a fabricated 0/151 (browser, 2026-09-06).",
-      "The health request, active sessions and the monitoring dashboard are unavailable: StarRocks has no information_schema.PROCESSLIST, which is the engine's own, and the health read still fails on it (browser, 2026-09-06).",
+      "The health request and the active-session panel are unavailable: StarRocks has no information_schema.PROCESSLIST, which is the engine's own, and the health read still failed on it when it was re-measured in the browser on 2026-09-06. The rest of the monitoring dashboard renders, each panel read independently since 2026-08-24.",
       "Row counts and sizes are always 0: information_schema.TABLES reports 0 rows and 0 bytes for a populated table.",
       "No index information at all: StarRocks exposes no secondary-index catalog, so the object browser and the index panel show none.",
       "The Explain panel renders StarRocks's own text plan: StarRocks does not parse EXPLAIN FORMAT='json', so the provider sends a plain EXPLAIN, which answered a 13-node tree for a constant SELECT (browser, 2026-09-06).",
@@ -450,9 +451,9 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     tier: "partial",
     probedVersion: "SingleStoreDB 9.1.1 (advertises MySQL 5.7.32)",
     caveats: [
-      'Ten of the fifteen surfaces answer. Test Connection, health, the overview and the monitoring dashboard all fail with one engine message, "This command is not supported in the prepared statement protocol yet".',
+      "Ten of the fifteen surfaces answered when this engine was first probed. Four of those failures were ours rather than SingleStore's and are fixed: Test Connection, health, the overview and the monitoring dashboard all failed with one engine message, \"This command is not supported in the prepared statement protocol yet\", until every parameterless statement moved to MySQL's text protocol on 2026-08-24, and all four answer since (browser, 2026-09-06).",
       "The Explain panel renders SingleStore's own text plan: EXPLAIN FORMAT=JSON is still a parse error here, so the provider no longer sends it and asks for a plain EXPLAIN instead (browser, 2026-09-06).",
-      "No version is displayed anywhere, because the panel that carries it is one of the unavailable ones. Were it fixed it would read MySQL 5.7.32, the wire version SingleStore advertises, not SingleStoreDB 9.1.1.",
+      "The version shown is MySQL 5.7.32: now that the overview renders, it displays the wire version SingleStore advertises rather than SingleStoreDB 9.1.1 (browser, 2026-08-24).",
       "Row counts and sizes are missing rather than wrong: a 2000-row table reads rowCount 0 and 0 B in the object browser, the table statistics and the storage panel, against a ground truth of 2000 rows and 77046 bytes measured four independent ways.",
       "SingleStore leaves information_schema.TABLES zeroed and keeps the real numbers elsewhere - SHOW TABLE STATUS, information_schema.OPTIMIZER_STATISTICS.ROW_COUNT and the EXPLAIN plan's est_table_rows - and running ANALYZE does not change what the panels read.",
       "The index panel lists 4 rows for 2 tables against the MySQL baseline's 2: SingleStore auto-creates a shard key on every table and reports it as an index named __SHARDKEY with indexType SHARD, beside PRIMARY.",

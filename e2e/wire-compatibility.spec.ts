@@ -52,7 +52,7 @@ test.describe("Wire compatibility hint", () => {
     await expect(hint).toContainText("StarRocks");
     await expect(hint.getByTestId("wire-compat-tier-StarRocks")).toContainText("partial support");
     // Databend (#424, probed 2026-08-27) is the first MySQL-wire relative to be query-only,
-    // so its suffix is asserted for the same reason Doris's is: the tier is the claim.
+    // so its suffix is asserted for the same reason StarRocks's is: the tier is the claim.
     await expect(hint).toContainText("Databend");
     await expect(hint.getByTestId("wire-compat-tier-Databend")).toContainText("query editor only");
   });
