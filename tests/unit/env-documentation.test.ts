@@ -14,9 +14,19 @@
  * visible decision in review rather than a one-word diff. Anything an operator
  * could reasonably want to set belongs in `.env.example`, not here.
  *
- * Dynamic reads (`process.env[name]`) are out of scope, as #566 says: they
- * cannot be extracted statically, and a guard that pretended otherwise would
- * report a name that is not a name.
+ * Coverage boundary (#609). The extractor resolves three same-file shapes:
+ *
+ * 1. literal `process.env.NAME` / `process.env?.NAME`;
+ * 2. `const X = "NAME"` (exported or not), then `process.env[X]`;
+ * 3. object fields whose value is a bare uppercase string literal, then
+ *    `process.env[<expr>.field]` (the rate-limit bucket table).
+ *
+ * Helper-argument reads such as `getEnvVar("LLM_PROVIDER")` and
+ * `process.env[envVar]` where the name arrives as a parameter stay out of
+ * scope: they need a call-graph, and a regex guard that pretended to have one
+ * would report a name that is not a name. At the time of #609 that left six
+ * names out of reach (HOSTNAME, MY_DB_PASSWORD, and four LLM_*), against
+ * sixteen recovered by shapes 2 and 3.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -37,7 +47,13 @@ const ALLOWLIST: Record<string, string> = {
     "Injected by next.config.ts from package.json at build time; setting it by hand would misreport the version.",
   NEXT_PUBLIC_MANAGED_POLL_MS:
     "Inlined at build time, so a runtime value has no effect. Documented in docs/SEED_CONNECTIONS.md.",
+  VERCEL_DEPLOYMENT_ID:
+    "Injected by the Vercel platform; read only to refuse an implicit hosted backend, never set by an operator.",
 };
+
+/** Env-var-shaped identifiers: starts with a letter, then uppercase / digits / underscore. */
+const ENV_NAME = "[A-Z][A-Z0-9_]*";
+const IDENT = "[A-Za-z_][A-Za-z0-9_]*";
 
 /** Every `.ts`/`.tsx` file under `src/`. */
 const sourceFiles = (dir: string): string[] => {
@@ -53,17 +69,55 @@ const sourceFiles = (dir: string): string[] => {
   return out;
 };
 
-/** Literal `process.env.NAME` reads across `src/`, deduplicated and sorted. */
+/**
+ * Environment variable names read under `src/`, including the two statically
+ * resolvable bracket shapes from #609. Deduplicated and sorted.
+ */
 const readNames = (): string[] => {
   const names = new Set<string>();
-  // Both `process.env.NAME` and the optional-chained `process.env?.NAME` that
-  // logger.ts uses. Dynamic `process.env[name]` reads are out of scope: they
-  // cannot be resolved statically, and reporting the expression as a variable
-  // name would be worse than not reporting it.
-  const pattern = /process[.]env[?]?[.]([A-Za-z_][A-Za-z0-9_]*)/g;
+  // Literal `process.env.NAME` and optional-chained `process.env?.NAME`.
+  const literalPattern = new RegExp(`process[.]env[?]?[.](${IDENT})`, "g");
+  // Same-file `const X = "NAME"` / `export const X = "NAME"`.
+  const constPattern = new RegExp(`(?:export\\s+)?const\\s+(${IDENT})\\s*=\\s*"(${ENV_NAME})"`, "g");
+  // Bracket read of a bare identifier: `process.env[X]` (optional chaining on env allowed).
+  const constReadPattern = new RegExp(`process[.]env[?]?\\[(${IDENT})\\]`, "g");
+  // Object field whose value is a bare uppercase string literal: `maxVar: "RATE_LIMIT_QUERY_MAX"`.
+  const fieldPattern = new RegExp(`(${IDENT})\\s*:\\s*"(${ENV_NAME})"`, "g");
+  // Bracket read through a property: `process.env[spec.maxVar]`.
+  const fieldReadPattern = new RegExp(`process[.]env[?]?\\[${IDENT}[.](${IDENT})\\]`, "g");
+
   for (const file of sourceFiles(path.join(ROOT, "src"))) {
-    for (const match of readFileSync(file, "utf8").matchAll(pattern)) {
+    const source = readFileSync(file, "utf8");
+
+    for (const match of source.matchAll(literalPattern)) {
       names.add(match[1]);
+    }
+
+    const constNames = new Map<string, string>();
+    for (const match of source.matchAll(constPattern)) {
+      constNames.set(match[1], match[2]);
+    }
+    for (const match of source.matchAll(constReadPattern)) {
+      const resolved = constNames.get(match[1]);
+      if (resolved !== undefined) names.add(resolved);
+    }
+
+    const fieldValues = new Map<string, Set<string>>();
+    for (const match of source.matchAll(fieldPattern)) {
+      const field = match[1];
+      const value = match[2];
+      let bucket = fieldValues.get(field);
+      if (bucket === undefined) {
+        bucket = new Set();
+        fieldValues.set(field, bucket);
+      }
+      bucket.add(value);
+    }
+    for (const match of source.matchAll(fieldReadPattern)) {
+      const values = fieldValues.get(match[1]);
+      if (values !== undefined) {
+        for (const value of values) names.add(value);
+      }
     }
   }
   return [...names].sort();
@@ -87,6 +141,12 @@ describe("environment variable documentation", () => {
     expect(names.length).toBeGreaterThan(20);
     expect(names).toContain("LOG_LEVEL");
     expect(names).toContain("JWT_SECRET");
+    // Shape 2 (#609): same-file const alias, then process.env[X].
+    expect(names).toContain("LIBREDB_AGENT_ENABLED");
+    expect(names).toContain("WORKFLOW_LOCAL_DATA_DIR");
+    // Shape 3 (#609): object-field uppercase literal, then process.env[spec.field].
+    expect(names).toContain("RATE_LIMIT_QUERY_MAX");
+    expect(names).toContain("RATE_LIMIT_LOGIN_ACCOUNT_WINDOW_SEC");
   });
 
   test("every variable read under src/ is documented or allowlisted", () => {
