@@ -12,26 +12,25 @@ Within each rung, people are in the order they first landed a change.
 
 ## Maintainer
 
-The people who carry the project: the releases, the review, and the decisions nobody else can make.
+The people who carry the project: the releases, the review, and the decisions nobody else can make. Their work is most of the history and is not itemised here; the links are a sample.
 
 ### @cevheri
 
-Wrote the thing. The engine set, the agent, the storage layer and the release machinery are his, and so is the standard the rest of this page is measured against.
+Organisation member. Wrote most of what is here.
 
-- [Brought libSQL in over the Hrana protocol, one type-id for sqld and Turso Cloud](https://github.com/libredb/libredb-studio/pull/511)
-- [Added DuckDB as an embedded file engine, with the boundary the engine itself enforces](https://github.com/libredb/libredb-studio/pull/516)
-- [Found that Oracle Thick mode had never once loaded in a built image](https://github.com/libredb/libredb-studio/pull/575)
+- [Brought libSQL in over the Hrana protocol](https://github.com/libredb/libredb-studio/pull/511)
+- [Added DuckDB as an embedded file engine](https://github.com/libredb/libredb-studio/pull/516)
 
 ### @yusuf-gundogdu
 
-Owns the question "which local model can actually drive an agent run", and answers it by running them rather than by reading their cards. Also keeps the distribution inventory honest about what is live.
+Organisation member. The agent model record, and the distribution inventory.
 
 - [Ran ten models across every agent surface, 300 for 300](https://github.com/libredb/libredb-studio/pull/465)
 - [Found two cloud marketplaces the inventory did not know about](https://github.com/libredb/libredb-studio/pull/577)
 
 ### @kaya-abdullah
 
-Lives where the wire-compatible engines disagree with the engine they claim to be, which is the least glamorous and most easily faked part of this product. The first localized READMEs are his too.
+Organisation member. The wire-compatible engines, and the first localized READMEs.
 
 - [Caught Trino handing back every bigint past 2^53 rounded](https://github.com/libredb/libredb-studio/pull/460)
 - [Added the Simplified Chinese and Japanese READMEs](https://github.com/libredb/libredb-studio/pull/317)
@@ -59,6 +58,13 @@ Came the same day as the first, hours behind it, into the same empty repository.
 
 - [Handled SQL queries in the demo connection, with a mock fallback](https://github.com/libredb/libredb-studio/commit/c6d3e10c5d5076f674af12f58d2244e0208e6c5b)
 
+### @hbasria
+
+Brought a fifth identity provider into the OIDC layer, and the branch he added is still what runs — `src/lib/oidc.ts` handles Zitadel's RP-initiated logout because of him. He arrived with the doc and the test in the same change, months before this repository wrote that down as a rule.
+
+- [Added Zitadel OIDC integration support](https://github.com/libredb/libredb-studio/commit/d8227cbc)
+- [Covered `OIDC_ROLE_CLAIM` in the Zitadel logout URL test](https://github.com/libredb/libredb-studio/commit/09d36a4d)
+
 ### @ugurpektas
 
 Built out the admin section: the routes, the interactive UI around them, and the tests that hold it. He did it in one careful pass rather than leaving it half-finished for someone else.
@@ -83,11 +89,6 @@ Went wherever the work was: the login page, the admin fleet view, a license noti
 - [Did the same for `mongodb.md`](https://github.com/libredb/libredb-studio/pull/581)
 
 ## Contributor
-
-### @hbasria
-
-- [Added Zitadel OIDC integration support](https://github.com/libredb/libredb-studio/commit/d8227cbc)
-- [Covered `OIDC_ROLE_CLAIM` in the Zitadel logout URL test](https://github.com/libredb/libredb-studio/commit/09d36a4d)
 
 ### @ucmazmehmet
 
