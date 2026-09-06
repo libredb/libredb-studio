@@ -91,20 +91,27 @@ labels above are how this repository welcomes contributors in any month.
 
 Every change here lands with its tests in the same pull request, under a hard 100% line-coverage
 gate and six required checks. Clearing that bar says something about you, so we write down who
-cleared it and what it earns. Three rungs, and nothing on them is decorative.
+cleared it and what it earns.
 
-- **Contributor** — one merged pull request. You are listed in
-  [`CONTRIBUTORS.md`](CONTRIBUTORS.md) with a link to the change you made, so the entry is evidence
-  rather than a thank-you. Use it wherever you need to show what you have shipped.
-- **Trusted contributor** — three merged pull requests. You may assign yourself any open labeled
-  issue without asking first, and your review on someone else's pull request is read as a review
-  rather than a comment. Nothing to apply for; the third merge does it.
+**There is no threshold on this page, and that is deliberate.** We do not count merged pull
+requests, changed lines, closed issues or anything else. A count measures how often somebody showed
+up; it cannot see the care they took, the bug nobody else found, or the question they answered for
+a stranger at midnight. Five small changes and one careful one are not the same thing in either
+direction, and a number cannot tell you which is which. So these rungs are judgements, made by the
+maintainers and written down where you can read them and disagree.
+
+- **Contributor** — you landed a change. You are listed in [`CONTRIBUTORS.md`](CONTRIBUTORS.md) with
+  a link to it, so the entry is evidence rather than a thank-you. Use it wherever you need to show
+  what you have shipped.
+- **Trusted contributor** — someone we would hand an issue to without a conversation first. In
+  practice: assign yourself any open labeled issue without asking, and your review on someone else's
+  pull request is read as a review rather than a comment. Nothing to apply for and nothing to reach;
+  we put you here, and the reason is written beside your name.
 - **Area owner** — you own one area: a database provider, or a subsystem such as the Helm chart or
   the SQL editor. For a provider that means the triad the repository is built on — the code under
   `src/lib/db/providers/`, the doc under `docs/providers/` and the tests under
-  `tests/integration/db/` move together, and a change to your area is reviewed with you. This rung
-  is offered by the maintainers, not applied for, and it is offered to people who have already been
-  answering questions about that area.
+  `tests/integration/db/` move together, and a change to your area is reviewed with you. Offered by
+  the maintainers, and offered to people who have already been answering questions about that area.
 
 Falling off a rung is not a thing. If you stop contributing, you keep what you earned.
 

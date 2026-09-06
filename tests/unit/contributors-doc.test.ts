@@ -4,14 +4,21 @@
  * The page exists because a merged pull request here is evidence about the person who wrote it:
  * every change lands with its tests in the same PR, under a 100% line-coverage gate. A page making
  * that claim is only worth reading if each entry points at the change it is claiming, so these
- * tests pin the two things a reader would otherwise have to take on trust:
+ * tests pin the three things a reader would otherwise have to take on trust:
  *
- *   1. every person listed carries at least one link to a real merged pull request, written as a
- *      full URL rather than a bare `#123` - the page is read outside GitHub too, where a bare
- *      number links to nothing;
+ *   1. every person listed carries at least one link to the change itself, written as a full URL
+ *      rather than a bare `#123` - the page is read outside GitHub too, where a bare number links
+ *      to nothing;
  *   2. the rungs `CONTRIBUTORS.md` groups people under are exactly the rungs `CONTRIBUTING.md`
  *      defines. A ladder whose two halves drift is worse than no ladder: someone is told they are
- *      a "Trusted contributor" by one file and the other has never heard of the rung.
+ *      a "Trusted contributor" by one file and the other has never heard of the rung;
+ *   3. no rung is described as a number of merges. The page's premise is that nothing here is
+ *      counted, and a threshold creeping back into the prose would contradict it in the one place
+ *      a reader looks to find out how they are being judged.
+ *
+ * The rungs themselves are deliberately NOT testable, because they are judgements. There is no
+ * assertion that a person belongs where they are put; that is the maintainers' call and the reason
+ * is written beside the name so a reader can disagree with it.
  *
  * Deliberately NOT asserted: that the list is complete. Completeness can only be measured against
  * the GitHub API or a full `git log`, and CI clones shallowly, so a test claiming to check it would
@@ -27,7 +34,19 @@ const read = (relative: string): string => readFileSync(path.join(ROOT, relative
 
 const CONTRIBUTORS = "CONTRIBUTORS.md";
 const CONTRIBUTING = "CONTRIBUTING.md";
-const PULL_URL = "https://github.com/libredb/libredb-studio/pull/";
+
+/**
+ * Evidence is a pull request OR a commit, and the second is not a fallback.
+ *
+ * The two earliest outside changes reached `main` by rebase rather than through the merge button,
+ * so GitHub records pull requests 8 and 12 as closed with `mergedAt: null` even though the code has
+ * been in the tree since 2025-12-25. Linking those would show a stranger a rejected pull request as
+ * proof of a contribution. The commit is the honest citation there.
+ */
+const EVIDENCE_URLS = [
+  "https://github.com/libredb/libredb-studio/pull/",
+  "https://github.com/libredb/libredb-studio/commit/",
+];
 
 /**
  * The `## <rung>` headings people are actually grouped under.
@@ -75,11 +94,17 @@ describe("CONTRIBUTORS.md", () => {
     expect(entries(contributors).length).toBeGreaterThan(0);
   });
 
-  test("every person links to at least one merged pull request by full URL", () => {
+  test("every person links to a pull request or a commit by full URL", () => {
     const withoutEvidence = entries(contributors)
-      .filter(({ body }) => !body.includes(PULL_URL))
+      .filter(({ body }) => !EVIDENCE_URLS.some((prefix) => body.includes(prefix)))
       .map(({ login }) => login);
     expect(withoutEvidence).toEqual([]);
+  });
+
+  test("no rung is described as a number of anything", () => {
+    // The page states that nothing here is counted. A threshold creeping back into the prose is the
+    // one drift that would contradict the page's own premise, and it would read as policy.
+    expect(contributors).not.toMatch(/\b(?:one|two|three|four|five|\d+)\s+merged\b/i);
   });
 
   test("no bare #123 reference stands in for a link", () => {

@@ -4,13 +4,49 @@ Every change in this repository lands with its tests in the same pull request, u
 
 So this is not a thank-you wall. Each entry links to the change itself, so a reader who does not know us can check the claim. If your name is here, the link is yours to use — a CV, a profile README, anywhere the question "what have you actually shipped" comes up.
 
-How the rungs work is written down in [CONTRIBUTING.md](CONTRIBUTING.md#the-contributor-ladder). The short version: one merged pull request puts you on this page, three lets you take an issue without asking, and owning an area is offered rather than applied for.
+Nothing here is counted. Not merged pull requests, not changed lines, not closed issues. A count sees how often somebody showed up and misses everything that matters about it: the care taken, the bug nobody else found, the answer written out for a stranger. So the rungs below are judgements rather than totals, and where one is not obvious the reason is written beside the name — [CONTRIBUTING.md](CONTRIBUTING.md#the-contributor-ladder) says what each rung means.
 
-Listed in the order people first landed a change. Maintainers and bots are not listed here; `git shortlog -sn` is the full record.
+Within each rung, people are in the order they first landed a change. Bots are not listed, and the maintainers' own day-to-day work belongs in `git shortlog -sn` rather than on this page.
 
 ## Trusted contributor
 
+### @harish18092002
+
+The first person outside the core team to send anything at all, on 2025-12-25, when there was no contributing guide, no labeled issue and no reason to believe anyone would answer. Being first is a different act from being second.
+
+- [Improved the query preview in the Save Query modal](https://github.com/libredb/libredb-studio/commit/ff22a5dd4f5b5a3fcd0c01339820ffa6035ae51f)
+
+### @omerfarukbolat
+
+The light theme rests on the shared token layer he built, and the export path escapes every field because of the pass he did over it. Both were the kind of change that moves the floor under everything else rather than fixing one thing.
+
+- [Fixed the auth flow, middleware redirects and hooks cleanup](https://github.com/libredb/libredb-studio/pull/10)
+- [Enforced the ESLint and TypeScript checks in CI, and fixed the component bugs they found](https://github.com/libredb/libredb-studio/pull/18)
+- [Built a light theme through a shared token layer, and fixed four silent query-execution defects](https://github.com/libredb/libredb-studio/pull/384)
+- [Escaped every field an export writes, and stopped a plan outliving its run](https://github.com/libredb/libredb-studio/pull/422)
+
+### @suleymansurucu
+
+Came the same day as the first, hours behind it, into the same empty repository. Two people decided this was worth their evening before there was anything here to promise them it would be.
+
+- [Handled SQL queries in the demo connection, with a mock fallback](https://github.com/libredb/libredb-studio/commit/c6d3e10c5d5076f674af12f58d2244e0208e6c5b)
+
+### @ugurpektas
+
+Built out the admin section: the routes, the interactive UI around them, and the tests that hold it. He did it in one careful pass rather than leaving it half-finished for someone else.
+
+- [Added the admin section routes and polished the interactive UI](https://github.com/libredb/libredb-studio/pull/231)
+
+### @koraysrn
+
+First into the agent layer, which nobody outside the core team had opened, and he has stayed in it since. Both of his changes are about a run behaving correctly when something goes wrong, which is the part nobody volunteers for.
+
+- [Enforced single-drive ownership in the agent, and refused post-close appends](https://github.com/libredb/libredb-studio/pull/419)
+- [Aggregated the PostgreSQL grounding column read per table](https://github.com/libredb/libredb-studio/pull/537)
+
 ### @hasnaintypes
+
+Went wherever the work was: the login page, the admin fleet view, a license notice nobody had stated, and the provider docs whose citations had quietly rotted. Each one arrived finished, with the reasoning written down.
 
 - [Closed the login hero's overflow at 1280x800](https://github.com/libredb/libredb-studio/pull/550)
 - [Stated elkjs's EPL-2.0 license alongside the MIT license](https://github.com/libredb/libredb-studio/pull/552)
@@ -28,10 +64,6 @@ Listed in the order people first landed a change. Maintainers and bots are not l
 
 - [Made Oracle Thick mode optional and mapped NJS-138 to an honest error](https://github.com/libredb/libredb-studio/pull/229)
 
-### @ugurpektas
-
-- [Added the admin section routes and polished the interactive UI](https://github.com/libredb/libredb-studio/pull/231)
-
 ### @yangchuansheng
 
 - [Added the Sealos deployment option](https://github.com/libredb/libredb-studio/pull/296)
@@ -43,11 +75,6 @@ Listed in the order people first landed a change. Maintainers and bots are not l
 ### @wjiec
 
 - [Used OIDC discovery for generic logout URLs](https://github.com/libredb/libredb-studio/pull/431)
-
-### @koraysrn
-
-- [Enforced single-drive ownership in the agent, and refused post-close appends](https://github.com/libredb/libredb-studio/pull/419)
-- [Aggregated the PostgreSQL grounding column read per table](https://github.com/libredb/libredb-studio/pull/537)
 
 ### @Matthew-Selvam
 
