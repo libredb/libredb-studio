@@ -84,8 +84,12 @@ export async function POST(req: NextRequest) {
     let explainFormat: ExplainFormat | undefined;
     if (explain.explain) {
       const capabilities = provider.getCapabilities();
+      // `getExplainStrategy` indexes a Record, so a format outside this build's union
+      // (an external implementer of the published interface can declare anything)
+      // comes back undefined rather than null; a strict null check let that reach
+      // `strategy.buildSql` and surface as a TypeError 500 instead of this 400.
       const strategy = capabilities.supportsExplain ? getExplainStrategy(capabilities.explainFormat) : null;
-      if (strategy === null) {
+      if (!strategy) {
         return NextResponse.json({ error: "This server does not support EXPLAIN" }, { status: 400 });
       }
       const built = strategy.buildSql(sql, explain.explain.mode);

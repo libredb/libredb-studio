@@ -589,6 +589,29 @@ describe("POST /api/db/query with an explain request", () => {
     expect(mockProvider.query).not.toHaveBeenCalled();
   });
 
+  test("returns 400 and runs nothing when the provider names a format this build does not register", async () => {
+    // `getExplainStrategy` indexes a Record, so a format outside the union comes back as
+    // undefined rather than null. A strict null check let that fall through to
+    // `strategy.buildSql` and a TypeError, which the error mapper reports as a 500 with
+    // no sentence a user can act on. Unreachable from this repo's providers today; an
+    // external implementer of the published interface can declare anything.
+    const provider = createMockProvider({
+      capabilities: { supportsExplain: true, explainFormat: "oracle-hierarchy" as never },
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1", explain: { mode: "analyze" } },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("This server does not support EXPLAIN");
+    expect(provider.query).not.toHaveBeenCalled();
+  });
+
   test("returns 400 and runs nothing for a statement the strategy declines", async () => {
     const provider = explainCapableProvider();
     mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);

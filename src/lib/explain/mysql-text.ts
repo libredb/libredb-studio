@@ -47,10 +47,18 @@ function cellText(value: unknown): string {
   return value === null || value === undefined ? "" : String(value);
 }
 
+/**
+ * The figure, or nothing. A blank cell is an absent reading, not a zero: `Number("")`
+ * is 0, so without the emptiness check a row whose estRows the engine left blank would
+ * carry a "~0 rows" badge nobody measured, the fabrication the absence rule (#477)
+ * exists to prevent.
+ */
 function readEstRows(entries: [string, unknown][]): number | undefined {
   const cell = entries.find(([column]) => column.toLowerCase() === EST_ROWS);
   if (cell === undefined) return undefined;
-  const parsed = Number(cellText(cell[1]));
+  const text = cellText(cell[1]).trim();
+  if (text === "") return undefined;
+  const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
@@ -62,8 +70,10 @@ function readEstRows(entries: [string, unknown][]): number | undefined {
 function toPlanLine(row: Record<string, unknown>): PlanLine | null {
   const entries = Object.entries(row);
   const first = cellText(entries[0]?.[1]);
-  const indent = INDENT.exec(first)?.[0].length ?? 0;
-  const label = first.slice(indent);
+  // A `*` run anchored at the start always matches, so the prefix is simply what
+  // stripping it removes: no null arm to guard.
+  const label = first.replace(INDENT, "");
+  const indent = first.length - label.length;
   if (label.trim() === "") return null;
 
   const node: ExplainTreeNode = { label, children: [] };

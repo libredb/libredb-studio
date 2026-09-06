@@ -171,6 +171,15 @@ describe("mysqlTextStrategy", () => {
     expect(rootOf(model).detail).toBe("estRows: n/a");
   });
 
+  test("an empty or null estRows cell is an absent reading, never a fabricated 0", () => {
+    // Number("") is 0 and Number.isFinite(0) is true, so a row whose estRows cell the
+    // engine left blank used to render as "~0 rows": a figure nobody measured, which is
+    // the class the absence rule (#477) exists to keep off the screen.
+    expect(rootOf(mysqlTextStrategy.toRenderModel([{ id: "Sort_1", estRows: "" }])).metrics).toBeUndefined();
+    expect(rootOf(mysqlTextStrategy.toRenderModel([{ id: "Sort_1", estRows: null }])).metrics).toBeUndefined();
+    expect(rootOf(mysqlTextStrategy.toRenderModel([{ id: "Sort_1", estRows: "   " }])).metrics).toBeUndefined();
+  });
+
   test("a null cell is neither detail nor a line break", () => {
     const model = mysqlTextStrategy.toRenderModel([
       { "Explain String(Nereids Planner)": "PLAN FRAGMENT 0", extra: null },
