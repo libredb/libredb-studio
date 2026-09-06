@@ -171,6 +171,8 @@ export function maintenanceControl(
  */
 export type ExplainFormat =
   | "postgres-json"
+  | "postgres-text"
+  | "postgres-text-analyze"
   | "mysql-json"
   | "mysql-text"
   | "sqlite-queryplan"

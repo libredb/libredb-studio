@@ -1,4 +1,5 @@
 import { classifySelectPrefix } from "./select-prefix";
+import { INDENT, buildTree, cellText, isRecord, withRoot, type PlanLine } from "./text-plan";
 import type { ExplainPlanInput, ExplainStrategy, ExplainTreeNode } from "./types";
 
 /**
@@ -22,30 +23,8 @@ import type { ExplainPlanInput, ExplainStrategy, ExplainTreeNode } from "./types
  * the rest are detail, indentation is the nesting.
  */
 
-/**
- * The leading run that means "deeper", not "content": whitespace and the box glyphs
- * TiDB draws its tree with (`└─`, `├─`, `│`). Its length is the indent, and what
- * follows it is the label, which is how `└─Projection_12` reads as `Projection_12`.
- */
-const INDENT = /^[\s│├└─]*/u;
-
 /** The one column carrying a number worth showing. TiDB spells it `estRows`. */
 const EST_ROWS = "estrows";
-
-interface PlanLine {
-  readonly indent: number;
-  readonly text: string;
-  readonly node: ExplainTreeNode;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Absent and null cells render as nothing rather than as the words "null"/"undefined". */
-function cellText(value: unknown): string {
-  return value === null || value === undefined ? "" : String(value);
-}
 
 /**
  * The figure, or nothing. A blank cell is an absent reading, not a zero: `Number("")`
@@ -91,23 +70,6 @@ function toPlanLine(row: Record<string, unknown>): PlanLine | null {
   return { indent, text: entries.map(([, value]) => cellText(value)).join("  "), node };
 }
 
-/**
- * Indentation is the only nesting these engines publish, so a stack turns it into a
- * tree: a line is a child of the nearest line above it that is less indented.
- */
-function buildTree(lines: readonly PlanLine[]): ExplainTreeNode[] {
-  const roots: ExplainTreeNode[] = [];
-  const stack: PlanLine[] = [];
-  for (const line of lines) {
-    while (stack.length > 0 && stack[stack.length - 1].indent >= line.indent) stack.pop();
-    const parent = stack[stack.length - 1];
-    if (parent === undefined) roots.push(line.node);
-    else parent.node.children.push(line.node);
-    stack.push(line);
-  }
-  return roots;
-}
-
 export const mysqlTextStrategy: ExplainStrategy = {
   format: "mysql-text",
   // Plain EXPLAIN describes without running on every engine measured, so a CTE is
@@ -124,10 +86,10 @@ export const mysqlTextStrategy: ExplainStrategy = {
     if (!Array.isArray(raw) || raw.length === 0 || !raw.every(isRecord)) return null;
     const lines = raw.map(toPlanLine).filter((line): line is PlanLine => line !== null);
     if (lines.length === 0) return null;
-    const roots = buildTree(lines);
-    // StarRocks and Doris print several fragments at indent 0, and neither is the
-    // parent of the other, so a synthetic root is the only honest way to show both.
-    const root = roots.length === 1 ? roots[0] : { label: "EXPLAIN", children: roots };
-    return { kind: "tree", root, raw: lines.map((line) => line.text).join("\n") };
+    return {
+      kind: "tree",
+      root: withRoot(buildTree(lines)),
+      raw: lines.map((line) => line.text).join("\n"),
+    };
   },
 };

@@ -14,6 +14,7 @@ import {
   type MaintenanceType,
   type MaintenanceResult,
   type ProviderOptions,
+  type ExplainFormat,
   type ProviderCapabilities,
   type ProviderLabels,
   type ProviderExecutionContext,
@@ -855,6 +856,63 @@ function assertAgentRoleIsUnprivileged(rows: unknown[]): void {
   }
 }
 
+/**
+ * The EXPLAIN grammars this provider can ask for, most specific first, each paired
+ * with the strategy id that reads what the statement answers.
+ *
+ * `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` is PostgreSQL's own grammar and the rest
+ * of the wire family does not share it. Measured 2026-09-06 through `pg`, one
+ * connection per engine:
+ *
+ * - PostgreSQL 18, TimescaleDB (PG 17.11), YugabyteDB 2.25.2, Apache Cloudberry 2.1.0
+ *   and AlloyDB Omni (PG 17.9): accepted, so nothing about those five changes.
+ * - CockroachDB v26.2.5: `at or near "analyze": syntax error`, and `at or near
+ *   "json": syntax error` for a bare `(FORMAT JSON)` - its parenthesised options are
+ *   its own vocabulary, and `JSON` is legal there only beside `DISTSQL`, where it
+ *   answers a processor diagram rather than a plan. Its `EXPLAIN ANALYZE` needs no
+ *   parentheses and reports what the query really did.
+ * - Materialize v26.40.0: `Expected SELECT, VALUES, or a subquery in the query body,
+ *   found ANALYZE`, the same refusal for `(FORMAT JSON)` naming `FORMAT` - the
+ *   PARENTHESES are what the grammar has no rule for - and `Expected one of CPU or
+ *   MEMORY, found SELECT` for `EXPLAIN ANALYZE`, which is a different statement
+ *   there. The plain `EXPLAIN` is the only plan grammar it publishes.
+ *
+ * Each probe is the statement its strategy really sends, so a grammar that answers
+ * here is one the panel can use. `SELECT 1` is what they run: the first two forms
+ * execute what they explain, and this one has nothing to execute.
+ */
+const EXPLAIN_PROBES: readonly (readonly [sql: string, format: ExplainFormat])[] = [
+  ["EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1", "postgres-json"],
+  ["EXPLAIN ANALYZE SELECT 1", "postgres-text-analyze"],
+  ["EXPLAIN SELECT 1", "postgres-text"],
+];
+
+/**
+ * Which of those grammars this server accepts, or `undefined` when it accepts none.
+ * Run once per `connect()`, on the client that connect already borrowed.
+ *
+ * It reads SUCCESS OR FAILURE and never the message, because the family does not
+ * share one for a grammar refusal - Materialize names the token its parser stopped
+ * at, CockroachDB names a position - and keying on wording would have to enumerate
+ * engines, which is the branch `src/lib/db` does not take. Asking the server what its
+ * grammar accepts is the same answer without the enumeration.
+ *
+ * Nothing here rejects. A grammar the server does not have is a fact about the
+ * Explain panel, not about the connection, and `connect()` must not fail for it.
+ */
+async function probeExplainFormat(client: PoolClient): Promise<ExplainFormat | undefined> {
+  for (const [sql, format] of EXPLAIN_PROBES) {
+    try {
+      await client.query(sql);
+      return format;
+    } catch {
+      // Refused, so try the next grammar. The reason is the engine's own and there is
+      // nothing to report: the capability this produces IS the report.
+    }
+  }
+  return undefined;
+}
+
 // ============================================================================
 // PostgreSQL Provider
 // ============================================================================
@@ -870,6 +928,16 @@ export class PostgresProvider extends SQLBaseProvider {
 
   /** True when this instance was opened under the agent read-only profile. */
   private readonly readOnlyProfile: boolean;
+
+  /**
+   * The EXPLAIN grammar this server accepts, measured by `probeExplainFormat()` at
+   * connect. It starts as PostgreSQL's own grammar, which is what this provider
+   * declared unconditionally before the probe existed and is still the right answer
+   * for an unconnected provider: `POST /api/db/provider-meta` reads capabilities off a
+   * provider it never connects (#457), so the pre-flight the client does keeps exactly
+   * the behaviour it had.
+   */
+  private measuredExplainFormat: ExplainFormat | undefined = "postgres-json";
 
   constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
@@ -888,8 +956,13 @@ export class PostgresProvider extends SQLBaseProvider {
     return {
       ...super.getCapabilities(),
       defaultPort: 5432,
-      supportsExplain: true,
-      explainFormat: "postgres-json",
+      // Measured at connect, not declared per type id: the PostgreSQL-wire relatives
+      // do not all accept the parenthesised JSON form (#597). The key is spread in
+      // rather than set to `undefined` because `ProviderCapabilities.explainFormat` is
+      // present iff `supportsExplain` is true, and the provider tests assert that as a
+      // shape.
+      supportsExplain: this.measuredExplainFormat !== undefined,
+      ...(this.measuredExplainFormat === undefined ? {} : { explainFormat: this.measuredExplainFormat }),
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
       // BEGIN / COMMIT / ROLLBACK over one held pool client (`beginTransaction()` below).
@@ -962,6 +1035,19 @@ export class PostgresProvider extends SQLBaseProvider {
         // on the same client this connect already borrowed.
         if (this.readOnlyProfile) {
           assertAgentRoleIsUnprivileged((await client.query(AGENT_ROLE_PRIVILEGE_SQL)).rows);
+        }
+        // Never under the read-only profile. That connection's invariant is that every
+        // statement it runs arrives inside a `BEGIN READ ONLY` envelope
+        // (`tests/isolated/agent-investigation-e2e.test.ts` asserts exactly that), and
+        // a bare probe at connect would be the first statement to leave it - for an
+        // answer that path cannot use: the agent composes its own EXPLAIN from
+        // `ESTIMATING_EXPLAIN_PREFIX`, keyed on the type id and not on this capability,
+        // and `summarisePlan` reads a plan only when that composed `EXPLAIN
+        // (FORMAT JSON)` succeeded, which is the case where the probe would have
+        // answered `postgres-json` anyway. So the profile keeps the static default and
+        // the envelope keeps its hole-free guarantee.
+        if (!this.readOnlyProfile) {
+          this.measuredExplainFormat = await probeExplainFormat(client);
         }
       } finally {
         client.release();

@@ -1646,6 +1646,9 @@ describe("PostgresProvider", () => {
       };
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
+      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
+      // attempts; what this counts is what getSchema() sent.
+      attempts.length = 0;
       await provider.getSchema();
 
       // Two attempts: the original, then one that has dropped the FK catalog.
@@ -1673,6 +1676,9 @@ describe("PostgresProvider", () => {
       };
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
+      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
+      // attempts; what this counts is what getSchema() sent.
+      attempts.length = 0;
       await provider.getSchema();
 
       const rewritten = attempts[attempts.length - 1];
@@ -1722,6 +1728,9 @@ describe("PostgresProvider", () => {
       };
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
+      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
+      // attempts; what this counts is what getSchema() sent.
+      attempts.length = 0;
 
       const schema = await provider.getSchema();
       expect(schema.length).toBe(2);
@@ -1784,6 +1793,9 @@ describe("PostgresProvider", () => {
       };
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
+      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
+      // attempts; what this counts is what getSchema() sent.
+      attempts.length = 0;
 
       const schema = await provider.getSchema();
       expect(schema.length).toBe(2);
@@ -1918,6 +1930,9 @@ describe("PostgresProvider", () => {
       };
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
+      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
+      // attempts; what this counts is what getSchema() sent.
+      attempts.length = 0;
 
       const schema = await provider.getSchema();
       expect(schema.length).toBe(2);
@@ -3245,6 +3260,32 @@ describe("PostgresProvider", () => {
       releaseSpy.mockRestore();
     });
 
+    test("the profile connection never probes the EXPLAIN grammar, so nothing it runs leaves the envelope", async () => {
+      const fresh = new ReadOnlyEngineMock();
+      mockQueryFn = (sql: string, params?: unknown[]) => fresh.query(sql, params);
+      const profiled = new PostgresProvider(makePgConfig(), {}, { readOnly: true });
+      await profiled.connect();
+
+      // A bare probe at connect would be the first statement this connection ran
+      // outside `BEGIN READ ONLY`. It buys nothing here: the agent composes its own
+      // EXPLAIN from `ESTIMATING_EXPLAIN_PREFIX` rather than from this capability.
+      expect(fresh.statements.map((s) => s.text)).toEqual([]);
+      expect(profiled.getCapabilities().explainFormat).toBe("postgres-json");
+      await profiled.disconnect();
+    });
+
+    test("an unprofiled provider on the same server DOES probe, so the skip is the profile's and not the mock's", async () => {
+      // The control the assertion above needs: an empty statement list means nothing
+      // ran only if this same fixture records a probe when one is issued.
+      const fresh = new ReadOnlyEngineMock();
+      mockQueryFn = (sql: string, params?: unknown[]) => fresh.query(sql, params);
+      const editor = new PostgresProvider(makePgConfig());
+      await editor.connect();
+
+      expect(fresh.statements.map((s) => s.text)).toEqual(["EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1"]);
+      await editor.disconnect();
+    });
+
     test("runs exactly one statement inside BEGIN READ ONLY with a transaction-local timeout, then rolls back and releases", async () => {
       const result = await provider.queryReadOnly("SELECT 1 AS ok", roBudget());
 
@@ -3293,6 +3334,10 @@ describe("PostgresProvider", () => {
     test("refuses queryReadOnly on a provider that was not opened under the profile", async () => {
       const unprofiled = new PostgresProvider(makePgConfig());
       await unprofiled.connect();
+      // Connect's own EXPLAIN grammar probe (#597), dropped for the reason the
+      // beforeEach drops it: what this asserts is that queryReadOnly reached the
+      // session with nothing.
+      engine.statements.length = 0;
 
       // Fail closed, and for the reason the SQLite profile fails closed too: a
       // provider opened outside the profile has had no role verification, so
@@ -3694,6 +3739,154 @@ describe("PostgresProvider declared column types", () => {
       "ROLLBACK",
       "DISCARD ALL",
     ]);
+    await provider.disconnect();
+  });
+});
+
+// ============================================================================
+// The connect-time EXPLAIN grammar probe (#597)
+// ============================================================================
+/**
+ * `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` is PostgreSQL's grammar, not the wire
+ * family's. Measured 2026-09-06 through `pg` against live containers:
+ *
+ * - Materialize v26.40.0 refuses it with `Expected SELECT, VALUES, or a subquery in
+ *   the query body, found ANALYZE`, and refuses a bare `(FORMAT JSON)` the same way.
+ *   It has no `EXPLAIN ANALYZE` either (`Expected one of CPU or MEMORY, found
+ *   SELECT`), so the plain `EXPLAIN` is all it publishes.
+ * - CockroachDB v26.2.5 refuses it with `at or near "analyze": syntax error` - its
+ *   option vocabulary is its own - but accepts an unparenthesised `EXPLAIN ANALYZE`.
+ * - PostgreSQL 18, TimescaleDB (PG 17.11), YugabyteDB 2.25.2, Cloudberry 2.1.0 and
+ *   AlloyDB Omni (PG 17.9) all accept the parenthesised form and stop at the first
+ *   probe.
+ *
+ * The refusals below are those runs' own words. Nothing here reads the message: the
+ * family shares no code for a grammar refusal any more than the MySQL family does
+ * (#574), so the probe asks and reads success or failure.
+ */
+describe("PostgresProvider EXPLAIN grammar probe", () => {
+  let sent: string[];
+
+  /**
+   * A server that refuses the statements named here and answers everything else the
+   * way the shared fixture does.
+   */
+  function refusing(refusals: Record<string, string>) {
+    return (sql: string, params?: unknown[]) => {
+      sent.push(sql);
+      const refusal = refusals[sql.trim().toLowerCase()];
+      return refusal === undefined ? defaultMockQuery(sql) : Promise.reject(new Error(refusal));
+    };
+  }
+
+  const MATERIALIZE_REFUSAL = "Expected SELECT, VALUES, or a subquery in the query body, found ANALYZE";
+  const MATERIALIZE_ANALYZE_REFUSAL = "Expected one of CPU or MEMORY, found SELECT";
+  const COCKROACH_REFUSAL = 'at or near "analyze": syntax error';
+
+  /** Only the statements the probe issued, in order. */
+  const probed = () => sent.filter((sql) => sql.toLowerCase().startsWith("explain"));
+
+  beforeEach(() => {
+    sent = [];
+    mockQueryFn = refusing({});
+  });
+
+  test("before connect the provider answers the static PostgreSQL default", () => {
+    const caps = new PostgresProvider(makePgConfig()).getCapabilities();
+
+    // `POST /api/db/provider-meta` never connects (#457), so this is what the client's
+    // pre-flight sees, and it must stay what it has always been.
+    expect(caps.explainFormat).toBe("postgres-json");
+    expect(caps.supportsExplain).toBe(true);
+    expect(probed()).toEqual([]);
+  });
+
+  test("a server that accepts the parenthesised JSON form keeps postgres-json, after one statement", async () => {
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+
+    expect(provider.getCapabilities().explainFormat).toBe("postgres-json");
+    expect(probed()).toEqual(["EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1"]);
+    await provider.disconnect();
+  });
+
+  test("CockroachDB refuses the parenthesised form and accepts EXPLAIN ANALYZE, so the format is postgres-text-analyze", async () => {
+    mockQueryFn = refusing({ "explain (analyze, buffers, format json) select 1": COCKROACH_REFUSAL });
+
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+
+    expect(provider.getCapabilities().explainFormat).toBe("postgres-text-analyze");
+    expect(probed()).toEqual(["EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1", "EXPLAIN ANALYZE SELECT 1"]);
+    await provider.disconnect();
+  });
+
+  test("Materialize refuses both analyze grammars and lands on the plain EXPLAIN", async () => {
+    mockQueryFn = refusing({
+      "explain (analyze, buffers, format json) select 1": MATERIALIZE_REFUSAL,
+      "explain analyze select 1": MATERIALIZE_ANALYZE_REFUSAL,
+    });
+
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    const caps = provider.getCapabilities();
+
+    expect(caps.explainFormat).toBe("postgres-text");
+    expect(caps.supportsExplain).toBe(true);
+    expect(probed()).toEqual([
+      "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1",
+      "EXPLAIN ANALYZE SELECT 1",
+      "EXPLAIN SELECT 1",
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a server that refuses every grammar declares no explain support and no format", async () => {
+    mockQueryFn = refusing({
+      "explain (analyze, buffers, format json) select 1": MATERIALIZE_REFUSAL,
+      "explain analyze select 1": MATERIALIZE_ANALYZE_REFUSAL,
+      "explain select 1": 'syntax error at or near "EXPLAIN"',
+    });
+
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    const caps = provider.getCapabilities();
+
+    expect(caps.supportsExplain).toBe(false);
+    // Absent, not undefined-valued: `explainFormat` is present iff supportsExplain is.
+    expect("explainFormat" in caps).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("a grammar the server does not have never fails the connection", async () => {
+    mockQueryFn = refusing({
+      "explain (analyze, buffers, format json) select 1": MATERIALIZE_REFUSAL,
+      "explain analyze select 1": MATERIALIZE_ANALYZE_REFUSAL,
+      "explain select 1": "syntax error",
+    });
+
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+
+    // The Explain panel is not the connection. A refused grammar is a fact about the
+    // panel and the capability it produces IS the report.
+    expect(provider.isConnected()).toBe(true);
+    await provider.disconnect();
+  });
+
+  test("the probe runs again on the next connect, because the next server may be another engine", async () => {
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    expect(provider.getCapabilities().explainFormat).toBe("postgres-json");
+    await provider.disconnect();
+
+    mockQueryFn = refusing({
+      "explain (analyze, buffers, format json) select 1": MATERIALIZE_REFUSAL,
+      "explain analyze select 1": MATERIALIZE_ANALYZE_REFUSAL,
+    });
+    await provider.connect();
+
+    expect(provider.getCapabilities().explainFormat).toBe("postgres-text");
     await provider.disconnect();
   });
 });

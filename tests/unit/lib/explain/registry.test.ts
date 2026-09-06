@@ -10,6 +10,14 @@ describe("getExplainStrategy", () => {
     expect(getExplainStrategy("mysql-json")?.format).toBe("mysql-json");
   });
 
+  test("resolves postgres-text", () => {
+    expect(getExplainStrategy("postgres-text")?.format).toBe("postgres-text");
+  });
+
+  test("resolves postgres-text-analyze", () => {
+    expect(getExplainStrategy("postgres-text-analyze")?.format).toBe("postgres-text-analyze");
+  });
+
   test("resolves mysql-text", () => {
     expect(getExplainStrategy("mysql-text")?.format).toBe("mysql-text");
   });

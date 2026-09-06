@@ -825,8 +825,8 @@ Overrides the SQL base defaults:
 | Capability | Value |
 |------------|-------|
 | `queryLanguage` | `sql` |
-| `supportsExplain` | `true` |
-| `explainFormat` | `postgres-json` |
+| `supportsExplain` | `true` when the server accepts one of the grammars below, measured at connect |
+| `explainFormat` | `postgres-json`, `postgres-text-analyze` or `postgres-text` — **measured, not declared** (see §10.1) |
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `true` |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core PostgreSQL DML |
@@ -837,6 +837,57 @@ Overrides the SQL base defaults:
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `5432` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
+
+
+### 10.1 The EXPLAIN grammar is measured at connect (#597)
+
+`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` is PostgreSQL's own grammar and the wire family does not
+share it, so the provider asks the server which grammar it accepts instead of declaring one per type
+id. `probeExplainFormat()` runs on the client `connect()` already borrowed, tries each statement in
+turn and keeps the first that is accepted:
+
+| Probe | Format | Accepted by (measured 2026-09-06, through `pg`) |
+|---|---|---|
+| `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1` | `postgres-json` | PostgreSQL 18, TimescaleDB (PG 17.11), YugabyteDB 2.25.2, Apache Cloudberry 2.1.0, AlloyDB Omni (PG 17.9) |
+| `EXPLAIN ANALYZE SELECT 1` | `postgres-text-analyze` | CockroachDB v26.2.5 |
+| `EXPLAIN SELECT 1` | `postgres-text` | Materialize v26.40.0 |
+
+Each probe is the statement its strategy really sends, so a grammar that answers here is one the
+panel can use. The probe reads success or failure and never the message: the family shares no code or
+wording for a grammar refusal, and keying on one would have to enumerate engines. A server that
+refuses all three declares `supportsExplain: false` and no format, and the connection still succeeds
+— a missing grammar is a fact about the Explain panel, not about the connection.
+
+**What the two refusals actually were.** Materialize answers `Expected SELECT, VALUES, or a subquery
+in the query body, found ANALYZE`, and answers the same way to a bare `(FORMAT JSON)` naming
+`FORMAT`: the PARENTHESES are what its grammar has no rule for, so dropping `ANALYZE` alone changes
+nothing — the error text names only the first token inside them, which is what made this look like a
+smaller problem than it was. It has no `EXPLAIN ANALYZE` either (`Expected one of CPU or MEMORY,
+found SELECT`). CockroachDB answers `at or near "analyze": syntax error`, and `at or near "json":
+syntax error` for `(FORMAT JSON)` — its parenthesised options are its own vocabulary, and `JSON` is
+legal there only beside `DISTSQL`, where it answers a processor diagram rather than a plan.
+
+Until this was measured, both engines rendered the Explain panel's "no execution plan" empty state:
+the plan request failed with an HTTP 500 that only the server log saw, so the panel read as *this
+query has no plan* rather than as an error.
+
+**The read-only agent profile does not probe.** That connection's invariant is that every statement
+it runs arrives inside a `BEGIN READ ONLY` envelope, and a bare probe at connect would be the first
+statement to leave it. It would also buy nothing: the agent path composes its own EXPLAIN from
+[`composed-sql.ts`](../../src/lib/agent/composed-sql.ts) keyed on the type id, and `summarisePlan`
+reads a plan only when that composed `EXPLAIN (FORMAT JSON)` succeeded — the case where the probe
+would have answered `postgres-json` anyway. So a profiled provider keeps the static default.
+
+**Reading a text plan.** `postgres-text` and `postgres-text-analyze` differ only in the statement
+they build; both read the answer through the same shape-driven reader in
+[`postgres-text.ts`](../../src/lib/explain/postgres-text.ts). CockroachDB returns one row per plan
+line in a column called `info`; Materialize returns a single row whose one cell holds the whole plan
+with newlines in it. The cell is split, blank padding is dropped, and the leading run of whitespace
+and box glyphs is the nesting. Where a plan marks its nodes — CockroachDB prefixes every operator
+with `•` — the marker is the structure and the lines between two markers become the detail of the
+one above them; read by indentation alone, `└── • hash join` would land underneath its own parent's
+`│ group by: name` attribute. Materialize marks nothing that way and indents correctly, so the rule
+is applied only to a plan that uses it.
 
 ### Labels
 
