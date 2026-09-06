@@ -855,7 +855,7 @@ sub-query is independently privilege-guarded ([§3.6](#36-privilege-resilient-mo
 | Method | Primary source | Notes / degradation |
 |--------|----------------|---------------------|
 | `getHealth()` | `V$SESSION`, `USER_SEGMENTS`, `V$SYSSTAT`, `V$SQL` | each block guarded → absent/`N/A`/`[]` if no privilege; `activeConnections` is **omitted**, never `0` ([§7.2](#72-when-the-connection-count-is-not-measurable)); `cacheHitRatio` is `N/A`, never `0%` ([§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)) |
-| `getOverview()` | `V$VERSION`, `V$INSTANCE`, `V$SESSION`, `V$PARAMETER`, `USER_SEGMENTS`, `USER_TABLES`/`USER_INDEXES` | each guarded; `activeConnections` is **omitted**, never `0` ([§7.2](#72-when-the-connection-count-is-not-measurable)), while `maxConnections` stays `0` because `0` there means "no limit published" |
+| `getOverview()` | `V$VERSION`, `V$INSTANCE`, `V$SESSION`, `V$PARAMETER`, `USER_SEGMENTS`, `USER_TABLES`/`USER_INDEXES` | each guarded; `activeConnections` is **omitted**, never `0` ([§7.2](#72-when-the-connection-count-is-not-measurable)), while `maxConnections` stays `0` because `0` there means "no limit published"; `databaseSizeBytes` is **omitted** and `databaseSize` stays `N/A`, never a `0`, when `USER_SEGMENTS` does not answer ([§7.3](#73-when-the-database-size-is-not-measurable)) |
 | `getPerformanceMetrics()` | `V$SYSSTAT` | **only** `cacheHitRatio`, and it is **omitted** when `V$SYSSTAT` cannot be read (no QPS/deadlocks/buffer-pool) — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `V$SQL` (top-N by `ELAPSED_TIME`) | `sharedBlksHit`=`BUFFER_GETS`, `sharedBlksRead`=`DISK_READS`; `[]` on failure |
 | `getActiveSessions()` | `V$SESSION` ⋈ `V$SQL` | `pid` = `"SID,SERIAL#"`; wait class/event; `[]` on failure |
@@ -952,6 +952,59 @@ reported as `0`. The absence is spelled `measuredNumber(...)` plus a conditional
 (`V$PARAMETER` `sessions`), and there `0` MEANS "no limit published" - the same fact as absence - so
 a refused `V$PARAMETER` leaves `0` and the card says "no limit published". The count is read first in
 that shared block precisely so a refused ceiling cannot carry a measured count away with it.
+
+### 7.3 When the database size is not measurable
+
+`getOverview()` sizes the schema with one statement over a **data dictionary view of the connected
+user's own segments**:
+
+```sql
+SELECT SUM(BYTES) AS TOTAL FROM USER_SEGMENTS
+```
+
+That is a different story from [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) and
+[§7.2](#72-when-the-connection-count-is-not-measurable), and the difference is the point. `USER_*`
+views describe objects the current user owns, so this statement needs none of the `V_$` access those
+sections turn on - the `ORA-00942` measured there against a `CREATE SESSION`-only user is **not**
+what fails here, and **no failure of this statement has been measured on a live instance at all**.
+That is precisely why the guard names no cause: a dictionary the DBA has locked down, a connection
+lost between this statement and the one before it, and an overrunning query that nothing here cuts
+short - this provider wires no server-side query timeout at all
+([§4.2](#42-connection-pooling)) - all arrive at the same `catch` in the same shape. A `catch` cannot
+tell them apart. It knows only that no figure arrived.
+
+So the figure is **omitted**, not zeroed. `DatabaseOverview.databaseSizeBytes` is optional exactly so
+this can be said - *"absence and zero are different facts"*, its docblock in
+[`src/lib/db/types.ts`](../../src/lib/db/types.ts) - and until #565 this method could not say it: the
+local was initialised to `0` and the `catch` was empty, so a statement that never answered published
+a measured-looking zero, indistinguishable from a schema that owns nothing.
+
+The monitoring **Storage** tab
+([`src/components/monitoring/tabs/StorageTab.tsx`](../../src/components/monitoring/tabs/StorageTab.tsx))
+is what the difference buys: it keys its entire breakdown off `databaseSizeBytes !== undefined`, so
+on the absence it renders *"No storage size information available."* On the fabricated `0` it drew
+the breakdown instead - and drew it against a total that contradicted its own rows. The Tables and
+Indexes figures come from `getTableStats()`, a **separate** read that does not share the size
+statement's failure, so real per-table bytes sat under a schema reported as `0 B`: every share is
+gated on `totalSize > 0`, so all three bars stayed empty, and `0 - tables - indexes` went negative,
+which the remainder row refuses as `N/A`. What the tab presented as a measurement was therefore a
+breakdown whose every element either disagreed with the total or declined to answer.
+
+**`databaseSize`, the formatted string, moves with the figure.** It is initialised to `"N/A"` and
+only `formatBytes()` replaces it, so an unanswered statement now leaves `"N/A"` where it used to
+leave `"0 bytes"`. That is not cosmetic: both the monitoring Overview card and the Storage tab's own
+header render this string as the headline size (`overview?.databaseSize || "N/A"`), so the old
+initialiser printed a confident `0 bytes` directly above *"No storage size information available."*
+`getHealth()` in this same file initialises its own `databaseSize` to `"N/A"`, so `getOverview()`
+was the odd one out; #569 (libSQL) and #517 (the search provider) merged the same
+pairing.
+
+A schema that really measures `0` is a **reading** and is kept, and here that case is ordinary rather
+than hypothetical: a freshly created user owns no segment, `SUM(BYTES)` over no row answers one row
+of `NULL`, `Number(... || 0)` folds that to `0`, and the tab formats the `0 B` it was given. The
+absence is therefore spelled `=== undefined` plus a conditional spread, never a falsy test - a falsy
+test would erase exactly that measurement, which is the mistake §7.2 records for the connection
+count.
 
 ---
 

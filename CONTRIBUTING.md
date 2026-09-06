@@ -87,6 +87,49 @@ The repository keeps the `hacktoberfest` topic for discoverability. Note that Ha
 itself is organised around in-person and online events and no longer counts pull requests; the
 labels above are how this repository welcomes contributors in any month.
 
+### The contributor ladder
+
+Every change here lands with its tests in the same pull request, under a hard 100% line-coverage
+gate and six required checks. Clearing that bar says something about you, so we write down who
+cleared it and what it earns.
+
+**There is no threshold on this page, and that is deliberate.** We do not count merged pull
+requests, changed lines, closed issues or anything else. A count measures how often somebody showed
+up; it cannot see the care they took, the bug nobody else found, or the question they answered for
+a stranger at midnight. Five small changes and one careful one are not the same thing in either
+direction, and a number cannot tell you which is which. So these rungs are judgements, made by the
+maintainers and written down where you can read them and disagree.
+
+- **Contributor** — you landed a change. You are listed in [`CONTRIBUTORS.md`](CONTRIBUTORS.md) with
+  a link to it, so the entry is evidence rather than a thank-you. Use it wherever you need to show
+  what you have shipped.
+- **Trusted contributor** — someone we would hand an issue to without a conversation first. In
+  practice: assign yourself any open labeled issue without asking, and your review on someone else's
+  pull request is read as a review rather than a comment. Nothing to apply for and nothing to reach;
+  we put you here, and the reason is written beside your name.
+- **Area owner** — you own one area: a database provider, or a subsystem such as the Helm chart or
+  the SQL editor. For a provider that means the triad the repository is built on — the code under
+  `src/lib/db/providers/`, the doc under `docs/providers/` and the tests under
+  `tests/integration/db/` move together, and a change to your area is reviewed with you. Offered by
+  the maintainers, and offered to people who have already been answering questions about that area.
+- **Maintainer** — carries the project: the releases, the review, and the decisions nobody else can
+  make. Not a rung you climb to from the ones above it, which is why it is listed separately rather
+  than at the top of the same ladder.
+
+Maintainers are on [`CONTRIBUTORS.md`](CONTRIBUTORS.md) alongside everyone else. Keeping their work
+off the page would make it read as a guest list rather than a record, and the standard the page holds
+people to is one they are held to as well. Bots and coding agents are not listed: `dependabot`,
+`Copilot` and `claude` all appear in the commit history, none of them is a person, and putting them
+beside people would blur the only thing the page is for.
+
+Falling off a rung is not a thing. If you stop contributing, you keep what you earned.
+
+**Maintainers:** adding the contributor to `CONTRIBUTORS.md` is part of merging an external pull
+request, not a later sweep. `tests/unit/contributors-doc.test.ts` checks the page's shape and the
+ladder's two halves against each other, but it deliberately does not check that the list is
+complete — completeness cannot be measured in a shallow CI clone, so it stays a human step that is
+honest about being one.
+
 ## Development Setup
 
 ### Prerequisites

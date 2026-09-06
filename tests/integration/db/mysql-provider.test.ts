@@ -204,19 +204,31 @@ function sqlTextRefusal(): Error & { code: string; errno: number; sqlState: stri
 function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
   const normalized = sql.trim().toLowerCase();
 
-  // SHOW STATUS LIKE 'Threads_connected'
-  if (normalized.includes("show status like 'threads_connected'")) {
-    return Promise.resolve([[{ Value: "5" }], []]);
-  }
-
-  // SHOW STATUS LIKE 'Uptime'
-  if (normalized.includes("show status like 'uptime'")) {
-    return Promise.resolve([[{ Value: "86400" }], []]);
-  }
-
-  // SHOW STATUS LIKE 'Innodb_deadlocks'
-  if (normalized.includes("show status like 'innodb_deadlocks'")) {
-    return Promise.resolve([[{ Value: "0" }], []]);
+  // SHOW STATUS, bare. The provider reads the whole list and picks by `Variable_name`
+  // because Apache Doris rejects the LIKE clause on this statement outright: measured
+  // 2026-09-06 against `apache/doris:all-in-one-4.1.3`, `SHOW STATUS LIKE 'Uptime'`
+  // answers errno 1105 / ER_UNKNOWN_ERROR / HY000 "mismatched input 'LIKE' expecting
+  // {<EOF>, ';'}(line 1, pos 12)" while a bare `SHOW STATUS` is accepted (#573).
+  //
+  // Two columns, `Variable_name` and `Value`, on every engine measured that day:
+  // MySQL 26.7.0 (528 rows), MariaDB 12.3.2 (571), TiDB 8.5.1 (13), SingleStore (75),
+  // StarRocks 3.3.22 (0) and Doris 4.1.3 (0). The five rows below are that shape; the
+  // surrounding rows are there so the pick has something to pick out of.
+  //
+  // `Innodb_deadlocks` is MariaDB's variable and MariaDB 12.3.2 publishes it, so this
+  // shared fixture carries it. MySQL 26.7.0 does not publish it at all, and the test
+  // that pins that absence brings its own fixture.
+  if (normalized.startsWith("show status")) {
+    return Promise.resolve([
+      [
+        { Variable_name: "Connections", Value: "9" },
+        { Variable_name: "Queries", Value: "3" },
+        { Variable_name: "Threads_connected", Value: "5" },
+        { Variable_name: "Uptime", Value: "86400" },
+        { Variable_name: "Innodb_deadlocks", Value: "0" },
+      ],
+      [],
+    ]);
   }
 
   // SHOW VARIABLES LIKE 'max_connections'
@@ -515,6 +527,23 @@ function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
     ]);
   }
 
+  // EXPLAIN, both grammars. Measured 2026-09-06 on `mysql:latest` (26.7.0) through
+  // mysql2 3.24.2 over the text protocol: `EXPLAIN FORMAT=JSON <select>` answers one
+  // row of one column named `EXPLAIN` carrying the JSON plan as a string, and plain
+  // `EXPLAIN <select>` answers the tabular columns. The connect-time grammar probe
+  // sends `EXPLAIN FORMAT=JSON SELECT 1` first, so this shared fixture models the
+  // engine the provider is named for, which accepts it.
+  if (normalized.startsWith("explain format=json")) {
+    return Promise.resolve([[{ EXPLAIN: '{"query_block": {"select_id": 1}}' }], [{ name: "EXPLAIN" }]]);
+  }
+
+  if (normalized.startsWith("explain")) {
+    return Promise.resolve([
+      [{ id: 1, select_type: "SIMPLE", table: null, type: null, rows: null, Extra: "No tables used" }],
+      [{ name: "id" }, { name: "select_type" }],
+    ]);
+  }
+
   // Default: generic SELECT result
   return Promise.resolve([[{ id: 1, name: "test" }], [{ name: "id" }, { name: "name" }]]);
 }
@@ -650,6 +679,45 @@ function digestGrantDeniedMockExecute(sql: string): Promise<[unknown[], unknown[
     error.errno = 1142;
     error.sqlState = "42000";
     return Promise.reject(error);
+  }
+
+  return defaultMockExecute(sql);
+}
+
+/**
+ * Apache Doris, whose status and variable lists are both empty. Measured 2026-09-06
+ * against `apache/doris:all-in-one-4.1.3` (FE with one alive BE) over mysql2 3.24.2's
+ * text protocol:
+ *
+ *   SHOW STATUS                             -> ok, columns Variable_name/Value, 0 rows
+ *   SHOW STATUS LIKE 'Uptime'               -> errno=1105 code=ER_UNKNOWN_ERROR
+ *                                              sqlState=HY000, "mismatched input 'LIKE'
+ *                                              expecting {<EOF>, ';'}(line 1, pos 12)"
+ *   SHOW VARIABLES LIKE 'max_connections'   -> ok, 0 rows (four columns there)
+ *
+ * The LIKE arm REFUSES rather than answering, and that is the whole point of the
+ * fixture: issue #573 is that the provider sent a statement this server rejects, so a
+ * fixture that answered it would let the old statement keep passing this file.
+ */
+function dorisMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
+  const normalized = sql.trim().toLowerCase();
+
+  if (normalized.startsWith("show status like")) {
+    const error = new Error(
+      "errCode = 2, detailMessage = \nmismatched input 'LIKE' expecting {<EOF>, ';'}(line 1, pos 12)\n",
+    ) as Error & { code: string; errno: number; sqlState: string };
+    error.code = "ER_UNKNOWN_ERROR";
+    error.errno = 1105;
+    error.sqlState = "HY000";
+    return Promise.reject(error);
+  }
+
+  if (normalized.startsWith("show status")) {
+    return Promise.resolve([[], []]);
+  }
+
+  if (normalized.includes("show variables like 'max_connections'")) {
+    return Promise.resolve([[], []]);
   }
 
   return defaultMockExecute(sql);
@@ -976,6 +1044,37 @@ describe("MySQLProvider", () => {
       expect(typeof health.databaseSize).toBe("string");
       expect(typeof health.cacheHitRatio).toBe("string");
       expect(Array.isArray(health.slowQueries)).toBe(true);
+      expect(Array.isArray(health.activeSessions)).toBe(true);
+    });
+
+    test("reads the connection count from ONE bare SHOW STATUS, never SHOW STATUS LIKE", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      protocolCalls = [];
+      await provider.getHealth();
+
+      // Apache Doris 4.1.3 rejects the LIKE clause on SHOW STATUS as a parse error
+      // (errno 1105, measured 2026-09-06), which took the whole Health panel down
+      // there. One bare read, picked client-side, is what every engine accepts (#573).
+      expect(
+        protocolCalls
+          .filter((c) => c.sql.toLowerCase().includes("show status"))
+          .map((c) => ({ method: c.method, sql: c.sql.trim() })),
+      ).toEqual([{ method: "query", sql: "SHOW STATUS" }]);
+    });
+
+    test("omits activeConnections on a server that publishes no Threads_connected row", async () => {
+      mockExecuteFn = dorisMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      // ABSENCE and ZERO are different facts (#477, and the docblock on
+      // `HealthInfo.activeConnections`). Doris 4.1.3 and StarRocks 3.3.22 answer a bare
+      // SHOW STATUS with zero rows and TiDB 8.5.1 publishes Uptime but not
+      // Threads_connected, so the key must be missing rather than a fabricated 0.
+      expect("activeConnections" in health).toBe(false);
       expect(Array.isArray(health.activeSessions)).toBe(true);
     });
 
@@ -1549,6 +1648,68 @@ describe("MySQLProvider", () => {
       // 86400 seconds = 1 day
       expect(overview.uptime).toBe("1d 0h");
     });
+
+    test("reads uptime and connections from ONE bare SHOW STATUS, and keeps SHOW VARIABLES LIKE", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      protocolCalls = [];
+      await provider.getOverview();
+
+      // Doris 4.1.3 rejects `SHOW STATUS LIKE` (errno 1105, measured 2026-09-06) and
+      // accepts `SHOW VARIABLES LIKE 'max_connections'`, so only the first statement
+      // changes: the narrowest fix touches only what a grammar refuses. One read
+      // serves both variables, which is one round trip fewer than before.
+      expect(
+        protocolCalls
+          .filter((c) => c.sql.toLowerCase().includes("show status"))
+          .map((c) => ({ method: c.method, sql: c.sql.trim() })),
+      ).toEqual([{ method: "query", sql: "SHOW STATUS" }]);
+      expect(methodFor("show variables like 'max_connections'")).toBe("query");
+    });
+
+    test("reports absence, not zero, on a server that publishes no status rows", async () => {
+      mockExecuteFn = dorisMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      // Doris 4.1.3: SHOW STATUS answers 0 rows and SHOW VARIABLES LIKE
+      // 'max_connections' answers 0 rows, both measured 2026-09-06. Nothing was read,
+      // so nothing is reported as read: no `activeConnections` key at all, no
+      // `startTime` for an uptime nobody published, and the uptime string is the "N/A"
+      // every other provider sends for an unmeasured one.
+      expect("activeConnections" in overview).toBe(false);
+      expect("startTime" in overview).toBe(false);
+      expect(overview.uptime).toBe("N/A");
+      // `maxConnections` is the one figure where 0 and absence are the SAME fact - it
+      // means "no limit published", see the docblock in `src/lib/db/types.ts` - so it
+      // stays a number. The old fallback invented MySQL's 151 for every server.
+      expect(overview.maxConnections).toBe(0);
+      expect(overview.version).toBe("MySQL 8.0.35");
+    });
+
+    test("picks the status rows case-insensitively", async () => {
+      // `SHOW STATUS LIKE 'Uptime'` matched case-insensitively on every MySQL-family
+      // server, so the client-side pick that replaces it has to match the same way.
+      mockExecuteFn = (sql: string) =>
+        sql.trim().toLowerCase().startsWith("show status")
+          ? Promise.resolve([
+              [
+                { Variable_name: "uptime", Value: "86400" },
+                { Variable_name: "threads_connected", Value: "7" },
+              ],
+              [],
+            ])
+          : defaultMockExecute(sql);
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect(overview.uptime).toBe("1d 0h");
+      expect(overview.activeConnections).toBe(7);
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -1604,11 +1765,19 @@ describe("MySQLProvider", () => {
 
     test("omits deadlocks on a server that does not publish Innodb_deadlocks", async () => {
       // `Innodb_deadlocks` is MariaDB's status variable. MySQL does not publish it -
-      // measured as an empty SHOW STATUS result on both 8.0.46 and 26.7.0 - so the
-      // old `parseInt(row?.Value || "0")` reported a deadlock count MySQL never gave.
+      // measured 2026-09-06 on MySQL 26.7.0, whose bare SHOW STATUS answers 528 rows
+      // and none of them named `Innodb_deadlocks`, against MariaDB 12.3.2's 571 rows
+      // which do. So the row is simply not in the list, and the old
+      // `parseInt(row?.Value || "0")` reported a deadlock count MySQL never gave.
       mockExecuteFn = (sql: string) =>
-        sql.trim().toLowerCase().includes("show status like 'innodb_deadlocks'")
-          ? Promise.resolve([[], []])
+        sql.trim().toLowerCase().startsWith("show status")
+          ? Promise.resolve([
+              [
+                { Variable_name: "Threads_connected", Value: "5" },
+                { Variable_name: "Uptime", Value: "86400" },
+              ],
+              [],
+            ])
           : defaultMockExecute(sql);
 
       provider = new MySQLProvider(makeMySQLConfig());
@@ -1619,6 +1788,19 @@ describe("MySQLProvider", () => {
       // The performance_schema readings are unaffected: still measured, still reported.
       expect(metrics.cacheHitRatio).toBe(99.5);
       expect(metrics.bufferPoolUsage).toBe(80);
+    });
+
+    test("reads deadlocks from a bare SHOW STATUS, never SHOW STATUS LIKE", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      protocolCalls = [];
+      await provider.getPerformanceMetrics();
+
+      expect(
+        protocolCalls
+          .filter((c) => c.sql.toLowerCase().includes("show status"))
+          .map((c) => ({ method: c.method, sql: c.sql.trim() })),
+      ).toEqual([{ method: "query", sql: "SHOW STATUS" }]);
     });
 
     test("omits every metric when the performance_schema query fails outright", async () => {
@@ -2327,7 +2509,7 @@ describe("MySQLProvider wire protocol", () => {
     const p = await connected();
     await p.getHealth();
 
-    expect(methodFor("show status like 'threads_connected'")).toBe("query");
+    expect(methodFor("show status")).toBe("query");
     // Every information_schema read here binds the database name.
     expect(methodFor("information_schema.tables")).toBe("execute");
     expect(methodFor("processlist")).toBe("execute");
@@ -2338,7 +2520,7 @@ describe("MySQLProvider wire protocol", () => {
     await p.getOverview();
 
     expect(methodFor("version()")).toBe("query");
-    expect(methodFor("show status like 'uptime'")).toBe("query");
+    expect(methodFor("show status")).toBe("query");
     expect(methodFor("show variables like 'max_connections'")).toBe("query");
     expect(methodFor("information_schema.tables")).toBe("execute");
   });
@@ -2507,5 +2689,178 @@ describe("the mysql2 fixture-fidelity guard", () => {
     // wrapper leaves a rejection a rejection rather than resolving it.
     await expect(mockConnection.execute(SQL_TEXT_DIGEST_READ, ["testdb"])).rejects.toThrow(/Unknown column 'sql_text'/);
     expect(fixtureViolations).toEqual([]);
+  });
+});
+
+// ============================================================================
+// The connect-time EXPLAIN grammar probe
+// ============================================================================
+/**
+ * `EXPLAIN FORMAT=JSON` is MySQL's grammar, not the wire family's. Measured
+ * 2026-09-06 through mysql2 3.24.2 over the text protocol, `EXPLAIN FORMAT=JSON
+ * SELECT 1` is refused by Apache Doris 4.1.3 and TiDB 8.5.1 (errno 1105) and by
+ * StarRocks 3.3.22 and SingleStore (errno 1064), while a plain `EXPLAIN SELECT 1`
+ * is accepted by every one of them. The relatives share no errno for a grammar
+ * refusal, so the provider probes at connect and reads success or failure only.
+ *
+ * The refusals below are the fixtures from those runs. A mock that resolves them
+ * models a server that does not exist, which is exactly how the panel's failure
+ * survived until now.
+ */
+function explainRefusal(
+  message: string,
+  errno: number,
+  code: string,
+  sqlState: string,
+): Error & { code: string; errno: number; sqlState: string } {
+  const error = new Error(message) as Error & { code: string; errno: number; sqlState: string };
+  error.code = code;
+  error.errno = errno;
+  error.sqlState = sqlState;
+  return error;
+}
+
+/** Apache Doris 4.1.3 (`apache/doris:all-in-one-4.1.3`), measured 2026-09-06. */
+const dorisExplainRefusal = () =>
+  explainRefusal("mismatched input '=' expecting {<EOF>, ';'}(line 1, pos 14)", 1105, "ER_UNKNOWN_ERROR", "HY000");
+
+/** TiDB 8.5.1 (`pingcap/tidb:v8.5.1`), measured 2026-09-06. */
+const tidbExplainRefusal = () =>
+  explainRefusal("explain format 'json' is not supported now", 1105, "ER_UNKNOWN_ERROR", "HY000");
+
+/** StarRocks 3.3.22 and SingleStore both answer a parse error, measured 2026-09-06. */
+const parseErrorExplainRefusal = () =>
+  explainRefusal("You have an error in your SQL syntax", 1064, "ER_PARSE_ERROR", "42000");
+
+describe("MySQLProvider EXPLAIN grammar probe", () => {
+  let provider: InstanceType<typeof MySQLProvider>;
+
+  beforeEach(() => {
+    mockExecuteFn = defaultMockExecute;
+    protocolCalls = [];
+  });
+
+  afterEach(async () => {
+    try {
+      if (provider?.isConnected()) await provider.disconnect();
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  /** Every statement the probe issued, in order. */
+  function explainProbeCalls(): ProtocolCall[] {
+    return protocolCalls.filter((c) => c.sql.toLowerCase().startsWith("explain"));
+  }
+
+  /**
+   * A server that refuses the statements named here and answers everything else
+   * through the shared fixture.
+   */
+  function refusing(refusals: Record<string, () => Error>): (sql: string) => Promise<[unknown[], unknown[]]> {
+    return (sql: string) => {
+      const normalized = sql.trim().toLowerCase();
+      const refusal = Object.entries(refusals).find(([statement]) => normalized === statement.toLowerCase());
+      return refusal === undefined ? defaultMockExecute(sql) : Promise.reject(refusal[1]());
+    };
+  }
+
+  test("before connect the provider answers the static MySQL default", () => {
+    provider = new MySQLProvider(makeMySQLConfig());
+    const caps = provider.getCapabilities();
+
+    // `POST /api/db/provider-meta` never connects (#457), so this is the answer the
+    // client's pre-flight sees, and it must stay what it has always been.
+    expect(caps.explainFormat).toBe("mysql-json");
+    expect(caps.supportsExplain).toBe(true);
+    expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
+    expect(explainProbeCalls()).toEqual([]);
+  });
+
+  test("a server that accepts EXPLAIN FORMAT=JSON keeps mysql-json, probed with one statement", async () => {
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const caps = provider.getCapabilities();
+
+    expect(caps.explainFormat).toBe("mysql-json");
+    expect(caps.supportsExplain).toBe(true);
+    expect(explainProbeCalls().map((c) => c.sql)).toEqual(["EXPLAIN FORMAT=JSON SELECT 1"]);
+    // Parameterless, so the text protocol, like every other statement of that shape.
+    expect(methodFor("explain format=json select 1")).toBe("query");
+  });
+
+  test("Doris refuses FORMAT=JSON and accepts plain EXPLAIN, so the format is mysql-text", async () => {
+    mockExecuteFn = refusing({ "explain format=json select 1": dorisExplainRefusal });
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const caps = provider.getCapabilities();
+
+    expect(caps.explainFormat).toBe("mysql-text");
+    expect(caps.supportsExplain).toBe(true);
+    expect(explainProbeCalls().map((c) => c.sql)).toEqual(["EXPLAIN FORMAT=JSON SELECT 1", "EXPLAIN SELECT 1"]);
+    expect(explainProbeCalls().every((c) => c.method === "query")).toBe(true);
+  });
+
+  test("TiDB's own wording for the same refusal reaches the same format", async () => {
+    mockExecuteFn = refusing({ "explain format=json select 1": tidbExplainRefusal });
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+
+    expect(provider.getCapabilities().explainFormat).toBe("mysql-text");
+  });
+
+  test("a parse error rather than an unknown error reaches the same format", async () => {
+    // StarRocks 3.3.22 and SingleStore answer errno 1064 where Doris and TiDB answer
+    // 1105. The probe reads success or failure, never the code, and this pins that.
+    mockExecuteFn = refusing({ "explain format=json select 1": parseErrorExplainRefusal });
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+
+    expect(provider.getCapabilities().explainFormat).toBe("mysql-text");
+  });
+
+  test("a server that refuses both statements declares no explain support and no format", async () => {
+    mockExecuteFn = refusing({
+      "explain format=json select 1": dorisExplainRefusal,
+      "explain select 1": parseErrorExplainRefusal,
+    });
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const caps = provider.getCapabilities();
+
+    expect(caps.supportsExplain).toBe(false);
+    // Absent, not undefined-valued: `explainFormat` is present iff supportsExplain is.
+    expect("explainFormat" in caps).toBe(false);
+    expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
+    expect(explainProbeCalls().map((c) => c.sql)).toEqual(["EXPLAIN FORMAT=JSON SELECT 1", "EXPLAIN SELECT 1"]);
+  });
+
+  test("a refused probe is not a failed connection", async () => {
+    mockExecuteFn = refusing({
+      "explain format=json select 1": dorisExplainRefusal,
+      "explain select 1": parseErrorExplainRefusal,
+    });
+
+    provider = new MySQLProvider(makeMySQLConfig());
+
+    // The probe is a capability measurement, not a connection check. A grammar the
+    // server does not have must never cost the user the connection.
+    await expect(provider.connect()).resolves.toBeUndefined();
+    expect(provider.isConnected()).toBe(true);
+  });
+
+  test("a re-connect over a live pool does not probe again", async () => {
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    protocolCalls = [];
+
+    await provider.connect();
+
+    expect(explainProbeCalls()).toEqual([]);
+    expect(provider.getCapabilities().explainFormat).toBe("mysql-json");
   });
 });

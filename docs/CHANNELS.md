@@ -34,9 +34,9 @@ channel count.
 
 ## Coverage snapshot
 
-**33 channels · 26 live · 6 pending · 1 deprecated**
+**35 channels · 27 live · 7 pending · 1 deprecated**
 
-Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 4 · Kubernetes 2 · Cloud 10**
+Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 4 · Kubernetes 3 · Cloud 11**
 
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
@@ -47,7 +47,7 @@ Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 4 · K
 | OS / desktop packages | 3 | 0 | 0 |
 | PaaS catalogs (listed) | 8 | 4 | 0 |
 | Deploy recipes | 3 | 0 | 0 |
-| Cloud marketplaces | 1 | 1 | 0 |
+| Cloud marketplaces | 2 | 2 | 0 |
 
 <!-- END:CHANNEL-SCORECARD -->
 
@@ -89,6 +89,8 @@ Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 4 · K
 | [Koyeb deploy button](https://github.com/libredb/libredb-studio/tree/main/deploy/koyeb) | Deploy recipes | Cloud | live | Manual, on demand | [deploy/koyeb/README.md](../deploy/koyeb/README.md) |
 | [Render Blueprint](https://github.com/libredb/libredb-studio/blob/main/render.yaml) | Deploy recipes | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [DigitalOcean Marketplace](https://marketplace.digitalocean.com/apps/libredb-studio) | Cloud marketplaces | Cloud | live | Manual, on demand | [deploy/digitalocean/README.md](../deploy/digitalocean/README.md) |
+| [Google Cloud Marketplace](https://console.cloud.google.com/marketplace/product/libredb-public/libredb-studio) | Cloud marketplaces | Kubernetes, Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| Azure Marketplace | Cloud marketplaces | Cloud | pending | Manual, on demand | [deploy/azure/README.md](../deploy/azure/README.md) |
 | [Koyeb One-Click Apps catalog](https://www.koyeb.com/deploy) | Cloud marketplaces | Cloud | pending | Manual, on demand | [deploy/koyeb/CATALOG_SUBMISSION.md](../deploy/koyeb/CATALOG_SUBMISSION.md) |
 
 <!-- END:CHANNEL-TABLE -->
@@ -99,5 +101,10 @@ hand. To propose a new channel, add an entry with a `category` and a `platforms`
 list, then run `bun run distribution:matrix`. Freshness is enforced on pull
 requests with `bun run distribution:matrix --check`.
 
-Planned and deliberately not counted here until a listing exists: GCP, Azure, AWS
-and Alibaba cloud marketplaces, and Coolify, Portainer and Dokku deploy support.
+Not counted here, and why. **AWS Marketplace** has a registered seller account
+but no submitted product, so there is nothing to track yet. **Alibaba Cloud** is
+not being pursued. **Coolify** declined the submission: its maintainers accept
+service templates only from projects above 1000 GitHub stars. **Dokku** has no
+application catalog to apply to. A row appears above the moment a submission
+exists — `pending` while it is open or under review, `live` once the product can
+be installed from that channel.

@@ -18,7 +18,7 @@
  * listed are the sections present, each listed id exists, each range's endpoints are the real
  * extremes, and the trailing count is the real number of entries. The endpoints are checked as
  * extremes rather than as a canonical rendering because the file writes a prefix's entries as
- * `X2–X14` in one section and as bare ids in another, and both are legitimate. The examples in
+ * `X2–X12` in one section and as bare ids in another, and both are legitimate. The examples in
  * this file are illustrative rather than pinned: a closed entry changes them, so they are written
  * as shapes and the assertions derive the real ones from the document.
  */

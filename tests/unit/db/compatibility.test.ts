@@ -105,35 +105,43 @@ describe("wire-compatibility registry", () => {
     expect(WIRE_COMPATIBLE_ENGINES.map((engine) => engine.name.toLowerCase())).toContain("scylladb");
   });
 
-  test("Apache Doris is recorded as a partial MySQL relative, on what the probe measured", () => {
+  test("Apache Doris is recorded as a full MySQL relative, on what the 2026-09-06 re-measurement found", () => {
     // Probed 2026-08-26 against `apache/doris:all-in-one-4.1.3` (#424 Phase 0). The entry
     // exists because StarRocks - already registered here - is a FORK of Doris, and this
     // registry had been carrying the fork while missing the original. It is not a copy of
-    // that row: thirteen of the fifteen surfaces answer where StarRocks manages eleven,
+    // that row: every one of the fifteen surfaces answers where StarRocks still loses health and
+    // the session panel to its missing information_schema.PROCESSLIST,
     // and the numbers are the sharp difference. StarRocks reports hard zeros; Doris reports
     // 2000 rows and 10187 bytes for a table holding exactly that, so the object browser and
     // the table-statistics panel are trustworthy here.
     //
-    // Two surfaces fail, both on ONE statement form: `SHOW STATUS LIKE '...'` is a parse
-    // error in the Doris grammar while a bare `SHOW STATUS` is accepted (and answers zero
-    // rows), which takes the overview and health panels. That cause is ours rather than the
-    // engine's and is filed as a backlog defect - the tier records what a user gets today,
-    // not what a fix could give them.
+    // The tier was `partial` for exactly two surfaces, the overview and health panels, and
+    // for one cause that was ours rather than the engine's: `SHOW STATUS LIKE '...'` is a
+    // parse error in the Doris grammar while a bare `SHOW STATUS` is accepted. Both panels
+    // render since that read was fixed (#573), and the Explain panel renders Doris's own
+    // text plan since the provider stopped sending `EXPLAIN FORMAT=JSON` (#574), so the
+    // tier is `full`. Verified in a browser against the built app on 2026-09-06.
     const relatives = compatibleEnginesFor("mysql");
     const doris = relatives.find((engine) => engine.name === "Apache Doris");
     expect(doris).toBeDefined();
     expect(doris?.via).toBe("mysql");
-    expect(doris?.tier).toBe("partial");
+    expect(doris?.tier).toBe("full");
     expect(doris?.probedVersion).toBe("Apache Doris 4.1.3-rc02-7126cf65d96 (version() reports 5.7.99)");
-    // The caveat set has to name the failures and the traps that remain, because each one is a
-    // thing a reader would otherwise believe works: the invisible foreign key, the absent
-    // indexes, and the statement form that costs two panels. The fictitious version() number is
-    // deliberately absent from this list: the overview reads @@version_comment instead and shows
-    // the real build, so it is no longer something a reader would be misled by.
+    // The caveat set has to name the traps that remain, because each one is a thing a reader
+    // would otherwise believe works: the invisible foreign key and the absent indexes. It
+    // also has to say what the overview publishes now that it renders, which is an absence
+    // rather than a number, because Doris answers `SHOW STATUS` and
+    // `SHOW VARIABLES LIKE 'max_connections'` with zero rows each. The fictitious version()
+    // number is deliberately absent from this list: the overview reads @@version_comment
+    // instead and shows the real build, so it is no longer something a reader would be
+    // misled by.
     const caveats = doris?.caveats.join(" ") ?? "";
-    expect(caveats).toContain("SHOW STATUS");
+    expect(caveats).toContain("N/A, not published");
     expect(caveats).toContain("KEY_COLUMN_USAGE");
     expect(caveats).toContain("information_schema.statistics");
+    // The two resolved claims must not come back: neither panel is unavailable any more.
+    expect(doris?.caveats.some((caveat) => caveat.includes("The Explain panel does not work"))).toBe(false);
+    expect(doris?.caveats.some((caveat) => caveat.includes("panels are unavailable"))).toBe(false);
   });
 
   test("the Doris row is not the StarRocks row, and says so where it matters", () => {

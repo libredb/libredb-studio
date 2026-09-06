@@ -71,12 +71,21 @@ function typeIdOf(file: string): string {
 }
 
 /**
- * The engines whose provider declares a plan format. The match is anchored to the start
- * of the line so the several comment lines that discuss a MISSING `explainFormat` (the
- * search provider explains at length why it declares none) are not read as declarations.
+ * A provider file that declares a plan format, in either of the two forms one is written
+ * in. Both alternatives are anchored to the start of a line so the several comment lines
+ * that discuss a MISSING `explainFormat` (the search provider explains at length why it
+ * declares none) are not read as declarations.
+ *
+ * The second alternative is the MEASURED form. MySQL serves every MySQL-wire relative and
+ * they do not share one EXPLAIN grammar, so its provider probes the server at connect and
+ * spreads the result in rather than writing a literal (#574). It returns a plan on every
+ * engine measured, so a listing may name it; a literal-only match read it as plan-less.
  */
+const DECLARES_EXPLAIN_FORMAT = /^\s*explainFormat:\s*"|^\s*\.\.\..*\bexplainFormat: this\./m;
+
+/** The engines whose provider declares a plan format. */
 const explainCapable: DatabaseType[] = providerFiles(PROVIDER_ROOT)
-  .filter((file) => /^\s*explainFormat:\s*"/m.test(readFileSync(file, "utf8")))
+  .filter((file) => DECLARES_EXPLAIN_FORMAT.test(readFileSync(file, "utf8")))
   .map(typeIdOf)
   .filter((id): id is DatabaseType => id in DB_UI_CONFIG)
   .sort();

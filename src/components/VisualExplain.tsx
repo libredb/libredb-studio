@@ -369,9 +369,17 @@ const TreeNodeView = ({ node, depth = 0 }: { node: ExplainTreeNode; depth?: numb
         <ListTree strokeWidth={1.5} className="w-3 h-3 text-fg-tertiary" />
       </div>
 
-      {/* Label */}
+      {/* Label, and under it whatever the engine printed ABOUT this node */}
       <div className="flex-1 min-w-0">
         <span className="text-xs font-medium text-fg truncate">{node.label}</span>
+        {/* A text plan's attributes: CockroachDB prints `table: orders@orders_pkey` and
+            `spans: FULL SCAN` under the operator they describe, TiDB carries the same
+            kind of thing in extra EXPLAIN columns, and `detail` is where both land.
+            Without this the tree would show operator names and nothing else — most of
+            what those plans say would be readable only in the raw tab (#597). */}
+        {node.detail !== undefined && (
+          <span className="block text-[11px] font-mono text-fg-muted truncate">{node.detail}</span>
+        )}
       </div>
 
       {/* Metric badges — only when the node actually carries metrics */}
@@ -719,6 +727,18 @@ function AIExplainTab({
 
 type ExplainTab = "insights" | "tree" | "raw" | "ai";
 
+/**
+ * The raw tab shows what the engine sent. That is JSON for every format but one:
+ * `mysql-text` stores the plan as PLAIN TEXT, because the MySQL-wire relatives that
+ * refuse `EXPLAIN FORMAT=JSON` print a text or tabular plan instead (measured
+ * 2026-09-06: StarRocks 3.3.22 `EXPLAIN SELECT 1` answers 13 rows of one text column,
+ * Apache Doris 4.1.3 answers 17). Stringifying that would show one quoted line with
+ * escaped newlines instead of the plan.
+ */
+function formatRawPlan(raw: unknown): string {
+  return typeof raw === "string" ? raw : JSON.stringify(raw, null, 2);
+}
+
 // First entry is the kind's default tab. No "insights" for tree plans —
 // analyzePlan's heuristics key off postgres-only fields (Actual Rows, Total
 // Cost, buffer stats) that sqlite-queryplan and friends never produce.
@@ -976,7 +996,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
         {activeTab === "raw" && (
           <div className="p-4">
             <pre className="text-xs font-mono text-fg-tertiary bg-fill-subtle rounded-lg p-4 overflow-auto border border-hairline">
-              {JSON.stringify(input.kind === "tree" ? input.raw : postgresPlan, null, 2)}
+              {formatRawPlan(input.kind === "tree" ? input.raw : postgresPlan)}
             </pre>
           </div>
         )}

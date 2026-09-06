@@ -7,7 +7,7 @@ import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:
 import { EventEmitter } from "node:events";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
-import { ConnectionError, DatabaseConfigError, ExecutionProfileError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 
 // ============================================================================
@@ -93,6 +93,25 @@ function makePgConfig(overrides: Partial<DatabaseConnection> = {}): DatabaseConn
 /**
  * Default mock query that matches SQL patterns and returns appropriate mock data.
  */
+// A SQL rewrite that drops a bracket still satisfies "does not contain X", so the
+// rewrite tests below pair every such assertion with this: it reports imbalance
+// rather than a bare false, so a failure says which direction the rewrite broke.
+function countParens(sql: string): { balanced: boolean; open?: number; close?: number } {
+  let depth = 0;
+  let open = 0;
+  let close = 0;
+  for (const ch of sql) {
+    if (ch === "(") {
+      open++;
+      depth++;
+    } else if (ch === ")") {
+      close++;
+      depth--;
+    }
+  }
+  return depth === 0 ? { balanced: true } : { balanced: false, open, close };
+}
+
 function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { name: string }[]; rowCount?: number }> {
   const normalized = sql.trim().toLowerCase();
 
@@ -332,8 +351,8 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
     });
   }
 
-  // Schema CTE query: information_schema + table_type = 'base table'
-  if (normalized.includes("information_schema") && normalized.includes("table_type = 'base table'")) {
+  // Schema CTE query: information_schema + table_type in ('base table'
+  if (normalized.includes("tables_info as materialized (") || normalized.includes("tables_info as (")) {
     return Promise.resolve({
       rows: [
         {
@@ -380,12 +399,21 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
     });
   }
 
-  // getOverview: version() + pg_postmaster_start_time()
-  if (normalized.includes("version()") && normalized.includes("pg_postmaster_start_time()")) {
+  // getOverview: version() (split from uptime so an engine without
+  // pg_postmaster_start_time() still reports a version - see postgres.ts)
+  if (normalized.includes("version()") && !normalized.includes("pg_postmaster_start_time()")) {
+    return Promise.resolve({
+      rows: [{ version: "PostgreSQL 16.2, compiled by Visual C++ build 1941, 64-bit" }],
+      fields: [],
+      rowCount: 1,
+    });
+  }
+
+  // getOverview: pg_postmaster_start_time() + uptime_seconds
+  if (normalized.includes("pg_postmaster_start_time()")) {
     return Promise.resolve({
       rows: [
         {
-          version: "PostgreSQL 16.2, compiled by Visual C++ build 1941, 64-bit",
           start_time: new Date(Date.now() - 90061000).toISOString(),
           uptime_seconds: "90061",
         },
@@ -413,8 +441,9 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
     });
   }
 
-  // getOverview: table + index counts
-  if (normalized.includes("pg_tables") && normalized.includes("pg_indexes")) {
+  // getOverview: table + index counts. Keyed on the output column rather than on the
+  // catalogs, which have already moved once (pg_tables -> information_schema.tables).
+  if (normalized.includes("as table_count") && normalized.includes("as index_count")) {
     return Promise.resolve({
       rows: [{ table_count: "15", index_count: "30" }],
       fields: [],
@@ -993,7 +1022,7 @@ describe("PostgresProvider", () => {
 
   describe("getSchemaList()", () => {
     // The fast path shares the tables/columns/pk CTE shape with getSchema(), so
-    // the default mock (information_schema + table_type = 'base table') applies.
+    // the default mock (information_schema + table_type in ('base table') applies.
     // What it must NOT do is populate indexes/foreignKeys — those are deferred
     // to getSchemaRelations() so a slow stats query can't block the table list.
     test("returns tables with columns and PKs but empty indexes/foreignKeys", async () => {
@@ -1031,10 +1060,12 @@ describe("PostgresProvider", () => {
       expect(schema.find((t) => t.name === "users")).toBeDefined();
     });
 
-    test("negative reltuples row_count is clamped to zero", async () => {
-      // Never-analyzed tables report reltuples = -1; the UI must never show -1.
+    test("negative reltuples row_count is reported as absent, not as zero", async () => {
+      // Never-analysed tables report reltuples = -1 and the UI must never show -1 - but
+      // clamping it to 0 traded one wrong number for another, and 0 is the more
+      // convincing lie because it looks like a reading. Absence draws no badge at all.
       mockQueryFn = (sql: string) => {
-        if (sql.toLowerCase().includes("table_type = 'base table'")) {
+        if (sql.toLowerCase().includes("table_type in ('base table'")) {
           return Promise.resolve({
             rows: [
               {
@@ -1056,12 +1087,12 @@ describe("PostgresProvider", () => {
       await provider.connect();
       const schema = await provider.getSchemaList();
 
-      expect(schema[0].rowCount).toBe(0);
+      expect(schema[0].rowCount).toBeUndefined();
     });
 
     test("table with no columns yields an empty columns array (not a crash)", async () => {
       mockQueryFn = (sql: string) => {
-        if (sql.toLowerCase().includes("table_type = 'base table'")) {
+        if (sql.toLowerCase().includes("table_type in ('base table'")) {
           return Promise.resolve({
             rows: [
               {
@@ -1243,6 +1274,770 @@ describe("PostgresProvider", () => {
   });
 
   // --------------------------------------------------------------------------
+  // MATERIALIZED-keyword fallback (Materialize/RisingWave compatibility, #38680)
+  // --------------------------------------------------------------------------
+
+  describe("MATERIALIZED-keyword schema fallback", () => {
+    // Materialize/RisingWave reserve MATERIALIZED as a keyword and reject the
+    // CTE modifier with a syntax error, even though the underlying
+    // information_schema views are otherwise queryable there.
+    function rejectMaterializedHintOnce(onRetry: (sql: string) => ReturnType<typeof defaultMockQuery>) {
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("AS MATERIALIZED (")) {
+          return Promise.reject(new Error('syntax error at or near "MATERIALIZED"'));
+        }
+        return onRetry(sql);
+      };
+    }
+
+    test("getSchema() retries without the hint and returns real data", async () => {
+      rejectMaterializedHintOnce(defaultMockQuery);
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const schema = await provider.getSchema();
+      expect(schema.length).toBe(2);
+    });
+
+    test("getSchemaList() and getSchemaRelations() also recover via the same fallback", async () => {
+      rejectMaterializedHintOnce(defaultMockQuery);
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const list = await provider.getSchemaList();
+      expect(list.length).toBe(2);
+
+      const relations = await provider.getSchemaRelations();
+      expect(Array.isArray(relations)).toBe(true);
+    });
+
+    test("getSchema() maps and rethrows when the retry without the hint also fails", async () => {
+      mockQueryFn = () => Promise.reject(new Error('syntax error at or near "MATERIALIZED"'));
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      await expect(provider.getSchema()).rejects.toThrow(QueryError);
+      await expect(provider.getSchema()).rejects.toThrow(/materialized/i);
+    });
+
+    test("getSchema() maps and rethrows an unrelated error without retrying", async () => {
+      mockQueryFn = () => Promise.reject(new Error('relation "tables_info" does not exist'));
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      await expect(provider.getSchema()).rejects.toThrow(QueryError);
+      await expect(provider.getSchema()).rejects.toThrow(/does not exist/);
+    });
+
+    // CockroachDB accepts the MATERIALIZED hint fine (its own compatibility.ts entry
+    // says so) but has no pg_total_relation_size() builtin - hitting the second
+    // fallback as the FIRST error, with the MATERIALIZED collision never in play.
+    test("getSchema() retries around a missing pg_total_relation_size(), independent of the MATERIALIZED collision", async () => {
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("pg_total_relation_size(c.oid)")) {
+          return Promise.reject(new Error("unknown function: pg_total_relation_size()"));
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const schema = await provider.getSchema();
+      expect(schema.length).toBe(2);
+    });
+
+    // Materialize hits all three gaps in sequence: MATERIALIZED is rejected first,
+    // then (once stripped) pg_total_relation_size, then (once replaced) json_agg.
+    test("getSchema() chains through all three fallbacks when an engine hits every gap", async () => {
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("AS MATERIALIZED (")) {
+          return Promise.reject(new Error("Expected left parenthesis, found MATERIALIZED"));
+        }
+        if (sql.includes("pg_total_relation_size(c.oid)")) {
+          return Promise.reject(new Error('function "pg_total_relation_size" does not exist'));
+        }
+        if (sql.includes("json_agg(")) {
+          return Promise.reject(new Error('function "json_agg" does not exist'));
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const schema = await provider.getSchema();
+      expect(schema.length).toBe(2);
+    });
+
+    test("getSchema() maps and rethrows when the MATERIALIZED retry fails for an unrelated reason", async () => {
+      // Every attempt gets this same message: the first is consumed by the
+      // MATERIALIZED fallback (it mentions "MATERIALIZED"), but once that fallback is
+      // used up, no remaining fallback recognizes it, so the second attempt's
+      // rejection is mapped and rethrown rather than retried forever.
+      mockQueryFn = () =>
+        Promise.reject(new Error("syntax error: Expected left parenthesis, found MATERIALIZED; unrelated cause"));
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      await expect(provider.getSchema()).rejects.toThrow(QueryError);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // System-schema exclusion set (engine internals must never count as user data)
+  // --------------------------------------------------------------------------
+
+  describe("system-schema exclusion set", () => {
+    // Each name below was read off that engine's own documentation and then
+    // confirmed against a live instance. They are the schemas a wire-compatible
+    // engine puts in pg_tables/information_schema alongside a user's own tables.
+    const DOCUMENTED_ENGINE_SCHEMAS = [
+      // Materialize - materialize.com/docs/sql/system-catalog/
+      "mz_catalog",
+      "mz_internal",
+      "mz_introspection",
+      // CockroachDB - cockroachlabs.com/docs/stable/system-catalogs
+      "crdb_internal",
+      "pg_extension",
+      // TimescaleDB - timescaledb/sql/pre_install/schemas.sql
+      "_timescaledb_catalog",
+      "_timescaledb_config",
+      "_timescaledb_functions",
+      "_timescaledb_internal",
+      "_timescaledb_cache",
+      "timescaledb_experimental",
+      "timescaledb_information",
+      // Apache Cloudberry - cloudberry.apache.org create-and-manage-schemas
+      "gp_toolkit",
+      "pg_aoseg",
+      "pg_bitmapindex",
+      "pg_ext_aux",
+      // AlloyDB Omni is not here on purpose: its google_ml schema is extension-created,
+      // so the ownership test covers it and no user schema can collide with the name.
+      // See "extension-created schemas are excluded by ownership, not by name" below.
+    ];
+
+    // Capture every statement the provider sends while exercising the surfaces
+    // that filter by schema, so the assertion below covers all of them at once
+    // rather than a hand-copied list that a new query could silently escape.
+    async function captureSchemaFilteredSql(): Promise<string[]> {
+      const seen: string[] = [];
+      mockQueryFn = (sql: string) => {
+        seen.push(sql);
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.getSchema();
+      await provider.getSchemaList();
+      await provider.getSchemaRelations();
+      await provider.getOverview();
+      await provider.getTableStats();
+      await provider.getIndexStats();
+      return seen.filter((sql) => sql.includes("NOT IN ('pg_catalog'"));
+    }
+
+    test("every schema-filtered query excludes all documented engine internals", async () => {
+      const filtered = await captureSchemaFilteredSql();
+
+      // Non-vacuity: the surfaces above really do emit schema filters. The count
+      // is read off the capture rather than pinned, so adding a query cannot make
+      // this guard silently stop covering it.
+      expect(filtered.length).toBeGreaterThan(0);
+
+      for (const sql of filtered) {
+        for (const schema of DOCUMENTED_ENGINE_SCHEMAS) {
+          expect(sql).toContain(`'${schema}'`);
+        }
+      }
+    });
+
+    test("every CTE in the schema queries filters by schema, not just some of them", async () => {
+      // tables_info/columns_info/index_info carried the exclusion while pk_info and
+      // fk_info did not, so getSchemaRelations() still listed _timescaledb_catalog
+      // and google_ml relations through the FK side of its FULL OUTER JOIN even
+      // after the object browser stopped showing them. Every CTE here reads
+      // per-table metadata, so every one of them needs the filter.
+      const seen: string[] = [];
+      mockQueryFn = (sql: string) => {
+        seen.push(sql);
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.getSchema();
+      await provider.getSchemaRelations();
+
+      const schemaQueries = seen.filter((sql) => sql.includes("_info AS MATERIALIZED ("));
+      expect(schemaQueries.length).toBeGreaterThan(0);
+
+      // Split each query into its CTE bodies and require the filter in every one.
+      // The count comes off the split, so a CTE added later is covered automatically.
+      const unfiltered: string[] = [];
+      for (const sql of schemaQueries) {
+        // Splitting on the CTE header yields [prefix, name, body, name, body, ...],
+        // so each body runs exactly to the next CTE and cannot borrow its filter.
+        const parts = sql.split(/(\w+) AS MATERIALIZED \(/);
+        expect(parts.length).toBeGreaterThan(1);
+        for (let i = 1; i < parts.length; i += 2) {
+          if (!parts[i + 1].includes("NOT IN ('pg_catalog'")) unfiltered.push(parts[i]);
+        }
+      }
+      expect(unfiltered).toEqual([]);
+    });
+
+    test("extension-created schemas are excluded by ownership, not by name", async () => {
+      // A hardcoded "google_ml" would hide a real schema from anyone who happened to
+      // name one that - it is the only entry on the list a user could plausibly pick.
+      // pg_depend answers the question the name was standing in for, and answers it
+      // better: on a live AlloyDB Omni it returns google_ml AND ai, which the name
+      // list had missed. Measured working on all seven engines, PostgreSQL included,
+      // where it correctly returns nothing.
+      const seen: string[] = [];
+      mockQueryFn = (sql: string) => {
+        seen.push(sql);
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.getSchema();
+      await provider.getOverview();
+      await provider.getTableStats();
+      await provider.getIndexStats();
+
+      const filtered = seen.filter((sql) => sql.includes("NOT IN ('pg_catalog'"));
+      expect(filtered.length).toBeGreaterThan(0);
+      for (const sql of filtered) {
+        expect(sql).toContain("pg_depend");
+      }
+      // And the name it replaces is gone, so a user's own google_ml stays visible.
+      expect(seen.some((sql) => sql.includes("'google_ml'"))).toBe(false);
+    });
+
+    test("an engine without pg_depend still gets a real count, not a zero", async () => {
+      // The counts query carries the ownership clause too, but it does not go through
+      // the object browser's fallback chain, so an engine that cannot evaluate
+      // pg_depend used to land in getOverview's catch and report 0 tables - the same
+      // fabricated measurement this file spends its comments arguing against.
+      let attempts = 0;
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("as table_count")) {
+          attempts++;
+          if (sql.includes("pg_depend")) {
+            return Promise.reject(new Error('relation "pg_depend" does not exist'));
+          }
+          return Promise.resolve({ rows: [{ table_count: "42", index_count: "7" }], fields: [], rowCount: 1 });
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const overview = await provider.getOverview();
+      expect(attempts).toBe(2);
+      expect(overview.tableCount).toBe(42);
+      expect(overview.indexCount).toBe(7);
+    });
+
+    test("the overview counts a table the same way the object browser does", async () => {
+      // These are the two readers that disagreed on CockroachDB, and adding
+      // materialized views to the browser split them again on Materialize: the browser
+      // said 4 and the overview 3, because pg_tables has no materialized views in it.
+      // One definition of "a table" or the panels drift apart again on the next engine.
+      const seen: string[] = [];
+      mockQueryFn = (sql: string) => {
+        seen.push(sql);
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.getSchema();
+      await provider.getOverview();
+
+      const browserQuery = seen.find((sql) => sql.includes("tables_info AS MATERIALIZED ("));
+      const countsQuery = seen.find((sql) => sql.includes("as table_count"));
+      expect(browserQuery).toBeDefined();
+      expect(countsQuery).toBeDefined();
+
+      // Same source and same type list, not merely both filtered somehow.
+      expect(countsQuery).toContain("information_schema.tables");
+      expect(countsQuery).toContain("'MATERIALIZED VIEW'");
+      expect(countsQuery).toContain("'BASE TABLE'");
+    });
+
+    test("getOverview() counts exclude CockroachDB's crdb_internal and pg_extension", async () => {
+      // Measured on CockroachDB v26.2.5: a database with two user tables answers
+      // 98 rows from pg_tables, 93 of them crdb_internal and 3 pg_extension. The
+      // object browser reads information_schema and correctly says 2, so an
+      // unfiltered count makes the two panels disagree.
+      let countsSql = "";
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("as table_count")) countsSql = sql;
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.getOverview();
+
+      expect(countsSql).toContain("'crdb_internal'");
+      expect(countsSql).toContain("'pg_extension'");
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Foreign-key catalog fallback (Materialize has no constraint_column_usage)
+  // --------------------------------------------------------------------------
+
+  describe("missing constraint_column_usage fallback", () => {
+    // Measured on Materialize v26.37.0: key_column_usage and table_constraints
+    // both exist, but constraint_column_usage does not, so the whole schema query
+    // fails even after the MATERIALIZED/size/json fallbacks have cleared their
+    // gaps. Foreign keys are genuinely unknowable there; every other column is not.
+    function rejectConstraintColumnUsage(onRetry: (sql: string) => ReturnType<typeof defaultMockQuery>) {
+      mockQueryFn = async (sql: string) => {
+        if (sql.includes("constraint_column_usage")) {
+          return Promise.reject(new Error("unknown catalog item 'information_schema.constraint_column_usage'"));
+        }
+        const result = await onRetry(sql);
+        // The canned rows carry foreign keys whatever SQL arrives, so asserting on
+        // them would test the fixture rather than the rewrite. Model what the engine
+        // actually does instead: an emptied fk_info CTE joins to nothing, and the
+        // outer COALESCE turns that into []. Keyed on the emptied CTE's own marker so
+        // the fixture cannot answer [] for a query that still asked for real keys.
+        if (!sql.includes("WHERE false")) return result;
+        return {
+          ...result,
+          rows: result.rows.map((row) =>
+            row !== null && typeof row === "object" && "foreign_keys" in row ? { ...row, foreign_keys: [] } : row,
+          ),
+        };
+      };
+    }
+
+    test("getSchema() returns tables with no foreign keys instead of failing", async () => {
+      rejectConstraintColumnUsage(defaultMockQuery);
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const schema = await provider.getSchema();
+      expect(schema.length).toBe(2);
+      // Absent, not invented: the retry drops the FK join rather than guessing.
+      for (const table of schema) {
+        expect(table.foreignKeys).toEqual([]);
+      }
+    });
+
+    test("getSchemaRelations() still returns index data once the FK join is dropped", async () => {
+      rejectConstraintColumnUsage(defaultMockQuery);
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const relations = await provider.getSchemaRelations();
+      expect(Array.isArray(relations)).toBe(true);
+    });
+
+    test("the retried statement no longer reads constraint_column_usage", async () => {
+      const attempts: string[] = [];
+      mockQueryFn = (sql: string) => {
+        attempts.push(sql);
+        if (sql.includes("constraint_column_usage")) {
+          return Promise.reject(new Error("unknown catalog item 'information_schema.constraint_column_usage'"));
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
+      // attempts; what this counts is what getSchema() sent.
+      attempts.length = 0;
+      await provider.getSchema();
+
+      // Two attempts: the original, then one that has dropped the FK catalog.
+      expect(attempts.length).toBe(2);
+      expect(attempts[0]).toContain("constraint_column_usage");
+      expect(attempts[1]).not.toContain("constraint_column_usage");
+      // The CTE itself must survive - the outer query joins it by name.
+      expect(attempts[1]).toContain("fk_info");
+      // A rewrite that ate a bracket would still satisfy the assertions above.
+      expect(countParens(attempts[1])).toEqual({ balanced: true });
+    });
+
+    test("a parenthesis inside a string literal does not move the CTE boundary", async () => {
+      // replaceCteBody() counts brackets to find where the CTE ends. Today fk_info's
+      // literals contain none, so the count is right by luck rather than by rule. This
+      // pins the rule: the engine sees an unbalanced ")" inside a quoted string, and a
+      // scanner that counted it would cut the CTE short and corrupt everything after.
+      const attempts: string[] = [];
+      mockQueryFn = (sql: string) => {
+        attempts.push(sql);
+        if (sql.includes("constraint_column_usage")) {
+          return Promise.reject(new Error("unknown catalog item 'information_schema.constraint_column_usage'"));
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
+      // attempts; what this counts is what getSchema() sent.
+      attempts.length = 0;
+      await provider.getSchema();
+
+      const rewritten = attempts[attempts.length - 1];
+      // Everything the outer query needs must survive the cut, in order.
+      expect(rewritten).toContain("fk_info");
+      expect(rewritten).toContain("index_info AS MATERIALIZED (");
+      expect(rewritten).toContain("LEFT JOIN fk_info fk");
+      expect(rewritten).toContain("ORDER BY ti.table_schema");
+      expect(countParens(rewritten)).toEqual({ balanced: true });
+    });
+
+    test("the ownership subquery stays strippable, which means bracket-free", async () => {
+      // withoutExtensionOwnershipTest() finds the clause with a regex that stops at the
+      // first ")", so a bracket anywhere inside the subquery would leave half of it
+      // behind and produce SQL no engine will parse - silently, on exactly the engines
+      // nobody here can test. The subquery is written bracket-free on purpose; this
+      // fails the moment someone forgets why.
+      const seen: string[] = [];
+      mockQueryFn = (sql: string) => {
+        seen.push(sql);
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.getSchema();
+
+      const query = seen.find((sql) => sql.includes("pg_depend"));
+      expect(query).toBeDefined();
+      const clause = /NOT IN \(SELECT n\.nspname FROM pg_namespace n JOIN pg_depend[^)]*\)/.exec(query as string);
+      expect(clause).not.toBeNull();
+      // The match must end at the clause's own closing bracket, so what it captured
+      // has to contain the whole subquery - pg_extension is its last table.
+      expect((clause as RegExpExecArray)[0]).toContain("pg_extension");
+    });
+
+    test("an engine without pg_depend falls back to the fixed schema list", async () => {
+      // Every engine probed accepts the ownership test, but the driver serves engines
+      // nobody has run. One that has no pg_depend must keep working on the fixed list
+      // rather than losing its object browser to a filter it cannot evaluate.
+      const attempts: string[] = [];
+      mockQueryFn = (sql: string) => {
+        attempts.push(sql);
+        if (sql.includes("pg_depend")) {
+          return Promise.reject(new Error('relation "pg_depend" does not exist'));
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
+      // attempts; what this counts is what getSchema() sent.
+      attempts.length = 0;
+
+      const schema = await provider.getSchema();
+      expect(schema.length).toBe(2);
+      expect(attempts.length).toBe(2);
+      // The ownership clause is gone and the fixed list is still doing its job.
+      expect(attempts[1]).not.toContain("pg_depend");
+      expect(attempts[1]).toContain("NOT IN ('pg_catalog'");
+      expect(countParens(attempts[1])).toEqual({ balanced: true });
+    });
+
+    test("the rethrown error carries the statement that actually failed", async () => {
+      // The chain rewrites the SQL as it goes, so reporting the original text sends a
+      // reader looking at a statement the server never saw. Here the MATERIALIZED hint
+      // is stripped, the retry fails for an unrelated reason, and the error should
+      // quote the stripped statement - the one that produced it.
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("AS MATERIALIZED (")) {
+          return Promise.reject(new Error("Expected left parenthesis, found MATERIALIZED"));
+        }
+        return Promise.reject(new Error('relation "tables_info" is not visible to this role'));
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const error = (await provider.getSchema().catch((e: unknown) => e)) as QueryError;
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.query).toBeDefined();
+      expect(error.query).not.toContain("AS MATERIALIZED (");
+    });
+
+    test("getSchemaList(), which never joins the FK catalog, rethrows instead of retrying blind", async () => {
+      // SCHEMA_LIST_SQL has no fk_info CTE to drop, so there is nothing this
+      // fallback can rewrite. It must surface the error rather than loop or
+      // quietly hand back a query it did not actually repair.
+      mockQueryFn = () =>
+        Promise.reject(new Error("unknown catalog item 'information_schema.constraint_column_usage'"));
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      await expect(provider.getSchemaList()).rejects.toThrow(QueryError);
+    });
+
+    test("Materialize's full sequence: keyword, size builtin, json_agg, then the FK catalog", async () => {
+      const attempts: string[] = [];
+      mockQueryFn = (sql: string) => {
+        attempts.push(sql);
+        if (sql.includes("AS MATERIALIZED (")) {
+          return Promise.reject(new Error("Expected left parenthesis, found MATERIALIZED"));
+        }
+        if (sql.includes("pg_total_relation_size(c.oid)")) {
+          return Promise.reject(new Error('function "pg_total_relation_size" does not exist'));
+        }
+        if (sql.includes("json_agg(")) {
+          return Promise.reject(new Error('function "json_agg" does not exist'));
+        }
+        if (sql.includes("constraint_column_usage")) {
+          return Promise.reject(new Error("unknown catalog item 'information_schema.constraint_column_usage'"));
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
+      // attempts; what this counts is what getSchema() sent.
+      attempts.length = 0;
+
+      const schema = await provider.getSchema();
+      expect(schema.length).toBe(2);
+      expect(attempts.length).toBe(5);
+      expect(countParens(attempts[4])).toEqual({ balanced: true });
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Materialized views, and statistics panels on an engine that has no sizes
+  // --------------------------------------------------------------------------
+
+  describe("materialized views in the object browser", () => {
+    test("the schema query asks for materialized views as well as base tables", async () => {
+      // Materialize reports its materialized views through information_schema.tables
+      // with table_type = 'MATERIALIZED VIEW', and they are the object its users
+      // actually work with - a browser that lists only BASE TABLE hides the product.
+      // Measured no-op elsewhere: PostgreSQL 18.4, TimescaleDB, YugabyteDB, Cloudberry,
+      // AlloyDB Omni and CockroachDB never emit that table_type at all (PostgreSQL
+      // leaves materialized views out of information_schema.tables entirely).
+      const seen: string[] = [];
+      mockQueryFn = (sql: string) => {
+        seen.push(sql);
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.getSchema();
+      await provider.getSchemaList();
+
+      const tableQueries = seen.filter((sql) => sql.includes("tables_info AS MATERIALIZED ("));
+      expect(tableQueries.length).toBeGreaterThan(0);
+      for (const sql of tableQueries) {
+        expect(sql).toContain("'MATERIALIZED VIEW'");
+        // Still a positive list, not "everything that is not a view": a FOREIGN or
+        // SYSTEM VIEW row is not a table and must stay out.
+        expect(sql).toContain("'BASE TABLE'");
+        expect(sql).not.toContain("'SYSTEM VIEW'");
+      }
+    });
+  });
+
+  describe("statistics panels on an engine with no size functions", () => {
+    // Measured on Materialize v26.37.0: getTableStats() dies on pg_table_size,
+    // getIndexStats() on pg_stat_user_tables and the tablespace read on
+    // pg_tablespace_size. All three REJECT rather than answering [], because
+    // MonitoringData draws that exact distinction: an absent panel means "this engine
+    // could not answer" and carries the engine's sentence under `errors`, while an
+    // empty array claims the engine answered "nothing" - a measurement it never made.
+    // PanelUnavailable then reads that sentence to decide whether the absence is an
+    // engine limit or a refused statement (see monitoring-absence.ts).
+
+    test("getTableStats() surfaces the engine's sentence instead of an empty result", async () => {
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("pg_table_size")) {
+          return Promise.reject(new Error('function "pg_table_size" does not exist'));
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      await expect(provider.getTableStats()).rejects.toThrow(/pg_table_size/);
+    });
+
+    test("getIndexStats() surfaces the engine's sentence instead of an empty result", async () => {
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("pg_stat_user_indexes") || sql.includes("pg_stat_user_tables")) {
+          return Promise.reject(new Error("unknown catalog item 'pg_stat_user_tables'"));
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      await expect(provider.getIndexStats()).rejects.toThrow(/pg_stat_user_tables/);
+    });
+
+    test("a planner restriction reaches the panel with its own wording", async () => {
+      // Cloudberry's control case: pg_stat_user_tables exists there and the catalog is
+      // readable, so this sentence must not be flattened into the same absence as a
+      // missing function - a different statement could still succeed.
+      mockQueryFn = () => Promise.reject(new Error("query plan with multiple segworker groups is not supported"));
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      await expect(provider.getTableStats()).rejects.toThrow(/segworker/);
+      await expect(provider.getIndexStats()).rejects.toThrow(/segworker/);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // A relation that disappears while the schema is being read
+  // --------------------------------------------------------------------------
+
+  describe("concurrent DDL during a schema read", () => {
+    // tables_info lists relations from information_schema and then resolves each name
+    // to a pg_class row. A bare ::regclass cast RAISES when the name no longer resolves,
+    // so a table dropped between those two steps failed the whole read. Reproduced on
+    // PostgreSQL 18.4: with tables being created and dropped alongside, 102 of 400 runs
+    // died with 'relation "public.materialized_daily_totals_396" does not exist'.
+    //
+    // to_regclass() answers NULL instead of raising, so the row survives with no
+    // pg_class match and its count reads as absent - which it genuinely is.
+
+    test("the schema query resolves names without raising", async () => {
+      const seen: string[] = [];
+      mockQueryFn = (sql: string) => {
+        seen.push(sql);
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.getSchema();
+
+      const query = seen.find((sql) => sql.includes("tables_info AS MATERIALIZED ("));
+      expect(query).toBeDefined();
+      expect(query).toContain("to_regclass(");
+    });
+
+    test("an engine without to_regclass falls back to the cast and still reads", async () => {
+      // Measured: Materialize has no to_regclass, while PostgreSQL, TimescaleDB,
+      // YugabyteDB, Cloudberry, AlloyDB Omni and CockroachDB all do. The engine this
+      // whole fallback chain exists for must not lose its object browser to the fix.
+      const attempts: string[] = [];
+      mockQueryFn = (sql: string) => {
+        attempts.push(sql);
+        if (sql.includes("to_regclass(")) {
+          return Promise.reject(new Error('function "to_regclass" does not exist'));
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
+      // attempts; what this counts is what getSchema() sent.
+      attempts.length = 0;
+
+      const schema = await provider.getSchema();
+      expect(schema.length).toBe(2);
+      expect(attempts.length).toBe(2);
+      expect(attempts[1]).not.toContain("to_regclass(");
+      expect(attempts[1]).toContain("::regclass");
+      expect(countParens(attempts[1])).toEqual({ balanced: true });
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Row counts an engine has not actually counted
+  // --------------------------------------------------------------------------
+
+  describe("uncounted row estimates", () => {
+    // pg_class.reltuples is -1 on PostgreSQL 14+ for a relation nothing has vacuumed
+    // or analysed yet. Measured on a stock PostgreSQL 18.4: two tables holding 5000
+    // and 1200 rows both answered -1 until ANALYZE ran, and the object browser showed
+    // "0 rows" for both. A freshly restored dump is exactly that state, so the first
+    // thing a new user sees is every table claiming to be empty.
+    //
+    // src/lib/agent/schema-stats.ts already reads -1 as absence and says why: "the
+    // standing defect class in this repository is claiming a precision you do not
+    // have". The object browser is the same read for a human instead of a model.
+    function schemaWithRowCount(rowCount: string | null) {
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("tables_info AS MATERIALIZED (")) {
+          return Promise.resolve({
+            rows: [
+              {
+                table_schema: "public",
+                table_name: "orders",
+                row_count: rowCount,
+                total_size: "81920",
+                columns: [],
+                pk_columns: [],
+                foreign_keys: [],
+                indexes: [],
+              },
+            ],
+            fields: [],
+            rowCount: 1,
+          });
+        }
+        return defaultMockQuery(sql);
+      };
+    }
+
+    test("getSchema() leaves the count absent when the engine has not counted", async () => {
+      schemaWithRowCount("-1");
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const [table] = await provider.getSchema();
+      expect(table.rowCount).toBeUndefined();
+    });
+
+    test("getSchemaList() leaves it absent too", async () => {
+      schemaWithRowCount("-1");
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const [table] = await provider.getSchemaList();
+      expect(table.rowCount).toBeUndefined();
+    });
+
+    test("a table with no pg_class row is absent, not zero", async () => {
+      // The CTE used to COALESCE a missing join to 0, which is the same fabrication
+      // wearing a different hat: "no row here" is not "this table has no rows".
+      schemaWithRowCount(null);
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const [table] = await provider.getSchema();
+      expect(table.rowCount).toBeUndefined();
+    });
+
+    test("a real zero survives, because an empty table is a measurement", async () => {
+      // The control. If absence swallowed 0 as well, this fix would trade one wrong
+      // answer for another and the badge would vanish from every genuinely empty table.
+      schemaWithRowCount("0");
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const [table] = await provider.getSchema();
+      expect(table.rowCount).toBe(0);
+    });
+
+    test("the query no longer asks the database to invent a zero", async () => {
+      const seen: string[] = [];
+      mockQueryFn = (sql: string) => {
+        seen.push(sql);
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.getSchema();
+
+      const schemaQuery = seen.find((sql) => sql.includes("tables_info AS MATERIALIZED ("));
+      expect(schemaQuery).toBeDefined();
+      expect(schemaQuery).not.toContain("COALESCE(c.reltuples");
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Health
   // --------------------------------------------------------------------------
 
@@ -1323,6 +2118,81 @@ describe("PostgresProvider", () => {
       expect(Array.isArray(health.slowQueries)).toBe(true);
       expect(health.slowQueries.length).toBe(1);
       expect(health.slowQueries[0].query).toContain("pg_stat_statements extension not enabled");
+    });
+
+    // Engines with no pg statistics catalog at all (Materialize, RisingWave)
+    // reject every query below, not just pg_stat_statements. Each must degrade
+    // its own panel instead of failing the whole health check (#38680).
+    test("activeConnections is omitted when the pg_stat_activity count query fails", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("count(*)") && normalized.includes("pg_stat_activity")) {
+          throw new Error('relation "pg_stat_activity" does not exist');
+        }
+        return originalMock(sql, params);
+      };
+
+      const health = await provider.getHealth();
+      expect(health.activeConnections).toBeUndefined();
+    });
+
+    test("databaseSize falls back to N/A when pg_database_size fails", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_size_pretty") && normalized.includes("pg_database_size")) {
+          throw new Error("function pg_database_size(text) does not exist");
+        }
+        return originalMock(sql, params);
+      };
+
+      const health = await provider.getHealth();
+      expect(health.databaseSize).toBe("N/A");
+    });
+
+    test("cacheHitRatio reports unavailable when pg_statio_user_tables fails outright", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_statio_user_tables")) {
+          throw new Error('relation "pg_statio_user_tables" does not exist');
+        }
+        return originalMock(sql, params);
+      };
+
+      const health = await provider.getHealth();
+      expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
+    });
+
+    test("activeSessions falls back to an empty array when the sessions query fails", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (
+          normalized.includes("pg_stat_activity") &&
+          normalized.includes("pid != pg_backend_pid()") &&
+          normalized.includes("xact_start desc")
+        ) {
+          throw new Error('relation "pg_stat_activity" does not exist');
+        }
+        return originalMock(sql, params);
+      };
+
+      const health = await provider.getHealth();
+      expect(health.activeSessions).toEqual([]);
     });
 
     test("sessions data is populated", async () => {
@@ -2390,6 +3260,32 @@ describe("PostgresProvider", () => {
       releaseSpy.mockRestore();
     });
 
+    test("the profile connection never probes the EXPLAIN grammar, so nothing it runs leaves the envelope", async () => {
+      const fresh = new ReadOnlyEngineMock();
+      mockQueryFn = (sql: string, params?: unknown[]) => fresh.query(sql, params);
+      const profiled = new PostgresProvider(makePgConfig(), {}, { readOnly: true });
+      await profiled.connect();
+
+      // A bare probe at connect would be the first statement this connection ran
+      // outside `BEGIN READ ONLY`. It buys nothing here: the agent composes its own
+      // EXPLAIN from `ESTIMATING_EXPLAIN_PREFIX` rather than from this capability.
+      expect(fresh.statements.map((s) => s.text)).toEqual([]);
+      expect(profiled.getCapabilities().explainFormat).toBe("postgres-json");
+      await profiled.disconnect();
+    });
+
+    test("an unprofiled provider on the same server DOES probe, so the skip is the profile's and not the mock's", async () => {
+      // The control the assertion above needs: an empty statement list means nothing
+      // ran only if this same fixture records a probe when one is issued.
+      const fresh = new ReadOnlyEngineMock();
+      mockQueryFn = (sql: string, params?: unknown[]) => fresh.query(sql, params);
+      const editor = new PostgresProvider(makePgConfig());
+      await editor.connect();
+
+      expect(fresh.statements.map((s) => s.text)).toEqual(["EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1"]);
+      await editor.disconnect();
+    });
+
     test("runs exactly one statement inside BEGIN READ ONLY with a transaction-local timeout, then rolls back and releases", async () => {
       const result = await provider.queryReadOnly("SELECT 1 AS ok", roBudget());
 
@@ -2438,6 +3334,10 @@ describe("PostgresProvider", () => {
     test("refuses queryReadOnly on a provider that was not opened under the profile", async () => {
       const unprofiled = new PostgresProvider(makePgConfig());
       await unprofiled.connect();
+      // Connect's own EXPLAIN grammar probe (#597), dropped for the reason the
+      // beforeEach drops it: what this asserts is that queryReadOnly reached the
+      // session with nothing.
+      engine.statements.length = 0;
 
       // Fail closed, and for the reason the SQLite profile fails closed too: a
       // provider opened outside the profile has had no role verification, so
@@ -2839,6 +3739,154 @@ describe("PostgresProvider declared column types", () => {
       "ROLLBACK",
       "DISCARD ALL",
     ]);
+    await provider.disconnect();
+  });
+});
+
+// ============================================================================
+// The connect-time EXPLAIN grammar probe (#597)
+// ============================================================================
+/**
+ * `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` is PostgreSQL's grammar, not the wire
+ * family's. Measured 2026-09-06 through `pg` against live containers:
+ *
+ * - Materialize v26.40.0 refuses it with `Expected SELECT, VALUES, or a subquery in
+ *   the query body, found ANALYZE`, and refuses a bare `(FORMAT JSON)` the same way.
+ *   It has no `EXPLAIN ANALYZE` either (`Expected one of CPU or MEMORY, found
+ *   SELECT`), so the plain `EXPLAIN` is all it publishes.
+ * - CockroachDB v26.2.5 refuses it with `at or near "analyze": syntax error` - its
+ *   option vocabulary is its own - but accepts an unparenthesised `EXPLAIN ANALYZE`.
+ * - PostgreSQL 18, TimescaleDB (PG 17.11), YugabyteDB 2.25.2, Cloudberry 2.1.0 and
+ *   AlloyDB Omni (PG 17.9) all accept the parenthesised form and stop at the first
+ *   probe.
+ *
+ * The refusals below are those runs' own words. Nothing here reads the message: the
+ * family shares no code for a grammar refusal any more than the MySQL family does
+ * (#574), so the probe asks and reads success or failure.
+ */
+describe("PostgresProvider EXPLAIN grammar probe", () => {
+  let sent: string[];
+
+  /**
+   * A server that refuses the statements named here and answers everything else the
+   * way the shared fixture does.
+   */
+  function refusing(refusals: Record<string, string>) {
+    return (sql: string, params?: unknown[]) => {
+      sent.push(sql);
+      const refusal = refusals[sql.trim().toLowerCase()];
+      return refusal === undefined ? defaultMockQuery(sql) : Promise.reject(new Error(refusal));
+    };
+  }
+
+  const MATERIALIZE_REFUSAL = "Expected SELECT, VALUES, or a subquery in the query body, found ANALYZE";
+  const MATERIALIZE_ANALYZE_REFUSAL = "Expected one of CPU or MEMORY, found SELECT";
+  const COCKROACH_REFUSAL = 'at or near "analyze": syntax error';
+
+  /** Only the statements the probe issued, in order. */
+  const probed = () => sent.filter((sql) => sql.toLowerCase().startsWith("explain"));
+
+  beforeEach(() => {
+    sent = [];
+    mockQueryFn = refusing({});
+  });
+
+  test("before connect the provider answers the static PostgreSQL default", () => {
+    const caps = new PostgresProvider(makePgConfig()).getCapabilities();
+
+    // `POST /api/db/provider-meta` never connects (#457), so this is what the client's
+    // pre-flight sees, and it must stay what it has always been.
+    expect(caps.explainFormat).toBe("postgres-json");
+    expect(caps.supportsExplain).toBe(true);
+    expect(probed()).toEqual([]);
+  });
+
+  test("a server that accepts the parenthesised JSON form keeps postgres-json, after one statement", async () => {
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+
+    expect(provider.getCapabilities().explainFormat).toBe("postgres-json");
+    expect(probed()).toEqual(["EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1"]);
+    await provider.disconnect();
+  });
+
+  test("CockroachDB refuses the parenthesised form and accepts EXPLAIN ANALYZE, so the format is postgres-text-analyze", async () => {
+    mockQueryFn = refusing({ "explain (analyze, buffers, format json) select 1": COCKROACH_REFUSAL });
+
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+
+    expect(provider.getCapabilities().explainFormat).toBe("postgres-text-analyze");
+    expect(probed()).toEqual(["EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1", "EXPLAIN ANALYZE SELECT 1"]);
+    await provider.disconnect();
+  });
+
+  test("Materialize refuses both analyze grammars and lands on the plain EXPLAIN", async () => {
+    mockQueryFn = refusing({
+      "explain (analyze, buffers, format json) select 1": MATERIALIZE_REFUSAL,
+      "explain analyze select 1": MATERIALIZE_ANALYZE_REFUSAL,
+    });
+
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    const caps = provider.getCapabilities();
+
+    expect(caps.explainFormat).toBe("postgres-text");
+    expect(caps.supportsExplain).toBe(true);
+    expect(probed()).toEqual([
+      "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1",
+      "EXPLAIN ANALYZE SELECT 1",
+      "EXPLAIN SELECT 1",
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a server that refuses every grammar declares no explain support and no format", async () => {
+    mockQueryFn = refusing({
+      "explain (analyze, buffers, format json) select 1": MATERIALIZE_REFUSAL,
+      "explain analyze select 1": MATERIALIZE_ANALYZE_REFUSAL,
+      "explain select 1": 'syntax error at or near "EXPLAIN"',
+    });
+
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    const caps = provider.getCapabilities();
+
+    expect(caps.supportsExplain).toBe(false);
+    // Absent, not undefined-valued: `explainFormat` is present iff supportsExplain is.
+    expect("explainFormat" in caps).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("a grammar the server does not have never fails the connection", async () => {
+    mockQueryFn = refusing({
+      "explain (analyze, buffers, format json) select 1": MATERIALIZE_REFUSAL,
+      "explain analyze select 1": MATERIALIZE_ANALYZE_REFUSAL,
+      "explain select 1": "syntax error",
+    });
+
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+
+    // The Explain panel is not the connection. A refused grammar is a fact about the
+    // panel and the capability it produces IS the report.
+    expect(provider.isConnected()).toBe(true);
+    await provider.disconnect();
+  });
+
+  test("the probe runs again on the next connect, because the next server may be another engine", async () => {
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    expect(provider.getCapabilities().explainFormat).toBe("postgres-json");
+    await provider.disconnect();
+
+    mockQueryFn = refusing({
+      "explain (analyze, buffers, format json) select 1": MATERIALIZE_REFUSAL,
+      "explain analyze select 1": MATERIALIZE_ANALYZE_REFUSAL,
+    });
+    await provider.connect();
+
+    expect(provider.getCapabilities().explainFormat).toBe("postgres-text");
     await provider.disconnect();
   });
 });

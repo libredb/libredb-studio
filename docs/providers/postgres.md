@@ -120,6 +120,189 @@ large schema (100+ tables/constraints/indexes) that explodes into minutes of pla
 
 If you edit these queries, keep `MATERIALIZED` or you reintroduce the timeout.
 
+**Fallback chain for engines that reject part of this query (#38680).** `getSchema()`,
+`getSchemaList()`, and `getSchemaRelations()` all route their query through
+`queryWithMaterializedFallback()` ([postgres.ts](../../src/lib/db/providers/sql/postgres.ts)), which
+recovers real object-browser data on four independent gaps instead of failing outright:
+
+1. **The `MATERIALIZED` keyword itself.** Materialize and RisingWave reserve it for their own
+   `CREATE MATERIALIZED VIEW` grammar and reject the CTE modifier, even though the underlying
+   `information_schema` views are otherwise readable there. `withoutMaterializedHint()` strips it.
+2. **`pg_total_relation_size()`.** CockroachDB has no such builtin at all — this is why its object
+   browser used to read empty even though it happily accepts the `MATERIALIZED` hint — and
+   Materialize reaches the same gap once past #1. `withoutTotalRelationSizeFn()` replaces the call
+   with a literal `0`, trading per-table size for real column/PK data instead of nothing.
+3. **`json_agg()` / `json_build_object()`.** Materialize has neither, only the `jsonb_` forms
+   (verified: they return the identical shape over the wire — `pg` parses both OIDs into plain JS
+   values). `withoutJsonAggFunctions()` swaps the function names.
+4. **`information_schema.constraint_column_usage`.** Materialize answers `table_constraints` and
+   `key_column_usage` but does not implement this one: its catalog ships fourteen
+   `information_schema` views and that is not among them, at HEAD as well as at the probed release,
+   so it is not a version gap that will close. Worth knowing what the fallback is and is not buying:
+   Materialize has no primary keys or foreign keys at all — `CREATE TABLE` refuses both — so those
+   columns would come back empty even with the view present. The fallback exists because the query
+   *fails* without it, not because it recovers data. `withoutForeignKeyCatalog()` empties the `fk_info` CTE rather
+   than dropping it, which keeps the outer `LEFT JOIN`/`FULL OUTER JOIN` valid and leaves
+   `foreignKeys` as `[]`. It matches the closing parenthesis by depth, not by text, because the
+   three fallbacks above have already rewritten parts of the statement by the time it runs.
+
+Each fallback is matched against whichever error actually comes back, not tried in a fixed order —
+CockroachDB hits #2 as its *first* error with #1 never in play, Materialize hits all three in
+sequence. Real PostgreSQL never takes any retry path; it accepts every construct above and the first
+attempt succeeds. An error no fallback recognizes, or one that survives every applicable fallback, is
+mapped through `mapDatabaseError()` and rethrown rather than left raw.
+
+**What still doesn't work.** On Materialize, foreign keys and indexes come back empty (see gap #4);
+sizes are unmeasured (gap #2). RisingWave's object browser remains unavailable for a different,
+unrelated reason: its query binder fails on the `LEFT JOIN pg_class ON (...)::regclass` pattern
+itself (`missing FROM-clause entry for table c`), which none of the four fallbacks above address.
+
+A statement that never joined the catalog a fallback repairs is *not* retried blind:
+`withoutForeignKeyCatalog()` returns the SQL untouched when there is no `fk_info` CTE to empty
+(`SCHEMA_LIST_SQL` has none), so the rejection is mapped and rethrown on the next attempt instead of
+looping on a statement nothing changed.
+
+### 3.0.1 Resolving a name that may vanish mid-read
+
+`tables_info` lists relations from `information_schema` and then resolves each name to a
+`pg_class` row. A bare `::regclass` cast **raises** when the name no longer resolves, so a
+table dropped between those two steps failed the entire read. Reproduced on PostgreSQL
+18.4 with concurrent `CREATE`/`DROP` alongside: **102 of 400 runs** died with
+`relation "public.materialized_daily_totals_396" does not exist`. `to_regclass()` answers
+`NULL` instead, the row survives with no `pg_class` match, and its count reads as absent —
+which it is. Same harness after the change: **400 of 400 succeeded**.
+
+Materialize has no `to_regclass`, so it retries with the cast through
+`withoutToRegclass()` and behaves as it did before. PostgreSQL, TimescaleDB, YugabyteDB,
+Cloudberry, AlloyDB Omni and CockroachDB were each asked on a live instance and all have it.
+
+**What this costs, measured:** a PostgreSQL schema read is still **one** round trip.
+A Materialize one is **six** — it walks the whole chain (`MATERIALIZED` hint,
+`pg_total_relation_size`, `json_agg`, `constraint_column_usage`, `to_regclass`) before it
+lands on a statement that runs. Each failed attempt is a parse or plan error rather than
+work, and the chain is error-driven so it cannot be pre-sorted, but on a remote instance
+those round trips are latency the object browser pays on every refresh.
+
+### 3.1.0 A row count nobody counted
+
+`tables_info` reads `pg_class.reltuples`, which is an **estimate**, and PostgreSQL 14+ writes
+**-1** there for a relation nothing has vacuumed or analysed yet. That is "I have not counted
+this", not "this has no rows". `estimatedRowCount()` maps it — and a NULL from a pg_class join
+that matched nothing — to `undefined`; `TableSchema.rowCount` is optional and both
+[TableItem.tsx](../../src/components/schema-explorer/TableItem.tsx) and `DatabaseDocs.tsx`
+already gate on that, so no badge is drawn rather than a number nobody produced.
+
+A genuine `0` is kept, because an empty table is a real measurement. On a server old enough to
+write `0` instead of `-1` the two cannot be told apart, the same limit
+[schema-stats.ts](../../src/lib/agent/schema-stats.ts) documents for the agent's grounding read.
+
+This mattered more than it looks. Measured on stock PostgreSQL 18.4, two tables holding 5000 and
+1200 rows both answered -1 until `ANALYZE` ran, and the browser showed **0 rows** for both — a
+freshly restored dump is exactly that state, so the first thing a new user saw was every table
+claiming to be empty. Materialize answers -1 for every relation always. The clamp that produced
+this was `Math.max(0, ...)`, and a test asserted it: "negative reltuples row_count is clamped to
+zero". Its stated concern was right, the UI must never show -1; its conclusion swapped one wrong
+number for a more convincing one.
+
+### 3.1.1 What counts as a table
+
+`CTE_TABLES_INFO` filters `table_type IN ('BASE TABLE', 'MATERIALIZED VIEW')` — a positive list,
+not "anything that is not a view", so a `FOREIGN` or `SYSTEM VIEW` row still stays out.
+`MATERIALIZED VIEW` is on it for Materialize, which reports its materialized views through
+`information_schema.tables` under that type and whose users work with them rather than with base
+tables: listing only `BASE TABLE` hid the engine's central object while showing its plain tables.
+
+It is a measured no-op everywhere else. PostgreSQL leaves materialized views out of
+`information_schema.tables` altogether — its `table_type` is only `BASE TABLE`, `VIEW`, `FOREIGN` or
+`LOCAL TEMPORARY` — and TimescaleDB, YugabyteDB, Cloudberry, AlloyDB Omni and CockroachDB were each
+asked on a live instance and emit no such row (CockroachDB's third value is `SYSTEM VIEW`).
+
+### 3.1.2 Two kinds of absence, and why neither is an empty array
+
+`getTableStats()`, `getIndexStats()` and `getStorageStats()`'s tablespace read **reject**
+when the engine says the object is not there. They do not answer `[]`. The `MonitoringData`
+contract ([types.ts](../../src/lib/db/types.ts)) is explicit that these are different facts:
+a rejected read leaves its panel absent and records the engine's own sentence under
+`errors`, while an empty array claims the engine answered "nothing" — a measurement it
+never made, and one that throws away the sentence saying why.
+
+The distinction a reader needs is then drawn where the sentence is rendered.
+`describesAbsentObject()` ([monitoring-absence.ts](../../src/lib/monitoring-absence.ts))
+asks whether the message names a `pg_`-prefixed object that is not there, and
+`PanelUnavailable` picks its headline from the answer:
+
+- **"This engine does not publish this."** — Materialize has no `pg_table_size()`, no
+  `pg_stat_user_tables` and no `pg_tablespace_size()`. Nothing is wrong and nothing the
+  user does will change it. Three of its panels land here.
+- **"This database could not answer this panel."** — Apache Cloudberry answers
+  `query plan with multiple segworker groups is not supported` for the same queries while
+  `pg_stat_user_tables` exists there and is readable. Its MPP planner is refusing this
+  query's *shape*, so a different statement could still succeed; that is worth attention
+  in a way the first is not. Two of its panels land here.
+
+The engine's sentence is shown verbatim under either headline, so no reason is lost.
+Both halves of the predicate are load-bearing: without the phrase any message naming a
+catalog would qualify, and without the `pg_` name Cloudberry's restriction would be
+flattened into a settled fact the next time its wording contains "does not exist".
+Verified in the browser in both directions on live instances.
+
+### 3.1.1 The system-schema exclusion set
+
+`SYSTEM_SCHEMAS` ([postgres.ts](../../src/lib/db/providers/sql/postgres.ts)) is single-sourced and
+interpolated into every `NOT IN (...)` clause in the file, so a query added later cannot filter on a
+shorter list than the rest. Every name was read off that engine's own documentation and then
+confirmed against a live instance; stock PostgreSQL creates none of them, so excluding them there is
+a no-op — measured, not assumed: PostgreSQL 18.4 and YugabyteDB 2.25.2 both answer `public` and
+nothing else.
+
+Two separate defects made this load-bearing rather than cosmetic, and they pull in opposite
+directions because the two readers use different catalogs:
+
+- **The object browser** reads `information_schema.tables` with `table_type = 'BASE TABLE'`. That
+  filter hides an engine's *views* but not its internal *tables*, so it listed 61 objects on
+  TimescaleDB where 2 were the user's (34 hypertable chunks in `_timescaledb_internal`, 22 in
+  `_timescaledb_catalog`, 3 in `_timescaledb_cache`), 10 on AlloyDB Omni (`google_ml`) and 4 on
+  Apache Cloudberry (`pg_ext_aux`).
+- **`OVERVIEW_COUNTS_SQL`** counted `pg_tables` directly, which has no `table_type` column to
+  filter on. On CockroachDB that answered 98 for the same 2 tables — 93 `crdb_internal`, 3
+  `pg_extension` — so the Monitoring overview and the Explorer badge disagreed inside one app.
+  It now counts `information_schema.tables` through the same `USER_TABLE_TYPES` list the browser
+  uses, because the two disagreed a second time once materialized views joined the browser
+  (4 against 3 on Materialize). One definition of "a table", or they drift apart on the next
+  engine. The index count still reads `pg_indexes`, which has no equivalent second reader.
+
+Every CTE in the schema queries carries the filter, not just some: `pk_info` and `fk_info` were
+missing it while `tables_info`, `columns_info` and `index_info` had it, which let
+`getSchemaRelations()` keep listing `_timescaledb_catalog` and `google_ml` relations through the FK
+side of its `FULL OUTER JOIN` after the browser had stopped showing them.
+
+Extension-created schemas are excluded by **ownership**, not by name. A hardcoded
+`google_ml` would have hidden a real schema from anyone who happened to name one that -
+it is the only entry of this kind a user could plausibly choose - so `pg_depend` is asked
+the question the name was standing in for. It answers better too: on a live AlloyDB Omni
+it returns `google_ml` **and** `ai`, which the name list had missed, and a user's own
+schema is never extension-owned so it always survives. Measured accepted on all seven
+engines, PostgreSQL included, where it correctly returns nothing; the driver serves
+engines nobody here has run, so an engine without `pg_depend` or `pg_extension` drops the
+clause through `withoutExtensionOwnershipTest()` and keeps the fixed list.
+
+The fixed list stays for schemas the *engine itself* builds in, which are not
+extension-owned: measured, CockroachDB's `crdb_internal` and Cloudberry's `pg_ext_aux`
+return nothing from `pg_depend`.
+
+Citations, by engine: Materialize's
+[system catalog](https://materialize.com/docs/sql/system-catalog/) (`mz_catalog`, `mz_internal`,
+`mz_introspection`); CockroachDB's
+[system catalogs](https://www.cockroachlabs.com/docs/stable/system-catalogs), which enumerates
+exactly four (`crdb_internal` and `pg_extension` are the two stock PostgreSQL lacks); TimescaleDB's
+own `sql/pre_install/schemas.sql`, which creates all seven; Cloudberry's
+[schema documentation](https://cloudberry.apache.org/docs/operate-with-data/operate-with-db-objects/create-and-manage-schemas/)
+for `gp_toolkit`, `pg_aoseg` and `pg_bitmapindex`. Two entries rest on measurement rather than a
+document, and are marked as such in the code: Cloudberry's `pg_ext_aux` (the PAX auxiliary tables),
+which its schema page does not list, and AlloyDB's `google_ml`, which Google's docs never name —
+traced through `pg_depend` to the `google_ml_integration` extension the Omni image enables by
+default.
+
 ### 3.2 Schema SQL hoisted to module scope
 
 `SCHEMA_FULL_SQL`, `SCHEMA_LIST_SQL`, and `SCHEMA_RELATIONS_SQL` are module-level `const`s, not
@@ -170,6 +353,25 @@ Monitoring never hard-fails on a missing optional feature:
 - A metric the statistics views did not publish is **omitted rather than defaulted**
   ([§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)); `deadlocks` is absent when
   `pg_stat_database` has no row for the database, rather than reported as zero deadlocks.
+- `getHealth()` isolates each of its five queries in its own try/catch
+  ([postgres.ts](../../src/lib/db/providers/sql/postgres.ts)). This matters beyond the
+  `pg_stat_statements` case above: an engine with no pg statistics catalog at all (Materialize,
+  RisingWave, #38680) rejects `pg_stat_activity` and `pg_statio_user_tables` outright, not just the
+  one optional extension. `activeConnections` is omitted (`undefined`), `databaseSize` and
+  `cacheHitRatio` report `"N/A"`/`CACHE_HIT_RATIO_UNAVAILABLE`, and `activeSessions` is `[]` — the
+  dashboard degrades panel-by-panel instead of the whole health check throwing.
+- The same isolation extends to `getOverview()`, `getPerformanceMetrics()`, `getSlowQueries()` and
+  `getActiveSessions()` (#38680) — these are the four "core" reads `getMonitoringData()`
+  (`base-provider.ts`) requires at least one of to succeed before it renders a dashboard at all; on
+  an engine with no statistics catalog every one of them used to reject in full (each ran several
+  unguarded queries in sequence), so the **entire Monitoring page** showed a connection-error
+  screen even though `getHealth()`'s own badge degraded fine. `getOverview()`'s single `version() +
+  pg_postmaster_start_time()` query is now two queries (`OVERVIEW_VERSION_SQL` /
+  `OVERVIEW_UPTIME_SQL`), because a single `SELECT` fails whole-row if any one column's function is
+  missing — version() alone still answers on Materialize even though uptime does not.
+  `getSlowQueries()`'s existing `pg_stat_statements` → `pg_stat_activity` fallback now has a second
+  layer: if `pg_stat_activity` is *also* absent, it returns `[]` instead of propagating that second
+  rejection.
 
 ### 3.6 Safe maintenance targets
 
@@ -623,8 +825,8 @@ Overrides the SQL base defaults:
 | Capability | Value |
 |------------|-------|
 | `queryLanguage` | `sql` |
-| `supportsExplain` | `true` |
-| `explainFormat` | `postgres-json` |
+| `supportsExplain` | `true` when the server accepts one of the grammars below, measured at connect |
+| `explainFormat` | `postgres-json`, `postgres-text-analyze` or `postgres-text` — **measured, not declared** (see §10.1) |
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `true` |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core PostgreSQL DML |
@@ -635,6 +837,57 @@ Overrides the SQL base defaults:
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `5432` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
+
+
+### 10.1 The EXPLAIN grammar is measured at connect (#597)
+
+`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` is PostgreSQL's own grammar and the wire family does not
+share it, so the provider asks the server which grammar it accepts instead of declaring one per type
+id. `probeExplainFormat()` runs on the client `connect()` already borrowed, tries each statement in
+turn and keeps the first that is accepted:
+
+| Probe | Format | Accepted by (measured 2026-09-06, through `pg`) |
+|---|---|---|
+| `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1` | `postgres-json` | PostgreSQL 18, TimescaleDB (PG 17.11), YugabyteDB 2.25.2, Apache Cloudberry 2.1.0, AlloyDB Omni (PG 17.9) |
+| `EXPLAIN ANALYZE SELECT 1` | `postgres-text-analyze` | CockroachDB v26.2.5 |
+| `EXPLAIN SELECT 1` | `postgres-text` | Materialize v26.40.0 |
+
+Each probe is the statement its strategy really sends, so a grammar that answers here is one the
+panel can use. The probe reads success or failure and never the message: the family shares no code or
+wording for a grammar refusal, and keying on one would have to enumerate engines. A server that
+refuses all three declares `supportsExplain: false` and no format, and the connection still succeeds
+— a missing grammar is a fact about the Explain panel, not about the connection.
+
+**What the two refusals actually were.** Materialize answers `Expected SELECT, VALUES, or a subquery
+in the query body, found ANALYZE`, and answers the same way to a bare `(FORMAT JSON)` naming
+`FORMAT`: the PARENTHESES are what its grammar has no rule for, so dropping `ANALYZE` alone changes
+nothing — the error text names only the first token inside them, which is what made this look like a
+smaller problem than it was. It has no `EXPLAIN ANALYZE` either (`Expected one of CPU or MEMORY,
+found SELECT`). CockroachDB answers `at or near "analyze": syntax error`, and `at or near "json":
+syntax error` for `(FORMAT JSON)` — its parenthesised options are its own vocabulary, and `JSON` is
+legal there only beside `DISTSQL`, where it answers a processor diagram rather than a plan.
+
+Until this was measured, both engines rendered the Explain panel's "no execution plan" empty state:
+the plan request failed with an HTTP 500 that only the server log saw, so the panel read as *this
+query has no plan* rather than as an error.
+
+**The read-only agent profile does not probe.** That connection's invariant is that every statement
+it runs arrives inside a `BEGIN READ ONLY` envelope, and a bare probe at connect would be the first
+statement to leave it. It would also buy nothing: the agent path composes its own EXPLAIN from
+[`composed-sql.ts`](../../src/lib/agent/composed-sql.ts) keyed on the type id, and `summarisePlan`
+reads a plan only when that composed `EXPLAIN (FORMAT JSON)` succeeded — the case where the probe
+would have answered `postgres-json` anyway. So a profiled provider keeps the static default.
+
+**Reading a text plan.** `postgres-text` and `postgres-text-analyze` differ only in the statement
+they build; both read the answer through the same shape-driven reader in
+[`postgres-text.ts`](../../src/lib/explain/postgres-text.ts). CockroachDB returns one row per plan
+line in a column called `info`; Materialize returns a single row whose one cell holds the whole plan
+with newlines in it. The cell is split, blank padding is dropped, and the leading run of whitespace
+and box glyphs is the nesting. Where a plan marks its nodes — CockroachDB prefixes every operator
+with `•` — the marker is the structure and the lines between two markers become the detail of the
+one above them; read by indentation alone, `└── • hash join` would land underneath its own parent's
+`│ group by: name` attribute. Materialize marks nothing that way and indents correctly, so the rule
+is applied only to a plan that uses it.
 
 ### Labels
 

@@ -331,6 +331,49 @@ The `pagination` object reports the auto-limiting applied by the server (default
 
 Each element must be a string, number, boolean or `null`; anything else is rejected with 400 rather than handed to the driver. `POST /api/db/transaction` accepts the same field for its `query` action.
 
+**Query plan (optional):**
+```json
+{
+  "connection": { "type": "mysql", "host": "localhost", "database": "mydb" },
+  "sql": "SELECT id, name FROM users WHERE active = true",
+  "explain": { "mode": "estimate" }
+}
+```
+
+`explain` asks for a PLAN of `sql` rather than a run of it, and the server builds the EXPLAIN statement
+from the connected provider's own plan format. `mode` is `"estimate"` (describe the statement) or
+`"analyze"` (the deeper form, where the dialect has one); it is required, and any other shape is a 400.
+The client never sends EXPLAIN text of its own: on the MySQL and PostgreSQL wire families alike the
+accepted form is only knowable once connected - the relatives do not share `EXPLAIN FORMAT=JSON` (#574)
+or `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` (#597) - and `POST /api/db/provider-meta` answers without
+connecting, so the statement is built where the connection is. Which means `explainFormat` can differ
+between two connections of the same `type`, and is the field to read rather than the type id.
+
+The 200 response is an ordinary query response plus `explainFormat`, naming the strategy that built the
+statement, so a client reads the plan with the strategy that really produced it:
+
+```json
+{
+  "rows": [{ "EXPLAIN": "{ \"query_block\": { \"select_id\": 1 } }" }],
+  "fields": ["EXPLAIN"],
+  "rowCount": 1,
+  "executionTime": 3,
+  "explainFormat": "mysql-json",
+  "pagination": { "limit": 500, "offset": 0, "hasMore": false, "totalReturned": 1, "wasLimited": false }
+}
+```
+
+A `params` array may accompany an explain request. The strategies only prefix the statement, so the
+placeholders are the same ones in the same order and the values bind the built statement, which is how a
+generated statement that sends its values separately still gets a plan.
+
+Two refusals, each a 400 that runs nothing:
+
+- `This server does not support EXPLAIN` when the provider declares `supportsExplain: false` or no plan
+  format at all.
+- `Only SELECT statements can be explained` when the dialect's strategy declines the statement. The
+  original `sql` is never run as a fallback.
+
 **Response (400 Bad Request):**
 ```json
 {
