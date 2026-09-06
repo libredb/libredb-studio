@@ -1,0 +1,134 @@
+name: AWS AMI Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag to ship — must exist on ghcr.io/libredb/libredb-studio (e.g. 0.14.0)'
+        required: true
+
+permissions:
+  contents: read
+  id-token: write # OIDC — no long-lived AWS access keys anywhere
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/aws/ami
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          # Nothing here pushes; leaving the token in .git/config for the rest of
+          # the job buys nothing.
+          persist-credentials: false
+
+      - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3
+
+      - name: Validate version format
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be semver (e.g. 0.14.0), got: $VERSION"
+            exit 1
+          fi
+
+      # The support address is printed in every buyer's first-boot banner, so it
+      # is a repository variable rather than a secret — and the build fails loudly
+      # when it is unset instead of shipping a placeholder.
+      # Fail before the fifteen-minute build rather than after it: an unset
+      # support address ships a placeholder to every buyer, an unset build role
+      # cannot assume anything, and an unset ingestion role leaves the operator
+      # with a summary that does not say what to paste into the portal.
+      - name: Require the build configuration
+        env:
+          SUPPORT_EMAIL: ${{ vars.AWS_SUPPORT_EMAIL }}
+          BUILD_ROLE_ARN: ${{ vars.AWS_AMI_BUILD_ROLE_ARN }}
+          INGESTION_ROLE_ARN: ${{ vars.AWS_AMI_INGESTION_ROLE_ARN }}
+        run: |
+          for name in SUPPORT_EMAIL BUILD_ROLE_ARN INGESTION_ROLE_ARN; do
+            if [ -z "${!name}" ]; then
+              echo "::error::repository variable for $name is not set"
+              exit 1
+            fi
+          done
+
+      # Resolve the tag to a digest here, so the AMI and the job summary agree on
+      # exactly which image shipped. Buildx is present on GitHub runners.
+      - name: Resolve image digest
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          DIGEST="$(docker buildx imagetools inspect \
+            "ghcr.io/libredb/libredb-studio:${VERSION}" --format '{{.Manifest.Digest}}')"
+          # Exact shape, not a prefix: this value is interpolated into the image
+          # ref the AMI is built from, so "starts with sha256:" is not a check.
+          if ! [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::digest resolution failed, got: $DIGEST"
+            exit 1
+          fi
+          echo "IMAGE_REF=ghcr.io/libredb/libredb-studio@${DIGEST}" >> "$GITHUB_ENV"
+
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.AWS_AMI_BUILD_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # The one input chosen at run time rather than pinned in the repo. Packer
+      # resolves the same parameter moments later, so a Canonical publish landing
+      # between the two would make this line name the previous serial - it is an
+      # audit trail, not the pin.
+      - name: Record the base image
+        run: |
+          BASE_AMI=$(aws ssm get-parameter \
+            --name /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id \
+            --query Parameter.Value --output text)
+          echo "BASE_AMI=$BASE_AMI" >> "$GITHUB_ENV"
+
+      - name: Packer init & validate
+        env:
+          VERSION: ${{ inputs.version }}
+          SUPPORT_EMAIL: ${{ vars.AWS_SUPPORT_EMAIL }}
+        run: |
+          packer init .
+          packer validate \
+            -var "version=$VERSION" \
+            -var "image_ref=$IMAGE_REF" \
+            -var "support_email=$SUPPORT_EMAIL" .
+
+      - name: Packer build
+        env:
+          VERSION: ${{ inputs.version }}
+          SUPPORT_EMAIL: ${{ vars.AWS_SUPPORT_EMAIL }}
+        run: |
+          packer build \
+            -var "version=$VERSION" \
+            -var "image_ref=$IMAGE_REF" \
+            -var "support_email=$SUPPORT_EMAIL" .
+
+      # amazon-ebs artifact_id is "region:ami-id" — the ID is after the colon.
+      - name: AMI ID to job summary
+        env:
+          VERSION: ${{ inputs.version }}
+          INGESTION_ROLE_ARN: ${{ vars.AWS_AMI_INGESTION_ROLE_ARN }}
+        run: |
+          AMI_ID=$(jq -r '.builds[-1].artifact_id' packer-manifest.json | cut -d: -f2)
+          {
+            echo "## AWS Marketplace AMI"
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| AMI ID | \`${AMI_ID}\` |"
+            echo "| Region | \`us-east-1\` |"
+            echo "| Version | \`${VERSION}\` |"
+            echo "| Image | \`${IMAGE_REF}\` |"
+            echo "| Base image | \`${BASE_AMI}\` (Canonical Ubuntu 24.04 server) |"
+            echo "| Ingestion role | \`${INGESTION_ROLE_ARN}\` |"
+            echo
+            echo "### Next steps in the portal"
+            echo "1. AWS Marketplace Management Portal -> Server products -> LibreDB Studio."
+            echo "2. Request changes -> Update versions -> Test 'Add version' with the AMI ID above to run a scan without creating a version."
+            echo "3. When the scan passes, Add new version: OS Ubuntu 24.04, OS user \`ubuntu\`, scanning port 22, endpoint http / / 3000."
+            echo "4. Do not deregister this AMI or delete its snapshot while the version request is under review."
+          } >> "$GITHUB_STEP_SUMMARY"

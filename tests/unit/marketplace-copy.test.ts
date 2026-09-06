@@ -1,8 +1,9 @@
 /**
  * The accuracy gate for outward-facing marketplace copy.
  *
- * These four files are submissions to somebody else's catalog: Railway, DigitalOcean,
- * SUSE PCSC and Azure Partner Center. Nobody in this repo reviews them again once they
+ * These five files are submissions to somebody else's catalog: Railway,
+ * DigitalOcean, SUSE PCSC, Azure Partner Center and the AWS Marketplace
+ * Management Portal. Nobody in this repo reviews them again once they
  * are mailed, so the only thing standing between a corrected claim and its return is a
  * test. A previous revision replaced a false natural-language-to-SQL claim with two new
  * ones - "AI query explanation on any connection" (true on 7 of the 14 engines) and
@@ -32,6 +33,7 @@ const LISTINGS = {
   digitalocean: "deploy/digitalocean/assets/description-long.md",
   rancher: "deploy/rancher/CATALOG_LISTING.md",
   azure: "deploy/azure/listing/listing-fields.md",
+  aws: "deploy/aws/listing/listing-fields.md",
 } as const;
 
 /**
