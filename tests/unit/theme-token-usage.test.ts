@@ -23,12 +23,16 @@ import { join, relative } from "node:path";
 const ROOT = join(import.meta.dir, "..", "..");
 const SRC = join(ROOT, "src");
 
+/** Sorted: `readdirSync` returns filesystem order, so an unsorted walk makes every
+ * list built on it machine-ordered — green here, red on the next machine. */
 function sourceFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((entry) => {
-    const path = join(dir, entry);
-    if (statSync(path).isDirectory()) return sourceFiles(path);
-    return /\.tsx?$/.test(entry) ? [path] : [];
-  });
+  return readdirSync(dir)
+    .sort()
+    .flatMap((entry) => {
+      const path = join(dir, entry);
+      if (statSync(path).isDirectory()) return sourceFiles(path);
+      return /\.tsx?$/.test(entry) ? [path] : [];
+    });
 }
 
 const files = sourceFiles(SRC).map((path) => ({

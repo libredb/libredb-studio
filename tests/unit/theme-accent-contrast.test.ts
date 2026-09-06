@@ -44,13 +44,21 @@ import {
 const ROOT = join(import.meta.dir, "..", "..");
 const theme = readFileSync(join(ROOT, "src", "styles", "theme.css"), "utf8");
 
-/** Every component source, concatenated, for the scans that have to read the code. */
+/**
+ * Every component source, concatenated, for the scans that have to read the code.
+ *
+ * Sorted, because `readdirSync` returns filesystem order: an unsorted walk makes
+ * every scan built on it machine-ordered, which is invisible on one machine and a
+ * failing assertion on the next. This suite shipped that bug once.
+ */
 function sourceOfSrc(): string {
   const walk = (dir: string): string[] =>
-    readdirSync(dir).flatMap((entry) => {
-      const path = join(dir, entry);
-      return statSync(path).isDirectory() ? walk(path) : /\.tsx?$/.test(entry) ? [path] : [];
-    });
+    readdirSync(dir)
+      .sort()
+      .flatMap((entry) => {
+        const path = join(dir, entry);
+        return statSync(path).isDirectory() ? walk(path) : /\.tsx?$/.test(entry) ? [path] : [];
+      });
   return walk(join(ROOT, "src"))
     .map((path) => readFileSync(path, "utf8"))
     .join("\n");
@@ -446,15 +454,15 @@ describe("a filled control keeps its label", () => {
  * in a PR description stops being true the moment somebody edits a class.
  */
 const FADED_LIGHT_ONLY = [
-  "--studio-warning/80",
-  "--studio-success/90",
-  "--studio-warning/90",
   "--studio-hue-amber/80",
-  "--studio-success/80",
-  "--studio-hue-yellow/90",
   "--studio-hue-amber/90",
   "--studio-hue-cyan/80",
   "--studio-hue-emerald/90",
+  "--studio-hue-yellow/90",
+  "--studio-success/80",
+  "--studio-success/90",
+  "--studio-warning/80",
+  "--studio-warning/90",
 ];
 
 const FADED_BOTH = [
@@ -541,7 +549,8 @@ describe("faded accent text is measured, not assumed", () => {
   test("no faded accent is worse in light than the same accent is in dark", () => {
     const regressions = sites
       .filter(({ token, alpha }) => worstFaded(dark, token, alpha) >= AA && worstFaded(light, token, alpha) < AA)
-      .map(({ label }) => label);
+      .map(({ label }) => label)
+      .sort();
     expect(regressions).toEqual(FADED_LIGHT_ONLY);
   });
 
