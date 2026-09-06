@@ -605,7 +605,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 text-xs font-medium text-warning hover:text-warning gap-2"
+                // The base absorbed this button's old hover value when the -500 text
+                // drift collapsed amber-500 onto the token, so the hover has to step
+                // up to keep any feedback of its own (#402).
+                className="h-7 text-xs font-medium text-warning hover:text-warning-bright gap-2"
                 onClick={onExplain}
               >
                 <Zap strokeWidth={1.5} className="w-3 h-3" /> Explain

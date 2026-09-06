@@ -30,7 +30,7 @@ export function evaluateThreshold(value: number, config: ThresholdConfig): Thres
 export function getThresholdColor(level: ThresholdLevel): string {
   switch (level) {
     case "critical":
-      return "border-danger-tint/50";
+      return "border-hue-red-tint/50";
     case "warning":
       return "border-hue-yellow-tint/50";
     case "healthy":

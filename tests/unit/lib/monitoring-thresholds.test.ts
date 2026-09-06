@@ -98,9 +98,22 @@ describe("getThresholdColor", () => {
     expect(color).toBe("border-hue-yellow-tint/50");
   });
 
-  test("critical returns the danger border token", () => {
+  test("critical returns the red identity ring", () => {
     const color = getThresholdColor("critical");
-    expect(color).toBe("border-danger-tint/50");
+    expect(color).toBe("border-hue-red-tint/50");
+  });
+
+  /**
+   * All three from one family. `danger-tint` and `hue-red-tint` are the same value,
+   * so mixing them changed nothing visible — which is exactly why it would have
+   * survived: a reader of one arm would have inferred the wrong rule for the other
+   * two.
+   */
+  test("the three rings come from one vocabulary, not two", () => {
+    const families = (["healthy", "warning", "critical"] as const)
+      .map((level) => /border-(hue|brand|warning|success|danger)/.exec(getThresholdColor(level))?.[1])
+      .filter((family, index, all) => all.indexOf(family) === index);
+    expect(families).toEqual(["hue"]);
   });
 });
 

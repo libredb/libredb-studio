@@ -130,7 +130,7 @@
    * ── Accents: identity ─────────────────────────────────────────────────
    * Colour that answers WHICH THING, not what state: which engine, which bottom
    * panel, added vs removed, primary key vs foreign key, number vs boolean. Folding
-   * these into the four state roles would repaint nineteen engines in four colours,
+   * these into the four state roles would repaint seventeen engines in four colours,
    * so they get their own family — SELECTED per mode, the way `charts/palette.ts`
    * selects rather than flipping a ramp, and for the same reason: the two modes run
    * out of room in different places. Dark's tightest pair is amber/yellow; light's

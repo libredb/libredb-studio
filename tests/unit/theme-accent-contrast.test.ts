@@ -351,13 +351,22 @@ describe("the dark palette reproduces the literals the components carried", () =
    * what the palette-parity test requires; declaring them DIFFERENTLY would be a
    * silent dark-mode change.
    */
-  for (const role of ["brand", "warning", "success", "danger"]) {
-    for (const suffix of ["tint", "solid", "solid-hover"]) {
-      test(`--studio-${role}-${suffix} is mode-independent`, () => {
-        expect(value(light, `--studio-${role}-${suffix}`)).toBe(value(dark, `--studio-${role}-${suffix}`));
-      });
-    }
-  }
+  /**
+   * Every declared ground, not a hand-listed set of suffixes. The first version
+   * enumerated `tint`/`solid`/`solid-hover` and so silently skipped
+   * `brand-solid-active` — which was added later and is the one most likely to be
+   * tuned in a single palette, because only three pages use it.
+   */
+  const grounds = [...light.keys()].filter((token) => /-(?:tint|solid|solid-hover|solid-active)$/.test(token));
+
+  test("the ground sweep found them (guard against a filter that matches nothing)", () => {
+    expect(grounds).toContain("--studio-brand-solid-active");
+    expect(grounds.length).toBeGreaterThan(20);
+  });
+
+  test("every wash and every filled ground is mode-independent", () => {
+    expect(grounds.filter((token) => value(light, token) !== value(dark, token))).toEqual([]);
+  });
 });
 
 describe("the light values are the ones that were selected", () => {
@@ -426,6 +435,122 @@ describe("a filled control keeps its label", () => {
       "--studio-success-solid",
       "--studio-hue-teal-solid",
     ]);
+  });
+});
+
+/**
+ * The faded sites light still loses on, and the ones both palettes lose on.
+ *
+ * Every entry improved in this migration — the worst went 1.35:1 to 6.80:1 — and
+ * none regressed. They are listed because "improved" is not "fixed", and a number
+ * in a PR description stops being true the moment somebody edits a class.
+ */
+const FADED_LIGHT_ONLY = [
+  "--studio-warning/80",
+  "--studio-success/90",
+  "--studio-warning/90",
+  "--studio-hue-amber/80",
+  "--studio-success/80",
+  "--studio-hue-yellow/90",
+  "--studio-hue-amber/90",
+  "--studio-hue-cyan/80",
+  "--studio-hue-emerald/90",
+];
+
+const FADED_BOTH = [
+  "--studio-brand/20",
+  "--studio-brand/50",
+  "--studio-brand/80",
+  "--studio-danger/70",
+  "--studio-danger/80",
+  "--studio-hue-amber/70",
+  "--studio-hue-blue/80",
+  "--studio-hue-emerald/70",
+  "--studio-hue-purple/40",
+  "--studio-hue-purple/50",
+  "--studio-hue-red/60",
+  "--studio-hue-rose/90",
+  "--studio-hue-yellow/70",
+  "--studio-success/50",
+  "--studio-warning/60",
+  "--studio-warning/70",
+];
+
+/**
+ * Faded accent text — `text-warning/80`, `text-hue-amber/70`, `text-brand/50`.
+ *
+ * The gate above measures the token OPAQUE, which is not what these paint: an
+ * opacity modifier composites the foreground onto its ground before anyone reads
+ * it, and a token that clears AA at full strength can fall well under it at 50%.
+ * A review caught that this file could not see them at all.
+ *
+ * What the measurement says, once it exists: this migration IMPROVED every one of
+ * these sites in light — 38 of 38, worst case 1.35:1 -> 6.80:1 — and regressed
+ * none. It did not lift all of them over AA, and 9 of the survivors fail in dark
+ * too, at values byte-identical to what shipped before #402. So this is not the
+ * failure class #402 is about ("the one failure class that light has and dark does
+ * not"); it is a second one, symmetric across themes, that the accent ramp alone
+ * cannot fix — a faded token needs a per-mode alpha, which is its own design.
+ *
+ * Pinned rather than deferred in prose: the list can only shrink, and the day
+ * somebody fixes one, this test says so.
+ */
+describe("faded accent text is measured, not assumed", () => {
+  const FADED = /\btext-((?:brand|warning|success|danger)(?:-bright)?|hue-[a-z]+(?:-alt)?)\/(\d{1,3})\b/g;
+
+  const sites = (() => {
+    const seen = new Map<string, number>();
+    for (const [, token, alpha] of sourceOfSrc().matchAll(FADED)) {
+      const key = `--studio-${token}`;
+      const value = Number(alpha) / 100;
+      if (!seen.has(`${key}/${alpha}`)) seen.set(`${key}/${alpha}`, value);
+    }
+    return [...seen.entries()].map(([label, alpha]) => ({ label, token: label.split("/")[0], alpha }));
+  })();
+
+  const tintFor = (token: string) => {
+    const hue = /^--studio-hue-([a-z]+)/.exec(token);
+    if (hue) return `--studio-hue-${hue[1]}-tint`;
+    return `${token.replace(/-bright$/, "")}-tint`;
+  };
+
+  /** The worst ratio this faded foreground reaches on any ground it may sit on. */
+  const worstFaded = (palettes: Map<string, string>, token: string, alpha: number) => {
+    const foreground = rgb(palettes, token);
+    const tint = tintFor(token);
+    let worst = Number.POSITIVE_INFINITY;
+    for (const groundToken of GROUNDS) {
+      const base = rgb(palettes, groundToken);
+      const candidates = [base, ...TINT_ALPHAS.map((a) => composite(rgb(palettes, tint), base, a))];
+      for (const ground of candidates) worst = Math.min(worst, contrast(composite(foreground, ground, alpha), ground));
+    }
+    return worst;
+  };
+
+  test("the scan found the faded call sites (guard against a regex that matches nothing)", () => {
+    expect(sites.length).toBeGreaterThan(20);
+    expect(sites.map((s) => s.label)).toContain("--studio-warning/80");
+  });
+
+  /**
+   * Light is allowed to be no worse than dark at the same opacity. Where dark
+   * already failed, light inherits a defect it did not create; where dark passed,
+   * light has to pass too — and that is the #402 contract, applied to a foreground
+   * the original sweep could not see.
+   */
+  test("no faded accent is worse in light than the same accent is in dark", () => {
+    const regressions = sites
+      .filter(({ token, alpha }) => worstFaded(dark, token, alpha) >= AA && worstFaded(light, token, alpha) < AA)
+      .map(({ label }) => label);
+    expect(regressions).toEqual(FADED_LIGHT_ONLY);
+  });
+
+  test("the faded sites that fail in BOTH palettes are the ones that always did", () => {
+    const both = sites
+      .filter(({ token, alpha }) => worstFaded(dark, token, alpha) < AA && worstFaded(light, token, alpha) < AA)
+      .map(({ label }) => label)
+      .sort();
+    expect(both).toEqual(FADED_BOTH);
   });
 });
 

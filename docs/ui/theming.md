@@ -55,8 +55,8 @@ editor frame — is written in the semantic tokens of `src/styles/theme.css`. Tw
 |------|-----------------------------------------------------|
 | Surface | `canvas` · `sunken` · `surface` · `raised` · `overlay` (plus `panel`, the translucent card ground) |
 | Text | `fg-bright` · `fg` · `fg-secondary` · `fg-tertiary` · `fg-muted` · `fg-subtle` · `fg-faint` |
-| Accent, state | `brand` · `warning` · `success` · `danger`, each with `-bright`, `-tint`, `-solid`, `-solid-hover` |
-| Accent, identity | `hue-<name>`, one per hue the app uses, some with `-alt` (a second step) and `-tint` (its wash) |
+| Accent, state | `brand` · `warning` · `success` · `danger`, each with `-bright`, `-tint`, `-solid`, `-solid-hover` (plus `brand-solid-active`, the one filled ground that hovers darker) |
+| Accent, identity | `hue-<name>`, one per hue the app uses, some with `-alt` (a second step) and `-tint` (its wash); `hue-teal` and `hue-purple` also carry `-solid` / `-solid-hover` for the two filled controls painted in a panel's own hue |
 
 Alongside them: `hairline` / `hairline-strong` for structural rules, `edge` / `edge-hover` for
 the border of a control the user is meant to see, and `fill-subtle` / `fill` / `fill-strong`
@@ -86,7 +86,7 @@ near-white text on a white page.
   `hue-<name>-alt` where two identities share a hue: there are more engines than there are hues,
   and `db-ui-config`'s own test asserts every engine colour differs.
 
-Folding an identity into a state role repaints nineteen engines in four colours. Folding a state
+Folding an identity into a state role repaints seventeen engines in four colours. Folding a state
 into an identity hue means the next person to change what "error" looks like has to find every
 red in the codebase. The identity set is **selected per mode**, the way `lib/charts/palette.ts`
 selects rather than flipping a ramp — the two modes run out of room in different places, so a
@@ -376,8 +376,13 @@ measures every accent token on every ground it can land on, in both palettes, an
 `tests/unit/theme-token-usage.test.ts` fails on a colour literal in `src` and on a token nothing
 reaches. The bars a new token has to clear:
 
-- **4.5:1** on the five studio grounds, on a wash of its own hue up to `/20`, and on the brand
-  tile — WCAG AA for text, in both palettes.
+- **4.5:1** on the five studio grounds, on a wash of its own hue at every alpha the code
+  actually paints (scanned out of `src`, currently up to `/25`), and on the brand tile — WCAG AA
+  for text, in both palettes.
+- **No worse in light than in dark** if the token is ever used with a foreground opacity
+  (`text-warning/80`). An opacity modifier composites before anyone reads it, so a token that
+  clears AA opaque can fall under it faded; the suite measures those separately and pins the
+  ones that do not clear.
 - **Separation** no tighter than the shipped dark set's own minimum, if it joins the identity
   palette. The bar is measured, not chosen, so it moves if dark is ever retuned.
 - **A call site.** A token nobody uses is a value nobody has checked.

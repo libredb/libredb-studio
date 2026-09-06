@@ -239,8 +239,13 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
             </div>
           </div>
 
-          {/* Preview Section */}
-          <div className="p-4 rounded-lg bg-black border border-hairline font-mono">
+          {/*
+            A terminal, not a panel: the ground is a hard `bg-black` in both themes,
+            so the tokens inside it have to resolve their DARK values or the light
+            palette paints dark-on-black. Scoped the way the login hero scopes its
+            own pinned-dark column (#402).
+          */}
+          <div className="dark p-4 rounded-lg bg-black border border-hairline font-mono">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-brand-tint" />
