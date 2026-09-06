@@ -56,7 +56,7 @@ editor frame — is written in the semantic tokens of `src/styles/theme.css`. Tw
 | Surface | `canvas` · `sunken` · `surface` · `raised` · `overlay` (plus `panel`, the translucent card ground) |
 | Text | `fg-bright` · `fg` · `fg-secondary` · `fg-tertiary` · `fg-muted` · `fg-subtle` · `fg-faint` |
 | Accent, state | `brand` · `warning` · `success` · `danger`, each with `-bright`, `-tint`, `-solid`, `-solid-hover` |
-| Accent, identity | `hue-<name>` for fifteen hues, some with `-alt` and `-tint` |
+| Accent, identity | `hue-<name>`, one per hue the app uses, some with `-alt` (a second step) and `-tint` (its wash) |
 
 Alongside them: `hairline` / `hairline-strong` for structural rules, `edge` / `edge-hover` for
 the border of a control the user is meant to see, and `fill-subtle` / `fill` / `fill-strong`

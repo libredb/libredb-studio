@@ -40,10 +40,14 @@ const HUES = "blue|sky|indigo|violet|purple|cyan|teal|emerald|green|lime|yellow|
 
 /**
  * `from-`, `via-`, `to-` and `shadow-` are the decorative half — gradients, blur
- * orbs, glow rings. They are never read as text, they are never the only signal for
- * anything, and giving each of them a token would mean tokenising a hundred values
- * to change none of them. They stay literal, deliberately, and this pattern is the
+ * orbs, glow rings — and they stay literal deliberately, so this pattern is the
  * record of that decision rather than an oversight.
+ *
+ * "Never read as text" would be too strong: the login hero paints its headline with
+ * `bg-gradient-to-r … bg-clip-text`, where the gradient IS the letterform. That one
+ * lives inside a subtree that re-declares the dark palette, so it is a dark-on-dark
+ * mark in both themes and the light ramp never reaches it. It is the exception that
+ * makes the rule worth stating rather than a hole in it.
  */
 const LITERAL = new RegExp(
   `\\b(?:text|bg|border|ring|divide|outline|decoration)-(?:${HUES})-\\d{2,3}(?:/\\d{1,3})?\\b`,
@@ -115,8 +119,10 @@ describe("no token is declared and unreachable", () => {
       // `--studio-brand-tint` is reached as `bg-accent-tint`, `text-accent-tint`,
       // `border-accent-tint/20`, … so the utility suffix is what has to appear.
       const utility = token.replace("--studio-", "");
+      // `\b` matches between a letter and a hyphen, so `bg-brand-tint` would have
+      // satisfied `--studio-brand`. The token has to END there.
       return !new RegExp(
-        `[-:\\[\\s"'\`](?:text|bg|border|ring|divide|outline|decoration|from|via|to)-${utility}\\b`,
+        `[-:\\[\\s"'\`](?:text|bg|border|ring|divide|outline|decoration|from|via|to)-${utility}(?![a-zA-Z0-9-])`,
       ).test(haystack);
     });
     expect(unused).toEqual([]);

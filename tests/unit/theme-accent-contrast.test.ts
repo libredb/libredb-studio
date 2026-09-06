@@ -1,8 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { composite, contrast, deltaEOk, parseColor, tailwindPalette, tailwindStep, toHex } from "../helpers/contrast";
+import {
+  composite,
+  contrast,
+  deltaEOk,
+  luminance,
+  parseColor,
+  tailwindPalette,
+  tailwindStep,
+  toHex,
+} from "../helpers/contrast";
 
 /**
  * #402: the accents kept dark-tuned values on light grounds.
@@ -34,6 +43,18 @@ import { composite, contrast, deltaEOk, parseColor, tailwindPalette, tailwindSte
 
 const ROOT = join(import.meta.dir, "..", "..");
 const theme = readFileSync(join(ROOT, "src", "styles", "theme.css"), "utf8");
+
+/** Every component source, concatenated, for the scans that have to read the code. */
+function sourceOfSrc(): string {
+  const walk = (dir: string): string[] =>
+    readdirSync(dir).flatMap((entry) => {
+      const path = join(dir, entry);
+      return statSync(path).isDirectory() ? walk(path) : /\.tsx?$/.test(entry) ? [path] : [];
+    });
+  return walk(join(ROOT, "src"))
+    .map((path) => readFileSync(path, "utf8"))
+    .join("\n");
+}
 const palette = tailwindPalette(ROOT);
 
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -70,15 +91,48 @@ const rgb = (palettes: Map<string, string>, token: string) => parseColor(value(p
  * one cross-hue ground that provably carries every identity hue at once (the
  * selected-engine tile in `ConnectionModal`, `bg-blue-600/10`).
  *
- * `/20` is the ceiling because no tint heavier than that carries coloured text
- * anywhere in `src`; `bg-blue-500/30` and `/50` exist, but as fills, never as a
- * ground under a word.
+ * The alpha ladder runs to `/30`. An earlier draft stopped at `/20` on the claim
+ * that nothing heavier carried text — which was wrong: `AgentRail` and
+ * `ConsentCard` put `-bright` text on a `/25` hover wash, including the very pill
+ * this issue is about. The ladder is now a round ceiling rather than a survey, so
+ * it cannot go stale the next time a call site picks a heavier wash.
  */
-const GROUNDS = {
-  light: ["--studio-canvas", "--studio-sunken", "--studio-surface", "--studio-raised", "--studio-overlay"],
-  dark: ["--studio-canvas", "--studio-sunken", "--studio-surface", "--studio-raised", "--studio-overlay"],
-} as const;
-const TINT_ALPHAS = [0.05, 0.1, 0.15, 0.2];
+// One list, not one per mode: the ground TOKENS are the same in both palettes —
+// it is their values that differ, and `worstGround` reads those from whichever
+// palette it is handed.
+const GROUNDS = [
+  "--studio-canvas",
+  "--studio-sunken",
+  "--studio-surface",
+  "--studio-raised",
+  "--studio-overlay",
+] as const;
+/**
+ * Derived from `src`, not asserted about it.
+ *
+ * The first draft hard-coded a `/20` ceiling on the claim that nothing heavier
+ * carried text. That was wrong — `AgentRail` and `ConsentCard` put `-bright` text
+ * on a `/25` hover wash, including the very pill this issue is about — and it was
+ * wrong in the way a comment is always wrong: silently, and only until someone
+ * reads it. Scanning for the alphas that a wash is actually painted at means the
+ * ladder cannot drift away from the code again.
+ *
+ * Alphas above `TEXT_CEILING` are fills — a progress bar, a pulsing dot, a resize
+ * handle — never a ground under a word, and including them would force every token
+ * two steps darker to satisfy a case that does not exist.
+ */
+const TEXT_CEILING = 0.25;
+const TINT_ALPHAS = (() => {
+  const src = sourceOfSrc();
+  const found = new Set<number>();
+  for (const [, alpha] of src.matchAll(
+    /\bbg-(?:brand|warning|success|danger|hue-[a-z]+)(?:-tint|-solid)?\/(\d{1,3})\b/g,
+  )) {
+    const value = Number(alpha) / 100;
+    if (value <= TEXT_CEILING) found.add(value);
+  }
+  return [...found].sort((a, b) => a - b);
+})();
 const ACCENT_TILE: ReadonlyArray<readonly [string, number]> = [
   ["--studio-brand-tint", 0.05],
   ["--studio-brand-tint", 0.1],
@@ -99,7 +153,7 @@ function worstGround(palettes: Map<string, string>, token: string, ownTint: stri
     }
   };
 
-  for (const groundToken of GROUNDS.light) {
+  for (const groundToken of GROUNDS) {
     const ground = rgb(palettes, groundToken);
     record(contrast(foreground, ground), groundToken);
     for (const alpha of TINT_ALPHAS) {
@@ -188,15 +242,22 @@ for (const { hue, light: base, lightAlt } of HUES) {
 }
 
 describe("accent text clears WCAG AA on every ground it can land on", () => {
+  /**
+   * The ladder is scanned out of `src`, so an empty or truncated scan would make
+   * every test below measure plain grounds only — passing loudly while checking
+   * nothing that matters.
+   */
+  test("the alpha ladder was actually found in the source", () => {
+    expect(TINT_ALPHAS).toContain(0.25);
+    expect(TINT_ALPHAS.length).toBeGreaterThanOrEqual(4);
+  });
+
   for (const { token, tint } of TEXT_TOKENS) {
     test(`${token} in light`, () => {
       const { ratio, where } = worstGround(light, token, tint);
-      expect({ token, worst: `${ratio.toFixed(2)}:1`, where }).toEqual({
-        token,
-        worst: `${ratio.toFixed(2)}:1`,
-        where,
-      });
-      expect(ratio).toBeGreaterThanOrEqual(AA);
+      // The ground is in the assertion, not beside it: a bare numeric comparison
+      // fails with "4.21 is not >= 4.5" and says nothing about WHERE.
+      expect([token, where, ratio >= AA]).toEqual([token, where, true]);
     });
 
     test(`${token} in dark`, () => {
@@ -312,6 +373,62 @@ describe("the light values are the ones that were selected", () => {
   });
 });
 
+/**
+ * The filled controls. These are excluded from the AA text sweep above — they are
+ * GROUNDS, not text — so without this block nothing measures the one thing that
+ * matters about them: whether their label survives.
+ *
+ * The migration got this wrong once. Three standalone error pages hovered DOWN the
+ * ramp (`bg-blue-600 hover:bg-blue-700`) where the rest of the app hovers up, and
+ * flattening them onto `-solid-hover` inverted the direction and took white from
+ * 6.8:1 to 3.8:1. Every gate stayed green.
+ */
+describe("a filled control keeps its label", () => {
+  const WHITE = parseColor("#ffffff").rgb;
+  const label = (token: string) => contrast(rgb(light, token), WHITE);
+
+  test("the two roles that carry a white label clear AA, resting and on hover", () => {
+    for (const token of ["--studio-brand-solid", "--studio-brand-solid-active", "--studio-danger-solid"]) {
+      expect([token, label(token) >= AA]).toEqual([token, true]);
+    }
+  });
+
+  /**
+   * `-solid-active` exists ONLY to be darker than the ground it hovers from. If it
+   * ever stops being darker it is not merely wrong, it is pointless — and the three
+   * pages that use it would silently go back to the regression above.
+   */
+  test("the active step is darker than the ground it hovers from", () => {
+    expect(luminance(rgb(light, "--studio-brand-solid-active"))).toBeLessThan(
+      luminance(rgb(light, "--studio-brand-solid")),
+    );
+  });
+
+  /**
+   * Deferred, deliberately, and pinned so the deferral is a fact rather than a
+   * sentence. `warning`, `success` and the teal "AI Describe" button are filled at
+   * their -600 step under a white label, which is around 3.2-3.7:1 — under AA, in
+   * BOTH themes, and under AA before this migration too. Darkening them enough for
+   * white is a visible change to a control this issue never claimed, so it is filed
+   * separately; when it lands, this test fails and says so.
+   *
+   * Hover steps are excluded on purpose: every `-solid-hover` lightens, so none of
+   * them clears AA against white, and that is the convention the app already had.
+   * The resting state is what a label has to survive.
+   */
+  test("the roles whose white label is still under AA are exactly the two that already were", () => {
+    const resting = [...light.keys()].filter((token) => /-solid$/.test(token));
+    expect(resting.length).toBeGreaterThan(4);
+    // Names, not ratios: a rounded number pinned here would fail on a rendering
+    // change that moves nothing anyone can see.
+    expect(resting.filter((token) => label(token) < AA)).toEqual([
+      "--studio-warning-solid",
+      "--studio-success-solid",
+      "--studio-hue-teal-solid",
+    ]);
+  });
+});
+
 describe("the identity hues stay tellable apart", () => {
   const closestPair = (palettes: Map<string, string>, tokens: string[]) => {
     let closest = Number.POSITIVE_INFINITY;
@@ -346,18 +463,11 @@ describe("the identity hues stay tellable apart", () => {
   test("the light set is no tighter than the dark set it is modelled on", () => {
     const darkest = closestPair(dark, identitySet);
     const lightest = closestPair(light, identitySet);
-    expect({
-      bar: darkest.closest.toFixed(4),
-      barPair: darkest.pair,
-      light: lightest.closest.toFixed(4),
-      lightPair: lightest.pair,
-    }).toEqual({
-      bar: darkest.closest.toFixed(4),
-      barPair: darkest.pair,
-      light: lightest.closest.toFixed(4),
-      lightPair: lightest.pair,
-    });
-    expect(lightest.closest).toBeGreaterThanOrEqual(darkest.closest);
+    expect([lightest.pair, darkest.pair, lightest.closest >= darkest.closest]).toEqual([
+      lightest.pair,
+      darkest.pair,
+      true,
+    ]);
   });
 
   /**

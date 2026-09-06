@@ -313,7 +313,10 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
                 nothing to advise about a cache nobody measured. */}
             {cacheHitRatio !== undefined && cacheHitRatio < 90 && (
               <div className="flex items-start gap-2 p-2 bg-hue-yellow-tint/10 rounded-md">
-                <TriangleAlert strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-yellow mt-0.5 flex-shrink-0" />
+                <TriangleAlert
+                  strokeWidth={1.5}
+                  className="h-3 w-3 sm:h-4 sm:w-4 text-hue-yellow mt-0.5 flex-shrink-0"
+                />
                 <div>
                   <p className="text-xs sm:text-xs font-medium">Low Cache Hit</p>
                   <p className="text-xs sm:text-xs text-muted-foreground hidden sm:block">Increase shared_buffers</p>

@@ -78,9 +78,10 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   duckdb: {
     icon: DuckDBIcon,
-    // DuckDB's own mark is a bright yellow (#FFF000), and `text-yellow-400` is already
-    // ClickHouse's. yellow-300 is the nearest free shade, and the distinct-colour
-    // assertion in tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
+    // DuckDB's own mark is a bright yellow (#FFF000), and `hue-yellow` is already
+    // ClickHouse's. `-alt` is the second step of that hue, kept apart from its base
+    // in both palettes; the distinct-colour assertion in
+    // tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
     color: "text-hue-yellow-alt",
     label: "DuckDB",
     // Embedded: nothing is listening anywhere, so there is no port to default.
@@ -177,9 +178,9 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   druid: {
     icon: DruidIcon,
-    // Issue #265 specified text-sky-400, which mssql already owns; the distinct-colour
-    // assertion in tests/unit/lib/db-ui-config.test.ts rules a duplicate out. teal-400
-    // is the nearest free shade and is closer to Druid's own petrol-teal mark anyway.
+    // Issue #265 specified sky, which mssql already owns; the distinct-colour
+    // assertion in tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
+    // `hue-teal` was free and is closer to Druid's own petrol-teal mark anyway.
     color: "text-hue-teal",
     label: "Apache Druid",
     // The Router port. The Broker on 8082 serves the identical POST /druid/v2/sql and

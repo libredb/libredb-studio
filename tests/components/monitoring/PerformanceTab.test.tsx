@@ -82,7 +82,7 @@ describe("PerformanceTab", () => {
     expect(card.textContent).toContain("%");
     expect(card.querySelectorAll('[data-slot="progress"]').length).toBe(1);
     expect(card.textContent).toContain("Excellent");
-    expect(card.querySelector("svg")?.getAttribute("class")).toContain("text-success");
+    expect(card.querySelector("svg")?.getAttribute("class")).toContain("text-hue-green");
   });
 
   test("reports an unmeasured cache hit ratio as unavailable instead of 0%", () => {
@@ -219,7 +219,7 @@ describe("PerformanceTab", () => {
     expect(deadlocks.textContent).toContain("None detected");
     expect(deadlocks.textContent).toContain("Healthy");
     expect(deadlocks.textContent).not.toContain("N/A");
-    expect(deadlocks.querySelector("svg")?.getAttribute("class")).toContain("text-success");
+    expect(deadlocks.querySelector("svg")?.getAttribute("class")).toContain("text-hue-green");
   });
 
   test("renders the buffer and deadlock trends as not measured when no sample carries them", () => {

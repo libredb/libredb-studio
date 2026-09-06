@@ -80,14 +80,22 @@ describe("evaluateThreshold (direction=below)", () => {
 // ============================================================================
 
 describe("getThresholdColor", () => {
-  test("healthy returns the success border token", () => {
+  /**
+   * Green and yellow, not the emerald-based `success` and amber-based `warning`
+   * roles. The monitoring surfaces have always drawn their threshold ring in
+   * green/yellow/red, and routing them through the state roles would have changed
+   * the hue in dark — so they take the identity hues that reproduce it exactly
+   * (#402). The drift between the two vocabularies is real and is filed, but it is
+   * not this migration's to resolve.
+   */
+  test("healthy returns the green identity ring", () => {
     const color = getThresholdColor("healthy");
-    expect(color).toBe("border-success-tint/30");
+    expect(color).toBe("border-hue-green-tint/30");
   });
 
-  test("warning returns the warning border token", () => {
+  test("warning returns the yellow identity ring", () => {
     const color = getThresholdColor("warning");
-    expect(color).toBe("border-warning-tint/50");
+    expect(color).toBe("border-hue-yellow-tint/50");
   });
 
   test("critical returns the danger border token", () => {
