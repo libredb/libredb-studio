@@ -204,19 +204,31 @@ function sqlTextRefusal(): Error & { code: string; errno: number; sqlState: stri
 function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
   const normalized = sql.trim().toLowerCase();
 
-  // SHOW STATUS LIKE 'Threads_connected'
-  if (normalized.includes("show status like 'threads_connected'")) {
-    return Promise.resolve([[{ Value: "5" }], []]);
-  }
-
-  // SHOW STATUS LIKE 'Uptime'
-  if (normalized.includes("show status like 'uptime'")) {
-    return Promise.resolve([[{ Value: "86400" }], []]);
-  }
-
-  // SHOW STATUS LIKE 'Innodb_deadlocks'
-  if (normalized.includes("show status like 'innodb_deadlocks'")) {
-    return Promise.resolve([[{ Value: "0" }], []]);
+  // SHOW STATUS, bare. The provider reads the whole list and picks by `Variable_name`
+  // because Apache Doris rejects the LIKE clause on this statement outright: measured
+  // 2026-09-06 against `apache/doris:all-in-one-4.1.3`, `SHOW STATUS LIKE 'Uptime'`
+  // answers errno 1105 / ER_UNKNOWN_ERROR / HY000 "mismatched input 'LIKE' expecting
+  // {<EOF>, ';'}(line 1, pos 12)" while a bare `SHOW STATUS` is accepted (#573).
+  //
+  // Two columns, `Variable_name` and `Value`, on every engine measured that day:
+  // MySQL 26.7.0 (528 rows), MariaDB 12.3.2 (571), TiDB 8.5.1 (13), SingleStore (75),
+  // StarRocks 3.3.22 (0) and Doris 4.1.3 (0). The five rows below are that shape; the
+  // surrounding rows are there so the pick has something to pick out of.
+  //
+  // `Innodb_deadlocks` is MariaDB's variable and MariaDB 12.3.2 publishes it, so this
+  // shared fixture carries it. MySQL 26.7.0 does not publish it at all, and the test
+  // that pins that absence brings its own fixture.
+  if (normalized.startsWith("show status")) {
+    return Promise.resolve([
+      [
+        { Variable_name: "Connections", Value: "9" },
+        { Variable_name: "Queries", Value: "3" },
+        { Variable_name: "Threads_connected", Value: "5" },
+        { Variable_name: "Uptime", Value: "86400" },
+        { Variable_name: "Innodb_deadlocks", Value: "0" },
+      ],
+      [],
+    ]);
   }
 
   // SHOW VARIABLES LIKE 'max_connections'
@@ -656,6 +668,45 @@ function digestGrantDeniedMockExecute(sql: string): Promise<[unknown[], unknown[
 }
 
 /**
+ * Apache Doris, whose status and variable lists are both empty. Measured 2026-09-06
+ * against `apache/doris:all-in-one-4.1.3` (FE with one alive BE) over mysql2 3.24.2's
+ * text protocol:
+ *
+ *   SHOW STATUS                             -> ok, columns Variable_name/Value, 0 rows
+ *   SHOW STATUS LIKE 'Uptime'               -> errno=1105 code=ER_UNKNOWN_ERROR
+ *                                              sqlState=HY000, "mismatched input 'LIKE'
+ *                                              expecting {<EOF>, ';'}(line 1, pos 12)"
+ *   SHOW VARIABLES LIKE 'max_connections'   -> ok, 0 rows (four columns there)
+ *
+ * The LIKE arm REFUSES rather than answering, and that is the whole point of the
+ * fixture: issue #573 is that the provider sent a statement this server rejects, so a
+ * fixture that answered it would let the old statement keep passing this file.
+ */
+function dorisMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
+  const normalized = sql.trim().toLowerCase();
+
+  if (normalized.startsWith("show status like")) {
+    const error = new Error(
+      "errCode = 2, detailMessage = \nmismatched input 'LIKE' expecting {<EOF>, ';'}(line 1, pos 12)\n",
+    ) as Error & { code: string; errno: number; sqlState: string };
+    error.code = "ER_UNKNOWN_ERROR";
+    error.errno = 1105;
+    error.sqlState = "HY000";
+    return Promise.reject(error);
+  }
+
+  if (normalized.startsWith("show status")) {
+    return Promise.resolve([[], []]);
+  }
+
+  if (normalized.includes("show variables like 'max_connections'")) {
+    return Promise.resolve([[], []]);
+  }
+
+  return defaultMockExecute(sql);
+}
+
+/**
  * What a server with no `performance_schema` DATABASE does - a different fact from
  * the schema being merely OFF. Measured 2026-08-20 against a live OceanBase
  * Community Edition 4.4.2.1 tenant through this provider, and reproduced against
@@ -976,6 +1027,37 @@ describe("MySQLProvider", () => {
       expect(typeof health.databaseSize).toBe("string");
       expect(typeof health.cacheHitRatio).toBe("string");
       expect(Array.isArray(health.slowQueries)).toBe(true);
+      expect(Array.isArray(health.activeSessions)).toBe(true);
+    });
+
+    test("reads the connection count from ONE bare SHOW STATUS, never SHOW STATUS LIKE", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      protocolCalls = [];
+      await provider.getHealth();
+
+      // Apache Doris 4.1.3 rejects the LIKE clause on SHOW STATUS as a parse error
+      // (errno 1105, measured 2026-09-06), which took the whole Health panel down
+      // there. One bare read, picked client-side, is what every engine accepts (#573).
+      expect(
+        protocolCalls
+          .filter((c) => c.sql.toLowerCase().includes("show status"))
+          .map((c) => ({ method: c.method, sql: c.sql.trim() })),
+      ).toEqual([{ method: "query", sql: "SHOW STATUS" }]);
+    });
+
+    test("omits activeConnections on a server that publishes no Threads_connected row", async () => {
+      mockExecuteFn = dorisMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      // ABSENCE and ZERO are different facts (#477, and the docblock on
+      // `HealthInfo.activeConnections`). Doris 4.1.3 and StarRocks 3.3.22 answer a bare
+      // SHOW STATUS with zero rows and TiDB 8.5.1 publishes Uptime but not
+      // Threads_connected, so the key must be missing rather than a fabricated 0.
+      expect("activeConnections" in health).toBe(false);
       expect(Array.isArray(health.activeSessions)).toBe(true);
     });
 
@@ -1549,6 +1631,68 @@ describe("MySQLProvider", () => {
       // 86400 seconds = 1 day
       expect(overview.uptime).toBe("1d 0h");
     });
+
+    test("reads uptime and connections from ONE bare SHOW STATUS, and keeps SHOW VARIABLES LIKE", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      protocolCalls = [];
+      await provider.getOverview();
+
+      // Doris 4.1.3 rejects `SHOW STATUS LIKE` (errno 1105, measured 2026-09-06) and
+      // accepts `SHOW VARIABLES LIKE 'max_connections'`, so only the first statement
+      // changes: the narrowest fix touches only what a grammar refuses. One read
+      // serves both variables, which is one round trip fewer than before.
+      expect(
+        protocolCalls
+          .filter((c) => c.sql.toLowerCase().includes("show status"))
+          .map((c) => ({ method: c.method, sql: c.sql.trim() })),
+      ).toEqual([{ method: "query", sql: "SHOW STATUS" }]);
+      expect(methodFor("show variables like 'max_connections'")).toBe("query");
+    });
+
+    test("reports absence, not zero, on a server that publishes no status rows", async () => {
+      mockExecuteFn = dorisMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      // Doris 4.1.3: SHOW STATUS answers 0 rows and SHOW VARIABLES LIKE
+      // 'max_connections' answers 0 rows, both measured 2026-09-06. Nothing was read,
+      // so nothing is reported as read: no `activeConnections` key at all, no
+      // `startTime` for an uptime nobody published, and the uptime string is the "N/A"
+      // every other provider sends for an unmeasured one.
+      expect("activeConnections" in overview).toBe(false);
+      expect("startTime" in overview).toBe(false);
+      expect(overview.uptime).toBe("N/A");
+      // `maxConnections` is the one figure where 0 and absence are the SAME fact - it
+      // means "no limit published", see the docblock in `src/lib/db/types.ts` - so it
+      // stays a number. The old fallback invented MySQL's 151 for every server.
+      expect(overview.maxConnections).toBe(0);
+      expect(overview.version).toBe("MySQL 8.0.35");
+    });
+
+    test("picks the status rows case-insensitively", async () => {
+      // `SHOW STATUS LIKE 'Uptime'` matched case-insensitively on every MySQL-family
+      // server, so the client-side pick that replaces it has to match the same way.
+      mockExecuteFn = (sql: string) =>
+        sql.trim().toLowerCase().startsWith("show status")
+          ? Promise.resolve([
+              [
+                { Variable_name: "uptime", Value: "86400" },
+                { Variable_name: "threads_connected", Value: "7" },
+              ],
+              [],
+            ])
+          : defaultMockExecute(sql);
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect(overview.uptime).toBe("1d 0h");
+      expect(overview.activeConnections).toBe(7);
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -1604,11 +1748,19 @@ describe("MySQLProvider", () => {
 
     test("omits deadlocks on a server that does not publish Innodb_deadlocks", async () => {
       // `Innodb_deadlocks` is MariaDB's status variable. MySQL does not publish it -
-      // measured as an empty SHOW STATUS result on both 8.0.46 and 26.7.0 - so the
-      // old `parseInt(row?.Value || "0")` reported a deadlock count MySQL never gave.
+      // measured 2026-09-06 on MySQL 26.7.0, whose bare SHOW STATUS answers 528 rows
+      // and none of them named `Innodb_deadlocks`, against MariaDB 12.3.2's 571 rows
+      // which do. So the row is simply not in the list, and the old
+      // `parseInt(row?.Value || "0")` reported a deadlock count MySQL never gave.
       mockExecuteFn = (sql: string) =>
-        sql.trim().toLowerCase().includes("show status like 'innodb_deadlocks'")
-          ? Promise.resolve([[], []])
+        sql.trim().toLowerCase().startsWith("show status")
+          ? Promise.resolve([
+              [
+                { Variable_name: "Threads_connected", Value: "5" },
+                { Variable_name: "Uptime", Value: "86400" },
+              ],
+              [],
+            ])
           : defaultMockExecute(sql);
 
       provider = new MySQLProvider(makeMySQLConfig());
@@ -1619,6 +1771,19 @@ describe("MySQLProvider", () => {
       // The performance_schema readings are unaffected: still measured, still reported.
       expect(metrics.cacheHitRatio).toBe(99.5);
       expect(metrics.bufferPoolUsage).toBe(80);
+    });
+
+    test("reads deadlocks from a bare SHOW STATUS, never SHOW STATUS LIKE", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      protocolCalls = [];
+      await provider.getPerformanceMetrics();
+
+      expect(
+        protocolCalls
+          .filter((c) => c.sql.toLowerCase().includes("show status"))
+          .map((c) => ({ method: c.method, sql: c.sql.trim() })),
+      ).toEqual([{ method: "query", sql: "SHOW STATUS" }]);
     });
 
     test("omits every metric when the performance_schema query fails outright", async () => {
@@ -2327,7 +2492,7 @@ describe("MySQLProvider wire protocol", () => {
     const p = await connected();
     await p.getHealth();
 
-    expect(methodFor("show status like 'threads_connected'")).toBe("query");
+    expect(methodFor("show status")).toBe("query");
     // Every information_schema read here binds the database name.
     expect(methodFor("information_schema.tables")).toBe("execute");
     expect(methodFor("processlist")).toBe("execute");
@@ -2338,7 +2503,7 @@ describe("MySQLProvider wire protocol", () => {
     await p.getOverview();
 
     expect(methodFor("version()")).toBe("query");
-    expect(methodFor("show status like 'uptime'")).toBe("query");
+    expect(methodFor("show status")).toBe("query");
     expect(methodFor("show variables like 'max_connections'")).toBe("query");
     expect(methodFor("information_schema.tables")).toBe("execute");
   });

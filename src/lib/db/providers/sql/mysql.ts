@@ -166,6 +166,32 @@ function readMaintenanceReport(
 
 const unique = (values: string[]): string[] => [...new Set(values)];
 
+/**
+ * One status variable out of a bare `SHOW STATUS` result, or `undefined` when the
+ * server does not publish it.
+ *
+ * The provider used to ask for each variable by name with `SHOW STATUS LIKE '<name>'`,
+ * which is MySQL grammar that not every MySQL-wire server has. Measured 2026-09-06 over
+ * mysql2 3.24.2's text protocol against `apache/doris:all-in-one-4.1.3`:
+ *
+ *   SHOW STATUS LIKE 'Uptime'  -> errno=1105 code=ER_UNKNOWN_ERROR sqlState=HY000
+ *                                 "mismatched input 'LIKE' expecting {<EOF>, ';'}
+ *                                  (line 1, pos 12)"
+ *   SHOW STATUS                -> ok, columns Variable_name/Value, 0 rows
+ *
+ * so the whole Overview and Health panels failed on Doris for a clause the bare
+ * statement does not need (#573). The bare form is accepted everywhere measured that
+ * day: MySQL 26.7.0 (528 rows), MariaDB 12.3.2 (571), TiDB 8.5.1 (13), SingleStore
+ * (75), StarRocks 3.3.22 (0) and Doris 4.1.3 (0).
+ *
+ * The match is case-insensitive because `LIKE` was: replacing the server-side filter
+ * with a client-side one must not narrow what it accepted.
+ */
+function statusValue(rows: RowDataPacket[], name: string): unknown {
+  const wanted = name.toLowerCase();
+  return rows.find((row) => String(row.Variable_name).toLowerCase() === wanted)?.Value;
+}
+
 // ============================================================================
 // SQL Statements
 // ============================================================================
@@ -970,8 +996,14 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [connRows] = await runStatement(conn, "SHOW STATUS LIKE 'Threads_connected'");
-      const activeConnections = parseInt(connRows[0]?.Value || "0");
+      // One bare read, picked client-side: see `statusValue()` for the Doris measurement
+      // that forced it. `Threads_connected` is absent on TiDB 8.5.1 (13 status rows,
+      // none of them that one), on StarRocks 3.3.22 and on Doris 4.1.3 (0 rows each),
+      // all measured 2026-09-06, and an unmeasured count is OMITTED rather than sent as
+      // a fabricated 0 (#477, and the docblock on `HealthInfo.activeConnections`): this
+      // is the field the agent's curated health reading forwards to the model.
+      const [statusRows] = await runStatement(conn, "SHOW STATUS");
+      const activeConnections = measuredNumber(statusValue(statusRows, "Threads_connected"));
 
       const [sizeRows] = await runStatement(conn, DATABASE_SIZE_MB_SQL, [this.config.database]);
       const databaseSize = `${sizeRows[0]?.size_mb || 0} MB`;
@@ -1058,7 +1090,7 @@ export class MySQLProvider extends SQLBaseProvider {
       }));
 
       return {
-        activeConnections,
+        ...(activeConnections === undefined ? {} : { activeConnections }),
         databaseSize,
         cacheHitRatio,
         slowQueries,
@@ -1160,18 +1192,25 @@ export class MySQLProvider extends SQLBaseProvider {
       const version = versionRows[0]?.version || "Unknown";
       const versionComment = versionRows[0]?.version_comment as string | undefined;
 
-      // Get uptime
-      const [uptimeRows] = await runStatement(conn, "SHOW STATUS LIKE 'Uptime'");
-      const uptimeSeconds = parseInt(uptimeRows[0]?.Value || "0");
-      const uptime = this.formatUptimeString(uptimeSeconds);
+      // Uptime and the connection count come out of ONE bare `SHOW STATUS`: the LIKE
+      // clause is what Doris 4.1.3 refuses (see `statusValue()`), and reading the list
+      // once serves both variables in one round trip instead of two.
+      const [statusRows] = await runStatement(conn, "SHOW STATUS");
+      const uptimeSeconds = measuredNumber(statusValue(statusRows, "Uptime"));
+      const activeConnections = measuredNumber(statusValue(statusRows, "Threads_connected"));
 
-      // Get active connections
-      const [connRows] = await runStatement(conn, "SHOW STATUS LIKE 'Threads_connected'");
-      const activeConnections = parseInt(connRows[0]?.Value || "0");
-
-      // Get max connections
+      // `SHOW VARIABLES LIKE` STAYS. Doris rejects the LIKE clause on `SHOW STATUS`
+      // only: measured 2026-09-06, `SHOW VARIABLES LIKE 'max_connections'` is accepted
+      // on Doris 4.1.3 and on StarRocks 3.3.22 alike (both answering 0 rows), so the
+      // narrowest fix changes only the statement a grammar refuses.
+      //
+      // The `|| "151"` default is gone with it: 151 is MySQL's compiled-in ceiling and
+      // was reported for every server that published none, including TiDB, which
+      // publishes a real `0`. `maxConnections` is the one figure where 0 and absence
+      // are the SAME fact, "no limit published", which is why it stays a required
+      // number here rather than being omitted (see `src/lib/db/types.ts`).
       const [maxConnRows] = await runStatement(conn, "SHOW VARIABLES LIKE 'max_connections'");
-      const maxConnections = parseInt(maxConnRows[0]?.Value || "151");
+      const maxConnections = measuredNumber(maxConnRows[0]?.Value) ?? 0;
 
       // Get database size
       const [sizeRows] = await runStatement(conn, OVERVIEW_DATABASE_SIZE_SQL, [this.config.database]);
@@ -1184,9 +1223,12 @@ export class MySQLProvider extends SQLBaseProvider {
 
       return {
         version: labelServerVersion(version, versionComment),
-        uptime,
-        startTime: new Date(Date.now() - uptimeSeconds * 1000),
-        activeConnections,
+        // "N/A" is what a provider that cannot measure uptime sends (sqlite, duckdb,
+        // libsql, mongodb), and no `startTime` is derived from an uptime nobody
+        // published: `Date.now()` would have been reported as the server's start.
+        uptime: uptimeSeconds === undefined ? "N/A" : this.formatUptimeString(uptimeSeconds),
+        ...(uptimeSeconds === undefined ? {} : { startTime: new Date(Date.now() - uptimeSeconds * 1000) }),
+        ...(activeConnections === undefined ? {} : { activeConnections }),
         maxConnections,
         databaseSize: formatBytes(databaseSizeBytes),
         databaseSizeBytes,
@@ -1223,9 +1265,13 @@ export class MySQLProvider extends SQLBaseProvider {
       const uptime = measuredNumber(qpsRows[0]?.uptime);
 
       // Get deadlocks. SHOW STATUS answers this with or without performance_schema,
-      // so a 0 here is a measurement and is reported as one.
-      const [deadlockRows] = await runStatement(conn, "SHOW STATUS LIKE 'Innodb_deadlocks'");
-      const deadlocks = measuredNumber(deadlockRows[0]?.Value);
+      // so a 0 here is a measurement and is reported as one. Bare, for the reason
+      // `statusValue()` records: Doris 4.1.3 refuses the LIKE clause on this statement.
+      // `Innodb_deadlocks` is MariaDB's variable (12.3.2 publishes it among 571 rows);
+      // MySQL 26.7.0 publishes none of it among its 528, measured 2026-09-06, so the
+      // row is simply not in the list there and the reading stays absent.
+      const [statusRows] = await runStatement(conn, "SHOW STATUS");
+      const deadlocks = measuredNumber(statusValue(statusRows, "Innodb_deadlocks"));
 
       return {
         ...(hitRatio === undefined ? {} : { cacheHitRatio: Math.min(100, Math.max(0, hitRatio)) }),
