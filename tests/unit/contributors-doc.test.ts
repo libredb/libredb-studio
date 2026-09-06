@@ -1,0 +1,118 @@
+/**
+ * `CONTRIBUTORS.md` is a credential, so it has to stay checkable.
+ *
+ * The page exists because a merged pull request here is evidence about the person who wrote it:
+ * every change lands with its tests in the same PR, under a 100% line-coverage gate. A page making
+ * that claim is only worth reading if each entry points at the change it is claiming, so these
+ * tests pin the two things a reader would otherwise have to take on trust:
+ *
+ *   1. every person listed carries at least one link to a real merged pull request, written as a
+ *      full URL rather than a bare `#123` - the page is read outside GitHub too, where a bare
+ *      number links to nothing;
+ *   2. the rungs `CONTRIBUTORS.md` groups people under are exactly the rungs `CONTRIBUTING.md`
+ *      defines. A ladder whose two halves drift is worse than no ladder: someone is told they are
+ *      a "Trusted contributor" by one file and the other has never heard of the rung.
+ *
+ * Deliberately NOT asserted: that the list is complete. Completeness can only be measured against
+ * the GitHub API or a full `git log`, and CI clones shallowly, so a test claiming to check it would
+ * pass vacuously. Adding the contributor is a step in the merge checklist in `CONTRIBUTING.md`
+ * instead - a human step that is honest about being one, rather than a gate that does not gate.
+ */
+import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+const ROOT = path.resolve(import.meta.dir, "../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+
+const CONTRIBUTORS = "CONTRIBUTORS.md";
+const CONTRIBUTING = "CONTRIBUTING.md";
+const PULL_URL = "https://github.com/libredb/libredb-studio/pull/";
+
+/**
+ * The `## <rung>` headings people are actually grouped under.
+ *
+ * Not every `##` on the page is a rung - the page also carries prose sections - so a heading counts
+ * only once a `### @login` entry appears beneath it. Reading the rungs off the entries rather than
+ * off the heading level is what lets the page grow a section without the ladder guard firing at it.
+ */
+const rungHeadings = (text: string): string[] => {
+  const rungs = new Set<string>();
+  let current: string | null = null;
+  for (const line of text.split("\n")) {
+    if (/^## \S/.test(line)) {
+      current = line.slice(3).trim();
+    } else if (current !== null && /^### @/.test(line)) {
+      rungs.add(current);
+    }
+  }
+  return [...rungs];
+};
+
+/** Each `### @login` block, with the body that follows it up to the next heading of any level. */
+const entries = (text: string): { login: string; body: string }[] => {
+  const found: { login: string; body: string }[] = [];
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const heading = /^### @([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\b/.exec(lines[i]);
+    if (heading === null) {
+      continue;
+    }
+    const body: string[] = [];
+    for (let j = i + 1; j < lines.length && !lines[j].startsWith("#"); j++) {
+      body.push(lines[j]);
+    }
+    found.push({ login: heading[1], body: body.join("\n") });
+  }
+  return found;
+};
+
+describe("CONTRIBUTORS.md", () => {
+  const contributors = read(CONTRIBUTORS);
+
+  test("lists people, so the guard below is not measuring an empty page", () => {
+    // Without this, every assertion that follows passes vacuously on a file with no entries.
+    expect(entries(contributors).length).toBeGreaterThan(0);
+  });
+
+  test("every person links to at least one merged pull request by full URL", () => {
+    const withoutEvidence = entries(contributors)
+      .filter(({ body }) => !body.includes(PULL_URL))
+      .map(({ login }) => login);
+    expect(withoutEvidence).toEqual([]);
+  });
+
+  test("no bare #123 reference stands in for a link", () => {
+    // A bare number renders as plain text everywhere this page is read outside GitHub, so the
+    // claim it supports becomes uncheckable exactly where a stranger would want to check it.
+    const bare = entries(contributors)
+      .flatMap(({ login, body }) => body.split("\n").map((line) => ({ login, line })))
+      .filter(({ line }) => /(^|\s)#\d+/.test(line))
+      .map(({ login }) => login);
+    expect(bare).toEqual([]);
+  });
+
+  test("nobody is listed twice", () => {
+    const logins = entries(contributors).map(({ login }) => login);
+    expect(logins).toEqual([...new Set(logins)]);
+  });
+});
+
+describe("the contributor ladder", () => {
+  test("every rung CONTRIBUTORS.md groups people under is defined in CONTRIBUTING.md", () => {
+    // The two-way binding. A rung renamed on one side has to be renamed on the other, or someone
+    // is told they hold a rung the defining document has never heard of.
+    const defined = read(CONTRIBUTING);
+    const rungs = rungHeadings(read(CONTRIBUTORS));
+    // Without this the filter below has nothing to reject and the assertion means nothing.
+    expect(rungs.length).toBeGreaterThan(0);
+    expect(rungs.filter((rung) => !defined.includes(rung))).toEqual([]);
+  });
+
+  test("CONTRIBUTING.md defines the rungs as a ladder a reader can climb", () => {
+    const defining = read(CONTRIBUTING);
+    for (const rung of ["Contributor", "Trusted contributor", "Area owner"]) {
+      expect(defining.includes(rung), `CONTRIBUTING.md does not define the ${rung} rung`).toBe(true);
+    }
+  });
+});

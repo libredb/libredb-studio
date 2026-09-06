@@ -980,6 +980,13 @@ We welcome contributions from the community! Whether it's a bug fix, a new featu
 4. Push to the Branch (`git push origin feature/AmazingFeature`).
 5. Open a Pull Request.
 
+Every change here lands with its tests in the same pull request, under a hard 100% line-coverage
+gate. Clearing that bar is worth something, so the people who have are named — with a link to the
+change they made — in [`CONTRIBUTORS.md`](CONTRIBUTORS.md), and what each rung earns is written down
+in [`CONTRIBUTING.md`](CONTRIBUTING.md#the-contributor-ladder). Start with a
+[`good first issue`](https://github.com/libredb/libredb-studio/labels/good%20first%20issue): each one
+states what "done" looks like as a command you can run yourself.
+
 ---
 
 ## License

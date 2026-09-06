@@ -87,6 +87,33 @@ The repository keeps the `hacktoberfest` topic for discoverability. Note that Ha
 itself is organised around in-person and online events and no longer counts pull requests; the
 labels above are how this repository welcomes contributors in any month.
 
+### The contributor ladder
+
+Every change here lands with its tests in the same pull request, under a hard 100% line-coverage
+gate and six required checks. Clearing that bar says something about you, so we write down who
+cleared it and what it earns. Three rungs, and nothing on them is decorative.
+
+- **Contributor** — one merged pull request. You are listed in
+  [`CONTRIBUTORS.md`](CONTRIBUTORS.md) with a link to the change you made, so the entry is evidence
+  rather than a thank-you. Use it wherever you need to show what you have shipped.
+- **Trusted contributor** — three merged pull requests. You may assign yourself any open labeled
+  issue without asking first, and your review on someone else's pull request is read as a review
+  rather than a comment. Nothing to apply for; the third merge does it.
+- **Area owner** — you own one area: a database provider, or a subsystem such as the Helm chart or
+  the SQL editor. For a provider that means the triad the repository is built on — the code under
+  `src/lib/db/providers/`, the doc under `docs/providers/` and the tests under
+  `tests/integration/db/` move together, and a change to your area is reviewed with you. This rung
+  is offered by the maintainers, not applied for, and it is offered to people who have already been
+  answering questions about that area.
+
+Falling off a rung is not a thing. If you stop contributing, you keep what you earned.
+
+**Maintainers:** adding the contributor to `CONTRIBUTORS.md` is part of merging an external pull
+request, not a later sweep. `tests/unit/contributors-doc.test.ts` checks the page's shape and the
+ladder's two halves against each other, but it deliberately does not check that the list is
+complete — completeness cannot be measured in a shallow CI clone, so it stays a human step that is
+honest about being one.
+
 ## Development Setup
 
 ### Prerequisites
