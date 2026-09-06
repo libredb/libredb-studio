@@ -165,6 +165,9 @@ export interface WireCompatibleEngine {
  * and SingleStore from a fifth run the same day, ScyllaDB from a sixth run on
  * 2026-08-21/22, Apache Doris, Garnet and both Percona distributions from a seventh run
  * on 2026-08-26, and ParadeDB, OrioleDB and Databend from an eighth on 2026-08-27.
+ * The nine MySQL-wire relatives were re-measured together on 2026-09-06 for issues
+ * #573 and #574, at the wire and then in a browser against the built app, and the
+ * outcome per engine is recorded in `docs/providers/mysql.md` section 5.5.
  * Names still awaiting an instance are tracked in issue #424, never here: there
  * is no "pending" state on purpose, because a reader cannot tell a pending entry
  * from a probed one. A name that WAS probed and did not earn an entry has no
@@ -351,10 +354,10 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     probedVersion: "8.0.11-TiDB-v8.5.1",
     caveats: [
       "A freshly loaded table reads 0 rows and 0 B until TiDB's own background statistics collection catches up; the numbers correct themselves with no ANALYZE.",
-      "Max connections reads 0, because TiDB's max_connections defaults to 0 meaning unlimited.",
+      "Max connections reads 0, because TiDB's max_connections defaults to 0 meaning unlimited, and the connection count beside it reads not published: TiDB answers SHOW STATUS with 13 rows and none of them is Threads_connected (wire, 2026-09-06).",
       "The slow-query panel is always empty: TiDB keeps its slow log in information_schema.SLOW_QUERY, not in the performance_schema view the provider reads.",
       "Storage stats list a phantom InnoDB entry at ibdata1:12M:autoextend, which is a MySQL default echoed back by a server that has no InnoDB.",
-      "The Explain panel does not work: TiDB rejects EXPLAIN FORMAT='json' outright, so the editor's plan request fails while the query itself runs normally.",
+      "The Explain panel renders TiDB's own operator tree rather than a MySQL JSON plan: TiDB rejects EXPLAIN FORMAT='json' outright, so the provider sends a plain EXPLAIN and the panel shows the operator tree with estRows as the row estimate (browser, 2026-09-06).",
       "Probed on a standalone --store=unistore server only; a PD + TiKV deployment was not probed.",
     ],
   },
@@ -365,11 +368,11 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     probedVersion: "StarRocks 3.3.22-753696f (version() reports 5.1.0)",
     caveats: [
       "The version shown is MySQL 5.1: version() returns a fictitious compatibility number, and the real build is only in current_version(), which the provider does not call.",
-      "The overview and health panels are unavailable: StarRocks refuses their statements through the prepared-statement protocol the provider uses.",
-      "Active sessions and the monitoring dashboard are unavailable: StarRocks has no information_schema.PROCESSLIST.",
+      "The overview panel renders but publishes no uptime and no connection count: StarRocks answers a bare SHOW STATUS with zero rows and SHOW VARIABLES LIKE 'max_connections' with zero rows, so both read N/A, not published, where they used to read a fabricated 0/151 (browser, 2026-09-06).",
+      "The health request, active sessions and the monitoring dashboard are unavailable: StarRocks has no information_schema.PROCESSLIST, which is the engine's own, and the health read still fails on it (browser, 2026-09-06).",
       "Row counts and sizes are always 0: information_schema.TABLES reports 0 rows and 0 bytes for a populated table.",
       "No index information at all: StarRocks exposes no secondary-index catalog, so the object browser and the index panel show none.",
-      "The Explain panel does not work: StarRocks does not parse EXPLAIN FORMAT='json', so the editor's plan request fails while the query itself runs normally.",
+      "The Explain panel renders StarRocks's own text plan: StarRocks does not parse EXPLAIN FORMAT='json', so the provider sends a plain EXPLAIN, which answered a 13-node tree for a constant SELECT (browser, 2026-09-06).",
     ],
   },
   {
@@ -382,14 +385,13 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     // never an inheritance.
     name: "Apache Doris",
     via: "mysql",
-    tier: "partial",
+    tier: "full",
     probedVersion: "Apache Doris 4.1.3-rc02-7126cf65d96 (version() reports 5.7.99)",
     caveats: [
-      "The overview and health panels are unavailable, and one statement form is the whole reason: Doris parses SHOW STATUS but rejects the LIKE filter both panels use, so they fail with a syntax error instead of reading an empty result.",
+      "The overview and health panels render since 2026-09-06, and the overview publishes no uptime and no connection count: Doris answers a bare SHOW STATUS with zero rows and SHOW VARIABLES LIKE 'max_connections' with zero rows, so uptime reads N/A and connections read N/A, not published (browser, 2026-09-06).",
       "No index information at all: information_schema.statistics is empty on Doris, so the index panel and the object browser report none however many keys a table declares.",
       "A declared foreign key is invisible and unenforced: Doris accepts ADD CONSTRAINT ... FOREIGN KEY and lists it in SHOW CONSTRAINTS, but information_schema.KEY_COLUMN_USAGE is empty, so the ER diagram draws no relationship - and an orphan row inserts successfully, because the constraint is a planner hint there.",
       "Optimize and Check are unavailable: neither statement exists in the Doris grammar. Analyze works.",
-      "The Explain panel does not work: Doris rejects EXPLAIN FORMAT='json', while a plain EXPLAIN runs in the editor.",
       "Row counts and sizes are correct but late: a table read 0 rows and 0 B immediately after a 2000-row insert and the true 2000 rows / 10187 bytes about a minute later, with an ANALYZE in between changing nothing. The lag is self-correcting, so a freshly loaded table looks empty for a while.",
       "A UNIQUE KEY table declares no primary key to the product: information_schema reports COLUMN_KEY as UNI rather than PRI, so the object browser marks no column primary.",
     ],
@@ -400,11 +402,11 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     tier: "query-only",
     probedVersion: "Databend v1.2.925-patch-11 (advertises MySQL 8.0.90)",
     caveats: [
-      "The SQL editor works and a plain EXPLAIN shows Databend's own plan. Nothing else does: the object browser, every statistics panel and the monitoring dashboard are unavailable.",
+      "The SQL editor works and the Explain panel renders Databend's own text plan through a plain EXPLAIN (browser, 2026-09-06). Nothing else does: the object browser, every statistics panel and the monitoring dashboard are unavailable.",
       "The cause is ours rather than Databend's, which is why the catalogs are worth naming: asked with literal SQL, information_schema.tables answers the true 3 and 2000 rows with sizes. Every parameterised read fails instead with Prepare is not support in Databend, because those still go through mysql2's prepared protocol.",
       "Databend has no SHOW STATUS statement at all and no information_schema.processlist, so the overview, health and session panels have no source even once the protocol question is settled.",
       "Strings must be single-quoted: Databend follows the SQL standard and reads a double-quoted value as an identifier, so a double-quoted literal is an unknown-column error.",
-      "EXPLAIN FORMAT='json' does not parse, and neither Optimize nor Check exists. Analyze runs but the provider mis-reads its reply.",
+      "EXPLAIN FORMAT='json' does not parse, so the provider sends a plain EXPLAIN there instead (browser, 2026-09-06), and neither Optimize nor Check exists. Analyze runs but the provider mis-reads its reply.",
     ],
   },
   {
@@ -448,7 +450,8 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     tier: "partial",
     probedVersion: "SingleStoreDB 9.1.1 (advertises MySQL 5.7.32)",
     caveats: [
-      'Ten of the fifteen surfaces answer. Test Connection, health, the overview and the monitoring dashboard all fail with one engine message, "This command is not supported in the prepared statement protocol yet", and the Explain panel fails with a syntax error on EXPLAIN FORMAT=JSON.',
+      'Ten of the fifteen surfaces answer. Test Connection, health, the overview and the monitoring dashboard all fail with one engine message, "This command is not supported in the prepared statement protocol yet".',
+      "The Explain panel renders SingleStore's own text plan: EXPLAIN FORMAT=JSON is still a parse error here, so the provider no longer sends it and asks for a plain EXPLAIN instead (browser, 2026-09-06).",
       "No version is displayed anywhere, because the panel that carries it is one of the unavailable ones. Were it fixed it would read MySQL 5.7.32, the wire version SingleStore advertises, not SingleStoreDB 9.1.1.",
       "Row counts and sizes are missing rather than wrong: a 2000-row table reads rowCount 0 and 0 B in the object browser, the table statistics and the storage panel, against a ground truth of 2000 rows and 77046 bytes measured four independent ways.",
       "SingleStore leaves information_schema.TABLES zeroed and keeps the real numbers elsewhere - SHOW TABLE STATUS, information_schema.OPTIMIZER_STATISTICS.ROW_COUNT and the EXPLAIN plan's est_table_rows - and running ANALYZE does not change what the panels read.",

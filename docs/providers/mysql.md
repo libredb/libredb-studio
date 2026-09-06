@@ -241,7 +241,7 @@ against three live servers:
 | `getStorageStats` | ok | **recovered** | **recovered** |
 | `getSchema`, table/index stats, editor query, transactions | ok | ok | ok |
 | maintenance `analyze` / `optimize` / `check` | all three ok (`check` **recovered**) | all three ok (`optimize`, `check` **recovered**) | n/a |
-| Explain | ok, `EXPLAIN FORMAT=JSON` (the connect probe measures `mysql-json`) | **recovered** — the probe measures `mysql-text` and the panel sends plain `EXPLAIN` ([§5.5](#55-the-explain-grammar-is-measured-at-connect)) | **recovered** the same way |
+| Explain | ok, `EXPLAIN FORMAT=JSON` (the connect probe measures `mysql-json`) | **Explain tab renders the text plan, browser, 2026-09-06**: the probe measures `mysql-text`, the panel sends plain `EXPLAIN`, and one row came back for a constant `SELECT` ([§5.5](#55-the-explain-grammar-is-measured-at-connect)) | **Explain tab renders the text plan, browser, 2026-09-06**: the same probe and statement, 14 rows drawn as a 13-node tree |
 
 One behaviour does differ, and only for a connection that opted into `multipleStatements=true` in its
 connection string: a `;`-separated statement is rejected by the prepared protocol and accepted by the

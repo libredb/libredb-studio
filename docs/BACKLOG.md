@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D51, U17 · 13
+- [Drivers and connections](#drivers-and-connections) — D1–D51, U17 · 12
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 7
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X12, U2–U21 · 6
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -227,39 +227,6 @@ and a refusal sentence that has never been seen from the server is exactly what 
 **Done when:** a Couchbase panel a role may not read is absent with the cluster's own wording, and
 the counts it feeds carry the same distinction - measured against a live cluster with a document-only
 role, not inferred from the code.
-
-### D30. `SHOW STATUS LIKE` costs two panels on an engine that answers `SHOW STATUS`
-
-Measured 2026-08-26 against `apache/doris:all-in-one-4.1.3` (issue #424, Phase 0). `getOverview()`
-and `getHealth()` in `src/lib/db/providers/sql/mysql.ts` read three statements of the form
-`SHOW STATUS LIKE 'Uptime'`, `SHOW STATUS LIKE 'Threads_connected'` and
-`SHOW VARIABLES LIKE 'max_connections'`. On Doris the third is accepted and the first two are a
-**parse error** — `errCode = 2, detailMessage = mismatched input 'LIKE' expecting {<EOF>, ';'}
-(line 1, pos 12)` — because the Doris grammar has no `LIKE` clause on `SHOW STATUS`. Both panels
-therefore fail outright.
-
-The engine is not missing the data by refusing the statement, and that is what makes this ours: a
-bare `SHOW STATUS` **is** accepted there and answers zero rows. So the filter we add for our own
-convenience is the whole difference between a panel that renders absence (`N/A`, "not published",
-per the absence rule of #477) and a panel that renders an error the user cannot act on.
-
-This is the D8 shape one layer up. D8 was a PROTOCOL choice that engines refused; this is a
-STATEMENT-FORM choice that a grammar refuses, and the same reasoning applies: the narrowest fix is
-to ask for what every MySQL-wire engine can answer and filter in the reader. `SHOW STATUS` on a
-stock MySQL 8 returns roughly 500 rows, so the cost is one small result set per panel read, not a
-new round trip.
-
-Not fixed with the Doris registry entry on purpose: that PR publishes a measurement, and this
-changes what two panels read on **every** MySQL-wire engine — MySQL, MariaDB, TiDB, Vitess,
-OceanBase, SingleStore, StarRocks and Doris — so it needs its own probe pass rather than a
-by-the-way edit inside a labelling change.
-
-**Done when:** the overview and health reads ask for something Doris's grammar accepts, the two
-panels on Doris show absence rather than an error, and the reading is unchanged on MySQL, MariaDB
-and one analytics relative — each verified against the live container, not inferred from the
-statement text.
-
----
 
 ### D33. Every parameterised read still prepares, so an engine without PREPARE loses all of them
 
@@ -683,32 +650,6 @@ and calling that lossless would be a lie.
 **Done when:** a declared type the target cannot parse is either translated or refused with something a
 reader can act on, proven by replaying a `jsonb` and a `json` result into ClickHouse, Trino and
 Cassandra.
-
----
-
-### X14. SingleStore's Explain panel needs a different STATEMENT, not a different protocol
-
-D8 moved every parameterless statement onto MySQL's text protocol, and its own table claimed
-`EXPLAIN FORMAT=JSON` was one of the statements that recovers on SingleStore. Re-measured
-2026-08-24 on the same image (`ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82`), both protocols on
-one connection: it is `ER_PARSE_ERROR` on BOTH. SingleStore's grammar is `EXPLAIN JSON <select>`,
-which does show the protocol split (`ER_UNSUPPORTED_PS` prepared, succeeds as text), and plain
-`EXPLAIN` splits the same way. So the panel's failure is a statement problem wearing a protocol
-problem's error message, and the D8 row that said otherwise was wrong.
-
-`src/lib/explain/mysql-json.ts` is one strategy per format (`registry` in
-`src/lib/explain/index.ts`), and the type-id it serves is `mysql`. Reaching a second spelling means
-either sniffing the engine inside the strategy - which this repo's provider rules forbid, no
-`=== 'singlestore'` equivalent exists and none should - or a capability the connection carries, which
-is the shape `ProviderCapabilities` already uses for exactly this kind of divergence.
-
-The blast radius is one panel on one relative. StarRocks is a separate case again: its
-`EXPLAIN FORMAT='json'` does not parse either, recorded in `docs/providers/README.md` as that
-engine's own quirk.
-
-**Done when:** either the Explain statement is a capability the connection declares rather than a
-constant in one strategy, and SingleStore's panel renders a plan; or the panel is withheld on an
-engine whose grammar the strategy cannot express, and the README rows say which engines those are.
 
 ---
 

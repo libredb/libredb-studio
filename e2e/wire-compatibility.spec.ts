@@ -39,11 +39,18 @@ test.describe("Wire compatibility hint", () => {
     // The version is what makes the claim dated rather than open-ended.
     await expect(hint).toContainText("12.3.2-MariaDB");
     // Apache Doris is the twentieth relative (#424, probed 2026-08-26) and it arrives here
-    // from the registry with no per-engine code. The tier is asserted beside the name for
-    // the reason MariaDB's is not: MariaDB is `full`, so the name alone is the whole claim,
-    // while a `partial` name next to it would read as parity unless the hint says otherwise.
+    // from the registry with no per-engine code. It became `full` on 2026-09-06, when the
+    // overview, health and Explain panels were re-measured in a browser and all three
+    // rendered (#573, #574), so it renders no tier suffix at all now - like MariaDB, the
+    // name alone is the whole claim, and asserting the absence catches a silent re-tier.
     await expect(hint).toContainText("Apache Doris");
-    await expect(hint.getByTestId("wire-compat-tier-Apache Doris")).toContainText("partial support");
+    await expect(hint.getByTestId("wire-compat-tier-Apache Doris")).toHaveCount(0);
+    // StarRocks is still `partial` (its health and session panels have no
+    // information_schema.PROCESSLIST, which is the engine's own), so the negative case is
+    // still guarded here: a `partial` name beside a full one would read as parity unless
+    // the hint says otherwise.
+    await expect(hint).toContainText("StarRocks");
+    await expect(hint.getByTestId("wire-compat-tier-StarRocks")).toContainText("partial support");
     // Databend (#424, probed 2026-08-27) is the first MySQL-wire relative to be query-only,
     // so its suffix is asserted for the same reason Doris's is: the tier is the claim.
     await expect(hint).toContainText("Databend");
