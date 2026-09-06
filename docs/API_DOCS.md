@@ -1222,6 +1222,13 @@ Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ 
 
 ### DatabaseConnection
 
+The object is one shape on the wire. Fields the server reads from a request body — and that
+change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
+`host`, `port`, `user`, `password`, `database`, `connectionString`, `createdAt`), plus `ssl`,
+`sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
+`authSource` (MongoDB), `agentUser`, and `agentPassword`. `color`, `environment`, `group`,
+`managed`, and `seedId` are client-side bookkeeping that travel in the same object.
+
 ```typescript
 interface DatabaseConnection {
   id: string;              // Unique identifier
@@ -1233,12 +1240,24 @@ interface DatabaseConnection {
   password?: string;       // Password
   database?: string;       // Database name (Couchbase: the bucket; Druid: unused, it has one catalog; Trino: the CATALOG; Cassandra: the KEYSPACE)
   connectionString?: string; // Full connection string (alternative; Druid has no URI form, host + port only; Cassandra has none either, no URI carries localDataCenter)
+  createdAt: Date;         // Creation timestamp
+  color?: string;          // UI accent for this connection
+  environment?: ConnectionEnvironment; // production | staging | development | local | other
+  group?: string;          // Optional sidebar grouping label
+  ssl?: SSLConfig;         // TLS mode and optional certificates
+  sshTunnel?: SSHTunnelConfig; // Bastion hop before the database host
+  serviceName?: string;    // Oracle: service name (e.g. ORCL, XEPDB1)
+  instanceName?: string;   // MSSQL: named instance (e.g. SQLEXPRESS)
   localDataCenter?: string; // Cassandra only, and REQUIRED there: the driver refuses to connect without it (`datacenter1` on a stock single node)
   authSource?: string; // MongoDB only: the database the credentials live in (`?authSource=admin`). Not the database being opened - without it the driver checks the user against that one, which fails as a credentials error
-  createdAt: Date;         // Creation timestamp
+  managed?: boolean;       // true = admin-controlled, read-only in UI
+  seedId?: string;         // stable reference to seed config ID
+  agentUser?: string;      // optional least-privilege role for the agent read-only execution profile (#328)
+  agentPassword?: string;  // password for agentUser; secret-classified, sealed at rest by connection-secrets
 }
 
 type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';
+type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 ```
 
 ### TableSchema
@@ -1283,8 +1302,17 @@ interface QueryResult {
   rowCount: number;        // Number of rows returned
   executionTime: number;   // Execution time in ms
   explainPlan?: any;       // Query execution plan (if requested)
+  pagination?: QueryPagination;          // Auto-limiting the route attaches to every response
   warnings?: QueryWarning[];             // Notices the engine attached; ABSENT when it reported none
   columnTypes?: Record<string, string>;  // Declared type per column, keyed by its name in `fields`
+}
+
+interface QueryPagination {
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  totalReturned: number;
+  wasLimited: boolean;
 }
 
 interface QueryWarning {
@@ -1293,11 +1321,13 @@ interface QueryWarning {
 }
 ```
 
-Both optional channels are filled only by providers whose source declares them, and **absence is the
-signal**: a run that produced no warnings omits the field rather than sending `[]`, so a client can
-decide what to render from the field's presence alone. `columnTypes` is the declared type of *this*
-result, which is the only source for a computed column or an ad-hoc projection — the schema has no
-catalog entry to answer with.
+`pagination` is the object `POST /api/db/query` attaches to every response (`limit`, `offset`,
+`hasMore`, `totalReturned`, `wasLimited`). Both optional channels (`warnings`, `columnTypes`) are
+filled only by providers whose source declares them, and **absence is the signal**: a run that
+produced no warnings omits the field rather than sending `[]`, so a client can decide what to render
+from the field's presence alone. `columnTypes` is the declared type of *this* result, which is the
+only source for a computed column or an ad-hoc projection — the schema has no catalog entry to
+answer with.
 
 ### HealthInfo
 
