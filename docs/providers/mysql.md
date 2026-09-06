@@ -202,13 +202,17 @@ prepared protocol** — measured 2026-08-24 on `mysql:latest`, `ER_UNSUPPORTED_P
 `query`, while the other statements above worked either way. So one of this provider's own three
 maintenance actions was unavailable on the engine it is named for.
 
-**The Explain panel is NOT one of the recovered surfaces, and the row above is why.** `EXPLAIN
+**The Explain panel was NOT one of the recovered surfaces, and the row above is why.** `EXPLAIN
 FORMAT=JSON` is a parse error on SingleStore on BOTH protocols — re-measured 2026-08-24 on the same
 image — because SingleStore's grammar is `EXPLAIN JSON <select>`. The protocol was never what stopped
 it there. (An earlier note recorded `EXPLAIN FORMAT=JSON` as succeeding on the text protocol; the
-statement that succeeds is plain `EXPLAIN`.) Reaching a JSON plan on that engine needs a different
-statement, not a different protocol, and [`mysql-json.ts`](../../src/lib/explain/mysql-json.ts) builds
-one statement for every engine on this type id.
+statement that succeeds is plain `EXPLAIN`.) Reaching a plan on that engine needs a different
+STATEMENT, not a different protocol, and that is what
+[§5.5](#55-the-explain-grammar-is-measured-at-connect) now sends: the provider measures which EXPLAIN
+grammar the server accepts when it connects, and an engine that refuses `EXPLAIN FORMAT=JSON` gets the
+plain `EXPLAIN` of [`mysql-text.ts`](../../src/lib/explain/mysql-text.ts) instead of a failing panel.
+The probe statement carries no parameters, so it takes the text protocol like every other statement of
+that shape.
 
 **The read path is safe to move because the two protocols decode to the same JS shapes.** mysql2
 decodes text and binary rows on different code paths, so this was measured rather than assumed:
@@ -237,7 +241,7 @@ against three live servers:
 | `getStorageStats` | ok | **recovered** | **recovered** |
 | `getSchema`, table/index stats, editor query, transactions | ok | ok | ok |
 | maintenance `analyze` / `optimize` / `check` | all three ok (`check` **recovered**) | all three ok (`optimize`, `check` **recovered**) | n/a |
-| Explain (`EXPLAIN FORMAT=JSON`) | ok | still fails — `ER_PARSE_ERROR`, see above | not re-probed |
+| Explain | ok, `EXPLAIN FORMAT=JSON` (the connect probe measures `mysql-json`) | **recovered** — the probe measures `mysql-text` and the panel sends plain `EXPLAIN` ([§5.5](#55-the-explain-grammar-is-measured-at-connect)) | **recovered** the same way |
 
 One behaviour does differ, and only for a connection that opted into `multipleStatements=true` in its
 connection string: a `;`-separated statement is rejected by the prepared protocol and accepted by the
@@ -492,6 +496,45 @@ column declared a type. Its consumers are the results grid's column labels, the 
 (which prefers a declared type over its own value-shaped guess) and the agent's state summary. This
 matters most for the types whose values arrive as strings: a `DECIMAL` reaches the browser as
 `"19.99"`, so before this the DDL export wrote it as `TEXT`.
+
+### 5.5 The EXPLAIN grammar is measured at connect
+
+`EXPLAIN FORMAT=JSON` is MySQL's own grammar, and this provider serves every MySQL-wire relative.
+Several of them reject it, so the provider asks the server rather than assuming. On `connect()`, on
+the connection the pool check already holds, `probeExplainFormat()`
+([mysql.ts](../../src/lib/db/providers/sql/mysql.ts)) runs `EXPLAIN FORMAT=JSON SELECT 1`, and only if
+that is refused, `EXPLAIN SELECT 1`. The first statement that succeeds names the format
+`getCapabilities()` then declares.
+
+Measured 2026-09-06 through `mysql2` 3.24.2 over the text protocol, one connection per engine:
+
+| Engine (image) | `EXPLAIN FORMAT=JSON SELECT 1` | plain `EXPLAIN SELECT 1` | resulting `explainFormat` |
+|---|---|---|---|
+| MySQL 26.7.0 (`mysql:latest`) | ok, one column `EXPLAIN` carrying the JSON plan | ok | `mysql-json` |
+| MariaDB 12.3.2 (`mariadb:latest`) | ok, one column `EXPLAIN` | ok, 10 tabular columns | `mysql-json` |
+| TiDB 8.5.1 (`pingcap/tidb:v8.5.1`) | errno 1105 `explain format 'json' is not supported now` | ok, columns `id, estRows, task, access object, operator info` | `mysql-text` |
+| StarRocks 3.3.22 (`starrocks/allin1-ubuntu:3.3.22`) | errno 1064, syntax error at column 8 | ok, one column `Explain String` | `mysql-text` |
+| SingleStore (`ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82`) | errno 1064 | ok, one column `EXPLAIN` | `mysql-text` |
+| Apache Doris 4.1.3 (`apache/doris:all-in-one-4.1.3`) | errno 1105 `mismatched input '=' expecting {<EOF>, ';'}(line 1, pos 14)` | ok, one column `Explain String(Nereids Planner)` | `mysql-text` |
+| Vitess 24.0.2 (`vitess/vttestserver:v24.0.2-mysql80`) | ok, one column `EXPLAIN` (the QUOTED `EXPLAIN FORMAT='json'` is errno 1105 there; the unquoted form the probe sends is accepted) | ok, 12 tabular columns | `mysql-json` |
+| OceanBase CE 4.4.2 (`oceanbase/oceanbase-ce:4.4.2-lts`, tenant `test`) | ok, 8 rows in one column `Query Plan`, an ASCII plan | ok, 9 rows in the same column | `mysql-json` |
+| Databend 1.2.925 (`datafuselabs/databend:v1.2.925-patch-11`) | errno 1105, SyntaxException | ok, one column `explain`, 5 rows | `mysql-text` |
+
+**The probe reads success or failure, never the error code.** The family shares no errno for a grammar
+refusal: Doris and TiDB answer 1105 where StarRocks and SingleStore answer 1064, as the table shows. A
+code list would have to enumerate engines, and nothing in `src/lib/db` branches on which product
+answered. Asking the server what its grammar accepts gives the same answer without the enumeration.
+For the same reason a refusal is never a connection failure: it is a fact about the Explain panel, so
+`connect()` resolves normally and the capability carries the result.
+
+**The statement is built on the server, not in the browser.** `POST /api/db/provider-meta` never
+connects: it constructs the provider and reads `getCapabilities()` off it, by design (#457, no socket,
+no SSH tunnel, no SQLite lock contention). A capability that is only knowable once connected therefore
+cannot reach the client that way, so `POST /api/db/query` builds the EXPLAIN statement from the
+CONNECTED provider's `explainFormat` and names that format in its response
+([API_DOCS.md](../API_DOCS.md)). Before `connect()` the provider still answers the static
+`mysql-json`, which is exactly what it answered before the probe existed, so the client's pre-flight
+refusal for a non-SELECT statement is unchanged.
 
 ---
 
@@ -843,8 +886,8 @@ gated on the literal `vacuum`, so MySQL's own wording was written and never show
 | Capability | Value |
 |------------|-------|
 | `queryLanguage` | `sql` |
-| `supportsExplain` | `true` |
-| `explainFormat` | `mysql-json` |
+| `supportsExplain` | `true` unless the server refuses both EXPLAIN grammars, measured at connect ([§5.5](#55-the-explain-grammar-is-measured-at-connect)) |
+| `explainFormat` | `mysql-json` before `connect()` and on a server that accepts `EXPLAIN FORMAT=JSON`; `mysql-text` on one that accepts only plain `EXPLAIN` (TiDB, StarRocks, SingleStore, Doris); the key is ABSENT when both are refused, and `supportsExplain` is then `false` |
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core MySQL DML |

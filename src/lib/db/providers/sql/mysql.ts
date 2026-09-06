@@ -15,6 +15,7 @@ import {
   type MaintenanceResult,
   type ProviderOptions,
   type ProviderCapabilities,
+  type ExplainFormat,
   type ProviderLabels,
   type SlowQuery,
   type ActiveSession,
@@ -72,7 +73,10 @@ type MySQLQueryable = Pick<PoolConnection, "query" | "execute">;
  *   `CHECK TABLE` all fail prepared with `ER_UNSUPPORTED_PS` and all succeed as
  *   text. `EXPLAIN FORMAT=JSON` is NOT in that list: it is `ER_PARSE_ERROR` on
  *   both protocols there, because SingleStore's grammar is `EXPLAIN JSON`, so the
- *   Explain panel is not something this helper recovers.
+ *   Explain panel is not something this helper recovers. What recovers it is
+ *   `probeExplainFormat()` below: the grammar is measured at connect and declared
+ *   as a capability, so an engine that refuses `EXPLAIN FORMAT=JSON` gets the
+ *   plain `EXPLAIN` of the `mysql-text` strategy instead of a failing panel.
  * - StarRocks 3.3, whose overview this recovers (measured through the provider,
  *   2026-08-24); its health still fails on a missing
  *   `information_schema.PROCESSLIST`, which is the engine's gap, not the protocol.
@@ -104,6 +108,63 @@ const runStatement = <T extends RowDataPacket[] = RowDataPacket[]>(
   params === undefined || params.length === 0
     ? queryable.query<T>(sql)
     : queryable.execute<T>(sql, asExecuteParams(params));
+
+/**
+ * The EXPLAIN grammars this provider can ask for, most specific first, each paired
+ * with the strategy id that reads what the statement answers.
+ *
+ * `EXPLAIN FORMAT=JSON` is MySQL's own grammar and the rest of the wire family does
+ * not share it. Measured 2026-09-06 through mysql2 3.24.2 over the text protocol,
+ * one connection per engine:
+ *
+ * - MySQL 26.7.0 (`mysql:latest`) and MariaDB 12.3.2 (`mariadb:latest`): both
+ *   statements accepted.
+ * - TiDB 8.5.1 (`pingcap/tidb:v8.5.1`): `EXPLAIN FORMAT=JSON SELECT 1` is errno 1105
+ *   `explain format 'json' is not supported now`; `EXPLAIN SELECT 1` is accepted.
+ * - Apache Doris 4.1.3 (`apache/doris:all-in-one-4.1.3`): errno 1105
+ *   `mismatched input '=' expecting {<EOF>, ';'}(line 1, pos 14)`; `EXPLAIN SELECT 1`
+ *   is accepted.
+ * - StarRocks 3.3.22 (`starrocks/allin1-ubuntu:3.3.22`) and SingleStore
+ *   (`ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82`): errno 1064, a parse error;
+ *   `EXPLAIN SELECT 1` is accepted on both.
+ * - Databend 1.2.925 (`datafuselabs/databend:v1.2.925-patch-11`): errno 1105
+ *   SyntaxException; `EXPLAIN SELECT 1` is accepted.
+ * - Vitess 24.0.2 (`vitess/vttestserver:v24.0.2-mysql80`) and OceanBase CE 4.4.2
+ *   (`oceanbase/oceanbase-ce:4.4.2-lts`): both statements accepted, so nothing about
+ *   those two changes. Vitess refuses the QUOTED `EXPLAIN FORMAT='json'`, which is a
+ *   reason to keep sending the unquoted form the probe and the strategy already use.
+ */
+const EXPLAIN_PROBES: readonly (readonly [sql: string, format: ExplainFormat])[] = [
+  ["EXPLAIN FORMAT=JSON SELECT 1", "mysql-json"],
+  ["EXPLAIN SELECT 1", "mysql-text"],
+];
+
+/**
+ * Which of those grammars this server accepts, or `undefined` when it accepts
+ * neither. Run once per `connect()`, on the connection the pool check already holds.
+ *
+ * It reads SUCCESS OR FAILURE and never the errno, because the family does not share
+ * one for a grammar refusal: Doris and TiDB answer 1105 where StarRocks and
+ * SingleStore answer 1064 (measured 2026-09-06, see `EXPLAIN_PROBES`). Keying on a
+ * code would have to enumerate engines, which is the branch `src/lib/db` does not
+ * take; asking the server what its grammar accepts is the same answer without the
+ * enumeration.
+ *
+ * Nothing here rejects. A grammar the server does not have is a fact about the
+ * Explain panel, not about the connection, and `connect()` must not fail for it.
+ */
+const probeExplainFormat = async (queryable: MySQLQueryable): Promise<ExplainFormat | undefined> => {
+  for (const [sql, format] of EXPLAIN_PROBES) {
+    try {
+      await runStatement(queryable, sql);
+      return format;
+    } catch {
+      // Refused, so try the next grammar. The reason is the engine's own and there is
+      // nothing to report: the capability this produces IS the report.
+    }
+  }
+  return undefined;
+};
 
 /**
  * One row of MySQL's answer to `ANALYZE`/`OPTIMIZE`/`CHECK TABLE`. These statements
@@ -554,6 +615,16 @@ const STORAGE_STATS_SQL = `
 export class MySQLProvider extends SQLBaseProvider {
   private pool: Pool | null = null;
 
+  /**
+   * The EXPLAIN grammar this server accepts, measured by `probeExplainFormat()` at
+   * connect. It starts as MySQL's own grammar, which is what this provider declared
+   * unconditionally before the probe existed and is still the right answer for an
+   * unconnected provider: `POST /api/db/provider-meta` reads capabilities off a
+   * provider it never connects (#457), so the pre-flight the client does keeps
+   * exactly the behaviour it had.
+   */
+  private measuredExplainFormat: ExplainFormat | undefined = "mysql-json";
+
   // Transaction support: dedicated connection held outside pool
   private txConn: PoolConnection | null = null;
   private txActive = false;
@@ -573,8 +644,12 @@ export class MySQLProvider extends SQLBaseProvider {
     return {
       ...super.getCapabilities(),
       defaultPort: 3306,
-      supportsExplain: true,
-      explainFormat: "mysql-json",
+      // Measured at connect, not declared per type id: the MySQL-wire relatives do
+      // not all accept `EXPLAIN FORMAT=JSON` (#574). The key is spread in rather than
+      // set to `undefined` because `ProviderCapabilities.explainFormat` is present iff
+      // `supportsExplain` is true, and the provider tests assert that as a shape.
+      supportsExplain: this.measuredExplainFormat !== undefined,
+      ...(this.measuredExplainFormat === undefined ? {} : { explainFormat: this.measuredExplainFormat }),
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
       // The driver's own connection.beginTransaction() over one held connection.
@@ -667,6 +742,9 @@ export class MySQLProvider extends SQLBaseProvider {
       this.pool = mysql.createPool(this.buildPoolConfig());
 
       const conn = await this.pool.getConnection();
+      // The pool check already holds a connection, so the grammar probe costs no extra
+      // acquisition. It never rejects, so the release below is never skipped.
+      this.measuredExplainFormat = await probeExplainFormat(conn);
       conn.release();
 
       this.setConnected(true);

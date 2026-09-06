@@ -527,6 +527,23 @@ function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
     ]);
   }
 
+  // EXPLAIN, both grammars. Measured 2026-09-06 on `mysql:latest` (26.7.0) through
+  // mysql2 3.24.2 over the text protocol: `EXPLAIN FORMAT=JSON <select>` answers one
+  // row of one column named `EXPLAIN` carrying the JSON plan as a string, and plain
+  // `EXPLAIN <select>` answers the tabular columns. The connect-time grammar probe
+  // sends `EXPLAIN FORMAT=JSON SELECT 1` first, so this shared fixture models the
+  // engine the provider is named for, which accepts it.
+  if (normalized.startsWith("explain format=json")) {
+    return Promise.resolve([[{ EXPLAIN: '{"query_block": {"select_id": 1}}' }], [{ name: "EXPLAIN" }]]);
+  }
+
+  if (normalized.startsWith("explain")) {
+    return Promise.resolve([
+      [{ id: 1, select_type: "SIMPLE", table: null, type: null, rows: null, Extra: "No tables used" }],
+      [{ name: "id" }, { name: "select_type" }],
+    ]);
+  }
+
   // Default: generic SELECT result
   return Promise.resolve([[{ id: 1, name: "test" }], [{ name: "id" }, { name: "name" }]]);
 }
@@ -2672,5 +2689,178 @@ describe("the mysql2 fixture-fidelity guard", () => {
     // wrapper leaves a rejection a rejection rather than resolving it.
     await expect(mockConnection.execute(SQL_TEXT_DIGEST_READ, ["testdb"])).rejects.toThrow(/Unknown column 'sql_text'/);
     expect(fixtureViolations).toEqual([]);
+  });
+});
+
+// ============================================================================
+// The connect-time EXPLAIN grammar probe
+// ============================================================================
+/**
+ * `EXPLAIN FORMAT=JSON` is MySQL's grammar, not the wire family's. Measured
+ * 2026-09-06 through mysql2 3.24.2 over the text protocol, `EXPLAIN FORMAT=JSON
+ * SELECT 1` is refused by Apache Doris 4.1.3 and TiDB 8.5.1 (errno 1105) and by
+ * StarRocks 3.3.22 and SingleStore (errno 1064), while a plain `EXPLAIN SELECT 1`
+ * is accepted by every one of them. The relatives share no errno for a grammar
+ * refusal, so the provider probes at connect and reads success or failure only.
+ *
+ * The refusals below are the fixtures from those runs. A mock that resolves them
+ * models a server that does not exist, which is exactly how the panel's failure
+ * survived until now.
+ */
+function explainRefusal(
+  message: string,
+  errno: number,
+  code: string,
+  sqlState: string,
+): Error & { code: string; errno: number; sqlState: string } {
+  const error = new Error(message) as Error & { code: string; errno: number; sqlState: string };
+  error.code = code;
+  error.errno = errno;
+  error.sqlState = sqlState;
+  return error;
+}
+
+/** Apache Doris 4.1.3 (`apache/doris:all-in-one-4.1.3`), measured 2026-09-06. */
+const dorisExplainRefusal = () =>
+  explainRefusal("mismatched input '=' expecting {<EOF>, ';'}(line 1, pos 14)", 1105, "ER_UNKNOWN_ERROR", "HY000");
+
+/** TiDB 8.5.1 (`pingcap/tidb:v8.5.1`), measured 2026-09-06. */
+const tidbExplainRefusal = () =>
+  explainRefusal("explain format 'json' is not supported now", 1105, "ER_UNKNOWN_ERROR", "HY000");
+
+/** StarRocks 3.3.22 and SingleStore both answer a parse error, measured 2026-09-06. */
+const parseErrorExplainRefusal = () =>
+  explainRefusal("You have an error in your SQL syntax", 1064, "ER_PARSE_ERROR", "42000");
+
+describe("MySQLProvider EXPLAIN grammar probe", () => {
+  let provider: InstanceType<typeof MySQLProvider>;
+
+  beforeEach(() => {
+    mockExecuteFn = defaultMockExecute;
+    protocolCalls = [];
+  });
+
+  afterEach(async () => {
+    try {
+      if (provider?.isConnected()) await provider.disconnect();
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  /** Every statement the probe issued, in order. */
+  function explainProbeCalls(): ProtocolCall[] {
+    return protocolCalls.filter((c) => c.sql.toLowerCase().startsWith("explain"));
+  }
+
+  /**
+   * A server that refuses the statements named here and answers everything else
+   * through the shared fixture.
+   */
+  function refusing(refusals: Record<string, () => Error>): (sql: string) => Promise<[unknown[], unknown[]]> {
+    return (sql: string) => {
+      const normalized = sql.trim().toLowerCase();
+      const refusal = Object.entries(refusals).find(([statement]) => normalized === statement.toLowerCase());
+      return refusal === undefined ? defaultMockExecute(sql) : Promise.reject(refusal[1]());
+    };
+  }
+
+  test("before connect the provider answers the static MySQL default", () => {
+    provider = new MySQLProvider(makeMySQLConfig());
+    const caps = provider.getCapabilities();
+
+    // `POST /api/db/provider-meta` never connects (#457), so this is the answer the
+    // client's pre-flight sees, and it must stay what it has always been.
+    expect(caps.explainFormat).toBe("mysql-json");
+    expect(caps.supportsExplain).toBe(true);
+    expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
+    expect(explainProbeCalls()).toEqual([]);
+  });
+
+  test("a server that accepts EXPLAIN FORMAT=JSON keeps mysql-json, probed with one statement", async () => {
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const caps = provider.getCapabilities();
+
+    expect(caps.explainFormat).toBe("mysql-json");
+    expect(caps.supportsExplain).toBe(true);
+    expect(explainProbeCalls().map((c) => c.sql)).toEqual(["EXPLAIN FORMAT=JSON SELECT 1"]);
+    // Parameterless, so the text protocol, like every other statement of that shape.
+    expect(methodFor("explain format=json select 1")).toBe("query");
+  });
+
+  test("Doris refuses FORMAT=JSON and accepts plain EXPLAIN, so the format is mysql-text", async () => {
+    mockExecuteFn = refusing({ "explain format=json select 1": dorisExplainRefusal });
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const caps = provider.getCapabilities();
+
+    expect(caps.explainFormat).toBe("mysql-text");
+    expect(caps.supportsExplain).toBe(true);
+    expect(explainProbeCalls().map((c) => c.sql)).toEqual(["EXPLAIN FORMAT=JSON SELECT 1", "EXPLAIN SELECT 1"]);
+    expect(explainProbeCalls().every((c) => c.method === "query")).toBe(true);
+  });
+
+  test("TiDB's own wording for the same refusal reaches the same format", async () => {
+    mockExecuteFn = refusing({ "explain format=json select 1": tidbExplainRefusal });
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+
+    expect(provider.getCapabilities().explainFormat).toBe("mysql-text");
+  });
+
+  test("a parse error rather than an unknown error reaches the same format", async () => {
+    // StarRocks 3.3.22 and SingleStore answer errno 1064 where Doris and TiDB answer
+    // 1105. The probe reads success or failure, never the code, and this pins that.
+    mockExecuteFn = refusing({ "explain format=json select 1": parseErrorExplainRefusal });
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+
+    expect(provider.getCapabilities().explainFormat).toBe("mysql-text");
+  });
+
+  test("a server that refuses both statements declares no explain support and no format", async () => {
+    mockExecuteFn = refusing({
+      "explain format=json select 1": dorisExplainRefusal,
+      "explain select 1": parseErrorExplainRefusal,
+    });
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const caps = provider.getCapabilities();
+
+    expect(caps.supportsExplain).toBe(false);
+    // Absent, not undefined-valued: `explainFormat` is present iff supportsExplain is.
+    expect("explainFormat" in caps).toBe(false);
+    expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
+    expect(explainProbeCalls().map((c) => c.sql)).toEqual(["EXPLAIN FORMAT=JSON SELECT 1", "EXPLAIN SELECT 1"]);
+  });
+
+  test("a refused probe is not a failed connection", async () => {
+    mockExecuteFn = refusing({
+      "explain format=json select 1": dorisExplainRefusal,
+      "explain select 1": parseErrorExplainRefusal,
+    });
+
+    provider = new MySQLProvider(makeMySQLConfig());
+
+    // The probe is a capability measurement, not a connection check. A grammar the
+    // server does not have must never cost the user the connection.
+    await expect(provider.connect()).resolves.toBeUndefined();
+    expect(provider.isConnected()).toBe(true);
+  });
+
+  test("a re-connect over a live pool does not probe again", async () => {
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    protocolCalls = [];
+
+    await provider.connect();
+
+    expect(explainProbeCalls()).toEqual([]);
+    expect(provider.getCapabilities().explainFormat).toBe("mysql-json");
   });
 });
