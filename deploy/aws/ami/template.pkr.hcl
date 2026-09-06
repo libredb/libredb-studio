@@ -117,9 +117,15 @@ build {
     ]
   }
 
+  # `env {{ .Vars }}`, not a bare `sudo -E bash`: Packer's declared
+  # environment_vars ride in that one expansion, which the default
+  # execute_command carries and a custom one has to carry itself. Without it the
+  # variables are declared and never delivered, and 01-install.sh dies on
+  # `IMAGE_REF: unbound variable` a quarter of an hour into the build. Passing
+  # them as arguments to `env` also keeps them out of sudo's environment policy.
   provisioner "shell" {
     script           = "scripts/01-install.sh"
-    execute_command  = "sudo -E bash '{{ .Path }}'"
+    execute_command  = "sudo -E env {{ .Vars }} bash '{{ .Path }}'"
     environment_vars = ["IMAGE_REF=${var.image_ref}", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a"]
   }
 
@@ -137,7 +143,7 @@ build {
 
   provisioner "shell" {
     script          = "scripts/02-configure.sh"
-    execute_command = "sudo -E bash '{{ .Path }}'"
+    execute_command = "sudo -E env {{ .Vars }} bash '{{ .Path }}'"
     environment_vars = [
       "IMAGE_REF=${var.image_ref}",
       "VERSION=${var.version}",

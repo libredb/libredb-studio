@@ -69,6 +69,20 @@ describe("AWS AMI Packer template", () => {
       const readsVar = /(IMAGE_REF|VERSION|SUPPORT_EMAIL)/.test(script ? read(`scripts/${script}.sh`) : body);
       if (usesVar || readsVar)
         expect({ script, hasEnv: /environment_vars/.test(body) }).toEqual({ script, hasEnv: true });
+
+      // Declaring environment_vars is not delivering them. Packer's default
+      // execute_command is `chmod +x {{.Path}}; {{.Vars}} {{.Path}}`, and the
+      // vars ride in that `{{ .Vars }}` expansion alone - so a custom
+      // execute_command that omits it silently drops every declared variable,
+      // and the block above stays green while the build dies fifteen minutes
+      // in on `IMAGE_REF: unbound variable`. Assert the delivery, not the
+      // declaration.
+      const execute = /execute_command\s*=\s*"([^"]*)"/.exec(body)?.[1];
+      if (execute !== undefined && /environment_vars/.test(body))
+        expect({ script, deliversVars: /\{\{\s*\.Vars\s*\}\}/.test(execute) }).toEqual({
+          script,
+          deliversVars: true,
+        });
     }
   });
 
