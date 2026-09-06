@@ -260,7 +260,7 @@ export function useQueryExecution({
       const explainStrategy = getExplainStrategy(metadata?.capabilities.explainFormat);
 
       // An explain run skips the dangerous-query gate above, so it may only ever
-      // ask for a plan of a statement the dialect really explains — whether the
+      // ask for a plan of a statement the dialect really explains, whether the
       // provider denies EXPLAIN outright, ships no strategy, or the statement is not
       // a SELECT. Sending it anyway would ask the server to execute e.g. an UPDATE
       // unguarded (#201).
