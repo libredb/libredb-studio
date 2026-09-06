@@ -102,10 +102,9 @@ hand. To propose a new channel, add an entry with a `category` and a `platforms`
 list, then run `bun run distribution:matrix`. Freshness is enforced on pull
 requests with `bun run distribution:matrix --check`.
 
-Not counted here, and why. **AWS Marketplace** has a registered seller account
-but no submitted product, so there is nothing to track yet. **Alibaba Cloud** is
-not being pursued. **Coolify** declined the submission: its maintainers accept
-service templates only from projects above 1000 GitHub stars. **Dokku** has no
-application catalog to apply to. A row appears above the moment a submission
-exists — `pending` while it is open or under review, `live` once the product can
-be installed from that channel.
+Not counted here, and why. **Alibaba Cloud** is not being pursued. **Coolify**
+declined the submission: its maintainers accept service templates only from
+projects above 1000 GitHub stars. **Dokku** has no application catalog to apply
+to. A row appears above as soon as there is something to track — a submission,
+or a descriptor in this repo that a workflow reads — and stays `pending` until
+the product can be installed from that channel, when it becomes `live`.

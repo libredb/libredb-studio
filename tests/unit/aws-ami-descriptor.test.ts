@@ -386,9 +386,59 @@ describe("AWS AMI build workflow", () => {
   });
 
   test("a machine path stands down where a named dispatch fails loudly", () => {
-    expect(decide).toMatch(/stand_down\(\)[^\n]*run=false/);
-    expect(decide).toMatch(/explicit=\$\(\[ -n "\$INPUT_VERSION" \]/);
+    // Through the `exit 0`: a stand_down that writes run=false and then falls
+    // through is overwritten by the run=true at the end, which would turn every
+    // stand-down in this step into a no-op.
+    expect(decide).toMatch(/stand_down\(\)[^\n]*run=false[^\n]*exit 0/);
+    // Through both arms: inverting them makes every machine path "explicit",
+    // and a plain release then builds while the channel is not live.
+    expect(decide).toMatch(/explicit=\$\(\[ -n "\$INPUT_VERSION" \] && echo yes \|\| echo no\)/);
+    // And the input it reads is the dispatch input alone - falling back to the
+    // release tag here would make every release look like a person.
+    expect(workflow).toMatch(/INPUT_VERSION: \$\{\{ inputs\.version \}\}/);
     expect(decide).toMatch(/if \[ "\$explicit" = yes \]; then echo "::error::\$1"; exit 1; fi/);
+  });
+
+  test("no machine path builds while the channel is not live", () => {
+    // The listing gate. Keyed on whether the run NAMES a version rather than on
+    // the event name: the release chain this workflow is meant to join arrives
+    // as a workflow_dispatch, so an event-name test would let exactly the path
+    // the gate exists for walk straight past it. A person who names a version
+    // still builds - that is how the AMI for the first submission gets made.
+    expect(decide).toContain('$0 == "  - id: aws-marketplace"');
+    // The `- id:` bound is load-bearing: without it, a row missing its status
+    // makes awk read the NEXT channel's - `live` - and the gate opens.
+    expect(decide).toMatch(/found && \/\^ {2}- id: \/ \{ exit \}/);
+    expect(decide).toMatch(/found && \/\^ {4}status: \/ \{ print \$2; exit \}/);
+    expect(decide).toContain('if [ "$CHANNEL_STATUS" != live ]; then');
+    // Scoped to the gate, and asserting the STRUCTURE rather than the presence
+    // of two strings: `stand_down` lifted out of the exemption keeps both
+    // substrings and stands every path down, including the named-version
+    // dispatch - the same lockout the literal flip above is caught for.
+    const gate = decide.slice(decide.indexOf("CHANNEL_STATUS=$(awk"), decide.indexOf("# Chart releases"));
+    expect(gate).toMatch(/if \[ "\$explicit" = no \]; then\n\s+stand_down "aws-marketplace is/);
+    // And that the exemption exempts: one stand_down in the block, with the
+    // named-version path falling through to a notice. A second stand_down after
+    // the `fi` keeps every substring above and locks the first AMI out.
+    expect(gate).toMatch(/fi\n\s+echo "::notice::aws-marketplace is/);
+    expect(gate.match(/stand_down/g)).toHaveLength(1);
+    expect(workflow).not.toContain("github.event_name");
+
+    // And the row the gate reads has to exist, matched the way the awk matches
+    // it - a substring test would pass for `aws-marketplace-something`, which
+    // the workflow would never find - and bounded to its own block, because a
+    // slice running to the end of the file would match the next channel's
+    // status and pass whatever this one said.
+    const channels = fs.readFileSync(path.join(AMI, "../../../distribution/channels.yaml"), "utf8");
+    const idLine = /^ {2}- id: aws-marketplace$/m.exec(channels);
+    expect(idLine).not.toBeNull();
+    const from = (idLine as RegExpExecArray).index;
+    const next = channels.indexOf("\n  - id:", from + 1);
+    const entry = channels.slice(from, next === -1 ? undefined : next);
+    expect(entry).toMatch(/^ {4}status: \w+$/m);
+    // The category too, because a row moved out of cloud-marketplaces is a row
+    // the marketplace scorecard stops counting while the gate keeps reading it.
+    expect(entry).toMatch(/^ {4}category: cloud-marketplaces$/m);
   });
 
   test("chart releases never build a product AMI", () => {
@@ -430,7 +480,13 @@ describe("AWS AMI build workflow", () => {
   test("run=true is written after every check, never before one", () => {
     const go = decide.indexOf('echo "run=true"');
     expect(go).toBeGreaterThan(0);
-    for (const check of ["libredb-studio-*", "is not a product release", "does not match package.json", "is not set"]) {
+    for (const check of [
+      "aws-marketplace is",
+      "libredb-studio-*",
+      "is not a product release",
+      "does not match package.json",
+      "is not set",
+    ]) {
       expect(decide.indexOf(check)).toBeLessThan(go);
     }
     expect(decide.lastIndexOf("exit 1")).toBeLessThan(go);
