@@ -31,7 +31,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CANONICAL = "README.md";
-const LOCALIZED = ["README_zh.md", "README_ja.md"];
+const LOCALIZED = ["README_zh.md", "README_ja.md", "README_es.md"];
 
 /** Splits a markdown row into trimmed cells, dropping the leading/trailing empties. */
 function cells(line) {
