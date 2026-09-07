@@ -235,11 +235,12 @@ These are real, current, and not oversights. Each is a decision with a reason.
   ([`docs/BACKLOG.md`](./BACKLOG.md) B29, open). What each surface sends, and what comes back, with
   the call site for every claim, is [`docs/AGENT_DATA_FLOW.md`](./AGENT_DATA_FLOW.md). **A key is not
   what decides whether any of this happens — a model configuration that validates is.**
-  `validateConfig` requires `LLM_API_KEY` for the `gemini` and `openai` kinds only
-  (`src/lib/llm/utils/config.ts:127-134`), so a keyless `LLM_PROVIDER=ollama` deployment, or a
+  `validateConfig()` ([`config.ts`](../src/lib/llm/utils/config.ts)) requires `LLM_API_KEY` for the
+  `gemini` and `openai` kinds only, so a keyless `LLM_PROVIDER=ollama` deployment, or a
   `custom` one with `LLM_API_URL`, has the agent available and sends everything above to that
   endpoint. What sends nothing is a deployment with **no `LLM_*` configuration at all**: the provider
-  defaults to `gemini` (`config.ts:12`), it is refused without a key, availability answers
+  defaults to `gemini` through `DEFAULT_PROVIDER`
+  ([`config.ts`](../src/lib/llm/utils/config.ts)), it is refused without a key, availability answers
   `NO_MODEL_CONFIGURED`, no rail renders and no model call is made.
 - **A page on a sibling subdomain can time an authenticated endpoint on this one.** The auth cookie
   is `SameSite=Lax`, which withholds it from a cross-*site* subresource request but sends it to a

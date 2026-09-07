@@ -46,7 +46,7 @@ Three decisions. The first is the consequential one, which is why it is first.
      shared helpers cannot express. Couchbase is that case: SQL++ quotes identifiers with doubled
      backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting in
      `keyspace.ts`. The cost is that it re-implements `prepareQuery()` to get the limiter back
-     ([index.ts:336](../src/lib/db/providers/document/couchbase/index.ts)) — duplication worth
+     ([`index.ts`](../src/lib/db/providers/document/couchbase/index.ts)) — duplication worth
      avoiding if your dialect does fit.
 
 3. **Query language?**
@@ -101,7 +101,8 @@ rather than an afterthought.
 
 Provider logic must never call `fetch` directly. It goes through an interface with a single
 implementation, so that adopting a native driver later is an additive change rather than a rewrite.
-See [`couchbase/transport.ts:87`](../src/lib/db/providers/document/couchbase/transport.ts):
+See `CouchbaseTransport`
+([`transport.ts`](../src/lib/db/providers/document/couchbase/transport.ts)):
 
 ```ts
 interface XTransport {
@@ -116,7 +117,8 @@ interface XTransport {
 **Make the result type neutral, not the wire envelope.** An interface shaped like the HTTP response
 (`{ results, signature, status, metrics, errors }`) would force any future driver adapter to
 fabricate fields that only the REST API produces naturally. Define the shape both sources could
-produce without inventing anything ([`transport.ts:45`](../src/lib/db/providers/document/couchbase/transport.ts)):
+produce without inventing anything (`CouchbaseQueryResult` in
+[`transport.ts`](../src/lib/db/providers/document/couchbase/transport.ts)):
 
 ```ts
 interface XQueryResult {
@@ -452,7 +454,8 @@ control that only emits invalid input. That is the defect class
   row-level DML at all, so both offered an editor that could only fail.
 - If `supportsExplain` is `true`, `buildSql()` **must not** return `null` for the `analyze` mode. The
   direct Explain action always builds with `analyze`
-  ([`use-query-execution.ts:165`](../src/hooks/use-query-execution.ts)) and refuses the run when the
+  in `executeQuery()` ([`use-query-execution.ts`](../src/hooks/use-query-execution.ts)) and refuses
+  the run when the
   strategy declines, so the button is dead while only the background pre-warm works. When the engine
   has no analyze equivalent, return the estimate for both modes — `sqlite-queryplan.ts` and
   `couchbase-json.ts` both do exactly that.

@@ -46,7 +46,7 @@ const POSTGRES_GRAMMAR = resolveSqlGrammar("postgres");
  * table left zero rows. Under this dialect's grammar the comment is read whole, the
  * statement leads with `DELETE`, and nothing is built (#300).
  */
-function isExplainable(sql: string): boolean {
+export function isExplainableUnderPostgresGrammar(sql: string): boolean {
   const prefix = classifySelectPrefix(sql, POSTGRES_GRAMMAR);
   if (prefix === null) return false;
 
@@ -56,7 +56,7 @@ function isExplainable(sql: string): boolean {
 export const postgresJsonStrategy: ExplainStrategy = {
   format: "postgres-json",
   buildSql(sql) {
-    if (!isExplainable(sql)) return null;
+    if (!isExplainableUnderPostgresGrammar(sql)) return null;
     return `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`;
   },
   extractPlan(result) {

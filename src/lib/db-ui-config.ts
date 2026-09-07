@@ -54,7 +54,7 @@ export type ConnectionField = DatabaseUIConfig["connectionFields"][number];
 export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   postgres: {
     icon: PostgreSQLIcon,
-    color: "text-blue-400",
+    color: "text-hue-blue",
     label: "PostgreSQL",
     defaultPort: "5432",
     showConnectionStringToggle: false,
@@ -62,7 +62,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   mysql: {
     icon: MySQLIcon,
-    color: "text-amber-400",
+    color: "text-hue-amber",
     label: "MySQL",
     defaultPort: "3306",
     showConnectionStringToggle: false,
@@ -70,7 +70,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   sqlite: {
     icon: SQLiteIcon,
-    color: "text-cyan-400",
+    color: "text-hue-cyan",
     label: "SQLite",
     defaultPort: "",
     showConnectionStringToggle: false,
@@ -78,10 +78,11 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   duckdb: {
     icon: DuckDBIcon,
-    // DuckDB's own mark is a bright yellow (#FFF000), and `text-yellow-400` is already
-    // ClickHouse's. yellow-300 is the nearest free shade, and the distinct-colour
-    // assertion in tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
-    color: "text-yellow-300",
+    // DuckDB's own mark is a bright yellow (#FFF000), and `hue-yellow` is already
+    // ClickHouse's. `-alt` is the second step of that hue, kept apart from its base
+    // in both palettes; the distinct-colour assertion in
+    // tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
+    color: "text-hue-yellow-alt",
     label: "DuckDB",
     // Embedded: nothing is listening anywhere, so there is no port to default.
     defaultPort: "",
@@ -100,7 +101,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // free shade - emerald-400 is MongoDB's, both teals are taken by Couchbase and
     // Elasticsearch, and the distinct-colour assertion in
     // tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
-    color: "text-emerald-300",
+    color: "text-hue-emerald-alt",
     // The protocol's name rather than the product's: one connection here reaches a
     // self-hosted libSQL server OR Turso Cloud, and naming the managed product would
     // read as though the self-hosted one belonged somewhere else.
@@ -120,7 +121,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   mongodb: {
     icon: MongoDBIcon,
-    color: "text-emerald-400",
+    color: "text-hue-emerald",
     label: "MongoDB",
     defaultPort: "27017",
     showConnectionStringToggle: true,
@@ -128,7 +129,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   redis: {
     icon: RedisIcon,
-    color: "text-rose-400",
+    color: "text-hue-rose",
     label: "Redis",
     defaultPort: "6379",
     showConnectionStringToggle: false,
@@ -141,7 +142,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   oracle: {
     icon: OracleIcon,
-    color: "text-red-400",
+    color: "text-hue-red",
     label: "Oracle",
     defaultPort: "1521",
     showConnectionStringToggle: false,
@@ -149,7 +150,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   mssql: {
     icon: MSSQLIcon,
-    color: "text-sky-400",
+    color: "text-hue-sky",
     label: "SQL Server",
     defaultPort: "1433",
     showConnectionStringToggle: false,
@@ -157,7 +158,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   couchbase: {
     icon: CouchbaseIcon,
-    color: "text-orange-400",
+    color: "text-hue-orange",
     label: "Couchbase",
     // Management port. The query ports are discovered from the cluster at connect
     // time (issue #262, decision 3), so only this one is ever stored.
@@ -167,7 +168,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   clickhouse: {
     icon: ClickHouseIcon,
-    color: "text-yellow-400",
+    color: "text-hue-yellow",
     label: "ClickHouse",
     // The HTTP interface port. The provider speaks HTTP only, so the native
     // protocol port 9000 is never a valid value here (issue #264).
@@ -177,10 +178,10 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   druid: {
     icon: DruidIcon,
-    // Issue #265 specified text-sky-400, which mssql already owns; the distinct-colour
-    // assertion in tests/unit/lib/db-ui-config.test.ts rules a duplicate out. teal-400
-    // is the nearest free shade and is closer to Druid's own petrol-teal mark anyway.
-    color: "text-teal-400",
+    // Issue #265 specified sky, which mssql already owns; the distinct-colour
+    // assertion in tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
+    // `hue-teal` was free and is closer to Druid's own petrol-teal mark anyway.
+    color: "text-hue-teal",
     label: "Apache Druid",
     // The Router port. The Broker on 8082 serves the identical POST /druid/v2/sql and
     // needs no different configuration (live-verified, issue #265); the Router is the
@@ -202,7 +203,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // and yellow-400 are already owned by druid and clickhouse, and the distinct-colour
     // assertion in tests/unit/lib/db-ui-config.test.ts rules a duplicate out. teal-300
     // is the nearest free shade to the brand teal.
-    color: "text-teal-300",
+    color: "text-hue-teal-alt",
     label: "Elasticsearch",
     // 9200 for both products and both schemes: a TLS deployment serves HTTPS on the
     // SAME port rather than on a second well-known one, so unlike ClickHouse there is
@@ -224,7 +225,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     icon: OpenSearchIcon,
     // OpenSearch's Pacific Blue (#005EB8) is deeper and bluer than postgres' own
     // blue-400, which already owns "blue" here; indigo-400 is the nearest free shade.
-    color: "text-indigo-400",
+    color: "text-hue-indigo",
     label: "OpenSearch",
     // Same 9200 floor, same reason - the fork kept the port.
     defaultPort: "9200",
@@ -236,7 +237,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // Trino's own mark is a magenta-pink (#DD00A1); pink-400 is the nearest free
     // shade, and the distinct-colour assertion in tests/unit/lib/db-ui-config.test.ts
     // rules a duplicate out.
-    color: "text-pink-400",
+    color: "text-hue-pink",
     // The product's own name, with no vendor word in front of it: "Trino" is what the
     // project calls itself, unlike "Apache Druid".
     label: "Trino",
@@ -261,7 +262,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // Cassandra's own mark is a mid-cyan eye (#1287B1). sky-400 is mssql's and the
     // distinct-colour assertion in tests/unit/lib/db-ui-config.test.ts rules a
     // duplicate out, so sky-300 is the nearest free shade.
-    color: "text-sky-300",
+    color: "text-hue-sky-alt",
     // The project's own name, vendor word included, exactly as "Apache Druid" is
     // spelled here: the ASF name is how this engine is universally written.
     label: "Apache Cassandra",
@@ -283,7 +284,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   libredb: {
     icon: LibreDBIcon,
-    color: "text-violet-400",
+    color: "text-hue-violet",
     label: "LibreDB",
     defaultPort: "",
     showConnectionStringToggle: false,

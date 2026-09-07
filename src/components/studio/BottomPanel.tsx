@@ -253,55 +253,55 @@ export function BottomPanel({
       key: "results",
       label: "Results",
       icon: <LayoutGrid strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-blue-400 border-blue-500 bg-fill",
+      activeClass: "text-hue-blue border-hue-blue-tint bg-fill",
     },
     {
       key: "explain",
       label: "Explain",
       icon: <Zap strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-amber-400 border-amber-500 bg-fill",
+      activeClass: "text-hue-amber border-hue-amber-tint bg-fill",
     },
     {
       key: "history",
       label: "History",
       icon: <Clock strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-emerald-400 border-emerald-500 bg-fill",
+      activeClass: "text-hue-emerald border-hue-emerald-tint bg-fill",
     },
     {
       key: "saved",
       label: "Saved",
       icon: <Bookmark strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-purple-400 border-purple-500 bg-fill",
+      activeClass: "text-hue-purple border-hue-purple-tint bg-fill",
     },
     {
       key: "charts",
       label: "Charts",
       icon: <ChartColumn strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-cyan-400 border-cyan-500 bg-fill",
+      activeClass: "text-hue-cyan border-hue-cyan-tint bg-fill",
     },
     {
       key: "pivot",
       label: "Pivot",
       icon: <Columns3 strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-orange-400 border-orange-500 bg-fill",
+      activeClass: "text-hue-orange border-hue-orange-tint bg-fill",
     },
     {
       key: "docs",
       label: "Docs",
       icon: <FileText strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-teal-400 border-teal-500 bg-fill",
+      activeClass: "text-hue-teal border-hue-teal-tint bg-fill",
     },
     {
       key: "schemadiff",
       label: "Diff",
       icon: <GitCompare strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-rose-400 border-rose-500 bg-fill",
+      activeClass: "text-hue-rose border-hue-rose-tint bg-fill",
     },
     {
       key: "dashboard",
       label: "Dashboard",
       icon: <LayoutDashboard strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-indigo-400 border-indigo-500 bg-fill",
+      activeClass: "text-hue-indigo border-hue-indigo-tint bg-fill",
     },
   ];
 
@@ -372,13 +372,13 @@ export function BottomPanel({
                 <div data-testid="export-scope" className="px-2 py-1.5 text-xs text-fg-muted max-w-[15rem]">
                   {exportScope.summary}
                   {exportScope.shortfall !== null && (
-                    <span className="block mt-1 text-amber-400/80">{exportScope.shortfall}</span>
+                    <span className="block mt-1 text-warning/80">{exportScope.shortfall}</span>
                   )}
                 </div>
                 {exportArtifact !== null && (
                   // Stated before the formats, because it changes what the file IS:
                   // these are a run's rows, and the name will say so.
-                  <div data-testid="export-provenance" className="px-2 pb-1.5 text-xs text-blue-300/90">
+                  <div data-testid="export-provenance" className="px-2 pb-1.5 text-xs text-hue-blue-alt/90">
                     Saved as agent run <span className="font-mono text-[0.625rem]">{exportArtifact.runId}</span>&apos;s
                     own file.
                   </div>
@@ -421,9 +421,9 @@ export function BottomPanel({
       {hydratedHere && agentArtifact !== null && (
         <div
           data-testid="agent-provenance"
-          className="flex items-center justify-between gap-2 px-3 py-1 border-b border-blue-500/20 bg-blue-500/5"
+          className="flex items-center justify-between gap-2 px-3 py-1 border-b border-hue-blue-tint/20 bg-hue-blue-tint/5"
         >
-          <span className="text-xs text-blue-300/90">
+          <span className="text-xs text-hue-blue-alt/90">
             Stored by agent run <span className="font-mono text-[0.625rem]">{agentArtifact.runId}</span> via{" "}
             <span className="font-mono text-[0.625rem]">{agentArtifact.operationId}</span>{" "}
             {/* The audit correlation id: what joins these rows to the audit line for

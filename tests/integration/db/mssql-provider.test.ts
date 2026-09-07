@@ -1523,6 +1523,108 @@ describe("MSSQLProvider", () => {
       expect(overview.maxConnections).toBe(32767);
     });
 
+    test("a refused size read leaves overview databaseSizeBytes absent, never a measured 0", async () => {
+      // The same defect as the connections pair above, one field over, and it survived
+      // #515 because that round only moved the count: `let databaseSizeBytes = 0` plus an
+      // empty catch turned any failure of the size statement into a reading.
+      // Deliberately NOT given a permission-refusal shape like §7.2's. `sys.database_files`
+      // is a database-scoped catalog view, not one of the server-scoped DMVs that section
+      // measured a `Msg 300` against, and no failure of this statement has been measured on
+      // a live instance - the request timeout of §3.5 firing, a pool fault mid-overview and
+      // a deployment without the view all arrive here identically. That is the whole point:
+      // the `catch` cannot tell one cause from another, so it must not publish a figure for
+      // any of them. The error below therefore asserts nothing beyond "the statement threw".
+      mockQueryFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("SYS.DATABASE_FILES")) {
+          throw new Error("Timeout: Request failed to complete in 15000ms");
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      // Absent, so StorageTab.tsx's `sizeKnown` is false and the tab says "No storage
+      // size information available" instead of drawing a breakdown over a database it
+      // never measured, against per-table bytes that a separate read did answer for.
+      expect("databaseSizeBytes" in overview).toBe(false);
+      // The formatted string travels with the figure, as it does in the merged libSQL
+      // (#569) and search (#517) shapes: "0 bytes" beside an absent byte count would
+      // print a confident zero as the headline size on that same tab.
+      expect(overview.databaseSize).toBe("N/A");
+      // Only the refused statement goes absent; every other reading survives.
+      expect(overview.activeConnections).toBe(5);
+      expect(overview.tableCount).toBe(5);
+    });
+
+    test("a database that measures zero bytes keeps its measured zero size", async () => {
+      // The anti-vacuity twin of the test above: absence must never be spelled with a
+      // falsy test. `SUM(CAST(size AS BIGINT))` returns NULL when the aggregate has no
+      // row to sum. The provider deliberately treats that returned null aggregate as
+      // a measured zero, so the key stays present and the Storage tab formats the zero it was
+      // given rather than claiming it knows nothing.
+      mockQueryFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("SYS.DATABASE_FILES")) {
+          return { recordset: [{ size_bytes: null }], rowsAffected: [1] };
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(true);
+      expect(overview.databaseSizeBytes).toBe(0);
+      expect(overview.databaseSize).toBe("0 B");
+    });
+
+    test("a size read with no result row leaves overview size absent", async () => {
+      mockQueryFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("SYS.DATABASE_FILES")) {
+          return { recordset: [], rowsAffected: [0] };
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
+    test("a size result without the expected column leaves overview size absent", async () => {
+      mockQueryFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("SYS.DATABASE_FILES")) {
+          return { recordset: [{ unrelated: 1 }], rowsAffected: [1] };
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
+    test("a non-finite size leaves overview size absent", async () => {
+      mockQueryFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("SYS.DATABASE_FILES")) {
+          return { recordset: [{ size_bytes: Number.POSITIVE_INFINITY }], rowsAffected: [1] };
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
     test("Azure SQL detection from hostname", () => {
       const azureProvider = new MSSQLProvider({
         ...baseConfig,

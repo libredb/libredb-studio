@@ -14,7 +14,8 @@ import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { logger } from "@/lib/logger";
 import { newLocalId } from "@/lib/ids";
-import { getExplainStrategy } from "@/lib/explain";
+import { getExplainStrategy, type ExplainStrategy } from "@/lib/explain";
+import type { ExplainFormat } from "@/lib/db/types";
 import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
 import { buildConnectionPayload } from "./use-connection-payload";
 
@@ -57,6 +58,34 @@ function explainRefusal(metadata: ProviderMetadata | null, hasStrategy: boolean)
     return { title: "Not Supported", description: "Only SELECT statements can be explained." };
   }
   return { title: "Not Supported", description: "EXPLAIN is not available for this database type." };
+}
+
+/**
+ * Which strategy reads a plan the server just answered.
+ *
+ * The EXPLAIN statement is built on the server now (#574), so the response names
+ * the format that really produced the plan and that naming wins: on the MySQL wire
+ * family the provider only learns which form its server accepts once connected
+ * (measured 2026-09-06: `EXPLAIN FORMAT=JSON SELECT 1` is errno 1105 on TiDB v8.5.1
+ * and Apache Doris 4.1.3, errno 1064 on StarRocks 3.3.22 and SingleStore, while a
+ * plain `EXPLAIN SELECT 1` is accepted on every one of them), and provider-meta
+ * answers this hook without connecting at all (#457).
+ *
+ * The static strategy stays as the fallback for the two cases where the response
+ * says nothing usable: an older server that names no format, and a format this build
+ * does not register.
+ */
+function planStrategy(payload: unknown, fallback: ExplainStrategy): ExplainStrategy {
+  const named =
+    typeof payload === "object" && payload !== null
+      ? (payload as { explainFormat?: unknown }).explainFormat
+      : undefined;
+  if (typeof named !== "string") return fallback;
+  // `getExplainStrategy` indexes an object literal, so an inherited key such as
+  // "constructor" resolves to a value that is truthy and is not a strategy. Every
+  // registered strategy names itself, so that identity is the guard.
+  const namedStrategy = getExplainStrategy(named as ExplainFormat);
+  return namedStrategy?.format === named ? namedStrategy : fallback;
 }
 
 /**
@@ -236,14 +265,18 @@ export function useQueryExecution({
       const explainStrategy = getExplainStrategy(metadata?.capabilities.explainFormat);
 
       // An explain run skips the dangerous-query gate above, so it may only ever
-      // send SQL the dialect actually built for it — whether the provider denies
-      // EXPLAIN outright, ships no strategy, or the statement is not a SELECT.
-      // Falling back to the original statement would execute e.g. an UPDATE
+      // ask for a plan of a statement the dialect really explains, whether the
+      // provider denies EXPLAIN outright, ships no strategy, or the statement is not
+      // a SELECT. Sending it anyway would ask the server to execute e.g. an UPDATE
       // unguarded (#201).
+      //
+      // The refusal stays here even though the statement itself is now built on the
+      // server (#574): a statement nothing can explain must not become a request at
+      // all, so the user gets this toast rather than a 400.
       const explainSupported = !metadata || metadata.capabilities.supportsExplain;
-      const directExplainSql =
-        isExplain && explainSupported ? (explainStrategy?.buildSql(queryToExecute, "analyze") ?? null) : null;
-      if (isExplain && !directExplainSql) {
+      const explainAccepted =
+        isExplain && explainSupported && (explainStrategy?.buildSql(queryToExecute, "analyze") ?? null) !== null;
+      if (isExplain && !explainAccepted) {
         toast({ ...explainRefusal(metadata, Boolean(explainStrategy)), variant: "destructive" });
         setTabs((prev) =>
           prev.map((t) => (t.id === targetTabId ? { ...t, isExecuting: false, isLoadingMore: false } : t)),
@@ -297,9 +330,6 @@ export function useQueryExecution({
           }
         }
 
-        // If isExplain mode, run the dialect's EXPLAIN query instead
-        const queryToRun = directExplainSql || queryToExecute;
-
         // Detect multi-statement queries (not for EXPLAIN or load-more or transaction)
         //
         // A parameterized statement never takes this route: `/api/db/multi-query`
@@ -350,8 +380,12 @@ export function useQueryExecution({
             ...(useTransaction
               ? { action: "query", sql: queryToExecute, options: { limit, offset, unlimited } }
               : {
-                  sql: isExplain ? queryToRun : queryToExecute,
+                  // The user's own statement, always: an explain run asks for a
+                  // plan of it with `explain`, and the connected provider builds
+                  // the EXPLAIN on the server (#574).
+                  sql: queryToExecute,
                   options: isExplain ? {} : { limit, offset, unlimited },
+                  ...(isExplain && { explain: { mode: "analyze" } }),
                   ...(!useMultiQuery && { queryId }),
                 }),
           }),
@@ -366,16 +400,20 @@ export function useQueryExecution({
         // its run — would be an unhandled rejection until then.
         let explainPromise: Promise<Response | null> | null = null;
         if (!isExplain && !isLoadMore && explainStrategy) {
-          const explainSql = explainStrategy.buildSql(queryToExecute, "estimate");
-          if (explainSql) {
+          // Asked of the STATIC strategy, which is all this side has before a
+          // response: whether a statement is explainable at all is a question about
+          // the statement, and every strategy answers it the same way. The
+          // statement the engine sees is built on the server (#574).
+          if (explainStrategy.buildSql(queryToExecute, "estimate") !== null) {
             explainPromise = fetch("/api/db/query", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 ...buildConnectionPayload(activeConnection),
-                sql: explainSql,
+                sql: queryToExecute,
                 options: {},
-                // The explain SQL is the statement with a prefix, so its
+                explain: { mode: "estimate" },
+                // The server prefixes the statement to build the EXPLAIN, so its
                 // placeholders are the same ones in the same order and the same
                 // values bind them. Without this the plan request would run
                 // unbound and the panel would keep the previous plan (PR #304).
@@ -479,16 +517,18 @@ export function useQueryExecution({
         // Process EXPLAIN results (from background or direct)
         let explainPlanData = null;
         if (isExplain) {
-          explainPlanData = explainStrategy
-            ? { format: explainStrategy.format, raw: explainStrategy.extractPlan(resultData) }
-            : null;
+          if (explainStrategy) {
+            const strategy = planStrategy(resultData, explainStrategy);
+            explainPlanData = { format: strategy.format, raw: strategy.extractPlan(resultData) };
+          }
         } else if (explainPromise && explainStrategy) {
           // Background EXPLAIN - don't block, update async
           explainPromise
             .then(async (explainRes) => {
               if (!explainRes?.ok) return;
               const explainData = await explainRes.json();
-              const plan = { format: explainStrategy.format, raw: explainStrategy.extractPlan(explainData) };
+              const strategy = planStrategy(explainData, explainStrategy);
+              const plan = { format: strategy.format, raw: strategy.extractPlan(explainData) };
               // `commitToTab` drops the plan if a newer run owns the tab: a plan
               // describing the previous statement is worse than no plan at all.
               commitToTab((t) => ({ ...t, explainPlan: plan }));

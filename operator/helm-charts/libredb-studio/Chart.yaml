@@ -2,8 +2,8 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting sixteen engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and libSQL
 type: application
-version: 0.1.58
-appVersion: "0.13.7"
+version: 0.1.60
+appVersion: "0.14.1"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -46,6 +46,12 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
+  # False: 0.1.60 tracks app release 0.14.1, which repairs how the light theme is
+  # painted and how two wire families are asked for a query plan. Accent colours were
+  # picked for a dark ground and reused on the light one, so warning, success and danger
+  # text sat as low as 1.46:1 against the surface behind it; and both EXPLAIN grammars
+  # are now measured when the connection opens rather than assumed from the type id. No
+  # template, value or default moves, and the image is where every one of them lands.
   # False: 0.1.58 tracks app release 0.13.7, which adds one metadata field to
   # package.json and nothing else. The npm artifact declared no licence, so
   # @libredb/studio showed as unlicensed on the registry while the repository shipped
@@ -95,7 +101,7 @@ annotations:
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.13.7
+      image: ghcr.io/libredb/libredb-studio:0.14.1
       platforms:
         - linux/amd64
         - linux/arm64
@@ -107,8 +113,13 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "The published npm package now declares its licence. package.json carried no license field, so @libredb/studio rendered on npm as unlicensed even though the project has been MIT since its first release and the LICENSE file was always inside the tarball - npm includes it regardless of the files list. The declaration is what package managers, mirrors and licence scanners read, and only a new release can carry it. No chart template, value or image behaviour moves"
-    - "Track app release 0.13.7 (appVersion bump; default image tag follows)"
+    - "The light theme stops painting dark-tuned accent colour. Warning, success and danger text, the query editor Explain control and the monitoring status rings were drawn in colours chosen against a dark ground and reused unchanged on the light one, where the worst of them sat at 1.46:1 against the surface behind it. Every accent is now a token measured on the ground it is drawn on, and the measurement runs as a test rather than being recorded in a comment"
+    - "Both themes now clear a 4.79:1 contrast floor for accent text, measured per token on every surface it can land on"
+    - "Engine identity colours are separated by measurement instead of by eye, so two engines listed next to each other no longer read as the same colour on either theme"
+    - "The Overview and Health panels answer on the MySQL-wire engines that refused a filter they never needed. SHOW STATUS is now read bare and the wanted rows picked out of the answer, so Apache Doris renders instead of failing outright, and a status variable an engine does not publish reads as absent rather than as a fabricated default"
+    - "A query plan is asked for in the grammar the server actually accepts, measured when the connection opens on both wire families. The Explain panel was sending one MySQL form and one PostgreSQL form to every relative of each, so it showed an empty no-plan state on Materialize, CockroachDB, TiDB, StarRocks, SingleStore, Apache Doris and Databend. All seven now render their own plan"
+    - "LOG_LEVEL is documented in .env.example, and an environment variable the app reads can no longer go undocumented without failing a test"
+    - "Track app release 0.14.1 (appVersion bump; default image tag follows)"
 dependencies:
   - name: postgresql
     version: "16.x.x"

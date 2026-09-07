@@ -126,7 +126,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">DB Size</CardTitle>
-            <Database strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500" />
+            <Database strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-blue" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium truncate">{overview?.databaseSize || "N/A"}</div>
@@ -136,7 +136,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Tables</CardTitle>
-            <HardDrive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
+            <HardDrive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-green" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             {/*
@@ -159,7 +159,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Indexes</CardTitle>
-            <Archive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-purple-500" />
+            <Archive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-purple" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium truncate" data-testid="storage-stat-indexes">
@@ -174,7 +174,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">WAL</CardTitle>
-            <FolderOpen strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-orange-500" />
+            <FolderOpen strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-orange" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium truncate">
@@ -200,7 +200,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
               <div>
                 <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
                   <span className="flex items-center gap-1 sm:gap-2">
-                    <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-green-500" />
+                    <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-hue-green-tint" />
                     Tables
                   </span>
                   <span className="font-medium" data-testid="storage-breakdown-tables">
@@ -213,14 +213,14 @@ export function StorageTab({ data, loading }: StorageTabProps) {
               <div>
                 <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
                   <span className="flex items-center gap-1 sm:gap-2">
-                    <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-purple-500" />
+                    <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-hue-purple-tint" />
                     Indexes
                   </span>
                   <span className="font-medium" data-testid="storage-breakdown-indexes">
                     {indexSizeKnown ? formatBytes(totalIndexSize) : "N/A"}
                   </span>
                 </div>
-                <Progress value={indexPercent} className="h-1.5 sm:h-2 [&>div]:bg-purple-500" />
+                <Progress value={indexPercent} className="h-1.5 sm:h-2 [&>div]:bg-hue-purple-tint" />
               </div>
 
               <div>

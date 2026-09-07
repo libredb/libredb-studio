@@ -54,11 +54,11 @@ import { useProviderMetadata } from "@/hooks/use-provider-metadata";
  * `DBCC CHECKDB`, SQLite's `VACUUM`) - see `maintenanceControl` (#496).
  */
 const TABLE_ACTIONS: { type: MaintenanceType; label: string; Icon: LucideIcon; hover: string }[] = [
-  { type: "analyze", label: "Analyze", Icon: Search, hover: "hover:text-yellow-500" },
-  { type: "vacuum", label: "Vacuum", Icon: HardDrive, hover: "hover:text-blue-500" },
-  { type: "optimize", label: "Optimize", Icon: Wrench, hover: "hover:text-blue-500" },
-  { type: "reindex", label: "Reindex", Icon: RefreshCw, hover: "hover:text-purple-500" },
-  { type: "check", label: "Check", Icon: ShieldCheck, hover: "hover:text-green-500" },
+  { type: "analyze", label: "Analyze", Icon: Search, hover: "hover:text-hue-yellow" },
+  { type: "vacuum", label: "Vacuum", Icon: HardDrive, hover: "hover:text-hue-blue" },
+  { type: "optimize", label: "Optimize", Icon: Wrench, hover: "hover:text-hue-blue" },
+  { type: "reindex", label: "Reindex", Icon: RefreshCw, hover: "hover:text-hue-purple" },
+  { type: "check", label: "Check", Icon: ShieldCheck, hover: "hover:text-hue-green" },
 ];
 
 /**
@@ -290,7 +290,9 @@ export function OperationsTab() {
     switch (state) {
       case "active":
         return (
-          <Badge className="bg-green-500/10 text-green-400 border border-green-500/20 text-[0.625rem]">Active</Badge>
+          <Badge className="bg-hue-green-tint/10 text-hue-green border border-hue-green-tint/20 text-[0.625rem]">
+            Active
+          </Badge>
         );
       case "idle":
         return (
@@ -300,12 +302,14 @@ export function OperationsTab() {
         );
       case "idle in transaction":
         return (
-          <Badge className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-[0.625rem]">
+          <Badge className="bg-hue-yellow-tint/10 text-hue-yellow border border-hue-yellow-tint/20 text-[0.625rem]">
             Idle TX
           </Badge>
         );
       case "idle in transaction (aborted)":
-        return <Badge className="bg-red-500/10 text-red-400 border border-red-500/20 text-[0.625rem]">Abort</Badge>;
+        return (
+          <Badge className="bg-hue-red-tint/10 text-hue-red border border-hue-red-tint/20 text-[0.625rem]">Abort</Badge>
+        );
       default:
         return (
           <Badge variant="outline" className="text-[0.625rem]">
@@ -368,7 +372,7 @@ export function OperationsTab() {
       </div>
 
       {error && !data && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-red-400 text-sm">{error}</div>
+        <div className="rounded-xl border border-danger-tint/20 bg-danger-tint/5 p-4 text-danger text-sm">{error}</div>
       )}
 
       {/* Global Operations — hidden entirely where not one operation has a
@@ -378,7 +382,7 @@ export function OperationsTab() {
       {anyMaintenance && (
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <ShieldAlert className="h-4 w-4 text-blue-400" />
+            <ShieldAlert className="h-4 w-4 text-brand" />
             <h3 className="text-sm font-bold text-fg-secondary">Global Operations</h3>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -386,13 +390,13 @@ export function OperationsTab() {
             {globalAnalyze && (
               <div className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors">
                 <div className="flex items-start justify-between mb-3">
-                  <div className="w-8 h-8 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center">
-                    <Zap className="w-4 h-4 text-yellow-500" />
+                  <div className="w-8 h-8 rounded-lg bg-hue-yellow-tint/10 border border-hue-yellow-tint/20 flex items-center justify-center">
+                    <Zap className="w-4 h-4 text-hue-yellow" />
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-xs border-hairline-strong hover:bg-yellow-500/10 hover:text-yellow-500"
+                    className="h-7 text-xs border-hairline-strong hover:bg-hue-yellow-tint/10 hover:text-hue-yellow"
                     onClick={() => handleRunMaintenance("analyze")}
                     disabled={!!actionLoading || !selectedConnection}
                   >
@@ -411,13 +415,13 @@ export function OperationsTab() {
             {globalVacuum && (
               <div className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors">
                 <div className="flex items-start justify-between mb-3">
-                  <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                    <HardDrive className="w-4 h-4 text-blue-500" />
+                  <div className="w-8 h-8 rounded-lg bg-hue-blue-tint/10 border border-hue-blue-tint/20 flex items-center justify-center">
+                    <HardDrive className="w-4 h-4 text-hue-blue" />
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-xs border-hairline-strong hover:bg-blue-500/10 hover:text-blue-500"
+                    className="h-7 text-xs border-hairline-strong hover:bg-hue-blue-tint/10 hover:text-hue-blue"
                     onClick={() => handleRunMaintenance(vacuumOperation)}
                     disabled={!!actionLoading || !selectedConnection}
                   >
@@ -442,13 +446,13 @@ export function OperationsTab() {
             {globalReindex && (
               <div className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors">
                 <div className="flex items-start justify-between mb-3">
-                  <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
-                    <RefreshCw className="w-4 h-4 text-purple-500" />
+                  <div className="w-8 h-8 rounded-lg bg-hue-purple-tint/10 border border-hue-purple-tint/20 flex items-center justify-center">
+                    <RefreshCw className="w-4 h-4 text-hue-purple" />
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-xs border-hairline-strong hover:bg-purple-500/10 hover:text-purple-500"
+                    className="h-7 text-xs border-hairline-strong hover:bg-hue-purple-tint/10 hover:text-hue-purple"
                     onClick={() => handleRunMaintenance("reindex")}
                     disabled={!!actionLoading || !selectedConnection}
                   >
@@ -464,12 +468,12 @@ export function OperationsTab() {
             )}
 
             {/* Warning Card */}
-            <div className="p-4 rounded-xl border border-red-500/10 bg-red-500/5 flex flex-col justify-center">
-              <div className="flex items-center gap-2 text-red-400 mb-2">
+            <div className="p-4 rounded-xl border border-danger-tint/10 bg-danger-tint/5 flex flex-col justify-center">
+              <div className="flex items-center gap-2 text-danger mb-2">
                 <ShieldAlert className="w-4 h-4" />
                 <span className="text-xs font-bold uppercase tracking-wider">Warning</span>
               </div>
-              <p className="text-xs text-red-400/70 leading-relaxed italic">
+              <p className="text-xs text-danger/70 leading-relaxed italic">
                 These operations can be resource-intensive. Avoid running them during peak traffic hours.
               </p>
             </div>
@@ -484,7 +488,7 @@ export function OperationsTab() {
           <div className="rounded-xl border border-hairline bg-panel">
             <div className="p-4 border-b border-hairline flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Table2 className="w-4 h-4 text-blue-400" />
+                <Table2 className="w-4 h-4 text-brand" />
                 <span className="text-xs font-bold text-fg-secondary">
                   {tablesUnavailable ? "Tables" : `Tables (${tables.length})`}
                 </span>
@@ -528,7 +532,7 @@ export function OperationsTab() {
                           {(table.bloatRatio ?? 0) > 10 && (
                             <Badge
                               variant="outline"
-                              className="text-[0.625rem] text-yellow-400 border-yellow-500/20 h-4"
+                              className="text-[0.625rem] text-hue-yellow border-hue-yellow-tint/20 h-4"
                             >
                               {(table.bloatRatio ?? 0).toFixed(0)}% bloat
                             </Badge>
@@ -572,7 +576,7 @@ export function OperationsTab() {
         <div className="rounded-xl border border-hairline bg-panel">
           <div className="p-4 border-b border-hairline">
             <div className="flex items-center gap-2 mb-3">
-              <Users className="w-4 h-4 text-green-400" />
+              <Users className="w-4 h-4 text-hue-green" />
               <span className="text-xs font-bold text-fg-secondary">
                 {sessionsUnavailable ? "Sessions" : `Sessions (${sessions.length})`}
               </span>
@@ -587,13 +591,13 @@ export function OperationsTab() {
                 <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Idle</div>
               </div>
               <div className="rounded-lg bg-fill p-2 text-center">
-                <div className={`text-lg font-bold tabular-nums ${idleInTxCount > 0 ? "text-yellow-400" : "text-fg"}`}>
+                <div className={`text-lg font-bold tabular-nums ${idleInTxCount > 0 ? "text-hue-yellow" : "text-fg"}`}>
                   {idleInTxCount}
                 </div>
                 <div className="text-[0.625rem] text-fg-muted uppercase font-bold">In TX</div>
               </div>
               <div className="rounded-lg bg-fill p-2 text-center">
-                <div className={`text-lg font-bold tabular-nums ${waitingCount > 0 ? "text-orange-400" : "text-fg"}`}>
+                <div className={`text-lg font-bold tabular-nums ${waitingCount > 0 ? "text-hue-orange" : "text-fg"}`}>
                   {waitingCount}
                 </div>
                 <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Wait</div>
@@ -666,7 +670,7 @@ export function OperationsTab() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-6 w-6 text-fg-subtle hover:text-red-500 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
+                          className="h-6 w-6 text-fg-subtle hover:text-danger hover:bg-danger-tint/10 opacity-0 group-hover:opacity-100 transition-all"
                           onClick={() => handleKillClick(session)}
                           disabled={killingPid === session.pid}
                         >
@@ -711,9 +715,9 @@ export function OperationsTab() {
                 <span className="text-fg-tertiary font-mono truncate">{entry.target}</span>
                 <div className="ml-auto flex items-center gap-2 shrink-0">
                   {entry.result === "success" ? (
-                    <CircleCheck className="w-3 h-3 text-emerald-500" />
+                    <CircleCheck className="w-3 h-3 text-success" />
                   ) : (
-                    <CircleX className="w-3 h-3 text-red-500" />
+                    <CircleX className="w-3 h-3 text-danger" />
                   )}
                   <span className="text-fg-subtle font-mono text-xs">{entry.duration}ms</span>
                 </div>
@@ -745,7 +749,10 @@ export function OperationsTab() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="border-hairline-strong text-fg-tertiary">Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmKill} className="bg-red-600 text-white hover:bg-red-500">
+            <AlertDialogAction
+              onClick={handleConfirmKill}
+              className="bg-danger-solid text-white hover:bg-danger-solid-hover"
+            >
               Terminate
             </AlertDialogAction>
           </AlertDialogFooter>

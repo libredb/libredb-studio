@@ -65,7 +65,7 @@ export function ConnectionSignature() {
         aria-hidden="true"
         className="font-mono text-xl xl:text-2xl tracking-tight text-fg-tertiary select-none"
       >
-        <span key={current.type} className="text-blue-400 animate-in fade-in duration-500">
+        <span key={current.type} className="text-brand animate-in fade-in duration-500">
           {current.scheme}
         </span>
         {current.rest}

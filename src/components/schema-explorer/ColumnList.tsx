@@ -23,7 +23,7 @@ export const ColumnList = React.memo(function ColumnList({ columns, indexes }: C
           key={column.name}
           className="flex items-center gap-2 py-1 px-2 rounded-sm group/col hover:bg-accent/20 cursor-default"
         >
-          {column.isPrimary ? <Key strokeWidth={1.5} className="w-2.5 h-2.5 text-yellow-500/70" /> : nonPrimaryDot}
+          {column.isPrimary ? <Key strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-yellow/70" /> : nonPrimaryDot}
 
           <span className="text-xs text-muted-foreground flex-1 truncate group-hover/col:text-foreground">
             {column.name}
@@ -37,7 +37,7 @@ export const ColumnList = React.memo(function ColumnList({ columns, indexes }: C
       {indexes.length > 0 && (
         <div className="pt-2 pb-1">
           <div className="flex items-center gap-1.5 px-2 mb-1">
-            <Hash strokeWidth={1.5} className="w-2.5 h-2.5 text-purple-500/40" />
+            <Hash strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-purple/40" />
             <span className="text-[0.625rem] font-medium text-muted-foreground">Indexes</span>
           </div>
           {indexes.map((idx) => (

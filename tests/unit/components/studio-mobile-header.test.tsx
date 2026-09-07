@@ -106,7 +106,7 @@ describe("StudioMobileHeader", () => {
   test("renders Database icon in connection trigger", () => {
     const html = renderToStaticMarkup(<StudioMobileHeader {...defaultProps} />);
     expect(html).toContain("lucide-database");
-    expect(html).toContain("text-blue-400");
+    expect(html).toContain("text-brand");
   });
 
   // ── ChevronDown icon in trigger ────────────────────────────────────────
@@ -121,8 +121,8 @@ describe("StudioMobileHeader", () => {
   test("shows Online badge when connection is active", () => {
     const html = renderToStaticMarkup(<StudioMobileHeader {...defaultProps} />);
     expect(html).toContain("Online");
-    expect(html).toContain("text-emerald-500");
-    expect(html).toContain("bg-emerald-500/10");
+    expect(html).toContain("text-success");
+    expect(html).toContain("bg-success-tint/10");
   });
 
   test("hides Online badge when no active connection", () => {
@@ -135,34 +135,48 @@ describe("StudioMobileHeader", () => {
   test("renders monitoring gauge button", () => {
     const html = renderToStaticMarkup(<StudioMobileHeader {...defaultProps} />);
     expect(html).toContain("lucide-gauge");
-    expect(html).toContain("hover:text-purple-400");
+    expect(html).toContain("hover:text-hue-purple");
   });
 
   // ── Connection pulse indicator ─────────────────────────────────────────
 
+  /**
+   * Scoped to the indicator rather than matched against the whole header.
+   *
+   * Under the old class names a substring search was accidentally precise:
+   * `bg-amber-500` appeared nowhere else in this markup. The token does — the
+   * read-only badge carries `bg-warning-tint/10` — so the negative below would have
+   * started answering about a different element the first time that badge rendered
+   * in this fixture, and it would have gone red without anything breaking.
+   */
+  const pulse = (connectionPulse: "healthy" | "degraded" | "error" | null): string | null => {
+    const html = renderToStaticMarkup(<StudioMobileHeader {...defaultProps} connectionPulse={connectionPulse} />);
+    return /<div[^>]*title="Connection: [a-z]+"[^>]*>.*?<\/div>/.exec(html)?.[0] ?? null;
+  };
+
   test("renders healthy pulse indicator", () => {
-    const html = renderToStaticMarkup(<StudioMobileHeader {...defaultProps} connectionPulse="healthy" />);
-    expect(html).toContain("bg-emerald-500");
-    expect(html).toContain("animate-pulse");
-    expect(html).toContain("Connection: healthy");
+    const indicator = pulse("healthy");
+    expect(indicator).toContain('title="Connection: healthy"');
+    expect(indicator).toContain("bg-success-tint");
+    expect(indicator).toContain("animate-pulse");
   });
 
   test("renders degraded pulse indicator", () => {
-    const html = renderToStaticMarkup(<StudioMobileHeader {...defaultProps} connectionPulse="degraded" />);
-    expect(html).toContain("bg-amber-500");
-    expect(html).toContain("Connection: degraded");
+    const indicator = pulse("degraded");
+    expect(indicator).toContain('title="Connection: degraded"');
+    expect(indicator).toContain("bg-warning-tint");
   });
 
   test("renders error pulse indicator", () => {
-    const html = renderToStaticMarkup(<StudioMobileHeader {...defaultProps} connectionPulse="error" />);
-    expect(html).toContain("bg-red-500");
-    expect(html).toContain("Connection: error");
+    const indicator = pulse("error");
+    expect(indicator).toContain('title="Connection: error"');
+    expect(indicator).toContain("bg-danger-tint");
   });
 
   test("hides pulse indicator when null", () => {
-    const html = renderToStaticMarkup(<StudioMobileHeader {...defaultProps} connectionPulse={null} />);
-    expect(html).not.toContain("Connection:");
-    expect(html).not.toContain("bg-amber-500");
+    // The control the three tests above provide: the same query returns the
+    // element for every other value, so `null` here is absence, not a typo.
+    expect(pulse(null)).toBeNull();
   });
 
   // ── User trigger button ────────────────────────────────────────────────
@@ -217,7 +231,7 @@ describe("StudioMobileHeader", () => {
   test("shows RUN button when not executing", () => {
     const html = renderToStaticMarkup(<StudioMobileHeader {...defaultProps} isExecuting={false} />);
     expect(html).toContain("RUN");
-    expect(html).toContain("bg-blue-600");
+    expect(html).toContain("bg-brand-solid");
     expect(html).toContain("lucide-play");
     expect(html).not.toContain("CANCEL");
     expect(html).not.toContain("lucide-square");
@@ -226,7 +240,7 @@ describe("StudioMobileHeader", () => {
   test("shows CANCEL button when executing", () => {
     const html = renderToStaticMarkup(<StudioMobileHeader {...defaultProps} isExecuting={true} />);
     expect(html).toContain("CANCEL");
-    expect(html).toContain("bg-red-600");
+    expect(html).toContain("bg-danger-solid");
     expect(html).toContain("lucide-square");
     expect(html).not.toContain("RUN");
     expect(html).not.toContain("lucide-play");
@@ -278,8 +292,8 @@ describe("StudioMobileHeader", () => {
     expect(errorHtml).not.toContain("animate-pulse");
 
     // Each has unique color
-    expect(healthyHtml).toContain("bg-emerald-500");
-    expect(degradedHtml).toContain("bg-amber-500");
-    expect(errorHtml).toContain("bg-red-500");
+    expect(healthyHtml).toContain("bg-success-tint");
+    expect(degradedHtml).toContain("bg-warning-tint");
+    expect(errorHtml).toContain("bg-danger-tint");
   });
 });

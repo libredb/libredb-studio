@@ -37,6 +37,7 @@ import {
 } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
+import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
@@ -1177,8 +1178,25 @@ export class OracleProvider extends SQLBaseProvider {
       // NOT made optional alongside it: `maxConnections` is a published ceiling where
       // 0 MEANS "no limit published", so 0 and absence are the SAME fact there.
       let maxConnections = 0;
-      let databaseSize = "0 bytes";
-      let databaseSizeBytes = 0;
+      // Left UNDEFINED and spread conditionally too, for the reason the count above is:
+      // `DatabaseOverview.databaseSizeBytes` is optional because absence and zero are
+      // different facts, and a USER_SEGMENTS read that does not answer says nothing
+      // about how much the schema holds. Unlike the count above this is NOT a
+      // privilege story - USER_* views describe the caller's own objects, so §7.2's
+      // V_$ refusal does not gate it, and no failure of this statement has been
+      // measured on a live instance; whatever reaches the catch, the catch cannot
+      // name it. StorageTab.tsx keys its whole breakdown off
+      // `databaseSizeBytes !== undefined`, so the old `0` initialiser drew that
+      // breakdown over a schema it never measured, instead of "No storage size
+      // information available." - and drew it against per-table bytes from
+      // getTableStats(), a separate read that does not share this statement's failure,
+      // so the rows contradicted the total they were shares of. `databaseSize` moves
+      // with the figure for the same reason: both monitoring tabs render that string
+      // as the headline size, so a leftover "0 bytes" printed a confident zero beside
+      // that message. "N/A" while the bytes are unknown is the shape merged for libSQL
+      // (#569) and the search provider (#517). See docs/providers/oracle.md section 7.3.
+      let databaseSize = "N/A";
+      let databaseSizeBytes: number | undefined;
       let tableCount = 0;
       let indexCount = 0;
 
@@ -1237,10 +1255,12 @@ export class OracleProvider extends SQLBaseProvider {
         const sizeRes = await conn.execute(`SELECT SUM(BYTES) AS TOTAL FROM USER_SEGMENTS`, [], {
           outFormat: oracledb.OUT_FORMAT_OBJECT,
         });
-        databaseSizeBytes = Number(((sizeRes.rows || []) as Record<string, unknown>[])[0]?.TOTAL || 0);
-        databaseSize = formatBytes(databaseSizeBytes);
+        const sizeRows = (sizeRes.rows || []) as Record<string, unknown>[];
+        databaseSizeBytes = measuredNullableAggregate(sizeRows[0], "TOTAL");
+        if (databaseSizeBytes !== undefined) databaseSize = formatBytes(databaseSizeBytes);
       } catch {
-        /* ignore */
+        /* The size stays absent, never 0, and `databaseSize` keeps the "N/A" it was
+           initialised with. */
       }
 
       // Table and index counts
@@ -1260,7 +1280,7 @@ export class OracleProvider extends SQLBaseProvider {
         ...(activeConnections === undefined ? {} : { activeConnections }),
         maxConnections,
         databaseSize,
-        databaseSizeBytes,
+        ...(databaseSizeBytes === undefined ? {} : { databaseSizeBytes }),
         tableCount,
         indexCount,
       };

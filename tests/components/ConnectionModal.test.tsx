@@ -207,17 +207,17 @@ function getDefaultForm() {
         value: "postgres",
         label: "PostgreSQL",
         icon: () => React.createElement("span", null, "PG"),
-        color: "text-blue-400",
+        color: "text-hue-blue",
       },
-      { value: "mysql", label: "MySQL", icon: () => React.createElement("span", null, "MY"), color: "text-amber-400" },
-      { value: "sqlite", label: "SQLite", icon: () => React.createElement("span", null, "SL"), color: "text-cyan-400" },
+      { value: "mysql", label: "MySQL", icon: () => React.createElement("span", null, "MY"), color: "text-hue-amber" },
+      { value: "sqlite", label: "SQLite", icon: () => React.createElement("span", null, "SL"), color: "text-hue-cyan" },
       {
         value: "mongodb",
         label: "MongoDB",
         icon: () => React.createElement("span", null, "MG"),
-        color: "text-emerald-400",
+        color: "text-hue-emerald",
       },
-      { value: "redis", label: "Redis", icon: () => React.createElement("span", null, "RD"), color: "text-red-400" },
+      { value: "redis", label: "Redis", icon: () => React.createElement("span", null, "RD"), color: "text-hue-red" },
     ],
     ...mockFormOverrides,
   };
@@ -248,7 +248,7 @@ const mockFields = (type: string): string[] =>
 mock.module("@/lib/db-ui-config", () => ({
   getDBConfig: (type: string) => ({
     icon: () => null,
-    color: "text-blue-400",
+    color: "text-hue-blue",
     label: type,
     defaultPort: type === "mysql" ? "3306" : type === "mongodb" ? "27017" : "5432",
     // Mirrors the real config: the URI-addressed providers offer the toggle.
@@ -257,7 +257,7 @@ mock.module("@/lib/db-ui-config", () => ({
   }),
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
   getDBIcon: () => () => null,
-  getDBColor: () => "text-blue-400",
+  getDBColor: () => "text-hue-blue",
   // `isFileBased` must be mocked now that `DB_UI_CONFIG` is an exported binding (#425 made
   // it one so the login showcase can enumerate it). The real `isFileBased` reads that
   // binding, and this mock replaces it with `{}`, so leaving the function to the real module
@@ -552,7 +552,7 @@ describe("ConnectionModal", () => {
   test("test result warning message renders as neither success nor failure", () => {
     // A degraded save/connect asks the user to act again - it is not a completed
     // action and not a refusal either, so it must not render as the success
-    // (emerald/CircleCheck) or error (red/CircleX) tone.
+    // (success token/CircleCheck) or error (danger token/CircleX) tone.
     mockFormOverrides = {
       testResult: { tone: "warning", message: "Connected, but this server answered no health data." },
     };

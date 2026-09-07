@@ -52,9 +52,9 @@ const ColumnRow = memo(function ColumnRow({ column, isFk, hasSourceHandle, hasTa
 
       <div className="flex items-center gap-2">
         {column.isPrimary ? (
-          <Key strokeWidth={1.5} className="w-2.5 h-2.5 text-yellow-500" />
+          <Key strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-yellow" />
         ) : isFk ? (
-          <Link2 strokeWidth={1.5} className="w-2.5 h-2.5 text-blue-400" />
+          <Link2 strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-blue" />
         ) : column.type.toLowerCase().includes("int") ? (
           <Hash strokeWidth={1.5} className="w-2.5 h-2.5 text-fg-muted" />
         ) : (
@@ -62,14 +62,14 @@ const ColumnRow = memo(function ColumnRow({ column, isFk, hasSourceHandle, hasTa
         )}
         <span
           className={
-            column.isPrimary ? "text-yellow-500/90 font-medium" : isFk ? "text-blue-400/80" : "text-fg-tertiary"
+            column.isPrimary ? "text-hue-yellow/90 font-medium" : isFk ? "text-hue-blue/80" : "text-fg-tertiary"
           }
         >
           {column.name}
         </span>
       </div>
       <div className="flex items-center gap-1">
-        {column.nullable === false && <span className="text-[0.5rem] text-red-500/60">NN</span>}
+        {column.nullable === false && <span className="text-[0.5rem] text-hue-red/60">NN</span>}
         <span className="text-[0.625rem] text-fg-subtle font-mono uppercase">{column.type}</span>
       </div>
     </div>
@@ -103,10 +103,10 @@ export const TableNode = memo(function TableNode({ id, data }: NodeProps<TableFl
   return (
     <div
       className={`bg-raised border rounded-lg overflow-hidden min-w-[200px] shadow-2xl transition-all ${
-        highlighted ? "border-blue-500/60 ring-1 ring-blue-500/30" : "border-hairline-strong"
+        highlighted ? "border-brand-tint/60 ring-1 ring-brand-tint/30" : "border-hairline-strong"
       }`}
     >
-      <div className="relative bg-blue-600/10 px-3 py-2 border-b border-hairline flex items-center gap-2">
+      <div className="relative bg-brand-solid/10 px-3 py-2 border-b border-hairline flex items-center gap-2">
         <Handle
           type="target"
           position={Position.Left}
@@ -121,7 +121,7 @@ export const TableNode = memo(function TableNode({ id, data }: NodeProps<TableFl
           isConnectable={false}
           style={{ opacity: 0, right: -5 }}
         />
-        <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
+        <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-blue" />
         <span className="text-xs font-medium text-fg">{table.name}</span>
         <span className="text-[0.625rem] text-fg-subtle ml-auto">{table.columns?.length || 0} cols</span>
       </div>

@@ -400,6 +400,12 @@ because the drivers disagree — that comparison is a separate measurement, kept
 record of what Bun 1.3.14 did. The 1.3.14 row is not history: an install pinned to an
 older image still behaves that way, which is why the absent-field arm below stays.
 
+**The pin moved on to Bun 1.4.2 on 2026-09-07 and none of the above moved with it.**
+Re-measured that day on Linux x86_64: `bun:sqlite` still reports `sqlite_version()`
+3.53.2 and `dbstat` still answers. So the 1.4.0 rows are the current behaviour as well
+as the record of what 1.4.0 did, and nothing here needed rewriting for the new pin.
+macOS is still unmeasured, on 1.4.2 exactly as on 1.4.0.
+
 **macOS is not covered by the row above.** There `bun:sqlite` dlopens Apple's
 `/usr/lib/libsqlite3.dylib` instead of the amalgamation Bun links on Linux and Windows —
 [oven-sh/bun#16717](https://github.com/oven-sh/bun/issues/16717), open, reproduced by Bun's own

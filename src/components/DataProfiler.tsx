@@ -63,88 +63,6 @@ export function DataProfiler({
     return detectSensitiveColumns(tableSchema.columns.map((c) => c.name));
   }, [tableSchema]);
 
-  useEffect(() => {
-    if (isOpen && tableName && connection) {
-      fetchProfile();
-    }
-    return () => {
-      setProfile(null);
-      setAiSummary("");
-      setError(null);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, tableName]);
-
-  /*
-    Escape closes the modal.
-
-    U4: `/api/db/profile` can fail for any provider (#427 measured it on Redis,
-    where the route answered 400 for every key-prefix row), and the card that
-    failure renders was a dead end - this shell is hand-rolled rather than a
-    `ui/dialog`, so nothing bound Escape for it and the header control was the only
-    exit. Swapping the shell for the Radix primitive would bring Escape along, but
-    it also portals the card out of the subtree `[data-studio-workspace]` styles by
-    descendant selector, and re-homing the embedded surface's chrome is a larger
-    change than a dismiss fix should make.
-
-    Registered on `document`, following CommandPalette's shortcut effect
-    (src/components/CommandPalette.tsx:79): the card takes no focus of its own when
-    it opens, so a handler on the card would never see the key. Bound only while
-    open, so a closed profiler - of which the tree holds one per surface - is not a
-    listener that swallows Escape from whatever else is on screen.
-  */
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      onClose();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
-
-  const fetchProfile = async () => {
-    if (!connection || !tableSchema) return;
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      let data: ProfileData;
-
-      if (onProfile) {
-        // Platform adapter: use callback instead of fetch
-        data = await onProfile({ connectionId: connection.id, tableName });
-      } else {
-        // Default: existing fetch behavior
-        const columns = tableSchema.columns?.map((c) => c.name) || [];
-        const response = await fetch("/api/db/profile", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          // The seed id for a managed connection: the browser's copy has had its
-          // password and connection string stripped, so the object cannot be
-          // resolved to a database from a cold provider cache.
-          body: JSON.stringify({ ...buildConnectionPayload(connection), tableName, columns }),
-        });
-
-        if (!response.ok) {
-          const err = await response.json();
-          throw new Error(err.error || "Profile failed");
-        }
-
-        data = await response.json();
-      }
-
-      setProfile(data);
-
-      // Trigger AI summary
-      fetchAiSummary(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const fetchAiSummary = async (data: ProfileData) => {
     setIsAiLoading(true);
     try {
@@ -193,6 +111,91 @@ export function DataProfiler({
     }
   };
 
+  // Declared above the effect that calls it: react-compiler
+  // (react-hooks/immutability) rejects reading a `const` binding from a position
+  // earlier than its declaration. Pure code motion - no hook order changes.
+  const fetchProfile = async () => {
+    if (!connection || !tableSchema) return;
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      let data: ProfileData;
+
+      if (onProfile) {
+        // Platform adapter: use callback instead of fetch
+        data = await onProfile({ connectionId: connection.id, tableName });
+      } else {
+        // Default: existing fetch behavior
+        const columns = tableSchema.columns?.map((c) => c.name) || [];
+        const response = await fetch("/api/db/profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // The seed id for a managed connection: the browser's copy has had its
+          // password and connection string stripped, so the object cannot be
+          // resolved to a database from a cold provider cache.
+          body: JSON.stringify({ ...buildConnectionPayload(connection), tableName, columns }),
+        });
+
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error || "Profile failed");
+        }
+
+        data = await response.json();
+      }
+
+      setProfile(data);
+
+      // Trigger AI summary
+      fetchAiSummary(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && tableName && connection) {
+      fetchProfile();
+    }
+    return () => {
+      setProfile(null);
+      setAiSummary("");
+      setError(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, tableName]);
+
+  /*
+    Escape closes the modal.
+
+    U4: `/api/db/profile` can fail for any provider (#427 measured it on Redis,
+    where the route answered 400 for every key-prefix row), and the card that
+    failure renders was a dead end - this shell is hand-rolled rather than a
+    `ui/dialog`, so nothing bound Escape for it and the header control was the only
+    exit. Swapping the shell for the Radix primitive would bring Escape along, but
+    it also portals the card out of the subtree `[data-studio-workspace]` styles by
+    descendant selector, and re-homing the embedded surface's chrome is a larger
+    change than a dismiss fix should make.
+
+    Registered on `document`, following CommandPalette's shortcut effect
+    (src/components/CommandPalette.tsx:79): the card takes no focus of its own when
+    it opens, so a handler on the card would never see the key. Bound only while
+    open, so a closed profiler - of which the tree holds one per surface - is not a
+    listener that swallows Escape from whatever else is on screen.
+  */
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
@@ -208,7 +211,7 @@ export function DataProfiler({
         */}
         <div className="relative z-10 shrink-0 flex items-center justify-between gap-2 px-5 py-3 border-b border-hairline">
           <div className="flex min-w-0 items-center gap-2">
-            <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
+            <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0 text-hue-cyan" />
             <span className="text-xs font-medium text-fg shrink-0">Data Profiler</span>
             <span className="text-xs text-fg-muted font-mono truncate">{tableName}</span>
           </div>
@@ -231,7 +234,7 @@ export function DataProfiler({
           )}
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-400 flex items-center gap-2">
+            <div className="bg-danger-tint/10 border border-danger-tint/20 rounded-lg p-3 text-xs text-danger flex items-center gap-2">
               <CircleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
               {error}
             </div>
@@ -267,12 +270,12 @@ export function DataProfiler({
                   <div key={col.name} className="bg-surface rounded-lg p-3 border border-hairline">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <Hash strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
+                        <Hash strokeWidth={1.5} className="w-3 h-3 text-hue-blue" />
                         <span className="text-xs font-medium text-fg">{col.name}</span>
                         {col.type && <span className="text-xs text-fg-muted font-mono">{col.type}</span>}
                         {sensitiveColumnNames.has(col.name) && (
                           <span title="Sensitive column - values masked">
-                            <Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400" />
+                            <Lock strokeWidth={1.5} className="w-3 h-3 text-hue-purple" />
                           </span>
                         )}
                       </div>
@@ -280,7 +283,7 @@ export function DataProfiler({
                     </div>
 
                     {col.error ? (
-                      <p className="text-xs text-amber-400">{col.error}</p>
+                      <p className="text-xs text-warning">{col.error}</p>
                     ) : (
                       <>
                         {/* Null bar */}
@@ -290,10 +293,10 @@ export function DataProfiler({
                               className={cn(
                                 "h-full rounded-full transition-all",
                                 col.nullPercent > 50
-                                  ? "bg-red-500"
+                                  ? "bg-danger-tint"
                                   : col.nullPercent > 20
-                                    ? "bg-amber-500"
-                                    : "bg-emerald-500",
+                                    ? "bg-warning-tint"
+                                    : "bg-success-tint",
                               )}
                               style={{ width: `${100 - col.nullPercent}%` }}
                             />
@@ -302,10 +305,10 @@ export function DataProfiler({
                             className={cn(
                               "text-xs font-mono w-10 text-right",
                               col.nullPercent > 50
-                                ? "text-red-400"
+                                ? "text-danger"
                                 : col.nullPercent > 20
-                                  ? "text-amber-400"
-                                  : "text-emerald-400",
+                                  ? "text-warning"
+                                  : "text-success",
                             )}
                           >
                             {col.nullPercent}% null
@@ -370,11 +373,11 @@ export function DataProfiler({
 
               {/* AI Summary */}
               {(aiSummary || isAiLoading) && (
-                <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-lg p-4">
+                <div className="bg-hue-cyan-tint/5 border border-hue-cyan-tint/10 rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-2">
-                    <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
-                    <span className="text-xs font-medium text-cyan-400">AI Analysis</span>
-                    {isAiLoading && <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin text-cyan-400" />}
+                    <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-cyan" />
+                    <span className="text-xs font-medium text-hue-cyan">AI Analysis</span>
+                    {isAiLoading && <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin text-hue-cyan" />}
                   </div>
                   {aiSummary && (
                     <div className="text-xs text-fg-tertiary leading-relaxed whitespace-pre-wrap">{aiSummary}</div>

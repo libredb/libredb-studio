@@ -57,14 +57,14 @@ export function StatsBar({
     <div className="flex items-center justify-between px-4 py-2 border-b border-hairline bg-surface text-xs text-fg-muted font-mono">
       <div className="flex items-center gap-4">
         <span className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/50" />
+          <span className="w-1.5 h-1.5 rounded-full bg-success-tint/50" />
           {result.rows.length} rows
-          {result.pagination?.hasMore && <span className="text-amber-400 ml-1">(more available)</span>}
+          {result.pagination?.hasMore && <span className="text-warning ml-1">(more available)</span>}
         </span>
         <span className="hidden sm:inline">{result.fields.length} columns</span>
         {activeFilterCount > 0 && (
           <button
-            className="flex items-center gap-1 text-blue-400 text-xs bg-blue-500/10 px-2 py-0.5 rounded hover:bg-blue-500/20 transition-colors"
+            className="flex items-center gap-1 text-brand text-xs bg-brand-tint/10 px-2 py-0.5 rounded hover:bg-brand-tint/20 transition-colors"
             onClick={onClearFilters}
             title="Clear all filters"
           >
@@ -74,10 +74,10 @@ export function StatsBar({
           </button>
         )}
         {result.pagination?.wasLimited && (
-          <span className="text-blue-400 text-xs bg-blue-500/10 px-2 py-0.5 rounded">AUTO-LIMITED</span>
+          <span className="text-brand text-xs bg-brand-tint/10 px-2 py-0.5 rounded">AUTO-LIMITED</span>
         )}
         {warnings.length > 0 && (
-          <span className="text-amber-400 text-xs bg-amber-500/10 px-2 py-0.5 rounded" title={warningDetail}>
+          <span className="text-warning text-xs bg-warning-tint/10 px-2 py-0.5 rounded" title={warningDetail}>
             {warnings.length} WARNING{warnings.length > 1 ? "S" : ""}
             <span className="sr-only">: {warningDetail}</span>
           </span>
@@ -92,7 +92,7 @@ export function StatsBar({
               size="sm"
               className={cn(
                 "h-6 px-2 text-xs font-medium gap-1",
-                effectiveMaskingEnabled ? "text-purple-400 bg-purple-500/10" : "text-fg-muted",
+                effectiveMaskingEnabled ? "text-hue-purple bg-hue-purple-tint/10" : "text-fg-muted",
               )}
               onClick={onToggleMasking}
               title={effectiveMaskingEnabled ? "Show sensitive data" : "Mask sensitive data"}
@@ -101,7 +101,7 @@ export function StatsBar({
               {effectiveMaskingEnabled ? "MASKED" : "MASK"}
             </Button>
           ) : effectiveMaskingEnabled ? (
-            <span className="h-6 px-2 text-xs font-medium text-purple-400 bg-purple-500/10 rounded flex items-center gap-1">
+            <span className="h-6 px-2 text-xs font-medium text-hue-purple bg-hue-purple-tint/10 rounded flex items-center gap-1">
               <Lock strokeWidth={1.5} className="w-3 h-3" />
               {MASKED_LABEL}
             </span>
@@ -109,13 +109,13 @@ export function StatsBar({
 
         {editingEnabled && pendingChanges && pendingChanges.length > 0 && (
           <div className="flex items-center gap-1">
-            <span className="text-xs text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+            <span className="text-xs text-warning bg-warning-tint/10 px-1.5 py-0.5 rounded">
               {pendingChanges.length} change{pendingChanges.length > 1 ? "s" : ""}
             </span>
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 px-1.5 text-xs text-emerald-400 hover:bg-emerald-500/10"
+              className="h-6 px-1.5 text-xs text-success hover:bg-success-tint/10"
               onClick={onApplyChanges}
             >
               <Save strokeWidth={1.5} className="w-3 h-3" />
@@ -123,7 +123,7 @@ export function StatsBar({
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 px-1.5 text-xs text-red-400 hover:bg-red-500/10"
+              className="h-6 px-1.5 text-xs text-danger hover:bg-danger-tint/10"
               onClick={onDiscardChanges}
             >
               <X strokeWidth={1.5} className="w-3 h-3" />
@@ -140,7 +140,7 @@ export function StatsBar({
             onClick={() => onSetViewMode("card")}
             className={cn(
               "p-1.5 rounded transition-all",
-              viewMode === "card" ? "bg-blue-600 text-white" : "text-fg-muted",
+              viewMode === "card" ? "bg-brand-solid text-white" : "text-fg-muted",
             )}
           >
             <LayoutGrid strokeWidth={1.5} className="w-3.5 h-3.5" />
@@ -149,7 +149,7 @@ export function StatsBar({
             onClick={() => onSetViewMode("table")}
             className={cn(
               "p-1.5 rounded transition-all",
-              viewMode === "table" ? "bg-blue-600 text-white" : "text-fg-muted",
+              viewMode === "table" ? "bg-brand-solid text-white" : "text-fg-muted",
             )}
           >
             <Table2 strokeWidth={1.5} className="w-3.5 h-3.5" />

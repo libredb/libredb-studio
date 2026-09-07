@@ -55,8 +55,8 @@ mock.module("@/lib/db-ui-config", () => ({
     const React = require("react");
     return (props: Record<string, unknown>) => React.createElement("span", { ...props, "data-testid": "db-icon" });
   },
-  getDBColor: () => "text-blue-400",
-  getDBConfig: () => ({ icon: () => null, color: "text-blue-400", label: "PostgreSQL", defaultPort: "5432" }),
+  getDBColor: () => "text-hue-blue",
+  getDBConfig: () => ({ icon: () => null, color: "text-hue-blue", label: "PostgreSQL", defaultPort: "5432" }),
 }));
 
 mock.module("next/link", () => ({

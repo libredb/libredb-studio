@@ -60,8 +60,8 @@ describe("ColumnList", () => {
   test("renders Key icon for primary key column", () => {
     const html = renderToStaticMarkup(<ColumnList columns={[primaryColumn]} indexes={[]} />);
 
-    // Key icon has yellow styling
-    expect(html).toContain("text-yellow-500");
+    // Key icon carries the yellow identity hue token
+    expect(html).toContain("text-hue-yellow");
   });
 
   // ── Non-primary column dot ───────────────────────────────────────────────
@@ -71,7 +71,7 @@ describe("ColumnList", () => {
 
     // Non-primary columns get a dot instead of key icon
     expect(html).toContain("rounded-full");
-    expect(html).not.toContain("text-yellow-500");
+    expect(html).not.toContain("text-hue-yellow");
   });
 
   // ── Type display strips parentheses ──────────────────────────────────────
@@ -101,7 +101,7 @@ describe("ColumnList", () => {
     expect(html).toContain("email");
     expect(html).toContain("bio");
     // Should have both key icon and dot
-    expect(html).toContain("text-yellow-500");
+    expect(html).toContain("text-hue-yellow");
     expect(html).toContain("rounded-full");
   });
 
@@ -151,7 +151,7 @@ describe("ColumnList", () => {
 
     // Should render the wrapper div but no column items
     expect(html).toContain("<div");
-    expect(html).not.toContain("text-yellow-500");
+    expect(html).not.toContain("text-hue-yellow");
     expect(html).not.toContain("rounded-full");
   });
 

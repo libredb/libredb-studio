@@ -73,9 +73,9 @@ distinguishable from a broken read at all. `information_schema`, `PROCESSLIST`, 
 FORMAT=JSON`, schema introspection, sizes and row counts are unaffected. Start the server with
 `performance_schema=ON` to get the monitoring figures.
 
-The one metric that goes the other way is `deadlocks`: it comes from `SHOW STATUS LIKE
-'Innodb_deadlocks'`, which MariaDB publishes and MySQL does not, so it is the single performance
-figure a default MariaDB reports and a MySQL server does not.
+The one metric that goes the other way is `deadlocks`: it comes from the `Innodb_deadlocks` row of
+`SHOW STATUS`, which MariaDB publishes and MySQL does not, so it is the single performance figure a
+default MariaDB reports and a MySQL server does not.
 
 ---
 
@@ -101,7 +101,7 @@ that matter most here:
 
 ### Registration
 
-Loaded on demand by the factory ([`factory.ts:67`](../../src/lib/db/factory.ts)):
+Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'mysql': {
@@ -116,7 +116,7 @@ case 'mysql': {
 
 ### 3.1 N+1 schema introspection (no MATERIALIZED CTEs, no two-phase split)
 
-Unlike PostgreSQL, `getSchema()` ([mysql.ts:326](../../src/lib/db/providers/sql/mysql.ts)) runs one
+Unlike PostgreSQL, `getSchema()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)) runs one
 query for the table list and then **three queries per table** (columns, foreign keys, indexes) —
 the classic `1 + N*3` pattern. MySQL also does **not** implement `getSchemaList()` /
 `getSchemaRelations()`, so the two-phase fast-tree loading that PostgreSQL uses is unavailable; the
@@ -202,13 +202,17 @@ prepared protocol** — measured 2026-08-24 on `mysql:latest`, `ER_UNSUPPORTED_P
 `query`, while the other statements above worked either way. So one of this provider's own three
 maintenance actions was unavailable on the engine it is named for.
 
-**The Explain panel is NOT one of the recovered surfaces, and the row above is why.** `EXPLAIN
+**The Explain panel was NOT one of the recovered surfaces, and the row above is why.** `EXPLAIN
 FORMAT=JSON` is a parse error on SingleStore on BOTH protocols — re-measured 2026-08-24 on the same
 image — because SingleStore's grammar is `EXPLAIN JSON <select>`. The protocol was never what stopped
 it there. (An earlier note recorded `EXPLAIN FORMAT=JSON` as succeeding on the text protocol; the
-statement that succeeds is plain `EXPLAIN`.) Reaching a JSON plan on that engine needs a different
-statement, not a different protocol, and [`mysql-json.ts`](../../src/lib/explain/mysql-json.ts) builds
-one statement for every engine on this type id.
+statement that succeeds is plain `EXPLAIN`.) Reaching a plan on that engine needs a different
+STATEMENT, not a different protocol, and that is what
+[§5.5](#55-the-explain-grammar-is-measured-at-connect) now sends: the provider measures which EXPLAIN
+grammar the server accepts when it connects, and an engine that refuses `EXPLAIN FORMAT=JSON` gets the
+plain `EXPLAIN` of [`mysql-text.ts`](../../src/lib/explain/mysql-text.ts) instead of a failing panel.
+The probe statement carries no parameters, so it takes the text protocol like every other statement of
+that shape.
 
 **The read path is safe to move because the two protocols decode to the same JS shapes.** mysql2
 decodes text and binary rows on different code paths, so this was measured rather than assumed:
@@ -237,7 +241,7 @@ against three live servers:
 | `getStorageStats` | ok | **recovered** | **recovered** |
 | `getSchema`, table/index stats, editor query, transactions | ok | ok | ok |
 | maintenance `analyze` / `optimize` / `check` | all three ok (`check` **recovered**) | all three ok (`optimize`, `check` **recovered**) | n/a |
-| Explain (`EXPLAIN FORMAT=JSON`) | ok | still fails — `ER_PARSE_ERROR`, see above | not re-probed |
+| Explain | ok, `EXPLAIN FORMAT=JSON` (the connect probe measures `mysql-json`) | **Explain tab renders the text plan, browser, 2026-09-06**: the probe measures `mysql-text`, the panel sends plain `EXPLAIN`, and one row came back for a constant `SELECT` ([§5.5](#55-the-explain-grammar-is-measured-at-connect)) | **Explain tab renders the text plan, browser, 2026-09-06**: the same probe and statement, 14 rows drawn as a 13-node tree |
 
 One behaviour does differ, and only for a connection that opted into `multipleStatements=true` in its
 connection string: a `;`-separated statement is rejected by the prepared protocol and accepted by the
@@ -256,7 +260,7 @@ already done.
 
 ### 3.5 No server-side query timeout
 
-The pool config ([mysql.ts:114](../../src/lib/db/providers/sql/mysql.ts)) intentionally sets only
+The pool config, built by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)), intentionally sets only
 mysql2-specific options and **does not** translate `ProviderOptions.queryTimeout` into a server-side
 timeout (MySQL has no direct `statement_timeout` pool option like Postgres). A runaway query is not
 auto-killed by the provider; cancellation is explicit via [`cancelQuery()`](#53-query-cancellation).
@@ -264,7 +268,7 @@ auto-killed by the provider; cancellation is explicit via [`cancelQuery()`](#53-
 ### 3.6 Maintenance over all tables when no target
 
 `analyze`/`optimize`/`check` without a target run against **all base tables** in the database
-(`getAllTablesForMaintenance()`, capped at **50** tables, [mysql.ts:577](../../src/lib/db/providers/sql/mysql.ts)),
+(`getAllTablesForMaintenance()`, capped at **50** tables, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)),
 each name quoted via `escapeIdentifier()`. With a target, the single quoted table is used.
 
 ---
@@ -273,7 +277,7 @@ each name quoted via `escapeIdentifier()`. With a target, the single quoted tabl
 
 ### 4.1 Configuration
 
-Two forms (`validate()`, [mysql.ts:66](../../src/lib/db/providers/sql/mysql.ts)). `validate()`
+Two forms (`validate()`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). `validate()`
 requires `host` **and** `database` only when no `connectionString` is given — it does not reject
 supplying both; if both are present the connection string is used (passed to the pool as `uri`).
 
@@ -291,7 +295,7 @@ const b = { id: 'my-1', name: 'App DB', type: 'mysql',
 ### 4.2 Connection pooling
 
 `connect()` builds a `mysql2` pool and validates it by acquiring/releasing one connection. The pool
-options ([mysql.ts:114](../../src/lib/db/providers/sql/mysql.ts)):
+options set by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)):
 
 | mysql2 option | Value | Source |
 |---------------|-------|--------|
@@ -314,7 +318,7 @@ options ([mysql.ts:114](../../src/lib/db/providers/sql/mysql.ts)):
 
 ### 4.3 SSL
 
-`buildSSLConfig()` ([mysql.ts:142](../../src/lib/db/providers/sql/mysql.ts)) — applied **only in the
+`buildSSLConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)) — applied **only in the
 discrete-fields form** (the `connectionString` path bypasses it entirely). Note `disable` returns
 `undefined` (mysql2's "off"), not `false`:
 
@@ -371,7 +375,7 @@ yourself in the SSL / TLS panel.
 
 ### 5.1 Execution
 
-`query(sql, params?, queryId?)` ([mysql.ts:185](../../src/lib/db/providers/sql/mysql.ts)) acquires a
+`query(sql, params?, queryId?)` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)) acquires a
 pooled connection, optionally records its `threadId` for cancellation, runs the statement over the
 protocol its parameters imply ([§3.4](#34-which-wire-protocol-a-statement-takes)), and returns the
 standard envelope with the driver's own values
@@ -447,7 +451,7 @@ UI reports a truncated result set. A trailing `-- note` was always bounded norma
 ### 5.3 Query cancellation
 
 A query issued with a `queryId` records its connection `threadId`. `cancelQuery(queryId)`
-([mysql.ts:215](../../src/lib/db/providers/sql/mysql.ts)) issues `KILL QUERY <threadId>` and returns
+([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)) issues `KILL QUERY <threadId>` and returns
 `true` on success (it does not verify the target was actually mid-query). The killed query surfaces
 to its caller as a `QueryCancelledError` (MySQL emits *"Query execution was interrupted"*, which
 `mapDatabaseError()` classifies as cancellation). Exposed via `POST /api/db/cancel`.
@@ -493,6 +497,45 @@ column declared a type. Its consumers are the results grid's column labels, the 
 matters most for the types whose values arrive as strings: a `DECIMAL` reaches the browser as
 `"19.99"`, so before this the DDL export wrote it as `TEXT`.
 
+### 5.5 The EXPLAIN grammar is measured at connect
+
+`EXPLAIN FORMAT=JSON` is MySQL's own grammar, and this provider serves every MySQL-wire relative.
+Several of them reject it, so the provider asks the server rather than assuming. On `connect()`, on
+the connection the pool check already holds, `probeExplainFormat()`
+([mysql.ts](../../src/lib/db/providers/sql/mysql.ts)) runs `EXPLAIN FORMAT=JSON SELECT 1`, and only if
+that is refused, `EXPLAIN SELECT 1`. The first statement that succeeds names the format
+`getCapabilities()` then declares.
+
+Measured 2026-09-06 through `mysql2` 3.24.2 over the text protocol, one connection per engine:
+
+| Engine (image) | `EXPLAIN FORMAT=JSON SELECT 1` | plain `EXPLAIN SELECT 1` | resulting `explainFormat` |
+|---|---|---|---|
+| MySQL 26.7.0 (`mysql:latest`) | ok, one column `EXPLAIN` carrying the JSON plan | ok | `mysql-json` |
+| MariaDB 12.3.2 (`mariadb:latest`) | ok, one column `EXPLAIN` | ok, 10 tabular columns | `mysql-json` |
+| TiDB 8.5.1 (`pingcap/tidb:v8.5.1`) | errno 1105 `explain format 'json' is not supported now` | ok, columns `id, estRows, task, access object, operator info` | `mysql-text` |
+| StarRocks 3.3.22 (`starrocks/allin1-ubuntu:3.3.22`) | errno 1064, syntax error at column 8 | ok, one column `Explain String` | `mysql-text` |
+| SingleStore (`ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82`) | errno 1064 | ok, one column `EXPLAIN` | `mysql-text` |
+| Apache Doris 4.1.3 (`apache/doris:all-in-one-4.1.3`) | errno 1105 `mismatched input '=' expecting {<EOF>, ';'}(line 1, pos 14)` | ok, one column `Explain String(Nereids Planner)` | `mysql-text` |
+| Vitess 24.0.2 (`vitess/vttestserver:v24.0.2-mysql80`) | ok, one column `EXPLAIN` (the QUOTED `EXPLAIN FORMAT='json'` is errno 1105 there; the unquoted form the probe sends is accepted) | ok, 12 tabular columns | `mysql-json` |
+| OceanBase CE 4.4.2 (`oceanbase/oceanbase-ce:4.4.2-lts`, tenant `test`) | ok, 8 rows in one column `Query Plan`, an ASCII plan | ok, 9 rows in the same column | `mysql-json` |
+| Databend 1.2.925 (`datafuselabs/databend:v1.2.925-patch-11`) | errno 1105, SyntaxException | ok, one column `explain`, 5 rows | `mysql-text` |
+
+**The probe reads success or failure, never the error code.** The family shares no errno for a grammar
+refusal: Doris and TiDB answer 1105 where StarRocks and SingleStore answer 1064, as the table shows. A
+code list would have to enumerate engines, and nothing in `src/lib/db` branches on which product
+answered. Asking the server what its grammar accepts gives the same answer without the enumeration.
+For the same reason a refusal is never a connection failure: it is a fact about the Explain panel, so
+`connect()` resolves normally and the capability carries the result.
+
+**The statement is built on the server, not in the browser.** `POST /api/db/provider-meta` never
+connects: it constructs the provider and reads `getCapabilities()` off it, by design (#457, no socket,
+no SSH tunnel, no SQLite lock contention). A capability that is only knowable once connected therefore
+cannot reach the client that way, so `POST /api/db/query` builds the EXPLAIN statement from the
+CONNECTED provider's `explainFormat` and names that format in its response
+([API_DOCS.md](../API_DOCS.md)). Before `connect()` the provider still answers the static
+`mysql-json`, which is exactly what it answered before the probe existed, so the client's pre-flight
+refusal for a non-SELECT statement is unchanged.
+
 ---
 
 ## 6. Transactions
@@ -503,7 +546,7 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | `pool.getConnection()` + `beginTransaction()`, arms a **5-minute auto-rollback** timer ([mysql.ts:41](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active. |
+| `beginTransaction()` | `pool.getConnection()` + `beginTransaction()`, arms a **5-minute auto-rollback** timer (`TX_TIMEOUT_MS`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active. |
 | `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same non-SELECT envelope as §5.1). Throws if none active. |
 | `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. Throws if none active. |
 | `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks. |
@@ -534,14 +577,26 @@ All monitoring reads from `SHOW STATUS`/`SHOW VARIABLES`, `information_schema`, 
 
 | Method | Primary source | Notes |
 |--------|----------------|-------|
-| `getHealth()` | `SHOW STATUS`, `information_schema.TABLES`/`PROCESSLIST`, `performance_schema` | connections, size (MB), InnoDB buffer hit %, top-5 slow queries, 10 sessions |
-| `getOverview()` | `VERSION()`, `SHOW STATUS/VARIABLES`, `information_schema` | version, uptime, conns, max_conns, size, table/index counts |
-| `getPerformanceMetrics()` | `performance_schema.global_status`, `SHOW STATUS` | cache-hit %, **queries/sec** (`Queries`/`Uptime`), buffer-pool %, deadlocks. Every field optional — see the degradation note below |
+| `getHealth()` | one bare `SHOW STATUS` (`Threads_connected` picked client-side), `information_schema.TABLES`/`PROCESSLIST`, `performance_schema` | connections, size (MB), InnoDB buffer hit %, top-5 slow queries, 10 sessions |
+| `getOverview()` | `VERSION()`, one bare `SHOW STATUS` (`Uptime` and `Threads_connected` out of the same result), `SHOW VARIABLES LIKE 'max_connections'`, `information_schema` | version, uptime, conns, max_conns, size, table/index counts |
+| `getPerformanceMetrics()` | `performance_schema.global_status`, one bare `SHOW STATUS` (`Innodb_deadlocks` picked client-side) | cache-hit %, **queries/sec** (`Queries`/`Uptime`), buffer-pool %, deadlocks. Every field optional — see the degradation note below |
 | `getSlowQueries()` | `performance_schema.events_statements_summary_by_digest` | per-digest stats |
 | `getActiveSessions()` | `information_schema.PROCESSLIST` | pid, user, db, host, command, duration |
 | `getTableStats()` | `information_schema.TABLES` | sizes; bloat **estimated from `DATA_FREE`** (no live/dead tuples, no last-vacuum/analyze) |
 | `getIndexStats()` | `information_schema.STATISTICS` + `mysql.innodb_index_stats` | columns, unique/primary; **`scans` = `CARDINALITY`** (a proxy, not a real scan counter); per-index size, or **absent** — see the index-size note below |
 | `getStorageStats()` | `information_schema.TABLES`, `SHOW BINARY LOGS` | Data size, Binary Logs (if enabled), InnoDB data file (size `N/A`) |
+
+**No monitoring read sends `SHOW STATUS LIKE '…'`, and that is a portability fix, not a style
+choice.** The whole list is read once per method and the wanted variables are picked out of it by
+`Variable_name`, matched case-insensitively, which is how the server-side `LIKE` matched. Measured
+2026-09-06 over mysql2 3.24.2's text protocol against `apache/doris:all-in-one-4.1.3`: `SHOW STATUS
+LIKE 'Uptime'` answers `errno=1105 code=ER_UNKNOWN_ERROR sqlState=HY000`, *mismatched input 'LIKE'
+expecting {&lt;EOF&gt;, ';'}(line 1, pos 12)*, because the Doris grammar has no `LIKE` clause on this
+statement, while a bare `SHOW STATUS` is accepted there. So the Overview and Health panels failed
+outright on Doris for a filter the statement does not need ([#573](https://github.com/libredb/libredb-studio/issues/573)).
+`SHOW VARIABLES LIKE 'max_connections'` **stays**: Doris rejects the clause on `SHOW STATUS` only,
+and the narrowest fix changes only what a grammar refuses. `getOverview()` also costs one round trip
+fewer than before, reading uptime and connections out of the same result set.
 
 **Graceful degradation — note the *different* failure modes:**
 - `getHealth()` slow-queries: the digest rows, or **an empty list** — never a placeholder row, and
@@ -579,9 +634,22 @@ All monitoring reads from `SHOW STATUS`/`SHOW VARIABLES`, `information_schema`, 
   these queries raises `ERROR 1049` — the whole method returns `{}` rather than the `cacheHitRatio:
   99` it once did. This is the rule #448 and #452 settled: ABSENCE and
   ZERO are different inputs, and only the first is invisible to the panels.
-- `deadlocks` reads `Innodb_deadlocks`, which is **MariaDB's** status variable. MySQL does not publish
-  it — measured as an empty `SHOW STATUS` result on both 8.0.46 and 26.7.0 — so the field is absent on
-  MySQL and present on MariaDB. It is the one metric that survives `performance_schema` being off.
+- `deadlocks` reads the `Innodb_deadlocks` row of `SHOW STATUS`, which is **MariaDB's** status
+  variable. MySQL does not publish it: re-measured 2026-09-06, MySQL 26.7.0's 528 status rows carry
+  no such name where MariaDB 12.3.2's 571 do, so the field is absent on MySQL and present on
+  MariaDB. It is the one metric that survives `performance_schema` being off.
+- **An unpublished status variable is an ABSENT reading, never a zero.** A bare `SHOW STATUS` is
+  accepted on every MySQL-wire engine measured 2026-09-06 but the lists differ wildly: MySQL 26.7.0
+  528 rows, MariaDB 12.3.2 571, SingleStore 9.1.1 75, TiDB 8.5.1 13, StarRocks 3.3.22 0 and Apache
+  Doris 4.1.3 0. TiDB publishes `Uptime` and not `Threads_connected`; StarRocks and Doris publish
+  neither. So `activeConnections` is **omitted** from both `HealthInfo` and `DatabaseOverview` when
+  the row is missing, and `startTime` is omitted with `uptime: "N/A"` when `Uptime` is. The panels
+  render *N/A / not published* rather than a confident `0`, which is what they showed before (#477
+  and the docblocks in [`types.ts`](../../src/lib/db/types.ts)). `maxConnections` is the documented
+  exception and stays a required number: `0` there **means** "no limit published", so absence and
+  zero are the same fact. Its old `|| "151"` default reported MySQL's compiled-in ceiling for every
+  server that published none, including StarRocks and Doris, whose `SHOW VARIABLES LIKE
+  'max_connections'` answers 0 rows, while TiDB publishes a real `0`.
 
 ### The slow-query line asked for a column the digest table does not have
 
@@ -731,7 +799,7 @@ that is what MySQL itself calls index bytes.
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([mysql.ts:525](../../src/lib/db/providers/sql/mysql.ts)); targets
+`runMaintenance(type, target?)` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)); targets
 are backtick-quoted via `escapeIdentifier()`:
 
 | Type | With target | Without target |
@@ -813,13 +881,13 @@ gated on the literal `vacuum`, so MySQL's own wording was written and never show
 
 ## 10. Capabilities & labels
 
-### `getCapabilities()` ([mysql.ts:52](../../src/lib/db/providers/sql/mysql.ts))
+### `getCapabilities()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts))
 
 | Capability | Value |
 |------------|-------|
 | `queryLanguage` | `sql` |
-| `supportsExplain` | `true` |
-| `explainFormat` | `mysql-json` |
+| `supportsExplain` | `true` unless the server refuses both EXPLAIN grammars, measured at connect ([§5.5](#55-the-explain-grammar-is-measured-at-connect)) |
+| `explainFormat` | `mysql-json` before `connect()` and on a server that accepts `EXPLAIN FORMAT=JSON`; `mysql-text` on one that accepts only plain `EXPLAIN` (TiDB, StarRocks, SingleStore, Doris); the key is ABSENT when both are refused, and `supportsExplain` is then `false` |
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core MySQL DML |
@@ -846,9 +914,10 @@ are analyze/optimize/check/kill — and because that card was gated on the liter
 wording MySQL could have declared would have been shown (#U9,
 [§9](#where-each-operation-may-be-offered-maintenanceoperationspecs)).
 
-**And one monitoring field** ([mysql.ts:346](../../src/lib/db/providers/sql/mysql.ts)):
+**And one monitoring field**, `slowQueriesEmptyState`, returned by `getLabels()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)):
 `slowQueriesEmptyState` → *"Query stats come from
-performance_schema.events_statements_summary_by_digest - enable the Performance Schema to see them."*
+performance_schema.events_statements_summary_by_digest for this database. An empty list means it
+recorded nothing - the Performance Schema is off, or nothing has run against this database yet."*
 The monitoring Queries panel's empty state was hardcoded to PostgreSQL's `pg_stat_statements` advice
 on every engine (#463) — an extension MySQL does not have under any name, while the
 digest table this provider actually reads ([§8](#8-monitoring--health)) is a server switch a DBA can

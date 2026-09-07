@@ -35,8 +35,8 @@ export function StudioDesktopHeader({
   return (
     <header className="hidden md:flex h-14 border-b border-hairline items-center justify-between px-4 bg-surface/80 backdrop-blur-xl sticky top-0 z-30">
       <div className="flex items-center gap-3">
-        <div className="p-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
-          <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
+        <div className="p-1.5 rounded-lg bg-brand-tint/10 border border-brand-tint/20">
+          <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-brand" />
         </div>
         <div>
           <h1 className="text-xs font-medium text-fg truncate max-w-[120px]">
@@ -53,7 +53,7 @@ export function StudioDesktopHeader({
               {!activeConnection.environment && (
                 <span>
                   {" "}
-                  • <span className="text-emerald-500/80">Online</span>
+                  • <span className="text-success/80">Online</span>
                 </span>
               )}
             </p>
@@ -70,9 +70,9 @@ export function StudioDesktopHeader({
             <div
               className={cn(
                 "w-2 h-2 rounded-full",
-                connectionPulse === "healthy" && "bg-emerald-500 animate-pulse",
-                connectionPulse === "degraded" && "bg-amber-500",
-                connectionPulse === "error" && "bg-red-500",
+                connectionPulse === "healthy" && "bg-success-tint animate-pulse",
+                connectionPulse === "degraded" && "bg-warning-tint",
+                connectionPulse === "error" && "bg-danger-tint",
               )}
             />
             <span className="text-xs font-medium text-fg-muted">
@@ -84,7 +84,7 @@ export function StudioDesktopHeader({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 px-3 text-xs font-medium gap-2 text-fg-muted hover:text-purple-400 hover:bg-purple-500/10"
+          className="h-7 px-3 text-xs font-medium gap-2 text-fg-muted hover:text-hue-purple hover:bg-hue-purple-tint/10"
           onClick={() => router.push("/monitoring")}
         >
           <Gauge strokeWidth={1.5} className="w-3 h-3" /> Monitoring
@@ -94,7 +94,7 @@ export function StudioDesktopHeader({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="h-8 gap-2 hover:bg-fill px-2">
-                <User strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
+                <User strokeWidth={1.5} className="w-3 h-3 text-brand" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56 bg-raised border-hairline-strong text-fg-secondary">
@@ -107,7 +107,7 @@ export function StudioDesktopHeader({
                 <Gauge strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Monitoring
               </DropdownMenuItem>
               <div className="border-t border-hairline my-1" />
-              <DropdownMenuItem onClick={onLogout} className="text-red-400 cursor-pointer">
+              <DropdownMenuItem onClick={onLogout} className="text-danger cursor-pointer">
                 <LogOut strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Logout
               </DropdownMenuItem>
             </DropdownMenuContent>

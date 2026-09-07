@@ -160,7 +160,7 @@ export function MaskingSettings() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-xs">
-            <Shield className="h-5 w-5 text-purple-400" />
+            <Shield className="h-5 w-5 text-hue-purple" />
             Data Masking Settings
           </CardTitle>
         </CardHeader>
@@ -288,7 +288,7 @@ export function MaskingSettings() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-7 w-7 p-0 text-red-400 hover:text-red-300"
+                          className="h-7 w-7 p-0 text-danger hover:text-danger-bright"
                           onClick={() => deletePattern(pattern.id)}
                         >
                           <Trash2 strokeWidth={1.5} className="w-3 h-3" />
@@ -313,11 +313,11 @@ export function MaskingSettings() {
                   const masked = getPreviewMasked(pattern.maskType, pattern.customMask);
                   return (
                     <div key={pattern.id} className="flex items-center gap-2 text-xs font-mono">
-                      <Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400 shrink-0" />
+                      <Lock strokeWidth={1.5} className="w-3 h-3 text-hue-purple shrink-0" />
                       <span className="text-fg-muted w-24 truncate">{pattern.name}:</span>
                       <span className="text-fg-subtle line-through">{preview.sample}</span>
                       <span className="text-fg-tertiary mx-1">&rarr;</span>
-                      <span className="text-purple-300">{masked}</span>
+                      <span className="text-hue-purple-alt">{masked}</span>
                     </div>
                   );
                 })}
@@ -392,7 +392,7 @@ export function MaskingSettings() {
               </label>
               <textarea
                 id="masking-column-patterns"
-                className="w-full h-32 bg-surface border border-hairline-strong rounded-md px-3 py-2 text-xs font-mono text-fg focus:outline-none focus:ring-1 focus:ring-purple-500/50 resize-none"
+                className="w-full h-32 bg-surface border border-hairline-strong rounded-md px-3 py-2 text-xs font-mono text-fg focus:outline-none focus:ring-1 focus:ring-hue-purple-tint/50 resize-none"
                 value={editColumnPatterns}
                 onChange={(e) => setEditColumnPatterns(e.target.value)}
                 placeholder={"email\ne_mail\nuser_email"}
@@ -404,7 +404,7 @@ export function MaskingSettings() {
             {/* Preview */}
             <div className="rounded-lg border border-hairline bg-surface p-3">
               <p className="text-xs text-fg-muted mb-1">Preview:</p>
-              <p className="text-xs font-mono text-purple-300">
+              <p className="text-xs font-mono text-hue-purple-alt">
                 {getPreviewMasked(editMaskType, editMaskType === "custom" ? editCustomMask : undefined)}
               </p>
             </div>

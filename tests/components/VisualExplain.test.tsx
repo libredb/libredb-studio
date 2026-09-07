@@ -482,13 +482,13 @@ describe("VisualExplain", () => {
       expect(queryByText("inline code")).not.toBeNull();
     });
 
-    // One SQL fenced block (blue styling) and one non-SQL "text" fenced block (zinc styling).
+    // One SQL fenced block (accent styling) and one non-SQL "text" fenced block (neutral fill styling).
     const pres = container.querySelectorAll("pre");
     expect(pres.length).toBe(2);
 
     const sqlPre = Array.from(pres).find((pre) => pre.textContent?.includes("SELECT * FROM users;"));
     expect(sqlPre).not.toBeUndefined();
-    expect(sqlPre!.className).toContain("bg-blue-500/5");
+    expect(sqlPre!.className).toContain("bg-brand-tint/5");
 
     const nonSqlPre = Array.from(pres).find((pre) => pre.textContent?.includes("plain block content"));
     expect(nonSqlPre).not.toBeUndefined();
@@ -708,17 +708,17 @@ describe("VisualExplain", () => {
       },
     ];
     const { container } = render(<VisualExplain plan={joinPlan} />);
-    // Layers icon for Join has text-purple-400 class
-    const purpleIcon = container.querySelector(".text-purple-400");
+    // Layers icon for Join carries the purple identity hue token
+    const purpleIcon = container.querySelector(".text-hue-purple");
     expect(purpleIcon).not.toBeNull();
   });
 
   test("NodeIcon renders ArrowDown icon for Sort type", () => {
     // sortPlan already has Node Type = 'Sort'
     const { container } = render(<VisualExplain plan={sortPlan} />);
-    // Sort nodes use ArrowDown icon with text-amber-400
-    // Seq Scan also uses amber-400, but sortPlan has 'Sort' not 'Seq Scan'
-    const amberIcon = container.querySelector(".text-amber-400");
+    // Sort nodes use ArrowDown icon with the amber identity hue token
+    // Seq Scan also uses text-hue-amber, but sortPlan has 'Sort' not 'Seq Scan'
+    const amberIcon = container.querySelector(".text-hue-amber");
     expect(amberIcon).not.toBeNull();
   });
 
@@ -737,8 +737,8 @@ describe("VisualExplain", () => {
       },
     ];
     const { container } = render(<VisualExplain plan={aggPlan} />);
-    // Aggregate uses Zap icon with text-pink-400
-    const pinkIcon = container.querySelector(".text-pink-400");
+    // Aggregate uses Zap icon with the pink identity hue token
+    const pinkIcon = container.querySelector(".text-hue-pink");
     expect(pinkIcon).not.toBeNull();
   });
 
@@ -757,8 +757,8 @@ describe("VisualExplain", () => {
       },
     ];
     const { container } = render(<VisualExplain plan={hashPlan} />);
-    // Hash uses HardDrive icon with text-cyan-400
-    const cyanIcon = container.querySelector(".text-cyan-400");
+    // Hash uses HardDrive icon with the cyan identity hue token
+    const cyanIcon = container.querySelector(".text-hue-cyan");
     expect(cyanIcon).not.toBeNull();
   });
 
@@ -909,6 +909,39 @@ describe("tree render model (sqlite-queryplan)", () => {
     );
     fireEvent.click(queryByText("raw")!);
     expect(getByText(/"detail": "SCAN employee"/)).toBeTruthy();
+  });
+
+  test("a tree node's detail is shown, so a text plan's attributes are not dropped", () => {
+    // CockroachDB v26.2.5 prints a plan node's attributes on their own lines under it
+    // (`table: orders@orders_pkey`, `spans: FULL SCAN`), and `postgres-text` folds them
+    // into the node they describe rather than nesting an operator under one of them.
+    // A renderer that shows only the label would throw away most of that plan - and
+    // TiDB's extra EXPLAIN columns with it, which is the same field (#597).
+    const withDetail = {
+      kind: "tree" as const,
+      root: {
+        label: "EXPLAIN",
+        children: [{ label: "\u2022 scan", detail: "table: orders@orders_pkey, spans: FULL SCAN", children: [] }],
+      },
+      raw: "\u2022 scan",
+    };
+    const { getByText } = render(<VisualExplain plan={withDetail} query="SELECT 1" databaseType="postgres" />);
+    expect(getByText("table: orders@orders_pkey, spans: FULL SCAN")).toBeTruthy();
+  });
+
+  test("raw tab prints a string raw plan verbatim (mysql-text)", () => {
+    // mysql-text stores the plan as the engine printed it, not as JSON: measured
+    // 2026-09-06, `EXPLAIN SELECT 1` on StarRocks 3.3.22 answers one column of plain
+    // text. JSON.stringify would show it wrapped in quotes with escaped newlines.
+    const textPlan = {
+      kind: "tree" as const,
+      root: { label: "EXPLAIN", children: [{ label: "PLAN FRAGMENT 0", children: [] }] },
+      raw: "PLAN FRAGMENT 0\n  RESULT SINK",
+    };
+    const { getByText, queryByText } = render(<VisualExplain plan={textPlan} query="SELECT 1" databaseType="mysql" />);
+    fireEvent.click(queryByText("raw")!);
+    const pre = getByText(/PLAN FRAGMENT 0/);
+    expect(pre.textContent).toBe("PLAN FRAGMENT 0\n  RESULT SINK");
   });
 
   test("legacy array prop still renders the postgres pipeline", () => {

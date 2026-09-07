@@ -21,38 +21,38 @@ describe("formatCellValue parity", () => {
   test("object compact-stringifies on a single line", () => {
     expect(formatCellValue({ a: 1, b: "x" })).toEqual({
       display: '{"a":1,"b":"x"}',
-      className: "text-blue-400/80 italic font-light",
+      className: "text-hue-blue/80 italic font-light",
     });
   });
 
   test("array compact-stringifies on a single line", () => {
     expect(formatCellValue([1, 2, 3])).toEqual({
       display: "[1,2,3]",
-      className: "text-blue-400/80 italic font-light",
+      className: "text-hue-blue/80 italic font-light",
     });
   });
 
   test("number renders via String()", () => {
-    expect(formatCellValue(42)).toEqual({ display: "42", className: "text-amber-500/90 font-medium" });
-    expect(formatCellValue(0)).toEqual({ display: "0", className: "text-amber-500/90 font-medium" });
-    expect(formatCellValue(-1.5)).toEqual({ display: "-1.5", className: "text-amber-500/90 font-medium" });
+    expect(formatCellValue(42)).toEqual({ display: "42", className: "text-hue-amber/90 font-medium" });
+    expect(formatCellValue(0)).toEqual({ display: "0", className: "text-hue-amber/90 font-medium" });
+    expect(formatCellValue(-1.5)).toEqual({ display: "-1.5", className: "text-hue-amber/90 font-medium" });
   });
 
-  test("boolean true is emerald, false is rose", () => {
-    expect(formatCellValue(true)).toEqual({ display: "true", className: "text-emerald-500/90" });
-    expect(formatCellValue(false)).toEqual({ display: "false", className: "text-rose-500/90" });
+  test("boolean true takes the emerald hue token, false the rose one", () => {
+    expect(formatCellValue(true)).toEqual({ display: "true", className: "text-hue-emerald/90" });
+    expect(formatCellValue(false)).toEqual({ display: "false", className: "text-hue-rose/90" });
   });
 
-  test("truthy status strings are emerald, case preserved", () => {
-    expect(formatCellValue("true")).toEqual({ display: "true", className: "text-emerald-500/90" });
-    expect(formatCellValue("ACTIVE")).toEqual({ display: "ACTIVE", className: "text-emerald-500/90" });
-    expect(formatCellValue("Enabled")).toEqual({ display: "Enabled", className: "text-emerald-500/90" });
+  test("truthy status strings take the emerald hue token, case preserved", () => {
+    expect(formatCellValue("true")).toEqual({ display: "true", className: "text-hue-emerald/90" });
+    expect(formatCellValue("ACTIVE")).toEqual({ display: "ACTIVE", className: "text-hue-emerald/90" });
+    expect(formatCellValue("Enabled")).toEqual({ display: "Enabled", className: "text-hue-emerald/90" });
   });
 
-  test("falsy status strings are rose, case preserved", () => {
-    expect(formatCellValue("false")).toEqual({ display: "false", className: "text-rose-500/90" });
-    expect(formatCellValue("INACTIVE")).toEqual({ display: "INACTIVE", className: "text-rose-500/90" });
-    expect(formatCellValue("Disabled")).toEqual({ display: "Disabled", className: "text-rose-500/90" });
+  test("falsy status strings take the rose hue token, case preserved", () => {
+    expect(formatCellValue("false")).toEqual({ display: "false", className: "text-hue-rose/90" });
+    expect(formatCellValue("INACTIVE")).toEqual({ display: "INACTIVE", className: "text-hue-rose/90" });
+    expect(formatCellValue("Disabled")).toEqual({ display: "Disabled", className: "text-hue-rose/90" });
   });
 
   test("plain string renders as-is", () => {

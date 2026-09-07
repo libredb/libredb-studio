@@ -68,9 +68,9 @@ export interface SafetyStripProps {
  * scans every rendered `class` attribute to keep it that way.
  */
 const TONE_PILL: Readonly<Record<AgentPostureTone, string>> = Object.freeze({
-  safe: "text-emerald-400/90 bg-emerald-500/10",
-  reads: "text-blue-300 bg-blue-500/10",
-  widened: "text-amber-400 bg-amber-500/10",
+  safe: "text-success/90 bg-success-tint/10",
+  reads: "text-brand-bright bg-brand-tint/10",
+  widened: "text-warning bg-warning-tint/10",
   blocked: "text-fg-muted bg-fill",
 } satisfies Record<AgentPostureTone, string>);
 

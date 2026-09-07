@@ -78,7 +78,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: "1.4.0"
+          bun-version: "1.4.2"
 
       - name: Install dependencies
         uses: ./.github/actions/bun-install
@@ -182,7 +182,7 @@ jobs:
           flatpak-builder-lint manifest build/flatpak/org.libredb.Studio.yml
 
       - name: Build the Flatpak
-        uses: flatpak/flatpak-github-actions/flatpak-builder@401fe28a8384095fc1531b9d320b292f0ee45adb # v6
+        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6
         with:
           manifest-path: build/flatpak/org.libredb.Studio.local.yml
           bundle: libredb-studio-${{ matrix.arch }}.flatpak

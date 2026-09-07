@@ -34,7 +34,7 @@ channel count.
 
 ## Coverage snapshot
 
-**35 channels · 27 live · 7 pending · 1 deprecated**
+**36 channels · 27 live · 8 pending · 1 deprecated**
 
 Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 4 · Kubernetes 3 · Cloud 11**
 
@@ -47,7 +47,7 @@ Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 4 · K
 | OS / desktop packages | 3 | 0 | 0 |
 | PaaS catalogs (listed) | 8 | 4 | 0 |
 | Deploy recipes | 3 | 0 | 0 |
-| Cloud marketplaces | 2 | 2 | 0 |
+| Cloud marketplaces | 2 | 3 | 0 |
 
 <!-- END:CHANNEL-SCORECARD -->
 
@@ -90,6 +90,7 @@ Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 4 · K
 | [Render Blueprint](https://github.com/libredb/libredb-studio/blob/main/render.yaml) | Deploy recipes | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [DigitalOcean Marketplace](https://marketplace.digitalocean.com/apps/libredb-studio) | Cloud marketplaces | Cloud | live | Manual, on demand | [deploy/digitalocean/README.md](../deploy/digitalocean/README.md) |
 | [Google Cloud Marketplace](https://console.cloud.google.com/marketplace/product/libredb-public/libredb-studio) | Cloud marketplaces | Kubernetes, Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| AWS Marketplace | Cloud marketplaces | Cloud | pending | Manual, on demand | [deploy/aws/README.md](../deploy/aws/README.md) |
 | Azure Marketplace | Cloud marketplaces | Cloud | pending | Manual, on demand | [deploy/azure/README.md](../deploy/azure/README.md) |
 | [Koyeb One-Click Apps catalog](https://www.koyeb.com/deploy) | Cloud marketplaces | Cloud | pending | Manual, on demand | [deploy/koyeb/CATALOG_SUBMISSION.md](../deploy/koyeb/CATALOG_SUBMISSION.md) |
 
@@ -101,10 +102,9 @@ hand. To propose a new channel, add an entry with a `category` and a `platforms`
 list, then run `bun run distribution:matrix`. Freshness is enforced on pull
 requests with `bun run distribution:matrix --check`.
 
-Not counted here, and why. **AWS Marketplace** has a registered seller account
-but no submitted product, so there is nothing to track yet. **Alibaba Cloud** is
-not being pursued. **Coolify** declined the submission: its maintainers accept
-service templates only from projects above 1000 GitHub stars. **Dokku** has no
-application catalog to apply to. A row appears above the moment a submission
-exists — `pending` while it is open or under review, `live` once the product can
-be installed from that channel.
+Not counted here, and why. **Alibaba Cloud** is not being pursued. **Coolify**
+declined the submission: its maintainers accept service templates only from
+projects above 1000 GitHub stars. **Dokku** has no application catalog to apply
+to. A row appears above as soon as there is something to track — a submission,
+or a descriptor in this repo that a workflow reads — and stays `pending` until
+the product can be installed from that channel, when it becomes `live`.

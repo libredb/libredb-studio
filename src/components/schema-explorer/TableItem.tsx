@@ -108,11 +108,11 @@ function renderMenuItems({
   return (
     <>
       <Item onClick={() => callbacks.onTableClick?.(table.name)}>
-        <Play strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-green-500" />
+        <Play strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-green" />
         {labels?.selectAction || "Select Top 50"}
       </Item>
       <Item onClick={() => callbacks.onGenerateSelect?.(table.name)}>
-        <Funnel strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-blue-500" />
+        <Funnel strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
         {labels?.generateAction || "Generate Query"}
       </Item>
       <Item onClick={() => copyToClipboard(table.name, `${labels?.entityName || "Table"} name`)}>
@@ -124,17 +124,17 @@ function renderMenuItems({
       <Separator />
       {rowsAreAddressable && (
         <Item onClick={() => callbacks.onProfileTable?.(table.name)}>
-          <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-cyan-500" />
+          <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-cyan" />
           {"Profile Table"}
         </Item>
       )}
       <Item onClick={() => callbacks.onGenerateCode?.(table.name)}>
-        <Code strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-purple-500" />
+        <Code strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-purple" />
         {"Generate Code"}
       </Item>
       {rowsAreAddressable && (
         <Item onClick={() => callbacks.onGenerateTestData?.(table.name)}>
-          <WandSparkles strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-amber-500" />
+          <WandSparkles strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-amber" />
           {"Generate Test Data"}
         </Item>
       )}
@@ -173,13 +173,13 @@ function renderMenuItems({
           <Separator />
           {analyzeControl.offered && (
             <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>
-              <Search strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-amber-500" />
+              <Search strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-amber" />
               {analyzeControl.label ?? labels?.analyzeAction ?? "Analyze Table"}
             </Item>
           )}
           {vacuumControl.offered && (
             <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>
-              <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-blue-400" />
+              <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
               {vacuumControl.label ?? labels?.vacuumAction ?? "Vacuum Table"}
             </Item>
           )}
@@ -246,7 +246,7 @@ export const TableItem = React.memo(function TableItem({
               <TableIcon
                 className={cn(
                   "w-3.5 h-3.5 shrink-0 transition-colors",
-                  isExpanded ? "text-blue-400" : "text-muted-foreground group-hover:text-foreground",
+                  isExpanded ? "text-brand" : "text-muted-foreground group-hover:text-foreground",
                 )}
               />
 

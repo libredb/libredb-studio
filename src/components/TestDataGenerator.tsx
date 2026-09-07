@@ -241,7 +241,7 @@ export function TestDataGenerator({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-hairline">
           <div className="flex items-center gap-2">
-            <WandSparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-amber-400" />
+            <WandSparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-amber" />
             <span className="text-xs font-medium text-fg">Test Data Generator</span>
             <span className="text-xs text-fg-muted font-mono">{tableName}</span>
           </div>
@@ -262,7 +262,7 @@ export function TestDataGenerator({
                   className={cn(
                     "px-2 py-0.5 rounded text-xs font-medium transition-colors",
                     rowCount === n
-                      ? "bg-amber-500/20 text-amber-400 border border-amber-500/20"
+                      ? "bg-hue-amber-tint/20 text-hue-amber border border-hue-amber-tint/20"
                       : "text-fg-muted hover:text-fg-secondary hover:bg-fill",
                   )}
                 >
@@ -290,7 +290,7 @@ export function TestDataGenerator({
                   "text-xs px-1.5 py-0.5 rounded font-mono",
                   col.faker.generator === "autoIncrement"
                     ? "bg-overlay text-fg-subtle line-through"
-                    : "bg-amber-500/10 text-amber-400/80",
+                    : "bg-hue-amber-tint/10 text-hue-amber/80",
                 )}
                 title={`${col.name} → ${col.faker.generator} (e.g., ${col.faker.example})`}
               >
@@ -302,7 +302,7 @@ export function TestDataGenerator({
 
         {/* Preview */}
         <div className="flex-1 overflow-auto relative">
-          <pre className="p-5 text-xs font-mono text-blue-300 whitespace-pre-wrap leading-relaxed">
+          <pre className="p-5 text-xs font-mono text-hue-blue-alt whitespace-pre-wrap leading-relaxed">
             {generatedQuery}
           </pre>
         </div>
@@ -329,7 +329,7 @@ export function TestDataGenerator({
                 onExecuteQuery(generatedQuery);
                 onClose();
               }}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium transition-colors"
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-warning-solid hover:bg-warning-solid-hover text-white text-xs font-medium transition-colors"
             >
               <Play strokeWidth={1.5} className="w-3 h-3 fill-current" /> Execute
             </button>

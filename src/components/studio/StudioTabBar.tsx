@@ -66,7 +66,7 @@ export function StudioTabBar({
           className={cn(
             "h-8 flex items-center px-3 gap-2 rounded-t-md transition-all cursor-pointer min-w-[120px] max-w-[200px] group relative border-t-2",
             activeTabId === tab.id
-              ? "bg-overlay text-fg border-blue-500"
+              ? "bg-overlay text-fg border-brand-tint"
               : "text-fg-muted hover:bg-fill border-transparent",
           )}
         >
@@ -102,7 +102,7 @@ export function StudioTabBar({
                   }, 0);
                 }}
                 onClick={(e) => e.stopPropagation()}
-                className="text-xs font-medium bg-transparent border-b border-blue-500 outline-none w-full text-fg"
+                className="text-xs font-medium bg-transparent border-b border-brand-tint outline-none w-full text-fg"
               />
             </>
           ) : (

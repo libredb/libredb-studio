@@ -1,14 +1,14 @@
 /**
  * The accuracy gate for the engine COUNT in outward-facing catalog copy (#518).
  *
- * Nine files outside `src/` name the engine set by hand, and until this test nothing
+ * Eleven files outside `src/` name the engine set by hand, and until this test nothing
  * counted them: `scripts/readme-check.mjs` locates the engine table in the three
  * READMEs and `chart:check` pins a version across files, but a storefront listing was
  * only ever corrected by somebody noticing. Measured on the DuckDB registration branch,
- * every one of these nine was a full engine behind two weeks after libSQL shipped
+ * every one of the original nine was a full engine behind two weeks after libSQL shipped
  * (#511), and DuckDB was the second engine in a row to walk into it.
  *
- * The rule is not "every file names every engine" - three of the nine deliberately
+ * The rule is not "every file names every engine" - several of them deliberately
  * abridge, because a numeral there goes stale the day the next engine lands (#445). It
  * is:
  *
@@ -29,7 +29,7 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 const REPO_ROOT = join(import.meta.dir, "../../..");
 
 /**
- * The nine files that publish the engine set outward. Each is copy somebody else's
+ * The eleven files that publish the engine set outward. Each is copy somebody else's
  * catalog renders, so nobody in this repo reads it again once it is submitted.
  *
  * `from`/`to` cut away editorial matter, and only `CATALOG_LISTING.md` has any: its
@@ -47,6 +47,8 @@ const COPY_FILES: ReadonlyArray<{ path: string; from?: string; to?: string }> = 
   { path: "deploy/railway/template.json" },
   { path: "deploy/azure/listing/listing-fields.md" },
   { path: "deploy/azure/listing/description.html" },
+  { path: "deploy/aws/listing/listing-fields.md" },
+  { path: "deploy/aws/listing/description.md" },
   { path: "deploy/rancher/CATALOG_LISTING.md", from: "## Short description", to: "## Outstanding corrections" },
 ];
 
@@ -191,7 +193,8 @@ describe("outward-facing catalog copy counts the engines the registry ships", ()
       );
     });
 
-    // Nine numerals and seven counted lists on this revision.
+    // Eleven numerals and seven counted lists on this revision - the two AWS
+    // listing files abridge, so they add numerals without adding counted lists.
     expect(segments.length).toBeGreaterThanOrEqual(8);
     const counted = segments.filter(
       (segment) => !ABRIDGED_RE.test(segment) && ENGINE_NAMES.filter(({ name }) => segment.includes(name)).length >= 2,

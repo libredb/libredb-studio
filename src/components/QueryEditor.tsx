@@ -546,7 +546,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               size="sm"
               // `text-white` is the label ON a blue button, not the top of the
               // text ramp: it must stay white in the light theme too.
-              className="h-7 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 hover:text-white gap-2 shadow-[0_0_10px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
+              className="h-7 text-xs font-medium text-white bg-brand-solid hover:bg-brand-solid-hover hover:text-white gap-2 shadow-[0_0_10px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
               onClick={handleExecute}
             >
               <Play strokeWidth={1.5} className="w-3 h-3 fill-current" /> Run Sel
@@ -577,7 +577,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs font-medium text-fg-muted hover:text-red-400 gap-2"
+            className="h-7 text-xs font-medium text-fg-muted hover:text-danger gap-2"
             onClick={handleClear}
           >
             <Trash2 strokeWidth={1.5} className="w-3 h-3" /> Clear
@@ -605,7 +605,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 text-xs font-medium text-amber-500 hover:text-amber-400 gap-2"
+                // The base absorbed this button's old hover value when the -500 text
+                // drift collapsed amber-500 onto the token, so the hover has to step
+                // up to keep any feedback of its own (#402).
+                className="h-7 text-xs font-medium text-warning hover:text-warning-bright gap-2"
                 onClick={onExplain}
               >
                 <Zap strokeWidth={1.5} className="w-3 h-3" /> Explain

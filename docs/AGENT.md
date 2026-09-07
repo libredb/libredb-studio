@@ -20,20 +20,26 @@ Three properties frame everything below, and each of them is load-bearing rather
 - **It is standalone-only.** The embedded `@libredb/studio` package carries no agent surface, no
   agent type and none of the runtime's dependencies. See
   [Package boundary](#package-boundary).
-- **It can only read.** Every database reach goes through the agent's own audited operation pipeline
-  (`executeAuditedOperation`, `src/lib/db/operations/execution.ts:129`), under a read-only execution
-  profile and the agent's own frozen execution policy. The agent cannot exceed what that policy
+- **It can only read.** Every database reach goes through the agent's own audited operation pipeline,
+  `executeAuditedOperation()` ([`execution.ts`](../src/lib/db/operations/execution.ts)), under a
+  read-only execution profile and the agent's own frozen execution policy. The agent cannot exceed what that policy
   already allows, and it has no second path to a driver. The pipeline is **not** shared with the
-  rest of the application: `src/lib/agent/tools.ts:844` is its only production call site, and the
-  editor's `/api/db/query` reaches the provider directly (`src/app/api/db/query/route.ts:44`).
+  rest of the application: `executeAgentOperation()`
+  ([`tools.ts`](../src/lib/agent/tools.ts)) is its only production call site, and the editor's
+  `/api/db/query` reaches the provider directly in `POST()`
+  ([`query/route.ts`](../src/app/api/db/query/route.ts)).
 - **Agent mode requires PostgreSQL, SQLite or DuckDB — except the `operations` workflow, which runs
-  anywhere.** They are the only providers implementing `queryReadOnly` (`postgres.ts:915`,
-  `sqlite.ts:537`, `duckdb/index.ts:525`), so on any other engine an agent-mode run whose workflow sends a statement is
+  anywhere.** They are the only providers implementing `queryReadOnly`:
+  [`postgres.ts`](../src/lib/db/providers/sql/postgres.ts),
+  [`sqlite.ts`](../src/lib/db/providers/sql/sqlite.ts) and
+  [`duckdb/index.ts`](../src/lib/db/providers/sql/duckdb/index.ts), so on any other engine an
+  agent-mode run whose workflow sends a statement is
   **refused when it is started**: `POST /api/agent/runs` answers `400` with the posture's own
   paragraph before a run id exists or a model turn is spent (#512). The provider factory's gate sits
   behind that one and is what refuses a run reaching the drive some other way - profiled acquisition
-  fails with `PROFILE_UNSUPPORTED_BY_PROVIDER` and the run ends `engine-unsupported`
-  (`src/lib/agent/runtime.ts:199`), which is what a run opened by an earlier build still does. Both
+  fails with `PROFILE_UNSUPPORTED_BY_PROVIDER` and the run ends `engine-unsupported` inside
+  `driveAgentRun()` ([`runtime.ts`](../src/lib/agent/runtime.ts)), which is what a run opened by an
+  earlier build still does. Both
   read the same fact, which is why the route can refuse without duplicating the decision. Surfaces that must *state* that reach — the login hero does,
   since #425 — read `AGENT_EXECUTION_ENGINES` (`src/lib/agent/engine-support.ts`), which mirrors the
   gate rather than replacing it: the factory keeps probing `typeof provider.queryReadOnly`, and

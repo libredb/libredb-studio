@@ -1,0 +1,33 @@
+#!/bin/sh
+# The credential banner is written once; the URL is not, because a stop/start
+# assigns a new public IP. Only the volatile line is recomputed, and only for
+# someone already logged in.
+#
+# The Password: line is REMOVED rather than printed, and replaced by a pointer.
+# pam_motd caches this hook's output in /run/motd.dynamic, created under
+# umask(0022) - mode 0644 - so printing the value here would republish it
+# world-readable on every interactive login, and would keep showing the ORIGINAL
+# password after the buyer rotated it (the info file is written once by design).
+#
+# sed, not `grep -v` plus a printf: rewriting the line in place keeps the pointer
+# where the value would have been, and if the Password: line is ever absent this
+# does nothing, while delete-then-append would emit a pointer to a value that is
+# not there.
+[ -f /etc/libredb-studio.info ] || exit 0
+sed 's|^  Password:.*|  Password:  sudo cat /etc/libredb-studio.info   (root-only; not shown here)|' \
+  /etc/libredb-studio.info
+
+# Bounded, because pam_motd runs this synchronously in the SSH login path. IMDS
+# answers in milliseconds normally - but a buyer who DROPs traffic to
+# 169.254.169.254 (a common hardening step) makes the packets vanish rather than
+# be refused, and an unbounded curl would then hang every login until its
+# default connect timeout expires.
+TOKEN=$(curl -fsS --connect-timeout 1 --max-time 3 -X PUT \
+  'http://169.254.169.254/latest/api/token' \
+  -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' 2>/dev/null) || exit 0
+IP=$(curl -fsS --connect-timeout 1 --max-time 3 -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null) || exit 0
+[ -n "$IP" ] && printf '  Current URL: http://%s:3000\n\n' "$IP"
+# run-parts treats a non-zero exit as a failed MOTD fragment, and the test above
+# exits 1 when the address is empty. Nothing here is worth reporting as failure.
+exit 0

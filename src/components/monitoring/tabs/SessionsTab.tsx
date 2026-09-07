@@ -79,11 +79,11 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labe
   const getStateBadge = (state: string) => {
     switch (state) {
       case "active":
-        return <Badge className="bg-green-500">Active</Badge>;
+        return <Badge className="bg-hue-green-tint">Active</Badge>;
       case "idle":
         return <Badge variant="secondary">Idle</Badge>;
       case "idle in transaction":
-        return <Badge className="bg-yellow-500">Idle in TX</Badge>;
+        return <Badge className="bg-hue-yellow-tint">Idle in TX</Badge>;
       case "idle in transaction (aborted)":
         return <Badge variant="destructive">Aborted TX</Badge>;
       default:
@@ -98,7 +98,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labe
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Active</CardTitle>
-            <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
+            <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-green" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium" data-testid="session-stat-active">
@@ -123,7 +123,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labe
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">In TX</CardTitle>
             <Clock
-              className={`h-3 w-3 sm:h-4 sm:w-4 ${idleInTxCount !== "0" && !sessionsUnavailable ? "text-yellow-500" : "text-muted-foreground"}`}
+              className={`h-3 w-3 sm:h-4 sm:w-4 ${idleInTxCount !== "0" && !sessionsUnavailable ? "text-hue-yellow" : "text-muted-foreground"}`}
             />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
@@ -137,7 +137,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labe
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Wait</CardTitle>
             <Users
-              className={`h-3 w-3 sm:h-4 sm:w-4 ${waitingCount !== "0" && !sessionsUnavailable ? "text-orange-500" : "text-muted-foreground"}`}
+              className={`h-3 w-3 sm:h-4 sm:w-4 ${waitingCount !== "0" && !sessionsUnavailable ? "text-hue-orange" : "text-muted-foreground"}`}
             />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">

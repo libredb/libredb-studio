@@ -331,7 +331,7 @@ export function StudioWorkspace({
                 onGenerateTestData={features.testDataGenerator ? (name: string) => setTestDataTable(name) : undefined}
               />
             </ResizablePanel>
-            <ResizableHandle className="w-1 bg-transparent hover:bg-blue-500/30 transition-colors" />
+            <ResizableHandle className="w-1 bg-transparent hover:bg-brand-tint/30 transition-colors" />
           </>
         )}
         <ResizablePanel id="workspace-body" defaultSize="78">
@@ -420,7 +420,7 @@ export function StudioWorkspace({
                         </div>
                       </div>
                     </ResizablePanel>
-                    <ResizableHandle className="h-1 bg-fill hover:bg-blue-500/20" />
+                    <ResizableHandle className="h-1 bg-fill hover:bg-brand-tint/20" />
                     <ResizablePanel id="workspace-editor-bottom" defaultSize="60" minSize="20">
                       <BottomPanel
                         mode={queryExec.bottomPanelMode}
@@ -548,7 +548,7 @@ export function StudioWorkspace({
           <div className="px-6 pt-6 pb-4">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-red-500/10 flex items-center justify-center shrink-0">
-                <TriangleAlert strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
+                <TriangleAlert strokeWidth={1.5} className="w-5 h-5 text-warning" />
               </div>
               <div className="flex-1 min-w-0">
                 <AlertDialogTitle className="text-xs font-medium text-fg mb-1">Load all results?</AlertDialogTitle>
@@ -565,7 +565,7 @@ export function StudioWorkspace({
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={queryExec.handleUnlimitedQuery}
-              className="flex-1 h-9 bg-amber-600 border-0 text-white text-xs font-medium hover:bg-amber-500"
+              className="flex-1 h-9 bg-warning-solid border-0 text-white text-xs font-medium hover:bg-warning-solid-hover"
             >
               Load All
             </AlertDialogAction>

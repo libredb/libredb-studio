@@ -149,7 +149,7 @@ function PoolStatsGrid({ measured, usagePercent }: Readonly<{ measured: PoolStat
       <Card className="p-0">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
           <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Total</CardTitle>
-          <Server strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500" />
+          <Server strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-blue" />
         </CardHeader>
         <CardContent className="p-3 sm:p-4 pt-0">
           <div className="text-lg sm:text-2xl font-medium">{measured !== null ? measured.total : "N/A"}</div>
@@ -160,7 +160,7 @@ function PoolStatsGrid({ measured, usagePercent }: Readonly<{ measured: PoolStat
       <Card className="p-0">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
           <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Active</CardTitle>
-          <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
+          <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-green" />
         </CardHeader>
         <CardContent className="p-3 sm:p-4 pt-0">
           <div className="text-lg sm:text-2xl font-medium">{measured !== null ? measured.active : "N/A"}</div>
@@ -176,7 +176,7 @@ function PoolStatsGrid({ measured, usagePercent }: Readonly<{ measured: PoolStat
       <Card className="p-0">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
           <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Idle</CardTitle>
-          <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500" />
+          <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-yellow" />
         </CardHeader>
         <CardContent className="p-3 sm:p-4 pt-0">
           <div className="text-lg sm:text-2xl font-medium">{measured !== null ? measured.idle : "N/A"}</div>

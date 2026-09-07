@@ -49,8 +49,8 @@ export function ResultCard({
     >
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
-            <Hash strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
+          <div className="w-8 h-8 rounded-lg bg-brand-tint/10 flex items-center justify-center shrink-0">
+            <Hash strokeWidth={1.5} className="w-3.5 h-3.5 text-brand" />
           </div>
           <div className="min-w-0 flex-1">
             <p
@@ -78,7 +78,7 @@ export function ResultCard({
             <div key={field} className="flex items-center justify-between text-xs">
               <span className="text-fg-muted truncate mr-2">
                 {field}
-                {isMasked && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 inline ml-1 text-purple-400" />}
+                {isMasked && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 inline ml-1 text-hue-purple" />}
               </span>
               <span className={cn("truncate max-w-[60%] text-right font-mono", className)}>{displayValue}</span>
             </div>

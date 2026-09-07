@@ -178,9 +178,9 @@ function getDefaultForm() {
         value: "postgres",
         label: "PostgreSQL",
         icon: () => React.createElement("span", null, "PG"),
-        color: "text-blue-400",
+        color: "text-hue-blue",
       },
-      { value: "mysql", label: "MySQL", icon: () => React.createElement("span", null, "MY"), color: "text-amber-400" },
+      { value: "mysql", label: "MySQL", icon: () => React.createElement("span", null, "MY"), color: "text-hue-amber" },
     ],
     ...mockFormOverrides,
   };
@@ -209,7 +209,7 @@ const mockFields = (type: string): string[] =>
 mock.module("@/lib/db-ui-config", () => ({
   getDBConfig: (type: string) => ({
     icon: () => null,
-    color: "text-blue-400",
+    color: "text-hue-blue",
     label: type,
     defaultPort: type === "mysql" ? "3306" : type === "mongodb" ? "27017" : "5432",
     showConnectionStringToggle: type === "mongodb",
@@ -217,7 +217,7 @@ mock.module("@/lib/db-ui-config", () => ({
   }),
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
   getDBIcon: () => () => null,
-  getDBColor: () => "text-blue-400",
+  getDBColor: () => "text-hue-blue",
   // See the same note in ConnectionModal.test.tsx: `DB_UI_CONFIG` became an exported
   // binding in #425, so this mock's `{}` now reaches the real `isFileBased` unless the
   // function is mocked here too.

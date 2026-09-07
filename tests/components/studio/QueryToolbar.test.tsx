@@ -125,7 +125,7 @@ describe("QueryToolbar", () => {
     expect(sandboxText).not.toBeNull();
     const sandboxButton = sandboxText!.closest("button");
     expect(sandboxButton).not.toBeNull();
-    expect(sandboxButton?.className.includes("text-emerald-400")).toBe(true);
+    expect(sandboxButton?.className.includes("text-success")).toBe(true);
   });
 
   test("Edit button highlights when editingEnabled true", () => {
@@ -135,7 +135,7 @@ describe("QueryToolbar", () => {
     expect(editText).not.toBeNull();
     const editButton = editText!.closest("button");
     expect(editButton).not.toBeNull();
-    expect(editButton?.className.includes("text-amber-400")).toBe(true);
+    expect(editButton?.className.includes("text-warning")).toBe(true);
   });
 
   test("No EDIT button when onToggleEditing is not provided (#269)", () => {

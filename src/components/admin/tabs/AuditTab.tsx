@@ -34,21 +34,21 @@ export function AuditTab() {
         <TabsList className="bg-transparent border-b border-hairline rounded-none p-0 h-10 w-full justify-start">
           <TabsTrigger
             value="operations"
-            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-fg-muted text-xs px-4"
+            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-brand data-[state=active]:bg-transparent data-[state=active]:text-brand text-fg-muted text-xs px-4"
           >
             <Wrench className="h-3.5 w-3.5" />
             Operations
           </TabsTrigger>
           <TabsTrigger
             value="queries"
-            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-fg-muted text-xs px-4"
+            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-brand data-[state=active]:bg-transparent data-[state=active]:text-brand text-fg-muted text-xs px-4"
           >
             <SearchIcon className="h-3.5 w-3.5" />
             Queries
           </TabsTrigger>
           <TabsTrigger
             value="stats"
-            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-fg-muted text-xs px-4"
+            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-brand data-[state=active]:bg-transparent data-[state=active]:text-brand text-fg-muted text-xs px-4"
           >
             <ChartColumn className="h-3.5 w-3.5" />
             Stats
@@ -191,7 +191,7 @@ function OperationsAudit() {
           Total: <span className="font-bold text-fg-secondary">{events.length}</span> ops
         </span>
         <span>
-          Success: <span className="font-bold text-emerald-400">{successRate}%</span>
+          Success: <span className="font-bold text-success">{successRate}%</span>
         </span>
       </div>
 
@@ -229,9 +229,9 @@ function OperationsAudit() {
                 <TableRow key={event.id} className="border-hairline hover:bg-fill">
                   <TableCell className="py-2">
                     {event.result === "success" ? (
-                      <CircleCheck className="w-3.5 h-3.5 text-emerald-500" />
+                      <CircleCheck className="w-3.5 h-3.5 text-success" />
                     ) : (
-                      <CircleX className="w-3.5 h-3.5 text-red-500" />
+                      <CircleX className="w-3.5 h-3.5 text-danger" />
                     )}
                   </TableCell>
                   <TableCell className="py-2 font-mono text-xs text-fg-muted">
@@ -314,7 +314,7 @@ function QueryAudit() {
         <div className="text-xs text-fg-muted ml-auto">
           <span className="font-bold text-fg-secondary">{history.length}</span> queries
           <span className="mx-2">&middot;</span>
-          <span className="text-emerald-400 font-bold">{successRate}%</span> success
+          <span className="text-success font-bold">{successRate}%</span> success
         </div>
       </div>
 
@@ -346,9 +346,9 @@ function QueryAudit() {
                 <TableRow key={idx} className="border-hairline hover:bg-fill">
                   <TableCell className="py-2">
                     {item.status === "success" ? (
-                      <CircleCheck className="w-3.5 h-3.5 text-emerald-500" />
+                      <CircleCheck className="w-3.5 h-3.5 text-success" />
                     ) : (
-                      <CircleX className="w-3.5 h-3.5 text-red-500" />
+                      <CircleX className="w-3.5 h-3.5 text-danger" />
                     )}
                   </TableCell>
                   <TableCell className="py-2 font-mono text-xs text-fg-muted whitespace-nowrap">
@@ -432,7 +432,7 @@ function AuditStats() {
         </div>
         <div className="rounded-xl border border-hairline bg-panel p-4">
           <div className="text-xs text-fg-muted mb-1">Success Rate</div>
-          <div className="text-2xl font-bold text-emerald-400 tabular-nums">{stats.successRate}%</div>
+          <div className="text-2xl font-bold text-success tabular-nums">{stats.successRate}%</div>
           <Progress value={stats.successRate} className="h-1 mt-2" />
         </div>
         <div className="rounded-xl border border-hairline bg-panel p-4">
@@ -444,7 +444,7 @@ function AuditStats() {
         </div>
         <div className="rounded-xl border border-hairline bg-panel p-4">
           <div className="text-xs text-fg-muted mb-1">Failed</div>
-          <div className="text-2xl font-bold text-red-400 tabular-nums">{stats.total - stats.successful}</div>
+          <div className="text-2xl font-bold text-danger tabular-nums">{stats.total - stats.successful}</div>
         </div>
       </div>
 
@@ -452,7 +452,7 @@ function AuditStats() {
       <div className="grid gap-6 md:grid-cols-2">
         <div className="rounded-xl border border-hairline bg-panel p-5">
           <h3 className="text-sm font-bold text-fg-secondary mb-4 flex items-center gap-2">
-            <Activity className="h-4 w-4 text-blue-400" />
+            <Activity className="h-4 w-4 text-brand" />
             Query Activity (7 days)
           </h3>
           {stats.total === 0 ? (
@@ -480,7 +480,7 @@ function AuditStats() {
         {/* Most Active Connections */}
         <div className="rounded-xl border border-hairline bg-panel p-5">
           <h3 className="text-sm font-bold text-fg-secondary mb-4 flex items-center gap-2">
-            <Clock className="h-4 w-4 text-blue-400" />
+            <Clock className="h-4 w-4 text-brand" />
             Most Active Connections
           </h3>
           {stats.topConnections.length === 0 ? (

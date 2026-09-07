@@ -285,8 +285,8 @@ describe("BottomPanel", () => {
 
     const resultsButton = getByText("Results").closest("button");
     expect(resultsButton).not.toBeNull();
-    // Active tab should have the active class (text-blue-400 for results)
-    expect(resultsButton!.className).toContain("text-blue-400");
+    // Active tab should have the active class (the blue identity hue for results)
+    expect(resultsButton!.className).toContain("text-hue-blue");
   });
 
   test("shows empty state placeholder when currentTab.result is null", () => {

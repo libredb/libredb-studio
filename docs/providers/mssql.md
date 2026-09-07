@@ -447,7 +447,7 @@ in parallel. Each sub-query is independently privilege-guarded (DMVs need `VIEW 
 | Method | Primary source | Notes |
 |--------|----------------|-------|
 | `getHealth()` | `dm_exec_sessions`, `database_files`, `dm_os_performance_counters`, `dm_exec_query_stats` | connections (**omitted**, never `0`, when the DMV is denied — [§7.2](#72-when-the-connection-count-is-not-measurable)), size, buffer-cache-hit % (`N/A`, never `0%`, when unreadable — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)), top-5 slow queries, 10 sessions; each block guarded → absent/`N/A`/`[]` |
-| `getOverview()` | `@@VERSION`, `dm_os_sys_info`, `dm_exec_sessions`, `sys.configurations`, `database_files`, `sys.tables`/`indexes` | `user connections = 0` → reported as 32767 (unlimited) |
+| `getOverview()` | `@@VERSION`, `dm_os_sys_info`, `dm_exec_sessions`, `sys.configurations`, `database_files`, `sys.tables`/`indexes` | `user connections = 0` → reported as 32767 (unlimited); `databaseSizeBytes` is **omitted** and `databaseSize` stays `N/A`, never a `0`, when the size statement fails — [§7.3](#73-when-the-database-size-is-not-measurable) |
 | `getPerformanceMetrics()` | `dm_os_performance_counters` | **only** the cache-hit ratio, and it is **omitted** when the DMV cannot be read (no QPS/deadlocks/buffer-pool) — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `dm_exec_query_stats` ⋈ `dm_exec_sql_text` | `sharedBlksHit`=logical reads, `sharedBlksRead`=physical reads; `[]` on failure |
 | `getActiveSessions()` | `dm_exec_sessions` ⋈ `dm_exec_requests` ⋈ `dm_exec_sql_text` | **`blocked` is real** (`blocking_session_id > 0`); wait types; `[]` on failure |
@@ -609,6 +609,58 @@ less likely of the two shapes there.
 A count that really is `0` - an instance with no user sessions - is a reading and is reported as `0`,
 in `getOverview()` as in `getHealth()`.
 The absence is spelled `measuredNumber(...)` plus a conditional spread, never `|| undefined`.
+
+### 7.3 When the database size is not measurable
+
+`getOverview()` sizes the database with one statement over a **database-scoped catalog view**:
+
+```sql
+SELECT SUM(CAST(size AS BIGINT)) * 8 * 1024 AS size_bytes FROM sys.database_files
+```
+
+That is a different story from [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) and
+[§7.2](#72-when-the-connection-count-is-not-measurable), and the difference is the point.
+`sys.database_files` is a catalog view scoped to the connected database
+([sys.database_files](https://learn.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-database-files-transact-sql)),
+not one of the server-scoped DMVs those sections turn on, so the `Msg 300` refusal measured there is
+**not** what fails here - and **no failure of this statement has been measured on a live instance at
+all**. That is precisely why the guard names no cause: the client-side `requestTimeout` of
+[§3.5](#35-a-query-timeout-is-wired-driver-enforced) firing as a `TimeoutError` on a busy instance, a
+pool fault between this statement and the one before it, and a deployment whose T-SQL surface does
+not carry the view all arrive at the same `catch` in the same shape. A `catch` cannot tell them
+apart. It knows only that no figure arrived.
+
+So the figure is **omitted**, not zeroed. `DatabaseOverview.databaseSizeBytes` is optional exactly so
+this can be said - *"absence and zero are different facts"*, its docblock in
+[`src/lib/db/types.ts`](../../src/lib/db/types.ts) - and until #565 this method could not say it: the
+local was initialised to `0` and the `catch` was empty, so a statement that never answered published
+a measured-looking zero, indistinguishable from an empty database.
+
+The monitoring **Storage** tab
+([`src/components/monitoring/tabs/StorageTab.tsx`](../../src/components/monitoring/tabs/StorageTab.tsx))
+is what the difference buys: it keys its entire breakdown off `databaseSizeBytes !== undefined`, so
+on the absence it renders *"No storage size information available."* On the fabricated `0` it drew
+the breakdown instead - and drew it against a total that contradicted its own rows. The Tables and
+Indexes figures come from `getTableStats()`, a **separate** read that does not share the size
+statement's failure, so real per-table bytes sat under a database reported as `0 B`: every share is
+gated on `totalSize > 0`, so all three bars stayed empty, and `0 - tables - indexes` went negative,
+which the remainder row refuses as `N/A`. What the tab presented as a measurement was therefore a
+breakdown whose every element either disagreed with the total or declined to answer.
+
+**`databaseSize`, the formatted string, moves with the figure.** It is initialised to `"N/A"` and
+only `formatBytes()` replaces it, so an unanswered statement now leaves `"N/A"` where it used to
+leave `"0 bytes"`. That is not cosmetic: both the monitoring Overview card and the Storage tab's own
+header render this string as the headline size (`overview?.databaseSize || "N/A"`), so the old
+initialiser printed a confident `0 bytes` directly above *"No storage size information available."*
+`getHealth()` in this same file initialises its own `databaseSize` to `"N/A"`, so `getOverview()`
+was the odd one out; #569 (libSQL) and #517 (the search provider) merged the same
+pairing.
+
+A database that really measures `0` is a **reading** and is kept. `SUM(...)` over no input answers
+one row of `NULL`, which the provider maps to `0`; the tab then formats the `0 B` it was given. If
+the driver returns no row, no expected column, or a non-finite value, the measurement is absent and
+the string stays `N/A`. The shared `measuredNullableAggregate()` boundary preserves those states
+without a falsy test that would erase a genuine zero.
 
 ---
 

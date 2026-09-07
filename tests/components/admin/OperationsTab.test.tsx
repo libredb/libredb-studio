@@ -98,7 +98,7 @@ mock.module("@/lib/db-ui-config", () => ({
     const React = require("react");
     return (props: Record<string, unknown>) => React.createElement("span", { ...props, "data-testid": "db-icon" });
   },
-  getDBColor: () => "text-blue-400",
+  getDBColor: () => "text-hue-blue",
 }));
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";

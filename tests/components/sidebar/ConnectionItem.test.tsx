@@ -54,8 +54,8 @@ mock.module("@/lib/db-ui-config", () => ({
     MockDBIcon.displayName = "MockDBIcon";
     return MockDBIcon;
   },
-  getDBConfig: () => ({ icon: () => null, color: "text-blue-400", label: "PostgreSQL", defaultPort: "5432" }),
-  getDBColor: () => "text-blue-400",
+  getDBConfig: () => ({ icon: () => null, color: "text-hue-blue", label: "PostgreSQL", defaultPort: "5432" }),
+  getDBColor: () => "text-hue-blue",
 }));
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
@@ -143,7 +143,7 @@ describe("ConnectionItem", () => {
     const connectionDiv = container.firstElementChild;
     expect(connectionDiv).not.toBeNull();
     const className = connectionDiv?.className || "";
-    expect(className.includes("bg-blue-600/10")).toBe(true);
+    expect(className.includes("bg-brand-solid/10")).toBe(true);
   });
 
   test("onSelect fires on click", () => {
