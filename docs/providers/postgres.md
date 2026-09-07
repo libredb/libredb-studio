@@ -713,6 +713,12 @@ base) fans these out in parallel.
 `getTableStats()` / `getIndexStats()` accept an optional `{ schema }` filter; with none they cover
 all user schemas.
 
+**Database size is absent, never zeroed, when it is not measured.** `getOverview()` sizes the
+database with `pg_database_size`; a missing result row, or a row without `database_size_bytes`, is
+no measurement at all, so `databaseSizeBytes` is omitted and `databaseSize` stays `"N/A"`. Only a
+returned SQL `NULL` — an empty database — is a measured zero, and that reading is published as
+`0`/`"0 B"`.
+
 ### 7.1 When the cache hit ratio is not measurable
 
 The ratio comes from `pg_statio_user_tables`, and there are two ordinary states in which that view

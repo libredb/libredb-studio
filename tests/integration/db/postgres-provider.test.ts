@@ -2349,6 +2349,86 @@ describe("PostgresProvider", () => {
       // 90061 seconds = 1d 1h 1m
       expect(overview.uptime).toBe("1d 1h 1m");
     });
+
+    test("a size result without the expected column leaves overview size absent", async () => {
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_database_size") && normalized.includes("database_size_bytes")) {
+          return Promise.resolve({ rows: [{ database_size: "512 MB" }], fields: [], rowCount: 1 });
+        }
+        return defaultMockQuery(sql, params);
+      };
+
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
+    test("a size read with no result row leaves overview size absent", async () => {
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_database_size") && normalized.includes("database_size_bytes")) {
+          return Promise.resolve({ rows: [], fields: [], rowCount: 0 });
+        }
+        return defaultMockQuery(sql, params);
+      };
+
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
+    test("a non-finite size leaves overview size absent", async () => {
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_database_size") && normalized.includes("database_size_bytes")) {
+          return Promise.resolve({
+            rows: [{ database_size: "512 MB", database_size_bytes: Number.POSITIVE_INFINITY }],
+            fields: [],
+            rowCount: 1,
+          });
+        }
+        return defaultMockQuery(sql, params);
+      };
+
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
+    test("a database that measures zero bytes keeps its measured zero size", async () => {
+      // The anti-vacuity twin of the tests above: `pg_database_size($1)` answers NULL
+      // when the aggregate has nothing to measure, and that returned null aggregate is
+      // a measured zero the provider must keep publishing - never an absence.
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_database_size") && normalized.includes("database_size_bytes")) {
+          return Promise.resolve({
+            rows: [{ database_size: null, database_size_bytes: null }],
+            fields: [],
+            rowCount: 1,
+          });
+        }
+        return defaultMockQuery(sql, params);
+      };
+
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(true);
+      expect(overview.databaseSizeBytes).toBe(0);
+      expect(overview.databaseSize).toBe("0 B");
+    });
   });
 
   // --------------------------------------------------------------------------

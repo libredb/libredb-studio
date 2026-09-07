@@ -1560,6 +1560,78 @@ describe("MySQLProvider", () => {
       expect(overview.startTime).toBeInstanceOf(Date);
     });
 
+    test("a size result without the expected column leaves overview size absent", async () => {
+      mockExecuteFn = (sql: string) => {
+        const lower = sql.toLowerCase();
+        if (lower.includes("information_schema.tables") && lower.includes("sum(data_length") && !lower.includes("table_name")) {
+          return Promise.resolve([[{ size_mb: "12.50", name: "testdb" }], []]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
+    test("a size read with no result row leaves overview size absent", async () => {
+      mockExecuteFn = (sql: string) => {
+        const lower = sql.toLowerCase();
+        if (lower.includes("information_schema.tables") && lower.includes("sum(data_length") && !lower.includes("table_name")) {
+          return Promise.resolve([[], []]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
+    test("a non-finite size leaves overview size absent", async () => {
+      mockExecuteFn = (sql: string) => {
+        const lower = sql.toLowerCase();
+        if (lower.includes("information_schema.tables") && lower.includes("sum(data_length") && !lower.includes("table_name")) {
+          return Promise.resolve([[{ size_mb: "12.50", size_bytes: Number.POSITIVE_INFINITY, name: "testdb" }], []]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
+    test("a database that measures zero bytes keeps its measured zero size", async () => {
+      // The anti-vacuity twin of the tests above: `SUM(DATA_LENGTH + INDEX_LENGTH)`
+      // returns NULL over an empty schema, and that returned null aggregate is a
+      // measured zero the provider must keep publishing - never an absence.
+      mockExecuteFn = (sql: string) => {
+        const lower = sql.toLowerCase();
+        if (lower.includes("information_schema.tables") && lower.includes("sum(data_length") && !lower.includes("table_name")) {
+          return Promise.resolve([[{ size_mb: "0.00", size_bytes: null, name: "testdb" }], []]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(true);
+      expect(overview.databaseSizeBytes).toBe(0);
+      expect(overview.databaseSize).toBe("0 B");
+    });
+
     test("does not call a MariaDB server MySQL", async () => {
       mockExecuteFn = mariaDBMockExecute;
 

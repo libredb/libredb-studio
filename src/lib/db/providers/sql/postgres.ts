@@ -39,6 +39,7 @@ import {
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { postgresColumnTypes } from "./column-types";
 import { formatBytes } from "../../utils/pool-manager";
+import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
 // ============================================================================
@@ -1813,8 +1814,8 @@ export class PostgresProvider extends SQLBaseProvider {
       let databaseSizeBytes: number | undefined;
       try {
         const sizeRes = await client.query(OVERVIEW_SIZE_SQL, [this.config.database]);
-        databaseSize = sizeRes.rows[0].database_size || "0 bytes";
-        databaseSizeBytes = parseInt(sizeRes.rows[0].database_size_bytes || "0");
+        databaseSizeBytes = measuredNullableAggregate(sizeRes.rows[0], "database_size_bytes");
+        if (databaseSizeBytes !== undefined) databaseSize = formatBytes(databaseSizeBytes);
       } catch {
         databaseSize = "N/A";
         databaseSizeBytes = undefined;
@@ -1842,7 +1843,7 @@ export class PostgresProvider extends SQLBaseProvider {
         activeConnections,
         maxConnections,
         databaseSize,
-        databaseSizeBytes,
+        ...(databaseSizeBytes === undefined ? {} : { databaseSizeBytes }),
         tableCount,
         indexCount,
       };
