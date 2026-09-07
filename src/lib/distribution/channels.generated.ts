@@ -41,6 +41,7 @@ export const LIVE_CHANNELS: readonly ShowcaseChannel[] = [
   { id: "rancher-partner", label: "Rancher Partner Charts", group: "kubernetes" },
   { id: "digitalocean", label: "DigitalOcean Marketplace", group: "paas" },
   { id: "gcp-marketplace", label: "Google Cloud Marketplace", group: "paas" },
+  { id: "azure-marketplace", label: "Azure Marketplace", group: "paas" },
   { id: "aws-marketplace", label: "AWS Marketplace", group: "paas" },
   { id: "winget", label: "winget", group: "packages" },
   { id: "chocolatey", label: "Chocolatey", group: "packages" },

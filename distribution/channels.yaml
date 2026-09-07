@@ -774,7 +774,7 @@ channels:
   - id: azure-marketplace
     name: Microsoft Azure Marketplace
     short_name: Azure Marketplace
-    status: pending
+    status: live
     category: cloud-marketplaces
     platforms: [cloud]
     runtime: channel_supplied
@@ -784,16 +784,13 @@ channels:
       method: manual_ui
       sla: on_demand
     links:
+      catalog: https://marketplace.microsoft.com/en-us/product/libredb.libredb-studio
       docs: deploy/azure/README.md
     pin:
       strategy: none
-      note: The offer is submitted and in Microsoft's certification review, so nothing is listed
-        yet. It is recorded here rather than left out because the submission exists and its whole
-        descriptor does too - deploy/azure/ holds the solution template, the ARM assets and the
-        Partner Center listing texts - which is the same reason the four open catalog submissions
-        carry an entry. On publication, flip to live and add the offer's public listing URL as
-        links.catalog; there is no pin to add, because the listed version lives in Partner Center
-        the way Google's lives in the Producer Portal.
+      note: Published 7 Sep 2026 as a free ("Get It Now") Azure Application solution template
+        (package 1.0.1). There is no pin to add, because the listed version lives in Partner
+        Center the way Google's lives in the Producer Portal.
 
   - id: aws-marketplace
     name: AWS Marketplace (free AMI product)
