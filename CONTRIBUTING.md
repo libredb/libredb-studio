@@ -76,6 +76,14 @@ label have not been vetted for outside pickup; ask in an issue first if one inte
 
 - **Claim before you start.** Comment on the issue so two people do not build the same fix. A
   claimed issue with no activity for two weeks is open again.
+- **A claim is a courtesy, not a lock.** It cannot reach somebody who already had the issue open,
+  because GitHub sends no notification for a comment on a page you are already reading. So two
+  people do occasionally arrive at the same issue, and when that happens neither of them did
+  anything wrong. We decide by the clock rather than by the claim: work that was already in flight
+  when the claim was posted is not queue-jumping, and a pull request that is already delivered is
+  reviewed on its merits. Nobody is asked to write the same change twice, so whoever does not land
+  it is offered the nearest open issue instead, and a review on the other pull request is credited
+  here the same as code.
 - **What counts.** A PR that references its issue, includes tests and passes the gate above. During
   October we also add `hacktoberfest-accepted` to merged PRs from the labeled list, for participants
   whose program still looks for it.
