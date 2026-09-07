@@ -563,7 +563,7 @@ channels:
 
   - id: casaos
     name: CasaOS App Store
-    status: pending
+    status: live
     category: paas-catalogs
     platforms: [container]
     runtime: channel_supplied
@@ -578,12 +578,12 @@ channels:
       upstream_repo: https://github.com/IceWhaleTech/CasaOS-AppStore
       docs: docs/DISTRIBUTION.md
     pin:
-      strategy: none
-      note: PR IceWhaleTech/CasaOS-AppStore#992 is open, so nothing is listed yet. On merge, flip to live
-        and add a remote_file pin on
-        https://raw.githubusercontent.com/IceWhaleTech/CasaOS-AppStore/main/Apps/LibreDBStudio/docker-compose.yml
-        with extract 'libredb-studio:(\d+\.\d+\.\d+)'. Installs a Docker container on the user's own device,
-        so the platform is container.
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/IceWhaleTech/CasaOS-AppStore/main/Apps/LibreDBStudio/docker-compose.yml
+      extract: 'libredb-studio:(\d+\.\d+\.\d+)'
+      note: Merged in IceWhaleTech/CasaOS-AppStore#992 (7 Sep 2026); live in the CasaOS App Store. The pin
+        reads the image tag in Apps/LibreDBStudio/docker-compose.yml, the file a bump PR touches. Installs a
+        Docker container on the user's own device, so the platform is container.
 
   - id: umbrel
     name: Umbrel App Store
