@@ -38,9 +38,12 @@ describe("bundled Node.js runtime documentation", () => {
 
   test("SECURITY.md names the pinned version", () => {
     const version = pinnedVersion(LINUX_SCRIPT);
-    const section = SECURITY.slice(SECURITY.indexOf("#### Bundled Node.js runtime"));
-    expect(section.length, "SECURITY.md has no bundled-runtime section").toBeGreaterThan(0);
-    expect(section).toContain(version);
+    // indexOf returns -1 when the heading is gone, and slice(-1) is a
+    // one-character string, so asserting on the slice's length can never fail.
+    // Assert on the index itself, then read the section from it.
+    const heading = SECURITY.indexOf("#### Bundled Node.js runtime");
+    expect(heading, "SECURITY.md has no bundled-runtime section").not.toBe(-1);
+    expect(SECURITY.slice(heading)).toContain(version);
   });
 
   test("SECURITY.md names the upstream dist directory for that version", () => {
@@ -80,5 +83,10 @@ describe("bundled Node.js runtime documentation", () => {
     expect(floor).not.toBeNull();
     const major = Number(pinnedVersion(LINUX_SCRIPT).split(".")[0]);
     expect(major).toBeGreaterThanOrEqual(Number((floor as RegExpExecArray)[1]));
+    // SECURITY.md quotes the floor in prose. Nothing guarded that literal, so
+    // it went stale the day the floor moved; this pins it to package.json.
+    expect(SECURITY, `SECURITY.md does not quote the engines.node floor ${engines}`).toContain(
+      engines,
+    );
   });
 });

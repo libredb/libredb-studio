@@ -211,9 +211,9 @@ artefacts except the npm package. That runtime is the largest single binary in
 most of them, it is fetched by a shell script rather than resolved from a
 lockfile, and the SBOM's only `node`-named component is `pkg:npm/@types/node`, a
 type-declarations package with no relationship to the runtime that actually
-ships. This is a known gap, tracked in `docs/BACKLOG.md`. Until the SBOM covers it,
-the component is described by hand below so a reader of this document can still
-answer "which Node.js is inside, and where did it come from".
+ships. This is a known gap. Until the SBOM covers it, the component is described
+by hand below so a reader of this document can still answer "which Node.js is
+inside, and where did it come from".
 
 #### Bundled Node.js runtime
 

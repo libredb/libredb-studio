@@ -37,7 +37,7 @@ None of it is a GitHub issue.
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1, N3 · 2
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 2
-- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C10 · 7
+- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C10 · 6
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B76 · 22
@@ -1186,22 +1186,6 @@ It reports severity and vulnerable ranges and no fixed version, which is why Tri
 in the local contributor workflow could be dropped entirely.
 
 **Done when:** `bun audit --json` carries a fix field.
-
-### C7. The release SBOM does not describe the bundled Node.js runtime
-
-`packaging/linux/fetch-node.sh` and `packaging/windows/fetch-node.sh` download a pinned Node.js build
-and bundle it into every packaged artefact except the npm package: the standalone tarballs, the Windows
-zip, the `.deb` and `.rpm`, the snap, the AppImage and the desktop package.
-
-That runtime is the largest single binary in most of them, it is fetched by a shell script rather than
-resolved from a lockfile, and the CycloneDX SBOM Trivy generates from `bun.lock` never sees it. The
-document's only `node`-named component is `pkg:npm/@types/node`, a type-declarations package.
-
-`SECURITY.md` now says the SBOM covers "the dependency closure of" those artefacts rather than the
-artefacts themselves, which is the honest claim. This entry is the gap behind it.
-
-**Done when:** the bundled runtime's version and provenance appear in the SBOM or a sibling document —
-a second Trivy pass over the `fetch-node.sh` pinned version, or a hand-maintained component entry.
 
 ### C8. No artefact root declares that part of the distribution is not MIT
 
