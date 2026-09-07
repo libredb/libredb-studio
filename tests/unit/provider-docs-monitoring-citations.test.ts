@@ -163,6 +163,11 @@ const NAMED_CITATIONS = [
       "runMaintenance",
     ],
   },
+  {
+    doc: "docs/providers/clickhouse.md",
+    source: "src/lib/db/providers/sql/clickhouse/index.ts",
+    methods: ["mapClickHouseError", "prepareQuery", "query", "runMaintenance", "getCapabilities", "getLabels"],
+  },
 ] as const;
 
 const SEARCH_DOCS = ["docs/providers/elasticsearch.md", "docs/providers/opensearch.md"] as const;

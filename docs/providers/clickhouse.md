@@ -166,7 +166,7 @@ Couchbase makes in [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md).
 ### 3.2 The transport seam: one interface, one implementation
 
 Provider logic never calls `fetch`. It goes through `ClickHouseTransport`
-([transport.ts:114](../../src/lib/db/providers/sql/clickhouse/transport.ts)), so adopting the
+([`transport.ts`](../../src/lib/db/providers/sql/clickhouse/transport.ts)), so adopting the
 native protocol later would be one new file implementing the same contract rather than a rewrite:
 
 ```ts
@@ -181,8 +181,8 @@ There is no second entry point next to `query()`, unlike Couchbase's `manage()`:
 metric, session and storage statistic the provider needs is a `system.*` table reachable by SQL, so
 a permanent second HTTP surface would buy nothing.
 
-The result type is deliberately **neutral** rather than the HTTP response envelope
-([transport.ts:37](../../src/lib/db/providers/sql/clickhouse/transport.ts)):
+The result type, `ClickHouseQueryResult`, is deliberately **neutral** rather than the HTTP
+response envelope ([`transport.ts`](../../src/lib/db/providers/sql/clickhouse/transport.ts)):
 
 ```ts
 interface ClickHouseQueryResult {
@@ -200,7 +200,7 @@ ClickHouse client — HTTP or native — knows the type of the columns it receiv
 artefact. `rawText` is neutral for the same reason: output formats are a server feature, not a REST
 feature. Errors follow the same rule: the transport throws one normalized
 `ClickHouseTransportError { code, name, message }`
-([transport.ts:178](../../src/lib/db/providers/sql/clickhouse/transport.ts)), where `code` is
+([`transport.ts`](../../src/lib/db/providers/sql/clickhouse/transport.ts)), where `code` is
 ClickHouse's own numeric exception code, so the provider switches on a number instead of sniffing
 message strings.
 
@@ -232,8 +232,9 @@ The `497` message reads *"Not enough privileges. To execute this query, it's nec
 grant SELECT"* — it contains neither "access denied" nor "permission denied", so message sniffing
 would miss it entirely. **Detecting** a failure is status-based (`!response.ok`, inside the
 transport); **classifying** it is code-based, from `X-ClickHouse-Exception-Code`
-([index.ts:637](../../src/lib/db/providers/sql/clickhouse/index.ts)). A permission problem looks
-like a server fault by status alone, so any logic keyed on `403` would miss every real denial.
+(`mapClickHouseError()`, [`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts)). A
+permission problem looks like a server fault by status alone, so any logic keyed on `403` would
+miss every real denial.
 
 The upside is real: **the schema tree and the overview panel survive a restricted user** — only the
 monitoring panels and maintenance operations that need their own grant degrade
@@ -251,7 +252,7 @@ branches on it before parsing the body
 ([`toQueryResult`](../../src/lib/db/providers/sql/clickhouse/http-transport.ts)): when it is not
 `JSON`, the raw text comes back as `rawText` rather than being parsed or thrown away — the user asked
 for that format deliberately. The provider then surfaces it as one synthetic column,
-`__text` ([`RAW_TEXT_COLUMN`, index.ts:102](../../src/lib/db/providers/sql/clickhouse/index.ts)),
+`__text` (`RAW_TEXT_COLUMN`, [`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts)),
 the same convention Couchbase uses for a scalar projection.
 
 ### 3.5 64-bit integers are quoted on purpose, to stop `JSON.parse` from rounding them
@@ -289,7 +290,8 @@ misclassify it.
 verified independently. Both statement types are queued as background mutations rather than applied
 synchronously, and ClickHouse counts no rows written for either. The provider reports this number
 verbatim and never derives or fabricates a plausible-looking count in its place
-([transport.ts:69](../../src/lib/db/providers/sql/clickhouse/transport.ts)).
+(`ClickHouseQueryResult.mutationCount`,
+[`transport.ts`](../../src/lib/db/providers/sql/clickhouse/transport.ts)).
 
 ### 3.7 A mid-stream failure still arrives as 200
 
@@ -361,7 +363,7 @@ error, live-verified:
 works.
 
 `ClickHouseProvider.prepareQuery()`
-([index.ts:562](../../src/lib/db/providers/sql/clickhouse/index.ts)) detects a trailing `FORMAT` or
+([`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts)) detects a trailing `FORMAT` or
 `SETTINGS` clause with two patterns anchored at the **end** of the statement — as
 `src/lib/sql/statement-end.ts` delimits it, so the terminating semicolon and any trailing comment are
 outside what the patterns read — and, when either matches, returns the query
@@ -462,10 +464,10 @@ Types come back exactly as declared, with no normalization attempted:
 `LowCardinality(String)` · `Decimal(10,3)` · `DateTime64(3)` · `UUID`
 
 **Decision: `ColumnSchema.type` carries the declared type string unchanged**
-([introspect.ts:290](../../src/lib/db/providers/sql/clickhouse/introspect.ts)). It is precise, it
-is what a ClickHouse user already reads in `SHOW CREATE TABLE`, and collapsing it onto a generic
-family would throw away the wrapper — which is exactly the part that says nullable, low-cardinality,
-parameterised, or enumerated.
+(`readColumn()`, [`introspect.ts`](../../src/lib/db/providers/sql/clickhouse/introspect.ts)). It is
+precise, it is what a ClickHouse user already reads in `SHOW CREATE TABLE`, and collapsing it onto a
+generic family would throw away the wrapper — which is exactly the part that says nullable,
+low-cardinality, parameterised, or enumerated.
 
 **Nullability is derived by testing for the `Nullable(...)` wrapper, not by a bare substring
 search**, because the wrapper is not always outermost and not always the column's own:
@@ -473,7 +475,7 @@ search**, because the wrapper is not always outermost and not always the column'
 `Array(Nullable(String))`, `Map(String, Nullable(String))`, and
 `SimpleAggregateFunction(any, Nullable(UInt64))` all qualify an *inner* type and are not nullable
 columns themselves
-([introspect.ts:186](../../src/lib/db/providers/sql/clickhouse/introspect.ts)).
+(`isNullableType()`, [`introspect.ts`](../../src/lib/db/providers/sql/clickhouse/introspect.ts)).
 
 **There is a spacing inconsistency between the two surfaces that carry types**, and it matters
 because they must never be compared as strings: the query-response `meta` array renders
@@ -582,13 +584,13 @@ const connection = {
 
 `supportsConnectionString` is `true`. Two related but distinct paths exist:
 
-- **A pasted URL** goes through the shared parser
-  ([`connection-string-parser.ts:66`](../../src/lib/connection-string-parser.ts)), which decomposes
+- **A pasted URL** goes through the shared parser, `parseConnectionString()`
+  ([`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)), which decomposes
   it into discrete fields (host/port/user/password/database) before the provider ever sees it, and
   stores no `connectionString` on the connection.
 - **A hand-typed connection string** (the ConnectionModal's URI tab clears host, port, user and
   password when it submits) is resolved by the provider itself,
-  `resolveConnection()` ([index.ts:402](../../src/lib/db/providers/sql/clickhouse/index.ts)), which
+  `resolveConnection()` ([`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts)), which
   is not optional politeness: for a connection typed there, the URL is the *only* place any of those
   fields exist. Percent-encoded credentials are decoded (`p%40ss%2Fword` → `p@ss/word`), an
   unparsable string leaves every configured field untouched rather than emptying a working
@@ -638,7 +640,7 @@ Two consequences worth stating plainly:
 
 ### 5.1 Execution
 
-`query(sql, params?)` ([index.ts:593](../../src/lib/db/providers/sql/clickhouse/index.ts)) sends one
+`query(sql, params?)` ([`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts)) sends one
 statement under **two** deadlines, both derived from `queryTimeout` (default 60 seconds), because
 neither covers the other:
 
@@ -770,7 +772,7 @@ Two honest zeroes in the overview, so neither reads as a measurement:
 ## 8. Maintenance
 
 `runMaintenance(type, target?)`
-([index.ts:920](../../src/lib/db/providers/sql/clickhouse/index.ts)). `optimize` and `kill` **require**
+([`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts)). `optimize` and `kill` **require**
 a target; `analyze` does not.
 
 | Type | ClickHouse action | Notes |
@@ -826,7 +828,7 @@ rather than silent.
 
 ## 9. Capabilities & labels
 
-### `getCapabilities()` ([index.ts:461](../../src/lib/db/providers/sql/clickhouse/index.ts))
+### `getCapabilities()` ([`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts))
 
 | Capability | Value |
 |------------|-------|
@@ -847,7 +849,7 @@ rather than silent.
 `supportsCreateTable: false` is deliberate, not an oversight — see
 [§3.10](#310-supportscreatetable-is-false--live-disproved-the-issues-own-guess).
 
-### `getLabels()` ([index.ts:489](../../src/lib/db/providers/sql/clickhouse/index.ts))
+### `getLabels()` ([`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts))
 
 Tables and rows are the right words here, so only the maintenance vocabulary changes — ClickHouse
 has no VACUUM and no ANALYZE, and offering either by that name would describe an operation that does
@@ -872,7 +874,7 @@ log_queries is off."* The Queries panel's empty state was hardcoded to PostgreSQ
 The transport normalizes every failure into `ClickHouseTransportError { code, name, message }`; the
 provider maps that one numeric space onto the shared classes from
 [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
-([index.ts:637](../../src/lib/db/providers/sql/clickhouse/index.ts)):
+(`mapClickHouseError()`, [`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts)):
 
 | Code | Meaning | Error raised |
 |------|---------|--------------|
