@@ -221,6 +221,17 @@ describe("redis provider doc", () => {
   });
 });
 
+describe("measured aggregate helper docs", () => {
+  test("MSSQL and Oracle pin the helper name to its source file", () => {
+    for (const doc of ["docs/providers/mssql.md", "docs/providers/oracle.md"]) {
+      expect(read(doc)).toContain(
+        "`measuredNullableAggregate()` ([`measured-aggregate.ts`](../../src/lib/db/utils/measured-aggregate.ts))",
+      );
+    }
+    expect(read("src/lib/db/utils/measured-aggregate.ts")).toMatch(/^export function measuredNullableAggregate\(/m);
+  });
+});
+
 describe("provider docs rewritten this round: code cited by name, whole file", () => {
   for (const { doc, source, methods } of NAMED_CITATIONS) {
     test(`${doc} cites no line number anywhere`, () => {

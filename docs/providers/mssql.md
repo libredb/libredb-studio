@@ -659,8 +659,8 @@ pairing.
 A database that really measures `0` is a **reading** and is kept. `SUM(...)` over no input answers
 one row of `NULL`, which the provider maps to `0`; the tab then formats the `0 B` it was given. If
 the driver returns no row, no expected column, or a non-finite value, the measurement is absent and
-the string stays `N/A`. The shared `measuredNullableAggregate()` boundary preserves those states
-without a falsy test that would erase a genuine zero.
+the string stays `N/A`. The shared `measuredNullableAggregate()` ([`measured-aggregate.ts`](../../src/lib/db/utils/measured-aggregate.ts))
+boundary preserves those states without a falsy test that would erase a genuine zero.
 
 ---
 
