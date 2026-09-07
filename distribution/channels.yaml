@@ -798,27 +798,30 @@ channels:
   - id: aws-marketplace
     name: AWS Marketplace (free AMI product)
     short_name: AWS Marketplace
-    status: pending
+    status: live
     category: cloud-marketplaces
     platforms: [cloud]
     runtime: channel_supplied
     tier: 4
     kind: marketplace
     update:
+      # The AMI and every listing field are submitted through the AWS Marketplace
+      # Management Portal, and a visibility change is reviewed by hand by Seller
+      # Operations, so nothing here can be CI-driven.
       method: manual_ui
       sla: on_demand
     links:
+      catalog: https://aws.amazon.com/marketplace/pp/prodview-tsahkrgdqpnws
       docs: deploy/aws/README.md
     pin:
       strategy: none
-      note: Nothing is listed yet - the AMI product exists as a descriptor only (deploy/aws/ holds
-        the Packer build, the first-boot units and every portal field), the same reason the Azure
-        offer carries an entry. This status is load-bearing rather than documentation -
-        .github/workflows/aws-ami-build.yml reads it and refuses every machine-triggered build
-        while it is not live, so a release cannot register a marketplace AMI for a product that is
-        not on sale. On publication, flip to live (that alone turns the release path on) and add
-        the listing URL as links.catalog; there is no pin to add, because the listed version lives
-        in the AWS Marketplace Management Portal the way Azure's lives in Partner Center.
+      note: Published 7 Sep 2026 as a free AMI product (0.14.1, ami-08263251d25dc8ced). This status
+        is load-bearing rather than documentation - .github/workflows/aws-ami-build.yml reads it and
+        stands down on every machine-triggered path while it is not live. Live opens that workflow's
+        own release trigger, which fires only for a draft published by hand; no other workflow
+        dispatches it, so an ordinary release still builds no AMI.
+        There is no pin to read, because the listed version lives in the AWS Marketplace Management
+        Portal the way Azure's lives in Partner Center; it is checked by hand against the portal.
 
   - id: winget
     name: winget community repository (LibreDB.Studio)

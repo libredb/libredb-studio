@@ -153,7 +153,7 @@ matching GitHub release. They carry one of the labels AWS uses:
 - `Important` - a bug fix or a change in behaviour worth planning for.
 - `Optional` - new features and routine maintenance.
 
-Version 0.14.0 is the initial listing and is labelled `Optional`.
+Version 0.14.1 is the initial listing and is labelled `Optional`.
 
 ## 13. Upgrades
 

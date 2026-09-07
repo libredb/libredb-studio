@@ -34,9 +34,9 @@ channel count.
 
 ## Coverage snapshot
 
-**36 channels · 28 live · 7 pending · 1 deprecated**
+**36 channels · 29 live · 6 pending · 1 deprecated**
 
-Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 5 · Kubernetes 3 · Cloud 11**
+Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 5 · Kubernetes 3 · Cloud 12**
 
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
@@ -47,7 +47,7 @@ Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 5 · K
 | OS / desktop packages | 3 | 0 | 0 |
 | PaaS catalogs (listed) | 9 | 3 | 0 |
 | Deploy recipes | 3 | 0 | 0 |
-| Cloud marketplaces | 2 | 3 | 0 |
+| Cloud marketplaces | 3 | 2 | 0 |
 
 <!-- END:CHANNEL-SCORECARD -->
 
@@ -88,9 +88,9 @@ Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 5 · K
 | [Fly.io launch config](https://github.com/libredb/libredb-studio/blob/main/fly.toml) | Deploy recipes | Cloud | live | Manual, on demand | [FLY.md](FLY.md) |
 | [Koyeb deploy button](https://github.com/libredb/libredb-studio/tree/main/deploy/koyeb) | Deploy recipes | Cloud | live | Manual, on demand | [deploy/koyeb/README.md](../deploy/koyeb/README.md) |
 | [Render Blueprint](https://github.com/libredb/libredb-studio/blob/main/render.yaml) | Deploy recipes | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [AWS Marketplace](https://aws.amazon.com/marketplace/pp/prodview-tsahkrgdqpnws) | Cloud marketplaces | Cloud | live | Manual, on demand | [deploy/aws/README.md](../deploy/aws/README.md) |
 | [DigitalOcean Marketplace](https://marketplace.digitalocean.com/apps/libredb-studio) | Cloud marketplaces | Cloud | live | Manual, on demand | [deploy/digitalocean/README.md](../deploy/digitalocean/README.md) |
 | [Google Cloud Marketplace](https://console.cloud.google.com/marketplace/product/libredb-public/libredb-studio) | Cloud marketplaces | Kubernetes, Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| AWS Marketplace | Cloud marketplaces | Cloud | pending | Manual, on demand | [deploy/aws/README.md](../deploy/aws/README.md) |
 | Azure Marketplace | Cloud marketplaces | Cloud | pending | Manual, on demand | [deploy/azure/README.md](../deploy/azure/README.md) |
 | [Koyeb One-Click Apps catalog](https://www.koyeb.com/deploy) | Cloud marketplaces | Cloud | pending | Manual, on demand | [deploy/koyeb/CATALOG_SUBMISSION.md](../deploy/koyeb/CATALOG_SUBMISSION.md) |
 

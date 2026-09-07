@@ -10,19 +10,22 @@ name: AWS AMI Build
 # job rather than in a release-only `if:` that a dispatch would walk straight
 # past.
 #
-# Until the listing is live, no machine path may build: the preflight job reads
-# `aws-marketplace` in distribution/channels.yaml and stands down unless its
-# status is `live`. A person who names a version in the dispatch input still
-# builds - that is how the AMI for the first submission gets made - so the
-# channel status is the switch, and flipping it to `live` is the whole change
-# needed to turn the release path on.
+# No machine path builds while the listing is not on sale: the preflight job
+# reads `aws-marketplace` in distribution/channels.yaml and stands down unless
+# its status is `live`. A person who names a version in the dispatch input builds
+# either way - that is how the AMI for the first submission was made - so the
+# channel status is the switch, and no edit here is needed when a listing goes
+# public. The channel went live on 7 Sep 2026, which opened the `release:
+# published` trigger below - it fires only for a draft published by hand, since
+# release-artifacts.yml publishes with GITHUB_TOKEN and no workflow dispatches
+# this one.
 on:
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release tag to ship - must exist on ghcr.io/libredb/libredb-studio (e.g. 0.14.0). Leave empty to use package.json; while the AWS channel is not live in distribution/channels.yaml a version is REQUIRED, an empty run stands down.'
+        description: 'Release tag to ship - must exist on ghcr.io/libredb/libredb-studio (e.g. 0.14.1). Leave empty to use package.json, which builds while the AWS channel is live in distribution/channels.yaml; while it is not live a version is REQUIRED and an empty run stands down.'
         required: false
         type: string
 

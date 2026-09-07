@@ -9,6 +9,10 @@ Same shape as the DigitalOcean droplet and the Azure VM image: Ubuntu 24.04, the
 published container pinned by digest, run by a systemd unit, credentials
 generated on the buyer's own instance at first boot.
 
+Listed since 7 September 2026:
+<https://aws.amazon.com/marketplace/pp/prodview-tsahkrgdqpnws> — product
+`prod-jq7wwg5ifhcfe`, first published version 0.14.1.
+
 ## Layout
 
 | Path | What it is |
@@ -30,23 +34,24 @@ keep in sync.
 ## Build
 
 Through the **AWS AMI Build** workflow: Actions -> AWS AMI Build -> Run
-workflow, **with the version** - while the listing is not live, naming it is
-what marks the run as a person's rather than a machine's (the listing gate
-below), so an empty run stands down. Once the channel is live, empty falls back
-to the `package.json` version at the ref. The run resolves the tag to a digest,
-waits for the image if the push is still in flight, assumes the OIDC build role
-and prints the AMI ID, the base image and the next portal steps in the job
-summary.
+workflow. The channel is live, so an empty version falls back to the
+`package.json` version at the ref and builds; name a version to ship anything
+else. (While the channel was pending, naming a version was what marked a run as
+a person's rather than a machine's - the listing gate below - and an empty run
+stood down.) The run resolves the tag to a digest, waits for the image if the
+push is still in flight, assumes the OIDC build role and prints the AMI ID, the
+base image and the next portal steps in the job summary.
 
 The workflow also declares `release: published`, but that trigger fires only
 when a human publishes a draft by hand: `release-artifacts.yml` publishes with
 `GITHUB_TOKEN`, and a GITHUB_TOKEN-created event starts no workflow. Making
 every release build an AMI means adding `gh workflow run aws-ami-build.yml
 --ref "refs/tags/$TAG"` to that file's `dispatch-downstream` job. That is safe to
-add whenever somebody wants it: a chained run names no version, so the preflight
-job below stands down quietly and the run is a green no-op until the repository
-variables exist. It is left out here only because it edits the release pipeline,
-which is outside what this change touches.
+add only with that consequence in mind: the channel is live and the three
+repository variables were set for the first build, so a chained run would build
+and register a marketplace AMI on every release, and nothing in this repository
+ever deregisters one. It is left out because it edits the release pipeline, and
+because registering an AMI per release is a decision rather than a default.
 
 A preflight job decides whether there is anything to build, on every path, so
 that the chain dispatch above behaves like a release rather than like a person:
@@ -64,16 +69,19 @@ Before any of that, it checks whether the product is on sale at all.
 listing, and while it is anything but `live` every machine path - a published
 release, the chained dispatch above - stands down quietly, so a release can
 never register a marketplace AMI for a product nobody can buy. A dispatch that
-NAMES a version builds regardless, because that is how the AMI the first
-submission needs gets made. Flipping the status to `live` is the whole switch:
-there is nothing to edit in the workflow when the listing goes public.
+NAMES a version builds regardless, which is how the AMI for the first
+submission was made. Flipping the status to `live` was the whole switch when the
+listing went public - nothing in the workflow had to change. What it opens is
+this workflow's own `release: published` trigger, which fires only for a draft a
+person publishes by hand (see above); no other workflow dispatches this one, so
+an ordinary release still builds no AMI.
 
 Locally, against the seller account:
 
 ```bash
 cd deploy/aws/ami
 export AWS_PROFILE=libredb-seller
-VERSION=0.14.0
+VERSION=0.14.1
 DIGEST=$(docker buildx imagetools inspect ghcr.io/libredb/libredb-studio:$VERSION --format '{{.Manifest.Digest}}')
 SUPPORT=$(gh variable get AWS_SUPPORT_EMAIL)   # the same mailbox the workflow uses
 packer init .
@@ -97,14 +105,14 @@ DIGEST=$(curl -sSI -H "Authorization: Bearer $TOKEN" \
 Whichever method you use, assert the value starts with `sha256:` before passing
 it to Packer.
 
-> **The scan verdict is still open.** Phase 0 of the plan measures whether the AWS
-> AMI scanner objects to CVEs inside the pre-pulled container layers, which is not
-> documented anywhere. Pre-pulling is the preferred design - deterministic, no
-> registry dependency at launch - but if the scan fails on container-layer CVEs
-> the fallback order is: rebuild the app image on a freshly patched base and
-> re-pin, then pull at first boot instead (allowed only if disclosed in the
-> listing), then ship the standalone `.deb`. Record the verdict here once it is
-> known.
+> **The scan accepts the pre-pulled layers.** Whether the AWS AMI scanner would
+> object to CVEs inside a pre-pulled container image is documented nowhere, so it
+> was an open question until the first submission: `ami-08263251d25dc8ced` passed
+> and shipped as published version 0.14.1 on 7 September 2026. Pre-pulling stays
+> the design - deterministic, no registry dependency at launch. If a later scan
+> does fail on container-layer CVEs, the fallback order is: rebuild the app image
+> on a freshly patched base and re-pin, then pull at first boot instead (allowed
+> only if disclosed in the listing), then ship the standalone `.deb`.
 
 ## Rules that are not style preferences
 
@@ -158,7 +166,9 @@ request and AMI **45 days before** any announcement that depends on it.
 3. Launch from the raw AMI and walk the short checklist: health, login, reload
    (the `AUTH_COOKIE_SECURE` trap), rotation, reboot.
 4. Portal -> Request changes -> Add new version, with the same ingestion role,
-   `ubuntu`, port 22, endpoint `http` `/` `3000`.
+   `ubuntu`, port 22, endpoint `http` `/` `3000`, and the Region set recorded in
+   `listing/listing-fields.md` — automatic enrolment in future Regions is off, so
+   Regions are chosen per version rather than inherited.
 5. Once the new version is live, restrict the previous one. Do **not** deregister
    an AMI or delete its snapshot while a version request is in flight.
 
