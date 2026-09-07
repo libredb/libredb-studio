@@ -132,7 +132,7 @@ describe("sqlite-driver", () => {
   });
 
   test("loadNodeSQLiteDriver() falls back to the real node:sqlite import", async () => {
-    // Bun implements node:sqlite from 1.4.0 - the version this repo pins - so the default
+    // Bun implements node:sqlite from 1.4.0, at or below the 1.4.2 this repo pins, so the default
     // importer resolves in-process instead of throwing, and this is the first time the
     // adapter can be driven against the REAL DatabaseSync rather than a stand-in. On Bun
     // 1.3.14 only the injected path above was reachable here.

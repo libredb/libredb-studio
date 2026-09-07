@@ -123,18 +123,9 @@ export function QuerySafetyDialog({
     return readsSqlText(type) && hasUnterminatedSpan(query, resolveSqlGrammar(type));
   }, [query, databaseType]);
 
-  useEffect(() => {
-    if (isOpen && query) {
-      analyzeQuery();
-    }
-    return () => {
-      setAnalysis(null);
-      setRawResponse("");
-      setError(null);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, query]);
-
+  // Declared above the effect that calls it: react-compiler
+  // (react-hooks/immutability) rejects reading a `const` binding from a position
+  // earlier than its declaration. Pure code motion - no hook order changes.
   const analyzeQuery = async () => {
     setIsAnalyzing(true);
     setError(null);
@@ -199,6 +190,18 @@ export function QuerySafetyDialog({
       setIsAnalyzing(false);
     }
   };
+
+  useEffect(() => {
+    if (isOpen && query) {
+      analyzeQuery();
+    }
+    return () => {
+      setAnalysis(null);
+      setRawResponse("");
+      setError(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, query]);
 
   if (!isOpen) return null;
 

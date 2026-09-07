@@ -24,7 +24,8 @@
  * since 2023: Bun implements N-API but not the V8 C++ API these NAN addons
  * link against). `assessNodeRuntime` cannot catch it either, because Bun
  * reports a `process.versions.node` well above the floor - 26.3.0 on Bun
- * 1.4.0. Only `bunx --bun` reaches that path, and that is the caller asking.
+ * 1.4.0, and still 26.3.0 on the pinned 1.4.2. Only `bunx --bun` reaches that
+ * path, and that is the caller asking.
  */
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";

@@ -63,88 +63,6 @@ export function DataProfiler({
     return detectSensitiveColumns(tableSchema.columns.map((c) => c.name));
   }, [tableSchema]);
 
-  useEffect(() => {
-    if (isOpen && tableName && connection) {
-      fetchProfile();
-    }
-    return () => {
-      setProfile(null);
-      setAiSummary("");
-      setError(null);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, tableName]);
-
-  /*
-    Escape closes the modal.
-
-    U4: `/api/db/profile` can fail for any provider (#427 measured it on Redis,
-    where the route answered 400 for every key-prefix row), and the card that
-    failure renders was a dead end - this shell is hand-rolled rather than a
-    `ui/dialog`, so nothing bound Escape for it and the header control was the only
-    exit. Swapping the shell for the Radix primitive would bring Escape along, but
-    it also portals the card out of the subtree `[data-studio-workspace]` styles by
-    descendant selector, and re-homing the embedded surface's chrome is a larger
-    change than a dismiss fix should make.
-
-    Registered on `document`, following CommandPalette's shortcut effect
-    (src/components/CommandPalette.tsx:79): the card takes no focus of its own when
-    it opens, so a handler on the card would never see the key. Bound only while
-    open, so a closed profiler - of which the tree holds one per surface - is not a
-    listener that swallows Escape from whatever else is on screen.
-  */
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      onClose();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
-
-  const fetchProfile = async () => {
-    if (!connection || !tableSchema) return;
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      let data: ProfileData;
-
-      if (onProfile) {
-        // Platform adapter: use callback instead of fetch
-        data = await onProfile({ connectionId: connection.id, tableName });
-      } else {
-        // Default: existing fetch behavior
-        const columns = tableSchema.columns?.map((c) => c.name) || [];
-        const response = await fetch("/api/db/profile", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          // The seed id for a managed connection: the browser's copy has had its
-          // password and connection string stripped, so the object cannot be
-          // resolved to a database from a cold provider cache.
-          body: JSON.stringify({ ...buildConnectionPayload(connection), tableName, columns }),
-        });
-
-        if (!response.ok) {
-          const err = await response.json();
-          throw new Error(err.error || "Profile failed");
-        }
-
-        data = await response.json();
-      }
-
-      setProfile(data);
-
-      // Trigger AI summary
-      fetchAiSummary(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const fetchAiSummary = async (data: ProfileData) => {
     setIsAiLoading(true);
     try {
@@ -192,6 +110,91 @@ export function DataProfiler({
       setIsAiLoading(false);
     }
   };
+
+  // Declared above the effect that calls it: react-compiler
+  // (react-hooks/immutability) rejects reading a `const` binding from a position
+  // earlier than its declaration. Pure code motion - no hook order changes.
+  const fetchProfile = async () => {
+    if (!connection || !tableSchema) return;
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      let data: ProfileData;
+
+      if (onProfile) {
+        // Platform adapter: use callback instead of fetch
+        data = await onProfile({ connectionId: connection.id, tableName });
+      } else {
+        // Default: existing fetch behavior
+        const columns = tableSchema.columns?.map((c) => c.name) || [];
+        const response = await fetch("/api/db/profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // The seed id for a managed connection: the browser's copy has had its
+          // password and connection string stripped, so the object cannot be
+          // resolved to a database from a cold provider cache.
+          body: JSON.stringify({ ...buildConnectionPayload(connection), tableName, columns }),
+        });
+
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error || "Profile failed");
+        }
+
+        data = await response.json();
+      }
+
+      setProfile(data);
+
+      // Trigger AI summary
+      fetchAiSummary(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && tableName && connection) {
+      fetchProfile();
+    }
+    return () => {
+      setProfile(null);
+      setAiSummary("");
+      setError(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, tableName]);
+
+  /*
+    Escape closes the modal.
+
+    U4: `/api/db/profile` can fail for any provider (#427 measured it on Redis,
+    where the route answered 400 for every key-prefix row), and the card that
+    failure renders was a dead end - this shell is hand-rolled rather than a
+    `ui/dialog`, so nothing bound Escape for it and the header control was the only
+    exit. Swapping the shell for the Radix primitive would bring Escape along, but
+    it also portals the card out of the subtree `[data-studio-workspace]` styles by
+    descendant selector, and re-homing the embedded surface's chrome is a larger
+    change than a dismiss fix should make.
+
+    Registered on `document`, following CommandPalette's shortcut effect
+    (src/components/CommandPalette.tsx:79): the card takes no focus of its own when
+    it opens, so a handler on the card would never see the key. Bound only while
+    open, so a closed profiler - of which the tree holds one per surface - is not a
+    listener that swallows Escape from whatever else is on screen.
+  */
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
