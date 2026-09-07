@@ -131,7 +131,8 @@ the case [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) names ClickHouse
 
 ### 2.4 Registration & lifecycle
 
-The factory wires Druid in via a dynamic import ([`factory.ts:95`](../../src/lib/db/factory.ts)):
+The factory wires Druid in via a dynamic import inside `createDatabaseProvider()`
+([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case "druid": {

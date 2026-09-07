@@ -134,8 +134,8 @@ OpenSearchProvider (search/index.ts:967)         ElasticsearchProvider (search/i
 
 ### 2.4 Registration & lifecycle
 
-The factory wires the type-id in via a dynamic import
-([factory.ts:123](../../src/lib/db/factory.ts)):
+The factory wires the type-id in via a dynamic import inside `createDatabaseProvider()`
+([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case "opensearch": {

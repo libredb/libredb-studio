@@ -25,13 +25,14 @@
  * same eight, and the docs in scope carry no `:<line>` suffix.
  *
  * SCOPE, deliberately narrow: the whole of every document in `NAMED_CITATIONS`, plus the
- * monitoring seam of the two search docs. The rest of `docs/providers/` still cites code by line
- * in quantity — a pre-existing backlog this round did not open — and the two search docs are
- * guarded only inside their monitoring section. Nothing here asserts that the uncovered
+ * monitoring seam of the two search docs, plus one file across every provider doc: `factory.ts`
+ * is cited by its entry point and never by a line. The rest of `docs/providers/` still cites code
+ * by line in quantity — a pre-existing backlog this round did not open — and the two search docs
+ * are guarded only inside their monitoring section. Nothing here asserts that the uncovered
  * citations are correct; they are simply not measured yet.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -42,6 +43,12 @@ const SEARCH_PROVIDER = "src/lib/db/providers/sql/search/index.ts";
 const BASE_PROVIDER = "src/lib/db/base-provider.ts";
 const MIGRATION_GENERATOR = "src/lib/schema-diff/migration-generator.ts";
 const FACTORY = "src/lib/db/factory.ts";
+
+/** Sorted: `readdirSync` returns filesystem order — green here, red on the next machine. */
+const PROVIDER_DOCS = readdirSync(path.join(ROOT, "docs/providers"))
+  .filter((entry) => entry.endsWith(".md"))
+  .sort()
+  .map((entry) => `docs/providers/${entry}`);
 
 /**
  * The docs this round rewrote, the source their prose links to, and the method names that now
@@ -238,12 +245,19 @@ describe("provider docs rewritten this round: code cited by name, whole file", (
   }
 
   test("provider docs name the factory's entry point rather than a line inside it", () => {
-    for (const { doc } of NAMED_CITATIONS.filter((citation) =>
-      read(citation.doc).includes("`createDatabaseProvider()`"),
-    )) {
+    // Selected on the entry point's NAME, not on the link: fourteen docs link `factory.ts`, and
+    // one of them (oracle.md) does so without naming the function — prose it does not owe.
+    const docs = PROVIDER_DOCS.filter((doc) => read(doc).includes("`createDatabaseProvider()`"));
+    // A derived population can derive to nothing, and a loop over nothing passes; renaming the
+    // phrase everywhere used to shed four assertions and stay green (#620).
+    expect(docs.length).toBeGreaterThan(0);
+    for (const doc of docs) {
       expect(read(doc)).toMatch(
         /`createDatabaseProvider\(\)`\s*\(\[`factory\.ts`\]\(\.\.\/\.\.\/src\/lib\/db\/factory\.ts\)\)/,
       );
+    }
+    for (const doc of PROVIDER_DOCS) {
+      expect(read(doc), `${doc} cites a line inside factory.ts`).not.toMatch(/factory\.ts:\d/);
     }
     expect(read(FACTORY)).toMatch(/^export async function createDatabaseProvider\(/m);
   });

@@ -126,8 +126,8 @@ is overridden, for the trailing-clause trap in [§3.8](#38-the-preparequery-over
 
 ### 2.4 Registration & lifecycle
 
-The factory wires ClickHouse in via a dynamic import
-([`factory.ts:87`](../../src/lib/db/factory.ts)):
+The factory wires ClickHouse in via a dynamic import inside `createDatabaseProvider()`
+([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'clickhouse': {

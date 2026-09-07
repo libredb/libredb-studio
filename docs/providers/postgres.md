@@ -88,7 +88,8 @@ rather than reimplementing them:
 ### 2.3 Registration & lifecycle
 
 The factory loads the provider via dynamic import so the `pg` driver is only pulled in when a
-PostgreSQL connection is opened ([`factory.ts:62`](../../src/lib/db/factory.ts)):
+PostgreSQL connection is opened by `createDatabaseProvider()`
+([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'postgres': {
