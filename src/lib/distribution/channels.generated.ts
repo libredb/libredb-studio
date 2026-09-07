@@ -37,6 +37,7 @@ export const LIVE_CHANNELS: readonly ShowcaseChannel[] = [
   { id: "kubero", label: "Kubero template catalog", group: "paas" },
   { id: "sealos", label: "Sealos App Store template", group: "paas" },
   { id: "truenas-scale", label: "TrueNAS SCALE apps", group: "paas" },
+  { id: "casaos", label: "CasaOS App Store", group: "paas" },
   { id: "rancher-partner", label: "Rancher Partner Charts", group: "kubernetes" },
   { id: "digitalocean", label: "DigitalOcean Marketplace", group: "paas" },
   { id: "gcp-marketplace", label: "Google Cloud Marketplace", group: "paas" },
