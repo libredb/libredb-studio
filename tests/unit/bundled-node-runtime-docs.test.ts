@@ -85,8 +85,6 @@ describe("bundled Node.js runtime documentation", () => {
     expect(major).toBeGreaterThanOrEqual(Number((floor as RegExpExecArray)[1]));
     // SECURITY.md quotes the floor in prose. Nothing guarded that literal, so
     // it went stale the day the floor moved; this pins it to package.json.
-    expect(SECURITY, `SECURITY.md does not quote the engines.node floor ${engines}`).toContain(
-      engines,
-    );
+    expect(SECURITY, `SECURITY.md does not quote the engines.node floor ${engines}`).toContain(engines);
   });
 });
