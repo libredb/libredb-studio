@@ -106,7 +106,7 @@ For the lead deciding whether a team is allowed to use this. OIDC single sign-on
 
 ### Assurance 2 — Maturity
 
-For anyone asking whether this is a weekend project. 100% line coverage enforced as a CI gate. MIT. Four releases tagged between 31 July and 3 August 2026. A Helm chart and an OpenShift operator bundle. 36 distribution channels, 29 of them live. Build provenance attestations on published artifacts.
+For anyone asking whether this is a weekend project. 100% line coverage enforced as a CI gate. MIT. Four releases tagged between 31 July and 3 August 2026. A Helm chart and an OpenShift operator bundle. 36 distribution channels, 30 of them live. Build provenance attestations on published artifacts.
 
 ### Assurance 3 — Founder-market fit
 
@@ -127,7 +127,7 @@ Facts drift. Provider counts, channel counts and competitor editions all change,
 | Sixteen database engines | One reference document per engine: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra. A seventeenth, `libredb.md`, is the embedded provider and is not an external engine. The count is derived, not written: `SHIPPED` in `src/lib/db/compatibility.ts` is an exhaustive record over `DatabaseType`, so the compiler refuses a missing id — read the count from there, minus `libredb` | `docs/providers/`, `src/lib/db/compatibility.ts` | 2026-08-20 |
 | Published as an embeddable npm package | `"name": "@libredb/studio"`, version 0.14.1 | `package.json` | 2026-09-07 |
 | MIT licensed | "MIT License / Copyright (c) 2025 LibreDB" | `LICENSE` | 2026-08-07 |
-| 36 distribution channels, 29 live | "36 channels · 29 live · 6 pending · 1 deprecated" | `docs/CHANNELS.md` | 2026-09-07 |
+| 36 distribution channels, 30 live | "36 channels · 30 live · 5 pending · 1 deprecated" | `docs/CHANNELS.md` | 2026-09-07 |
 | One-click deployment on managed platforms | Railway, Dokploy, CapRover, DigitalOcean and Sealos are listed channels | `docs/CHANNELS.md` | 2026-08-07 |
 | Usable from a phone | Dedicated mobile navigation and mobile card and table result views | `src/components/MobileNav.tsx`, `src/components/results-grid/ResultCard.tsx` | 2026-08-07 |
 | 100% line coverage enforced as a CI gate | `coverage:check` runs `scripts/check-coverage.mjs` against the merged lcov | `package.json` | 2026-08-07 |
