@@ -148,6 +148,21 @@ const NAMED_CITATIONS = [
       "getActiveSessions",
     ],
   },
+  {
+    doc: "docs/providers/postgres.md",
+    source: "src/lib/db/providers/sql/postgres.ts",
+    methods: [
+      "getCapabilities",
+      "qualifyMaintenanceTarget",
+      "validate",
+      "connect",
+      "buildSSLConfig",
+      "query",
+      "cancelQuery",
+      "beginTransaction",
+      "runMaintenance",
+    ],
+  },
 ] as const;
 
 const SEARCH_DOCS = ["docs/providers/elasticsearch.md", "docs/providers/opensearch.md"] as const;
