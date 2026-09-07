@@ -350,8 +350,25 @@ describe("AWS AMI SSH policy", () => {
   test("the effective config is asserted at build time, before the host keys go", () => {
     // A here-string rather than a pipe, so `grep -q` closing early cannot make
     // pipefail report a correct config as a failure.
-    expect(configure).toMatch(/grep -qx 'passwordauthentication no' <<<"\$\(sshd -T\)"/);
-    expect(configure).toMatch(/grep -qE '\^permitrootlogin [^']*' <<<"\$\(sshd -T\)"/);
+    expect(configure).toMatch(/effective_sshd=\$\(sshd -T\)/);
+    expect(configure).toMatch(/grep -qx 'passwordauthentication no' <<<"\$effective_sshd"/);
+    // Written as the forbidden value rather than as an allow-list of the three
+    // permitted ones: every OpenSSH since 7.0 reports `without-password` for
+    // `prohibit-password`, so an allow-list has to track upstream's spelling
+    // while `yes` has no synonym to miss.
+    // The whole construct, not the grep alone: asserting the text leaves the
+    // polarity free, and an inverted check rejects every correct image - which
+    // is the bug this line was written to fix.
+    expect(configure).toMatch(
+      /if grep -qx 'permitrootlogin yes' <<<"\$effective_sshd"; then\n[^\n]*FATAL[^\n]*\n\s+exit 1\n\s*fi/,
+    );
+    // And it prints what it saw: the allow-list version could not, which is why
+    // diagnosing its misfire cost a whole second AMI build.
+    expect(configure).toMatch(/FATAL: effective sshd config still permits root password login: \$\(grep/);
+    // The allow-list as a CLASS, not as the one spelling that was there before:
+    // rewriting it as `(without-password|no|forced-commands-only)` is the same
+    // bug and would pass a literal-prefix guard.
+    expect(configure).not.toMatch(/permitrootlogin \([^)]*\|/);
     expect(cleanup).not.toContain("sshd -T");
   });
 });

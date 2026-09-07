@@ -45,13 +45,27 @@ grep -qx 'PermitRootLogin prohibit-password' /etc/ssh/sshd_config.d/00-libredb-m
   || { echo "FATAL: the sshd drop-in is missing PermitRootLogin prohibit-password" >&2; exit 1; }
 
 sshd -t || { echo "FATAL: sshd config does not parse" >&2; exit 1; }
+# Captured once, into a variable: it fails closed on its own under `set -e`, it
+# does not run sshd twice, and the failure below can print what it actually saw
+# - which is what the allow-list version could not do, and why diagnosing it
+# cost a whole second AMI build.
+effective_sshd=$(sshd -T)
 # A here-string, not a pipe: `grep -q` exits on its first match, and under
 # `set -o pipefail` the producer's SIGPIPE (141) would surface as the whole
 # command failing - aborting the build with the exact opposite of what happened.
-grep -qx 'passwordauthentication no' <<<"$(sshd -T)" \
+grep -qx 'passwordauthentication no' <<<"$effective_sshd" \
   || { echo "FATAL: effective sshd config still permits password authentication" >&2; exit 1; }
-grep -qE '^permitrootlogin (no|prohibit-password|forced-commands-only)$' <<<"$(sshd -T)" \
-  || { echo "FATAL: effective sshd config still permits root password login" >&2; exit 1; }
+# Stated as what AWS forbids rather than as a list of the spellings that are
+# allowed: `yes` is the only value that permits a root password login, and an
+# allow-list of the others rejected a correct image on the second real build.
+# The value sshd reports is not the value you wrote - every OpenSSH since 7.0
+# prints `without-password`, the deprecated synonym, because that spelling comes
+# first in its multistate table - so an allow-list has to track upstream's
+# spelling, while the forbidden value has no synonym to miss.
+if grep -qx 'permitrootlogin yes' <<<"$effective_sshd"; then
+  echo "FATAL: effective sshd config still permits root password login: $(grep -m1 '^permitrootlogin ' <<<"$effective_sshd")" >&2
+  exit 1
+fi
 
 # Build-time substitutions — must run AFTER the files are in place. One line per
 # token; each token appears exactly once here and once in the scan below.
