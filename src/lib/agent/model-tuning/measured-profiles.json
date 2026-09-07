@@ -151,6 +151,35 @@
       }
     },
     {
+      "id": "gemma4:31b",
+      "measured": "6/6 modes locked, 30/30 runs passed with the two settings below. Investigate 26s · Optimize 378s · Assess 214s · Operate 93s · Analyze 132s · Plan 3s (medians of the passing runs), slowest run 398s — the slowest model on this list, and the only one whose median run passes a minute. Its six cells did not all close on one configuration: five locked at the compiled 90-second turn ceiling and optimize needed 150, so those five were read again under the pair that ships rather than recorded as something they had not been measured as. Twenty-five runs, every surface 5/5.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": true,
+        "refusalExamples": false,
+        "turnTimeoutMs": 150000
+      },
+      "rationale": {
+        "suppressPlanReasoning": [
+          "Its plan cell read 0/5 at the defaults and the loss was the clock, not the plan: the model spends the turn thinking and the deliverable never arrives.",
+          "Quiet, it answers in three seconds - the fastest plan turn of any model this size here - and the cell locked on the second attempt. It reaches plan turns only (`investigation.ts` reads it where the mode is not agent), so it is not what carried the five agent surfaces."
+        ],
+        "turnTimeoutMs": [
+          "Optimize is this model's wall and its clock: a passing run takes 378 seconds against a 26-second investigation, and at the compiled 90-second ceiling the cell would not close.",
+          "The ceiling bounds ONE call rather than the run, so raising it does not obviously help - a turn cut at 90 is now re-asked, while a turn allowed 150 spends that from the run's own deadline instead. That trade was measured rather than argued: the four agent surfaces that had locked at 90 were read again at 150 and each returned 5/5."
+        ]
+      }
+    },
+    {
       "id": "granite4.1:30b",
       "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
       "settings": {
