@@ -902,7 +902,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
         sending prose where an object goes.
 
         The paths were already named. What was gated was the SHAPE: `exampleReportCall` rebuilds a
-        whole call from the run's ledger and sits behind `refusalExamples`, which two of twenty-two
+        whole call from the run's ledger and sits behind `refusalExamples`, which two of twenty-eight
         shipped models carry. Everyone else reads "expected object" and has to guess the object.
 
         So this splits the two, on the rule the column advice was split on: a one-line skeleton is
