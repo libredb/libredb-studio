@@ -10,7 +10,7 @@ This project and everyone participating in it is governed by our [Code of Conduc
 
 **Open an issue or a pull request in Chinese (中文) or Japanese (日本語) if that is easier for you.** You do not need fluent English to report a bug or propose a change, and a report we have to translate is far better than one you did not send. Maintainers will usually reply in English; say so if that does not work for you.
 
-This applies to the conversation, not to the repository. Everything that lands in the tree stays in English: code, comments, commit messages, documentation and the pull request title. The exceptions are the translated READMEs themselves ([README_zh.md](README_zh.md), [README_ja.md](README_ja.md)), which are maintained in their own language.
+This applies to the conversation, not to the repository. Everything that lands in the tree stays in English: code, comments, commit messages, documentation and the pull request title. The exceptions are the translated READMEs themselves ([README_zh.md](README_zh.md), [README_ja.md](README_ja.md), [README_es.md](README_es.md), [README_ru.md](README_ru.md)), which are maintained in their own language.
 
 If you are updating a translated README, note that `bun run readme:check` enforces that its engine table and install commands match [README.md](README.md). Translations may cover fewer install channels, but a command must never be paraphrased - a reader copy-pastes it.
 
@@ -59,8 +59,9 @@ Feature suggestions are welcome! Please provide:
 5. **Keep the provider triad in lockstep.** Anything under `src/lib/db/providers/**` has a matching
    `docs/providers/<type-id>.md` and `tests/integration/db/<type-id>-provider.test.ts`; a change to
    one moves the other two in the same PR.
-6. **Localized READMEs are guarded.** `README_zh.md` and `README_ja.md` must list the same engines
-   as `README.md` and quote install commands verbatim; `bun run readme:check` enforces it.
+6. **Localized READMEs are guarded.** `README_zh.md`, `README_ja.md`, `README_es.md` and `README_ru.md`
+   must list the same engines as `README.md` and quote install commands verbatim; `bun run readme:check`
+   enforces it.
 7. **Follow the coding style**, write clear commit messages, and update documentation with the code.
 
 ### Contributor programs

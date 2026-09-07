@@ -4,17 +4,20 @@
  *
  * README_zh.md and README_ja.md (#317) restate two things README.md already
  * says: which engines exist, and what the install commands are. Both are
- * hardcoded in all three files, and the repo has no other check that notices
- * when they diverge - `distribution:check` covers channels.yaml, `chart:check`
- * covers the chart, nothing covered this. Review of #317 found a Homebrew row
- * missing its mandatory `brew trust`, a Snap row missing `sudo`, and a Helm row
- * that added a repo without installing anything; the next provider to land will
- * leave both translations claiming the old engine count.
+ * hardcoded in every localized README, and the repo has no other check that
+ * notices when they diverge - `distribution:check` covers channels.yaml,
+ * `chart:check` covers the chart, nothing covered this. Review of #317 found
+ * a Homebrew row missing its mandatory `brew trust`, a Snap row missing
+ * `sudo`, and a Helm row that added a repo without installing anything; the
+ * next provider to land will leave every translation claiming the old engine
+ * count. README_es.md and README_ru.md joined the same guard later, unrelated
+ * to #317.
  *
  * Two invariants, chosen so that abridgement stays legal and errors do not:
  *
- *   1. The engine name set is identical in all three files. A translation that
- *      omits an engine is wrong, and so is one that invents an engine.
+ *   1. The engine name set is identical in every localized README. A
+ *      translation that omits an engine is wrong, and so is one that invents
+ *      an engine.
  *   2. Every command in a localized install table appears verbatim in
  *      README.md's. Localized files may list fewer channels - they deliberately
  *      drop Chocolatey and the portable zip - but may not paraphrase a command.
