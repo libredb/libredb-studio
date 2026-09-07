@@ -1703,7 +1703,9 @@ switches therefore spends two extra turns rather than one, and a model carrying 
 its `retryEmptyTurn: false` overridden by a switch that argues for something else.
 
 Live on `nemotron3:33b`, whose entry records `retryEmptyTurn: false` and whose empty turns are
-asked again anyway. Pinned as it behaves in `tests/isolated/agent-investigation.test.ts` rather
+asked again anyway — and, since the gate began reading `answersUnreadStop` rather than
+`retriesUnreadStop`, on every model with no entry at all, which is the same subsumption over a
+wider set. Pinned as it behaves in `tests/isolated/agent-investigation.test.ts` rather
 than repaired, because the repair — narrowing the gate to a turn with text in it — changes the
 behaviour the five passing query-optimization runs were measured under, and this repository does
 not move a measured cell without re-measuring it.

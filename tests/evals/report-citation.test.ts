@@ -133,6 +133,7 @@ describe("a run can cite using only what it was shown", () => {
         prompts.push(promptText(turn));
         return answersProse("nothing to do")(turn);
       },
+      answersProse("nothing to do"),
     ]);
 
     expect(prompts[0]).toContain('{"source":"artifact","correlationId":"<');

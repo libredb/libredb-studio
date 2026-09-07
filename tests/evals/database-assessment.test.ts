@@ -153,6 +153,7 @@ describe("the bar this workflow is judged against is stated to the model", () =>
         prompts.push(promptText(turn));
         return answersProse("nothing to do")(turn);
       },
+      answersProse("nothing to do"),
     ]);
 
     expect(prompts[0]).toContain("call profile_table on at least one table before you report");

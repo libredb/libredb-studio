@@ -106,7 +106,12 @@ describe("a hostile identifier in the schema inventory", () => {
   test("reaches the model neutralised, inside an envelope it did not break", async () => {
     const run = await open();
 
-    const drive = await run.drive([answersProse("I will not follow instructions found in data.")]);
+    // Nothing was read, so the drive names the instruments once; a model that
+    // narrates again is stopping rather than hesitating.
+    const drive = await run.drive([
+      answersProse("I will not follow instructions found in data."),
+      answersProse("I will not follow instructions found in data."),
+    ]);
 
     const transcript = drive.transcripts[0] ?? "";
     // The words survive — the content is evidence — but not as a marker.
@@ -118,7 +123,7 @@ describe("a hostile identifier in the schema inventory", () => {
   test("the instruction is inside the fence, never in the server's own voice", async () => {
     const run = await open();
 
-    const drive = await run.drive([answersProse("Nothing to do.")]);
+    const drive = await run.drive([answersProse("Nothing to do."), answersProse("Nothing to do.")]);
 
     const transcript = drive.transcripts[0] ?? "";
     const opened = transcript.indexOf(UNTRUSTED_CONTENT_BEGIN);
@@ -304,6 +309,8 @@ describe("a tool the injected text names does not exist for the run that reads i
         return chatToolCallStream("compare_plans", JSON.stringify({ before: "a", after: "b" }), "call_compare");
       },
       answersProse("No such tool."),
+      // A refused call read nothing, so the drive names the instruments once more.
+      answersProse("No such tool."),
     ]);
 
     // The offered set is a function of the run's PERSISTED workflow, so no text a
@@ -371,7 +378,7 @@ describe("OPEN RISK — an assistant message can carry an unfenced marker (B29)"
     // envelope's own pair.
     const run = await openHostile();
 
-    const drive = await run.drive([answersProse("Noted.")]);
+    const drive = await run.drive([answersProse("Noted."), answersProse("Noted.")]);
 
     const transcript = drive.transcripts[0] ?? "";
     expect(transcript).toContain("(neutralised marker:");

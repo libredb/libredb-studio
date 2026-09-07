@@ -3,7 +3,9 @@
 Studio ships a document recording what specific models were measured under — how long one of
 their turns may take, how many readings they may take before being asked to report, whether an
 empty turn is worth asking again. A model it does not name is driven with the compiled defaults,
-which is the honest treatment of a model nobody has measured.
+which is the honest treatment of a model nobody has measured — bar the two settings noted under
+[the settings](#the-settings), where an absent entry is read as the absence it is rather than as a
+`false` somebody wrote.
 
 This page is how you supply your own, with no new Studio release and no code change. It is the
 other half of [`testing-your-own.md`](testing-your-own.md): that page is how you measure a model,
@@ -113,11 +115,11 @@ Every one is optional. What you do not state resolves to the compiled default in
 | `perWorkflow` | the same object, per workflow id | sampling for named surfaces only — the narrowest an override gets | — |
 | `unreportedCallCeiling` | integer 1–100 | how many calls it may make without reporting before the run is narrowed to the tools that would finish it | `12` |
 | `reportReminderLimit` | integer 0–5 | how many times a turn with no call and no report may be answered with the report reminder | `1` |
-| `planStatementRetries` | integer 0–5 | extra turns a PLAN run gets when its prose named neither a statement nor a refusal | `0` |
+| `planStatementRetries` | integer 0–5 | extra turns a PLAN run gets when its prose named neither a statement nor a refusal | `0` — but see below |
 | `presentReminderLimit` | integer 0–5 | how many times a report may be held to ask for the answer that belongs beside it | `1` |
 | `verdictHoldLimit` | integer 0–5 | how many times a report whose own verdict would REJECT it may be held and told why — the third of the reminder bounds. A run about to pass never reaches this hold, so raising it costs turns only on a run that has already lost | `2` |
 | `retryEmptyTurn` | boolean | whether a turn that came back EMPTY is asked once more before the run is ended | `false` |
-| `retryUnreadStop` | boolean | whether a run that stopped having CALLED NOTHING is told once to read the database itself, instead of being ended — it subsumes `retryEmptyTurn`, since the gate asks what was called and not what was said | `false` |
+| `retryUnreadStop` | boolean | whether a run that stopped having CALLED NOTHING is told once to read the database itself, instead of being ended — it subsumes `retryEmptyTurn`, since the gate asks what was called and not what was said | `false` — but see below |
 | `suppressPlanReasoning` | boolean | whether this model's PLAN turn asks the endpoint for no reasoning at all — reaches the OpenAI-compatible adapter only (`openai`, `ollama`, `custom`), so it is a no-op on `gemini` | `false` |
 | `suppressAgentReasoning` | boolean | the same, for this model's AGENT turns — for a model that either answers at once or thinks until the wall, which `turnTimeoutMs` does not address because a turn spent thinking finds the new wall too. Same adapters, same no-op on `gemini` | `false` |
 | `refusalExamples` | boolean | whether a refused call is handed a worked example built from this run's ledger | `false` |
@@ -135,6 +137,17 @@ can — and this is the only place that fact can be expressed per model. Lower i
 your model starts losing the schema block or ending early; raise it if your model has room and your
 conversations are long enough to be truncating. Either way the answer comes from driving it, which
 is what [`testing-your-own.md`](testing-your-own.md) is for.
+
+**Two settings answer differently for a model with NO entry at all**, and the last column above is
+the compiled default rather than what an unnamed model gets. `planStatementRetries` and
+`retryUnreadStop` each buy a single extra turn, and each gate is reachable only on a run that has
+already fallen short — one where the closing prose named no statement, one where the model stopped
+having called nothing. Neither can turn a pass into a failure, so withholding them from a model
+nobody has measured only guarantees that the model most in need of the sentence is the one certain
+not to receive it. A model with no entry is therefore offered both: one plan ask
+(`planStatementAsksFor`) and one answer to a stop that read nothing (`answersUnreadStop`), both in
+[`src/lib/agent/models/index.ts`](../../src/lib/agent/models/index.ts). **A stated value still
+wins** — a `0` or a `false` you write here is a measurement, and Studio does not overrule it.
 
 ## The rules
 
