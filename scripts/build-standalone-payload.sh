@@ -18,6 +18,10 @@
 #                                      duckdb.node + libduckdb.so
 #   - node_modules/detect-libc      -> what the DuckDB binding loader uses to
 #                                      pick between a glibc and a musl package
+#   - node_modules/oracledb         -> the Oracle driver, whole: Thick mode
+#                                      (ORACLE_CLIENT_LIB_DIR) loads a native
+#                                      addon from build/Release, which file
+#                                      tracing never sees (#538)
 #   - seed-assets/                  -> vendored sample DB templates (fs-read
 #                                      at runtime, not seen by file tracing)
 #   - data/                         -> default SQLite storage directory
@@ -222,6 +226,30 @@ rm -rf "${PAYLOAD_DIR:?}/node_modules/@duckdb"
 cp -R node_modules/@duckdb "$PAYLOAD_DIR/node_modules/@duckdb"
 rm -rf "${PAYLOAD_DIR:?}/node_modules/detect-libc"
 cp -R node_modules/detect-libc "$PAYLOAD_DIR/node_modules/detect-libc"
+
+# The Oracle driver (#538). Thin mode is pure JavaScript, so this package looked
+# like an ordinary traced dependency for a long time. Thick mode is not: setting
+# ORACLE_CLIENT_LIB_DIR makes node-oracledb load build/Release/oracledb-<ver>-
+# <platform>-<arch>.node, reached through a computed require(path) that output
+# file tracing cannot follow, so the standalone tree got the JavaScript and none
+# of the binaries. Copy the whole package: build/ carries one binary per
+# platform and arch (~3 MB), which is what keeps this arch-agnostic.
+if [ ! -d node_modules/oracledb ]; then
+  echo "node_modules/oracledb not found - run 'bun install --frozen-lockfile' first" >&2
+  exit 1
+fi
+rm -rf "${PAYLOAD_DIR:?}/node_modules/oracledb"
+cp -R node_modules/oracledb "$PAYLOAD_DIR/node_modules/oracledb"
+# Unlike the two probes above, this one cannot `require` its way to proof: the
+# addon only loads under initOracleClient(), which needs an Oracle Instant
+# Client that no build runner has. What IS checkable is the failure the copy
+# exists to prevent - the addon for THIS target missing from the payload.
+if ! ls "$PAYLOAD_DIR"/node_modules/oracledb/build/Release/oracledb-*-"${OS}"-"${ARCH}".node >/dev/null 2>&1; then
+  echo "node_modules/oracledb has no Thick-mode addon for ${OS}-${ARCH} in build/Release." >&2
+  echo "The published package ships one per platform, so this normally means an incomplete" >&2
+  echo "node_modules - reinstall with 'bun install --frozen-lockfile'." >&2
+  exit 1
+fi
 
 # Vendored sample database templates (seed-assets/): read at runtime relative
 # to the payload root, so output file tracing never includes them — copy

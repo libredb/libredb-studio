@@ -211,7 +211,34 @@ artefacts except the npm package. That runtime is the largest single binary in
 most of them, it is fetched by a shell script rather than resolved from a
 lockfile, and the SBOM's only `node`-named component is `pkg:npm/@types/node`, a
 type-declarations package with no relationship to the runtime that actually
-ships. This is a known gap, tracked in `docs/BACKLOG.md`.
+ships. This is a known gap. Until the SBOM covers it, the component is described
+by hand below so a reader of this document can still answer "which Node.js is
+inside, and where did it come from".
+
+#### Bundled Node.js runtime
+
+Maintained by hand, read from the two fetch scripts. `bun run test` fails if
+this table drifts from them.
+
+| | |
+| --- | --- |
+| Component | Node.js |
+| Version | **24.18.0** (Krypton LTS) |
+| Upstream | <https://nodejs.org/dist/v24.18.0/> |
+| Linux artefacts | `node-v24.18.0-linux-x64.tar.xz`, `node-v24.18.0-linux-arm64.tar.xz` |
+| Windows artefact | `node-v24.18.0-win-x64.zip` |
+| Fetched by | `packaging/linux/fetch-node.sh`, `packaging/windows/fetch-node.sh` |
+| Integrity | sha256, pinned in-repo in those scripts and verified after download |
+| Licence | MIT (Node.js), plus the licences of its own bundled dependencies |
+| Ships in | standalone tarballs, Windows zip, `.deb`, `.rpm`, snap, AppImage, desktop |
+| Does not ship in | the npm package, which uses the host's Node.js |
+
+The digests are pinned in the scripts rather than taken from the
+`SHASUMS256.txt` served alongside the download, so a compromised origin cannot
+supply a tampered tarball together with a matching checksum file. Both the
+version and the digests move together when the pin is bumped; `package.json`'s
+`engines.node` floor (`>=24.0.0`) is the lower bound the pin must stay at or
+above.
 
 Verify it:
 

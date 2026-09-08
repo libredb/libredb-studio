@@ -165,6 +165,10 @@ export interface WireCompatibleEngine {
  * and SingleStore from a fifth run the same day, ScyllaDB from a sixth run on
  * 2026-08-21/22, Apache Doris, Garnet and both Percona distributions from a seventh run
  * on 2026-08-26, and ParadeDB, OrioleDB and Databend from an eighth on 2026-08-27.
+ * The nine MySQL-wire relatives were re-measured together on 2026-09-06 for issues
+ * #573 and #574, at the wire and then in a browser against the built app, and the
+ * outcome per engine is recorded in `docs/providers/mysql.md` section 5.5 for the
+ * EXPLAIN grammar and section 8 for the SHOW STATUS reads.
  * Names still awaiting an instance are tracked in issue #424, never here: there
  * is no "pending" state on purpose, because a reader cannot tell a pending entry
  * from a probed one. A name that WAS probed and did not earn an entry has no
@@ -195,21 +199,26 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     name: "CockroachDB",
     via: "postgres",
     tier: "partial",
-    probedVersion: "CockroachDB CCL v26.2.5",
+    probedVersion: "CockroachDB CCL v26.2.6",
     caveats: [
-      "The object browser is empty: CockroachDB has no pg_total_relation_size() builtin, which our schema query calls.",
-      "Health, overview, monitoring, table, index and storage panels are unavailable: pg_size_pretty(), pg_postmaster_start_time() and pg_tablespace_location() do not exist there.",
+      "The object browser now lists real tables (previously empty, #38680): the schema query recovers from the missing pg_total_relation_size() builtin by falling back to an unmeasured (0-byte) size instead of failing outright. Foreign keys and indexes are unaffected by this and continue to work.",
+      "The overview panel loads with connections/size/uptime marked unavailable rather than failing outright: pg_postmaster_start_time(), pg_size_pretty() and pg_tablespace_location() do not exist there.",
+      "Its table and index counts are the user's own. CockroachDB documents exactly four system schemas, and crdb_internal objects reach pg_tables even though information_schema's BASE TABLE filter never shows them - so before those two schemas were excluded, the overview counted 98 tables (93 crdb_internal, 3 pg_extension) for the 2 the object browser listed, and the two panels disagreed inside one app.",
       "Performance metrics, slow queries and active sessions do work: the pg_stat_* views CockroachDB provides are enough for them.",
+      'The Explain panel works, and shows what the query really did. CockroachDB refuses PostgreSQL\'s parenthesised options (`at or near "analyze": syntax error`, and `JSON` is legal there only beside DISTSQL, where it answers a processor diagram rather than a plan), so the grammar is measured at connect and this server gets its own unparenthesised EXPLAIN ANALYZE. Until it was measured the panel showed its "no execution plan" empty state, so a failed plan request read as a query with no plan.',
     ],
   },
   {
     name: "Materialize",
     via: "postgres",
-    tier: "query-only",
-    probedVersion: "Materialize 26.37.0 (advertises PostgreSQL 9.5)",
+    tier: "partial",
+    probedVersion: "Materialize 26.40.0 (advertises PostgreSQL 9.5)",
     caveats: [
-      "Only the SQL editor works. The object browser, the monitoring dashboard and every statistics panel are unavailable.",
-      "Materialize has no pg statistics catalog and no size functions, and it reserves the MATERIALIZED keyword our schema query uses.",
+      'The object browser lists tables and columns (previously nothing worked at all, #38680): the schema query recovers from four gaps by retrying without each - the reserved MATERIALIZED keyword, the missing pg_total_relation_size() builtin, json_agg()/json_build_object() (Materialize only has the jsonb_ equivalents), and information_schema.constraint_column_usage, which Materialize does not implement - its catalog ships fourteen information_schema views and that is not one of them, at HEAD as well as at the probed release, so this is not a version gap that will close. Foreign keys and primary keys are then empty for a reason that is not ours: Materialize has neither. CREATE TABLE refuses both, "a primary key or unique constraint is not supported" and "column constraint: REFERENCES ... not yet supported", and its table_constraints, key_column_usage and referential_constraints shims all answer zero rows because there is nothing to put in them. Indexes come back empty too. The \'[]\'::json casts in the same queries are left alone: the cast was measured working on a live instance even though Materialize documents no json type.',
+      "The monitoring dashboard loads with every statistic marked unavailable rather than erroring the whole page: Materialize has no pg statistics catalog and no size functions. All seven tabs render. Three panels - the Tables tab's breakdown and the Storage tab's tablespaces and largest-tables list - are absent rather than empty, each showing Materialize's own sentence under the heading \"This engine does not publish this\" rather than an error, because the message names a pg_ object that is simply not there.",
+      "Materialized views are listed beside tables in the object browser, with their columns. Materialize reports them through information_schema.tables as table_type = 'MATERIALIZED VIEW' and they are what its users actually work with, so a browser that listed only BASE TABLE hid the product: revenue_by_region was invisible while the three plain tables showed.",
+      "The Explain panel works. Materialize has no rule for EXPLAIN's parenthesised options at all - `(FORMAT JSON)` is refused the same way `(ANALYZE, BUFFERS, FORMAT JSON)` is, and the error names only the first token inside them - and no EXPLAIN ANALYZE either, so the grammar is measured at connect and this server gets the plain EXPLAIN, whose physical plan names the relations it reads, the join strategy and the filters it pushed down. The JSON form its docs publish is not used: it carries no relation names, only internal ids.",
+      "Row counts are blank rather than zero. Materialize answers -1 from pg_class.reltuples - PostgreSQL's never-counted sentinel - for tables, views and materialized views alike, so there is no estimate to show and the browser draws no badge. It used to show 0, which read as a measurement nobody made; a table holding three rows said it held none.",
     ],
   },
   {
@@ -218,8 +227,8 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     tier: "query-only",
     probedVersion: "RisingWave 3.0.3 (advertises PostgreSQL 13.14.0)",
     caveats: [
-      "Only the SQL editor works. The object browser, the monitoring dashboard and every statistics panel are unavailable.",
-      "RisingWave rejects a parameterised LIMIT, so the slow-query and active-session panels cannot run at all.",
+      'The object browser is unavailable: the schema query\'s LEFT JOIN pg_class ON (...)::regclass fails to bind ("missing FROM-clause entry for table c") - a different gap than the MATERIALIZED keyword collision Materialize hits, and not yet worked around.',
+      "The monitoring dashboard now loads with every statistic marked unavailable rather than erroring the whole page: RisingWave has no pg statistics catalog at all. Slow-query and active-session panels stay empty (not merely unavailable) because RisingWave also rejects a parameterised LIMIT.",
     ],
   },
   {
@@ -240,8 +249,8 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     tier: "full",
     probedVersion: "TimescaleDB 2.29.2 on PostgreSQL 17.11",
     caveats: [
-      "Row counts and sizes for a hypertable are wrong rather than missing: PostgreSQL statistics describe the empty parent table, not the chunks the rows live in.",
-      "Every chunk of a hypertable appears as its own table and index, so the object browser fills with _timescaledb_internal chunks and the _timescaledb_catalog and _timescaledb_cache schemas.",
+      "Row counts and sizes for a hypertable are wrong rather than missing: PostgreSQL statistics describe the empty parent table, not the chunks the rows live in. Measured on a 31-chunk hypertable, pg_total_relation_size() answered 24576 bytes where the extension's own hypertable_size() answered 2498560 - about a hundredfold understatement. Excluding the chunk schemas from the browser does not change this, because the parent is what the size is read from either way.",
+      "The object browser now lists only user tables. TimescaleDB's own seven schemas are excluded, so a database whose sole hypertable had 31 chunks went from 61 objects to the 2 the user created: 34 came from _timescaledb_internal, 22 from _timescaledb_catalog and 3 from _timescaledb_cache.",
       "The overview shows the PostgreSQL version, not the TimescaleDB extension version.",
       "The agent grounds a stock install: the column capture is one row per table rather than one row per column, so the extension's own catalogs no longer overflow the 200-row budget. On a database with real hypertable data every chunk still appears as its own table in the inventory.",
     ],
@@ -266,8 +275,8 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     caveats: [
       "Table statistics and index statistics are unavailable: both fail with the same engine error, \"query plan with multiple segworker groups is not supported\", which is Cloudberry's MPP planner restriction rather than a missing catalog. The monitoring dashboard itself answers - its overview and performance tabs read connections, database size, table count, deadlocks and checkpoint stats normally - and it is specifically the Tables tab's per-table breakdown and the Storage tab's largest-tables list that fail. Each failing panel says \"This database could not answer this panel\" and prints the engine's error under it, so the planner restriction is not presented as a connection fault.",
       "Row counts and sizes read after ANALYZE are correct - 2000 rows for 2000 rows and 576 KB for 589824 bytes - so the object browser here is not the kind that misleads; what they read before ANALYZE was not probed.",
-      "Two internal tables appear in the object browser, pg_ext_aux.pg_pax_fastsequence and pg_ext_aux.pg_pax_tables, so it lists 4 objects for 2 user tables.",
-      "A foreign key is read back as if it were enforced but is not: Cloudberry accepts ALTER TABLE ... ADD CONSTRAINT with a warning that referential integrity constraints are not supported, and an orphan insert then succeeds.",
+      "The object browser now lists only user tables: pg_ext_aux, which holds the PAX auxiliary tables pg_pax_fastsequence and pg_pax_tables, is excluded along with gp_toolkit, pg_aoseg and pg_bitmapindex, so the count went from 4 objects to the 2 the user created. Cloudberry's schema documentation lists the latter three but not pg_ext_aux, which is here on measurement rather than on the doc's authority.",
+      'Its two failing panels keep the heading "This database could not answer this panel" and print the planner\'s own sentence, which is the right reading: pg_stat_user_tables exists here and is readable, so a differently shaped statement could still succeed - unlike an engine that simply has no such function. A foreign key is read back as if it were enforced but is not: Cloudberry accepts ALTER TABLE ... ADD CONSTRAINT with a warning that referential integrity constraints are not supported, and an orphan insert then succeeds.',
       "The overview's database size reads 62 MB against roughly 900 KB of user tables, which is catalog and segment overhead rather than your data.",
       "The agent needs a least-privilege agent role to ground a run: connecting as the cluster's own gpadmin is refused because the execution profile reads that role as too broad. With that role the capture succeeds.",
       "Apache publishes build images only, so the probe ran on a third-party image (woblerr/cloudberry:2.1.0-incubating); no image from the project itself was measured.",
@@ -281,7 +290,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     caveats: [
       'The version panel cannot be told apart from a stock PostgreSQL 17: version() reports only "PostgreSQL 17.9 on x86_64-pc-linux-gnu" and names AlloyDB nowhere, so the product identity is visible only in the alloydb.* settings and in the image tag.',
       "Row counts and sizes are exact, checked against the engine: 2000 rows read as 2000, and 270336 total bytes as 270336 (180224 table plus 90112 index). Foreign keys are both read back and enforced.",
-      "Eight of AlloyDB's own google_ml tables appear in the object browser, so it lists 10 objects for 2 user tables: auth_info, embed_gen_progress, embed_gen_settings, model_family_info, models, native_models, proxy_models_query_mapping and supported_vertex_models.",
+      "The object browser now lists only user tables, and by ownership rather than by name: pg_depend is asked which schemas an extension created, which answers google_ml AND ai where a hardcoded name list had caught only the first. The count went from 10 objects to the 2 the user created. Google's documentation names the google_ml_integration extension but never its schema. Excluding by name would have hidden a schema from any user who happened to call one google_ml; a user's own schema is never extension-owned.",
       "The browser understates what the image installed: outside the system schemas there are 70 objects for 2 user tables, because 49 extension VIEWS are installed into public itself (g_columnar_* x27, google_db_advisor_* x18, g_agg_stat_statements, g_lap_timer, hypopg_list_indexes and a columnar vectorized-join view), plus 4 views in ai and 11 more in google_ml. They are hidden only because the schema query filters table_type = 'BASE TABLE'.",
       "Those eight google_ml tables are readable by a role with no grants at all: a LOGIN role given only CONNECT, with ALL revoked on schema public, still lists them and answered SELECT count(*) FROM google_ml.supported_vertex_models with 15 rows.",
       'The slow-query panel is always empty and health says why: pg_stat_statements ships with the image but is not installed in it, reported as "pg_stat_statements extension not enabled".',
@@ -348,10 +357,10 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     probedVersion: "8.0.11-TiDB-v8.5.1",
     caveats: [
       "A freshly loaded table reads 0 rows and 0 B until TiDB's own background statistics collection catches up; the numbers correct themselves with no ANALYZE.",
-      "Max connections reads 0, because TiDB's max_connections defaults to 0 meaning unlimited.",
+      "Max connections reads 0, because TiDB's max_connections defaults to 0 meaning unlimited, and the connection count beside it reads not published: TiDB answers SHOW STATUS with 13 rows and none of them is Threads_connected (wire, 2026-09-06).",
       "The slow-query panel is always empty: TiDB keeps its slow log in information_schema.SLOW_QUERY, not in the performance_schema view the provider reads.",
       "Storage stats list a phantom InnoDB entry at ibdata1:12M:autoextend, which is a MySQL default echoed back by a server that has no InnoDB.",
-      "The Explain panel does not work: TiDB rejects EXPLAIN FORMAT='json' outright, so the editor's plan request fails while the query itself runs normally.",
+      "The Explain panel renders TiDB's own operator tree rather than a MySQL JSON plan: TiDB rejects EXPLAIN FORMAT='json' outright, so the provider sends a plain EXPLAIN and the panel shows the operator tree with estRows as the row estimate (browser, 2026-09-06).",
       "Probed on a standalone --store=unistore server only; a PD + TiKV deployment was not probed.",
     ],
   },
@@ -362,11 +371,11 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     probedVersion: "StarRocks 3.3.22-753696f (version() reports 5.1.0)",
     caveats: [
       "The version shown is MySQL 5.1: version() returns a fictitious compatibility number, and the real build is only in current_version(), which the provider does not call.",
-      "The overview and health panels are unavailable: StarRocks refuses their statements through the prepared-statement protocol the provider uses.",
-      "Active sessions and the monitoring dashboard are unavailable: StarRocks has no information_schema.PROCESSLIST.",
+      "The overview panel renders but publishes no uptime and no connection count: StarRocks answers a bare SHOW STATUS with zero rows and SHOW VARIABLES LIKE 'max_connections' with zero rows, so both read N/A, not published, where they used to read a fabricated 0/151 (browser, 2026-09-06).",
+      "The health request and the active-session panel are unavailable: StarRocks has no information_schema.PROCESSLIST, which is the engine's own, and the health read still failed on it when it was re-measured in the browser on 2026-09-06. Every other monitoring panel is read independently, so the missing table costs only those two: getMonitoringData() answered overview, performance, slowQueries, tables, indexes and storage through the provider on 2026-08-24.",
       "Row counts and sizes are always 0: information_schema.TABLES reports 0 rows and 0 bytes for a populated table.",
       "No index information at all: StarRocks exposes no secondary-index catalog, so the object browser and the index panel show none.",
-      "The Explain panel does not work: StarRocks does not parse EXPLAIN FORMAT='json', so the editor's plan request fails while the query itself runs normally.",
+      "The Explain panel renders StarRocks's own text plan: StarRocks does not parse EXPLAIN FORMAT='json', so the provider sends a plain EXPLAIN, which answered a 13-node tree for a constant SELECT (browser, 2026-09-06).",
     ],
   },
   {
@@ -379,15 +388,13 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     // never an inheritance.
     name: "Apache Doris",
     via: "mysql",
-    tier: "partial",
+    tier: "full",
     probedVersion: "Apache Doris 4.1.3-rc02-7126cf65d96 (version() reports 5.7.99)",
     caveats: [
-      "The overview and health panels are unavailable, and one statement form is the whole reason: Doris parses SHOW STATUS but rejects the LIKE filter both panels use, so they fail with a syntax error instead of reading an empty result.",
-      "The version shown is MySQL 5.7.99: version() returns a fictitious compatibility number, the real build is only in @@version_comment, and Doris has no current_version() function to read it from.",
+      "The overview and health panels render since 2026-09-06, and the overview publishes no uptime and no connection count: Doris answers a bare SHOW STATUS with zero rows and SHOW VARIABLES LIKE 'max_connections' with zero rows, so uptime reads N/A and connections read N/A, not published (browser, 2026-09-06).",
       "No index information at all: information_schema.statistics is empty on Doris, so the index panel and the object browser report none however many keys a table declares.",
       "A declared foreign key is invisible and unenforced: Doris accepts ADD CONSTRAINT ... FOREIGN KEY and lists it in SHOW CONSTRAINTS, but information_schema.KEY_COLUMN_USAGE is empty, so the ER diagram draws no relationship - and an orphan row inserts successfully, because the constraint is a planner hint there.",
       "Optimize and Check are unavailable: neither statement exists in the Doris grammar. Analyze works.",
-      "The Explain panel does not work: Doris rejects EXPLAIN FORMAT='json', while a plain EXPLAIN runs in the editor.",
       "Row counts and sizes are correct but late: a table read 0 rows and 0 B immediately after a 2000-row insert and the true 2000 rows / 10187 bytes about a minute later, with an ANALYZE in between changing nothing. The lag is self-correcting, so a freshly loaded table looks empty for a while.",
       "A UNIQUE KEY table declares no primary key to the product: information_schema reports COLUMN_KEY as UNI rather than PRI, so the object browser marks no column primary.",
     ],
@@ -398,11 +405,11 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     tier: "query-only",
     probedVersion: "Databend v1.2.925-patch-11 (advertises MySQL 8.0.90)",
     caveats: [
-      "The SQL editor works and a plain EXPLAIN shows Databend's own plan. Nothing else does: the object browser, every statistics panel and the monitoring dashboard are unavailable.",
+      "The SQL editor works and the Explain panel renders Databend's own text plan through a plain EXPLAIN (browser, 2026-09-06). Nothing else does: the object browser, every statistics panel and the monitoring dashboard are unavailable.",
       "The cause is ours rather than Databend's, which is why the catalogs are worth naming: asked with literal SQL, information_schema.tables answers the true 3 and 2000 rows with sizes. Every parameterised read fails instead with Prepare is not support in Databend, because those still go through mysql2's prepared protocol.",
       "Databend has no SHOW STATUS statement at all and no information_schema.processlist, so the overview, health and session panels have no source even once the protocol question is settled.",
       "Strings must be single-quoted: Databend follows the SQL standard and reads a double-quoted value as an identifier, so a double-quoted literal is an unknown-column error.",
-      "EXPLAIN FORMAT='json' does not parse, and neither Optimize nor Check exists. Analyze runs but the provider mis-reads its reply.",
+      "EXPLAIN FORMAT='json' does not parse, so the provider sends a plain EXPLAIN there instead (browser, 2026-09-06), and neither Optimize nor Check exists. Analyze runs but the provider mis-reads its reply.",
     ],
   },
   {
@@ -446,8 +453,9 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     tier: "partial",
     probedVersion: "SingleStoreDB 9.1.1 (advertises MySQL 5.7.32)",
     caveats: [
-      'Ten of the fifteen surfaces answer. Test Connection, health, the overview and the monitoring dashboard all fail with one engine message, "This command is not supported in the prepared statement protocol yet", and the Explain panel fails with a syntax error on EXPLAIN FORMAT=JSON.',
-      "No version is displayed anywhere, because the panel that carries it is one of the unavailable ones. Were it fixed it would read MySQL 5.7.32, the wire version SingleStore advertises, not SingleStoreDB 9.1.1.",
+      "Ten of the fifteen surfaces answered when this engine was first probed. Four of those failures were ours rather than SingleStore's and are fixed: Test Connection, health, the overview and the monitoring dashboard all failed with one engine message, \"This command is not supported in the prepared statement protocol yet\", until every parameterless statement moved to MySQL's text protocol on 2026-08-24, and all four answer since (browser, 2026-09-06).",
+      "The Explain panel renders SingleStore's own text plan: EXPLAIN FORMAT=JSON is still a parse error here, so the provider no longer sends it and asks for a plain EXPLAIN instead (browser, 2026-09-06).",
+      "The version shown is MySQL 5.7.32: now that the overview renders, it displays the wire version SingleStore advertises rather than SingleStoreDB 9.1.1 (browser, 2026-08-24).",
       "Row counts and sizes are missing rather than wrong: a 2000-row table reads rowCount 0 and 0 B in the object browser, the table statistics and the storage panel, against a ground truth of 2000 rows and 77046 bytes measured four independent ways.",
       "SingleStore leaves information_schema.TABLES zeroed and keeps the real numbers elsewhere - SHOW TABLE STATUS, information_schema.OPTIMIZER_STATISTICS.ROW_COUNT and the EXPLAIN plan's est_table_rows - and running ANALYZE does not change what the panels read.",
       "The index panel lists 4 rows for 2 tables against the MySQL baseline's 2: SingleStore auto-creates a shard key on every table and reports it as an index named __SHARDKEY with indexType SHARD, beside PRIMARY.",

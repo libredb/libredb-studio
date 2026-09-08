@@ -19,7 +19,7 @@ const NODE_CLASS = "relative flex flex-col items-center min-w-[100px] cursor-poi
 // w-6 h-6 keeps a 24x24 minimum hit target: the control sits on top of the
 // stretched selection overlay, so a near miss must not select the snapshot.
 const DELETE_BUTTON_CLASS =
-  "absolute -top-3 -right-2 z-20 w-6 h-6 flex items-center justify-center text-fg-subtle hover:text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity";
+  "absolute -top-3 -right-2 z-20 w-6 h-6 flex items-center justify-center text-fg-subtle hover:text-danger opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity";
 
 export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTimelineProps) {
   const [selected, setSelected] = useState<string[]>([]);
@@ -54,7 +54,7 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
     <div className="space-y-2">
       <div className="flex items-center justify-between px-2">
         <span className="text-xs text-fg-muted font-medium">Timeline</span>
-        {canCompare && <span className="text-xs text-blue-400">Comparing 2 snapshots</span>}
+        {canCompare && <span className="text-xs text-brand">Comparing 2 snapshots</span>}
       </div>
 
       <div className="relative flex items-center overflow-x-auto pb-2 px-2 gap-0">
@@ -65,7 +65,7 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
           const date = new Date(snapshot.createdAt);
           const labelClass = cn(
             "mt-2 text-center transition-colors",
-            isSelected ? "text-blue-400" : "text-fg-muted group-hover:text-fg-secondary",
+            isSelected ? "text-brand" : "text-fg-muted group-hover:text-fg-secondary",
           );
           const handleDelete = (e: React.MouseEvent<HTMLButtonElement>) => {
             e.stopPropagation();
@@ -78,7 +78,7 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
                 className={cn(
                   "w-3.5 h-3.5 rounded-full border-2 z-10 transition-all",
                   isSelected
-                    ? "bg-blue-500 border-blue-400 scale-125"
+                    ? "bg-brand-tint border-brand scale-125"
                     : "bg-raised border-edge group-hover:border-edge-hover",
                 )}
               />

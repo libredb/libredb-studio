@@ -644,7 +644,7 @@ describe("ResultsGrid", () => {
   describe("Inline editing", () => {
     function findEditInput(container: HTMLElement) {
       return Array.from(container.querySelectorAll("input")).find((input) =>
-        input.className.includes("border-blue-500"),
+        input.classList.contains("border-brand-tint"),
       );
     }
 

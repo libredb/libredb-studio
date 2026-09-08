@@ -1,6 +1,6 @@
 # Database Provider Architecture
 
-This document describes the modular database provider architecture implemented using the Strategy Pattern. It serves both as the **architecture overview** and as a step-by-step tutorial for [adding a new database provider](#adding-a-new-database-provider).
+This document describes the modular database provider architecture implemented using the Strategy Pattern. It serves both as the **architecture overview** and as a step-by-step tutorial for [adding a new database provider](#adding-a-new-provider).
 
 > **Per-provider detail lives in [`docs/providers/`](./providers/README.md).** Each provider has its
 > own prime reference (`docs/providers/<type-id>.md`) covering connection, query format, schema,

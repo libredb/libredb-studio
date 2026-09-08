@@ -96,11 +96,11 @@ const EYEBROWS: Readonly<Record<AnswerState, string>> = Object.freeze({
  * with a union that lives on the server.
  */
 const STATUS_TONES: Readonly<Record<AgentRunStatus, string>> = Object.freeze({
-  queued: "bg-blue-500/10 text-blue-300",
-  running: "bg-blue-500/10 text-blue-300",
-  succeeded: "bg-emerald-500/10 text-emerald-300",
-  failed: "bg-rose-500/10 text-rose-300",
-  cancelled: "bg-amber-500/10 text-amber-300",
+  queued: "bg-brand-tint/10 text-brand-bright",
+  running: "bg-brand-tint/10 text-brand-bright",
+  succeeded: "bg-success-tint/10 text-success-bright",
+  failed: "bg-hue-rose-tint/10 text-hue-rose-alt",
+  cancelled: "bg-warning-tint/10 text-warning-bright",
 });
 
 /**
@@ -117,10 +117,10 @@ type StatementLanguage = "sql" | "json" | "libredb" | "redis" | "unknown";
  * takes the hairline, which says nothing, because nothing is what is known.
  */
 const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.freeze({
-  sql: "border-blue-400/40",
-  json: "border-cyan-400/40",
-  redis: "border-fuchsia-400/40",
-  libredb: "border-violet-400/40",
+  sql: "border-hue-blue/40",
+  json: "border-hue-cyan/40",
+  redis: "border-hue-fuchsia/40",
+  libredb: "border-hue-violet/40",
   unknown: "border-hairline-strong",
 });
 
@@ -154,10 +154,10 @@ function statementLanguage(
  */
 const GUARD_CHIPS: Readonly<Record<GuardReading, { readonly label: string; readonly className: string }>> =
   Object.freeze({
-    checked: { label: "Read-only", className: "text-emerald-300" },
+    checked: { label: "Read-only", className: "text-success-bright" },
     // The timeline's own headline for this state, in its own words.
-    objected: { label: "not classified as a read", className: "text-amber-300" },
-    unexamined: { label: "not checked", className: "text-amber-300" },
+    objected: { label: "not classified as a read", className: "text-warning-bright" },
+    unexamined: { label: "not checked", className: "text-warning-bright" },
   });
 
 /*
@@ -336,7 +336,7 @@ function GuardLine({ draft }: { readonly draft: AgentPlanStatementView }) {
     <p
       className={cn(
         "mt-1 flex items-start gap-1 text-[0.625rem]",
-        reading === "checked" ? "text-fg-muted" : "text-amber-300",
+        reading === "checked" ? "text-fg-muted" : "text-warning-bright",
       )}
     >
       {reading !== "checked" && (
@@ -399,7 +399,7 @@ function PlanChips({
         >
           {unknown.map((name) => (
             <li key={name}>
-              <Chip testId="agent-answer-chip-name" className="font-mono text-amber-200">
+              <Chip testId="agent-answer-chip-name" className="font-mono text-warning-bright">
                 {name}
               </Chip>
             </li>
@@ -528,8 +528,11 @@ function FailureNote({
   readonly onRetry: (() => void) | undefined;
 }) {
   return (
-    <div data-testid="agent-answer-failed" className="mt-1.5 rounded border border-rose-500/40 bg-rose-500/5 p-2">
-      <p className="flex items-center gap-1 text-xs text-rose-300">
+    <div
+      data-testid="agent-answer-failed"
+      className="mt-1.5 rounded border border-hue-rose-tint/40 bg-hue-rose-tint/5 p-2"
+    >
+      <p className="flex items-center gap-1 text-xs text-hue-rose-alt">
         <TriangleAlert strokeWidth={1.5} className="w-3 h-3 shrink-0" aria-hidden="true" />
         Run failed
       </p>
@@ -542,7 +545,7 @@ function FailureNote({
           type="button"
           data-testid="agent-answer-retry"
           onClick={onRetry}
-          className="mt-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.625rem] text-blue-300 hover:bg-fill transition-colors"
+          className="mt-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.625rem] text-brand-bright hover:bg-fill transition-colors"
         >
           <RotateCcw strokeWidth={1.5} className="w-3 h-3" />
           Retry
@@ -593,7 +596,7 @@ function PlanAnswer({
             onClick={() => onApplyStatement(draft.sql)}
             className={cn(
               "flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.625rem] transition-colors hover:bg-fill",
-              draft.readOnly ? "bg-blue-500/15 text-blue-300" : "bg-amber-500/15 text-amber-300",
+              draft.readOnly ? "bg-brand-tint/15 text-brand-bright" : "bg-warning-tint/15 text-warning-bright",
             )}
           >
             <PencilLine strokeWidth={1.5} className="w-3 h-3" />
@@ -679,7 +682,7 @@ function ReportAnswer({
                     takes the panel sideways instead — which is the failure the statement
                     blocks in this same card were changed to avoid.
                   */
-                  className={cn("font-mono whitespace-normal", citation.resolved ? undefined : "text-amber-300")}
+                  className={cn("font-mono whitespace-normal", citation.resolved ? undefined : "text-warning-bright")}
                 >
                   {/*
                     The identifier at chip length, never the whole one: a correlation id
@@ -745,7 +748,7 @@ function ReportAnswer({
         <div className="mt-1 space-y-1.5">
           {citations.map((citation) => (
             <div key={citation.id} data-testid="agent-answer-evidence-citation" className="text-[0.625rem]">
-              <span className={citation.resolved ? "text-fg-tertiary" : "text-amber-300"}>{citation.label}</span>
+              <span className={citation.resolved ? "text-fg-tertiary" : "text-warning-bright"}>{citation.label}</span>
               <span className="ml-1 text-fg-subtle">{citation.detail}</span>
               {citation.quoted !== undefined && (
                 <QuotedBlock text={citation.quoted} testId="agent-answer-citation-quoted-copy" className="mt-0.5" />
@@ -769,12 +772,12 @@ function ReportAnswer({
  */
 function RefusedAnswer({ prose }: { readonly prose: string }) {
   return (
-    <div data-testid="agent-answer-refused" className="mt-1.5 rounded border border-amber-400/40 bg-amber-500/5 p-2">
-      <p className="flex items-center gap-1 text-xs text-amber-300">
+    <div data-testid="agent-answer-refused" className="mt-1.5 rounded border border-warning/40 bg-warning-tint/5 p-2">
+      <p className="flex items-center gap-1 text-xs text-warning-bright">
         <TriangleAlert strokeWidth={1.5} className="w-3 h-3 shrink-0" aria-hidden="true" />
         No statement drafted
       </p>
-      <p data-testid="agent-answer-refusal-note" className="mt-1 text-[0.625rem] text-amber-300/90">
+      <p data-testid="agent-answer-refusal-note" className="mt-1 text-[0.625rem] text-warning-bright/90">
         {REFUSAL_NOTE}
       </p>
       {/* The marker it was read by is already stripped: it is a protocol token the model
@@ -821,7 +824,7 @@ function RunningAnswer({
       <div className="mt-1 h-0.5 rounded-full bg-fill">
         <div
           data-testid="agent-answer-progress"
-          className="h-full rounded-full bg-blue-400/60"
+          className="h-full rounded-full bg-brand/60"
           style={{ width: `${budgetFraction(timeline.budget)}%` }}
         />
       </div>
@@ -840,7 +843,7 @@ function RunningAnswer({
             type="button"
             data-testid="agent-answer-stop"
             onClick={onStop}
-            className="flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[0.625rem] text-amber-300 hover:bg-amber-500/25 transition-colors"
+            className="flex items-center gap-1 rounded bg-warning-tint/15 px-1.5 py-0.5 text-[0.625rem] text-warning-bright hover:bg-warning-tint/25 transition-colors"
           >
             <Square strokeWidth={1.5} className="w-3 h-3" />
             Stop

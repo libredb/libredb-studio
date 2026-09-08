@@ -136,8 +136,8 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
       <div className="p-4 border-b border-hairline bg-surface/50 backdrop-blur-sm sticky top-0 z-10 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-              <HistoryIcon strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />
+            <div className="p-2 rounded-lg bg-hue-emerald-tint/10 border border-hue-emerald-tint/20">
+              <HistoryIcon strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-emerald" />
             </div>
             <div>
               <h3 className="text-xs font-medium text-fg flex items-center gap-2">Query History</h3>
@@ -170,7 +170,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
               variant="ghost"
               size="sm"
               onClick={handleClearHistory}
-              className="h-8 text-xs font-medium text-red-400/70 hover:text-red-400 hover:bg-red-400/10"
+              className="h-8 text-xs font-medium text-danger/70 hover:text-danger hover:bg-danger/10"
             >
               <Trash2 strokeWidth={1.5} className="w-3 h-3 mr-2" /> Clear
             </Button>
@@ -184,7 +184,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
               placeholder="Search by query, connection or tab..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 h-9 bg-fill border-hairline-strong text-xs focus:ring-emerald-500/20 rounded-lg"
+              className="pl-9 h-9 bg-fill border-hairline-strong text-xs focus:ring-hue-emerald-tint/20 rounded-lg"
             />
             {search && (
               <button
@@ -202,7 +202,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
               className={cn(
                 "px-3 py-1.5 text-xs font-medium rounded-md transition-all",
                 !isGlobal
-                  ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/20"
+                  ? "bg-success-solid text-white shadow-lg shadow-emerald-600/20"
                   : "text-fg-muted hover:text-fg-secondary",
               )}
             >
@@ -213,7 +213,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
               className={cn(
                 "px-3 py-1.5 text-xs font-medium rounded-md transition-all",
                 isGlobal
-                  ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/20"
+                  ? "bg-success-solid text-white shadow-lg shadow-emerald-600/20"
                   : "text-fg-muted hover:text-fg-secondary",
               )}
             >
@@ -262,7 +262,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                         className={cn(
                           "w-3 h-3 transition-opacity",
                           sortField === "executedAt"
-                            ? "opacity-100 text-emerald-500"
+                            ? "opacity-100 text-hue-emerald"
                             : "opacity-0 group-hover:opacity-100",
                         )}
                       />
@@ -280,7 +280,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                         className={cn(
                           "w-3 h-3 transition-opacity",
                           sortField === "executionTime"
-                            ? "opacity-100 text-emerald-500"
+                            ? "opacity-100 text-hue-emerald"
                             : "opacity-0 group-hover:opacity-100",
                         )}
                       />
@@ -296,7 +296,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                         className={cn(
                           "w-3 h-3 transition-opacity",
                           sortField === "rowCount"
-                            ? "opacity-100 text-emerald-500"
+                            ? "opacity-100 text-hue-emerald"
                             : "opacity-0 group-hover:opacity-100",
                         )}
                       />
@@ -313,13 +313,13 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                     <td className="px-4 py-4 text-center">
                       <div className="flex justify-center">
                         {item.status === "success" && (
-                          <div className="w-5 h-5 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
-                            <CircleCheck strokeWidth={1.5} className="w-3 h-3 text-emerald-500" />
+                          <div className="w-5 h-5 rounded-full bg-success-tint/10 flex items-center justify-center border border-success-tint/20">
+                            <CircleCheck strokeWidth={1.5} className="w-3 h-3 text-success" />
                           </div>
                         )}
                         {item.status !== "success" && (
-                          <div className="w-5 h-5 rounded-full bg-red-500/10 flex items-center justify-center border border-red-500/20">
-                            <CircleAlert strokeWidth={1.5} className="w-3 h-3 text-red-500" />
+                          <div className="w-5 h-5 rounded-full bg-danger-tint/10 flex items-center justify-center border border-danger-tint/20">
+                            <CircleAlert strokeWidth={1.5} className="w-3 h-3 text-danger" />
                           </div>
                         )}
                       </div>
@@ -339,7 +339,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                     <td className="px-4 py-4 whitespace-nowrap">
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-1.5 text-fg-secondary">
-                          <Database strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
+                          <Database strokeWidth={1.5} className="w-3 h-3 text-brand" />
                           <span className="font-medium">{item.connectionName || "Unknown"}</span>
                         </div>
                         <div className="flex items-center gap-1.5 text-fg-muted text-xs">
@@ -354,7 +354,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                           {item.query}
                         </pre>
                         {item.errorMessage && (
-                          <div className="mt-2 pt-2 border-t border-red-500/10 text-xs text-red-400/80 font-mono italic">
+                          <div className="mt-2 pt-2 border-t border-danger-tint/10 text-xs text-danger/80 font-mono italic">
                             {item.errorMessage}
                           </div>
                         )}
@@ -364,7 +364,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                       <span
                         className={cn(
                           "px-2 py-0.5 rounded text-xs font-mono font-medium",
-                          item.executionTime > 500 ? "text-amber-400 bg-amber-400/10" : "text-fg-tertiary bg-fill",
+                          item.executionTime > 500 ? "text-warning bg-warning/10" : "text-fg-tertiary bg-fill",
                         )}
                       >
                         {item.executionTime}ms
@@ -379,7 +379,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-8 w-8 p-0 hover:bg-emerald-500/10 hover:text-emerald-400"
+                        className="h-8 w-8 p-0 hover:bg-hue-emerald-tint/10 hover:text-hue-emerald"
                         onClick={() => onSelectQuery(item.query)}
                         title="Restore Query"
                       >

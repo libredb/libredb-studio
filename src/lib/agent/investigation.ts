@@ -44,6 +44,8 @@
  */
 
 import { createHash } from "node:crypto";
+import { logger } from "@/lib/logger";
+import { isRetryableError } from "@/lib/llm/types";
 import { type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
 import { z } from "zod";
 import {
@@ -64,11 +66,11 @@ import {
   presentReminderLimitFor,
   verdictHoldLimitFor,
   retriesEmptyTurn,
-  retriesUnreadStop,
+  answersUnreadStop,
   suppressesAgentReasoning,
   suppressesPlanReasoning,
   turnTimeoutMsFor,
-  planStatementRetriesFor,
+  planStatementAsksFor,
   reportReminderLimitFor,
   samplingFor,
 } from "./models";
@@ -88,6 +90,7 @@ import { packSchemaStatistics, readSchemaStatistics } from "./schema-stats";
 import {
   AGENT_MODEL_TURN_TIMEOUT_MS,
   AGENT_REPORT_RESERVE_MS,
+  AGENT_TRANSPORT_TURN_RETRIES,
   AGENT_REPORT_RESERVE_TURNS,
   AGENT_WORKFLOW_BUDGETS,
 } from "./execution-policy";
@@ -360,8 +363,11 @@ function planningEngine(context: AgentToolContext): PlanningEngine {
  * only for SQL would push a model whose inventory cannot answer into inventing a table name
  * to satisfy it, which is the failure `verifyPlanningGoal` accepts refusals to avoid.
  *
- * Offered only where a profile asks for it (`planStatementRetriesFor`, 0 for every model but
- * one), so introducing it changed no other model's run.
+ * Offered to whoever needs it, because the ask is the server's own: `planStatementAsksFor` reads a
+ * measured profile's number when there is one and answers 1 when there is not, so a model nobody
+ * has measured is asked once rather than being refused a turn on the strength of its absence. A
+ * profile that states 0 is a measurement — that model was watched declining the ask — and it still
+ * decides for the model it was written about.
  */
 /**
  * What an answer-presenting run is told once when it would report without presenting.
@@ -2455,6 +2461,7 @@ export function guidanceDelivered(events: readonly AgentRunEvent[]): Readonly<Re
   const counts: Record<AgentGuidanceNotice, number> = {
     "report-reminder": 0,
     "plan-statement": 0,
+    "turn-cut-off": 0,
     "report-reserve": 0,
     "unread-stop": 0,
     "present-before-report": 0,
@@ -2634,6 +2641,35 @@ export async function runInvestigation(
     let narrowedAtEvent = Number.POSITIVE_INFINITY;
     /** Whether this drive has already re-asked an empty turn; see `retryEmptyTurn`. */
     let emptyTurnRetried = false;
+    /**
+     * Whether this drive has already given back a turn the per-call ceiling cut; once per DRIVE,
+     * which is what this local declares — a resumed run opens a new drive and is granted one
+     * again, deliberately, because a resume is a second decision to spend on this run.
+     *
+     * The ceiling is documented as bounding one call and it ended the run. Measured on
+     * `qwen3.6:35b`, query-optimization: nine losses, all `model-timeout` with `no-report`, all
+     * ending near 100s of a 450s deadline with 34 of 36 turns unspent — while the same cell's
+     * longest PASSING run took 183s. Those calls were coming back; the loop stopped waiting and
+     * threw away the run instead of the call.
+     *
+     * Every other failed turn in this loop has a recovery path and this one had none. Granted only
+     * where the run has already lost anyway — it filed no report, so it has earned `no-report` and
+     * the turn cannot cost a pass — and once, so a genuinely hung endpoint still fails fast.
+     */
+    let turnCutOffRetried = false;
+    /**
+     * Turns re-asked because the STREAM broke rather than the model.
+     *
+     * `isRetryableError` is this repository's own reading of an `LLMStreamError`, and
+     * `base-provider.ts` already acts on it three times over on the chat surface against the same
+     * endpoints. This loop held that judgement and spent runs anyway: measured on `gpt-oss:20b`,
+     * database-assessment, runs died on a broken frame a median of 17s into a 630s budget having
+     * called a median of four tools — indistinguishable, up to the break, from the runs that
+     * answered.
+     *
+     * Bounded, so a provider that is genuinely down still ends the run rather than looping.
+     */
+    let transportRetries = 0;
     /*
     Every notice this run has already been delivered, read once (B51). The counters it
     seeds are declared in two places — this one and the block before the turn loop — and
@@ -3129,19 +3165,45 @@ export async function runInvestigation(
     /**
      * Gives a PLAN run one more turn when its prose named neither statement nor refusal.
      *
-     * Bounded by the model's own `planStatementRetries`, which is 0 for every model but the one
-     * whose ledgers earned it. The other bounds are the same three `remindToReport` applies and
-     * load-bearing for the same reasons: an agent run has no plan deliverable to miss, an
-     * operations plan is prose by decision (`verifyPlanningGoal` exempts it), and a run with no
-     * turn left cannot act on what it is told.
+     * The other bounds are the same three `remindToReport` applies and load-bearing for the same
+     * reasons: an agent run has no plan deliverable to miss, an operations plan is prose by
+     * decision (`verifyPlanningGoal` exempts it), and a run with no turn left cannot act on what
+     * it is told.
      *
      * The reading is `readPlanStatement`, the same reader `recordPlanStatement` and the verifier
      * use, so this cannot ask for a statement the run already wrote — a disagreement between the
      * notice and the verdict would spend a turn telling a passing run it had failed.
+     *
+     * THE FIRST ASK IS THE SERVER'S OWN, NOT A PER-MODEL FAVOUR.
+     *
+     * It was gated behind `planStatementRetries`, which defaults to 0, so a model with no row in
+     * `measured-profiles.json` was told nothing at all: the server read the closing prose, learned
+     * it held neither a fenced statement nor the refusal marker, held the sentence written for
+     * exactly that shape — and returned false on the line above, because of who the model was
+     * rather than what the run did.
+     *
+     * The order was the whole defect. The reader below decides whether the run FELL SHORT, and it
+     * is the same reader, with the same dialect, that `verifyPlanningGoal` is about to score
+     * `no-statement` on. So this branch is reachable only on a run already earning that verdict,
+     * and a run that clears the bar returns non-absent and is never touched. The turn provably
+     * cannot cost a pass, which is the standard the unread-stop retry is already granted under.
+     *
+     * Measured: `cogito:32b` and `qwen2.5:32b` each lost their plan cell 4/5 with every single
+     * loss `no-statement` / `model-stopped`, prose describing the schema correctly and no
+     * statement. `ornith:9b` and `qwen3:14b` lost the same cell the same way and BOTH were won by
+     * this very sentence, filed as a number in a document. The mechanism was discovered three
+     * times; the third and fourth models got nothing.
+     *
+     * `Math.max` rather than a raised default: the two models measured with this mechanism live
+     * keep exactly one ask and see byte-identical drives, and a profile may still RAISE the bound.
+     * It may no longer silence a sentence the server is holding for a run it has already failed.
      */
     const askForPlanStatement = async (assistant: readonly ModelMessage[]): Promise<boolean> => {
       if (record.mode === "agent" || record.workflowType === "operations") return false;
-      if (planStatementAsks >= planStatementRetriesFor(model.modelId)) return false;
+      if (planStatementAsks >= planStatementAsksFor(model.modelId)) return false;
+      // Grounded runs only. A run shown no inventory has nothing to write a statement FROM,
+      // and asking it for one is the impossible ask this file records having paid for before.
+      if (planningInventory === null || planningInventory.length === 0) return false;
       if (turns >= maxTurns || resources.deadline.remainingMs() <= 0) return false;
       if (text.length === 0 || readPlanStatement(text, context.connection.type).kind !== "absent") return false;
       planStatementAsks += 1;
@@ -3264,25 +3326,78 @@ export async function runInvestigation(
       // Built after the context, because in planning mode the rules depend on whether
       // there WAS one: a run told to plan against an inventory it was not given is the
       // same defect as a run given one and never told to use it (#350).
-      const turn = await takeTurn(
-        model,
-        // The engine is the fence tag a plan run is told to write, so the prompt reads
-        // it from the connection this drive was given rather than from the record: the
-        // resources are what a statement would actually be run against.
-        systemPrompt(record, grounding, engine),
-        messages,
-        // Narrowed once the run has been told to finish; see `AGENT_NARROWED_EXTRA_TOOLS`.
-        narrowed && !prompted ? narrowedTools(ledger, narrowedAtEvent) : tools,
-        turnBudgetMs,
-        // Constraint measured and REVERTED; see the commit that removes it. Left unset here
-        // rather than deleted from `takeTurn`, because the seam is correct and the cost was in
-        // the model, not the wiring.
-        undefined,
-        record.workflowType,
-        record.mode,
-      );
+      let turn: ModelTurn;
+      try {
+        turn = await takeTurn(
+          model,
+          // The engine is the fence tag a plan run is told to write, so the prompt reads
+          // it from the connection this drive was given rather than from the record: the
+          // resources are what a statement would actually be run against.
+          systemPrompt(record, grounding, engine),
+          messages,
+          // Narrowed once the run has been told to finish; see `AGENT_NARROWED_EXTRA_TOOLS`.
+          narrowed && !prompted ? narrowedTools(ledger, narrowedAtEvent) : tools,
+          turnBudgetMs,
+          // Constraint measured and REVERTED; see the commit that removes it. Left unset here
+          // rather than deleted from `takeTurn`, because the seam is correct and the cost was in
+          // the model, not the wiring.
+          undefined,
+          record.workflowType,
+          record.mode,
+        );
+      } catch (error) {
+        /*
+          A turn that broke in TRANSPORT is not a turn the model failed, and this loop's other
+          re-asks all cover the model.
+
+          Re-asked rather than ended because nothing was written: `takeTurn` copies the transcript
+          (`messages: [...messages]`) and never mutates the caller's array, and every ledger write
+          for a call happens downstream in `handleCall`. So the re-ask sends byte-identical bytes —
+          no second result for a `tool_call_id`, none of the wedging hazards the comments around
+          `toolResultMessage` guard.
+
+          Bounded by the run's own clock and by a small count, so a provider that is genuinely down
+          still ends the run — with its own error, finally meaning it.
+        */
+        if (
+          !isRetryableError(error) ||
+          transportRetries >= AGENT_TRANSPORT_TURN_RETRIES ||
+          resources.deadline.remainingMs() <= 0
+        ) {
+          throw error;
+        }
+        transportRetries += 1;
+        logger.warn(`agent run ${runId} re-asking a turn whose stream failed`, {
+          runId,
+          attempt: transportRetries,
+          modelId: model.modelId,
+        });
+        return null;
+      }
       text = turn.text;
-      if (turn.aborted) return conclude("failed", turnBudgetMs < remainingMs ? "model-timeout" : "deadline-exceeded");
+      if (turn.aborted) {
+        /*
+          See the note above `turnCutOffRetried`. `turnBudgetMs < remainingMs` is not only the word
+          this ending gets — it is a FACT about the run: the run's own clock is untouched, so what
+          ended is one call, which is exactly what this ceiling says it bounds.
+        */
+        const cutByTurnCeiling = turnBudgetMs < remainingMs;
+        if (
+          cutByTurnCeiling &&
+          !turnCutOffRetried &&
+          record.mode === "agent" &&
+          turns < maxTurns &&
+          resources.deadline.remainingMs() > AGENT_REPORT_RESERVE_MS
+        ) {
+          turnCutOffRetried = true;
+          // No assistant message is pushed: `takeTurn` returns none on abort, and a cut-off
+          // partial must not enter the transcript as a completed turn.
+          messages.push({ role: "user", content: notice(BASELINE_NOTICES.turnCutOff) });
+          await issueGuidance("turn-cut-off");
+          return null;
+        }
+        return conclude("failed", cutByTurnCeiling ? "model-timeout" : "deadline-exceeded");
+      }
       /*
         On the prompted path the call arrives as a JSON object inside ordinary text, so it is
         read out here and from here on the turn is indistinguishable from a native one.
@@ -3401,8 +3516,10 @@ export async function runInvestigation(
 
           Granted only where the run has lost anyway. `compose_report` is one of the tools
           `anyToolCalled` counts, so a run reaching here with it false composed no report and
-          has already earned `no-report`; the turn cannot cost a pass. Once, and only for a
-          model whose ledger asked twice.
+          has already earned `no-report`; the turn cannot cost a pass. Once, and — because a
+          bound that cannot protect a passing run protects nothing — offered to whoever needs
+          it: `answersUnreadStop` reads a stated `false` as the measurement it is and an absent
+          profile as the absence it is, so a model nobody has measured is told to read.
         */
         if (
           record.mode === "agent" &&
@@ -3420,7 +3537,7 @@ export async function runInvestigation(
           // and spends the very turn this retry bought: the #350/#356 defect, paid for once.
           holdsTool("inspect_schema") &&
           holdsTool("inspect_plan") &&
-          retriesUnreadStop(model.modelId)
+          answersUnreadStop(model.modelId)
         ) {
           unreadStopRetried = true;
           messages.push(...turn.assistantMessages);

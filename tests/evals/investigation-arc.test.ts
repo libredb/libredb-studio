@@ -84,7 +84,9 @@ describe("an investigation that answers, on both reference engines", () => {
   test("postgres reads three catalog inventories before the first turn", async () => {
     const run = await open("postgres");
 
-    const drive = await run.drive([answersProse("Nothing to add.")]);
+    // Twice: this run reads nothing itself, so the drive names the instruments once
+    // before letting it stop.
+    const drive = await run.drive([answersProse("Nothing to add."), answersProse("Nothing to add.")]);
 
     expect(drive.statements).toHaveLength(3);
     expect(drive.modelStatements).toEqual([]);
@@ -93,7 +95,7 @@ describe("an investigation that answers, on both reference engines", () => {
   test("sqlite reads two, because its object read carries the relations in the DDL", async () => {
     const run = await open("sqlite");
 
-    const drive = await run.drive([answersProse("Nothing to add.")]);
+    const drive = await run.drive([answersProse("Nothing to add."), answersProse("Nothing to add.")]);
 
     expect(drive.statements).toHaveLength(2);
     expect(drive.modelStatements).toEqual([]);
@@ -150,12 +152,19 @@ describe("a planning run is judged by what planning mode can produce", () => {
     // user can run. Every field on this ledger called it answered until `no-statement`.
     const run = await open("postgres", { mode: "planning" });
 
-    const drive = await run.drive([answersProse("First I would ", "read the employees table.")]);
+    const drive = await run.drive([
+      answersProse("First I would ", "read the employees table."),
+      answersProse("I would still read the employees table."),
+    ]);
 
+    // `guidance-issued` is new and is the fix: a grounded plan run that named neither a statement
+    // nor a refusal is now told so while it still holds a turn, instead of being failed in
+    // silence. The verdict below is unchanged — prose twice is still `no-statement`.
     expect(drive.kinds).toEqual([
       "run-started",
       "driver-resolved",
       "context-captured",
+      "guidance-issued",
       "closing-statement",
       "run-finished",
     ]);
@@ -196,7 +205,7 @@ describe("a planning run is judged by what planning mode can produce", () => {
     const reader = await open("postgres");
     const planner = await open("postgres", { mode: "planning" });
 
-    const reading = await reader.drive([answersProse("Nothing to add.")]);
+    const reading = await reader.drive([answersProse("Nothing to add."), answersProse("Nothing to add.")]);
     const drive = await planner.drive([answersProse(...A_STATEMENT)]);
 
     expect(reading.statements).toHaveLength(3);
@@ -264,7 +273,10 @@ describe("a planning run is judged by what planning mode can produce", () => {
     // restarted process, a second replica, or a user who has never run agent mode.
     const run = await open("postgres", { mode: "planning" });
 
-    const drive = await run.drive([answersProse("I would begin with the engineering table.")]);
+    const drive = await run.drive([
+      answersProse("I would begin with the engineering table."),
+      answersProse("I would begin with the engineering table."),
+    ]);
 
     expect(drive.kinds).toContain("context-captured");
     expect(drive.modelStatements).toEqual([]);
@@ -297,7 +309,10 @@ describe("the planning-grounded case can fail on the defect it was written for",
   test("opening the case grounds its run, without the case sending anything itself", async () => {
     const run = await openCase();
 
-    const drive = await run.drive([answersProse("I would start with the engineering table.")]);
+    const drive = await run.drive([
+      answersProse("I would start with the engineering table."),
+      answersProse("I would start with the engineering table."),
+    ]);
 
     // The warm-up read the catalog, so the case's own run re-read none of it: it
     // sent nothing of the model's, and only the statistics read the hold cannot
@@ -399,7 +414,7 @@ describe("the schema's relations reach the model as their own fenced block", () 
   test("a run is shown the relation graph beside the inventory", async () => {
     const run = await open("sqlite");
 
-    const drive = await run.drive([answersProse("Noted.")]);
+    const drive = await run.drive([answersProse("Noted."), answersProse("Noted.")]);
 
     const transcript = drive.transcripts[0] ?? "";
     expect(transcript).toContain("schema relations");
@@ -413,7 +428,7 @@ describe("the schema's relations reach the model as their own fenced block", () 
   test("the block is fenced, so identifiers in it are untrusted content like any other", async () => {
     const run = await open("postgres");
 
-    const drive = await run.drive([answersProse("Noted.")]);
+    const drive = await run.drive([answersProse("Noted."), answersProse("Noted.")]);
 
     const transcript = drive.transcripts[0] ?? "";
     const opened = transcript.indexOf("schema relations");

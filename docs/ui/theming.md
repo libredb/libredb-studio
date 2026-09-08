@@ -55,6 +55,8 @@ editor frame — is written in the semantic tokens of `src/styles/theme.css`. Tw
 |------|-----------------------------------------------------|
 | Surface | `canvas` · `sunken` · `surface` · `raised` · `overlay` (plus `panel`, the translucent card ground) |
 | Text | `fg-bright` · `fg` · `fg-secondary` · `fg-tertiary` · `fg-muted` · `fg-subtle` · `fg-faint` |
+| Accent, state | `brand` · `warning` · `success` · `danger`, each with `-bright`, `-tint`, `-solid`, `-solid-hover` (plus `brand-solid-active`, the one filled ground that hovers darker) |
+| Accent, identity | `hue-<name>`, one per hue the app uses, some with `-alt` (a second step) and `-tint` (its wash); `hue-teal` and `hue-purple` also carry `-solid` / `-solid-hover` for the two filled controls painted in a panel's own hue |
 
 Alongside them: `hairline` / `hairline-strong` for structural rules, `edge` / `edge-hover` for
 the border of a control the user is meant to see, and `fill-subtle` / `fill` / `fill-strong`
@@ -66,6 +68,34 @@ In dark, elevation means lighter; in light it means whiter, and the text ramp in
 literals the components carried before the layer existed, so **moving a component onto a token
 must be a no-op in dark** — any visible dark-mode change is a bug unless it is deliberate and
 called out.
+
+### State or identity
+
+The two accent families answer different questions, and picking the wrong one is the mistake
+that costs something later. Note the state family is `brand`, not `accent`: shadcn already owns
+`--accent` — its neutral hover ground, `#f5f5f5` — and `globals.css` maps `--color-accent` to it
+*after* importing this layer, so a studio token of that name loses the cascade silently and paints
+near-white text on a white page.
+
+- **State** — the colour tracks a changing condition. A run failed, a row is selected, a
+  statement is risky. Four roles: `brand`, `warning`, `success`, `danger`. `-bright` is the
+  emphasised step and inverts exactly like `fg-bright` — brighter than its base in dark, darker
+  in light, both meaning *further from the ground*.
+- **Identity** — the colour is a fixed label for a thing. Which engine, which bottom panel,
+  added versus removed, primary key versus foreign key, number versus boolean. `hue-<name>`, and
+  `hue-<name>-alt` where two identities share a hue: there are more engines than there are hues,
+  and `db-ui-config`'s own test asserts every engine colour differs.
+
+Folding an identity into a state role repaints seventeen engines in four colours. Folding a state
+into an identity hue means the next person to change what "error" looks like has to find every
+red in the codebase. The identity set is **selected per mode**, the way `lib/charts/palette.ts`
+selects rather than flipping a ramp — the two modes run out of room in different places, so a
+ramp flip produces collisions in one of them.
+
+`-tint` is the wash a role is painted over (`bg-brand-tint/15`) and is the same value in both
+palettes on purpose: a wash is alpha over whatever is behind it, so it already adapts. `-solid`
+is a filled control's ground, mode-independent for the same reason — a button's label sits on
+the button, not on the page.
 
 ### Surfaces that cannot read CSS
 
@@ -308,15 +338,17 @@ shadcn/ui buttons use theme variables automatically:
 
 ### Step 1: Define Variables
 
+Both palettes, always. A token declared in one resolves to nothing in the other, which is invalid
+at computed-value time — the ground falls to transparent, the hairline to `currentColor`, and only
+in the theme nobody happened to be looking at.
+
 ```css
 :root {
-  --warning: #f59e0b;
-  --warning-foreground: #ffffff;
+  --studio-hue-lime: #3f6212;
 }
 
 .dark {
-  --warning: #d97706;
-  --warning-foreground: #ffffff;
+  --studio-hue-lime: #9ae600;
 }
 ```
 
@@ -324,18 +356,40 @@ shadcn/ui buttons use theme variables automatically:
 
 ```css
 @theme inline {
-  --color-warning: var(--warning);
-  --color-warning-foreground: var(--warning-foreground);
+  --color-hue-lime: var(--studio-hue-lime);
 }
 ```
+
+`inline` is required: a plain `@theme` resolves the value at build time and freezes whichever
+palette was in scope.
 
 ### Step 3: Use in Components
 
 ```jsx
-<div className="bg-warning text-warning-foreground">
-  Warning message
-</div>
+<span className="text-hue-lime">…</span>
 ```
+
+### Step 4: Let the suite check it
+
+Do not verify a colour by eye, and do not write the ratio into a comment. `tests/unit/theme-accent-contrast.test.ts`
+measures every accent token on every ground it can land on, in both palettes, and
+`tests/unit/theme-token-usage.test.ts` fails on a colour literal in `src` and on a token nothing
+reaches. The bars a new token has to clear:
+
+- **4.5:1** on the five studio grounds, on a wash of its own hue at every alpha the code
+  actually paints (scanned out of `src`, currently up to `/25`), and on the brand tile — WCAG AA
+  for text, in both palettes.
+- **No worse in light than in dark** if the token is ever used with a foreground opacity
+  (`text-warning/80`). An opacity modifier composites before anyone reads it, so a token that
+  clears AA opaque can fall under it faded; the suite measures those separately and pins the
+  ones that do not clear.
+- **Separation** no tighter than the shipped dark set's own minimum, if it joins the identity
+  palette. The bar is measured, not chosen, so it moves if dark is ever retuned.
+- **A call site.** A token nobody uses is a value nobody has checked.
+
+The helper the tests measure with is `tests/helpers/contrast.ts`. It reads the Tailwind palette out
+of `node_modules` rather than transcribing it, so a Tailwind upgrade that restyles `blue-400`
+reports itself as the dark-mode change it is.
 
 ## Troubleshooting
 
@@ -413,4 +467,4 @@ shadcn/ui buttons use theme variables automatically:
 
 ---
 
-*Last updated: June 2026*
+*Last updated: September 2026*

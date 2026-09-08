@@ -696,7 +696,9 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
               onClick={() => setChartType(type)}
               className={cn(
                 "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all",
-                chartType === type ? "bg-blue-600 text-white" : "text-fg-muted hover:text-fg-secondary hover:bg-fill",
+                chartType === type
+                  ? "bg-brand-solid text-white"
+                  : "text-fg-muted hover:text-fg-secondary hover:bg-fill",
               )}
               title={label}
             >
@@ -745,7 +747,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 <DropdownMenuItem
                   key={field}
                   onClick={() => (chartType === "pie" ? setYAxis([field]) : toggleYAxis(field))}
-                  className={cn("text-xs cursor-pointer", yAxis.includes(field) && "bg-blue-600/20 text-blue-400")}
+                  className={cn("text-xs cursor-pointer", yAxis.includes(field) && "bg-brand-solid/20 text-brand")}
                 >
                   <Hash strokeWidth={1.5} className="w-3 h-3 mr-2" />
                   {field}
@@ -852,10 +854,10 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
               value={saveName}
               onChange={(e) => setSaveName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSaveChart()}
-              className="h-7 px-2 text-xs bg-fill border border-hairline-strong rounded text-fg-secondary focus:outline-none focus:border-blue-500"
+              className="h-7 px-2 text-xs bg-fill border border-hairline-strong rounded text-fg-secondary focus:outline-none focus:border-brand-tint"
               autoFocus
             />
-            <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-400" onClick={handleSaveChart}>
+            <Button variant="ghost" size="sm" className="h-7 text-xs text-brand" onClick={handleSaveChart}>
               Save
             </Button>
             <Button
@@ -899,7 +901,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                           e.stopPropagation();
                           deleteSavedChart(chart.id);
                         }}
-                        className="text-fg-subtle hover:text-red-400"
+                        className="text-fg-subtle hover:text-danger"
                       >
                         <X strokeWidth={1.5} className="w-3 h-3" />
                       </button>
@@ -1127,10 +1129,10 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
           Numeric: <span className="text-fg-tertiary font-mono">{analysis.numericFields.length}</span>
         </span>
         {chartType === "pie" && chartData.length > MAX_SERIES && (
-          <span className="text-amber-500">Showing top {MAX_SERIES} values</span>
+          <span className="text-warning">Showing top {MAX_SERIES} values</span>
         )}
         {MULTI_SERIES_CHART_TYPES.has(chartType) && droppedYAxisCount > 0 && (
-          <span className="text-amber-500">
+          <span className="text-warning">
             Showing first {MAX_SERIES} of {yAxis.length} series — see the Results grid for the rest
           </span>
         )}

@@ -171,38 +171,38 @@ describe("StudioDesktopHeader", () => {
       expect(container.querySelector('[title^="Connection:"]')).toBeNull();
     });
 
-    test('renders healthy pulse with "Online" text and green dot', () => {
+    test('renders healthy pulse with "Online" text and a success-token dot', () => {
       const { container } = render(<StudioDesktopHeader {...defaultProps} connectionPulse="healthy" />);
       const pulseContainer = container.querySelector('[title="Connection: healthy"]');
       expect(pulseContainer).toBeTruthy();
 
       const dot = pulseContainer!.querySelector(".rounded-full");
-      expect(dot?.className).toContain("bg-emerald-500");
+      expect(dot?.className).toContain("bg-success-tint");
       expect(dot?.className).toContain("animate-pulse");
 
       // "Online" text in the pulse section
       expect(pulseContainer!.textContent).toContain("Online");
     });
 
-    test('renders degraded pulse with "Slow" text and amber dot', () => {
+    test('renders degraded pulse with "Slow" text and a warning-token dot', () => {
       const { container } = render(<StudioDesktopHeader {...defaultProps} connectionPulse="degraded" />);
       const pulseContainer = container.querySelector('[title="Connection: degraded"]');
       expect(pulseContainer).toBeTruthy();
 
       const dot = pulseContainer!.querySelector(".rounded-full");
-      expect(dot?.className).toContain("bg-amber-500");
+      expect(dot?.className).toContain("bg-warning-tint");
       expect(dot?.className).not.toContain("animate-pulse");
 
       expect(pulseContainer!.textContent).toContain("Slow");
     });
 
-    test('renders error pulse with "Error" text and red dot', () => {
+    test('renders error pulse with "Error" text and a danger-token dot', () => {
       const { container } = render(<StudioDesktopHeader {...defaultProps} connectionPulse="error" />);
       const pulseContainer = container.querySelector('[title="Connection: error"]');
       expect(pulseContainer).toBeTruthy();
 
       const dot = pulseContainer!.querySelector(".rounded-full");
-      expect(dot?.className).toContain("bg-red-500");
+      expect(dot?.className).toContain("bg-danger-tint");
       expect(dot?.className).not.toContain("animate-pulse");
 
       expect(pulseContainer!.textContent).toContain("Error");
@@ -286,10 +286,10 @@ describe("StudioDesktopHeader", () => {
       expect(onLogout).toHaveBeenCalledTimes(1);
     });
 
-    test("Logout menu item has red styling", () => {
+    test("Logout menu item has danger-token styling", () => {
       const { getByText } = render(<StudioDesktopHeader {...defaultProps} />);
       const logoutItem = getByText("Logout").closest('[role="menuitem"]');
-      expect(logoutItem?.className).toContain("text-red-400");
+      expect(logoutItem?.className).toContain("text-danger");
     });
   });
 

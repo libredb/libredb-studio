@@ -1,0 +1,88 @@
+#!/bin/bash
+# Waits for the app to be usable, then publishes the credential banner.
+set -euo pipefail
+
+# `set -o pipefail` already turns a missing file or a missing line into a failed
+# command substitution and aborts, so an empty password cannot reach the banner
+# by accident. The explicit test is here for the case a future edit weakens
+# that: a banner that prints "Password:" with nothing after it is worse than a
+# unit that failed and retries on the next boot.
+ADMIN_PASSWORD="$(grep -m1 '^ADMIN_PASSWORD=' /etc/libredb-studio.env | cut -d= -f2-)"
+ADMIN_EMAIL="$(grep -m1 '^ADMIN_EMAIL=' /etc/libredb-studio.env | cut -d= -f2-)"
+[ -n "$ADMIN_PASSWORD" ] && [ -n "$ADMIN_EMAIL" ] \
+  || { echo "FATAL: credentials missing from /etc/libredb-studio.env" >&2; exit 1; }
+
+# Three signals, not one. GET /api/db/health is a LIVENESS probe: it returns a
+# static payload without touching the database, the SQLite store or the auth
+# configuration, so on its own it would report a healthy app that cannot serve a
+# login page. The login route exercises rendering and is reachable
+# unauthenticated; docker's own state catches a container that exited and is
+# being restarted.
+ready=0
+for _ in $(seq 1 60); do
+  if [ "$(docker inspect -f '{{.State.Running}}' libredb-studio 2>/dev/null)" = "true" ] \
+     && curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:3000/api/db/health >/dev/null 2>&1 \
+     && curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:3000/login >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 5
+done
+
+# Same timeouts as the MOTD hook: the unit's TimeoutStartSec already bounds this
+# script, but a stall here delays the banner the buyer is waiting for.
+TOKEN="$(curl -fsS --connect-timeout 1 --max-time 3 -X PUT \
+  'http://169.254.169.254/latest/api/token' \
+  -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' 2>/dev/null || true)"
+PUBLIC_IP="$(curl -fsS --connect-timeout 1 --max-time 3 -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)"
+
+# umask, not a chmod afterwards: systemd runs this unit with UMask=0022, so a
+# plain redirect would create the file 0644 with a live password in it and only
+# narrow the mode later. A kill between the two (TimeoutStartSec, OOM, instance
+# stop) would leave it world-readable forever, because the unit's own condition
+# stops it from ever running again.
+( umask 077
+cat > /etc/libredb-studio.info <<EOF
+LibreDB Studio is running.
+
+  URL:       http://${PUBLIC_IP:-<instance-public-ip>}:3000
+  Sign in:   ${ADMIN_EMAIL}
+  Password:  ${ADMIN_PASSWORD}
+
+  CHANGE THIS PASSWORD NOW. It was generated for this instance only.
+  Edit the ADMIN_PASSWORD line (and ADMIN_EMAIL, if you want your own address),
+  then restart:
+
+    sudo nano /etc/libredb-studio.env
+    sudo systemctl restart libredb-studio
+
+  The file is a plain KEY=value environment file: write the value bare, with
+  no quotes and no line breaks.
+
+  Health:  sudo docker inspect -f '{{.State.Running}}' libredb-studio  (container up)
+           curl -fsS http://127.0.0.1:3000/api/db/health               (server answers)
+           curl -fsS http://127.0.0.1:3000/login                       (app serves pages)
+  Service: systemctl status libredb-studio
+  Logs:    sudo docker logs libredb-studio
+  Data:    /opt/libredb/data   (SQLite store; back it up WITH the config file below)
+  Config:  /etc/libredb-studio.env   (mode 0600)
+
+  Docs:    https://github.com/libredb/libredb-studio#readme
+  Support: SUPPORT_CONTACT
+EOF
+)
+# Belt: the umask above is the control, this is the assertion.
+chmod 600 /etc/libredb-studio.info
+
+# Two retrieval paths, because a 1-click launch may carry no SSH key pair:
+#   - No SSH: EC2 console -> Actions -> Monitor and troubleshoot -> Get system
+#     log. This is the ONE place the password is published, and it is deliberate.
+#   - SSH login: the MOTD hook prints this file with the Password: line REMOVED
+#     and points at `sudo cat` instead.
+cat /etc/libredb-studio.info > /dev/console 2>/dev/null || true
+
+if [ "$ready" -ne 1 ]; then
+  echo "WARNING: LibreDB Studio did not become ready within 5 minutes" > /dev/console
+  docker logs libredb-studio --tail 100 || true
+fi

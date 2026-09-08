@@ -76,8 +76,8 @@ export function SchemaExplorer({
     return (
       <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
         <div className="relative mb-4">
-          <LoaderCircle strokeWidth={1.5} className="w-8 h-8 animate-spin text-blue-500/20" />
-          <Database strokeWidth={1.5} className="w-3.5 h-3.5 absolute inset-0 m-auto text-blue-500 animate-pulse" />
+          <LoaderCircle strokeWidth={1.5} className="w-8 h-8 animate-spin text-brand/20" />
+          <Database strokeWidth={1.5} className="w-3.5 h-3.5 absolute inset-0 m-auto text-brand animate-pulse" />
         </div>
         <span className="text-xs font-medium animate-pulse">Scanning Schema...</span>
       </div>
@@ -95,7 +95,7 @@ export function SchemaExplorer({
         className="flex flex-col items-center justify-center py-12 px-6 text-center"
       >
         <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4 border border-border">
-          <CircleAlert strokeWidth={1.5} className="w-6 h-6 text-amber-400" />
+          <CircleAlert strokeWidth={1.5} className="w-6 h-6 text-warning" />
         </div>
         <h3 className="text-foreground text-xs font-medium mb-1">Schema could not be read</h3>
         <p className="text-xs text-muted-foreground leading-relaxed break-words">{schemaError}</p>
@@ -122,13 +122,13 @@ export function SchemaExplorer({
       <div className="sticky top-0 z-10 px-3 pb-3 pt-1 space-y-3 bg-background">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-500/50" />
+            <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-brand/50" />
             <span className="text-xs font-medium text-muted-foreground">Explorer</span>
           </div>
           <div className="flex items-center gap-1.5">
             {isAdmin && (
               <button
-                className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-amber-400 transition-colors"
+                className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-warning transition-colors"
                 onClick={() => onOpenMaintenance?.("global")}
                 title="Database Maintenance"
               >
@@ -137,14 +137,14 @@ export function SchemaExplorer({
             )}
             {capabilities?.supportsCreateTable !== false && (
               <button
-                className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-blue-400 transition-colors"
+                className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-brand transition-colors"
                 onClick={onCreateTableClick}
                 title={`Create ${labels?.entityName || "Table"}`}
               >
                 <Plus strokeWidth={1.5} className="w-3.5 h-3.5" />
               </button>
             )}
-            <span className="text-[0.625rem] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded-full font-mono border border-blue-500/10">
+            <span className="text-[0.625rem] bg-brand-tint/10 text-brand px-1.5 py-0.5 rounded-full font-mono border border-brand-tint/10">
               {schema.length}
             </span>
           </div>
@@ -153,13 +153,13 @@ export function SchemaExplorer({
         <div className="relative group">
           <Search
             strokeWidth={1.5}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground group-focus-within:text-blue-500 transition-colors"
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground group-focus-within:text-brand transition-colors"
           />
           <Input
             placeholder={labels?.searchPlaceholder || "Search tables or columns..."}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-8 pl-8 pr-8 text-xs bg-muted/50 border-border focus-visible:ring-1 focus-visible:ring-blue-500/50 placeholder:text-muted-foreground/50"
+            className="h-8 pl-8 pr-8 text-xs bg-muted/50 border-border focus-visible:ring-1 focus-visible:ring-brand-tint/50 placeholder:text-muted-foreground/50"
           />
           {searchQuery && (
             <button

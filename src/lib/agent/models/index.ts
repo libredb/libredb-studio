@@ -28,7 +28,10 @@
  * in the document; that is a better trade than carrying it empty until then.
  *
  * A model nobody has measured therefore resolves exactly to the compiled defaults, which is the
- * honest treatment of a model nobody has measured.
+ * honest treatment of a model nobody has measured. Two resolvers below — `planStatementAsksFor`
+ * and `answersUnreadStop` — deliberately do not, and each says why in its own note: they feed
+ * gates reachable only on a run that has already fallen short, where a default cannot protect a
+ * passing run and so protects nothing. A stated value still wins in both.
  */
 
 import { AGENT_THREAD_CONTEXT_MAX_CHARS } from "../execution-policy";
@@ -111,6 +114,33 @@ export function planStatementRetriesFor(modelId: string): number {
 }
 
 /**
+ * The same question, asked for a model NOBODY HAS MEASURED: one ask rather than none.
+ *
+ * The distinction the drive needs and `planStatementRetriesFor` cannot make. That resolver folds
+ * "this profile states 0" and "there is no profile" onto the same number, which is right for a
+ * setting and wrong for a decision: a stated 0 is a measurement, and an absent profile is the
+ * absence of one.
+ *
+ * The gate it feeds fires only where `readPlanStatement` scores the closing prose `absent` — the
+ * same reader, with the same dialect, that `verifyPlanningGoal` is about to score `no-statement`
+ * on. So the ask is reachable only on a run already earning that verdict and provably cannot cost
+ * a pass; what it costs an unmeasured model is one turn on a run it had already lost.
+ *
+ * Measured. `cogito:32b` and `qwen2.5:32b` each hold five surfaces and lose plan 4/5, every loss
+ * `no-statement` with the model stopping on its own after prose that describes the schema
+ * correctly and names no statement. Neither has a row in `measured-profiles.json`, so both were
+ * told nothing. `ornith:9b` and `qwen3:14b` lost that cell in exactly that shape and BOTH were won
+ * by this one sentence — recorded as a number against their names rather than as a rule. The
+ * mechanism has now been found four times.
+ *
+ * A measured model is untouched, including the twenty whose profiles state 0: their plan cells
+ * locked without the ask, and a number somebody measured is not this function's to overrule.
+ */
+export function planStatementAsksFor(modelId: string): number {
+  return resolve(modelId, "planStatementRetries") ?? 1;
+}
+
+/**
  * Whether an empty turn is asked again before this model's run is ended.
  *
  * False everywhere but the model measured returning nothing with its readings already taken,
@@ -128,6 +158,30 @@ export function retriesEmptyTurn(modelId: string): boolean {
  */
 export function retriesUnreadStop(modelId: string): boolean {
   return resolve(modelId, "retryUnreadStop") ?? DEFAULT_RETRY_UNREAD_STOP;
+}
+
+/**
+ * The same question for a model NOBODY HAS MEASURED: the sentence is sent rather than withheld.
+ *
+ * `retriesUnreadStop` folds two different answers into one, exactly as `planStatementRetriesFor`
+ * did before `planStatementAsksFor` split them: a profile stating `false` is a measurement, and no
+ * profile at all is the absence of one. Reading the absence as a `false` withheld the drive's own
+ * sentence — "Read it yourself. Call inspect_schema for the tables and their columns, and
+ * inspect_plan for how a statement will run" — from precisely the models nobody had measured yet,
+ * which is to say from every model this project has not reached.
+ *
+ * The gate it feeds fires only where no tool was called, so the run composed no report and has
+ * already earned `no-report`; it provably cannot cost a pass. Measured across the sweep behind
+ * 0.14.1: three hundred runs ended `model-stopped` with `no-report`, a hundred and fifty of them
+ * having called no tool at all, and ninety-four of those hundred and fifty were ended without the
+ * drive saying anything — `mistral-small3.1:24b` 51, `granite3.3:8b` 41, `mistral:7b` 40,
+ * `gpt-oss:20b` 18, a hundred and ten of them on `investigation`, the first surface a model meets.
+ *
+ * A measured model is untouched: all twenty-eight profiles state the field, so no shipped model's
+ * turn count moves.
+ */
+export function answersUnreadStop(modelId: string): boolean {
+  return resolve(modelId, "retryUnreadStop") ?? true;
 }
 
 /**

@@ -24,15 +24,15 @@
  * declarations, they are listed in the order the source declares them, both search docs name the
  * same eight, and the docs in scope carry no `:<line>` suffix.
  *
- * SCOPE, deliberately narrow: the whole of `docs/providers/mssql.md` and
- * `docs/providers/trino.md`, plus the monitoring seam of the two search docs and the one
- * `base-provider.ts` citation in `docs/providers/redis.md`. The rest of `docs/providers/` still
- * cites code by line in quantity — a pre-existing backlog this round did not open — and the two
- * search docs are guarded only inside their monitoring section. Nothing here asserts that the
- * uncovered citations are correct; they are simply not measured yet.
+ * SCOPE, deliberately narrow: the whole of every document in `NAMED_CITATIONS`, plus the
+ * monitoring seam of the two search docs, plus one file across every provider doc: `factory.ts`
+ * is cited by its entry point and never by a line. The rest of `docs/providers/` still cites code
+ * by line in quantity — a pre-existing backlog this round did not open — and the two search docs
+ * are guarded only inside their monitoring section. Nothing here asserts that the uncovered
+ * citations are correct; they are simply not measured yet.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -43,6 +43,12 @@ const SEARCH_PROVIDER = "src/lib/db/providers/sql/search/index.ts";
 const BASE_PROVIDER = "src/lib/db/base-provider.ts";
 const MIGRATION_GENERATOR = "src/lib/schema-diff/migration-generator.ts";
 const FACTORY = "src/lib/db/factory.ts";
+
+/** Sorted: `readdirSync` returns filesystem order — green here, red on the next machine. */
+const PROVIDER_DOCS = readdirSync(path.join(ROOT, "docs/providers"))
+  .filter((entry) => entry.endsWith(".md"))
+  .sort()
+  .map((entry) => `docs/providers/${entry}`);
 
 /**
  * The docs this round rewrote, the source their prose links to, and the method names that now
@@ -74,6 +80,23 @@ const NAMED_CITATIONS = [
     methods: ["getCapabilities", "getLabels"],
   },
   {
+    doc: "docs/providers/mysql.md",
+    source: "src/lib/db/providers/sql/mysql.ts",
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "validate",
+      "buildPoolConfig",
+      "buildSSLConfig",
+      "query",
+      "cancelQuery",
+      "beginTransaction",
+      "getSchema",
+      "runMaintenance",
+      "getAllTablesForMaintenance",
+    ],
+  },
+  {
     doc: "docs/providers/oracle.md",
     source: "src/lib/db/providers/sql/oracle.ts",
     methods: [
@@ -90,6 +113,143 @@ const NAMED_CITATIONS = [
       "runMaintenance",
       "getPoolStats",
       "buildTLSAttributes",
+    ],
+  },
+  {
+    doc: "docs/providers/mongodb.md",
+    source: "src/lib/db/providers/document/mongodb.ts",
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "validate",
+      "buildConnectionString",
+      "buildTLSOptions",
+      "query",
+      "parseQuery",
+      "serializeDocument",
+      "getSchema",
+      "runMaintenance",
+    ],
+  },
+  {
+    doc: "docs/providers/redis.md",
+    source: "src/lib/db/providers/keyvalue/redis.ts",
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "buildTLSOptions",
+      "executeRedisCommand",
+      "runCommand",
+      "formatResult",
+      "parseInfoResult",
+      "getSchema",
+      "getKeyPrefix",
+      "calculateHitRatio",
+      "getActiveSessions",
+    ],
+  },
+  {
+    doc: "docs/providers/postgres.md",
+    source: "src/lib/db/providers/sql/postgres.ts",
+    methods: [
+      "getCapabilities",
+      "qualifyMaintenanceTarget",
+      "validate",
+      "connect",
+      "buildSSLConfig",
+      "query",
+      "cancelQuery",
+      "beginTransaction",
+      "runMaintenance",
+    ],
+  },
+  {
+    doc: "docs/providers/clickhouse.md",
+    source: "src/lib/db/providers/sql/clickhouse/index.ts",
+    // Tracks the doc, not a hand-picked subset: every `name(` it cites that index.ts declares as
+    // a class member, in declaration order. Module-level functions (`resolveConnection`) and
+    // inherited SQLBaseProvider members carry no access modifier for `declarationLine` to match.
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "prepareQuery",
+      "validate",
+      "connect",
+      "disconnect",
+      "query",
+      "mapClickHouseError",
+      "getSchema",
+      "getSchemaList",
+      "getSchemaRelations",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getActiveSessions",
+      "getTableStats",
+      "getIndexStats",
+      "getStorageStats",
+      "getHealth",
+      "runMaintenance",
+    ],
+  },
+  {
+    doc: "docs/providers/druid.md",
+    source: "src/lib/db/providers/sql/druid/index.ts",
+    // Tracks the doc, not a hand-picked subset: every `name(` it cites that index.ts declares as
+    // a class member, in declaration order. The doc links the monitoring methods to introspect.ts,
+    // where the work is; index.ts declares each as a member that delegates there.
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "prepareQuery",
+      "validate",
+      "connect",
+      "disconnect",
+      "query",
+      "mapDruidError",
+      "getSchema",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getIndexStats",
+      "getActiveSessions",
+      "getTableStats",
+      "getStorageStats",
+      "getHealth",
+      "runMaintenance",
+    ],
+  },
+  {
+    doc: "docs/providers/couchbase.md",
+    source: "src/lib/db/providers/document/couchbase/index.ts",
+    // Same rule as clickhouse: every `name(` the doc cites that index.ts declares as a class
+    // member, in declaration order. `degradeTo()` is module-level; the transport, introspection
+    // and keyspace names live in their own files.
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "prepareQuery",
+      "validate",
+      "connect",
+      "disconnect",
+      "hostFromConnectionString",
+      "query",
+      "mapCouchbaseError",
+      "primaryIndexRemedy",
+      "getSchemaList",
+      "getSchemaRelations",
+      "getSchema",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getActiveSessions",
+      "getTableStats",
+      "getIndexStats",
+      "getStorageStats",
+      "getHealth",
+      "runMaintenance",
+      "dispatchMaintenance",
+      "requireTarget",
     ],
   },
 ] as const;
@@ -172,10 +332,22 @@ describe("redis provider doc", () => {
   });
 });
 
+describe("measured aggregate helper docs", () => {
+  test("MSSQL and Oracle pin the helper name to its source file", () => {
+    for (const doc of ["docs/providers/mssql.md", "docs/providers/oracle.md"]) {
+      expect(read(doc)).toContain(
+        "`measuredNullableAggregate()` ([`measured-aggregate.ts`](../../src/lib/db/utils/measured-aggregate.ts))",
+      );
+    }
+    expect(read("src/lib/db/utils/measured-aggregate.ts")).toMatch(/^export function measuredNullableAggregate\(/m);
+  });
+});
+
 describe("provider docs rewritten this round: code cited by name, whole file", () => {
   for (const { doc, source, methods } of NAMED_CITATIONS) {
     test(`${doc} cites no line number anywhere`, () => {
-      expect(read(doc)).not.toMatch(/\.ts:\d/);
+      // `.tsx` too: couchbase.md cited `ConnectionModal.tsx:139`, which `\.ts:` cannot see.
+      expect(read(doc)).not.toMatch(/\.tsx?:\d/);
     });
 
     test(`${doc} names methods that ${source} really declares`, () => {
@@ -188,10 +360,73 @@ describe("provider docs rewritten this round: code cited by name, whole file", (
     });
   }
 
-  test("mssql.md names the factory's entry point rather than a line inside it", () => {
-    expect(read("docs/providers/mssql.md")).toContain(
-      "`createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts))",
-    );
+  test("provider docs name the factory's entry point rather than a line inside it", () => {
+    // Selected on the entry point's NAME, not on the link: fourteen docs link `factory.ts`, and
+    // one of them (oracle.md) does so without naming the function — prose it does not owe.
+    const docs = PROVIDER_DOCS.filter((doc) => read(doc).includes("`createDatabaseProvider()`"));
+    // A derived population can derive to nothing, and a loop over nothing passes; renaming the
+    // phrase everywhere used to shed four assertions and stay green (#620).
+    expect(docs.length).toBeGreaterThan(0);
+    for (const doc of docs) {
+      expect(read(doc)).toMatch(
+        /`createDatabaseProvider\(\)`\s*\(\[`factory\.ts`\]\(\.\.\/\.\.\/src\/lib\/db\/factory\.ts\)\)/,
+      );
+    }
+    for (const doc of PROVIDER_DOCS) {
+      expect(read(doc), `${doc} cites a line inside factory.ts`).not.toMatch(/factory\.ts:\d/);
+    }
     expect(read(FACTORY)).toMatch(/^export async function createDatabaseProvider\(/m);
   });
+});
+
+const TOP_LEVEL_NAMED_CITATION_DOCS = [
+  "docs/AGENT.md",
+  "docs/FEATURES.md",
+  "docs/ADDING_A_PROVIDER.md",
+  "docs/SECURITY.md",
+] as const;
+
+describe("top-level docs: code cited by name, whole file", () => {
+  for (const doc of TOP_LEVEL_NAMED_CITATION_DOCS) {
+    test(`${doc} cites no TypeScript line number anywhere`, () => {
+      expect(read(doc)).not.toMatch(/\.tsx?:\d/);
+    });
+  }
+});
+
+/**
+ * A quoted VALUE rots exactly the way a line number does, and nothing above measures it.
+ *
+ * `docs/providers/mysql.md` presented `slowQueriesEmptyState` as *"... enable the Performance
+ * Schema to see them."* — the pre-#463 wording. #463 (e8b0056d) replaced that sentence in
+ * `getLabels()` because it named the one cause that never reaches the failure path, and §8 of the
+ * same doc says so in the past tense five hundred lines above. The quotation below it was never
+ * updated, so one file asserted both that the wording had changed and that it had not. A name
+ * survives an insertion above it; a value copied into prose survives nothing.
+ *
+ * A doc may still quote a superseded value deliberately, in the past tense, to explain why it
+ * changed — mysql.md does. So this pins the PRESENCE of the declared value, never the absence of
+ * the old one. Whitespace is collapsed on both sides because prose wraps and a string literal
+ * does not.
+ */
+const QUOTED_LABELS = [
+  {
+    doc: "docs/providers/mysql.md",
+    source: "src/lib/db/providers/sql/mysql.ts",
+    field: "slowQueriesEmptyState",
+  },
+];
+
+const collapse = (text: string): string => text.replace(/\s+/g, " ");
+
+describe("provider docs that quote a label value verbatim", () => {
+  for (const { doc, source, field } of QUOTED_LABELS) {
+    test(`${doc} quotes the ${field} that ${source} declares`, () => {
+      const declared = new RegExp(`\\b${field}:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(read(source));
+      expect(declared, `${field} is not declared as a string literal in ${source}`).not.toBeNull();
+      expect(collapse(read(doc)), `${doc} quotes a ${field} that ${source} no longer declares`).toContain(
+        collapse(declared![1]),
+      );
+    });
+  }
 });

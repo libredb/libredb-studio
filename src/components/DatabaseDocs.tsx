@@ -162,10 +162,10 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
     <div className="h-full flex flex-col bg-sunken">
       <div className="flex items-center justify-between px-4 py-2 border-b border-hairline bg-surface">
         <div className="flex items-center gap-2">
-          <div className="p-1 rounded bg-teal-500/10">
-            <FileText strokeWidth={1.5} className="w-3 h-3 text-teal-400" />
+          <div className="p-1 rounded bg-hue-teal-tint/10">
+            <FileText strokeWidth={1.5} className="w-3 h-3 text-hue-teal" />
           </div>
-          <span className="text-xs font-medium text-teal-400">Database Docs</span>
+          <span className="text-xs font-medium text-hue-teal">Database Docs</span>
           <span className="text-[0.625rem] text-fg-muted font-mono">{schema.length} tables</span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -174,7 +174,9 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
             disabled={isAiLoading}
             className={cn(
               "flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors",
-              isAiLoading ? "bg-teal-600/20 text-teal-400 cursor-wait" : "bg-teal-600 hover:bg-teal-500 text-white",
+              isAiLoading
+                ? "bg-hue-teal-solid/20 text-hue-teal cursor-wait"
+                : "bg-hue-teal-solid hover:bg-hue-teal-solid-hover text-white",
             )}
           >
             {isAiLoading && <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" />}
@@ -197,22 +199,24 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search tables or columns..."
-            className="w-full bg-overlay border border-hairline-strong rounded-lg pl-7 pr-3 py-1.5 text-xs text-fg placeholder:text-fg-subtle outline-none focus:border-teal-500/30"
+            className="w-full bg-overlay border border-hairline-strong rounded-lg pl-7 pr-3 py-1.5 text-xs text-fg placeholder:text-fg-subtle outline-none focus:border-hue-teal-tint/30"
           />
         </div>
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-3">
         {error && (
-          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-400">{error}</div>
+          <div className="bg-danger-tint/10 border border-danger-tint/20 rounded-lg p-3 text-xs text-danger">
+            {error}
+          </div>
         )}
 
         {(aiDocs || isAiLoading) && (
-          <div className="bg-teal-500/5 border border-teal-500/10 rounded-lg p-4 mb-4">
+          <div className="bg-hue-teal-tint/5 border border-hue-teal-tint/10 rounded-lg p-4 mb-4">
             <div className="flex items-center gap-2 mb-3">
-              <Sparkles strokeWidth={1.5} className="w-3 h-3 text-teal-400" />
-              <span className="text-xs font-medium text-teal-400">AI-Generated Documentation</span>
-              {isAiLoading && <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin text-teal-400" />}
+              <Sparkles strokeWidth={1.5} className="w-3 h-3 text-hue-teal" />
+              <span className="text-xs font-medium text-hue-teal">AI-Generated Documentation</span>
+              {isAiLoading && <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin text-hue-teal" />}
             </div>
             {aiDocs && <div className="prose prose-invert prose-xs max-w-none">{renderMarkdown(aiDocs)}</div>}
           </div>
@@ -247,7 +251,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
                         <td className="px-3 py-1 text-fg-secondary font-mono">{col.name}</td>
                         <td className="px-3 py-1 text-fg-muted font-mono">{col.type}</td>
                         <td className="px-3 py-1">
-                          {col.isPrimary && <span className="text-amber-400 text-[0.625rem] font-medium">PK</span>}
+                          {col.isPrimary && <span className="text-hue-amber text-[0.625rem] font-medium">PK</span>}
                         </td>
                         <td className="px-3 py-1 text-fg-subtle">{col.nullable !== false ? "Yes" : "No"}</td>
                       </tr>

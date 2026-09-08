@@ -54,7 +54,7 @@ export default function AdminDashboard({ children }: AdminDashboardProps) {
             <Button
               variant="outline"
               size="sm"
-              className="border-red-500/20 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+              className="border-danger-tint/20 text-danger hover:bg-danger-tint/10 hover:text-danger-bright"
               onClick={handleLogout}
             >
               <LogOut className="mr-2 h-3.5 w-3.5" />
@@ -82,10 +82,8 @@ export default function AdminDashboard({ children }: AdminDashboardProps) {
                     // whitespace-nowrap keeps the longest labels on one line inside the
                     // h-11 row; the nav's overflow-x-auto then scrolls instead of wrapping.
                     "flex flex-1 items-center justify-center gap-2 px-3 sm:px-4 h-11 border-b-2 text-xs sm:text-sm whitespace-nowrap transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400/60",
-                    isActive
-                      ? "border-blue-400 text-blue-400"
-                      : "border-transparent text-fg-muted hover:text-fg-secondary",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/60",
+                    isActive ? "border-brand text-brand" : "border-transparent text-fg-muted hover:text-fg-secondary",
                   )}
                 >
                   <Icon className="h-4 w-4" strokeWidth={1.5} />

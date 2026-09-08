@@ -80,19 +80,40 @@ describe("evaluateThreshold (direction=below)", () => {
 // ============================================================================
 
 describe("getThresholdColor", () => {
-  test("healthy returns green CSS class", () => {
+  /**
+   * Green and yellow, not the emerald-based `success` and amber-based `warning`
+   * roles. The monitoring surfaces have always drawn their threshold ring in
+   * green/yellow/red, and routing them through the state roles would have changed
+   * the hue in dark — so they take the identity hues that reproduce it exactly
+   * (#402). The drift between the two vocabularies is real and is filed, but it is
+   * not this migration's to resolve.
+   */
+  test("healthy returns the green identity ring", () => {
     const color = getThresholdColor("healthy");
-    expect(color).toContain("green");
+    expect(color).toBe("border-hue-green-tint/30");
   });
 
-  test("warning returns yellow CSS class", () => {
+  test("warning returns the yellow identity ring", () => {
     const color = getThresholdColor("warning");
-    expect(color).toContain("yellow");
+    expect(color).toBe("border-hue-yellow-tint/50");
   });
 
-  test("critical returns red CSS class", () => {
+  test("critical returns the red identity ring", () => {
     const color = getThresholdColor("critical");
-    expect(color).toContain("red");
+    expect(color).toBe("border-hue-red-tint/50");
+  });
+
+  /**
+   * All three from one family. `danger-tint` and `hue-red-tint` are the same value,
+   * so mixing them changed nothing visible — which is exactly why it would have
+   * survived: a reader of one arm would have inferred the wrong rule for the other
+   * two.
+   */
+  test("the three rings come from one vocabulary, not two", () => {
+    const families = (["healthy", "warning", "critical"] as const)
+      .map((level) => /border-(hue|brand|warning|success|danger)/.exec(getThresholdColor(level))?.[1])
+      .filter((family, index, all) => all.indexOf(family) === index);
+    expect(families).toEqual(["hue"]);
   });
 });
 

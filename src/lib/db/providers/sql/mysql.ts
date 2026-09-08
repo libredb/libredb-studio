@@ -15,6 +15,7 @@ import {
   type MaintenanceResult,
   type ProviderOptions,
   type ProviderCapabilities,
+  type ExplainFormat,
   type ProviderLabels,
   type SlowQuery,
   type ActiveSession,
@@ -72,7 +73,10 @@ type MySQLQueryable = Pick<PoolConnection, "query" | "execute">;
  *   `CHECK TABLE` all fail prepared with `ER_UNSUPPORTED_PS` and all succeed as
  *   text. `EXPLAIN FORMAT=JSON` is NOT in that list: it is `ER_PARSE_ERROR` on
  *   both protocols there, because SingleStore's grammar is `EXPLAIN JSON`, so the
- *   Explain panel is not something this helper recovers.
+ *   Explain panel is not something this helper recovers. What recovers it is
+ *   `probeExplainFormat()` below: the grammar is measured at connect and declared
+ *   as a capability, so an engine that refuses `EXPLAIN FORMAT=JSON` gets the
+ *   plain `EXPLAIN` of the `mysql-text` strategy instead of a failing panel.
  * - StarRocks 3.3, whose overview this recovers (measured through the provider,
  *   2026-08-24); its health still fails on a missing
  *   `information_schema.PROCESSLIST`, which is the engine's gap, not the protocol.
@@ -104,6 +108,63 @@ const runStatement = <T extends RowDataPacket[] = RowDataPacket[]>(
   params === undefined || params.length === 0
     ? queryable.query<T>(sql)
     : queryable.execute<T>(sql, asExecuteParams(params));
+
+/**
+ * The EXPLAIN grammars this provider can ask for, most specific first, each paired
+ * with the strategy id that reads what the statement answers.
+ *
+ * `EXPLAIN FORMAT=JSON` is MySQL's own grammar and the rest of the wire family does
+ * not share it. Measured 2026-09-06 through mysql2 3.24.2 over the text protocol,
+ * one connection per engine:
+ *
+ * - MySQL 26.7.0 (`mysql:latest`) and MariaDB 12.3.2 (`mariadb:latest`): both
+ *   statements accepted.
+ * - TiDB 8.5.1 (`pingcap/tidb:v8.5.1`): `EXPLAIN FORMAT=JSON SELECT 1` is errno 1105
+ *   `explain format 'json' is not supported now`; `EXPLAIN SELECT 1` is accepted.
+ * - Apache Doris 4.1.3 (`apache/doris:all-in-one-4.1.3`): errno 1105
+ *   `mismatched input '=' expecting {<EOF>, ';'}(line 1, pos 14)`; `EXPLAIN SELECT 1`
+ *   is accepted.
+ * - StarRocks 3.3.22 (`starrocks/allin1-ubuntu:3.3.22`) and SingleStore
+ *   (`ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82`): errno 1064, a parse error;
+ *   `EXPLAIN SELECT 1` is accepted on both.
+ * - Databend 1.2.925 (`datafuselabs/databend:v1.2.925-patch-11`): errno 1105
+ *   SyntaxException; `EXPLAIN SELECT 1` is accepted.
+ * - Vitess 24.0.2 (`vitess/vttestserver:v24.0.2-mysql80`) and OceanBase CE 4.4.2
+ *   (`oceanbase/oceanbase-ce:4.4.2-lts`): both statements accepted, so nothing about
+ *   those two changes. Vitess refuses the QUOTED `EXPLAIN FORMAT='json'`, which is a
+ *   reason to keep sending the unquoted form the probe and the strategy already use.
+ */
+const EXPLAIN_PROBES: readonly (readonly [sql: string, format: ExplainFormat])[] = [
+  ["EXPLAIN FORMAT=JSON SELECT 1", "mysql-json"],
+  ["EXPLAIN SELECT 1", "mysql-text"],
+];
+
+/**
+ * Which of those grammars this server accepts, or `undefined` when it accepts
+ * neither. Run once per `connect()`, on the connection the pool check already holds.
+ *
+ * It reads SUCCESS OR FAILURE and never the errno, because the family does not share
+ * one for a grammar refusal: Doris and TiDB answer 1105 where StarRocks and
+ * SingleStore answer 1064 (measured 2026-09-06, see `EXPLAIN_PROBES`). Keying on a
+ * code would have to enumerate engines, which is the branch `src/lib/db` does not
+ * take; asking the server what its grammar accepts is the same answer without the
+ * enumeration.
+ *
+ * Nothing here rejects. A grammar the server does not have is a fact about the
+ * Explain panel, not about the connection, and `connect()` must not fail for it.
+ */
+const probeExplainFormat = async (queryable: MySQLQueryable): Promise<ExplainFormat | undefined> => {
+  for (const [sql, format] of EXPLAIN_PROBES) {
+    try {
+      await runStatement(queryable, sql);
+      return format;
+    } catch {
+      // Refused, so try the next grammar. The reason is the engine's own and there is
+      // nothing to report: the capability this produces IS the report.
+    }
+  }
+  return undefined;
+};
 
 /**
  * One row of MySQL's answer to `ANALYZE`/`OPTIMIZE`/`CHECK TABLE`. These statements
@@ -165,6 +226,32 @@ function readMaintenanceReport(
 }
 
 const unique = (values: string[]): string[] => [...new Set(values)];
+
+/**
+ * One status variable out of a bare `SHOW STATUS` result, or `undefined` when the
+ * server does not publish it.
+ *
+ * The provider used to ask for each variable by name with `SHOW STATUS LIKE '<name>'`,
+ * which is MySQL grammar that not every MySQL-wire server has. Measured 2026-09-06 over
+ * mysql2 3.24.2's text protocol against `apache/doris:all-in-one-4.1.3`:
+ *
+ *   SHOW STATUS LIKE 'Uptime'  -> errno=1105 code=ER_UNKNOWN_ERROR sqlState=HY000
+ *                                 "mismatched input 'LIKE' expecting {<EOF>, ';'}
+ *                                  (line 1, pos 12)"
+ *   SHOW STATUS                -> ok, columns Variable_name/Value, 0 rows
+ *
+ * so the whole Overview and Health panels failed on Doris for a clause the bare
+ * statement does not need (#573). The bare form is accepted everywhere measured that
+ * day: MySQL 26.7.0 (528 rows), MariaDB 12.3.2 (571), TiDB 8.5.1 (13), SingleStore
+ * (75), StarRocks 3.3.22 (0) and Doris 4.1.3 (0).
+ *
+ * The match is case-insensitive because `LIKE` was: replacing the server-side filter
+ * with a client-side one must not narrow what it accepted.
+ */
+function statusValue(rows: RowDataPacket[], name: string): unknown {
+  const wanted = name.toLowerCase();
+  return rows.find((row) => String(row.Variable_name).toLowerCase() === wanted)?.Value;
+}
 
 // ============================================================================
 // SQL Statements
@@ -418,11 +505,29 @@ function toHealthSlowQuery(stats: SlowQueryStats): SlowQuery {
 const SELF_IDENTIFYING_VERSION = /mariadb|tidb|vitess|oceanbase/i;
 
 /**
- * How the overview names the server: the string as the server gave it when that
- * already names a vendor, `MySQL <version>` when it does not.
+ * Doris is absent from `SELF_IDENTIFYING_VERSION` for the same reason as
+ * StarRocks and SingleStore - `VERSION()` answers a fixed, fictitious MySQL
+ * number (`5.7.99`) with nothing to key on - but unlike those two, Doris does
+ * put its own build string in `@@version_comment`: `"doris version
+ * doris-4.1.3-rc02-7126cf65d96"`, measured against
+ * `apache/doris:all-in-one-4.1.3`. Real MySQL's own `@@version_comment`
+ * ("MySQL Community Server - GPL") and MariaDB's ("mariadb.org binary
+ * distribution") do not match this shape, so keying on it does not misfire on
+ * the engine this provider is named for.
  */
-function labelServerVersion(version: string): string {
-  return SELF_IDENTIFYING_VERSION.test(version) ? version : `MySQL ${version}`;
+const DORIS_VERSION_COMMENT = /doris version (?:doris-)?(\S+)/i;
+
+/**
+ * How the overview names the server: the string as the server gave it when
+ * that already names a vendor, Doris's own build string extracted from
+ * `@@version_comment` when the fictitious `VERSION()` number is the only
+ * other option, `MySQL <version>` otherwise.
+ */
+function labelServerVersion(version: string, versionComment?: string): string {
+  if (SELF_IDENTIFYING_VERSION.test(version)) return version;
+  const doris = versionComment?.match(DORIS_VERSION_COMMENT);
+  if (doris) return `Apache Doris ${doris[1]}`;
+  return `MySQL ${version}`;
 }
 
 function round2(value: number): number {
@@ -510,6 +615,16 @@ const STORAGE_STATS_SQL = `
 export class MySQLProvider extends SQLBaseProvider {
   private pool: Pool | null = null;
 
+  /**
+   * The EXPLAIN grammar this server accepts, measured by `probeExplainFormat()` at
+   * connect. It starts as MySQL's own grammar, which is what this provider declared
+   * unconditionally before the probe existed and is still the right answer for an
+   * unconnected provider: `POST /api/db/provider-meta` reads capabilities off a
+   * provider it never connects (#457), so the pre-flight the client does keeps
+   * exactly the behaviour it had.
+   */
+  private measuredExplainFormat: ExplainFormat | undefined = "mysql-json";
+
   // Transaction support: dedicated connection held outside pool
   private txConn: PoolConnection | null = null;
   private txActive = false;
@@ -529,8 +644,12 @@ export class MySQLProvider extends SQLBaseProvider {
     return {
       ...super.getCapabilities(),
       defaultPort: 3306,
-      supportsExplain: true,
-      explainFormat: "mysql-json",
+      // Measured at connect, not declared per type id: the MySQL-wire relatives do
+      // not all accept `EXPLAIN FORMAT=JSON` (#574). The key is spread in rather than
+      // set to `undefined` because `ProviderCapabilities.explainFormat` is present iff
+      // `supportsExplain` is true, and the provider tests assert that as a shape.
+      supportsExplain: this.measuredExplainFormat !== undefined,
+      ...(this.measuredExplainFormat === undefined ? {} : { explainFormat: this.measuredExplainFormat }),
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
       // The driver's own connection.beginTransaction() over one held connection.
@@ -623,6 +742,9 @@ export class MySQLProvider extends SQLBaseProvider {
       this.pool = mysql.createPool(this.buildPoolConfig());
 
       const conn = await this.pool.getConnection();
+      // The pool check already holds a connection, so the grammar probe costs no extra
+      // acquisition. It never rejects, so the release below is never skipped.
+      this.measuredExplainFormat = await probeExplainFormat(conn);
       conn.release();
 
       this.setConnected(true);
@@ -952,8 +1074,14 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [connRows] = await runStatement(conn, "SHOW STATUS LIKE 'Threads_connected'");
-      const activeConnections = parseInt(connRows[0]?.Value || "0");
+      // One bare read, picked client-side: see `statusValue()` for the Doris measurement
+      // that forced it. `Threads_connected` is absent on TiDB 8.5.1 (13 status rows,
+      // none of them that one), on StarRocks 3.3.22 and on Doris 4.1.3 (0 rows each),
+      // all measured 2026-09-06, and an unmeasured count is OMITTED rather than sent as
+      // a fabricated 0 (#477, and the docblock on `HealthInfo.activeConnections`): this
+      // is the field the agent's curated health reading forwards to the model.
+      const [statusRows] = await runStatement(conn, "SHOW STATUS");
+      const activeConnections = measuredNumber(statusValue(statusRows, "Threads_connected"));
 
       const [sizeRows] = await runStatement(conn, DATABASE_SIZE_MB_SQL, [this.config.database]);
       const databaseSize = `${sizeRows[0]?.size_mb || 0} MB`;
@@ -1040,7 +1168,7 @@ export class MySQLProvider extends SQLBaseProvider {
       }));
 
       return {
-        activeConnections,
+        ...(activeConnections === undefined ? {} : { activeConnections }),
         databaseSize,
         cacheHitRatio,
         slowQueries,
@@ -1135,21 +1263,32 @@ export class MySQLProvider extends SQLBaseProvider {
     const conn = await this.pool!.getConnection();
     try {
       // Get version
-      const [versionRows] = await runStatement(conn, "SELECT VERSION() as version");
+      const [versionRows] = await runStatement(
+        conn,
+        "SELECT VERSION() as version, @@version_comment as version_comment",
+      );
       const version = versionRows[0]?.version || "Unknown";
+      const versionComment = versionRows[0]?.version_comment as string | undefined;
 
-      // Get uptime
-      const [uptimeRows] = await runStatement(conn, "SHOW STATUS LIKE 'Uptime'");
-      const uptimeSeconds = parseInt(uptimeRows[0]?.Value || "0");
-      const uptime = this.formatUptimeString(uptimeSeconds);
+      // Uptime and the connection count come out of ONE bare `SHOW STATUS`: the LIKE
+      // clause is what Doris 4.1.3 refuses (see `statusValue()`), and reading the list
+      // once serves both variables in one round trip instead of two.
+      const [statusRows] = await runStatement(conn, "SHOW STATUS");
+      const uptimeSeconds = measuredNumber(statusValue(statusRows, "Uptime"));
+      const activeConnections = measuredNumber(statusValue(statusRows, "Threads_connected"));
 
-      // Get active connections
-      const [connRows] = await runStatement(conn, "SHOW STATUS LIKE 'Threads_connected'");
-      const activeConnections = parseInt(connRows[0]?.Value || "0");
-
-      // Get max connections
+      // `SHOW VARIABLES LIKE` STAYS. Doris rejects the LIKE clause on `SHOW STATUS`
+      // only: measured 2026-09-06, `SHOW VARIABLES LIKE 'max_connections'` is accepted
+      // on Doris 4.1.3 and on StarRocks 3.3.22 alike (both answering 0 rows), so the
+      // narrowest fix changes only the statement a grammar refuses.
+      //
+      // The `|| "151"` default is gone with it: 151 is MySQL's compiled-in ceiling and
+      // was reported for every server that published none, including TiDB, which
+      // publishes a real `0`. `maxConnections` is the one figure where 0 and absence
+      // are the SAME fact, "no limit published", which is why it stays a required
+      // number here rather than being omitted (see `src/lib/db/types.ts`).
       const [maxConnRows] = await runStatement(conn, "SHOW VARIABLES LIKE 'max_connections'");
-      const maxConnections = parseInt(maxConnRows[0]?.Value || "151");
+      const maxConnections = measuredNumber(maxConnRows[0]?.Value) ?? 0;
 
       // Get database size
       const [sizeRows] = await runStatement(conn, OVERVIEW_DATABASE_SIZE_SQL, [this.config.database]);
@@ -1161,10 +1300,13 @@ export class MySQLProvider extends SQLBaseProvider {
       const [tableCountRows] = await runStatement(conn, OVERVIEW_TABLE_COUNT_SQL, [this.config.database]);
 
       return {
-        version: labelServerVersion(version),
-        uptime,
-        startTime: new Date(Date.now() - uptimeSeconds * 1000),
-        activeConnections,
+        version: labelServerVersion(version, versionComment),
+        // "N/A" is what a provider that cannot measure uptime sends (sqlite, duckdb,
+        // libsql, mongodb), and no `startTime` is derived from an uptime nobody
+        // published: `Date.now()` would have been reported as the server's start.
+        uptime: uptimeSeconds === undefined ? "N/A" : this.formatUptimeString(uptimeSeconds),
+        ...(uptimeSeconds === undefined ? {} : { startTime: new Date(Date.now() - uptimeSeconds * 1000) }),
+        ...(activeConnections === undefined ? {} : { activeConnections }),
         maxConnections,
         databaseSize: formatBytes(databaseSizeBytes),
         databaseSizeBytes,
@@ -1201,9 +1343,13 @@ export class MySQLProvider extends SQLBaseProvider {
       const uptime = measuredNumber(qpsRows[0]?.uptime);
 
       // Get deadlocks. SHOW STATUS answers this with or without performance_schema,
-      // so a 0 here is a measurement and is reported as one.
-      const [deadlockRows] = await runStatement(conn, "SHOW STATUS LIKE 'Innodb_deadlocks'");
-      const deadlocks = measuredNumber(deadlockRows[0]?.Value);
+      // so a 0 here is a measurement and is reported as one. Bare, for the reason
+      // `statusValue()` records: Doris 4.1.3 refuses the LIKE clause on this statement.
+      // `Innodb_deadlocks` is MariaDB's variable (12.3.2 publishes it among 571 rows);
+      // MySQL 26.7.0 publishes none of it among its 528, measured 2026-09-06, so the
+      // row is simply not in the list there and the reading stays absent.
+      const [statusRows] = await runStatement(conn, "SHOW STATUS");
+      const deadlocks = measuredNumber(statusValue(statusRows, "Innodb_deadlocks"));
 
       return {
         ...(hitRatio === undefined ? {} : { cacheHitRatio: Math.min(100, Math.max(0, hitRatio)) }),

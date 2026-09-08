@@ -34,9 +34,9 @@ channel count.
 
 ## Coverage snapshot
 
-**33 channels · 26 live · 6 pending · 1 deprecated**
+**36 channels · 30 live · 5 pending · 1 deprecated**
 
-Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 4 · Kubernetes 2 · Cloud 10**
+Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 5 · Kubernetes 3 · Cloud 13**
 
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
@@ -45,9 +45,9 @@ Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 4 · K
 | Kubernetes & operators | 2 | 1 | 0 |
 | Package managers | 5 | 0 | 1 |
 | OS / desktop packages | 3 | 0 | 0 |
-| PaaS catalogs (listed) | 8 | 4 | 0 |
+| PaaS catalogs (listed) | 9 | 3 | 0 |
 | Deploy recipes | 3 | 0 | 0 |
-| Cloud marketplaces | 1 | 1 | 0 |
+| Cloud marketplaces | 4 | 1 | 0 |
 
 <!-- END:CHANNEL-SCORECARD -->
 
@@ -74,6 +74,7 @@ Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 4 · K
 | [AppImageHub](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Manual, on demand | [desktop/README.md](../desktop/README.md) |
 | [Linux .deb / .rpm](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [CapRover official](https://github.com/caprover/one-click-apps) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/caprover/README.md](../deploy/caprover/README.md) |
+| [CasaOS App Store](https://github.com/IceWhaleTech/CasaOS-AppStore) | PaaS catalogs (listed) | Container | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Cosmos servapp marketplace](https://github.com/azukaar/cosmos-servapps-official) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/cosmos/README.md](../deploy/cosmos/README.md) |
 | [Dokploy template catalog](https://templates.dokploy.com) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/dokploy/README.md](../deploy/dokploy/README.md) |
 | [Kubero template catalog](https://www.kubero.dev/templates) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/kubero/README.md](../deploy/kubero/README.md) |
@@ -81,14 +82,16 @@ Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 4 · K
 | [Sealos App Store template](https://sealos.io/products/app-store/libredb-studio) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [TrueNAS SCALE apps](https://apps.truenas.com/catalog/libredb-studio_community/) | PaaS catalogs (listed) | Container | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Unraid Community Apps](https://ca.unraid.net/apps/libredb-studio-0a5x41a1cy1kay) | PaaS catalogs (listed) | Container | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| [CasaOS App Store](https://github.com/IceWhaleTech/CasaOS-AppStore) | PaaS catalogs (listed) | Container | pending | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Easypanel template catalog](https://easypanel.io/templates) | PaaS catalogs (listed) | Cloud | pending | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Portainer app templates](https://github.com/portainer/templates) | PaaS catalogs (listed) | Container | pending | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Umbrel App Store](https://github.com/getumbrel/umbrel-apps) | PaaS catalogs (listed) | Container | pending | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Fly.io launch config](https://github.com/libredb/libredb-studio/blob/main/fly.toml) | Deploy recipes | Cloud | live | Manual, on demand | [FLY.md](FLY.md) |
 | [Koyeb deploy button](https://github.com/libredb/libredb-studio/tree/main/deploy/koyeb) | Deploy recipes | Cloud | live | Manual, on demand | [deploy/koyeb/README.md](../deploy/koyeb/README.md) |
 | [Render Blueprint](https://github.com/libredb/libredb-studio/blob/main/render.yaml) | Deploy recipes | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [AWS Marketplace](https://aws.amazon.com/marketplace/pp/prodview-tsahkrgdqpnws) | Cloud marketplaces | Cloud | live | Manual, on demand | [deploy/aws/README.md](../deploy/aws/README.md) |
+| [Azure Marketplace](https://marketplace.microsoft.com/en-us/product/libredb.libredb-studio) | Cloud marketplaces | Cloud | live | Manual, on demand | [deploy/azure/README.md](../deploy/azure/README.md) |
 | [DigitalOcean Marketplace](https://marketplace.digitalocean.com/apps/libredb-studio) | Cloud marketplaces | Cloud | live | Manual, on demand | [deploy/digitalocean/README.md](../deploy/digitalocean/README.md) |
+| [Google Cloud Marketplace](https://console.cloud.google.com/marketplace/product/libredb-public/libredb-studio) | Cloud marketplaces | Kubernetes, Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Koyeb One-Click Apps catalog](https://www.koyeb.com/deploy) | Cloud marketplaces | Cloud | pending | Manual, on demand | [deploy/koyeb/CATALOG_SUBMISSION.md](../deploy/koyeb/CATALOG_SUBMISSION.md) |
 
 <!-- END:CHANNEL-TABLE -->
@@ -99,5 +102,9 @@ hand. To propose a new channel, add an entry with a `category` and a `platforms`
 list, then run `bun run distribution:matrix`. Freshness is enforced on pull
 requests with `bun run distribution:matrix --check`.
 
-Planned and deliberately not counted here until a listing exists: GCP, Azure, AWS
-and Alibaba cloud marketplaces, and Coolify, Portainer and Dokku deploy support.
+Not counted here, and why. **Alibaba Cloud** is not being pursued. **Coolify**
+declined the submission: its maintainers accept service templates only from
+projects above 1000 GitHub stars. **Dokku** has no application catalog to apply
+to. A row appears above as soon as there is something to track — a submission,
+or a descriptor in this repo that a workflow reads — and stays `pending` until
+the product can be installed from that channel, when it becomes `live`.

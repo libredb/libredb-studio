@@ -338,7 +338,7 @@ describe("QuerySafetyDialog", () => {
     });
   });
 
-  test("applies correct severity styling to warnings (critical=red, warning=amber, info=blue)", async () => {
+  test("applies correct severity styling to warnings (critical=danger, warning=warning, info=accent)", async () => {
     const payload = {
       riskLevel: "high",
       summary: "Multiple warnings.",
@@ -372,16 +372,16 @@ describe("QuerySafetyDialog", () => {
     });
 
     const criticalEl = queryByText("Critical warning")!.closest("div");
-    expect(criticalEl?.className).toContain("bg-red-500/5");
-    expect(criticalEl?.className).toContain("border-red-500/20");
+    expect(criticalEl?.className).toContain("bg-danger-tint/5");
+    expect(criticalEl?.className).toContain("border-danger-tint/20");
 
     const warningEl = queryByText("Warning level")!.closest("div");
-    expect(warningEl?.className).toContain("bg-amber-500/5");
-    expect(warningEl?.className).toContain("border-amber-500/20");
+    expect(warningEl?.className).toContain("bg-warning-tint/5");
+    expect(warningEl?.className).toContain("border-warning-tint/20");
 
     const infoEl = queryByText("Info level")!.closest("div");
-    expect(infoEl?.className).toContain("bg-blue-500/5");
-    expect(infoEl?.className).toContain("border-blue-500/20");
+    expect(infoEl?.className).toContain("bg-brand-tint/5");
+    expect(infoEl?.className).toContain("border-brand-tint/20");
   });
 
   test("uses onAnalyzeSafety adapter instead of fetch when provided", async () => {
@@ -530,7 +530,7 @@ describe("QuerySafetyDialog", () => {
     });
   });
 
-  test("high and critical risk buttons have red background class", async () => {
+  test("high and critical risk buttons carry the danger solid background token", async () => {
     // Test critical risk button
     const criticalPayload = {
       riskLevel: "critical",
@@ -559,7 +559,7 @@ describe("QuerySafetyDialog", () => {
     });
 
     const criticalButton = queryByText("Execute Anyway")!.closest("button");
-    expect(criticalButton?.className).toContain("bg-red-600");
+    expect(criticalButton?.className).toContain("bg-danger-solid");
 
     unmount();
     cleanup();
@@ -592,7 +592,7 @@ describe("QuerySafetyDialog", () => {
     });
 
     const highButton = result2.queryByText("Proceed with Caution")!.closest("button");
-    expect(highButton?.className).toContain("bg-red-600");
+    expect(highButton?.className).toContain("bg-danger-solid");
   });
 
   // ── Honesty about text the reading could not resolve (#297) ────────────────

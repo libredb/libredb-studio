@@ -164,9 +164,9 @@ export interface AgentRailProps {
 
 const TONE_CLASSES: Readonly<Record<AgentTimelineTone, string>> = {
   neutral: "bg-fg-subtle",
-  progress: "bg-blue-400",
-  refused: "bg-amber-400",
-  done: "bg-emerald-400",
+  progress: "bg-brand",
+  refused: "bg-warning",
+  done: "bg-success",
 };
 
 const MODE_LABELS: Readonly<Record<AgentRunMode, string>> = {
@@ -540,7 +540,7 @@ function PlanStatementCard({ draft }: { readonly draft: AgentPlanStatementView }
       data-read-only={!draft.guardApplicable ? "unexamined" : draft.readOnly ? "true" : "false"}
       className={cn(
         "mt-1 ml-3.5 rounded border p-1.5",
-        draft.readOnly ? "border-hairline-strong" : "border-amber-400/50 bg-amber-500/5",
+        draft.readOnly ? "border-hairline-strong" : "border-warning/50 bg-warning-tint/5",
       )}
     >
       {/*
@@ -550,7 +550,7 @@ function PlanStatementCard({ draft }: { readonly draft: AgentPlanStatementView }
       */}
       <p
         data-testid="agent-plan-statement-summary"
-        className={cn("text-[0.625rem]", guardReading(draft) === "checked" ? "text-fg-muted" : "text-amber-300")}
+        className={cn("text-[0.625rem]", guardReading(draft) === "checked" ? "text-fg-muted" : "text-warning-bright")}
       >
         {guardSummaryLine(draft)} The statement, what the name check found and what applying it would and would not
         establish are in the answer at the top of this rail.
@@ -666,7 +666,7 @@ function TimelineEntryBody({
         (item.planRefusal === true ? (
           <section
             data-testid="agent-plan-refusal"
-            className="mt-1 ml-3.5 rounded border border-amber-400/40 bg-amber-500/5 p-1.5"
+            className="mt-1 ml-3.5 rounded border border-warning/40 bg-warning-tint/5 p-1.5"
           >
             {/*
               Says only that the run could not draft, never WHY — the two reasons
@@ -678,7 +678,7 @@ function TimelineEntryBody({
               because there was no inventory at all. The earlier wording named "the schema it read",
               which on the second path is a reading that never happened.
             */}
-            <p className="text-[0.625rem] text-amber-300">
+            <p className="text-[0.625rem] text-warning-bright">
               This run drafted no statement. What it says is missing, and what it needs from you, are in its own words
               below.
             </p>
@@ -716,11 +716,7 @@ function TimelineEntryBody({
       {declinedHandovers
         .filter((declined) => declined.id === item.id)
         .map((declined) => (
-          <p
-            key={declined.id}
-            data-testid="agent-handover-declined"
-            className="mt-0.5 pl-3.5 text-xs text-amber-400/80"
-          >
+          <p key={declined.id} data-testid="agent-handover-declined" className="mt-0.5 pl-3.5 text-xs text-warning/80">
             It was not run: this run was opened on {declined.openedOn ?? "another connection"} and your editor has moved
             to a different one since. The answer would have arrived in a tab that is connected somewhere else, so
             nothing was executed. The statement is below — take it yourself if you want it on the connection you are on
@@ -1963,7 +1959,7 @@ export function AgentRail({
     <div className="flex flex-col h-full min-h-0 bg-surface text-fg">
       <div className="flex items-center justify-between gap-2 px-3 h-9 border-b border-hairline shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <Bot strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
+          <Bot strokeWidth={1.5} className="w-3.5 h-3.5 text-brand" />
           <span className="text-xs font-medium text-fg-secondary">Agent</span>
           {connectionName !== null && <span className="text-xs text-fg-subtle truncate">on {connectionName}</span>}
         </div>
@@ -1986,7 +1982,7 @@ export function AgentRail({
               onClick={() => setMode(candidate)}
               className={cn(
                 "px-2 py-0.5 rounded text-xs font-normal transition-colors disabled:opacity-40 disabled:hover:bg-transparent",
-                mode === candidate ? "bg-blue-500/15 text-blue-300" : "text-fg-muted hover:bg-fill",
+                mode === candidate ? "bg-brand-tint/15 text-brand-bright" : "text-fg-muted hover:bg-fill",
               )}
             >
               {MODE_LABELS[candidate]}
@@ -2048,7 +2044,7 @@ export function AgentRail({
               onChange={(e) => setObjective(e.target.value)}
               maxLength={AGENT_MAX_OBJECTIVE_LENGTH}
               rows={3}
-              className="mt-1 w-full resize-none rounded bg-sunken border border-hairline-strong px-2 py-1.5 text-xs text-fg placeholder:text-fg-subtle focus:outline-none focus:border-blue-500/40"
+              className="mt-1 w-full resize-none rounded bg-sunken border border-hairline-strong px-2 py-1.5 text-xs text-fg placeholder:text-fg-subtle focus:outline-none focus:border-brand-tint/40"
               placeholder="Why is checkout slow?"
             />
           </>
@@ -2124,7 +2120,7 @@ export function AgentRail({
                 prefilledObjective.current = offeredObjective;
                 setOfferedObjective(null);
               }}
-              className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-fill transition-colors"
+              className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-brand-bright hover:bg-fill transition-colors"
             >
               Replace
             </button>
@@ -2189,7 +2185,9 @@ export function AgentRail({
                       onClick={() => setWorkflowChoice(candidate)}
                       className={cn(
                         "px-2 py-0.5 rounded text-xs font-normal transition-colors disabled:opacity-40 disabled:hover:bg-transparent",
-                        workflowChoice === candidate ? "bg-blue-500/15 text-blue-300" : "text-fg-muted hover:bg-fill",
+                        workflowChoice === candidate
+                          ? "bg-brand-tint/15 text-brand-bright"
+                          : "text-fg-muted hover:bg-fill",
                       )}
                     >
                       {candidate === "automatic" ? "Automatic" : WORKFLOW_LABELS[candidate]}
@@ -2216,16 +2214,12 @@ export function AgentRail({
         */}
         {connectionId === null &&
           (connection?.reason === "seed-config-unreadable" ? (
-            <p
-              data-testid="agent-seed-config-unreadable"
-              data-tone="warning"
-              className="mt-2 text-xs text-amber-400/80"
-            >
+            <p data-testid="agent-seed-config-unreadable" data-tone="warning" className="mt-2 text-xs text-warning/80">
               The server could not read its own connection configuration, so it cannot resolve a connection for a run.
               This is not a problem with {connectionName ?? "this connection"} — the server log says what failed.
             </p>
           ) : (
-            <p data-testid="agent-unresolvable-connection" className="mt-2 text-xs text-amber-400/80">
+            <p data-testid="agent-unresolvable-connection" className="mt-2 text-xs text-warning/80">
               {connectionName ?? "This connection"} cannot be rebuilt on the server: its settings live in this browser.
               A run re-resolves its connection there after a restart, so it can only investigate a connection the server
               holds too.
@@ -2239,7 +2233,7 @@ export function AgentRail({
           uses, so the two can never disagree.
         */}
         {run.timeline.failureReason !== null && (
-          <p data-testid="agent-failure-reason" className="mt-2 text-[0.625rem] text-rose-300">
+          <p data-testid="agent-failure-reason" className="mt-2 text-[0.625rem] text-hue-rose-alt">
             {describeFailureReason(run.timeline.failureReason)}
           </p>
         )}
@@ -2336,7 +2330,7 @@ export function AgentRail({
               evicted, so an offer this rail cannot keep would be worse than the notice.
             */}
             {interruptedThread !== null && (
-              <p data-testid="agent-thread-ended" className="text-amber-400/80">
+              <p data-testid="agent-thread-ended" className="text-warning/80">
                 {`The conversation this browser was in (${interruptedThread.steps} question${
                   interruptedThread.steps === 1 ? "" : "s"
                 }, ${interruptedThread.threadId}) ended when the page reloaded. Your next question starts a new one.`}
@@ -2350,7 +2344,7 @@ export function AgentRail({
                     type="button"
                     data-testid="agent-thread-new"
                     onClick={() => setStartFresh(true)}
-                    className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-fill transition-colors"
+                    className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-brand-bright hover:bg-fill transition-colors"
                   >
                     new conversation
                   </button>
@@ -2367,19 +2361,19 @@ export function AgentRail({
               </>
             )}
             {startFresh && (
-              <p data-testid="agent-thread-fresh-pending" className="mt-1 text-blue-300/90">
+              <p data-testid="agent-thread-fresh-pending" className="mt-1 text-brand-bright/90">
                 Your next question will start a new conversation.
                 <button
                   type="button"
                   onClick={() => setStartFresh(false)}
-                  className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-fill transition-colors"
+                  className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-brand-bright hover:bg-fill transition-colors"
                 >
                   keep it
                 </button>
               </p>
             )}
             {declineNotice !== null && (
-              <p data-testid="agent-thread-notice" className="mt-1 text-amber-400/80">
+              <p data-testid="agent-thread-notice" className="mt-1 text-warning/80">
                 {declineNotice}
               </p>
             )}
@@ -2396,7 +2390,7 @@ export function AgentRail({
                   aria-expanded={changeOpen}
                   aria-controls="agent-change-workflow"
                   onClick={() => setChangeOpen((open) => !open)}
-                  className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-fill transition-colors"
+                  className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-brand-bright hover:bg-fill transition-colors"
                 >
                   change
                 </button>
@@ -2434,7 +2428,7 @@ export function AgentRail({
               nothing, and why that is the safe answer.
             */}
             {replaceFailed && (
-              <p role="alert" data-testid="agent-change-failed" className="mt-1 text-amber-400/80">
+              <p role="alert" data-testid="agent-change-failed" className="mt-1 text-warning/80">
                 This run was not stopped, so nothing new was opened: it is still going and still spending its budget.
                 The line above is what the server answered. Ask again, or use Stop and start a new run once it has
                 ended.
@@ -2462,16 +2456,16 @@ export function AgentRail({
         {engineUnsupported && (
           <div
             data-testid="agent-engine-unsupported-notice"
-            className="mt-2 rounded border border-amber-400/40 bg-amber-500/5 p-2 space-y-1"
+            className="mt-2 rounded border border-warning/40 bg-warning-tint/5 p-2 space-y-1"
           >
-            <p className="flex items-start gap-1 text-xs text-amber-300">
+            <p className="flex items-start gap-1 text-xs text-warning-bright">
               <TriangleAlert strokeWidth={1.5} className="mt-px w-3 h-3 shrink-0" aria-hidden="true" />
               {selectionPosture.title}
             </p>
             <p
               id={ENGINE_UNSUPPORTED_REASON_ID}
               data-testid="agent-engine-unsupported-reason"
-              className="text-[0.625rem] text-amber-300/90"
+              className="text-[0.625rem] text-warning-bright/90"
             >
               {selectionPosture.body}
             </p>
@@ -2479,7 +2473,7 @@ export function AgentRail({
               type="button"
               data-testid="agent-engine-unsupported-plan"
               onClick={() => setMode("planning")}
-              className="px-1.5 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-fill transition-colors"
+              className="px-1.5 py-0.5 rounded text-[0.625rem] text-brand-bright hover:bg-fill transition-colors"
             >
               Switch to Plan
             </button>
@@ -2502,7 +2496,7 @@ export function AgentRail({
                 type="button"
                 data-testid="agent-stop"
                 onClick={() => void run.cancel()}
-                className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 transition-colors"
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-warning-tint/15 text-warning-bright hover:bg-warning-tint/25 transition-colors"
               >
                 <Square strokeWidth={1.5} className="w-3 h-3" />
                 Stop
@@ -2514,7 +2508,7 @@ export function AgentRail({
               data-testid="agent-start"
               disabled={!canStart}
               onClick={() => void handleStart()}
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 disabled:opacity-40 disabled:hover:bg-blue-500/15 transition-colors"
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-brand-tint/15 text-brand-bright hover:bg-brand-tint/25 disabled:opacity-40 disabled:hover:bg-brand-tint/15 transition-colors"
             >
               {run.isBusy || classifying ? (
                 <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" />
@@ -2587,14 +2581,17 @@ export function AgentRail({
           <div
             role="alert"
             data-testid="agent-model-refusal"
-            className="mt-2 p-2 rounded border border-red-500/30 bg-red-500/5 space-y-1"
+            className="mt-2 p-2 rounded border border-danger-tint/30 bg-danger-tint/5 space-y-1"
           >
-            <p className="text-xs text-red-300">This model cannot drive an agent run.</p>
+            <p className="text-xs text-danger-bright">This model cannot drive an agent run.</p>
             {modelRefusal.missing.length > 0 && (
               <div data-testid="agent-model-refusal-missing" className="flex flex-wrap items-center gap-1">
                 <span className="text-[0.625rem] text-fg-tertiary">The probe could not establish:</span>
                 {modelRefusal.missing.map((capability) => (
-                  <span key={capability} className="px-1 py-0.5 rounded bg-red-500/10 text-[0.625rem] text-red-200/90">
+                  <span
+                    key={capability}
+                    className="px-1 py-0.5 rounded bg-danger-tint/10 text-[0.625rem] text-danger-bright/90"
+                  >
                     {describeAgentCapability(capability)}
                   </span>
                 ))}
@@ -2616,7 +2613,7 @@ export function AgentRail({
                 type="button"
                 data-testid="agent-model-refusal-use-planning"
                 onClick={() => setMode("planning")}
-                className="px-1.5 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-fill transition-colors"
+                className="px-1.5 py-0.5 rounded text-[0.625rem] text-brand-bright hover:bg-fill transition-colors"
               >
                 Switch to Plan mode
               </button>
@@ -2628,7 +2625,7 @@ export function AgentRail({
           <p
             role="alert"
             data-testid="agent-error"
-            className="mt-2 text-xs text-red-400"
+            className="mt-2 text-xs text-danger"
             /*
               "The notice above" is a positional claim, and a positional claim is false for
               a reader who is not looking at the panel. Set on exactly the branch where the
@@ -2701,7 +2698,7 @@ export function AgentRail({
                 <div className="mt-1 h-0.5 rounded-full bg-fill">
                   <div
                     data-testid={`agent-budget-${gauge.id}-bar`}
-                    className="h-full rounded-full bg-blue-400/60"
+                    className="h-full rounded-full bg-brand/60"
                     style={{ width: `${gaugeFraction(gauge)}%` }}
                   />
                 </div>

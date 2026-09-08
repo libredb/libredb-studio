@@ -128,7 +128,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
           {/* Refresh Controls */}
           <div className="flex items-center gap-1 sm:gap-2">
             <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground mr-2">
-              <div className={`h-2 w-2 rounded-full ${autoRefresh ? "bg-green-500 animate-pulse" : "bg-muted"}`} />
+              <div className={`h-2 w-2 rounded-full ${autoRefresh ? "bg-hue-green-tint animate-pulse" : "bg-muted"}`} />
               <span className="hidden md:inline">{autoRefresh ? "Auto" : "Manual"}</span>
               <span className="hidden lg:inline text-xs">Last: {formatLastUpdated(lastUpdated)}</span>
             </div>

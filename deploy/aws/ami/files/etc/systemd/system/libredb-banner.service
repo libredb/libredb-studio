@@ -1,0 +1,18 @@
+[Unit]
+Description=LibreDB Studio first-boot banner
+# Written once; a failed attempt retries on the next boot because the file is
+# still absent.
+ConditionPathExists=!/etc/libredb-studio.info
+ConditionPathExists=/etc/libredb-studio.env
+After=libredb-studio.service
+Wants=libredb-studio.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/libredb-banner
+RemainAfterExit=no
+# Worst case is the readiness wait (60 x 5s = 300s) plus a little.
+TimeoutStartSec=420
+
+[Install]
+WantedBy=multi-user.target

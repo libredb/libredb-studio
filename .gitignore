@@ -160,6 +160,7 @@ deploy/rancher/results/
 .cursor/specs/
 .cursor/rules/
 docs/summaries/
+docs/archived/
 
 # Maintainer loop runtime artifacts (not source)
 .loop/

@@ -266,7 +266,7 @@ export function CodeGenerator({ isOpen, onClose, tableName, tableSchema, databas
       <div className="bg-overlay border border-hairline-strong rounded-xl shadow-2xl w-full max-w-xl mx-4 overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3 border-b border-hairline">
           <div className="flex items-center gap-2">
-            <Code strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-400" />
+            <Code strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-purple" />
             <span className="text-xs font-medium text-fg">Code Generator</span>
             <span className="text-xs text-fg-muted font-mono">{tableName}</span>
             {databaseType && <span className="text-xs text-fg-subtle font-mono uppercase">{databaseType}</span>}
@@ -296,7 +296,7 @@ export function CodeGenerator({ isOpen, onClose, tableName, tableSchema, databas
                     }}
                     className={cn(
                       "w-full text-left px-3 py-1.5 text-xs hover:bg-fill transition-colors",
-                      language === lang.id ? "text-purple-400" : "text-fg-tertiary",
+                      language === lang.id ? "text-hue-purple" : "text-fg-tertiary",
                     )}
                   >
                     {lang.label}

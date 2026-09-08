@@ -61,7 +61,7 @@ state/instrumentation helpers (see [Redis doc §2.3](./redis.md) for the shared 
 
 ### Registration
 
-Loaded on demand by the factory ([`factory.ts:88`](../../src/lib/db/factory.ts)):
+Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'mongodb': {
@@ -76,8 +76,8 @@ case 'mongodb': {
 
 ### 3.1 JSON / MQL query format
 
-`query()` ([mongodb.ts:240](../../src/lib/db/providers/document/mongodb.ts)) accepts a JSON object,
-parsed by `parseQuery()` ([mongodb.ts:366](../../src/lib/db/providers/document/mongodb.ts)), which
+`query()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)) accepts a JSON object,
+parsed by `parseQuery()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)), which
 requires `collection` and `operation`:
 
 ```json
@@ -108,7 +108,7 @@ cannot read as a document with a string `operation` (mongosh syntax such as
 
 ### 3.2 BSON serialization for the grid
 
-`serializeDocument()` ([mongodb.ts:388](../../src/lib/db/providers/document/mongodb.ts)) recursively
+`serializeDocument()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)) recursively
 normalises BSON types so documents render in the JSON grid: `ObjectId` → string, `Decimal128` →
 string, `Date` → ISO-8601, `Binary` → `<Binary: N bytes>` (placeholder, not the raw bytes), and
 nested objects/arrays are walked recursively. **Only these types are special-cased** — other BSON
@@ -117,9 +117,9 @@ may render poorly ([Known limitations](#13-known-limitations--future-work)).
 
 ### 3.3 Sampling-based schema inference, nested to three levels
 
-MongoDB has no fixed schema, so `getSchema()` ([mongodb.ts:476](../../src/lib/db/providers/document/mongodb.ts))
+MongoDB has no fixed schema, so `getSchema()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
 **infers** one: it lists collections (skipping `system.*`, capped at 200), and for each samples the
-first **100 documents** to derive field types ([mongodb.ts:510](../../src/lib/db/providers/document/mongodb.ts)).
+first **100 documents** to derive field types ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)).
 Caveats baked into this approach:
 - Fields absent from the sample (or appearing only in unsampled documents) won't show.
 - **Subdocuments are expanded into dotted paths**, to `MAX_NESTED_FIELD_DEPTH = 3` counting the top
@@ -142,7 +142,7 @@ Caveats baked into this approach:
 ### 3.4 `find` is capped at 100; `aggregate` is not
 
 A `find` with no explicit `options.limit` is capped at **100** documents
-([mongodb.ts:259](../../src/lib/db/providers/document/mongodb.ts)). **`aggregate` passes none of
+([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)). **`aggregate` passes none of
 `options` to the cursor** (no `limit`/`skip`) and has no default cap, so a pipeline without a
 `$limit` stage can return an unbounded result set.
 
@@ -157,7 +157,7 @@ unchanged), but it is **not** a true no-op: it returns `limit: options.limit || 
 ## 4. Connection
 
 `connectionString` is used **directly** (this is a genuine connection-string provider, unlike
-SQL Server). `buildConnectionString()` ([mongodb.ts:189](../../src/lib/db/providers/document/mongodb.ts))
+SQL Server). `buildConnectionString()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
 returns `config.connectionString` if present, else assembles
 `mongodb://<user>:<password>@<host>:<port>/<database>[?authSource=<authSource>]` (credentials and
 the auth database are URL-encoded; the `<user>:<password>@` segment is omitted when no credentials
@@ -187,7 +187,7 @@ const c = { id: 'mg-1', name: 'App', type: 'mongodb',
   user: 'app', password: 'secret', authSource: 'admin', createdAt: new Date() };
 ```
 
-`validate()` ([mongodb.ts:123](../../src/lib/db/providers/document/mongodb.ts)) requires either a
+`validate()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)) requires either a
 `connectionString` or both `host` and `database`. `connect()` builds a `MongoClient` whose built-in
 pool is configured from `ProviderOptions.pool`:
 
@@ -204,7 +204,7 @@ defaults to `test`. After connecting, a `{ ping: 1 }` command validates the conn
 
 ### 4.1 SSL / TLS
 
-`buildTLSOptions()` ([mongodb.ts:275](../../src/lib/db/providers/document/mongodb.ts)) maps
+`buildTLSOptions()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)) maps
 `connection.ssl` onto the driver's TLS options. `tls`, `ca`, `cert`, `key` and `rejectUnauthorized`
 are all on the driver's own allow-list (`LEGAL_TLS_SOCKET_OPTIONS` in `mongodb/lib/cmap/connect.js`)
 and reach `tls.connect` under Node's names, so the material maps exactly as it does for PostgreSQL,
@@ -261,7 +261,7 @@ before the mode reached the driver `require` failed the same way `disable` does.
 ## 5. Query interface
 
 `query(jsonString)` parses the MQL object and dispatches on `operation`
-([mongodb.ts:240](../../src/lib/db/providers/document/mongodb.ts)). Reads (`find`/`findOne`/
+([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)). Reads (`find`/`findOne`/
 `aggregate`/`count`/`distinct`) return documents; writes return an acknowledgement summary
 (`insertedId`/`modifiedCount`/`deletedCount`, …). `rowCount = rows.length || affectedCount`, and
 every returned document passes through `serializeDocument()`. There is no `prepareQuery` limit
@@ -472,7 +472,7 @@ something was measured:
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)` ([mongodb.ts:614](../../src/lib/db/providers/document/mongodb.ts))
+`runMaintenance(type, target?)` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
 maps the generic operations onto MongoDB admin commands:
 
 | Type | MongoDB action |
@@ -513,7 +513,7 @@ request here.
 
 ## 9. Capabilities & labels
 
-### `getCapabilities()` ([mongodb.ts:81](../../src/lib/db/providers/document/mongodb.ts))
+### `getCapabilities()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
 
 | Capability | Value |
 |------------|-------|
@@ -533,7 +533,7 @@ request here.
 `schemaRefreshPattern` matches write operations in the JSON query so the UI refreshes collections
 after inserts/updates/deletes.
 
-### Labels — overridden ([mongodb.ts:95](../../src/lib/db/providers/document/mongodb.ts))
+### Labels — overridden (`getLabels()`, [`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
 
 Document vocabulary: entity → *Collection*, row → *document*, select → *Find Documents*, analyze →
 *Validate Collection*, vacuum → *Compact Collection*, search → *Search collections or fields…*.

@@ -1,8 +1,9 @@
 /**
  * The accuracy gate for outward-facing marketplace copy.
  *
- * These four files are submissions to somebody else's catalog: Railway, DigitalOcean,
- * SUSE PCSC and Azure Partner Center. Nobody in this repo reviews them again once they
+ * These five files are submissions to somebody else's catalog: Railway,
+ * DigitalOcean, SUSE PCSC, Azure Partner Center and the AWS Marketplace
+ * Management Portal. Nobody in this repo reviews them again once they
  * are mailed, so the only thing standing between a corrected claim and its return is a
  * test. A previous revision replaced a false natural-language-to-SQL claim with two new
  * ones - "AI query explanation on any connection" (true on 7 of the 14 engines) and
@@ -32,6 +33,7 @@ const LISTINGS = {
   digitalocean: "deploy/digitalocean/assets/description-long.md",
   rancher: "deploy/rancher/CATALOG_LISTING.md",
   azure: "deploy/azure/listing/listing-fields.md",
+  aws: "deploy/aws/listing/listing-fields.md",
 } as const;
 
 /**
@@ -71,12 +73,21 @@ function typeIdOf(file: string): string {
 }
 
 /**
- * The engines whose provider declares a plan format. The match is anchored to the start
- * of the line so the several comment lines that discuss a MISSING `explainFormat` (the
- * search provider explains at length why it declares none) are not read as declarations.
+ * A provider file that declares a plan format, in either of the two forms one is written
+ * in. Both alternatives are anchored to the start of a line so the several comment lines
+ * that discuss a MISSING `explainFormat` (the search provider explains at length why it
+ * declares none) are not read as declarations.
+ *
+ * The second alternative is the MEASURED form. MySQL serves every MySQL-wire relative and
+ * they do not share one EXPLAIN grammar, so its provider probes the server at connect and
+ * spreads the result in rather than writing a literal (#574). It returns a plan on every
+ * engine measured, so a listing may name it; a literal-only match read it as plan-less.
  */
+const DECLARES_EXPLAIN_FORMAT = /^\s*explainFormat:\s*"|^\s*\.\.\..*\bexplainFormat: this\./m;
+
+/** The engines whose provider declares a plan format. */
 const explainCapable: DatabaseType[] = providerFiles(PROVIDER_ROOT)
-  .filter((file) => /^\s*explainFormat:\s*"/m.test(readFileSync(file, "utf8")))
+  .filter((file) => DECLARES_EXPLAIN_FORMAT.test(readFileSync(file, "utf8")))
   .map(typeIdOf)
   .filter((id): id is DatabaseType => id in DB_UI_CONFIG)
   .sort();

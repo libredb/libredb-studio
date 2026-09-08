@@ -73,8 +73,8 @@ describe("ColumnList", () => {
 
   test("renders Key icon for primary key columns", () => {
     const { container } = render(<ColumnList columns={columnsWithPrimary} indexes={[]} />);
-    // Key icon has text-yellow-500/70 class
-    const keyIcons = container.querySelectorAll(".text-yellow-500\\/70");
+    // Key icon has the text-hue-yellow/70 token class
+    const keyIcons = container.querySelectorAll(".text-hue-yellow\\/70");
     expect(keyIcons.length).toBe(1); // only 'id' is primary
   });
 
@@ -84,7 +84,7 @@ describe("ColumnList", () => {
     const dots = container.querySelectorAll(".bg-muted-foreground\\/50");
     expect(dots.length).toBe(2); // both columns are non-primary
     // No key icons
-    const keyIcons = container.querySelectorAll(".text-yellow-500\\/70");
+    const keyIcons = container.querySelectorAll(".text-hue-yellow\\/70");
     expect(keyIcons.length).toBe(0);
   });
 

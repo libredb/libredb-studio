@@ -738,8 +738,8 @@ resolves from the community repository and every release packs and pushes automa
 > while an account's first submission is unapproved, which failed the 0.9.60 and 0.9.61 release
 > runs even though both releases published correctly. The 2026-08-24 approval set
 > `ci_enabled: true` and `status: live` in a single edit — exactly what winget got once its
-> listing merged. The community feed serves 0.9.59 until the next release publishes through the
-> re-enabled job; do not re-dispatch `release-artifacts` for an already-published version to
+> listing merged. The community feed has moved with every release since and serves 0.13.6 today,
+> behind the current release, which is moderation lag; do not re-dispatch `release-artifacts` for an already-published version to
 > backfill the feed, because its asset steps would fight the immutable release — push a back
 > version by hand (the same choco container the job uses for Chocolatey; the [manual manifest
 > recipe](#windows-first-listing-checklist) for winget).
@@ -966,8 +966,10 @@ They are documented here rather than under `deploy/<provider>/` because neither 
 this repo: the Sealos template lives upstream in
 [`labring-actions/templates`](https://github.com/labring-actions/templates) and the Unraid template
 in [`libredb/unraid-templates`](https://github.com/libredb/unraid-templates), and neither has a
-`deploy/<provider>/` folder here at all. Every other catalog channel does have one and keeps its
-notes in `deploy/<provider>/README.md` instead - CapRover and Railway alongside the source
+`deploy/<provider>/` folder here at all. They are two of the eight catalog channels with no such
+folder - the others are TrueNAS SCALE, CasaOS, the three open submissions (Umbrel, Easypanel,
+Portainer) and Google Cloud Marketplace, whose artefacts live in Google's Producer Portal. The
+catalog channels that DO keep a folder keep their notes in `deploy/<provider>/README.md` - CapRover and Railway alongside the source
 descriptor itself, Dokploy, Kubero and Cosmos as notes only, since those three descriptors are also
 authored upstream. The full channel list is [`docs/CHANNELS.md`](CHANNELS.md).
 
@@ -1022,6 +1024,32 @@ provisions compute, networking, storage and ingress, so there is nothing to inst
 - Bumps go in as a template PR to `labring-actions/templates`. That repo's default branch is
   **`kb-0.9`**, not `main` or `master`, which is what both the drift-check pin URL and any bump PR
   must target.
+
+## Google Cloud Marketplace
+
+Publicly listed since **2026-09-04** as a free **Terraform Kubernetes app**: a customer finds
+LibreDB Studio in the Marketplace catalog inside the Google Cloud console and deploys it into their
+own GKE cluster. Deploying requires the **Kubernetes Engine Admin** role on the target project.
+
+It is the one channel in the inventory with **no public artefact to read a version from**, and that
+shapes everything below. The listing, its version and its Terraform module are all held in Google's
+Producer Portal; the Helm chart and the container image are served from a private Artifact Registry
+under the `libredb-public` project. So `pin.strategy` is `none` in
+[`distribution/channels.yaml`](../distribution/channels.yaml) and the listed version is checked by
+hand against the portal — the drift table cannot do it, and a pin that guessed would be worse than
+no pin.
+
+**The Marketplace version is its own number.** Google requires the chart and the image tags of a
+Terraform Kubernetes app to share a MAJOR.MINOR, which the repo's chart version (`0.1.x`) and the
+application version (`0.14.x`) do not. The published copy is therefore packaged with a version of
+its own — `helm package --version <n> --app-version <n>` at submission time, leaving the repo's
+chart untouched. The listing currently reads **0.10**, so a Marketplace version is not comparable
+with a release tag and must not be read as one.
+
+**Every change is a portal submission, not a pull request.** `update.method` is `manual_ui` and
+`update.sla` is `on_demand` because each new version goes through Google's own review before it
+reaches customers; nothing here can be driven from release CI, and no upstream repository accepts a
+bump PR for it.
 
 ## Building a standalone payload locally
 
@@ -1338,7 +1366,7 @@ pin or editing a channel entry is always a human commit.
 | 1 | Packaged formats owned by this repo, CI-published | Helm, Homebrew tap, Snap, .deb/.rpm, desktop AppImage |
 | 2 | LibreDB-owned copies and listings, bumped by hand | Railway, Koyeb button, Fly.io config, Render Blueprint, Unraid CA template |
 | 3 | Upstream community catalogs, bumped via PR | CapRover official, Dokploy, Cosmos, Kubero, Sealos, TrueNAS SCALE |
-| 4 | Partner or curated catalogs (not self-serve) | Rancher partner charts, Koyeb catalog, DO, winget, Chocolatey, Flathub |
+| 4 | Partner or curated catalogs (not self-serve) | Rancher partner charts, Koyeb catalog, DigitalOcean, Google Cloud Marketplace, winget, Chocolatey, Flathub |
 
 **Categories** (`category` on every channel) are the business-facing buckets rendered in
 [`docs/CHANNELS.md`](CHANNELS.md): `registries-releases`, `containers`,
@@ -1375,7 +1403,7 @@ channel's users or an invisible build detail (issue #326):
 | Value | Meaning | Channels |
 |---|---|---|
 | `user_supplied` | The user's own `node` executes the payload, so the floor is theirs to meet. A release that raises it is user-visible here and nowhere else. | `npm`, `github-release` |
-| `channel_supplied` | The channel provides the runtime — bundled inside the artefact (container image, snap, deb/rpm, Windows zip, Flatpak, the Tauri sidecar), inherited from an image a template deploys, or installed as a declared package dependency (Homebrew's `node@24`). Raising the floor is transparent. | the other 25 |
+| `channel_supplied` | The channel provides the runtime — bundled inside the artefact (container image, snap, deb/rpm, Windows zip, Flatpak, the Tauri sidecar), inherited from an image a template deploys, or installed as a declared package dependency (Homebrew's `node@24`). Raising the floor is transparent. | every other channel |
 
 It is deliberately not derived from `kind`: `os-package` covers deb/rpm, which ship a private Node
 (`packaging/linux/fetch-node.sh` installs `bin/node` into the payload), while `package-registry`
@@ -1508,10 +1536,16 @@ its in-repo descriptor unmeasured by any gate
 ([#268](https://github.com/libredb/libredb-studio/issues/268)); it fell 45 patch versions behind the
 catalog before anyone noticed. **Dokploy**, **Kubero** and **Cosmos** keep only a README there -
 their descriptors are authored in the upstream catalog repo, so all three are pinned `remote_file`
-and a bump is an upstream PR with nothing to change here. Two catalog channels keep **no**
-descriptor here at all — the Sealos template is authored in `labring-actions/templates` and the
-Unraid CA template in `libredb/unraid-templates` — so both are pinned with `remote_file` against
-those repos and documented under [App catalogs](#app-catalogs-unraid-sealos). Neither Fly.io nor
+and a bump is an upstream PR with nothing to change here. **Eight catalog channels keep no
+descriptor here at all.** Two of them are pinned `remote_file` against the repository that does
+hold it — the Sealos template in `labring-actions/templates`, the Unraid CA template in
+`libredb/unraid-templates` — and both are documented under
+[App catalogs](#app-catalogs-unraid-sealos); TrueNAS SCALE is pinned the same way against
+`truenas/apps`, and CasaOS against `IceWhaleTech/CasaOS-AppStore`. The three open submissions (Umbrel, Easypanel, Portainer) have nothing to
+pin until their upstream PR merges, and each entry's note names the pin to add on that day.
+[Google Cloud Marketplace](#google-cloud-marketplace) is the one with nothing to pin even in
+principle: its artefacts are held in Google's Producer Portal and a private Artifact Registry.
+Neither Fly.io nor
 Render has a marketplace or template gallery to publish into, which is why the repo file itself is the
 deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none` for
 `render.yaml`, which builds from the repo Dockerfile and tracks whatever `main` builds).

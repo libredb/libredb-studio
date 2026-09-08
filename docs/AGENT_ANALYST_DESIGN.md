@@ -1208,7 +1208,7 @@ scored `answered`) — that last one being the direct regression test for §4.3.
   characters (`er-diagram.ts`), at a detail level chosen per workflow (`erDetailForWorkflow`).
 - **`inspect_schema`**, to read any of it directly, narrowed.
 - **`run_read_query`**, which can read up to 200 actual rows at a time.
-- **`profile_table`** — but only in `database-assessment` (`tools.ts:438-441`), and it returns
+- **`profile_table`** — in `database-assessment` and `data-analysis` (`DATABASE_ASSESSMENT_TOOLS` and `DATA_ANALYSIS_TOOLS`, `src/lib/agent/tools.ts`), and it returns
   **counts only**, never a value (`tools.ts:377-383`).
 
 ### 5.2 What it lacks, specifically

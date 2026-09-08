@@ -51,10 +51,14 @@ export interface AgentModelProfile {
   /**
    * How many extra turns a PLAN run gets when its prose named no statement and no refusal.
    *
-   * Zero by default, because a run that answered its objective is not obviously owed another
-   * turn, and 24 models clear this bar unaided. `qwen3:14b` is the measured case: its losing
-   * plan describes all eight tables and every relation and then stops without the fenced
-   * statement or the explicit refusal that plan mode scores.
+   * Stated by every measured profile, and the number a profile states is what that model gets:
+   * 0 where the model was watched declining the ask, 1 where the extra turn is what closed the
+   * cell. `qwen3:14b` is the measured case for 1 — its losing plan describes all eight tables and
+   * every relation and then stops without the fenced statement or the explicit refusal that plan
+   * mode scores.
+   *
+   * A model with no profile is a different question, and it is answered in `planStatementAsksFor`
+   * rather than here: absence is not a measurement, so an unmeasured model is asked once.
    */
   readonly planStatementRetries?: number;
 
@@ -95,8 +99,12 @@ export interface AgentModelProfile {
    * run that called nothing composed no report and has already earned `no-report`; the turn is
    * spent on a run that has lost. It cannot cost a pass, only recover a failure.
    *
-   * Off by default even so. The ten models locked at 300/300 were measured without it, and a
-   * drive-wide change is twice how this repository has handed back cells it had won.
+   * A stated `false` is obeyed even so. The ten models locked at 300/300 were measured without
+   * it, and overruling a measurement is twice how this repository has handed back cells it had
+   * won. What is NOT obeyed is an absent entry, which is not a measurement: the drive asks
+   * `answersUnreadStop`, not `retriesUnreadStop`, and that resolver offers the turn to a model
+   * nobody has measured. All twenty-eight shipped entries state this field, so no shipped model's
+   * turn count moved when the two were split.
    *
    * It SUBSUMES `retryEmptyTurn`, and that is a property of the gate rather than of the name.
    * The condition is "called nothing", with no test on what was said, so an empty completion
@@ -235,6 +243,14 @@ export interface AgentNotices {
   readonly reportReminder: string;
   /** A PLAN run whose prose carried neither a runnable statement nor an explicit refusal. */
   readonly planStatement: string;
+  /**
+   * A turn the per-call ceiling cut off, on a run whose own deadline still has room.
+   *
+   * The one stop shape in the drive that had no recovery path. Measured on `qwen3.6:35b`: nine
+   * losses, every one cut at the ceiling with 333 to 353 seconds of a 450-second deadline and 34
+   * of 36 turns unspent, while the same cell's longest PASSING run took 183 seconds.
+   */
+  readonly turnCutOff: string;
   /** An answer-presenting run about to report a result it read but never presented. */
   readonly presentBeforeReport: string;
   /** A run that stopped without calling anything, having asked for what it could have read. */
@@ -263,7 +279,12 @@ export const DEFAULT_REPORT_REMINDER_LIMIT = 1;
  * No extra turn, which is what every locked plan cell was measured against.
  *
  * A plan run that produced prose has answered or it has not, and the verifier reads that for
- * itself. Offering another turn to every model would change 24 models' runs to reach one.
+ * itself. This is the number a MEASURED profile falls back to when it states none, and every
+ * profile that ships states one, so in practice it changes no measured model's run.
+ *
+ * It is not what an unmeasured model gets. That is `planStatementAsksFor`, which answers 1: a
+ * model nobody has watched has not been watched declining the ask either, and refusing it a turn
+ * on the strength of a missing measurement is the server deciding by silence.
  */
 export const DEFAULT_PLAN_STATEMENT_RETRIES = 0;
 
@@ -282,10 +303,14 @@ export const DEFAULT_RETRY_EMPTY_TURN = false;
 /**
  * A run that stops having called nothing keeps its ending, unless a model's ledger asked.
  *
- * Off despite being free to grant — the turn is spent on a run whose verdict is already
- * `no-report` — because "free" is an argument about cost, not about wording. The sentence sent
- * is read by the model and acted on by it, so it is a measured value like every other, and it
- * belongs to the models measured with it rather than to all of them at once.
+ * Off, and it stays off for every model that states it: the sentence sent is read by the model
+ * and acted on by it, so it is a measured value like every other and belongs to the models
+ * measured with it rather than to all of them at once.
+ *
+ * This constant is what a STATED field falls back to, and every shipped entry states the field,
+ * so nothing resolves through it today. It is not what a model with no entry gets — that is
+ * `answersUnreadStop`, which offers the turn, because on a run already earning `no-report` a
+ * default cannot protect a passing run and so protects nothing.
  */
 export const DEFAULT_RETRY_UNREAD_STOP = false;
 

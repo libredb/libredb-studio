@@ -1,0 +1,18 @@
+[Unit]
+Description=LibreDB Studio first-boot credential generation
+# Runs once per instance: the condition is the state, not a semaphore file
+ConditionPathExists=!/etc/libredb-studio.env
+# Ordering only - this unit never starts anything itself
+Before=libredb-studio.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/libredb-firstboot
+RemainAfterExit=no
+# Generating two secrets and writing one file. Nothing here waits on the
+# network, on docker, or on the app.
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

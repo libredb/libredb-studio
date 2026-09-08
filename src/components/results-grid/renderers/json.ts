@@ -35,7 +35,7 @@ export const jsonRenderer: ValueRenderer = {
     if (typeof value === "string") {
       return { display: value, className: "text-fg-secondary" };
     }
-    return { display: JSON.stringify(value), className: "text-blue-400/80 italic font-light" };
+    return { display: JSON.stringify(value), className: "text-hue-blue/80 italic font-light" };
   },
   renderDetail(value) {
     // classifyValue only routes parseable container strings here, so the parse

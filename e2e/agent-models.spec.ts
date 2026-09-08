@@ -1,5 +1,5 @@
 /**
- * The ten supported models, driven through the APPLICATION rather than through its API.
+ * The supported models, driven through the APPLICATION rather than through its API.
  *
  * Every figure in `docs/llms/` came from runs opened over HTTP: real runs against a real database
  * with a real model, but never once through the rail a user actually clicks. That gap is the

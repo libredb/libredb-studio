@@ -1,6 +1,6 @@
 # LibreDB Studio API Documentation
 
-> **Version:** 0.11.0
+> **Version:** 0.14.1
 > **Base URL:** `https://your-domain.com` or `http://localhost:3000`
 > **Content-Type:** `application/json`
 
@@ -26,12 +26,12 @@
 
 ## Overview
 
-LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, and Redis.
+LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and Redis.
 
 ### Key Features
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
-- **Multi-Database Support** - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Redis
+- **Multi-Database Support** - Sixteen engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, Redis
 - **AI-Powered Insights** - EXPLAIN explanations, query-safety analysis and schema docs, streamed
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
@@ -330,6 +330,49 @@ The `pagination` object reports the auto-limiting applied by the server (default
 `params` binds the statement's positional placeholders through the driver, so a value never becomes statement text. Use it for any statement built from data rather than typed by a person — a value carrying `\'` would otherwise close its own string literal on MySQL or ClickHouse and have the rest read as SQL. The placeholder form is the dialect's own: `$n` (PostgreSQL), `?` (MySQL, SQLite), `:n` (Oracle), `@pn` (SQL Server).
 
 Each element must be a string, number, boolean or `null`; anything else is rejected with 400 rather than handed to the driver. `POST /api/db/transaction` accepts the same field for its `query` action.
+
+**Query plan (optional):**
+```json
+{
+  "connection": { "type": "mysql", "host": "localhost", "database": "mydb" },
+  "sql": "SELECT id, name FROM users WHERE active = true",
+  "explain": { "mode": "estimate" }
+}
+```
+
+`explain` asks for a PLAN of `sql` rather than a run of it, and the server builds the EXPLAIN statement
+from the connected provider's own plan format. `mode` is `"estimate"` (describe the statement) or
+`"analyze"` (the deeper form, where the dialect has one); it is required, and any other shape is a 400.
+The client never sends EXPLAIN text of its own: on the MySQL and PostgreSQL wire families alike the
+accepted form is only knowable once connected - the relatives do not share `EXPLAIN FORMAT=JSON` (#574)
+or `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` (#597) - and `POST /api/db/provider-meta` answers without
+connecting, so the statement is built where the connection is. Which means `explainFormat` can differ
+between two connections of the same `type`, and is the field to read rather than the type id.
+
+The 200 response is an ordinary query response plus `explainFormat`, naming the strategy that built the
+statement, so a client reads the plan with the strategy that really produced it:
+
+```json
+{
+  "rows": [{ "EXPLAIN": "{ \"query_block\": { \"select_id\": 1 } }" }],
+  "fields": ["EXPLAIN"],
+  "rowCount": 1,
+  "executionTime": 3,
+  "explainFormat": "mysql-json",
+  "pagination": { "limit": 500, "offset": 0, "hasMore": false, "totalReturned": 1, "wasLimited": false }
+}
+```
+
+A `params` array may accompany an explain request. The strategies only prefix the statement, so the
+placeholders are the same ones in the same order and the values bind the built statement, which is how a
+generated statement that sends its values separately still gets a plan.
+
+Two refusals, each a 400 that runs nothing:
+
+- `This server does not support EXPLAIN` when the provider declares `supportsExplain: false` or no plan
+  format at all.
+- `Only SELECT statements can be explained` when the dialect's strategy declines the statement. The
+  original `sql` is never run as a fallback.
 
 **Response (400 Bad Request):**
 ```json
@@ -1167,7 +1210,7 @@ Auth required. Merges a client's localStorage payload into server storage on fir
 
 ```json
 // Response
-{ "ok": true, "migrated": ["connections", "queryHistory"] }
+{ "ok": true, "migrated": ["connections", "history"] }
 ```
 
 ---
@@ -1222,6 +1265,13 @@ Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ 
 
 ### DatabaseConnection
 
+The object is one shape on the wire. Fields the server reads from a request body — and that
+change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
+`host`, `port`, `user`, `password`, `database`, `connectionString`), plus `ssl`,
+`sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
+`authSource` (MongoDB), `agentUser`, and `agentPassword`. `color`, `environment`, `group`,
+`managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
+
 ```typescript
 interface DatabaseConnection {
   id: string;              // Unique identifier
@@ -1233,12 +1283,24 @@ interface DatabaseConnection {
   password?: string;       // Password
   database?: string;       // Database name (Couchbase: the bucket; Druid: unused, it has one catalog; Trino: the CATALOG; Cassandra: the KEYSPACE)
   connectionString?: string; // Full connection string (alternative; Druid has no URI form, host + port only; Cassandra has none either, no URI carries localDataCenter)
+  createdAt: Date;         // Creation timestamp
+  color?: string;          // UI accent for this connection
+  environment?: ConnectionEnvironment; // production | staging | development | local | other
+  group?: string;          // Optional sidebar grouping label
+  ssl?: SSLConfig;         // TLS mode and optional certificates
+  sshTunnel?: SSHTunnelConfig; // Bastion hop before the database host
+  serviceName?: string;    // Oracle: service name (e.g. ORCL, XEPDB1)
+  instanceName?: string;   // MSSQL: named instance (e.g. SQLEXPRESS)
   localDataCenter?: string; // Cassandra only, and REQUIRED there: the driver refuses to connect without it (`datacenter1` on a stock single node)
   authSource?: string; // MongoDB only: the database the credentials live in (`?authSource=admin`). Not the database being opened - without it the driver checks the user against that one, which fails as a credentials error
-  createdAt: Date;         // Creation timestamp
+  managed?: boolean;       // true = admin-controlled, read-only in UI
+  seedId?: string;         // stable reference to seed config ID
+  agentUser?: string;      // optional least-privilege role for the agent read-only execution profile (#328)
+  agentPassword?: string;  // password for agentUser; secret-classified, sealed at rest by connection-secrets
 }
 
 type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';
+type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 ```
 
 ### TableSchema
@@ -1283,8 +1345,17 @@ interface QueryResult {
   rowCount: number;        // Number of rows returned
   executionTime: number;   // Execution time in ms
   explainPlan?: any;       // Query execution plan (if requested)
+  pagination?: QueryPagination;          // Auto-limiting the route attaches to every response
   warnings?: QueryWarning[];             // Notices the engine attached; ABSENT when it reported none
   columnTypes?: Record<string, string>;  // Declared type per column, keyed by its name in `fields`
+}
+
+interface QueryPagination {
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  totalReturned: number;
+  wasLimited: boolean;
 }
 
 interface QueryWarning {
@@ -1293,11 +1364,13 @@ interface QueryWarning {
 }
 ```
 
-Both optional channels are filled only by providers whose source declares them, and **absence is the
-signal**: a run that produced no warnings omits the field rather than sending `[]`, so a client can
-decide what to render from the field's presence alone. `columnTypes` is the declared type of *this*
-result, which is the only source for a computed column or an ad-hoc projection — the schema has no
-catalog entry to answer with.
+`pagination` is the object `POST /api/db/query` attaches to every response (`limit`, `offset`,
+`hasMore`, `totalReturned`, `wasLimited`). Both optional channels (`warnings`, `columnTypes`) are
+filled only by providers whose source declares them, and **absence is the signal**: a run that
+produced no warnings omits the field rather than sending `[]`, so a client can decide what to render
+from the field's presence alone. `columnTypes` is the declared type of *this* result, which is the
+only source for a computed column or an ad-hoc projection — the schema has no catalog entry to
+answer with.
 
 ### HealthInfo
 
@@ -1423,7 +1496,7 @@ single number written here has gone stale every time it was updated:
 | Bucket | Applies to | Default |
 |--------|-----------|---------|
 | `ai` | The `/api/ai/*` routes, plus every `/api/agent/*` route except `GET /api/agent/config`: classifying an objective, starting a run, driving one, reading one, cancelling one, streaming one, and fetching an artifact | 20 requests / 60 seconds |
-| `query` | Every database-reaching `/api/db/*` route plus `/api/admin/fleet-health`, together | 120 requests / 60 seconds |
+| `query` | Every database-reaching `/api/db/*` route, plus `/api/admin/fleet-health` and the three storage data routes (`GET /api/storage`, `PUT /api/storage/{collection}`, `POST /api/storage/migrate`), together | 120 requests / 60 seconds |
 
 Routing the same workload through a different endpoint does not multiply the budget - the bucket is
 shared across every route it applies to. All limits are configurable through the `RATE_LIMIT_*`

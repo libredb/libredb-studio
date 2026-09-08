@@ -419,6 +419,7 @@ channels:
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/56
       first_pr: https://github.com/caprover/one-click-apps/pull/1303
+      last_bump_pr: https://github.com/caprover/one-click-apps/pull/1315
       upstream_repo: https://github.com/caprover/one-click-apps
       docs: deploy/caprover/README.md
     pin:
@@ -447,14 +448,20 @@ channels:
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/171
       first_pr: https://github.com/Dokploy/templates/pull/931
+      last_bump_pr: https://github.com/Dokploy/templates/pull/1039
       catalog: https://templates.dokploy.com
       upstream_repo: https://github.com/Dokploy/templates
       docs: deploy/dokploy/README.md
     pin:
       strategy: remote_file
-      url: https://raw.githubusercontent.com/Dokploy/templates/main/blueprints/libredb-studio/docker-compose.yml
+      url: https://raw.githubusercontent.com/Dokploy/templates/canary/blueprints/libredb-studio/docker-compose.yml
       extract: 'libredb-studio:(\d+\.\d+\.\d+)'
-      note: Bump from 0.9.27 to the current release is tracked in issue 175.
+      note: The blueprint serves 0.9.59, bumped there by Dokploy/templates#1039 (merged 2026-08-03).
+        Every bump is an upstream pull request a maintainer has to merge, so this pin drifts behind
+        the release by design and the drift row is the reminder to open the next one. That repo's
+        default branch is `canary`, not main, and both of the pull requests merged there for this
+        app (931 and 1039) targeted it, so the pin URL and any bump PR must use `canary`. This URL
+        read `main` until now, which happened to report the same version and so hid the mistake.
 
   - id: cosmos
     name: Cosmos servapp marketplace
@@ -559,7 +566,7 @@ channels:
 
   - id: casaos
     name: CasaOS App Store
-    status: pending
+    status: live
     category: paas-catalogs
     platforms: [container]
     runtime: channel_supplied
@@ -574,12 +581,12 @@ channels:
       upstream_repo: https://github.com/IceWhaleTech/CasaOS-AppStore
       docs: docs/DISTRIBUTION.md
     pin:
-      strategy: none
-      note: PR IceWhaleTech/CasaOS-AppStore#992 is open, so nothing is listed yet. On merge, flip to live
-        and add a remote_file pin on
-        https://raw.githubusercontent.com/IceWhaleTech/CasaOS-AppStore/main/Apps/LibreDBStudio/docker-compose.yml
-        with extract 'libredb-studio:(\d+\.\d+\.\d+)'. Installs a Docker container on the user's own device,
-        so the platform is container.
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/IceWhaleTech/CasaOS-AppStore/main/Apps/LibreDBStudio/docker-compose.yml
+      extract: 'libredb-studio:(\d+\.\d+\.\d+)'
+      note: Merged in IceWhaleTech/CasaOS-AppStore#992 (7 Sep 2026); live in the CasaOS App Store. The pin
+        reads the image tag in Apps/LibreDBStudio/docker-compose.yml, the file a bump PR touches. Installs a
+        Docker container on the user's own device, so the platform is container.
 
   - id: umbrel
     name: Umbrel App Store
@@ -743,6 +750,79 @@ channels:
     pin:
       strategy: none
 
+  - id: gcp-marketplace
+    name: Google Cloud Marketplace
+    short_name: Google Cloud Marketplace
+    status: live
+    category: cloud-marketplaces
+    platforms: [kubernetes, cloud]
+    runtime: channel_supplied
+    tier: 4
+    kind: marketplace
+    update:
+      # Producer Portal, not a pull request: the listing, its version and its
+      # Terraform module are submitted through Google's console and each change
+      # goes through Google's own review, so nothing here can be CI-driven.
+      method: manual_ui
+      sla: on_demand
+    links:
+      catalog: https://console.cloud.google.com/marketplace/product/libredb-public/libredb-studio
+      docs: docs/DISTRIBUTION.md
+    pin:
+      # The listed version is held in Google's Producer Portal and the artifacts
+      # live in a private Artifact Registry, so there is no public file to read a
+      # version out of. It is checked by hand against the portal.
+      strategy: none
+
+  - id: azure-marketplace
+    name: Microsoft Azure Marketplace
+    short_name: Azure Marketplace
+    status: live
+    category: cloud-marketplaces
+    platforms: [cloud]
+    runtime: channel_supplied
+    tier: 4
+    kind: marketplace
+    update:
+      method: manual_ui
+      sla: on_demand
+    links:
+      catalog: https://marketplace.microsoft.com/en-us/product/libredb.libredb-studio
+      docs: deploy/azure/README.md
+    pin:
+      strategy: none
+      note: Published 7 Sep 2026 as a free ("Get It Now") Azure Application solution template
+        (package 1.0.1). There is no pin to add, because the listed version lives in Partner
+        Center the way Google's lives in the Producer Portal.
+
+  - id: aws-marketplace
+    name: AWS Marketplace (free AMI product)
+    short_name: AWS Marketplace
+    status: live
+    category: cloud-marketplaces
+    platforms: [cloud]
+    runtime: channel_supplied
+    tier: 4
+    kind: marketplace
+    update:
+      # The AMI and every listing field are submitted through the AWS Marketplace
+      # Management Portal, and a visibility change is reviewed by hand by Seller
+      # Operations, so nothing here can be CI-driven.
+      method: manual_ui
+      sla: on_demand
+    links:
+      catalog: https://aws.amazon.com/marketplace/pp/prodview-tsahkrgdqpnws
+      docs: deploy/aws/README.md
+    pin:
+      strategy: none
+      note: Published 7 Sep 2026 as a free AMI product (0.14.1, ami-08263251d25dc8ced). This status
+        is load-bearing rather than documentation - .github/workflows/aws-ami-build.yml reads it and
+        stands down on every machine-triggered path while it is not live. Live opens that workflow's
+        own release trigger, which fires only for a draft published by hand; no other workflow
+        dispatches it, so an ordinary release still builds no AMI.
+        There is no pin to read, because the listed version lives in the AWS Marketplace Management
+        Portal the way Azure's lives in Partner Center; it is checked by hand against the portal.
+
   - id: winget
     name: winget community repository (LibreDB.Studio)
     short_name: winget
@@ -805,9 +885,10 @@ channels:
       extract: '<d:Version>(\d+\.\d+\.\d+)</d:Version>'
       note: Listed since 0.9.59 (choco install libredb-studio), approved 2026-08-24. The community
         feed publishes no floating "latest" document, so the pin filters the OData package list to
-        IsLatestVersion - one document, one match, whatever the published version count. It reads
-        0.9.59 until the next release publishes through the now-enabled job, which is real lag and
-        not a broken pin. The feed lists APPROVED versions only, so a drift row here means the
+        IsLatestVersion - one document, one match, whatever the published version count. It sat at
+        0.9.59 while the job was disabled and has moved with every release since; it reads 0.13.6
+        today, one behind, which is moderation lag and not a broken pin. The feed lists APPROVED
+        versions only, so a drift row here means the
         version is waiting on human moderation rather than that the push failed; the release run's
         job summary reports the push outcome and that version's PackageStatus. Trusted status is
         what removes the wait - docs/BACKLOG.md REL3.

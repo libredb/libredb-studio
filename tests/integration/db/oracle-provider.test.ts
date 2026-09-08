@@ -1884,7 +1884,14 @@ describe("OracleProvider", () => {
       // are the same fact for the ceiling and different facts for the count.
       expect("activeConnections" in overview).toBe(false);
       expect(overview.maxConnections).toBe(0);
-      expect(overview.databaseSizeBytes).toBe(0);
+      // Same correction, one field over. This read `toBe(0)` until #565 and pinned the
+      // fabrication too: `DatabaseOverview.databaseSizeBytes` is optional for the same
+      // reason the count above is, and `USER_SEGMENTS` refusing tells us nothing about
+      // the schema's size. The string travels with it, as in the merged libSQL (#569)
+      // and search (#517) shapes - "N/A" beside an absent figure, never "0 bytes"
+      // beside "No storage size information available."
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
       expect(overview.tableCount).toBe(0);
       expect(overview.indexCount).toBe(0);
     });
@@ -1953,6 +1960,81 @@ describe("OracleProvider", () => {
 
       expect(overview.activeConnections).toBe(8);
       expect(overview.maxConnections).toBe(0);
+    });
+
+    test("a schema that owns no segment keeps its measured zero size", async () => {
+      // The anti-vacuity twin of the absence pinned above, and why the guard is spelled
+      // `=== undefined` rather than a falsy test. `SUM(BYTES) FROM USER_SEGMENTS` over a
+      // schema that owns no segment is not a refusal: Oracle answers one row whose
+      // aggregate is NULL. The provider deliberately treats that returned null aggregate
+      // as a measured 0 for a schema that really does hold nothing. A falsy test would erase exactly this
+      // reading, and StorageTab.tsx would say "No storage size information available"
+      // about a schema Oracle had just measured.
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_SEGMENTS") && upper.includes("SUM(BYTES)")) {
+          return { rows: [{ TOTAL: null }], metaData: [{ name: "TOTAL" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(true);
+      expect(overview.databaseSizeBytes).toBe(0);
+      expect(overview.databaseSize).toBe("0 B");
+      // Only the size reading is at stake; every other read still answers.
+      expect(overview.activeConnections).toBe(8);
+      expect(overview.tableCount).toBe(10);
+    });
+
+    test("a size read with no result row leaves overview size absent", async () => {
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_SEGMENTS") && upper.includes("SUM(BYTES)")) {
+          return { rows: [], metaData: [{ name: "TOTAL" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
+    test("a size result without the expected column leaves overview size absent", async () => {
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_SEGMENTS") && upper.includes("SUM(BYTES)")) {
+          return { rows: [{ unrelated: 1 }], metaData: [{ name: "UNRELATED" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
+    test("a non-finite size leaves overview size absent", async () => {
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_SEGMENTS") && upper.includes("SUM(BYTES)")) {
+          return { rows: [{ TOTAL: Number.POSITIVE_INFINITY }], metaData: [{ name: "TOTAL" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
     });
   });
 
@@ -2388,6 +2470,29 @@ describe("OracleProvider", () => {
       expect((caught as Error).message).toContain("ORACLE_CLIENT_LIB_DIR");
       expect((caught as Error).message).toContain("/nonexistent/instantclient");
       expect((caught as Error).message).toContain("DPI-1047");
+      // The old message said "verify the path" for every failure. DPI-1047 on
+      // Linux is usually not a path problem at all: libclntsh has no RUNPATH,
+      // so the directory has to be on the loader path too (#538).
+      expect((caught as Error).message).toContain("ldconfig");
+    });
+
+    test("reports a missing Thick-mode binary (NJS-045) as a packaging defect, not a bad path", () => {
+      process.env.ORACLE_CLIENT_LIB_DIR = "/opt/oracle/instantclient_19_28";
+      mockInitOracleClientFn.mockImplementationOnce(() => {
+        throw new Error("NJS-045: cannot load a node-oracledb Thick mode binary for Node.js");
+      });
+
+      let caught: unknown;
+      try {
+        new OracleProvider(baseConfig);
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(DatabaseConfigError);
+      expect((caught as Error).message).toContain("NJS-045");
+      expect((caught as Error).message).toContain(`${process.platform}-${process.arch}`);
+      expect((caught as Error).message).toContain("packaging");
     });
 
     test("calls initOracleClient with libDir at most once, even across multiple providers", () => {

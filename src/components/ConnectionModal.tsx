@@ -195,11 +195,11 @@ export function ConnectionModal({
   const formContent = (
     <>
       {/* Progress bar — fixed top */}
-      <div className="shrink-0 h-2 w-full bg-blue-600/20">
+      <div className="shrink-0 h-2 w-full bg-brand-solid/20">
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: "100%" }}
-          className="h-full bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)]"
+          className="h-full bg-brand-tint shadow-[0_0_15px_rgba(59,130,246,0.5)]"
         />
       </div>
 
@@ -207,8 +207,8 @@ export function ConnectionModal({
       <div className="flex-1 overflow-y-auto p-4 md:p-8">
         <div className="mb-4 md:mb-8">
           <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20">
-              <Zap strokeWidth={1.5} className="w-5 h-5 text-blue-400" />
+            <div className="p-2 rounded-xl bg-brand-tint/10 border border-brand-tint/20">
+              <Zap strokeWidth={1.5} className="w-5 h-5 text-brand" />
             </div>
             <h2 className="text-xs md:text-[0.8125rem] font-medium">
               {isEditMode ? "Edit Connection" : "New Connection"}
@@ -223,7 +223,7 @@ export function ConnectionModal({
             {!isEditMode && (
               <button
                 onClick={() => setShowPasteInput(!showPasteInput)}
-                className="flex items-center gap-1.5 text-xs font-mediumr text-blue-400 hover:text-blue-300 transition-colors px-2 py-1 rounded-md hover:bg-blue-500/10"
+                className="flex items-center gap-1.5 text-xs font-mediumr text-brand hover:text-brand-bright transition-colors px-2 py-1 rounded-md hover:bg-brand-tint/10"
               >
                 <ClipboardPaste strokeWidth={1.5} className="w-3 h-3" />
                 Paste URL
@@ -241,20 +241,20 @@ export function ConnectionModal({
               exit={{ height: 0, opacity: 0 }}
               className="mb-6 overflow-hidden"
             >
-              <div className="p-3 rounded-lg border border-blue-500/20 bg-blue-500/5 space-y-2">
-                <Label className="text-xs font-mediumr text-blue-400">Paste Connection URL</Label>
+              <div className="p-3 rounded-lg border border-brand-tint/20 bg-brand-tint/5 space-y-2">
+                <Label className="text-xs font-mediumr text-brand">Paste Connection URL</Label>
                 <div className="flex gap-2">
                   <Input
                     value={pasteInput}
                     onChange={(e) => setPasteInput(e.target.value)}
                     placeholder="postgres://user:pass@host:5432/db  or  mongodb://..."
-                    className="h-9 bg-panel border-hairline focus:border-blue-500/50 text-xs font-mono flex-1"
+                    className="h-9 bg-panel border-hairline focus:border-brand-tint/50 text-xs font-mono flex-1"
                     onKeyDown={(e) => e.key === "Enter" && handlePasteConnectionString()}
                   />
                   <Button
                     size="sm"
                     onClick={handlePasteConnectionString}
-                    className="bg-blue-600 hover:bg-blue-500 text-white h-9 px-4 text-xs font-medium"
+                    className="bg-brand-solid hover:bg-brand-solid-hover text-white h-9 px-4 text-xs font-medium"
                   >
                     Parse
                   </Button>
@@ -281,7 +281,7 @@ export function ConnectionModal({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="My Database"
-              className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs"
+              className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
             />
           </div>
 
@@ -322,7 +322,7 @@ export function ConnectionModal({
                 className={cn(
                   "flex flex-col items-center justify-center p-3 md:p-4 rounded-xl border transition-all duration-200 gap-2 group",
                   type === db.value
-                    ? "bg-blue-600/10 border-blue-500/50 shadow-[0_0_20px_rgba(59,130,246,0.1)]"
+                    ? "bg-brand-solid/10 border-brand-tint/50 shadow-[0_0_20px_rgba(59,130,246,0.1)]"
                     : "bg-panel border-hairline hover:border-hairline-strong hover:bg-raised",
                   isEditMode && type !== db.value && "opacity-30 cursor-not-allowed",
                 )}
@@ -353,7 +353,7 @@ export function ConnectionModal({
                     className={cn(
                       "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-all",
                       mongoConnectionMode === "host"
-                        ? "bg-blue-600/20 text-blue-400 border border-blue-500/30"
+                        ? "bg-brand-solid/20 text-brand border border-brand-tint/30"
                         : "text-fg-muted hover:text-fg-secondary",
                     )}
                   >
@@ -365,7 +365,7 @@ export function ConnectionModal({
                     className={cn(
                       "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-all",
                       mongoConnectionMode === "connectionString"
-                        ? "bg-blue-600/20 text-blue-400 border border-blue-500/30"
+                        ? "bg-brand-solid/20 text-brand border border-brand-tint/30"
                         : "text-fg-muted hover:text-fg-secondary",
                     )}
                   >
@@ -389,7 +389,7 @@ export function ConnectionModal({
                       value={connectionString}
                       onChange={(e) => setConnectionString(e.target.value)}
                       placeholder={connectionUriPlaceholder}
-                      className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
+                      className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                     />
                   </div>
                   <div className="space-y-2">
@@ -404,7 +404,7 @@ export function ConnectionModal({
                       value={database}
                       onChange={(e) => setDatabase(e.target.value)}
                       placeholder="Extracted from URI if not provided"
-                      className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
+                      className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                     />
                   </div>
                 </>
@@ -421,7 +421,7 @@ export function ConnectionModal({
                     value={database}
                     onChange={(e) => setDatabase(e.target.value)}
                     placeholder="/path/to/database file"
-                    className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
+                    className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                   />
                 </div>
               ) : (
@@ -440,14 +440,14 @@ export function ConnectionModal({
                         onChange={(e) => setHost(e.target.value)}
                         placeholder="localhost"
                         autoComplete="off"
-                        className="md:col-span-3 h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs"
+                        className="md:col-span-3 h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
                       />
                       <Input
                         id="port"
                         value={port}
                         onChange={(e) => setPort(e.target.value)}
                         autoComplete="off"
-                        className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
                     </div>
                   </div>
@@ -472,7 +472,7 @@ export function ConnectionModal({
                           onChange={(e) => setUser(e.target.value)}
                           placeholder="user"
                           autoComplete="off"
-                          className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs"
+                          className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
                         />
                       </div>
                     )}
@@ -492,7 +492,7 @@ export function ConnectionModal({
                         // Server credential, not the user's own login: "new-password" is the only
                         // value Chrome honours to keep saved site passwords out of the field.
                         autoComplete="new-password"
-                        className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs"
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
                       />
                       {/*
                         Measured on Trino 476 with authentication DISABLED: a request
@@ -537,7 +537,7 @@ export function ConnectionModal({
                         value={database}
                         onChange={(e) => setDatabase(e.target.value)}
                         placeholder={databaseFieldPlaceholder}
-                        className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
                       {isTrino && (
                         <p className="text-xs text-fg-muted">
@@ -573,7 +573,7 @@ export function ConnectionModal({
                         value={authSource}
                         onChange={(e) => setAuthSource(e.target.value)}
                         placeholder="admin"
-                        className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
                       <p className="text-xs text-fg-muted">
                         The database the user was created in, usually admin. Leave empty when the credentials live in
@@ -602,7 +602,7 @@ export function ConnectionModal({
                         value={localDataCenter}
                         onChange={(e) => setLocalDataCenter(e.target.value)}
                         placeholder="datacenter1"
-                        className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
                       <p className="text-xs text-fg-muted">
                         Required: the Cassandra driver refuses to connect without it. A stock single-node install
@@ -623,10 +623,10 @@ export function ConnectionModal({
                 onClick={() => setShowAdvanced(!showAdvanced)}
                 className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-hairline hover:border-hairline-strong bg-panel text-xs font-medium text-fg-tertiary hover:text-fg transition-all"
               >
-                <Settings2 strokeWidth={1.5} className="w-3.5 h-3.5 text-orange-500" />
+                <Settings2 strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-orange" />
                 <span>Advanced</span>
                 {(serviceName || instanceName) && (
-                  <span className="ml-1 px-1.5 py-0.5 rounded text-[0.625rem] bg-orange-500/10 text-orange-400 border border-orange-500/20">
+                  <span className="ml-1 px-1.5 py-0.5 rounded text-[0.625rem] bg-hue-orange-tint/10 text-hue-orange border border-hue-orange-tint/20">
                     SET
                   </span>
                 )}
@@ -640,7 +640,7 @@ export function ConnectionModal({
                     exit={{ height: 0, opacity: 0 }}
                     className="overflow-hidden"
                   >
-                    <div className="p-3 rounded-lg border border-orange-500/10 bg-orange-500/5 space-y-3">
+                    <div className="p-3 rounded-lg border border-hue-orange-tint/10 bg-hue-orange-tint/5 space-y-3">
                       {type === "oracle" && (
                         <div className="space-y-1.5">
                           <Label className="text-xs font-mediumr text-fg-muted">Service Name</Label>
@@ -648,7 +648,7 @@ export function ConnectionModal({
                             value={serviceName}
                             onChange={(e) => setServiceName(e.target.value)}
                             placeholder="ORCL or XEPDB1"
-                            className="h-9 bg-panel border-hairline focus:border-orange-500/50 text-xs"
+                            className="h-9 bg-panel border-hairline focus:border-hue-orange-tint/50 text-xs"
                           />
                           <p className="text-xs text-fg-muted">
                             If empty, the Database Name field is used as the service name.
@@ -662,7 +662,7 @@ export function ConnectionModal({
                             value={instanceName}
                             onChange={(e) => setInstanceName(e.target.value)}
                             placeholder="SQLEXPRESS"
-                            className="h-9 bg-panel border-hairline focus:border-orange-500/50 text-xs"
+                            className="h-9 bg-panel border-hairline focus:border-hue-orange-tint/50 text-xs"
                           />
                           <p className="text-xs text-fg-muted">
                             For named instances (e.g. SQLEXPRESS). Leave empty for default instance.
@@ -685,10 +685,10 @@ export function ConnectionModal({
                 onClick={() => setShowSSL(!showSSL)}
                 className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-hairline hover:border-hairline-strong bg-panel text-xs font-medium text-fg-tertiary hover:text-fg transition-all"
               >
-                <Lock strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-500" />
+                <Lock strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-emerald" />
                 <span>SSL / TLS</span>
                 {sslMode !== "disable" && (
-                  <span className="ml-1 px-1.5 py-0.5 rounded text-[0.625rem] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  <span className="ml-1 px-1.5 py-0.5 rounded text-[0.625rem] bg-hue-emerald-tint/10 text-hue-emerald border border-hue-emerald-tint/20">
                     {sslMode.toUpperCase()}
                   </span>
                 )}
@@ -702,7 +702,7 @@ export function ConnectionModal({
                     exit={{ height: 0, opacity: 0 }}
                     className="overflow-hidden"
                   >
-                    <div className="p-3 rounded-lg border border-emerald-500/10 bg-emerald-500/5 space-y-3">
+                    <div className="p-3 rounded-lg border border-hue-emerald-tint/10 bg-hue-emerald-tint/5 space-y-3">
                       <div className="space-y-2">
                         <Label className="text-xs font-mediumr text-fg-muted">SSL Mode</Label>
                         <div className="flex flex-wrap gap-1.5">
@@ -715,7 +715,7 @@ export function ConnectionModal({
                                 className={cn(
                                   "px-2.5 py-1.5 rounded-md text-xs font-mediumr transition-all border",
                                   sslMode === mode
-                                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                                    ? "border-hue-emerald-tint/30 bg-hue-emerald-tint/10 text-hue-emerald"
                                     : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
                                 )}
                               >
@@ -737,7 +737,7 @@ export function ConnectionModal({
                               onChange={(e) => setCaCert(e.target.value)}
                               placeholder="-----BEGIN CERTIFICATE-----&#10;Paste CA cert content here...&#10;-----END CERTIFICATE-----"
                               rows={3}
-                              className="w-full rounded-md bg-panel border border-hairline focus:border-emerald-500/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
+                              className="w-full rounded-md bg-panel border border-hairline focus:border-hue-emerald-tint/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
                             />
                           </div>
                           {(sslMode === "verify-ca" || sslMode === "verify-full") && (
@@ -749,7 +749,7 @@ export function ConnectionModal({
                                   onChange={(e) => setClientCert(e.target.value)}
                                   placeholder="-----BEGIN CERTIFICATE-----&#10;Optional client cert...&#10;-----END CERTIFICATE-----"
                                   rows={3}
-                                  className="w-full rounded-md bg-panel border border-hairline focus:border-emerald-500/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
+                                  className="w-full rounded-md bg-panel border border-hairline focus:border-hue-emerald-tint/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
                                 />
                               </div>
                               <div className="space-y-1.5">
@@ -759,7 +759,7 @@ export function ConnectionModal({
                                   onChange={(e) => setClientKey(e.target.value)}
                                   placeholder="-----BEGIN PRIVATE KEY-----&#10;Optional client key...&#10;-----END PRIVATE KEY-----"
                                   rows={3}
-                                  className="w-full rounded-md bg-panel border border-hairline focus:border-emerald-500/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
+                                  className="w-full rounded-md bg-panel border border-hairline focus:border-hue-emerald-tint/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
                                 />
                               </div>
                             </>
@@ -777,10 +777,10 @@ export function ConnectionModal({
                 onClick={() => setShowSSH(!showSSH)}
                 className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-hairline hover:border-hairline-strong bg-panel text-xs font-medium text-fg-tertiary hover:text-fg transition-all"
               >
-                <Terminal strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-500" />
+                <Terminal strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-purple" />
                 <span>SSH Tunnel</span>
                 {sshEnabled && (
-                  <span className="ml-1 px-1.5 py-0.5 rounded text-[0.625rem] bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                  <span className="ml-1 px-1.5 py-0.5 rounded text-[0.625rem] bg-hue-purple-tint/10 text-hue-purple border border-hue-purple-tint/20">
                     ON
                   </span>
                 )}
@@ -794,7 +794,7 @@ export function ConnectionModal({
                     exit={{ height: 0, opacity: 0 }}
                     className="overflow-hidden"
                   >
-                    <div className="p-3 rounded-lg border border-purple-500/10 bg-purple-500/5 space-y-3">
+                    <div className="p-3 rounded-lg border border-hue-purple-tint/10 bg-hue-purple-tint/5 space-y-3">
                       <label className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
@@ -814,7 +814,7 @@ export function ConnectionModal({
                                 onChange={(e) => setSSHHost(e.target.value)}
                                 placeholder="bastion.example.com"
                                 autoComplete="off"
-                                className="h-9 bg-panel border-hairline focus:border-purple-500/50 text-xs"
+                                className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
                               />
                             </div>
                             <div className="space-y-1.5">
@@ -823,7 +823,7 @@ export function ConnectionModal({
                                 value={sshPort}
                                 onChange={(e) => setSSHPort(e.target.value)}
                                 autoComplete="off"
-                                className="h-9 bg-panel border-hairline focus:border-purple-500/50 text-xs font-mono"
+                                className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs font-mono"
                               />
                             </div>
                           </div>
@@ -834,7 +834,7 @@ export function ConnectionModal({
                               onChange={(e) => setSSHUsername(e.target.value)}
                               placeholder="ubuntu"
                               autoComplete="off"
-                              className="h-9 bg-panel border-hairline focus:border-purple-500/50 text-xs"
+                              className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
                             />
                           </div>
                           <div className="space-y-2">
@@ -846,7 +846,7 @@ export function ConnectionModal({
                                 className={cn(
                                   "flex-1 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
                                   sshAuthMethod === "password"
-                                    ? "border-purple-500/30 bg-purple-500/10 text-purple-400"
+                                    ? "border-hue-purple-tint/30 bg-hue-purple-tint/10 text-hue-purple"
                                     : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
                                 )}
                               >
@@ -858,7 +858,7 @@ export function ConnectionModal({
                                 className={cn(
                                   "flex-1 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
                                   sshAuthMethod === "privateKey"
-                                    ? "border-purple-500/30 bg-purple-500/10 text-purple-400"
+                                    ? "border-hue-purple-tint/30 bg-hue-purple-tint/10 text-hue-purple"
                                     : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
                                 )}
                               >
@@ -875,7 +875,7 @@ export function ConnectionModal({
                                 onChange={(e) => setSSHPassword(e.target.value)}
                                 placeholder="••••••••"
                                 autoComplete="new-password"
-                                className="h-9 bg-panel border-hairline focus:border-purple-500/50 text-xs"
+                                className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
                               />
                             </div>
                           ) : (
@@ -887,7 +887,7 @@ export function ConnectionModal({
                                   onChange={(e) => setSSHPrivateKey(e.target.value)}
                                   placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;Paste private key here...&#10;-----END OPENSSH PRIVATE KEY-----"
                                   rows={4}
-                                  className="w-full rounded-md bg-panel border border-hairline focus:border-purple-500/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
+                                  className="w-full rounded-md bg-panel border border-hairline focus:border-hue-purple-tint/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
                                 />
                               </div>
                               <div className="space-y-1.5">
@@ -898,7 +898,7 @@ export function ConnectionModal({
                                   onChange={(e) => setSSHPassphrase(e.target.value)}
                                   placeholder="Key passphrase (if encrypted)"
                                   autoComplete="new-password"
-                                  className="h-9 bg-panel border-hairline focus:border-purple-500/50 text-xs"
+                                  className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
                                 />
                               </div>
                             </div>
@@ -927,10 +927,10 @@ export function ConnectionModal({
                   className={cn(
                     "flex items-center gap-2 p-3 rounded-lg border text-xs",
                     testResult.tone === "success"
-                      ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-400"
+                      ? "bg-success-tint/5 border-success-tint/20 text-success"
                       : testResult.tone === "warning"
-                        ? "bg-amber-500/5 border-amber-500/20 text-amber-400"
-                        : "bg-red-500/5 border-red-500/20 text-red-400",
+                        ? "bg-warning-tint/5 border-warning-tint/20 text-warning"
+                        : "bg-danger-tint/5 border-danger-tint/20 text-danger",
                   )}
                 >
                   {testResult.tone === "success" ? (
@@ -983,7 +983,7 @@ export function ConnectionModal({
                   mongoConnectionMode === "connectionString" &&
                   !connectionString.trim())
               }
-              className="w-full md:w-auto min-w-0 md:min-w-[140px] bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs h-10 shadow-lg shadow-blue-900/20 group relative overflow-hidden"
+              className="w-full md:w-auto min-w-0 md:min-w-[140px] bg-brand-solid hover:bg-brand-solid-hover text-white font-medium text-xs h-10 shadow-lg shadow-blue-900/20 group relative overflow-hidden"
             >
               <AnimatePresence mode="wait">
                 {isTesting ? (

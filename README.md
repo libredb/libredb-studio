@@ -11,7 +11,8 @@
 <p align="center">
   <b>English</b> ·
   <a href="README_zh.md">简体中文</a> ·
-  <a href="README_ja.md">日本語</a>
+  <a href="README_ja.md">日本語</a> ·
+  <a href="README_es.md">Español</a>
 </p>
 
 <p align="center">
@@ -979,6 +980,14 @@ We welcome contributions from the community! Whether it's a bug fix, a new featu
 3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`).
 4. Push to the Branch (`git push origin feature/AmazingFeature`).
 5. Open a Pull Request.
+
+Every change here lands with its tests in the same pull request, under a hard 100% line-coverage
+gate. Clearing that bar is worth something, so the people who have are named in
+[`CONTRIBUTORS.md`](CONTRIBUTORS.md) with a link to the change they made. Nothing on that page is
+counted — no merge totals, no line counts — and
+[`CONTRIBUTING.md`](CONTRIBUTING.md#the-contributor-ladder) says why. Start with a
+[`good first issue`](https://github.com/libredb/libredb-studio/labels/good%20first%20issue): each one
+states what "done" looks like as a command you can run yourself.
 
 ---
 

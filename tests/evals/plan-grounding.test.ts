@@ -73,7 +73,12 @@ async function openPlan(engine: EvalEngine): Promise<EvalRun> {
   return run;
 }
 
-const PLAN = [answersProse("I would read the engineering table and count its rows.")];
+// Two turns of the same prose: a grounded plan run that names no statement is now asked for
+// one, and a model with nothing to add says the same thing again. The verdict is unchanged.
+const PLAN = [
+  answersProse("I would read the engineering table and count its rows."),
+  answersProse("I would read the engineering table and count its rows."),
+];
 
 describe("a plan run on a cold process grounds itself in the database it is about", () => {
   for (const engine of ["postgres", "sqlite"] as const) {
@@ -272,15 +277,17 @@ describe("a refused capture records why it was refused", () => {
   });
 });
 
-describe("a plan that names no statement is asked for one, where its model was measured needing it", () => {
+describe("a plan that names no statement is asked for one, whoever the model is", () => {
   /*
     `qwen3:14b`, plan, 4 of 5. Its losing run answered the objective completely — all eight
     tables, both join tables, the key every relation travels on — and never wrote the
     deliverable, so the verdict was `no-statement`. Planning had no notice for that: the prose
     arrived, `conclude` filed it as the closing statement, and the run was over.
 
-    The turn is offered per model (`planStatementRetries`, 0 everywhere else), so this is
-    driven through `modelOver`'s model name rather than the fixture default.
+    Who gets the turn is what these cases pin. A measured profile's number decides for the model
+    it was written about — 0 means that model was watched declining the ask — and a model with no
+    profile is asked once, because absence is not a measurement. So the drive is run through
+    `modelOver`'s model name rather than the fixture default, and both sides are asserted.
   */
   const PROSE = "The department table holds dept_no and dept_name, and dept_emp joins it to employee.";
   const FENCED = "Here is the plan.\n\n```sql\nSELECT dept_no, COUNT(*) FROM dept_emp GROUP BY dept_no;\n```";
@@ -314,13 +321,25 @@ describe("a plan that names no statement is asked for one, where its model was m
     expect(drive.status).toBe("succeeded");
   });
 
-  test("a model nobody measured keeps the one turn it had", async () => {
-    // The whole point of the per-model file: introducing this mechanism changed no run of any
-    // model but the one whose ledgers earned it. Same prose, same engine, one turn.
-    const { drive, sent } = await drivePlan("gpt-4o-mini", [answersProse(PROSE)]);
+  test("a model nobody measured is asked too, because the ask is the server's own", async () => {
+    /*
+      This test asserted the opposite, and its reason was the per-model file's whole discipline:
+      introducing a mechanism must change no run of any model but the one whose ledgers earned it.
+      That restraint is right for a SETTING and wrong for this one. The ask fires only where
+      `readPlanStatement` scores the closing prose `absent` — the same reader, with the same
+      dialect, that `verifyPlanningGoal` is about to score `no-statement` on — so it is reachable
+      only on a run already earning that verdict, and a run that clears the bar is never touched.
+      What the old bound protected was not a passing run; it was silence on a losing one.
 
-    expect(sent.length).toBe(1);
-    expect(drive.kinds).not.toContain("plan-statement-drafted");
+      `cogito:32b` and `qwen2.5:32b` are the measured cost: five surfaces each, plan 4/5, every
+      loss `no-statement` with the model stopping on its own after prose that named the schema
+      correctly. Neither has a row in the document, so neither was ever sent the sentence that
+      won this cell for `ornith:9b` and `qwen3:14b`.
+    */
+    const { sent } = await drivePlan("gpt-4o-mini", [answersProse(PROSE), answersProse(FENCED)]);
+
+    expect(sent.length).toBe(2);
+    expect(sent[1] ?? "").toContain("names no statement");
   });
 
   test("qwen3:14b that refused instead of drafting is not asked again", async () => {

@@ -62,13 +62,13 @@ describe("StudioTabBar", () => {
     expect(queryByText("Query 2")).not.toBeNull();
   });
 
-  test("active tab has blue border and bg styling", () => {
+  test("active tab has the accent border and raised bg styling", () => {
     const props = createDefaultProps({ activeTabId: "tab-1" });
     const { container } = render(<StudioTabBar {...props} />);
     const tabElements = container.querySelectorAll('[class*="border-t-2"]');
-    expect(tabElements[0]?.className).toContain("border-blue-500");
-    // The accent stays a literal blue (it reads on either ground); the tab's own
-    // ground is the elevated surface token, so it follows the theme.
+    expect(tabElements[0]?.className).toContain("border-brand-tint");
+    // Both sides are tokens now (#402): the accent tint reads on either ground,
+    // and the tab's own ground is the elevated surface token.
     expect(tabElements[0]?.className).toContain("bg-overlay");
   });
 
@@ -170,7 +170,7 @@ describe("StudioTabBar", () => {
     const input = container.querySelector("input")!;
     expect(input).not.toBeNull();
     expect(input.value).toBe("Query 1");
-    expect(input.className).toContain("border-blue-500");
+    expect(input.className).toContain("border-brand-tint");
     expect(input.className).toContain("bg-transparent");
   });
 

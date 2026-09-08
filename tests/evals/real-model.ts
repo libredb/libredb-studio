@@ -588,7 +588,9 @@ export async function openCaseRun(testCase: RealModelCase): Promise<EvalRun> {
 async function readInventoryOnce(engine: EvalEngine): Promise<void> {
   const reader = await openEvalRun({ engine });
   try {
-    await reader.drive([answersProse("Nothing to add.")]);
+    // Twice: this run reads nothing itself, so the drive names the instruments once
+    // before letting it stop, and a scripted model that runs dry throws.
+    await reader.drive([answersProse("Nothing to add."), answersProse("Nothing to add.")]);
   } finally {
     reader.dispose();
   }

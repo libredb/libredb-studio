@@ -88,8 +88,8 @@ function formatVacuumDate(date: Date | undefined, vacuumSupported: boolean): str
  */
 function vacuumIconClass(stateKnown: boolean, needingVacuum: number): string {
   if (!stateKnown) return "text-muted-foreground";
-  if (needingVacuum > 0) return "text-yellow-500";
-  return "text-green-500";
+  if (needingVacuum > 0) return "text-hue-yellow";
+  return "text-hue-green";
 }
 
 /** The same three states, as the note under the figure. `null` is the unknown case. */

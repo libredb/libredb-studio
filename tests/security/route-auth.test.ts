@@ -85,6 +85,23 @@ mock.module("@/lib/llm/types", () => ({
   LLMRateLimitError: MockLLMRateLimitError,
   LLMSafetyError: MockLLMSafetyError,
   LLMStreamError: MockLLMStreamError,
+  /*
+    Mirrors the real predicate over the classes mocked above, and it is here because a module mock
+    is WHOLE: `mock.module` replaces the module, so an export this object omits does not fall
+    through to the real one — it stops existing, and every importer of it fails to load. The agent
+    drive imports this one, so leaving it out turned two 401 assertions in this file into
+    `SyntaxError: Export named 'isRetryableError' not found`, and only under `test:coverage`, where
+    each file runs in its own process and nothing else has loaded the real module first.
+
+    Auth and safety are refused, so a misconfigured server still fails on its first turn; a broken
+    stream is retryable, which is the case this file's subjects never reach but its importers hold.
+  */
+  isRetryableError: (error: unknown): boolean =>
+    !(
+      error instanceof MockLLMAuthError ||
+      error instanceof MockLLMSafetyError ||
+      error instanceof MockLLMConfigError
+    ) && error instanceof MockLLMError,
 }));
 
 const { guardRoute } = await import("@/lib/api/require-session");

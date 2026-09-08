@@ -128,14 +128,17 @@ OpenSearchProvider (search/index.ts:967)         ElasticsearchProvider (search/i
 | `buildLimitClause()` | **Both** forms are correct here: `LIMIT n` and `LIMIT n OFFSET m` (measured, HTTP 200). So the shared limiter is right unmodified and `prepareQuery()` never refuses anything on this product ([§5.5](#55-offset-works-here-which-is-why-paging-does)) |
 | `prepareQuery()` (base) | The shared query limiter, used as inherited |
 | `escapeIdentifier()` | Inherited and **never called** — this provider builds no SQL of its own, because the schema comes from the mapping rather than from a statement. Worth knowing that its default branch would double-quote, which is **wrong for this product** ([§5.4](#54-dialect-traps-a-user-will-hit)); the codebase's own quoter gets it right instead ([`identifier.ts:36`](../../src/lib/sql/identifier.ts)) |
-| `getPlaceholder()` | Inherited and never reached: positional parameters are refused outright ([§3.11](#311-positional-parameters-are-refused-not-emulated)) |
 | `measureExecution()` / `trackQuery()` | The measured duration is the only timing in existence — neither the body nor the headers carry one |
 | `shouldEnableSSL()` | Inherited but **never called**. TLS comes from the connection's own `ssl` config only ([§4.3](#43-tls)) |
 
+Not in the list: a placeholder helper. `SQLBaseProvider` no longer has one (#304 removed it).
+Positional parameters are refused outright
+([§3.11](#311-positional-parameters-are-refused-not-emulated)).
+
 ### 2.4 Registration & lifecycle
 
-The factory wires the type-id in via a dynamic import
-([factory.ts:123](../../src/lib/db/factory.ts)):
+The factory wires the type-id in via a dynamic import inside `createDatabaseProvider()`
+([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case "opensearch": {

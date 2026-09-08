@@ -19,15 +19,16 @@ Three decisions. The first is the consequential one, which is why it is first.
 
 1. **Does it need a driver at all?** Score the engine against the rubric below. A database with a
    first-class HTTP API can be supported with no dependency at all, and that is worth real effort to
-   establish before you start. Seven shipped type-ids need no driver: SQLite uses the built-in
+   establish before you start. Eight shipped type-ids need no driver: SQLite uses the built-in
    `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, and the rest reach the engine over HTTP with
-   nothing but `fetch`/`node:https` — Couchbase over the documented REST endpoints
+   nothing but `fetch`/`node:https`. Couchbase goes over the documented REST endpoints
    ([couchbase.md](./providers/couchbase.md)), ClickHouse over its HTTP interface
    ([clickhouse.md](./providers/clickhouse.md)), Apache Druid over `POST /druid/v2/sql`
    ([druid.md](./providers/druid.md)), Elasticsearch and OpenSearch over their SQL endpoints
    ([elasticsearch.md](./providers/elasticsearch.md) · [opensearch.md](./providers/opensearch.md)),
-   and Apache Trino over its own client protocol
-   ([trino.md](./providers/trino.md)). If it does need one, it will be something like `pg`,
+   Apache Trino over its own client protocol ([trino.md](./providers/trino.md)), and libSQL over the
+   Hrana protocol, `POST /v2/pipeline` ([libsql.md](./providers/libsql.md)). If it does need one, it
+   will be something like `pg`,
    `mysql2`, `mongodb`, `ioredis`, `oracledb` or `mssql`.
 
 2. **Which base class?**
@@ -46,7 +47,7 @@ Three decisions. The first is the consequential one, which is why it is first.
      shared helpers cannot express. Couchbase is that case: SQL++ quotes identifiers with doubled
      backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting in
      `keyspace.ts`. The cost is that it re-implements `prepareQuery()` to get the limiter back
-     ([index.ts:336](../src/lib/db/providers/document/couchbase/index.ts)) — duplication worth
+     ([`index.ts`](../src/lib/db/providers/document/couchbase/index.ts)) — duplication worth
      avoiding if your dialect does fit.
 
 3. **Query language?**
@@ -101,7 +102,8 @@ rather than an afterthought.
 
 Provider logic must never call `fetch` directly. It goes through an interface with a single
 implementation, so that adopting a native driver later is an additive change rather than a rewrite.
-See [`couchbase/transport.ts:87`](../src/lib/db/providers/document/couchbase/transport.ts):
+See `CouchbaseTransport`
+([`transport.ts`](../src/lib/db/providers/document/couchbase/transport.ts)):
 
 ```ts
 interface XTransport {
@@ -116,7 +118,8 @@ interface XTransport {
 **Make the result type neutral, not the wire envelope.** An interface shaped like the HTTP response
 (`{ results, signature, status, metrics, errors }`) would force any future driver adapter to
 fabricate fields that only the REST API produces naturally. Define the shape both sources could
-produce without inventing anything ([`transport.ts:45`](../src/lib/db/providers/document/couchbase/transport.ts)):
+produce without inventing anything (`CouchbaseQueryResult` in
+[`transport.ts`](../src/lib/db/providers/document/couchbase/transport.ts)):
 
 ```ts
 interface XQueryResult {
@@ -452,7 +455,8 @@ control that only emits invalid input. That is the defect class
   row-level DML at all, so both offered an editor that could only fail.
 - If `supportsExplain` is `true`, `buildSql()` **must not** return `null` for the `analyze` mode. The
   direct Explain action always builds with `analyze`
-  ([`use-query-execution.ts:165`](../src/hooks/use-query-execution.ts)) and refuses the run when the
+  in `executeQuery()` ([`use-query-execution.ts`](../src/hooks/use-query-execution.ts)) and refuses
+  the run when the
   strategy declines, so the button is dead while only the background pre-warm works. When the engine
   has no analyze equivalent, return the estimate for both modes — `sqlite-queryplan.ts` and
   `couchbase-json.ts` both do exactly that.
@@ -629,8 +633,8 @@ The `*Global*` triads reach only the card, never the per-table button, and only 
 renders: the analyze card is gated on `analyze`, the vacuum card on the **literal** `vacuum`, the
 reindex card on `reindex`. The `reindexGlobal*` triad is **optional** while the other two are
 required, because `ProviderLabels` is published (`src/exports/types.ts`) and a required field added
-after the fact stops every external implementer compiling; only the three providers that declare the
-`reindex` operation (Postgres, SQLite, Couchbase) set it, and the card keeps its old strings as the
+after the fact stops every external implementer compiling; only the four providers that declare the
+`reindex` operation (Postgres, SQLite, libSQL, Couchbase) set it, and the card keeps its old strings as the
 fallback.
 
 ### PreparedQuery
@@ -819,7 +823,7 @@ The integration points, all of which need an entry. This is the list the Strateg
       so the compiler will at least stop you from *forgetting* that a decision exists
 
 **Published where a human reads it, and this is the block with the fewest gates.** `readme:check`
-compares the translated READMEs against `README.md` and `chart:check` compares versions. Nine of the
+compares the translated READMEs against `README.md` and `chart:check` compares versions. Eleven of the
 catalog files below are now counted as well:
 [`tests/unit/lib/catalog-copy-engine-count.test.ts`](../tests/unit/lib/catalog-copy-engine-count.test.ts)
 walks them, refuses a numeral qualifying "engines" that is not `EXTERNAL_DATABASE_TYPES.length`, and

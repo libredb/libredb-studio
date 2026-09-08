@@ -153,7 +153,7 @@ export function CopyButton({ text, testId, label = "Copy", className }: CopyButt
       }}
       className={cn(
         "flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] transition-colors",
-        outcome === "failed" ? "text-amber-400/80 hover:bg-fill" : "text-fg-tertiary hover:bg-fill hover:text-fg",
+        outcome === "failed" ? "text-warning/80 hover:bg-fill" : "text-fg-tertiary hover:bg-fill hover:text-fg",
         className,
       )}
     >

@@ -439,6 +439,8 @@ describe("what the removed panels did that these runs do not", () => {
         return chatToolCallStream("read_monitoring", JSON.stringify({ slowQueryLimit: 20 }), "call_monitor");
       },
       answersProse("I cannot read live monitoring from here."),
+      // A refused call read nothing, so the drive names the instruments once more.
+      answersProse("I cannot read live monitoring from here."),
     ]);
 
     // The transcript is the messages JSON-encoded, so the tool name arrives escaped.
@@ -520,6 +522,8 @@ describe("what the removed panels did that these runs do not", () => {
         );
       },
       answersProse("I can only report what I read."),
+      // A refused call read nothing, so the drive names the instruments once more.
+      answersProse("I can only report what I read."),
     ]);
 
     expect(drive.transcripts[1] ?? "").toContain(String.raw`There is no tool called \"recommend_change\"`);
@@ -540,7 +544,10 @@ describe("what the removed panels did that these runs do not", () => {
       answer: async () => rows(HEADCOUNTS, ["department", "headcount"]),
     });
     runs.push(followUp);
-    const second = await followUp.drive([answersProse("I would count the sales table.")]);
+    const second = await followUp.drive([
+      answersProse("I would count the sales table."),
+      answersProse("I would count the sales table."),
+    ]);
 
     expect(followUp.runId).not.toBe(first.runId);
     const prompt = second.transcripts[0] ?? "";

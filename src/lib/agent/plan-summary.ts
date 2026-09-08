@@ -209,6 +209,9 @@ function summariseSqlite(rows: readonly Record<string, unknown>[]): AgentPlanSum
  * verified two, so listing the other four as `unknown` would claim they had been
  * considered and found unreadable, when what is true is that nobody has looked.
  */
+// `mysql-text` is deliberately absent (#574): its plan is the engine's own text, and
+// a text plan carries no field this layer can read, so the fail-closed
+// `{ access: "unknown" }` below is the honest answer rather than a guess.
 const PLAN_READINGS: Partial<Record<ExplainFormat, (rows: readonly Record<string, unknown>[]) => AgentPlanSummary>> = {
   "postgres-json": summarisePostgres,
   "sqlite-queryplan": summariseSqlite,

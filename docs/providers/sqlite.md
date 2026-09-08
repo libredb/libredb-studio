@@ -158,7 +158,7 @@ directories are created on connect.
 > authenticated user of this Studio instance) — pointing Studio at an arbitrary server-side file is
 > the intended capability, not attacker-controlled input from an untrusted client. There is
 > currently **no** option to sandbox resolvable paths to a base directory. See
-> [Known limitations](#13-known-limitations--future-work).
+> [Known limitations](#14-known-limitations--future-work).
 
 ### 3.2 PRAGMAs on connect
 
@@ -236,7 +236,7 @@ so the picker was never a security control. What it does change is **discoverabi
 self-hosted instance, every authenticated user now sees a field for typing an arbitrary server-side
 path, where reaching the same capability previously took a hand-crafted API call. The reachable set
 of files is identical either way — see
-[No path sandboxing](#13-known-limitations--future-work) — but operators of multi-user deployments
+[No path sandboxing](#14-known-limitations--future-work) — but operators of multi-user deployments
 should treat "any logged-in user can open any SQLite file the Studio process can read" as an
 explicit assumption to check against their threat model, not a corner case. Where that assumption
 does not hold, the mitigations available today are OS-level: run Studio as a user with a narrow
@@ -399,6 +399,12 @@ The bytes differ from the 2026-08-24 row above because the seed is not the same 
 because the drivers disagree — that comparison is a separate measurement, kept as the
 record of what Bun 1.3.14 did. The 1.3.14 row is not history: an install pinned to an
 older image still behaves that way, which is why the absent-field arm below stays.
+
+**The pin moved on to Bun 1.4.2 on 2026-09-07 and none of the above moved with it.**
+Re-measured that day on Linux x86_64: `bun:sqlite` still reports `sqlite_version()`
+3.53.2 and `dbstat` still answers. So the 1.4.0 rows are the current behaviour as well
+as the record of what 1.4.0 did, and nothing here needed rewriting for the new pin.
+macOS is still unmeasured, on 1.4.2 exactly as on 1.4.0.
 
 **macOS is not covered by the row above.** There `bun:sqlite` dlopens Apple's
 `/usr/lib/libsqlite3.dylib` instead of the amalgamation Bun links on Linux and Windows —

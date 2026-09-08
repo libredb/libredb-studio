@@ -106,8 +106,8 @@ out in parallel.
 ### 2.4 Registration & lifecycle
 
 The factory wires LibreDB in via a dynamic import so the `@libredb/libredb` driver is only loaded
-when a LibreDB connection is actually opened
-([`factory.ts:100`](../../src/lib/db/factory.ts)):
+when a LibreDB connection is actually opened by `createDatabaseProvider()`
+([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'libredb': {
@@ -602,7 +602,7 @@ for a different reason — the rows are derived groupings, see 5.3.
 | `supportsTransactions` | `false` — the command grammar has no transaction verb at all, so the trio and SANDBOX are not offered (#464) |
 | `declaresForeignKeys` | `false` — the catalog declares namespaces and columns and nothing that references another namespace, so there is no foreign key to read |
 | `tablesAreDerivedGroupings` | `true` — the namespaces come from a bounded `kv.range` over 10000 keys, grouped by prefix, so they are this server's summary of what one scan reached rather than objects the engine declares. The agent layer states this to a plan run in one sentence |
-| `singleWriterFile` | `true` — `lib.open({ path })` takes an exclusive `<path>.lock`, so this file admits ONE handle and a second open throws `LOCKED`. The three callers that used to open a second one reuse the open handle instead ([§4.2.1](#421-on-disk-format-locking-and-version-compatibility-02x)). The only engine that declares it: SQLite, the other file engine, takes its locks per transaction rather than at open |
+| `singleWriterFile` | `true` — `lib.open({ path })` takes an exclusive `<path>.lock`, so this file admits ONE handle and a second open throws `LOCKED`. The three callers that used to open a second one reuse the open handle instead ([§4.2.1](#421-on-disk-format-locking-and-version-compatibility-02x)). DuckDB declares it too. SQLite, the third file engine here, does not: it takes its locks per transaction rather than at open |
 | `supportsMaintenance` | `false` |
 | `maintenanceOperations` | `[]` |
 | `supportsConnectionString` | `false` |

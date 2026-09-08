@@ -163,8 +163,8 @@ describe("MaskingSettings", () => {
     const { container } = render(<MaskingSettings />);
     const view = within(container);
 
-    // Delete buttons have the text-red-400 class and Trash2 icon
-    const deleteButtons = container.querySelectorAll("button.text-red-400");
+    // Delete buttons carry the danger token and a Trash2 icon
+    const deleteButtons = container.querySelectorAll("button.text-danger");
     // There should be exactly 1 delete button (for Phone, the non-builtin)
     expect(deleteButtons.length).toBe(1);
 

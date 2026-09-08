@@ -250,8 +250,8 @@ at all, which removes the exposure rather than retrying through it.
 
 The action deliberately does **not** set up Bun — each job's existing `Setup Bun` step keeps owning
 the pinned version, so the action makes no assumption about being adjacent to it. It requires bun on
-`PATH` and the repository checked out. The retry policy lives in one place because there are 17
-install sites across 7 workflows; duplicated, it would drift immediately.
+`PATH` and the repository checked out. The retry policy lives in one place because there are 21
+install sites across 9 workflows; duplicated, it would drift immediately.
 `tests/unit/ci-install.test.ts` covers the policy against a stub `bun` (first-try success, retry then
 success, exhaustion, custom attempt count, no dead sleep after the final attempt).
 

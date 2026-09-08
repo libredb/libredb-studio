@@ -141,21 +141,21 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     switch (action) {
       case "added":
         return (
-          <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">
+          <Badge className="bg-hue-green-tint/20 text-hue-green border-hue-green-tint/30 text-xs">
             <Plus strokeWidth={1.5} className="w-2.5 h-2.5 mr-0.5" />
             {"Added"}
           </Badge>
         );
       case "removed":
         return (
-          <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-xs">
+          <Badge className="bg-hue-red-tint/20 text-hue-red border-hue-red-tint/30 text-xs">
             <Minus className="w-2.5 h-2.5 mr-0.5" />
             {"Removed"}
           </Badge>
         );
       case "modified":
         return (
-          <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs">
+          <Badge className="bg-hue-yellow-tint/20 text-hue-yellow border-hue-yellow-tint/30 text-xs">
             <PenLine strokeWidth={1.5} className="w-2.5 h-2.5 mr-0.5" />
             {"Modified"}
           </Badge>
@@ -174,7 +174,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     <div className="h-full flex flex-col bg-sunken">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-hairline bg-surface flex-wrap">
-        <GitCompare strokeWidth={1.5} className="w-3.5 h-3.5 text-rose-400" />
+        <GitCompare strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-rose" />
         <span className="text-xs font-medium text-fg-tertiary">Schema Diff</span>
 
         <div className="h-4 w-px bg-fill-strong" />
@@ -244,9 +244,9 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
                     .map((c) => (
                       <SelectItem key={`conn:${c.id}`} value={`conn:${c.id}`} className="text-xs">
                         <div className="flex items-center gap-1">
-                          <Database strokeWidth={1.5} className="w-3 h-3 text-blue-400" /> {c.name}
+                          <Database strokeWidth={1.5} className="w-3 h-3 text-hue-blue" /> {c.name}
                           {c.environment === "production" && (
-                            <TriangleAlert strokeWidth={1.5} className="w-3 h-3 text-red-400" />
+                            <TriangleAlert strokeWidth={1.5} className="w-3 h-3 text-danger" />
                           )}
                         </div>
                       </SelectItem>
@@ -269,10 +269,10 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
               value={snapshotLabel}
               onChange={(e) => setSnapshotLabel(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && takeSnapshot()}
-              className="h-7 px-2 text-xs bg-fill border border-hairline-strong rounded text-fg-secondary focus:outline-none focus:border-blue-500 w-32"
+              className="h-7 px-2 text-xs bg-fill border border-hairline-strong rounded text-fg-secondary focus:outline-none focus:border-brand-tint w-32"
               autoFocus
             />
-            <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-400" onClick={takeSnapshot}>
+            <Button variant="ghost" size="sm" className="h-7 text-xs text-brand" onClick={takeSnapshot}>
               {"Save"}
             </Button>
             <Button
@@ -400,9 +400,9 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
         <Badge
           className={cn(
             "text-xs",
-            diff.action === "added" && "bg-green-500/20 text-green-400",
-            diff.action === "removed" && "bg-red-500/20 text-red-400",
-            diff.action === "modified" && "bg-yellow-500/20 text-yellow-400",
+            diff.action === "added" && "bg-hue-green-tint/20 text-hue-green",
+            diff.action === "removed" && "bg-hue-red-tint/20 text-hue-red",
+            diff.action === "modified" && "bg-hue-yellow-tint/20 text-hue-yellow",
           )}
         >
           {diff.action}
@@ -425,9 +425,9 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
                 key={col.columnName}
                 className={cn(
                   "px-3 py-2 rounded text-xs flex items-center gap-2",
-                  col.action === "added" && "bg-green-500/5 border border-green-500/10",
-                  col.action === "removed" && "bg-red-500/5 border border-red-500/10",
-                  col.action === "modified" && "bg-yellow-500/5 border border-yellow-500/10",
+                  col.action === "added" && "bg-hue-green-tint/5 border border-hue-green-tint/10",
+                  col.action === "removed" && "bg-hue-red-tint/5 border border-hue-red-tint/10",
+                  col.action === "modified" && "bg-hue-yellow-tint/5 border border-hue-yellow-tint/10",
                 )}
               >
                 <span className="font-mono text-fg-secondary min-w-[120px]">{col.columnName}</span>
@@ -440,8 +440,8 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
                     ))}
                   </div>
                 )}
-                {col.action === "added" && <span className="text-xs text-green-400 font-mono">{col.targetType}</span>}
-                {col.action === "removed" && <span className="text-xs text-red-400 font-mono">{col.sourceType}</span>}
+                {col.action === "added" && <span className="text-xs text-hue-green font-mono">{col.targetType}</span>}
+                {col.action === "removed" && <span className="text-xs text-hue-red font-mono">{col.sourceType}</span>}
                 <span className="ml-auto">{getActionIcon(col.action)}</span>
               </div>
             ))}
@@ -459,9 +459,9 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
                 key={idx.indexName}
                 className={cn(
                   "px-3 py-2 rounded text-xs flex items-center gap-2",
-                  idx.action === "added" && "bg-green-500/5 border border-green-500/10",
-                  idx.action === "removed" && "bg-red-500/5 border border-red-500/10",
-                  idx.action === "modified" && "bg-yellow-500/5 border border-yellow-500/10",
+                  idx.action === "added" && "bg-hue-green-tint/5 border border-hue-green-tint/10",
+                  idx.action === "removed" && "bg-hue-red-tint/5 border border-hue-red-tint/10",
+                  idx.action === "modified" && "bg-hue-yellow-tint/5 border border-hue-yellow-tint/10",
                 )}
               >
                 <span className="font-mono text-fg-secondary">{idx.indexName}</span>
@@ -492,8 +492,8 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
                 key={`${fk.action}:${fk.columnName}`}
                 className={cn(
                   "px-3 py-2 rounded text-xs flex items-center gap-2",
-                  fk.action === "added" && "bg-green-500/5 border border-green-500/10",
-                  fk.action === "removed" && "bg-red-500/5 border border-red-500/10",
+                  fk.action === "added" && "bg-hue-green-tint/5 border border-hue-green-tint/10",
+                  fk.action === "removed" && "bg-hue-red-tint/5 border border-hue-red-tint/10",
                 )}
               >
                 <span className="font-mono text-fg-secondary">{fk.columnName}</span>
@@ -515,11 +515,11 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
 function getActionIcon(action: string) {
   switch (action) {
     case "added":
-      return <Plus strokeWidth={1.5} className="w-3 h-3 text-green-400" />;
+      return <Plus strokeWidth={1.5} className="w-3 h-3 text-hue-green" />;
     case "removed":
-      return <Minus className="w-3 h-3 text-red-400" />;
+      return <Minus className="w-3 h-3 text-hue-red" />;
     case "modified":
-      return <PenLine strokeWidth={1.5} className="w-3 h-3 text-yellow-400" />;
+      return <PenLine strokeWidth={1.5} className="w-3 h-3 text-hue-yellow" />;
     default:
       return null;
   }

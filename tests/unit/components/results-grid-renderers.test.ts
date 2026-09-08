@@ -109,11 +109,11 @@ describe("renderCompact", () => {
   test("jsonRenderer compact-stringifies objects and arrays on a single line", () => {
     expect(jsonRenderer.renderCompact({ a: 1 })).toEqual({
       display: '{"a":1}',
-      className: "text-blue-400/80 italic font-light",
+      className: "text-hue-blue/80 italic font-light",
     });
     expect(jsonRenderer.renderCompact([1, 2])).toEqual({
       display: "[1,2]",
-      className: "text-blue-400/80 italic font-light",
+      className: "text-hue-blue/80 italic font-light",
     });
   });
 
@@ -125,15 +125,15 @@ describe("renderCompact", () => {
   test("binaryRenderer renders hex in the cell and truncates a long value with its size", () => {
     expect(binaryRenderer.renderCompact({ type: "Buffer", data: [1, 2, 171, 255] })).toEqual({
       display: "\\x0102abff",
-      className: "text-cyan-400/80 font-mono",
+      className: "text-hue-cyan/80 font-mono",
     });
     const long = new Uint8Array(1024 * 1024).fill(0xab);
     expect(binaryRenderer.renderCompact(long).display).toBe(`\\x${"ab".repeat(32)}... (1.0 MB)`);
   });
 
   test("scalarRenderer keeps the status-string coloring", () => {
-    expect(scalarRenderer.renderCompact("active")).toEqual({ display: "active", className: "text-emerald-500/90" });
-    expect(scalarRenderer.renderCompact("disabled")).toEqual({ display: "disabled", className: "text-rose-500/90" });
+    expect(scalarRenderer.renderCompact("active")).toEqual({ display: "active", className: "text-hue-emerald/90" });
+    expect(scalarRenderer.renderCompact("disabled")).toEqual({ display: "disabled", className: "text-hue-rose/90" });
     expect(scalarRenderer.renderCompact("plain")).toEqual({ display: "plain", className: "text-fg-secondary" });
   });
 });
@@ -208,7 +208,7 @@ describe("renderDetail", () => {
     const long = new Uint8Array(1024).fill(0xab);
     expect(binaryRenderer.renderDetail(long)).toEqual({
       text: `\\x${"ab".repeat(1024)}`,
-      className: "text-cyan-400/80 font-mono",
+      className: "text-hue-cyan/80 font-mono",
       preserveWhitespace: false,
     });
     expect(binaryRenderer.renderDetail({ type: "Buffer", data: [] }).text).toBe("\\x");

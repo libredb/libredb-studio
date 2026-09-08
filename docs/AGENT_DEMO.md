@@ -69,7 +69,7 @@ The third column was driven on 2026-08-17 against the #414 build, **every engine
 on a server seeded for it. What each cell records is the inventory that reached the run and the thing
 the run then wrote, because those are the two facts that decide whether grounding is worth anything.
 The last column is unchanged and was NOT re-driven: agent mode still needs a database-native read-only
-statement path, which only two engines have.
+statement path, which only three engines have.
 
 | Engine | Plan mode, as driven 2026-08-15/17 | Plan grounding after #414, driven 2026-08-17 | Operate | Investigate · Analyze · Optimize · Assess |
 | --- | --- | --- | --- | --- |
@@ -95,8 +95,8 @@ no inventory and refuses to invent one.
 **What "Verified grounded" is claiming, and what it is not.** It says an inventory of that database's
 real objects reached the run and the run wrote something in that engine's own language that the editor
 accepts. It does NOT say the draft is good, and on one engine it demonstrably is not — see Redis. It
-says nothing at all about agent mode, which still ends `engine-unsupported` everywhere but PostgreSQL
-and SQLite; that is pinned by a test rather than by this table, because a run that fails at its first
+says nothing at all about agent mode, which still ends `engine-unsupported` everywhere but PostgreSQL,
+SQLite and DuckDB; that is pinned by a test rather than by this table, because a run that fails at its first
 read is not a thing worth driving eleven times.
 
 **Two runs that refused, and both refusals were right.** A Couchbase run asked "how many documents of
@@ -140,7 +140,7 @@ is not. That sentence is unchanged by #414 and is the reason it was written this
 is where the condition holds, not the rule — and it now holds on ten engines rather than two, which is
 a demo you can give rather than a caveat you have to make. Operate reads what the engine reports about itself, so it needs no SQL and reaches
 everything. The other four workflows write SQL and need a database-native read-only statement path,
-which today only PostgreSQL and SQLite provide; everywhere else the run ends with *"The agent cannot
+which today only PostgreSQL, SQLite and DuckDB provide; everywhere else the run ends with *"The agent cannot
 run on this database engine: it offers no read-only execution profile."*
 
 **Grounding was engine-dependent and nothing else**, in every workflow — until #414, after which the
@@ -402,8 +402,8 @@ is blocked, and which commands those clients are running. Verified against `redi
 figures match.
 
 **This is the case to show a sceptic.** Redis has no SQL at all, and agent mode's other workflows
-cannot reach it: they need a database-native read-only statement path, which only PostgreSQL and
-SQLite provide. Operate does not write SQL — it reads what the engine already reports about itself —
+cannot reach it: they need a database-native read-only statement path, which only PostgreSQL, SQLite and
+DuckDB provide. Operate does not write SQL — it reads what the engine already reports about itself —
 so it answers the same operational questions on every provider Studio supports. Run case 9 against
 PostgreSQL and this one against Redis back to back, and the point makes itself.
 
@@ -799,7 +799,7 @@ grounding says so in words.
 
 **"Which databases?"** See the table at the top, and its #414 note. The short version: Operate works
 everywhere and was driven live on six engines including Redis, which has no SQL at all; the four SQL
-workflows need PostgreSQL or SQLite, and that has not changed; plan mode has no engine limit and since
+workflows need PostgreSQL, SQLite or DuckDB; plan mode has no engine limit and since
 #414 no grounding limit either — it composes catalog statements on those two and asks every other
 engine's own provider to describe itself, in every workflow, Operate included since #411 on a reduced
 inventory of table and index names.
@@ -821,7 +821,7 @@ would close it, so "not yet" means deferred with a reason, not overlooked.
 | **Returning to an earlier conversation** | A follow-up asked on the same connection continues the previous run's conversation, and the rail names the steps it is continuing — but only for the conversation you are in. Yesterday's conversations cannot be listed or reopened, and a page reload starts a new one without saying so | B67 — run history across conversations needs store enumeration, a list route and a retention rule, none of which exist. B69 for the reload |
 | **Causal questions** — "why are sales down?" | Answered from the schema alone, which cannot know which decomposition of a metric is the business one | A per-connection business note, held server-side; sketched in `docs/AGENT_ANALYST_DESIGN.md` §5 |
 | **"This database cannot answer that"** | It does say so, but has to run a throwaway query to be scored as having answered — case 21 spends 5 tool invocations to report that an employees database holds no customer data | A second arm on the verdict, so a schema-only conclusion counts |
-| **Agent mode on MySQL, Oracle, MongoDB, Redis…** | Only Operate. The other four workflows refuse, correctly and clearly | A database-native read-only statement path per engine — the same `queryReadOnly` PostgreSQL and SQLite implement |
+| **Agent mode on MySQL, Oracle, MongoDB, Redis…** | Only Operate. The other four workflows refuse, correctly and clearly | A database-native read-only statement path per engine — the same `queryReadOnly` PostgreSQL, SQLite and DuckDB implement |
 | **A run you can watch from your own stack** | Everything is in the run's ledger and on the rail; nothing is exported | B33 — OpenTelemetry spans, designed in #332 and deliberately not built while the event model is still moving |
 | **Resuming a run after a restart** | A drive that dies leaves a durable ledger, but nothing picks it up | B9 — a queue and a re-attach path for the stream |
 | **A budget you can trust to the minute** | The ceilings are real and enforced; the *numbers* are a starting point nobody has measured | One instrumented long run per workflow |

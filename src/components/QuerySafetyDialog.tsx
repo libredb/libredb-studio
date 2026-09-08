@@ -51,37 +51,37 @@ function parseSafetyResponse(text: string): SafetyAnalysis | null {
 
 const RISK_CONFIG = {
   safe: {
-    color: "text-emerald-400",
-    bg: "bg-emerald-500/10",
-    border: "border-emerald-500/20",
+    color: "text-hue-emerald",
+    bg: "bg-hue-emerald-tint/10",
+    border: "border-hue-emerald-tint/20",
     icon: ShieldCheck,
     label: "Safe",
   },
   low: {
-    color: "text-blue-400",
-    bg: "bg-blue-500/10",
-    border: "border-blue-500/20",
+    color: "text-hue-blue",
+    bg: "bg-hue-blue-tint/10",
+    border: "border-hue-blue-tint/20",
     icon: ShieldCheck,
     label: "Low Risk",
   },
   medium: {
-    color: "text-amber-400",
-    bg: "bg-amber-500/10",
-    border: "border-amber-500/20",
+    color: "text-hue-amber",
+    bg: "bg-hue-amber-tint/10",
+    border: "border-hue-amber-tint/20",
     icon: TriangleAlert,
     label: "Medium Risk",
   },
   high: {
-    color: "text-orange-400",
-    bg: "bg-orange-500/10",
-    border: "border-orange-500/20",
+    color: "text-hue-orange",
+    bg: "bg-hue-orange-tint/10",
+    border: "border-hue-orange-tint/20",
     icon: ShieldAlert,
     label: "High Risk",
   },
   critical: {
-    color: "text-red-400",
-    bg: "bg-red-500/10",
-    border: "border-red-500/20",
+    color: "text-hue-red",
+    bg: "bg-hue-red-tint/10",
+    border: "border-hue-red-tint/20",
     icon: ShieldAlert,
     label: "Critical Risk",
   },
@@ -123,18 +123,9 @@ export function QuerySafetyDialog({
     return readsSqlText(type) && hasUnterminatedSpan(query, resolveSqlGrammar(type));
   }, [query, databaseType]);
 
-  useEffect(() => {
-    if (isOpen && query) {
-      analyzeQuery();
-    }
-    return () => {
-      setAnalysis(null);
-      setRawResponse("");
-      setError(null);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, query]);
-
+  // Declared above the effect that calls it: react-compiler
+  // (react-hooks/immutability) rejects reading a `const` binding from a position
+  // earlier than its declaration. Pure code motion - no hook order changes.
   const analyzeQuery = async () => {
     setIsAnalyzing(true);
     setError(null);
@@ -200,6 +191,18 @@ export function QuerySafetyDialog({
     }
   };
 
+  useEffect(() => {
+    if (isOpen && query) {
+      analyzeQuery();
+    }
+    return () => {
+      setAnalysis(null);
+      setRawResponse("");
+      setError(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, query]);
+
   if (!isOpen) return null;
 
   const risk = analysis ? RISK_CONFIG[analysis.riskLevel] || RISK_CONFIG.medium : null;
@@ -210,7 +213,7 @@ export function QuerySafetyDialog({
       <div className="bg-overlay border border-hairline-strong rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3 border-b border-hairline">
           <div className="flex items-center gap-2">
-            <ShieldAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-amber-400" />
+            <ShieldAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-warning" />
             <span className="text-xs font-medium text-fg">Query Safety Check</span>
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-fill text-fg-muted">
@@ -231,10 +234,10 @@ export function QuerySafetyDialog({
             whose reading stopped early may not describe what the statement does.
           */}
           {unreadableRun && (
-            <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
-              <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" />
+            <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-warning-tint/10 border border-warning-tint/20">
+              <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-warning" />
               <div>
-                <span className="text-xs font-medium text-amber-400">Part of this statement could not be read</span>
+                <span className="text-xs font-medium text-warning">Part of this statement could not be read</span>
                 <p className="text-xs text-fg-tertiary mt-0.5">
                   A quoted, commented or bracketed run in it never closes (or its closing quote sits behind a backslash,
                   which dialects read differently), so nothing written after that point could be checked. It may hide a
@@ -252,7 +255,9 @@ export function QuerySafetyDialog({
           )}
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-400">{error}</div>
+            <div className="bg-danger-tint/10 border border-danger-tint/20 rounded-lg p-3 text-xs text-danger">
+              {error}
+            </div>
           )}
 
           {analysis && risk && (
@@ -273,10 +278,10 @@ export function QuerySafetyDialog({
                       className={cn(
                         "px-3 py-2 rounded-lg border text-xs",
                         w.severity === "critical"
-                          ? "bg-red-500/5 border-red-500/20"
+                          ? "bg-danger-tint/5 border-danger-tint/20"
                           : w.severity === "warning"
-                            ? "bg-amber-500/5 border-amber-500/20"
-                            : "bg-blue-500/5 border-blue-500/20",
+                            ? "bg-warning-tint/5 border-warning-tint/20"
+                            : "bg-brand-tint/5 border-brand-tint/20",
                       )}
                     >
                       <p className="font-medium text-fg-secondary">{w.message}</p>
@@ -327,8 +332,8 @@ export function QuerySafetyDialog({
             className={cn(
               "px-4 py-2 rounded-lg text-white text-xs font-medium transition-colors flex items-center gap-1.5",
               analysis?.riskLevel === "critical" || analysis?.riskLevel === "high"
-                ? "bg-red-600 hover:bg-red-500"
-                : "bg-blue-600 hover:bg-blue-500",
+                ? "bg-danger-solid hover:bg-danger-solid-hover"
+                : "bg-brand-solid hover:bg-brand-solid-hover",
               isAnalyzing && "opacity-50 cursor-not-allowed",
             )}
           >

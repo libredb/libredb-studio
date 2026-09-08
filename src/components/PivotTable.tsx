@@ -214,7 +214,7 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
               className={cn(
                 "px-1.5 py-0.5 rounded text-xs font-medium transition-colors",
                 aggFunction === fn
-                  ? "bg-blue-500/20 text-blue-400 border border-blue-500/20"
+                  ? "bg-brand-tint/20 text-brand border border-brand-tint/20"
                   : "text-fg-subtle hover:text-fg-tertiary",
               )}
             >
@@ -229,7 +229,7 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
               const sql = generateSQL();
               if (sql) onLoadQuery(sql);
             }}
-            className="ml-auto flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-fg-muted hover:text-blue-400 hover:bg-blue-500/10 transition-colors"
+            className="ml-auto flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-fg-muted hover:text-brand hover:bg-brand-tint/10 transition-colors"
           >
             <ArrowRight strokeWidth={1.5} className="w-3 h-3" /> Generate SQL
           </button>
@@ -256,10 +256,10 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
             </thead>
             <tbody>
               {pivotData.pivotRows.map((row, i) => (
-                <tr key={i} className="hover:bg-blue-500/[0.03] border-b border-hairline">
+                <tr key={i} className="hover:bg-brand-tint/[0.03] border-b border-hairline">
                   <td className="px-3 py-1.5 text-fg-secondary border-r border-hairline font-medium">{row.rowKey}</td>
                   {pivotData.colKeys.map((ck) => (
-                    <td key={ck} className="px-3 py-1.5 text-right text-amber-500/90 border-r border-hairline">
+                    <td key={ck} className="px-3 py-1.5 text-right text-hue-amber/90 border-r border-hairline">
                       {row.values.get(ck) || "0"}
                     </td>
                   ))}

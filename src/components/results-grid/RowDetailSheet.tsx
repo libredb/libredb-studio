@@ -108,8 +108,8 @@ export function RowDetailSheet({
         <SheetHeader className="pb-4 border-b border-hairline">
           <div className="flex items-center justify-between">
             <SheetTitle className="text-fg flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                <FileBraces strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
+              <div className="w-8 h-8 rounded-lg bg-brand-tint/10 flex items-center justify-center">
+                <FileBraces strokeWidth={1.5} className="w-3.5 h-3.5 text-brand" />
               </div>
               Row #{rowIndex + 1}
             </SheetTitle>
@@ -121,12 +121,12 @@ export function RowDetailSheet({
             >
               {copyOutcome?.key === "__all__" && copyOutcome.copied && (
                 <>
-                  <Check strokeWidth={1.5} className="w-3 h-3 mr-1 text-emerald-400" /> Copied
+                  <Check strokeWidth={1.5} className="w-3 h-3 mr-1 text-success" /> Copied
                 </>
               )}
               {copyOutcome?.key === "__all__" && !copyOutcome.copied && (
                 <>
-                  <TriangleAlert strokeWidth={1.5} className="w-3 h-3 mr-1 text-amber-400" /> Copy failed
+                  <TriangleAlert strokeWidth={1.5} className="w-3 h-3 mr-1 text-warning" /> Copy failed
                 </>
               )}
               {copyOutcome?.key !== "__all__" && (
@@ -150,7 +150,7 @@ export function RowDetailSheet({
                     <div className="flex-1 min-w-0">
                       <p className="text-xs text-fg-muted mb-1 font-mono flex items-center gap-1">
                         {field}
-                        {isMasked && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-purple-400" />}
+                        {isMasked && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-purple" />}
                       </p>
                       <p
                         className={cn(
@@ -172,7 +172,7 @@ export function RowDetailSheet({
                           onClick={() => revealField(field)}
                           title="Reveal value (10s)"
                         >
-                          <Eye className="w-3.5 h-3.5 text-purple-400" />
+                          <Eye className="w-3.5 h-3.5 text-hue-purple" />
                         </Button>
                       )}
                       <Button
@@ -182,10 +182,10 @@ export function RowDetailSheet({
                         onClick={() => copyValue(field, row[field])}
                       >
                         {copyOutcome?.key === field && copyOutcome.copied && (
-                          <Check strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />
+                          <Check strokeWidth={1.5} className="w-3.5 h-3.5 text-success" />
                         )}
                         {copyOutcome?.key === field && !copyOutcome.copied && (
-                          <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-amber-400" />
+                          <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-warning" />
                         )}
                         {copyOutcome?.key !== field && <Copy strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-muted" />}
                       </Button>

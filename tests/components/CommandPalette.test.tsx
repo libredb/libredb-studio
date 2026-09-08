@@ -73,8 +73,8 @@ mock.module("@/lib/db-ui-config", () => ({
     MockDBIcon.displayName = "MockDBIcon";
     return MockDBIcon;
   },
-  getDBConfig: () => ({ icon: () => null, color: "text-blue-400", label: "PostgreSQL", defaultPort: "5432" }),
-  getDBColor: () => "text-blue-400",
+  getDBConfig: () => ({ icon: () => null, color: "text-hue-blue", label: "PostgreSQL", defaultPort: "5432" }),
+  getDBColor: () => "text-hue-blue",
 }));
 
 import { describe, test, expect, afterEach } from "bun:test";

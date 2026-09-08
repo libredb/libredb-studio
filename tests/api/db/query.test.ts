@@ -506,3 +506,194 @@ describe("POST /api/db/query — the editor path stays outside the agent policy 
     expect(gated).toEqual([]);
   });
 });
+
+// ─── Server-built EXPLAIN (#574) ────────────────────────────────────────────
+//
+// The Explain panel used to build the EXPLAIN statement in the browser from the
+// static `explainFormat` that `POST /api/db/provider-meta` answers WITHOUT
+// connecting (#457). On the MySQL wire family the accepted form is only knowable
+// once connected: measured 2026-09-06, `EXPLAIN FORMAT=JSON SELECT 1` is errno
+// 1105 on TiDB v8.5.1 ("explain format 'json' is not supported now") and Apache
+// Doris 4.1.3 ("mismatched input '='"), and errno 1064 on StarRocks 3.3.22 and
+// SingleStore, while plain `EXPLAIN SELECT 1` is accepted on all of them. So the
+// statement is built here, where the CONNECTED provider is, and the client sends
+// the original statement plus the mode it wants.
+describe("POST /api/db/query with an explain request", () => {
+  const explainCapableProvider = () => createMockProvider({ capabilities: { explainFormat: "postgres-json" } });
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockClear();
+    (mockProvider.query as ReturnType<typeof mock>).mockClear();
+    mockGetSession.mockClear();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+  });
+
+  test("runs the statement the connected provider's strategy builds and names the format", async () => {
+    const provider = explainCapableProvider();
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: {
+        connection: validConnection,
+        sql: "SELECT * FROM users",
+        options: {},
+        explain: { mode: "estimate" },
+      },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ explainFormat: string }>(res);
+
+    expect(res.status).toBe(200);
+    expect(provider.query).toHaveBeenCalledWith(
+      "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users LIMIT 50",
+      undefined,
+    );
+    expect(data.explainFormat).toBe("postgres-json");
+  });
+
+  test("returns 400 and runs nothing when the provider declares no EXPLAIN support", async () => {
+    const provider = createMockProvider({ capabilities: { supportsExplain: false, explainFormat: "postgres-json" } });
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1", explain: { mode: "analyze" } },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("This server does not support EXPLAIN");
+    expect(provider.query).not.toHaveBeenCalled();
+  });
+
+  test("returns 400 and runs nothing when the provider declares no explain format", async () => {
+    // supportsExplain true with no format is the Elasticsearch shape: the button is
+    // hidden because no format is declared, so a request for one is still refused.
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1", explain: { mode: "analyze" } },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("This server does not support EXPLAIN");
+    expect(mockProvider.query).not.toHaveBeenCalled();
+  });
+
+  test("returns 400 and runs nothing when the provider names a format this build does not register", async () => {
+    // `getExplainStrategy` indexes a Record, so a format outside the union comes back as
+    // undefined rather than null. A strict null check let that fall through to
+    // `strategy.buildSql` and a TypeError, which the error mapper reports as a 500 with
+    // no sentence a user can act on. Unreachable from this repo's providers today; an
+    // external implementer of the published interface can declare anything.
+    const provider = createMockProvider({
+      capabilities: { supportsExplain: true, explainFormat: "oracle-hierarchy" as never },
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1", explain: { mode: "analyze" } },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("This server does not support EXPLAIN");
+    expect(provider.query).not.toHaveBeenCalled();
+  });
+
+  test("returns 400 and runs nothing for a statement the strategy declines", async () => {
+    const provider = explainCapableProvider();
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: {
+        connection: validConnection,
+        sql: "UPDATE users SET name = 'x'",
+        explain: { mode: "analyze" },
+      },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Only SELECT statements can be explained");
+    expect(provider.query).not.toHaveBeenCalled();
+  });
+
+  test("binds an explain request's parameters to the statement the strategy built", async () => {
+    // The strategies only PREFIX the statement, so the built statement carries the
+    // same placeholders in the same order and the same values bind them. This is the
+    // contract PR #304 relied on when the browser still built the EXPLAIN itself:
+    // without it, every generated statement that sends its values separately would
+    // lose its plan.
+    const provider = explainCapableProvider();
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: {
+        connection: validConnection,
+        sql: "SELECT * FROM users WHERE id = $1",
+        options: {},
+        params: [7],
+        explain: { mode: "estimate" },
+      },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ explainFormat: string }>(res);
+
+    expect(res.status).toBe(200);
+    expect(provider.query).toHaveBeenCalledWith(
+      "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users WHERE id = $1 LIMIT 50",
+      [7],
+    );
+    expect(data.explainFormat).toBe("postgres-json");
+  });
+
+  test.each([
+    ["a missing mode", {}],
+    ["an unknown mode", { mode: "profile" }],
+    ["a non-object explain", "estimate"],
+    ["a null explain", null],
+  ])("returns 400 for %s", async (_label, explain) => {
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1", explain },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toContain("explain");
+    expect(mockProvider.query).not.toHaveBeenCalled();
+  });
+
+  test("a request without an explain field runs the statement and names no format", async () => {
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM users" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(200);
+    expect(mockProvider.query).toHaveBeenCalledWith("SELECT * FROM users LIMIT 50", undefined);
+    expect("explainFormat" in data).toBe(false);
+  });
+});

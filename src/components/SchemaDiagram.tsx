@@ -353,7 +353,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
   if (schema.length === 0) {
     return (
       <div className="absolute inset-0 z-50 bg-canvas flex flex-col items-center justify-center">
-        <LoaderCircle strokeWidth={1.5} className="w-8 h-8 text-blue-500 animate-spin mb-4" />
+        <LoaderCircle strokeWidth={1.5} className="w-8 h-8 text-brand animate-spin mb-4" />
         <p className="text-fg-muted text-xs">Generating ERD Diagram...</p>
       </div>
     );
@@ -435,7 +435,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
                 <Button
                   variant="outline"
                   size="sm"
-                  className={`bg-raised border-hairline-strong hover:bg-fill text-xs ${compactMode ? "text-blue-400" : ""}`}
+                  className={`bg-raised border-hairline-strong hover:bg-fill text-xs ${compactMode ? "text-brand" : ""}`}
                   onClick={() => setCompactMode(!compactMode)}
                 >
                   {compactMode ? "Detail" : "Compact"}
@@ -455,7 +455,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
             <Panel position="top-left" className="p-4">
               <div className="bg-raised/80 backdrop-blur-md border border-hairline-strong p-3 rounded-xl shadow-2xl space-y-2">
                 <h3 className="text-xs font-medium text-fg mb-1 flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                  <div className="w-2 h-2 rounded-full bg-brand-tint animate-pulse" />
                   ERD Visualizer
                 </h3>
                 <div className="flex items-center gap-3 text-xs text-fg-muted">
@@ -480,13 +480,13 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
                     placeholder="Filter tables..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-7 pr-2 py-1.5 bg-fill border border-hairline-strong rounded text-xs text-fg-secondary placeholder:text-fg-subtle focus:outline-none focus:border-blue-500/50"
+                    className="w-full pl-7 pr-2 py-1.5 bg-fill border border-hairline-strong rounded text-xs text-fg-secondary placeholder:text-fg-subtle focus:outline-none focus:border-brand-tint/50"
                   />
                 </div>
 
                 {/* No FK warning */}
                 {showHeuristicWarning && (
-                  <div className="flex items-start gap-1.5 text-[0.625rem] text-amber-500/80">
+                  <div className="flex items-start gap-1.5 text-[0.625rem] text-warning/80">
                     <Info strokeWidth={1.5} className="w-3 h-3 mt-0.5 shrink-0" />
                     <span>{heuristicWarningText}</span>
                   </div>
@@ -494,7 +494,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
 
                 {/* Selected node info */}
                 {selectedNode && (
-                  <div className="text-xs text-blue-400 border-t border-hairline pt-2">
+                  <div className="text-xs text-brand border-t border-hairline pt-2">
                     Selected: <span className="font-mono font-medium">{selectedNode}</span>
                     <button onClick={() => selectTable(null)} className="ml-2 text-fg-subtle hover:text-fg-tertiary">
                       clear
@@ -509,7 +509,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
               transform is temporarily swapped for the fit-all capture. */}
           {exporting && (
             <div className="absolute inset-0 z-50 bg-canvas/85 flex flex-col items-center justify-center gap-2">
-              <LoaderCircle strokeWidth={1.5} className="w-6 h-6 text-blue-500 animate-spin" />
+              <LoaderCircle strokeWidth={1.5} className="w-6 h-6 text-brand animate-spin" />
               <p className="text-fg-muted text-xs">Exporting {exporting.toUpperCase()}...</p>
             </div>
           )}

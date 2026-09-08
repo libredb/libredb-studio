@@ -26,7 +26,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
       initial={false}
       className={cn(
         "group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 text-xs relative overflow-hidden",
-        isActive ? "bg-blue-600/10 text-blue-400" : "hover:bg-accent/50 text-muted-foreground hover:text-foreground",
+        isActive ? "bg-brand-solid/10 text-brand" : "hover:bg-accent/50 text-muted-foreground hover:text-foreground",
       )}
       onClick={() => onSelect(conn)}
     >
@@ -38,7 +38,10 @@ export const ConnectionItem = React.memo(function ConnectionItem({
         />
       )}
       <div
-        className={cn("p-1 rounded transition-colors", isActive ? "bg-blue-500/20" : "bg-muted group-hover:bg-accent")}
+        className={cn(
+          "p-1 rounded transition-colors",
+          isActive ? "bg-brand-tint/20" : "bg-muted group-hover:bg-accent",
+        )}
       >
         {React.createElement(getDBIcon(conn.type), { className: "w-3 h-3" })}
       </div>
@@ -62,7 +65,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
         {conn.managed && (
           <div
             data-testid={`managed-lock-${conn.seedId || conn.id}`}
-            className="flex items-center justify-center text-amber-500/60"
+            className="flex items-center justify-center text-warning/60"
             title="Managed by administrator"
           >
             <Lock strokeWidth={1.5} className="w-3 h-3" />
@@ -70,7 +73,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
         )}
         {!conn.managed && onEdit && (
           <button
-            className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-500/20 hover:text-blue-400"
+            className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-brand-tint/20 hover:text-brand"
             onClick={(e) => {
               e.stopPropagation();
               onEdit(conn);
@@ -81,7 +84,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
         )}
         {!conn.managed && (
           <button
-            className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
+            className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-danger-tint/20 hover:text-danger"
             onClick={(e) => {
               e.stopPropagation();
               onDelete(conn.id);

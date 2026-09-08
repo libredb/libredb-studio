@@ -807,10 +807,10 @@ describe("useQueryExecution", () => {
   });
 
   test("executeQuery binds the same parameters in the background explain request", async () => {
-    // The explain SQL is the statement with a prefix, so its placeholders are the
-    // same ones in the same order. Sending it without the values would run it
-    // unbound — the plan request fails and the panel keeps the previous plan
-    // (PR #304 review).
+    // The server prefixes the statement to build the EXPLAIN (#574), so its
+    // placeholders are the same ones in the same order. Sending the plan request
+    // without the values would run it unbound: the request fails and the panel keeps
+    // the previous plan (PR #304 review).
     const fetchMock = mockGlobalFetch({
       "/api/db/query": { ok: true, json: mockQueryResult },
     });
@@ -825,10 +825,12 @@ describe("useQueryExecution", () => {
 
     const explainCall = fetchMock.mock.calls.find((call) => {
       const body = JSON.parse((call[1] as RequestInit).body as string);
-      return typeof body.sql === "string" && body.sql.startsWith("EXPLAIN");
+      return body.explain !== undefined;
     });
     expect(explainCall).toBeDefined();
-    expect(JSON.parse((explainCall![1] as RequestInit).body as string).params).toEqual([7]);
+    const explainBody = JSON.parse((explainCall![1] as RequestInit).body as string);
+    expect(explainBody.sql).toBe("SELECT * FROM users WHERE id = $1");
+    expect(explainBody.params).toEqual([7]);
   });
 
   test("executeQuery keeps a parameterized statement off the multi-statement route", async () => {
@@ -1373,9 +1375,14 @@ describe("useQueryExecution", () => {
     expect(body.sql).toBe("SELECT 42");
   });
 
-  // ── executeQuery with EXPLAIN builds correct query for mysql ───────────
+  // ── the explain run asks for a mode and sends the original statement ────
 
-  test("executeQuery builds EXPLAIN FORMAT=JSON for mysql", async () => {
+  test("executeQuery with isExplain posts the original statement and asks for the analyze mode", async () => {
+    // The browser stopped building the EXPLAIN statement (#574): on the MySQL wire
+    // family the accepted form is only knowable once connected (measured 2026-09-06:
+    // `EXPLAIN FORMAT=JSON SELECT 1` is errno 1105 on TiDB v8.5.1 and Doris 4.1.3 and
+    // errno 1064 on StarRocks 3.3.22, while plain `EXPLAIN SELECT 1` is accepted on
+    // all of them), and provider-meta answers without connecting (#457).
     const fetchMock = mockGlobalFetch({
       "/api/db/query": {
         ok: true,
@@ -1400,7 +1407,101 @@ describe("useQueryExecution", () => {
     );
     expect(queryCall).toBeDefined();
     const body = JSON.parse(queryCall![1]!.body as string);
-    expect(body.sql).toContain("EXPLAIN FORMAT=JSON");
+    expect(body.sql).toBe("SELECT * FROM users");
+    expect(body.explain).toEqual({ mode: "analyze" });
+  });
+
+  test("executeQuery posts the original statement and the estimate mode for the background plan", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+
+    const planCall = fetchMock.mock.calls.find((call) => {
+      const body = JSON.parse((call[1] as RequestInit).body as string);
+      return body.explain !== undefined;
+    });
+    expect(planCall).toBeDefined();
+    const body = JSON.parse((planCall![1] as RequestInit).body as string);
+    expect(body.sql).toBe("SELECT * FROM users");
+    expect(body.explain).toEqual({ mode: "estimate" });
+  });
+
+  test("the stored plan carries the format the response names, not the static one", async () => {
+    // The server built the statement, so only it knows which form the engine
+    // accepted. A MySQL-wire relative that refused `FORMAT=JSON` answers a plain
+    // plan, and the plan must be read by the strategy that matches it.
+    mockGlobalFetch({
+      "/api/db/query": {
+        ok: true,
+        json: {
+          rows: [{ id: 2, parent: 0, notused: 0, detail: "SCAN users" }],
+          fields: ["id", "parent", "notused", "detail"],
+          rowCount: 1,
+          executionTime: 5,
+          explainFormat: "sqlite-queryplan",
+        },
+      },
+    });
+
+    const snapshots: QueryTab[][] = [];
+    const setTabsMock = mock((fn: unknown) => {
+      if (typeof fn === "function") snapshots.push((fn as (t: QueryTab[]) => QueryTab[])([createTab()]));
+    });
+    const params = createDefaultParams({ setTabs: setTabsMock });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users", undefined, true);
+    });
+
+    const tabWithPlan = snapshots.map((snapshot) => snapshot[0]).find((t) => t.explainPlan);
+    expect(tabWithPlan?.explainPlan).toEqual({
+      format: "sqlite-queryplan",
+      raw: [{ id: 2, parent: 0, notused: 0, detail: "SCAN users" }],
+    });
+  });
+
+  // "constructor" is the second case on purpose: the registry is an object literal,
+  // so an inherited key resolves to a truthy value that is not a strategy, and
+  // reading `.format` or `.extractPlan` off it would throw.
+  test.each([
+    ["a format this build does not register", "oracle-hierarchy"],
+    ["an inherited key", "constructor"],
+  ])("%s falls back to the static strategy", async (_label, explainFormat) => {
+    mockGlobalFetch({
+      "/api/db/query": {
+        ok: true,
+        json: {
+          rows: [{ "QUERY PLAN": [{ Plan: { "Node Type": "Seq Scan" } }] }],
+          fields: ["QUERY PLAN"],
+          rowCount: 1,
+          executionTime: 5,
+          explainFormat,
+        },
+      },
+    });
+
+    const snapshots: QueryTab[][] = [];
+    const setTabsMock = mock((fn: unknown) => {
+      if (typeof fn === "function") snapshots.push((fn as (t: QueryTab[]) => QueryTab[])([createTab()]));
+    });
+    const params = createDefaultParams({ setTabs: setTabsMock });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users", undefined, true);
+    });
+
+    const tabWithPlan = snapshots.map((snapshot) => snapshot[0]).find((t) => t.explainPlan);
+    expect((tabWithPlan?.explainPlan as { format?: string } | undefined)?.format).toBe("postgres-json");
   });
 
   // ── executeQuery EXPLAIN refuses non-SELECT ────────────────────────────
@@ -1765,8 +1866,10 @@ describe("useQueryExecution", () => {
 
     mockGlobalFetch({
       "/api/db/query": async (req) => {
-        const body = (await req.json()) as { sql: string };
-        if (!body.sql.toUpperCase().startsWith("EXPLAIN")) {
+        const body = (await req.json()) as { sql: string; explain?: { mode: string } };
+        // The plan request is the one that ASKS for a plan: the statement it posts
+        // is the user's own, since the EXPLAIN is built on the server now (#574).
+        if (body.explain === undefined) {
           return { ok: true, json: mockQueryResult };
         }
         explainCount += 1;
@@ -2087,7 +2190,9 @@ describe("useQueryExecution", () => {
       return calls;
     }
 
-    const isExplain = (c: DeferredCall) => typeof c.body.sql === "string" && c.body.sql.startsWith("EXPLAIN");
+    // A plan request is the one that ASKS for a plan: the statement it posts is the
+    // user's own, because the EXPLAIN is built on the server now (#574).
+    const isExplain = (c: DeferredCall) => c.body.explain !== undefined;
     const mainCalls = (calls: DeferredCall[]) => calls.filter((c) => c.url.includes("/api/db/query") && !isExplain(c));
     const explainCalls = (calls: DeferredCall[]) => calls.filter(isExplain);
 
@@ -2347,7 +2452,7 @@ describe("useQueryExecution", () => {
       globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         const body = init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : {};
-        if (url.includes("/api/db/query") && typeof body.sql === "string" && body.sql.startsWith("EXPLAIN")) {
+        if (url.includes("/api/db/query") && body.explain !== undefined) {
           return Promise.reject(new TypeError("network down"));
         }
         return Promise.resolve(
@@ -2376,8 +2481,7 @@ describe("useQueryExecution", () => {
       globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         const body = init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : {};
-        const isPlanRequest =
-          url.includes("/api/db/query") && typeof body.sql === "string" && body.sql.startsWith("EXPLAIN");
+        const isPlanRequest = url.includes("/api/db/query") && body.explain !== undefined;
         return Promise.resolve(
           new Response(isPlanRequest ? "<html>gateway timeout</html>" : JSON.stringify(mockQueryResult), {
             status: 200,

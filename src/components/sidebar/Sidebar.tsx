@@ -63,7 +63,7 @@ export function Sidebar({
     <div className="flex w-full h-full border-r border-border flex-col bg-background select-none">
       <div className="h-14 px-4 flex items-center justify-between border-b border-border">
         <div className="flex items-center gap-2">
-          <div className="w-5 h-5 bg-blue-600 rounded flex items-center justify-center">
+          <div className="w-5 h-5 bg-brand-solid rounded flex items-center justify-center">
             <Zap strokeWidth={1.5} className="w-3 h-3 text-white fill-current" />
           </div>
           <span className="font-medium text-xs tracking-tight bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-transparent">
@@ -123,7 +123,7 @@ export function Sidebar({
       <div className="p-3 border-t border-border bg-card/50 backdrop-blur-md">
         <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-muted/30 border border-border/50">
           <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+            <div className="w-1.5 h-1.5 rounded-full bg-hue-green-tint animate-pulse" />
             <span className="text-xs font-medium text-muted-foreground">Connected</span>
           </div>
           <div className="flex items-center gap-2">

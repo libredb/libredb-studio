@@ -199,16 +199,16 @@ function analyzePlan(plan: ExplainPlanResult[]): PlanAnalysis {
 // ============================================================================
 
 const NodeIcon = ({ type }: { type: string }) => {
-  if (type.includes("Seq Scan")) return <Search strokeWidth={1.5} className="w-3.5 h-3.5 text-amber-400" />;
+  if (type.includes("Seq Scan")) return <Search strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-amber" />;
   if (type.includes("Index Scan") || type.includes("Index Only"))
-    return <Target strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />;
-  if (type.includes("Scan")) return <Search strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />;
-  if (type.includes("Join")) return <Layers strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-400" />;
-  if (type.includes("Sort")) return <ArrowDown strokeWidth={1.5} className="w-3.5 h-3.5 text-amber-400" />;
+    return <Target strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-emerald" />;
+  if (type.includes("Scan")) return <Search strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-blue" />;
+  if (type.includes("Join")) return <Layers strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-purple" />;
+  if (type.includes("Sort")) return <ArrowDown strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-amber" />;
   if (type.includes("Limit")) return <LayoutGrid strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-tertiary" />;
   if (type.includes("Aggregate") || type.includes("Group"))
-    return <Zap strokeWidth={1.5} className="w-3.5 h-3.5 text-pink-400" />;
-  if (type.includes("Hash")) return <HardDrive strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />;
+    return <Zap strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-pink" />;
+  if (type.includes("Hash")) return <HardDrive strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-cyan" />;
   return <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-muted" />;
 };
 
@@ -217,7 +217,7 @@ const StatusBadge = ({ status }: { status: "good" | "warning" | "critical" }) =>
     <div
       className={cn(
         "w-2 h-2 rounded-full",
-        status === "good" ? "bg-emerald-500" : status === "warning" ? "bg-amber-500" : "bg-red-500",
+        status === "good" ? "bg-success-tint" : status === "warning" ? "bg-warning-tint" : "bg-danger-tint",
       )}
     />
   );
@@ -259,7 +259,10 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
 
         {/* Icon */}
         <div
-          className={cn("p-1 rounded", isSeqScan ? "bg-amber-500/10" : isIndexScan ? "bg-emerald-500/10" : "bg-fill")}
+          className={cn(
+            "p-1 rounded",
+            isSeqScan ? "bg-hue-amber-tint/10" : isIndexScan ? "bg-hue-emerald-tint/10" : "bg-fill",
+          )}
         >
           <NodeIcon type={nodeType} />
         </div>
@@ -280,7 +283,7 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
           <span
             className={cn(
               "w-16 text-right",
-              timePercent > 50 ? "text-red-400" : timePercent > 20 ? "text-amber-400" : "text-fg-tertiary",
+              timePercent > 50 ? "text-danger" : timePercent > 20 ? "text-warning" : "text-fg-tertiary",
             )}
           >
             {formatTime(actualTime)}
@@ -290,7 +293,7 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
             <div
               className={cn(
                 "h-full rounded-full transition-all",
-                timePercent > 50 ? "bg-red-500" : timePercent > 20 ? "bg-amber-500" : "bg-blue-500",
+                timePercent > 50 ? "bg-danger-tint" : timePercent > 20 ? "bg-warning-tint" : "bg-brand-tint",
               )}
               style={{ width: `${Math.min(timePercent, 100)}%` }}
             />
@@ -304,15 +307,15 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
           {/* Filter info */}
           {node["Filter"] && (
             <div className="flex items-start gap-2 py-1 text-xs">
-              <span className="text-amber-500/70 font-medium shrink-0">Filter:</span>
+              <span className="text-hue-amber/70 font-medium shrink-0">Filter:</span>
               <span className="text-fg-muted font-mono break-all">{node["Filter"]}</span>
             </div>
           )}
           {/* Index info */}
           {node["Index Name"] && (
             <div className="flex items-center gap-2 py-1 text-xs">
-              <span className="text-emerald-500/70 font-medium">Index:</span>
-              <span className="text-emerald-400 font-mono">{node["Index Name"]}</span>
+              <span className="text-hue-emerald/70 font-medium">Index:</span>
+              <span className="text-hue-emerald font-mono">{node["Index Name"]}</span>
             </div>
           )}
           {/* Buffer stats */}
@@ -369,9 +372,17 @@ const TreeNodeView = ({ node, depth = 0 }: { node: ExplainTreeNode; depth?: numb
         <ListTree strokeWidth={1.5} className="w-3 h-3 text-fg-tertiary" />
       </div>
 
-      {/* Label */}
+      {/* Label, and under it whatever the engine printed ABOUT this node */}
       <div className="flex-1 min-w-0">
         <span className="text-xs font-medium text-fg truncate">{node.label}</span>
+        {/* A text plan's attributes: CockroachDB prints `table: orders@orders_pkey` and
+            `spans: FULL SCAN` under the operator they describe, TiDB carries the same
+            kind of thing in extra EXPLAIN columns, and `detail` is where both land.
+            Without this the tree would show operator names and nothing else — most of
+            what those plans say would be readable only in the raw tab (#597). */}
+        {node.detail !== undefined && (
+          <span className="block text-[11px] font-mono text-fg-muted truncate">{node.detail}</span>
+        )}
       </div>
 
       {/* Metric badges — only when the node actually carries metrics */}
@@ -537,7 +548,7 @@ function AIExplainTab({
                 className={cn(
                   "text-xs font-mono p-3 rounded-lg overflow-x-auto border",
                   isSql
-                    ? "bg-blue-500/5 border-blue-500/10 text-blue-300"
+                    ? "bg-brand-tint/5 border-brand-tint/10 text-brand-bright"
                     : "bg-fill-subtle border-hairline text-fg-tertiary",
                 )}
               >
@@ -546,7 +557,7 @@ function AIExplainTab({
               {isSql && onLoadQuery && (
                 <button
                   onClick={() => onLoadQuery(content)}
-                  className="absolute top-2 right-2 opacity-0 group-hover/code:opacity-100 transition-opacity px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium flex items-center gap-1"
+                  className="absolute top-2 right-2 opacity-0 group-hover/code:opacity-100 transition-opacity px-2 py-1 rounded bg-brand-solid hover:bg-brand-solid-hover text-white text-xs font-medium flex items-center gap-1"
                 >
                   <Play strokeWidth={1.5} className="w-3 h-3" /> Try This
                 </button>
@@ -593,7 +604,7 @@ function AIExplainTab({
         const num = line.match(/^(\d+)\./)?.[1];
         elements.push(
           <div key={idx} className="flex items-start gap-2 text-xs text-fg-tertiary leading-relaxed ml-2 my-0.5">
-            <span className="text-blue-400 font-medium mt-0 shrink-0 w-4">{num}.</span>
+            <span className="text-brand font-medium mt-0 shrink-0 w-4">{num}.</span>
             <span>{renderInlineFormatting(line.replace(/^\d+\.\s*/, ""))}</span>
           </div>,
         );
@@ -624,7 +635,7 @@ function AIExplainTab({
       }
       if (part.startsWith("`") && part.endsWith("`")) {
         return (
-          <code key={i} className="text-blue-400 bg-blue-500/10 px-1 rounded text-xs font-mono">
+          <code key={i} className="text-brand bg-brand-tint/10 px-1 rounded text-xs font-mono">
             {part.slice(1, -1)}
           </code>
         );
@@ -638,7 +649,7 @@ function AIExplainTab({
     return (
       <div className="h-full flex flex-col items-center justify-center p-8 text-center">
         <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-purple-500/20 to-blue-500/10 flex items-center justify-center mb-4">
-          <Sparkles strokeWidth={1.5} className="w-7 h-7 text-purple-400" />
+          <Sparkles strokeWidth={1.5} className="w-7 h-7 text-hue-purple" />
         </div>
         <h3 className="text-xs font-medium text-fg mb-1">AI Query Analysis</h3>
         <p className="text-xs text-fg-muted max-w-[280px] leading-relaxed mb-4">
@@ -650,7 +661,7 @@ function AIExplainTab({
           className={cn(
             "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-all",
             query
-              ? "bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/20"
+              ? "bg-hue-purple-solid hover:bg-hue-purple-solid-hover text-white shadow-lg shadow-purple-900/20"
               : "bg-fill text-fg-subtle cursor-not-allowed",
           )}
         >
@@ -667,8 +678,8 @@ function AIExplainTab({
       {/* Re-analyze button */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-hairline bg-surface">
         <div className="flex items-center gap-2">
-          <Sparkles strokeWidth={1.5} className="w-3 h-3 text-purple-400" />
-          <span className="text-xs font-medium text-purple-400">AI Analysis</span>
+          <Sparkles strokeWidth={1.5} className="w-3 h-3 text-hue-purple" />
+          <span className="text-xs font-medium text-hue-purple">AI Analysis</span>
         </div>
         <button
           onClick={analyzeWithAI}
@@ -687,7 +698,7 @@ function AIExplainTab({
       {/* Content */}
       <div className="flex-1 overflow-auto p-4">
         {error && (
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/5 border border-red-500/10 text-red-400 text-xs mb-4">
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-danger-tint/5 border border-danger-tint/10 text-danger text-xs mb-4">
             <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
             {error}
           </div>
@@ -697,7 +708,7 @@ function AIExplainTab({
 
         {isLoading && !aiResponse && (
           <div className="flex items-center gap-3 text-fg-muted text-xs">
-            <LoaderCircle strokeWidth={1.5} className="w-3.5 h-3.5 animate-spin text-purple-400" />
+            <LoaderCircle strokeWidth={1.5} className="w-3.5 h-3.5 animate-spin text-hue-purple" />
             <span>Analyzing execution plan...</span>
           </div>
         )}
@@ -718,6 +729,18 @@ function AIExplainTab({
 // ============================================================================
 
 type ExplainTab = "insights" | "tree" | "raw" | "ai";
+
+/**
+ * The raw tab shows what the engine sent. That is JSON for every format but one:
+ * `mysql-text` stores the plan as PLAIN TEXT, because the MySQL-wire relatives that
+ * refuse `EXPLAIN FORMAT=JSON` print a text or tabular plan instead (measured
+ * 2026-09-06: StarRocks 3.3.22 `EXPLAIN SELECT 1` answers 13 rows of one text column,
+ * Apache Doris 4.1.3 answers 17). Stringifying that would show one quoted line with
+ * escaped newlines instead of the plan.
+ */
+function formatRawPlan(raw: unknown): string {
+  return typeof raw === "string" ? raw : JSON.stringify(raw, null, 2);
+}
 
 // First entry is the kind's default tab. No "insights" for tree plans —
 // analyzePlan's heuristics key off postgres-only fields (Actual Rows, Total
@@ -814,7 +837,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
           ) : (
             <div className="flex items-center gap-6">
               <div className="flex items-center gap-2">
-                <Clock strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
+                <Clock strokeWidth={1.5} className="w-3 h-3 text-brand" />
                 <span className="text-xs font-medium text-fg">{formatTime(analysis?.executionTime || 0)}</span>
                 <span className="text-xs text-fg-subtle">execution</span>
               </div>
@@ -841,7 +864,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                   "px-3 py-1 text-xs font-medium rounded-md transition-all",
                   activeTab === tab
                     ? tab === "ai"
-                      ? "bg-purple-500/20 text-purple-300"
+                      ? "bg-hue-purple-tint/20 text-hue-purple-alt"
                       : "bg-fill-strong text-fg"
                     : "text-fg-muted hover:text-fg-secondary",
                 )}
@@ -882,28 +905,28 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                     className={cn(
                       "flex items-start gap-3 p-3 rounded-lg border",
                       warning.type === "critical"
-                        ? "bg-red-500/5 border-red-500/10"
+                        ? "bg-danger-tint/5 border-danger-tint/10"
                         : warning.type === "warning"
-                          ? "bg-amber-500/5 border-amber-500/10"
-                          : "bg-blue-500/5 border-blue-500/10",
+                          ? "bg-warning-tint/5 border-warning-tint/10"
+                          : "bg-brand-tint/5 border-brand-tint/10",
                     )}
                   >
                     <div
                       className={cn(
                         "p-1 rounded",
                         warning.type === "critical"
-                          ? "bg-red-500/10"
+                          ? "bg-danger-tint/10"
                           : warning.type === "warning"
-                            ? "bg-amber-500/10"
-                            : "bg-blue-500/10",
+                            ? "bg-warning-tint/10"
+                            : "bg-brand-tint/10",
                       )}
                     >
                       {warning.type === "critical" ? (
-                        <TriangleAlert strokeWidth={1.5} className="w-3 h-3 text-red-400" />
+                        <TriangleAlert strokeWidth={1.5} className="w-3 h-3 text-danger" />
                       ) : warning.type === "warning" ? (
-                        <TriangleAlert strokeWidth={1.5} className="w-3 h-3 text-amber-400" />
+                        <TriangleAlert strokeWidth={1.5} className="w-3 h-3 text-warning" />
                       ) : (
-                        <Info strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
+                        <Info strokeWidth={1.5} className="w-3 h-3 text-brand" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -911,10 +934,10 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                         className={cn(
                           "text-xs font-medium",
                           warning.type === "critical"
-                            ? "text-red-300"
+                            ? "text-danger-bright"
                             : warning.type === "warning"
-                              ? "text-amber-300"
-                              : "text-blue-300",
+                              ? "text-warning-bright"
+                              : "text-brand-bright",
                         )}
                       >
                         {warning.title}
@@ -928,12 +951,12 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
 
             {/* No warnings */}
             {analysis && analysis.warnings.length === 0 && (
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
-                <div className="p-1 rounded bg-emerald-500/10">
-                  <CircleCheck strokeWidth={1.5} className="w-3 h-3 text-emerald-400" />
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-success-tint/5 border border-success-tint/10">
+                <div className="p-1 rounded bg-success-tint/10">
+                  <CircleCheck strokeWidth={1.5} className="w-3 h-3 text-success" />
                 </div>
                 <div>
-                  <h4 className="text-xs font-medium text-emerald-300">Query looks good</h4>
+                  <h4 className="text-xs font-medium text-success-bright">Query looks good</h4>
                   <p className="text-xs text-fg-muted">No obvious performance issues detected.</p>
                 </div>
               </div>
@@ -976,7 +999,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
         {activeTab === "raw" && (
           <div className="p-4">
             <pre className="text-xs font-mono text-fg-tertiary bg-fill-subtle rounded-lg p-4 overflow-auto border border-hairline">
-              {JSON.stringify(input.kind === "tree" ? input.raw : postgresPlan, null, 2)}
+              {formatRawPlan(input.kind === "tree" ? input.raw : postgresPlan)}
             </pre>
           </div>
         )}
