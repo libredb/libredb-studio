@@ -604,8 +604,11 @@ missing guarantee. The editor builds `UPDATE <table> SET <col> = <val> WHERE <pk
 customer_id = 3` — a plausible guess on a real table — → `Some partition key parts are missing: id`.
 
 `supportsCreateTable` is `false` for the same class of reason. `CREATE TABLE probe.t (id int PRIMARY
-KEY, name text)` works, but what `CreateTableModal` emits does not: its default column is `id SERIAL
-PRIMARY KEY` (`Unknown type probe.serial`), its type list offers `VARCHAR(255)` and `DECIMAL(10,2)`
+KEY, name text)` works, but what `CreateTableModal` emits does not: its default column is an
+auto-increment primary key, which CQL has no spelling of at all (measured as `id SERIAL PRIMARY KEY`,
+`Unknown type probe.serial`; #648 made that spelling per-engine and added no CQL row, so this id
+falls back to PostgreSQL's identity clause, which CQL does not have either), its type list offers
+`VARCHAR(255)` and `DECIMAL(10,2)`
 (syntax errors — CQL types carry no length) and `INTEGER` and `JSONB` (`Unknown type`), and its NOT
 NULL, UNIQUE and DEFAULT options are each `no viable alternative at input`. DDL typed into the editor
 works normally.

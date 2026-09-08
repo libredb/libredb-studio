@@ -446,8 +446,10 @@ describe("ClickHouseProvider metadata", () => {
 
   test("keeps supportsCreateTable false because the modal's default output is invalid here", () => {
     // Live-verified, and the reason the flag is not an oversight: the modal's
-    // default column emits `id SERIAL PRIMARY KEY` (code 50, unknown data type
-    // family) and its UNIQUE checkbox emits `UNIQUE` (code 62, syntax error).
+    // default column emits an auto-increment primary key (measured as `id SERIAL
+    // PRIMARY KEY`, code 50, unknown data type family; #648 made that spelling
+    // per-engine and added no ClickHouse row) and its UNIQUE checkbox emits `UNIQUE`
+    // (code 62, syntax error).
     expect(new ClickHouseProvider(makeConnection()).getCapabilities().supportsCreateTable).toBe(false);
   });
 

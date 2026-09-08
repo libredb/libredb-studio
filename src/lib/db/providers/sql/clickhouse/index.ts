@@ -508,8 +508,11 @@ export class ClickHouseProvider extends SQLBaseProvider {
       supportsExternalQueryLimiting: true,
       // Live-verified, and deliberate rather than an oversight: `CREATE TABLE t
       // (id Int32, name String)` succeeds on 26.x, but what CreateTableModal
-      // EMITS does not. Its default column is `id SERIAL PRIMARY KEY` (code 50,
-      // unknown data type family SERIAL) and its UNIQUE checkbox emits `UNIQUE`
+      // EMITS does not. Its default column is an auto-increment primary key (measured
+      // as `id SERIAL PRIMARY KEY`, code 50, unknown data type family SERIAL; #648 made
+      // that spelling per-engine and added no ClickHouse row, so this id falls back to
+      // PostgreSQL's identity clause, which is not a ClickHouse type either) and its
+      // UNIQUE checkbox emits `UNIQUE`
       // (code 62, syntax error), so the modal's default state produces invalid
       // SQL and it offers no ClickHouse type list. A control that can only
       // produce invalid input is not a supported capability. DDL typed into the

@@ -496,7 +496,7 @@ The real blocker is what `CreateTableModal` actually emits:
 
 | Modal output | ClickHouse result (live-verified) |
 |---|---|
-| `id SERIAL PRIMARY KEY` (the modal's **default** column) | `Code: 50 ... Unknown data type family: SERIAL` |
+| `id SERIAL PRIMARY KEY` (the modal's **default** column when this was measured; #648 made the spelling per-engine and added no ClickHouse row, so it falls back to PostgreSQL's identity clause — also not a ClickHouse type) | `Code: 50 ... Unknown data type family: SERIAL` |
 | `email VARCHAR(255) UNIQUE` | `Code: 62 ... Syntax error ... (UNIQUE)` |
 | `id Int32 PRIMARY KEY, name VARCHAR(255) NOT NULL` | works — `VARCHAR(255)` aliases to `String` |
 

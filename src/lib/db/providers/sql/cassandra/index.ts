@@ -219,8 +219,11 @@ export class CassandraProvider extends SQLBaseProvider {
       supportsExplain: false,
       supportsExternalQueryLimiting: true,
       // In the grammar - `CREATE TABLE probe.t (id int PRIMARY KEY, name text)` works
-      // - but what `CreateTableModal` EMITS is not: its default column is `id SERIAL
-      // PRIMARY KEY` ("Unknown type probe.serial"), its type list offers
+      // - but what `CreateTableModal` EMITS is not: its default column is an
+      // auto-increment primary key, a thing CQL has no spelling of at all (measured as
+      // `id SERIAL PRIMARY KEY`, "Unknown type probe.serial"; #648 made that spelling
+      // per-engine and added no CQL row, so this id falls back to PostgreSQL's identity
+      // clause, which CQL does not have either), its type list offers
       // `VARCHAR(255)` and `DECIMAL(10,2)` (both syntax errors, CQL types carry no
       // length) and `INTEGER` and `JSONB` (both "Unknown type"), and its NOT NULL,
       // UNIQUE and DEFAULT options are each "no viable alternative at input" - none
