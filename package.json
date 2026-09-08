@@ -1,6 +1,35 @@
 {
   "name": "@libredb/studio",
   "version": "0.15.0",
+  "description": "The database editor that deploys next to your data, not onto your laptop.",
+  "keywords": [
+    "sql",
+    "sql-ide",
+    "database-gui",
+    "database-editor",
+    "self-hosted",
+    "libredb",
+    "postgresql",
+    "mysql",
+    "oracle",
+    "sql-server",
+    "sqlite",
+    "libsql",
+    "duckdb",
+    "mongodb",
+    "redis",
+    "couchbase",
+    "clickhouse",
+    "druid",
+    "elasticsearch",
+    "opensearch",
+    "trino",
+    "cassandra"
+  ],
+  "homepage": "https://github.com/libredb/libredb-studio",
+  "bugs": {
+    "url": "https://github.com/libredb/libredb-studio/issues"
+  },
   "license": "MIT",
   "private": false,
   "publishConfig": {
