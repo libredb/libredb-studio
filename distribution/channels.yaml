@@ -726,11 +726,14 @@ channels:
       upstream_repo: https://github.com/rancher/partner-charts
     pin:
       strategy: none
-      note: Merged in rancher/partner-charts#1158 (17 Aug 2026); live in Rancher Partner Charts (the repo
-        index.yaml carries libredb-studio at appVersion 0.12.0) and listed in the SUSE Solutions Catalog.
-        Partner catalog, not self-serve - the chart is regenerated on Rancher's cadence and index.yaml
-        accumulates every chart version, so an image-tag extract there would be ambiguous; strategy stays
-        none like the other tier-4 partner/curated catalogs.
+      note: Merged in rancher/partner-charts#1158 (17 Aug 2026); live in Rancher Partner Charts and listed
+        in the SUSE Solutions Catalog. Chart versions need no submission of ours - partner-charts runs
+        partner-charts-ci update nightly against https://libredb.org/libredb-studio/ and has carried our
+        releases since the listing without a pull request, taking the newest chart version at each run.
+        So upstream_pr here is a copy change to the app-readme overlay (rancher/partner-charts#1168), not
+        a version bump. Strategy stays none because the catalog names one directory per CHART version and
+        the app version each ships is only inside its Chart.yaml, so a directory listing cannot measure it
+        - unlike the two operator catalogs, whose directories are named for the app version.
 
   - id: koyeb-catalog
     name: Koyeb One-Click Apps catalog (curated by Koyeb)

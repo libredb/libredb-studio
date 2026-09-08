@@ -34,6 +34,7 @@ const LISTINGS = {
   rancher: "deploy/rancher/CATALOG_LISTING.md",
   azure: "deploy/azure/listing/listing-fields.md",
   aws: "deploy/aws/listing/listing-fields.md",
+  rancherAppReadme: "deploy/rancher/app-readme.md",
 } as const;
 
 /**

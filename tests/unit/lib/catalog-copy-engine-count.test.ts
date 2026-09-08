@@ -1,7 +1,7 @@
 /**
  * The accuracy gate for the engine COUNT in outward-facing catalog copy (#518).
  *
- * Eleven files outside `src/` name the engine set by hand, and until this test nothing
+ * Twelve files outside `src/` name the engine set by hand, and until this test nothing
  * counted them: `scripts/readme-check.mjs` locates the engine table in the three
  * READMEs and `chart:check` pins a version across files, but a storefront listing was
  * only ever corrected by somebody noticing. Measured on the DuckDB registration branch,
@@ -29,8 +29,14 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 const REPO_ROOT = join(import.meta.dir, "../../..");
 
 /**
- * The eleven files that publish the engine set outward. Each is copy somebody else's
+ * The twelve files that publish the engine set outward. Each is copy somebody else's
  * catalog renders, so nobody in this repo reads it again once it is submitted.
+ *
+ * `deploy/rancher/app-readme.md` is the one that is not itself the submitted artifact: the
+ * file Rancher renders lives in `rancher/partner-charts` under
+ * `packages/libredb/libredb-studio/overlay/`, out of reach of any test here, and it drifted
+ * six engines behind before anybody looked. This copy is what a submission is cut from, so
+ * the drift fails here first.
  *
  * `from`/`to` cut away editorial matter, and only `CATALOG_LISTING.md` has any: its
  * accuracy-gate blockquote and its outstanding-corrections table exist to NAME stale
@@ -50,6 +56,7 @@ const COPY_FILES: ReadonlyArray<{ path: string; from?: string; to?: string }> = 
   { path: "deploy/aws/listing/listing-fields.md" },
   { path: "deploy/aws/listing/description.md" },
   { path: "deploy/rancher/CATALOG_LISTING.md", from: "## Short description", to: "## Outstanding corrections" },
+  { path: "deploy/rancher/app-readme.md" },
 ];
 
 const NUMERAL_WORDS: Record<string, number> = {
@@ -193,7 +200,7 @@ describe("outward-facing catalog copy counts the engines the registry ships", ()
       );
     });
 
-    // Eleven numerals and seven counted lists on this revision - the two AWS
+    // Thirteen numerals and eight counted lists on this revision - the two AWS
     // listing files abridge, so they add numerals without adding counted lists.
     expect(segments.length).toBeGreaterThanOrEqual(8);
     const counted = segments.filter(
