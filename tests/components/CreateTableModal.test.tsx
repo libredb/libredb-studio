@@ -557,9 +557,11 @@ describe("CreateTableModal", () => {
 
   test("duckdb creates the sequence its default reads, ahead of the table", () => {
     const sql = previewFor("duckdb");
-    // Measured on DuckDB 1.5.5: nextval() on a sequence that does not exist is a catalog
-    // error, so the order of these two statements is the fix and not a formatting choice.
-    expect(sql.indexOf("CREATE SEQUENCE widgets_id_seq;")).toBe(0);
+    // Measured on DuckDB 1.5.5: `CREATE TABLE t (id INTEGER DEFAULT nextval('nope'))` is
+    // "Catalog Error: Sequence with name nope does not exist!", so the order of these two
+    // statements is the fix and not a formatting choice. IF NOT EXISTS because the
+    // sequence outlives a DROP TABLE and a bare CREATE SEQUENCE would then fail.
+    expect(sql.indexOf("CREATE SEQUENCE IF NOT EXISTS widgets_id_seq;")).toBe(0);
     expect(sql.indexOf("CREATE TABLE widgets")).toBeGreaterThan(0);
   });
 

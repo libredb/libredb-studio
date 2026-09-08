@@ -309,8 +309,15 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated, dbType }: Cr
       if (col.type === AUTO_INCREMENT && dialect.autoIncrement) {
         let clause = `${col.name} ${dialect.autoIncrement}`;
         if (dialect.autoIncrementSequence) {
+          // `IF NOT EXISTS` because a DuckDB sequence OUTLIVES the table that defaults
+          // from it: measured on 1.5.5, `DROP TABLE widgets` leaves `widgets_id_seq`
+          // behind (`nextval` on it still answers), and a plain `CREATE SEQUENCE` then
+          // fails with `Sequence with name "widgets_id_seq" already exists!`. Without the
+          // guard, creating a table, dropping it and creating it again through this form
+          // fails the second time. The surviving sequence resumes its count, which costs
+          // a few ids and nothing else.
           const sequence = `${tableName}_${col.name}_seq`;
-          prelude.push(`CREATE SEQUENCE ${sequence};`);
+          prelude.push(`CREATE SEQUENCE IF NOT EXISTS ${sequence};`);
           clause += ` DEFAULT nextval('${sequence}')`;
         }
         return `  ${clause}`;
