@@ -22,7 +22,7 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.14.1
-    createdAt: "2026-09-08T14:52:40Z"
+    createdAt: "2026-09-08T15:36:12Z"
     description: Open-source web-based SQL IDE for sixteen engines - PostgreSQL, MySQL,
       Oracle, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache
       Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and libSQL
@@ -375,5 +375,4 @@ spec:
   provider:
     name: LibreDB
     url: https://libredb.org
-  replaces: libredb-studio-operator.v0.9.59
   version: 0.14.1

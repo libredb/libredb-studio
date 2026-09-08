@@ -22,7 +22,11 @@ on:
         type: string
 
 concurrency:
-  group: operator-release-${{ github.ref }}
+  # NOT keyed on the ref. Two releases in flight would otherwise race the
+  # submission's "an older submission is still open" guard, which reads the
+  # catalog's default branch and so cannot see a submission opened seconds
+  # earlier by the other run.
+  group: operator-release
   cancel-in-progress: false
 
 env:
@@ -36,6 +40,13 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      # Read by submit-catalogs. `skip` is what makes a Helm chart tag a no-op
+      # for the whole workflow rather than for this job alone.
+      version: ${{ steps.version.outputs.version }}
+      skip: ${{ steps.version.outputs.skip }}
+      submittable: ${{ steps.version.outputs.submittable }}
+      image: ${{ steps.image.outputs.name }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -73,6 +84,17 @@ jobs:
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          # The regex above admits a prerelease (0.15.0-rc.1), which is a
+          # legitimate operator image but not a catalog submission: the
+          # community catalogs take bare semver directories. Say so here
+          # rather than letting the submission job fail on it after the image
+          # is already pushed.
+          if printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "submittable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "submittable=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::'${VERSION}' is a prerelease; the operator image is built but no catalog submission is opened."
+          fi
 
       - name: Guard version against the checked-out ref
         # A manual dispatch (typo'd or historical version) or a manually
@@ -137,3 +159,267 @@ jobs:
           push: true
           tags: ${{ steps.image.outputs.name }}:${{ steps.version.outputs.version }}
           platforms: linux/amd64,linux/arm64
+
+  submit-catalogs:
+    name: Submit ${{ matrix.catalog.label }} bundle PR
+    # The community catalogs pull the controller image on a real cluster, so
+    # this cannot start before the image exists and is public (issue #656).
+    needs: build-and-push
+    if: needs.build-and-push.outputs.skip != 'true' && needs.build-and-push.outputs.submittable == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      # One catalog failing must not cancel the other: they are independent
+      # submissions with independent review queues.
+      fail-fast: false
+      matrix:
+        catalog:
+          - label: operatorhub.io
+            upstream: k8s-operatorhub/community-operators
+            fork: cevheri/community-operators
+            release_config: false
+          - label: OpenShift console
+            upstream: redhat-openshift-ecosystem/community-operators-prod
+            fork: cevheri/community-operators-prod
+            release_config: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Resolve the channel switch and the token
+        id: gate
+        env:
+          # Presence only: the secret is never expanded into a shell variable
+          # that could reach a log, and the steps that actually need it take it
+          # individually.
+          TOKEN_PRESENT: ${{ secrets.OPERATOR_CATALOG_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          # distribution/channels.yaml is the switchboard for every optional
+          # release channel; this reads the same flag the winget job reads.
+          CI_ENABLED=$(node scripts/distribution-check.mjs --ci-outputs | sed -n 's/^operatorhub_community=//p')
+          if [ "${CI_ENABLED:-}" != "true" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::operatorhub-community update.ci_enabled is '${CI_ENABLED:-<unresolved>}' in distribution/channels.yaml - skipping the catalog submission."
+            exit 0
+          fi
+          if [ "${TOKEN_PRESENT}" != "true" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::OPERATOR_CATALOG_TOKEN is not configured - skipping the catalog submission."
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the controller image is anonymously pullable
+        if: steps.gate.outputs.enabled == 'true'
+        id: image
+        env:
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+          VERSION: ${{ needs.build-and-push.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The catalog pipelines pull without credentials, so a private
+          # package fails there rather than here, late and confusingly. This
+          # checks it the way they will: an anonymous pull token and the
+          # manifest, with no credentials of our own.
+          #
+          # The manifest is parsed rather than grepped. A single-arch manifest
+          # has no platform objects at all, and grepping for a substring would
+          # read "absent" and "present but formatted differently" the same way.
+          REPO="${IMAGE#ghcr.io/}"
+          TOKEN=$(curl -sf --retry 3 --retry-connrefused "https://ghcr.io/token?service=ghcr.io&scope=repository:${REPO}:pull" |
+            node -e 'let raw = ""; process.stdin.on("data", (d) => { raw += d }); process.stdin.on("end", () => { process.stdout.write(JSON.parse(raw).token) })')
+          # No -f on the manifest read. ghcr hands out a pull token to anyone
+          # who asks, even for a package they cannot read, so the failure lands
+          # here - and with -f the step would die on curl's exit 22 before the
+          # message written for exactly this case could print.
+          CODE=$(curl -s --retry 3 --retry-connrefused -o manifest.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json" \
+            "https://ghcr.io/v2/${REPO}/manifests/${VERSION}")
+          case "${CODE}" in
+            200) ;;
+            401|403)
+              echo "::error::${IMAGE}:${VERSION} is not anonymously pullable (HTTP ${CODE}). The catalog CI pulls without credentials - make the GHCR package public: github.com/orgs/libredb/packages"
+              exit 1 ;;
+            404)
+              echo "::error::${IMAGE}:${VERSION} has no manifest (HTTP 404) - the tag was never pushed."
+              exit 1 ;;
+            *)
+              echo "::error::ghcr returned HTTP ${CODE} for ${IMAGE}:${VERSION}."
+              exit 1 ;;
+          esac
+          node -e '
+            const index = JSON.parse(require("node:fs").readFileSync("manifest.json", "utf8"))
+            const platforms = (index.manifests ?? []).map((m) => `${m.platform?.os}/${m.platform?.architecture}`)
+            const missing = ["linux/amd64", "linux/arm64"].filter((p) => !platforms.includes(p))
+            if (missing.length > 0) {
+              console.log(`::error::${process.env.IMAGE}:${process.env.VERSION} is missing ${missing.join(", ")}. Found: ${platforms.join(", ") || "no manifest list"}. If the GHCR package is private, make it public before submitting.`)
+              process.exit(1)
+            }
+            console.log(`Image is public and serves ${platforms.join(", ")}.`)
+          '
+          rm -f manifest.json
+
+      - name: Assert the fork and fast-forward its default branch
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.OPERATOR_CATALOG_TOKEN }}
+          FORK: ${{ matrix.catalog.fork }}
+          UPSTREAM: ${{ matrix.catalog.upstream }}
+        run: |
+          set -euo pipefail
+          # Not `gh repo sync --source`: that calls POST /merge-upstream first,
+          # an endpoint which takes neither a source nor a force parameter, so
+          # --source is dead on the success path and a fork pointing at the
+          # WRONG parent would sync from the wrong repository and still exit 0.
+          # The parent is asserted instead, then merge-upstream is called
+          # directly, then the result is asserted.
+          PARENT=$(gh api "repos/${FORK}" --jq .parent.full_name)
+          if [ "${PARENT}" != "${UPSTREAM}" ]; then
+            echo "::error::${FORK} is a fork of '${PARENT}', not of '${UPSTREAM}'. A fork's parent cannot be changed - re-create it from the upstream, or transfer the existing fork."
+            exit 1
+          fi
+          gh api -X POST "repos/${FORK}/merge-upstream" -f branch=main --jq .message
+          # The upstream pipeline rebases the submission branch onto the
+          # catalog's default branch and fails loudly if it cannot, so a fork
+          # whose main carries commits the upstream lacks has to stop us here
+          # rather than upstream.
+          STATUS=$(gh api "repos/${UPSTREAM}/compare/main...${FORK%%/*}:${FORK##*/}:main" --jq .status)
+          case "${STATUS}" in
+            identical|behind) echo "Fork main is ${STATUS} relative to upstream main." ;;
+            *) echo "::error::${FORK} main is '${STATUS}' relative to ${UPSTREAM} main; it carries commits upstream does not have. Reset it before submitting."; exit 1 ;;
+          esac
+
+      - name: Checkout the catalog repository
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          repository: ${{ matrix.catalog.upstream }}
+          ref: main
+          path: catalog
+          persist-credentials: false
+
+      - name: Decide whether to submit, and what this bundle replaces
+        if: steps.gate.outputs.enabled == 'true'
+        id: decide
+        env:
+          # The search API is rate limited hard for anonymous callers, and an
+          # unread search must fail the step rather than default to "submit".
+          GITHUB_TOKEN: ${{ secrets.OPERATOR_CATALOG_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/operator-catalog-submission.mjs decide \
+            --version "${{ needs.build-and-push.outputs.version }}" \
+            --operator-dir catalog/operators/libredb-studio-operator \
+            --repo "${{ matrix.catalog.upstream }}" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Report a skip
+        if: steps.gate.outputs.enabled == 'true' && steps.decide.outputs.enabled != 'true'
+        run: |
+          # A warning rather than a notice: every skip here means a release did
+          # not reach a catalog, and one of them (an older submission still
+          # open) mutes every later release until somebody acts on it.
+          echo "::warning::${{ matrix.catalog.upstream }} - ${{ steps.decide.outputs.reason }}"
+
+      - name: Stage the bundle
+        if: steps.decide.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ needs.build-and-push.outputs.version }}
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+          REPLACES: ${{ steps.decide.outputs.replaces }}
+        run: |
+          set -euo pipefail
+          DEST="catalog/operators/libredb-studio-operator/${VERSION}"
+          CSV="operator/bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml"
+          # The directory is named from the release version while its contents
+          # come from the committed bundle, and nothing upstream of here proves
+          # those agree: the bundle-freshness job only runs when a pull request
+          # touches operator/, so a version bump that skipped `make -C operator
+          # bundle` would submit the previous bundle under the new number.
+          grep -qx "  version: ${VERSION}" "$CSV" || {
+            echo "::error::${CSV} does not declare version ${VERSION}. Run 'make -C operator bundle' and commit the result."
+            exit 1
+          }
+          grep -q "containerImage: ${IMAGE}:${VERSION}$" "$CSV" || {
+            echo "::error::${CSV} does not stamp containerImage ${IMAGE}:${VERSION}. Run 'make -C operator bundle' and commit the result."
+            exit 1
+          }
+          mkdir -p "$DEST"
+          cp -R operator/bundle/. "$DEST/"
+          # spec.replaces is absent from the committed bundle on purpose: its
+          # only correct value names a version in THIS catalog, which this
+          # repository cannot derive. It is injected here, or omitted entirely
+          # on a first submission.
+          if [ -n "${REPLACES}" ]; then
+            node scripts/operator-catalog-submission.mjs set-replaces \
+              --csv "$DEST/manifests/libredb-studio-operator.clusterserviceversion.yaml" \
+              --replaces "${REPLACES}"
+          else
+            echo "First submission in this catalog - no replaces to set."
+          fi
+
+      - name: Write release-config.yaml for the FBC catalog
+        if: steps.decide.outputs.enabled == 'true' && matrix.catalog.release_config
+        env:
+          VERSION: ${{ needs.build-and-push.outputs.version }}
+          REPLACES: ${{ steps.decide.outputs.replaces }}
+        run: |
+          set -euo pipefail
+          # Without this file the release pipeline only prints the manual
+          # instructions instead of opening the rendered-catalog PR itself.
+          # `replaces` and not `skipRange`: with a skipRange alone the rendered
+          # channel keeps two heads and `opm validate` rejects it with
+          # "multiple channel heads found in graph" (measured on
+          # community-operators-prod#11106).
+          CONFIG="catalog/operators/libredb-studio-operator/${VERSION}/release-config.yaml"
+          {
+            echo "---"
+            echo "catalog_templates:"
+            echo "  - template_name: basic.yaml"
+            echo "    channels: [alpha]"
+            if [ -n "${REPLACES}" ]; then
+              echo "    replaces: ${REPLACES}"
+            fi
+          } > "$CONFIG"
+          cat "$CONFIG"
+
+      - name: Open or update the submission PR
+        if: steps.decide.outputs.enabled == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          path: catalog
+          push-to-fork: ${{ matrix.catalog.fork }}
+          token: ${{ secrets.OPERATOR_CATALOG_TOKEN }}
+          base: main
+          branch: libredb-studio-operator-${{ needs.build-and-push.outputs.version }}
+          # Never delete the head branch from here: deleting it closes the PR
+          # and GitHub then refuses to reopen it.
+          delete-branch: false
+          add-paths: operators/libredb-studio-operator
+          # DCO, not GPG: upstream's "signed" requirement is the Developer
+          # Certificate of Origin, and the trailer email must match the author.
+          signoff: true
+          committer: Mehmet Cevheri BOZOGLAN <cevheribozoglan@gmail.com>
+          author: Mehmet Cevheri BOZOGLAN <cevheribozoglan@gmail.com>
+          commit-message: |
+            operator libredb-studio-operator (${{ needs.build-and-push.outputs.version }})
+          title: operator libredb-studio-operator (${{ needs.build-and-push.outputs.version }})
+          body: |
+            Update libredb-studio-operator to ${{ needs.build-and-push.outputs.version }}.
+
+            Release notes: https://github.com/libredb/libredb-studio/releases/tag/${{ needs.build-and-push.outputs.version }}
+            Controller image: `${{ needs.build-and-push.outputs.image }}:${{ needs.build-and-push.outputs.version }}`, public, linux/amd64 and linux/arm64.
+
+            ${{ steps.decide.outputs.reason }}
+
+            Opened by this repository's release workflow.

@@ -38,25 +38,6 @@ IMAGE_TAG_BASE ?= ghcr.io/libredb/libredb-studio-operator
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
 BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:v$(VERSION)
 
-# CATALOG_REPLACES is the newest version the community catalogs actually
-# serve, which is what this bundle supersedes in channel `alpha`. It is NOT
-# derivable from package.json: it lags our releases by however many
-# submissions are still unmerged (0.14.0 was never submitted), and the
-# `operatorhub-community` row of `bun run distribution:check` is what measures
-# that lag.
-#
-# It has to be a real field rather than only a skipRange, because the
-# k8s-operatorhub deploy jobs build their catalog with `opm index add --mode
-# replaces` (the mode is read straight from the submission's ci.yaml) and that
-# command looks at spec.replaces and spec.skips ONLY. With a skipRange alone
-# it prunes the previous bundle out of the channel and fails. Measured against
-# the real command: replaces-mode plus skipRange alone exits 1, replaces-mode
-# plus this pointer exits 0.
-#
-# Bump this when a submission merges upstream. Forgetting is loud rather than
-# silent - the next submission fails upstream with that same prune error.
-CATALOG_REPLACES ?= 0.9.59
-
 # BUNDLE_GEN_FLAGS are the flags passed to the operator-sdk generate bundle command
 BUNDLE_GEN_FLAGS ?= -q --overwrite --version $(VERSION) $(BUNDLE_METADATA_OPTS)
 
@@ -226,13 +207,13 @@ bundle: kustomize operator-sdk ## Generate bundle manifests and metadata, then v
 	# fail the build, not ship an unstamped CSV.
 	@grep -q 'containerImage: $(IMG)$$' bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml || \
 		{ echo "ERROR: containerImage stamp failed - restore the containerImage annotation in config/manifests/bases"; exit 1; }
-	# Stamp the update-graph range the community catalogs read. k8s-operatorhub
-	# runs this operator in replaces-mode, whose dangling-bundle static check
-	# seeds its graph from olm.skipRange before it looks at spec.replaces - so
-	# this annotation carries the graph and no version of it has to be
-	# remembered by hand: "supersede everything below me" stays true however
-	# many releases go unsubmitted. The upper bound is exclusive on purpose; a
-	# <= would make the bundle skip itself.
+	# Stamp the half of the update graph this repo can know. "Supersede
+	# everything below me" is derivable from $(VERSION) and stays true however
+	# many releases go unsubmitted, so it belongs here. The other half,
+	# spec.replaces, names a version in a specific catalog and is injected at
+	# submission time instead - see docs/DISTRIBUTION.md, "The update graph".
+	# The upper bound is exclusive on purpose; a <= would make the bundle skip
+	# itself.
 	sed -e "s|olm.skipRange: '>=0.0.0 <.*'|olm.skipRange: '>=0.0.0 <$(VERSION)'|" \
 		bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml > bundle/manifests/.csv.tmp
 	mv bundle/manifests/.csv.tmp bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml
@@ -241,14 +222,6 @@ bundle: kustomize operator-sdk ## Generate bundle manifests and metadata, then v
 	# skipRange" and fail there as a dangling bundle. Verify it landed here.
 	@grep -q "olm.skipRange: '>=0.0.0 <$(VERSION)'$$" bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml || \
 		{ echo "ERROR: olm.skipRange stamp failed - restore the olm.skipRange annotation in config/manifests/bases"; exit 1; }
-	# Stamp the bundle this one replaces in the channel. The base CSV holds a
-	# v0.0.0 placeholder; see CATALOG_REPLACES above for why the value cannot
-	# be derived from $(VERSION).
-	sed -e 's|replaces: libredb-studio-operator.v.*|replaces: libredb-studio-operator.v$(CATALOG_REPLACES)|' \
-		bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml > bundle/manifests/.csv.tmp
-	mv bundle/manifests/.csv.tmp bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml
-	@grep -q '^  replaces: libredb-studio-operator.v$(CATALOG_REPLACES)$$' bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml || \
-		{ echo "ERROR: replaces stamp failed - restore the replaces field in config/manifests/bases"; exit 1; }
 	# The operatorframework suite is what the community-operator pipelines run
 	# (operator-pipelines static tests); default validators alone skip the
 	# OperatorHub metadata checks.

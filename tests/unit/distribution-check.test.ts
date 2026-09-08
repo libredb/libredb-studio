@@ -645,6 +645,7 @@ describe("update.ci_enabled", () => {
       "chocolatey",
       "docker-hub-mirror",
       "homebrew",
+      "operatorhub-community",
       "snap",
       "winget",
     ]);
@@ -1151,6 +1152,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     update:
       method: upstream_pr
       sla: every_release
+      ci_enabled: true
     pin:
       strategy: probe
       probe: github-dir-max-version
@@ -1322,6 +1324,20 @@ describe("matrix cell helpers", () => {
       "Manual, minor+",
     );
     expect(updateSummary({ status: "deprecated", update: { method: "upstream_pr", sla: "on_demand" } })).toBe("—");
+  });
+
+  test("updateSummary calls an automated upstream PR what it is", () => {
+    // The submission is opened by CI (#656) but merged by the upstream
+    // maintainers, so neither "Automated" nor "Manual" is true on its own.
+    expect(
+      updateSummary({ status: "live", update: { method: "upstream_pr", sla: "every_release", ci_enabled: true } }),
+    ).toBe("Automated PR, every release");
+  });
+
+  test("updateSummary marks a switched-off upstream PR channel as paused too", () => {
+    expect(
+      updateSummary({ status: "live", update: { method: "upstream_pr", sla: "every_release", ci_enabled: false } }),
+    ).toBe("Automated PR (paused), every release");
   });
 
   test("updateSummary marks a switched-off channel as paused", () => {

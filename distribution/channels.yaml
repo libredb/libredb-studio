@@ -675,6 +675,12 @@ channels:
     update:
       method: upstream_pr
       sla: every_release
+      # Submission is automated from operator-release.yml (#656). The switch is
+      # here because the submission can be legitimately impossible: the first
+      # listing in a catalog is manual, an earlier submission may still be
+      # unmerged, and OPERATOR_CATALOG_TOKEN may be absent - none of which is a
+      # broken release.
+      ci_enabled: true
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/152
       first_pr: https://github.com/redhat-openshift-ecosystem/community-operators-prod/pull/10497
@@ -687,7 +693,7 @@ channels:
       urls:
         operatorhub-io: https://api.github.com/repos/k8s-operatorhub/community-operators/contents/operators/libredb-studio-operator
         openshift-console: https://api.github.com/repos/redhat-openshift-ecosystem/community-operators-prod/contents/operators/libredb-studio-operator
-      note: Both catalogs are listed - OpenShift console since 0.9.59 (bundle community-operators-prod#10497
+      note: Submitted automatically by the submit-catalogs job in operator-release.yml (#656); ci_enabled above is its switch. Both catalogs are listed - OpenShift console since 0.9.59 (bundle community-operators-prod#10497
         merged 2026-07-27, FBC catalogs community-operators-prod#10581), operatorhub.io since
         k8s-operatorhub/community-operators#8794 merged 2026-09-08. These are the COMMUNITY catalogs, not the
         Red Hat certified one, so the OpenShift console lists the operator under Community with its
@@ -698,7 +704,7 @@ channels:
         start once the operator controller image is public on GHCR; community-operators-prod is contributed in
         FBC mode (fbc.enabled plus per-OCP-version catalog_mapping in ci.yaml). An FBC release is two upstream
         PRs - bundle first, then the rendered catalogs - and that second PR is only bot-created when the
-        bundle version directory ships a release-config.yaml, so every release must include one.
+        bundle version directory ships a release-config.yaml, which submit-catalogs writes.
 
   # ---- Tier 4: partner and curated catalogs (not self-serve) --------------
 
