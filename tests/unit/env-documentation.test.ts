@@ -22,8 +22,11 @@
  *   1. `const X = "NAME"` (exported or not), then `process.env[X]` -- the
  *      per-name aliases in `src/lib/agent/config.ts`;
  *   2. an object field whose value is a bare uppercase string literal, then
- *      `process.env[<expr>.field]` -- the rate-limit bucket table in
- *      `src/lib/api/rate-limit.ts`, read as `process.env[spec.maxVar]`.
+ *      `process.env[<identifier>.field]` -- exactly one bare identifier before
+ *      the `.field`, as in the rate-limit bucket table's `process.env[spec.maxVar]`
+ *      (`src/lib/api/rate-limit.ts`). A deeper receiver -- `process.env[a.b.field]`
+ *      or `process.env[arr[0].field]` -- is not matched; nothing in `src/` is in
+ *      that shape today.
  *
  * What stays out of scope: a name that reaches `process.env[...]` as a function
  * argument or parameter, because resolving it needs a call graph and a regex
@@ -87,7 +90,8 @@ const readNames = (): string[] => {
   // Shape 1: `const X = "NAME"` / `export const X = "NAME"`, then `process.env[X]`.
   const constDeclPattern = new RegExp(`(?:export\\s+)?const\\s+(${IDENT})\\s*=\\s*"(${ENV_NAME})"`, "g");
   const constReadPattern = new RegExp(`process[.]env[?]?\\[(${IDENT})\\]`, "g");
-  // Shape 2: `field: "NAME"`, then `process.env[<expr>.field]` (the bucket table).
+  // Shape 2: `field: "NAME"`, then `process.env[<identifier>.field]` -- one bare
+  // identifier before `.field` (the bucket table); a deeper receiver is not matched.
   const fieldDeclPattern = new RegExp(`(${IDENT})\\s*:\\s*"(${ENV_NAME})"`, "g");
   const fieldReadPattern = new RegExp(`process[.]env[?]?\\[${IDENT}[.](${IDENT})\\]`, "g");
 
@@ -174,6 +178,9 @@ describe("environment variable documentation", () => {
     // graph. When that stops being true, this test is the reminder to widen the
     // extractor rather than a silent gain.
     const names = new Set(readNames());
+    // Control: a negative-only test passes on an empty set, so anchor it to a
+    // name the extractor must always find before trusting the absences below.
+    expect(names.has("JWT_SECRET")).toBe(true);
     for (const name of ["LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL", "LLM_API_URL", "MY_DB_PASSWORD"]) {
       expect(names.has(name)).toBe(false);
     }
