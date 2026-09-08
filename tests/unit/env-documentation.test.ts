@@ -14,9 +14,24 @@
  * visible decision in review rather than a one-word diff. Anything an operator
  * could reasonably want to set belongs in `.env.example`, not here.
  *
- * Dynamic reads (`process.env[name]`) are out of scope, as #566 says: they
- * cannot be extracted statically, and a guard that pretended otherwise would
- * report a name that is not a name.
+ * Coverage boundary (#609). `process.env.NAME` is the minority shape in this
+ * repository, so the extractor also resolves the two static bracket shapes that
+ * make up most of the rest, both of which are string literals in the same file
+ * as the read:
+ *
+ *   1. `const X = "NAME"` (exported or not), then `process.env[X]` -- the
+ *      per-name aliases in `src/lib/agent/config.ts`;
+ *   2. an object field whose value is a bare uppercase string literal, then
+ *      `process.env[<expr>.field]` -- the rate-limit bucket table in
+ *      `src/lib/api/rate-limit.ts`, read as `process.env[spec.maxVar]`.
+ *
+ * What stays out of scope: a name that reaches `process.env[...]` as a function
+ * argument or parameter, because resolving it needs a call graph and a regex
+ * that faked one would report a name that is not a name. Two reads are in that
+ * position today -- `getEnvVar("LLM_PROVIDER")` in `src/lib/llm/utils/config.ts`
+ * and `process.env[envVar]` in `src/lib/seed/credential-resolver.ts` -- leaving
+ * `HOSTNAME`, `MY_DB_PASSWORD` and the four `LLM_*` names undiscovered. That is
+ * the whole remaining gap, not an aside.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -37,6 +52,8 @@ const ALLOWLIST: Record<string, string> = {
     "Injected by next.config.ts from package.json at build time; setting it by hand would misreport the version.",
   NEXT_PUBLIC_MANAGED_POLL_MS:
     "Inlined at build time, so a runtime value has no effect. Documented in docs/SEED_CONNECTIONS.md.",
+  VERCEL_DEPLOYMENT_ID:
+    "Injected by the Vercel platform; read only to refuse an implicit hosted workflow backend, never set by an operator.",
 };
 
 /** Every `.ts`/`.tsx` file under `src/`. */
@@ -53,17 +70,53 @@ const sourceFiles = (dir: string): string[] => {
   return out;
 };
 
-/** Literal `process.env.NAME` reads across `src/`, deduplicated and sorted. */
+/** An env-var-shaped string literal: a letter, then uppercase, digits or `_`. */
+const ENV_NAME = "[A-Z][A-Z0-9_]*";
+/** A JavaScript identifier. */
+const IDENT = "[A-Za-z_][A-Za-z0-9_]*";
+
+/**
+ * Environment variable names read under `src/`, deduplicated and sorted. Covers
+ * literal `process.env.NAME` plus the two static bracket shapes from #609 (see
+ * the header comment); a name reached through a function argument stays out.
+ */
 const readNames = (): string[] => {
   const names = new Set<string>();
-  // Both `process.env.NAME` and the optional-chained `process.env?.NAME` that
-  // logger.ts uses. Dynamic `process.env[name]` reads are out of scope: they
-  // cannot be resolved statically, and reporting the expression as a variable
-  // name would be worse than not reporting it.
-  const pattern = /process[.]env[?]?[.]([A-Za-z_][A-Za-z0-9_]*)/g;
+  // `process.env.NAME` and the optional-chained `process.env?.NAME` logger.ts uses.
+  const literalPattern = new RegExp(`process[.]env[?]?[.](${IDENT})`, "g");
+  // Shape 1: `const X = "NAME"` / `export const X = "NAME"`, then `process.env[X]`.
+  const constDeclPattern = new RegExp(`(?:export\\s+)?const\\s+(${IDENT})\\s*=\\s*"(${ENV_NAME})"`, "g");
+  const constReadPattern = new RegExp(`process[.]env[?]?\\[(${IDENT})\\]`, "g");
+  // Shape 2: `field: "NAME"`, then `process.env[<expr>.field]` (the bucket table).
+  const fieldDeclPattern = new RegExp(`(${IDENT})\\s*:\\s*"(${ENV_NAME})"`, "g");
+  const fieldReadPattern = new RegExp(`process[.]env[?]?\\[${IDENT}[.](${IDENT})\\]`, "g");
+
   for (const file of sourceFiles(path.join(ROOT, "src"))) {
-    for (const match of readFileSync(file, "utf8").matchAll(pattern)) {
+    const source = readFileSync(file, "utf8");
+
+    for (const match of source.matchAll(literalPattern)) {
       names.add(match[1]);
+    }
+
+    // Resolve bracket reads against literals declared in the same file only:
+    // an alias defined elsewhere would need a module graph this guard does not have.
+    const constByAlias = new Map<string, string>();
+    for (const match of source.matchAll(constDeclPattern)) {
+      constByAlias.set(match[1], match[2]);
+    }
+    for (const match of source.matchAll(constReadPattern)) {
+      const resolved = constByAlias.get(match[1]);
+      if (resolved !== undefined) names.add(resolved);
+    }
+
+    const namesByField = new Map<string, Set<string>>();
+    for (const match of source.matchAll(fieldDeclPattern)) {
+      const bucket = namesByField.get(match[1]) ?? new Set<string>();
+      bucket.add(match[2]);
+      namesByField.set(match[1], bucket);
+    }
+    for (const match of source.matchAll(fieldReadPattern)) {
+      for (const name of namesByField.get(match[1]) ?? []) names.add(name);
     }
   }
   return [...names].sort();
@@ -87,6 +140,43 @@ describe("environment variable documentation", () => {
     expect(names.length).toBeGreaterThan(20);
     expect(names).toContain("LOG_LEVEL");
     expect(names).toContain("JWT_SECRET");
+  });
+
+  test('shape 1 (#609): a same-file `const X = "NAME"` alias read as `process.env[X]`', () => {
+    // The six aliases in src/lib/agent/config.ts. Pinned by name, not by a count:
+    // a count says nothing about which alias regressed.
+    const names = readNames();
+    for (const name of [
+      "LIBREDB_AGENT_ENABLED",
+      "LIBREDB_AGENT_THREAD_CONTEXT",
+      "AGENT_MODEL_TUNING_PATH",
+      "AGENT_MODEL_TURN_TIMEOUT_MS",
+      "WORKFLOW_LOCAL_DATA_DIR",
+      "WORKFLOW_TARGET_WORLD",
+    ]) {
+      expect(names).toContain(name);
+    }
+  });
+
+  test("shape 2 (#609): an object-field literal read as `process.env[spec.field]`", () => {
+    // The ten RATE_LIMIT_* names in the src/lib/api/rate-limit.ts bucket table,
+    // read as process.env[spec.maxVar] / process.env[spec.windowVar].
+    const names = readNames();
+    for (const scope of ["LOGIN", "LOGIN_ACCOUNT", "AI", "QUERY", "ANON"]) {
+      expect(names).toContain(`RATE_LIMIT_${scope}_MAX`);
+      expect(names).toContain(`RATE_LIMIT_${scope}_WINDOW_SEC`);
+    }
+  });
+
+  test("#609 boundary: a name reached through a function argument stays undiscovered", () => {
+    // getEnvVar("LLM_PROVIDER") in src/lib/llm/utils/config.ts and
+    // process.env[envVar] in src/lib/seed/credential-resolver.ts need a call
+    // graph. When that stops being true, this test is the reminder to widen the
+    // extractor rather than a silent gain.
+    const names = new Set(readNames());
+    for (const name of ["LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL", "LLM_API_URL", "MY_DB_PASSWORD"]) {
+      expect(names.has(name)).toBe(false);
+    }
   });
 
   test("every variable read under src/ is documented or allowlisted", () => {
