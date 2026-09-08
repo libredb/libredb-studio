@@ -113,6 +113,15 @@ export function SchemaExplorer({
         <p className="text-xs text-muted-foreground leading-relaxed">
           We couldn&apos;t find any tables or views in this connection.
         </p>
+        {capabilities?.supportsCreateTable !== false && onCreateTableClick && (
+          <button
+            className="mt-3 flex items-center gap-1.5 rounded-md bg-brand text-brand-foreground px-3 py-1.5 text-xs font-medium hover:bg-brand/90 transition-colors"
+            onClick={onCreateTableClick}
+          >
+            <Plus strokeWidth={1.5} className="w-3.5 h-3.5" />
+            Create {labels?.entityName || "Table"}
+          </button>
+        )}
       </div>
     );
   }
