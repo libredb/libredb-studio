@@ -33,27 +33,37 @@ const MARKER = "**CI is the merge gate.**";
  * Layout has to go before the two sides can be compared; only the wording is pinned.
  *
  * In `CONTRIBUTING.md` the paragraph sits inside numbered list item 4, so every one of its lines is
- * indented by three spaces; in the footer it is flush left. A plain `includes()` therefore fails on
- * the very first line, which says nothing about whether the wording drifted. The two copies also
- * have different natural margins and this repository writes one sentence per line, so either will be
- * re-flowed sooner or later without a word changing - and a lone trailing space would otherwise fail
- * with two error strings that look identical. Collapsing every run of whitespace covers all three.
+ * indented by three spaces; in the footer it is flush left. Comparing the two as they are written
+ * therefore fails on the indentation alone, which says nothing about whether the wording drifted.
+ * The two copies also have different natural margins and this repository writes one sentence per
+ * line, so either will be re-flowed sooner or later without a word changing - and a lone trailing
+ * space would otherwise fail with two error strings that look identical. Collapsing every run of
+ * whitespace covers all three.
  */
 const words = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-/** The trimmed, blank-line-delimited paragraph of the footer that opens with `MARKER`. */
-const sharedParagraph = (): string => {
-  const found = read(FOOTER)
+/**
+ * The trimmed, blank-line-delimited paragraph of `relative` that opens with `MARKER`.
+ *
+ * Both sides are read with this one finder so the comparison below is paragraph against paragraph.
+ * Matching the marker against the whole of `CONTRIBUTING.md` instead would pass while the two
+ * documents disagree - a sentence appended to one copy leaves the other's wording still present in
+ * the file - and on a genuine drift it printed the entire file as the received string.
+ */
+const paragraphIn = (relative: string): string => {
+  const found = read(relative)
     .split(/\n\s*\n/)
     .map((paragraph) => paragraph.trim())
     .find((paragraph) => paragraph.startsWith(MARKER));
   if (found === undefined) {
-    // Rewording the footer's opening sentence is allowed; silently leaving this guard with nothing
-    // to compare is not, because every assertion below would then pass on any CONTRIBUTING.md at all.
-    throw new Error(`${FOOTER} no longer contains a paragraph starting with ${MARKER}`);
+    // Rewording the opening sentence is allowed; silently leaving this guard with nothing to
+    // compare is not, because every assertion below would then pass on any pair of documents.
+    throw new Error(`${relative} no longer contains a paragraph starting with ${MARKER}`);
   }
   return found;
 };
+
+const sharedParagraph = (): string => paragraphIn(FOOTER);
 
 describe("the CI-gate paragraph shared by CONTRIBUTING.md and the curated issue footer", () => {
   test(`${FOOTER} still carries the paragraph this guard reads`, () => {
@@ -61,7 +71,7 @@ describe("the CI-gate paragraph shared by CONTRIBUTING.md and the curated issue 
   });
 
   test("CONTRIBUTING.md repeats it word for word", () => {
-    expect(words(read(CONTRIBUTING))).toContain(words(sharedParagraph()));
+    expect(words(paragraphIn(CONTRIBUTING))).toBe(words(sharedParagraph()));
   });
 
   test("CONTRIBUTING.md tells a maintainer where the footer lives", () => {
