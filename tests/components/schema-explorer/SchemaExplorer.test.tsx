@@ -35,11 +35,50 @@ import userEvent from "@testing-library/user-event";
 import React from "react";
 
 import { SchemaExplorer } from "@/components/schema-explorer/SchemaExplorer";
+import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import type { ProviderLabels } from "@/lib/db/types";
 import { mockSchema, emptySchema } from "../../fixtures/schemas";
 
 // =============================================================================
 // SchemaExplorer Tests
 // =============================================================================
+
+const defaultLabels: ProviderLabels = {
+  entityName: "Table",
+  entityNamePlural: "Tables",
+  rowName: "row",
+  rowNamePlural: "rows",
+  selectAction: "SELECT * FROM",
+  generateAction: "Generate",
+  analyzeAction: "Analyze",
+  vacuumAction: "Vacuum",
+  searchPlaceholder: "Search tables or columns...",
+  analyzeGlobalLabel: "Analyze All",
+  analyzeGlobalTitle: "Analyze All Tables",
+  analyzeGlobalDesc: "Update statistics for all tables",
+  vacuumGlobalLabel: "Vacuum All",
+  vacuumGlobalTitle: "Vacuum All Tables",
+  vacuumGlobalDesc: "Reclaim storage for all tables",
+};
+
+// Named separately, and typed, so a test can spread it to vary one field: read back off
+// `createDefaultProps` the members arrive optional, because `Partial<Props>` widens them, and
+// `metadata.capabilities` is required (#427).
+const defaultMetadata: ProviderMetadata = {
+  capabilities: {
+    queryLanguage: "sql",
+    supportsExplain: true,
+    supportsExternalQueryLimiting: true,
+    supportsCreateTable: true,
+    supportsInlineRowEdit: true,
+    supportsMaintenance: false,
+    maintenanceOperations: [],
+    supportsConnectionString: false,
+    defaultPort: 5432,
+    schemaRefreshPattern: "",
+  },
+  labels: defaultLabels,
+};
 
 function createDefaultProps(overrides: Partial<Parameters<typeof SchemaExplorer>[0]> = {}) {
   return {
@@ -49,37 +88,7 @@ function createDefaultProps(overrides: Partial<Parameters<typeof SchemaExplorer>
     onGenerateSelect: mock(() => {}),
     onCreateTableClick: mock(() => {}),
     isAdmin: false,
-    metadata: {
-      capabilities: {
-        queryLanguage: "sql" as const,
-        supportsExplain: true,
-        supportsExternalQueryLimiting: true,
-        supportsCreateTable: true,
-        supportsInlineRowEdit: true,
-        supportsMaintenance: false,
-        maintenanceOperations: [],
-        supportsConnectionString: false,
-        defaultPort: 5432,
-        schemaRefreshPattern: "",
-      },
-      labels: {
-        entityName: "Table",
-        entityNamePlural: "Tables",
-        rowName: "row",
-        rowNamePlural: "rows",
-        selectAction: "SELECT * FROM",
-        generateAction: "Generate",
-        analyzeAction: "Analyze",
-        vacuumAction: "Vacuum",
-        searchPlaceholder: "Search tables or columns...",
-        analyzeGlobalLabel: "Analyze All",
-        analyzeGlobalTitle: "Analyze All Tables",
-        analyzeGlobalDesc: "Update statistics for all tables",
-        vacuumGlobalLabel: "Vacuum All",
-        vacuumGlobalTitle: "Vacuum All Tables",
-        vacuumGlobalDesc: "Reclaim storage for all tables",
-      },
-    },
+    metadata: defaultMetadata,
     ...overrides,
   };
 }
@@ -111,6 +120,65 @@ describe("SchemaExplorer", () => {
     const view = within(container);
 
     expect(view.queryByText("No structures found")).not.toBeNull();
+  });
+
+  // #654: an empty database is the one case where a table most needs creating, and the populated
+  // branch's header does not exist here, so the action lives in this panel under the same gate.
+  //
+  // All three select the action by its own `title`, the way the populated-branch tests below do,
+  // rather than by the panel's copy. A test anchored to "No structures found" or to the button's
+  // label keeps passing after somebody rewords the panel and stops saying anything about the button.
+  test("empty state offers the create-table action, and clicking it calls the handler", async () => {
+    const user = userEvent.setup();
+    const onCreateTableClick = mock(() => {});
+    const props = createDefaultProps({ schema: emptySchema, onCreateTableClick });
+    const { container } = render(<SchemaExplorer {...props} />);
+
+    const createButton = container.querySelector('button[title="Create Table"]');
+    expect(createButton).not.toBeNull();
+
+    await user.click(createButton as HTMLElement);
+    expect(onCreateTableClick).toHaveBeenCalledTimes(1);
+  });
+
+  test("empty state offers no create-table action when supportsCreateTable is false", () => {
+    const props = createDefaultProps({
+      schema: emptySchema,
+      metadata: {
+        ...defaultMetadata,
+        capabilities: { ...defaultMetadata.capabilities, supportsCreateTable: false },
+      },
+    });
+    const { container } = render(<SchemaExplorer {...props} />);
+
+    expect(container.querySelector('button[title="Create Table"]')).toBeNull();
+  });
+
+  // The action reuses the populated header's `title` shape so an engine that renames the entity keeps
+  // its own word here too. The default fixture calls it "Table", which is also the hardcoded
+  // fallback, so only a renamed entity can tell a working pass-through from a constant.
+  test("empty state names the engine's own entity in the create-table action", () => {
+    const props = createDefaultProps({
+      schema: emptySchema,
+      metadata: {
+        ...defaultMetadata,
+        labels: { ...defaultLabels, entityName: "Collection" },
+      },
+    });
+    const { container } = render(<SchemaExplorer {...props} />);
+
+    const createButton = container.querySelector('button[title="Create Collection"]');
+    expect(createButton).not.toBeNull();
+    expect(createButton?.textContent).toContain("Create Collection");
+  });
+
+  // A read that FAILED says nothing about whether the engine takes DDL, so the error branch offers
+  // no action at all - deliberately, and not as a side effect of the empty branch owning the button.
+  test("a failed read offers no create-table action", () => {
+    const props = createDefaultProps({ schema: emptySchema, schemaError: "'(' expected" });
+    const { container } = render(<SchemaExplorer {...props} />);
+
+    expect(container.querySelector('button[title="Create Table"]')).toBeNull();
   });
 
   // D31: an empty tree after a FAILED read must not read as "this database has
