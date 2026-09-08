@@ -773,6 +773,23 @@ describe("Studio", () => {
     expect(dialog.queryByText("Delete connection?")).toBeNull();
   });
 
+  /**
+   * Studio mounts the connections list twice: the desktop `Sidebar` above the breakpoint and the
+   * mobile database tab below it. Both were wired to the confirmation, but reverting only the mobile
+   * one to `handleDeleteConnection` left every test above green, so nothing held that half. The
+   * crowded-sidebar misclick this dialog exists for is likeliest on a phone.
+   */
+  test("the mobile connections list asks for confirmation too", () => {
+    connMgrOverride = { activeConnection: pgConn, connections: [pgConn] };
+    render(<Studio />);
+    const onTabChange = capturedMobileNavProps.onTabChange as (tab: string) => void;
+    act(() => onTabChange("database"));
+    const requestDelete = capturedConnectionsListProps.onDeleteConnection as (id: string) => void;
+    act(() => requestDelete("c1"));
+    expect(mockStorageDeleteConnection).not.toHaveBeenCalled();
+    expect(within(document.body as HTMLElement).getByText("Delete connection?")).toBeTruthy();
+  });
+
   test("cancelling the delete dialog leaves the connection untouched", () => {
     connMgrOverride = { activeConnection: pgConn, connections: [pgConn] };
     render(<Studio />);
