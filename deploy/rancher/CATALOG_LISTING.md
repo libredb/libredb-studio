@@ -206,6 +206,16 @@ So the submitted text now lives in `app-readme.md` beside this file and is count
 `tests/unit/lib/catalog-copy-engine-count.test.ts` and scoped by
 `tests/unit/marketplace-copy.test.ts`, the same two gates the copy above answers to.
 
+Review of that submission found two claims those gates did not cover, and both are now
+covered by `tests/unit/marketplace-copy.test.ts` rather than by this prose.
+The overlay had written "manage data across sixteen engines", which the rule above forbids
+by name and which prose alone did not prevent; the checker now derives the editable set
+from `supportsInlineRowEdit` and fails any manage-data sentence that names an engine
+outside it.
+It had also called SQLite the default storage, where `charts/libredb-studio/values.yaml`
+sets `config.storageProvider` to `local`; a storage default named in the overlay is now
+read back from the chart.
+
 Chart versions need no submission of their own: partner-charts runs
 `partner-charts-ci update` nightly against <https://libredb.org/libredb-studio/> and has
 carried our releases since the 0.1.36 listing without a pull request, taking the newest
