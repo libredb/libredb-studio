@@ -192,6 +192,33 @@ const NAMED_CITATIONS = [
       "runMaintenance",
     ],
   },
+  {
+    doc: "docs/providers/druid.md",
+    source: "src/lib/db/providers/sql/druid/index.ts",
+    // Tracks the doc, not a hand-picked subset: every `name(` it cites that index.ts declares as
+    // a class member, in declaration order. The doc links the monitoring methods to introspect.ts,
+    // where the work is; index.ts declares each as a member that delegates there.
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "prepareQuery",
+      "validate",
+      "connect",
+      "disconnect",
+      "query",
+      "mapDruidError",
+      "getSchema",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getIndexStats",
+      "getActiveSessions",
+      "getTableStats",
+      "getStorageStats",
+      "getHealth",
+      "runMaintenance",
+    ],
+  },
 ] as const;
 
 const SEARCH_DOCS = ["docs/providers/elasticsearch.md", "docs/providers/opensearch.md"] as const;

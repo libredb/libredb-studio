@@ -195,7 +195,7 @@ either:
 ### 3.2 The transport seam: one interface, one implementation
 
 Provider logic never calls `fetch`. It goes through `DruidTransport`
-([transport.ts:156](../../src/lib/db/providers/sql/druid/transport.ts)), so adopting the Avatica
+([`transport.ts`](../../src/lib/db/providers/sql/druid/transport.ts)), so adopting the Avatica
 driver later — or any client that is not this endpoint — is one new file implementing the same
 contract rather than a rewrite of the provider, the introspection and the explain strategy:
 
@@ -211,8 +211,8 @@ There is no second entry point next to `query()`, unlike Couchbase's `manage()`:
 task and storage statistic the provider needs is a `sys.*` table reachable by SQL
 ([§7](#7-monitoring--health)), so a permanent second HTTP surface would buy nothing.
 
-The result type is deliberately **neutral** rather than the wire envelope
-([transport.ts:47](../../src/lib/db/providers/sql/druid/transport.ts)):
+The result type, `DruidQueryResult`, is deliberately **neutral** rather than the wire envelope
+([`transport.ts`](../../src/lib/db/providers/sql/druid/transport.ts)):
 
 ```ts
 interface DruidQueryResult {
@@ -377,9 +377,10 @@ off by one is worse than an error, because nothing signals it.
 **Druid has no server-side "quote longs" setting.** This is the one place the provider genuinely
 diverges from ClickHouse (#264), which could push the problem to the server with
 `output_format_json_quote_64bit_integers=1`. Here the only place left to fix it is the raw body,
-before it is parsed — so `http-transport.ts` owns `quoteUnsafeIntegers()`
-([http-transport.ts:264](../../src/lib/db/providers/sql/druid/http-transport.ts)), a single-pass,
-**string-aware** scanner that wraps any integer literal outside
+before it is parsed — so `http-transport.ts` runs the body through `quoteUnsafeIntegers()`
+([`json-integers.ts`](../../src/lib/db/utils/json-integers.ts), shared with the Trino provider and
+the native EXPLAIN strategy) before `JSON.parse` sees it: a single-pass, **string-aware** scanner
+that wraps any integer literal outside
 `Number.MIN_SAFE_INTEGER … Number.MAX_SAFE_INTEGER` in quotes. The value then reaches the UI as an
 exact string — the same thing the `pg` driver already does for `int8`, so the grid renders it
 correctly with no further change.
@@ -479,7 +480,7 @@ Four consequences the implementation honours:
    spoken and classified the failure when nothing ever answered.
 
 `DruidTransportError`
-([transport.ts:256](../../src/lib/db/providers/sql/druid/transport.ts)) carries `category`,
+([`transport.ts`](../../src/lib/db/providers/sql/druid/transport.ts)) carries `category`,
 `errorCode`, `persona` and the resolved message, and offers two predicates so no call site spells a
 literal:
 
@@ -530,7 +531,7 @@ SELECT id FROM libredb_demo OFFSET 2 LIMIT 3
 ```
 
 `DruidProvider.prepareQuery()`
-([index.ts:271](../../src/lib/db/providers/sql/druid/index.ts)) asks `analyzeQuery()` — the shared
+([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts)) asks `analyzeQuery()` — the shared
 analyzer, not a regex of its own, because it already reads the end of the statement (so the
 terminating semicolon and any trailing comment are outside what its probes see) and already
 distinguishes an `OFFSET` that follows a `LIMIT` (the ordinary paginated form, which the limiter
@@ -714,8 +715,8 @@ Strategy details:
 
 ### 4.1 Configuration fields
 
-The form offers exactly four fields
-([`db-ui-config.ts:115`](../../src/lib/db-ui-config.ts)): `host`, `port`, `user`, `password`.
+The form offers exactly four fields (`connectionFields` under `DB_UI_CONFIG.druid`,
+[`db-ui-config.ts`](../../src/lib/db-ui-config.ts)): `host`, `port`, `user`, `password`.
 
 | Field | Required | Notes |
 |---|---|---|
@@ -800,7 +801,7 @@ fails verification; one with a publicly-trusted certificate works. Honouring the
 
 ### 5.1 Execution
 
-`query(sql, params?)` ([index.ts:328](../../src/lib/db/providers/sql/druid/index.ts)) sends one
+`query(sql, params?)` ([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts)) sends one
 statement under both deadlines from [§3.8](#38-both-halves-of-the-timeout), with its `?` parameters
 bound ([§3.10](#310-positional-parameters-really-execute)):
 
@@ -945,7 +946,7 @@ Druid's planner publishes none.
 
 ## 6. Schema introspection
 
-`getSchema()` ([introspect.ts:493](../../src/lib/db/providers/sql/druid/introspect.ts)) makes **two**
+`getSchema()` ([`introspect.ts`](../../src/lib/db/providers/sql/druid/introspect.ts)) makes **two**
 `INFORMATION_SCHEMA` reads in parallel with `Promise.all`, both through the transport seam:
 
 | Data | Source |
@@ -1068,14 +1069,14 @@ becomes a message the user sees.
 
 | Method | Source | Mapping |
 |---|---|---|
-| `getOverview()` ([introspect.ts:524](../../src/lib/db/providers/sql/druid/introspect.ts)) | `sys.servers`, `sys.segments`, `INFORMATION_SCHEMA.TABLES`, `sys.tasks` — **four separate reads** | `version` and `startTime` from the Coordinator's `sys.servers` row (Broker as fallback); `uptime` from `CURRENT_TIMESTAMP - start_time`; `databaseSizeBytes` = `SUM(size)` over active segments; `tableCount` = datasource count; `activeConnections` = count of `RUNNING` tasks; `maxConnections` = **0**; `indexCount` = **0** |
+| `getOverview()` ([`introspect.ts`](../../src/lib/db/providers/sql/druid/introspect.ts)) | `sys.servers`, `sys.segments`, `INFORMATION_SCHEMA.TABLES`, `sys.tasks` — **four separate reads** | `version` and `startTime` from the Coordinator's `sys.servers` row (Broker as fallback); `uptime` from `CURRENT_TIMESTAMP - start_time`; `databaseSizeBytes` = `SUM(size)` over active segments; `tableCount` = datasource count; `activeConnections` = count of `RUNNING` tasks; `maxConnections` = **0**; `indexCount` = **0** |
 | `getPerformanceMetrics()` | — | **Zeroed, and sends no statement.** Druid's cache, query and ingestion metrics all reach a metrics *emitter* (statsd, Kafka, an HTTP endpoint, the log) and none reaches a SQL-readable table |
 | `getSlowQueries()` | — | **`[]`**, and sends no statement. Druid keeps no query log at all |
-| `getActiveSessions()` ([introspect.ts:609](../../src/lib/db/providers/sql/druid/introspect.ts)) | `sys.tasks` where `status IN ('RUNNING','PENDING')`, newest first | **Ingestion tasks, not query sessions** — see below |
-| `getTableStats()` ([introspect.ts:649](../../src/lib/db/providers/sql/druid/introspect.ts)) | `sys.segments` where `is_active = 1`, grouped by `datasource` | `rowCount` = `SUM(num_rows)`; `tableSizeBytes` and `totalSizeBytes` both = `SUM(size)`; `schemaName` = `"druid"`. A `{ schema }` filter naming anything but `druid` returns `[]` without a round trip |
+| `getActiveSessions()` ([`introspect.ts`](../../src/lib/db/providers/sql/druid/introspect.ts)) | `sys.tasks` where `status IN ('RUNNING','PENDING')`, newest first | **Ingestion tasks, not query sessions** — see below |
+| `getTableStats()` ([`introspect.ts`](../../src/lib/db/providers/sql/druid/introspect.ts)) | `sys.segments` where `is_active = 1`, grouped by `datasource` | `rowCount` = `SUM(num_rows)`; `tableSizeBytes` and `totalSizeBytes` both = `SUM(size)`; `schemaName` = `"druid"`. A `{ schema }` filter naming anything but `druid` returns `[]` without a round trip |
 | `getIndexStats()` | — | **`[]`**, and sends no statement. No index objects exist |
-| `getStorageStats()` ([introspect.ts:678](../../src/lib/db/providers/sql/druid/introspect.ts)) | `sys.servers` where `server_type = 'historical'` | one row per historical: `name` = `server`, `location` = `host`, `sizeBytes` = `curr_size`, `usagePercent` = `curr_size / max_size` |
-| `getHealth()` ([introspect.ts:700](../../src/lib/db/providers/sql/druid/introspect.ts)) | the above, composed | `activeConnections`, `databaseSize`, up to 10 sessions; `cacheHitRatio` = **`"N/A"`**; `slowQueries` = `[]` |
+| `getStorageStats()` ([`introspect.ts`](../../src/lib/db/providers/sql/druid/introspect.ts)) | `sys.servers` where `server_type = 'historical'` | one row per historical: `name` = `server`, `location` = `host`, `sizeBytes` = `curr_size`, `usagePercent` = `curr_size / max_size` |
+| `getHealth()` ([`introspect.ts`](../../src/lib/db/providers/sql/druid/introspect.ts)) | the above, composed | `activeConnections`, `databaseSize`, up to 10 sessions; `cacheHitRatio` = **`"N/A"`**; `slowQueries` = `[]` |
 
 **The Active Sessions panel shows ingestion TASKS, and this is deliberate.** Druid has **no query
 sessions** — no `sys.queries`, no connection catalog, nothing that describes a client. Its tasks are
@@ -1211,7 +1212,7 @@ Global Operations group where `supportsMaintenance` is `false`, each individual 
 resolved. So for Druid no maintenance control renders in either place — the statement above now
 describes the software rather than the intent.
 
-`runMaintenance(type)` ([index.ts:471](../../src/lib/db/providers/sql/druid/index.ts)) exists because
+`runMaintenance(type)` ([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts)) exists because
 the `DatabaseProvider` interface obliges every provider to implement it, and **not** because any
 request reaches it: `/api/db/maintenance`
 ([route.ts](../../src/app/api/db/maintenance/route.ts)) checks `supportsMaintenance` and returns
@@ -1241,7 +1242,7 @@ Both halves of that are real constraints, not scope cuts made lightly:
 
 ## 9. Capabilities & labels
 
-### `getCapabilities()` ([index.ts:151](../../src/lib/db/providers/sql/druid/index.ts))
+### `getCapabilities()` ([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts))
 
 | Capability | Value | Why |
 |---|---|---|
@@ -1259,7 +1260,7 @@ Both halves of that are real constraints, not scope cuts made lightly:
 | `defaultPort` | `8888` | The Router. `8082` (Broker) is equally valid ([§3.3](#33-router-8888-or-broker-8082--both-work-identically)) |
 | `schemaRefreshPattern` | `\b(INSERT\|REPLACE)\b` | The only statements that could change a datasource — and the native engine rejects both, so in practice a query never refreshes the schema, which is correct |
 
-### `getLabels()` ([index.ts:194](../../src/lib/db/providers/sql/druid/index.ts))
+### `getLabels()` ([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts))
 
 Three overrides:
 
@@ -1282,7 +1283,7 @@ and the generate action are inherited unchanged and are correct for Druid.
 
 The transport normalizes every failure into `DruidTransportError { message, category, errorCode,
 persona }`; `mapDruidError()`
-([index.ts:358](../../src/lib/db/providers/sql/druid/index.ts)) maps that onto the shared classes from
+([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts)) maps that onto the shared classes from
 [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts) — **keyed on `category`, never on the HTTP
 status**:
 
