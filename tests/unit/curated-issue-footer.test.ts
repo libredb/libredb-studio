@@ -30,22 +30,22 @@ const FOOTER = ".github/curated-issue-footer.md";
 const MARKER = "**CI is the merge gate.**";
 
 /**
- * Leading whitespace has to go before the two sides can be compared.
+ * Layout has to go before the two sides can be compared; only the wording is pinned.
  *
  * In `CONTRIBUTING.md` the paragraph sits inside numbered list item 4, so every one of its lines is
  * indented by three spaces; in the footer it is flush left. A plain `includes()` therefore fails on
- * the very first line, which says nothing about whether the wording drifted.
+ * the very first line, which says nothing about whether the wording drifted. The two copies also
+ * have different natural margins and this repository writes one sentence per line, so either will be
+ * re-flowed sooner or later without a word changing - and a lone trailing space would otherwise fail
+ * with two error strings that look identical. Collapsing every run of whitespace covers all three.
  */
-const dedent = (text: string): string =>
-  text
-    .split("\n")
-    .map((line) => line.trimStart())
-    .join("\n");
+const words = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-/** The dedented, blank-line-delimited paragraph of the footer that opens with `MARKER`. */
+/** The trimmed, blank-line-delimited paragraph of the footer that opens with `MARKER`. */
 const sharedParagraph = (): string => {
-  const found = dedent(read(FOOTER))
+  const found = read(FOOTER)
     .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
     .find((paragraph) => paragraph.startsWith(MARKER));
   if (found === undefined) {
     // Rewording the footer's opening sentence is allowed; silently leaving this guard with nothing
@@ -57,11 +57,11 @@ const sharedParagraph = (): string => {
 
 describe("the CI-gate paragraph shared by CONTRIBUTING.md and the curated issue footer", () => {
   test(`${FOOTER} still carries the paragraph this guard reads`, () => {
-    expect(sharedParagraph().split("\n").length).toBeGreaterThan(1);
+    expect(sharedParagraph().length).toBeGreaterThan(MARKER.length);
   });
 
   test("CONTRIBUTING.md repeats it word for word", () => {
-    expect(dedent(read(CONTRIBUTING))).toContain(sharedParagraph());
+    expect(words(read(CONTRIBUTING))).toContain(words(sharedParagraph()));
   });
 
   test("CONTRIBUTING.md tells a maintainer where the footer lives", () => {
