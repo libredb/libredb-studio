@@ -1563,7 +1563,11 @@ describe("MySQLProvider", () => {
     test("a size result without the expected column leaves overview size absent", async () => {
       mockExecuteFn = (sql: string) => {
         const lower = sql.toLowerCase();
-        if (lower.includes("information_schema.tables") && lower.includes("sum(data_length") && !lower.includes("table_name")) {
+        if (
+          lower.includes("information_schema.tables") &&
+          lower.includes("sum(data_length") &&
+          !lower.includes("table_name")
+        ) {
           return Promise.resolve([[{ size_mb: "12.50", name: "testdb" }], []]);
         }
         return defaultMockExecute(sql);
@@ -1580,7 +1584,11 @@ describe("MySQLProvider", () => {
     test("a size read with no result row leaves overview size absent", async () => {
       mockExecuteFn = (sql: string) => {
         const lower = sql.toLowerCase();
-        if (lower.includes("information_schema.tables") && lower.includes("sum(data_length") && !lower.includes("table_name")) {
+        if (
+          lower.includes("information_schema.tables") &&
+          lower.includes("sum(data_length") &&
+          !lower.includes("table_name")
+        ) {
           return Promise.resolve([[], []]);
         }
         return defaultMockExecute(sql);
@@ -1597,7 +1605,11 @@ describe("MySQLProvider", () => {
     test("a non-finite size leaves overview size absent", async () => {
       mockExecuteFn = (sql: string) => {
         const lower = sql.toLowerCase();
-        if (lower.includes("information_schema.tables") && lower.includes("sum(data_length") && !lower.includes("table_name")) {
+        if (
+          lower.includes("information_schema.tables") &&
+          lower.includes("sum(data_length") &&
+          !lower.includes("table_name")
+        ) {
           return Promise.resolve([[{ size_mb: "12.50", size_bytes: Number.POSITIVE_INFINITY, name: "testdb" }], []]);
         }
         return defaultMockExecute(sql);
@@ -1617,7 +1629,11 @@ describe("MySQLProvider", () => {
       // measured zero the provider must keep publishing - never an absence.
       mockExecuteFn = (sql: string) => {
         const lower = sql.toLowerCase();
-        if (lower.includes("information_schema.tables") && lower.includes("sum(data_length") && !lower.includes("table_name")) {
+        if (
+          lower.includes("information_schema.tables") &&
+          lower.includes("sum(data_length") &&
+          !lower.includes("table_name")
+        ) {
           return Promise.resolve([[{ size_mb: "0.00", size_bytes: null, name: "testdb" }], []]);
         }
         return defaultMockExecute(sql);

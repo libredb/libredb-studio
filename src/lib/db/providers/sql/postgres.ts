@@ -575,7 +575,6 @@ const OVERVIEW_CONNECTIONS_SQL = `
 // getOverview: database size, pretty-printed and raw bytes ($1 = database).
 const OVERVIEW_SIZE_SQL = `
         SELECT
-          pg_size_pretty(pg_database_size($1)) as database_size,
           pg_database_size($1) as database_size_bytes
       `;
 

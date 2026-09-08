@@ -723,10 +723,14 @@ base) fans these out in parallel.
 all user schemas.
 
 **Database size is absent, never zeroed, when it is not measured.** `getOverview()` sizes the
-database with `pg_database_size`; a missing result row, or a row without `database_size_bytes`, is
-no measurement at all, so `databaseSizeBytes` is omitted and `databaseSize` stays `"N/A"`. Only a
-returned SQL `NULL` — an empty database — is a measured zero, and that reading is published as
-`0`/`"0 B"`.
+database with `pg_database_size($1)` and reads the byte figure only, the shape `mssql.ts` uses:
+`databaseSize` is `formatBytes()` over that number, so no `pg_size_pretty()` column is selected. A
+missing result row, or a row without `database_size_bytes`, is no measurement at all, so
+`databaseSizeBytes` is omitted and `databaseSize` stays `"N/A"`. A returned SQL `NULL` is a measured
+zero and is still published as `0`/`"0 B"`, which is the shared helper's contract rather than a
+state this engine produces: `pg_database_size()` is a function, not an aggregate, and measured on
+PostgreSQL 18 a freshly created database answers 7774735 bytes, never `NULL` and never zero. MySQL's
+`SUM()` over an empty schema is where that null row is real.
 
 ### 7.1 When the cache hit ratio is not measurable
 
