@@ -4,6 +4,74 @@ entries:
   - annotations:
       artifacthub.io/category: database
       artifacthub.io/changes: |
+        - "Prefix default health probes with config.basePath for images built to run under a subpath"
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:0.15.0
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 0.15.0
+    created: "2026-09-08T21:01:51.742529296Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting sixteen engines
+      - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase,
+      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra
+      and libSQL
+    digest: f71822ee8d473b13721f7053255ab872c1d715fae69cd25794bbe103250d3a0b
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - libsql
+    - turso
+    - duckdb
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.62/libredb-studio-0.1.62.tgz
+    version: 0.1.62
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
         - "The OpenShift operator bundle now reaches both community catalogs on every release. Submissions to operatorhub.io and the OpenShift console catalog were hand-made until now, which is why both sat at 0.9.59 while the product reached 0.14.1 and 0.14.0 was never submitted at all"
         - "A database size the server declines to measure is reported as absent rather than as 0 bytes, on MySQL, PostgreSQL, SQL Server and Oracle. An unmeasured database no longer reads as an empty one in the Overview panel"
         - "CREATE TABLE emits the DDL of the engine it is aimed at instead of PostgreSQL's, so the generated statement runs where it was generated"
@@ -3678,4 +3746,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-09-08T17:59:23.508548469Z"
+generated: "2026-09-08T21:01:51.735142718Z"
