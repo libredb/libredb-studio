@@ -99,6 +99,10 @@ label have not been vetted for outside pickup; ask in an issue first if one inte
 - **What does not count.** PRs that only reformat, rename, fix a typo without an issue, add a
   trailing comment or bump a version are closed with the `spam` or `invalid` label. Machine-generated
   PRs that do not run the tests fall in the same bin.
+- **Maintainers:** the block pasted at the foot of a curated issue lives in
+  [`.github/curated-issue-footer.md`](.github/curated-issue-footer.md). Copy it from there rather
+  than retyping it; `tests/unit/curated-issue-footer.test.ts` holds its CI-gate paragraph to the
+  copy in step 4 above.
 
 The repository keeps the `hacktoberfest` topic for discoverability. Note that Hacktoberfest 2026
 itself is organised around in-person and online events and no longer counts pull requests; the

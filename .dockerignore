@@ -72,6 +72,7 @@ docs
 # Development files
 .vscode
 .idea
+.devcontainer
 *.swp
 *.swo
 *~
