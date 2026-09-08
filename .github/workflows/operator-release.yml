@@ -22,11 +22,18 @@ on:
         type: string
 
 concurrency:
-  # NOT keyed on the ref. Two releases in flight would otherwise race the
-  # submission's "an older submission is still open" guard, which reads the
-  # catalog's default branch and so cannot see a submission opened seconds
-  # earlier by the other run.
-  group: operator-release
+  # Keyed on the ref on purpose, even though a global group would serialize
+  # the submission's "an open submission for another version" guard, which
+  # reads the catalog's default branch and so cannot see a pull request opened
+  # seconds earlier by another run.
+  #
+  # A global group costs more than that race. GitHub keeps only ONE pending
+  # run per group: a third release cancels the second while the first is still
+  # running, `cancel-in-progress: false` or not, and a cancelled run means no
+  # image and no submission for that version, silently. The race it would
+  # prevent is loud instead: two submissions naming the same predecessor fail
+  # the second merge upstream with "multiple channel heads".
+  group: operator-release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -177,11 +184,11 @@ jobs:
         catalog:
           - label: operatorhub.io
             upstream: k8s-operatorhub/community-operators
-            fork: cevheri/community-operators
+            fork: libredb/community-operators
             release_config: false
           - label: OpenShift console
             upstream: redhat-openshift-ecosystem/community-operators-prod
-            fork: cevheri/community-operators-prod
+            fork: libredb/community-operators-prod
             release_config: true
     steps:
       - name: Checkout code
@@ -321,7 +328,8 @@ jobs:
           node scripts/operator-catalog-submission.mjs decide \
             --version "${{ needs.build-and-push.outputs.version }}" \
             --operator-dir catalog/operators/libredb-studio-operator \
-            --repo "${{ matrix.catalog.upstream }}" | tee -a "$GITHUB_OUTPUT"
+            --repo "${{ matrix.catalog.upstream }}" \
+            --fork "${{ matrix.catalog.fork }}" | tee -a "$GITHUB_OUTPUT"
 
       - name: Report a skip
         if: steps.gate.outputs.enabled == 'true' && steps.decide.outputs.enabled != 'true'

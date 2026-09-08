@@ -92,24 +92,39 @@ export function submittedVersions(paths, operator) {
 }
 
 /**
+ * Whether an open pull request is the one this workflow manages for this
+ * version: our fork, and the branch `create-pull-request` pushes.
+ *
+ * The distinction matters because the version exemption below would otherwise
+ * let a duplicate through the very hole it exists to close. A rerun for our
+ * own version must not block, since the action updates that branch in place -
+ * but a same-version submission from any other branch or fork is a second
+ * pull request for one version, and the action will never touch it.
+ */
+export function isManagedSubmission(head, fork, operator, version) {
+  return head.headRepo === fork && head.headRef === `${operator}-${version}`;
+}
+
+/**
  * Open submissions that must stop this one, each with the pull request that
  * holds it. The predecessor is read from the catalog's default branch, so an
  * unmerged submission is invisible to it: submitting past a pending version
  * would leave that bundle dangling once both merge, which is the failure mode
  * that lost VictoriaMetrics 0.48.2.
  *
- * Our own version is not a blocker - that is the rerun case, where the
- * existing pull request is updated in place. The pull request number IS
- * carried, because a skip that does not say what to go and merge is a mute.
+ * Our own version is only exempt when the pull request is the managed one -
+ * see isManagedSubmission. The pull request number IS carried, because a skip
+ * that does not say what to go and merge is a mute.
  *
- * @param {{number: number, versions: string[]}[]} openSubmissions
+ * @param {{number: number, versions: string[], managed: boolean}[]} openSubmissions
  * @returns {{version: string, number: number}[]}
  */
 export function blockingSubmissions(openSubmissions, version) {
   const blockers = new Map();
   for (const submission of openSubmissions) {
     for (const found of submission.versions) {
-      if (found !== version && !blockers.has(found)) {
+      const exempt = found === version && submission.managed;
+      if (!exempt && !blockers.has(found)) {
         blockers.set(found, submission.number);
       }
     }
@@ -121,7 +136,7 @@ export function blockingSubmissions(openSubmissions, version) {
 
 /**
  * @param {{version: string, operator: string, entries: string[] | null,
- *           openSubmissions: {number: number, versions: string[]}[]}} input
+ *           openSubmissions: {number: number, versions: string[], managed: boolean}[]}} input
  *   `entries` is null when the operator directory is absent upstream.
  * @returns {{enabled: boolean, reason: string, predecessor: string | null}}
  */
@@ -245,7 +260,7 @@ export function readOperatorEntries(operatorDir) {
  * `apiBase` is a parameter so the tests can point both endpoints at a local
  * server and the suite never touches the network.
  */
-export async function readOpenSubmissions({ apiBase, repo, operator, timeoutMs = 15000 }) {
+export async function readOpenSubmissions({ apiBase, repo, operator, fork, version, timeoutMs = 15000 }) {
   const query = encodeURIComponent(`repo:${repo} is:pr is:open ${operator}`);
   const search = await fetchJson(`${apiBase}/search/issues?q=${query}&per_page=100`, timeoutMs);
   if (!Array.isArray(search.items)) {
@@ -260,11 +275,22 @@ export async function readOpenSubmissions({ apiBase, repo, operator, timeoutMs =
     if (!Array.isArray(files)) {
       throw new Error(`pull request ${item.number}: changed files unreadable`);
     }
+    // A second read for the head. The search result does not carry it, and
+    // without it a same-version pull request from another branch or fork
+    // cannot be told apart from our own rerun.
+    const pull = await fetchJson(`${apiBase}/repos/${repo}/pulls/${item.number}`, timeoutMs);
+    const versions = submittedVersions(
+      files.map((file) => file.filename ?? ""),
+      operator,
+    );
     submissions.push({
       number: item.number,
-      versions: submittedVersions(
-        files.map((file) => file.filename ?? ""),
+      versions,
+      managed: isManagedSubmission(
+        { headRepo: pull?.head?.repo?.full_name ?? null, headRef: pull?.head?.ref ?? null },
+        fork,
         operator,
+        version,
       ),
     });
   }
@@ -331,12 +357,14 @@ async function decide(argv) {
   const operatorFlag = argv.indexOf("--operator");
   const operator = operatorFlag === -1 ? "libredb-studio-operator" : flag(argv, "operator");
   const apiBase = flag(argv, "api-base") ?? "https://api.github.com";
+  const fork = flag(argv, "fork");
 
   for (const [name, value] of [
     ["version", version],
     ["operator-dir", operatorDir],
     ["repo", repo],
     ["operator", operator],
+    ["fork", fork],
   ]) {
     if (!value) {
       console.error(`ERROR: --${name} is required`);
@@ -354,7 +382,7 @@ async function decide(argv) {
   // it for an absent operator or an already-listed version keeps those two
   // answers offline and certain.
   const needsSearch = entries !== null && !catalogVersions(entries).includes(version);
-  const openSubmissions = needsSearch ? await readOpenSubmissions({ apiBase, repo, operator }) : [];
+  const openSubmissions = needsSearch ? await readOpenSubmissions({ apiBase, repo, operator, fork, version }) : [];
 
   const decision = submissionDecision({ version, operator, entries, openSubmissions });
   for (const line of submissionOutputs(decision, operator)) {

@@ -448,6 +448,9 @@ A skip that means a release did not reach a catalog is a `::warning::` rather th
 | an open submission for any other version | see below, this one is a hard stop |
 | the release is a prerelease | the catalogs take bare semver directories only |
 
+Three conditions are hard failures rather than skips, because each is a misconfiguration on our side that would otherwise break the channel quietly:
+the controller image is not anonymously pullable, the fork's `parent` is not the upstream, and a GitHub API read fails.
+
 Two things it refuses rather than guesses.
 A GitHub API read that fails stops the job instead of defaulting to "submit", because a decision made on an unread search is how a duplicate or a graph-breaking pull request gets opened.
 And a fork whose `parent` is not the upstream stops the job: `gh repo sync --source` cannot be trusted for that check, since it calls `POST /merge-upstream` first and that endpoint takes neither a source nor a force parameter, so a fork pointing at the wrong parent would sync from the wrong repository and still exit 0.
@@ -474,9 +477,9 @@ Our list is `cevheri` and `yusuf-gundogdu`, so the token must belong to one of t
 Signing is DCO, not GPG.
 `create-pull-request` writes the `Signed-off-by` trailer from its **committer** input, whose default is `github-actions[bot]`, so `committer` and `author` are both set to the same real identity; `sign-commits` stays off, because it recreates commits through the API and discards those identities, leaving a trailer that no longer matches the author.
 
-The forks are currently `cevheri/community-operators` and `cevheri/community-operators-prod`.
-If they move under the `libredb` organization, **transfer** them; do not fork the fork.
-An org fork created from a personal fork records the personal fork as its parent, a parent cannot be changed afterwards, and the only escape ("leave fork network") is permanent and destroys the pull requests.
+The forks are `libredb/community-operators` and `libredb/community-operators-prod`.
+They were **transferred** from the `cevheri` account rather than re-forked, which is the only way that keeps `parent` pointing at the upstream: an org fork created from a personal fork records the personal fork as its parent, a parent cannot be changed afterwards, and the only escape ("leave fork network") is permanent and destroys the pull requests.
+The job asserts that parent on every run for the same reason.
 
 What stays manual: the first listing in each catalog, the merge itself (the hub automerges once its checks pass, prod merges on its own pipeline), and the operatorhub.io index publication, which lags a merge by hours.
 
@@ -1685,14 +1688,16 @@ deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none
   ([community-operators-prod#10581](https://github.com/redhat-openshift-ecosystem/community-operators-prod/pull/10581)),
   and operatorhub.io via its bundle PR
   ([k8s-operatorhub/community-operators#8794](https://github.com/k8s-operatorhub/community-operators/pull/8794),
-  merged 2026-09-08). `operatorhub-community` is `live` accordingly. Two things
-  the merge does *not* finish: operatorhub.io serves from its own index build,
-  which lags the merge by hours (`https://operatorhub.io/api/operator?packageName=libredb-studio-operator`
-  is the read that answers for it — it returned "can't find" while a control
-  query for `argocd-operator` returned a full record), and both catalogs still
-  serve **0.9.59**, so every release from here is an upstream bump PR per
-  catalog. Remember `release-config.yaml` in each bundle PR (see
-  [An FBC release is two upstream PRs](#an-fbc-release-is-two-upstream-prs)).
+  merged 2026-09-08). `operatorhub-community` is `live` accordingly.
+  Both catalogs carried only 0.9.59 for weeks after that, which is why the
+  per-release submission is now automated; 0.14.1 was the catch-up, landing as
+  k8s-operatorhub/community-operators#9219 and community-operators-prod#11106.
+  One thing a merge still does not finish: operatorhub.io serves from its own
+  index build, which lags by hours.
+  `https://operatorhub.io/api/operator?packageName=libredb-studio-operator` is
+  the read that answers for it, and it returned "can't find" for hours after
+  #8794 merged while a control query for `argocd-operator` returned a full
+  record.
 - **Snap Store listing screenshots**: the description and icon ship with the snap
   (`snap/snapcraft.yaml`, `public/logo.svg`), but screenshots are a manual upload in the
   Snap Store web UI (https://snapcraft.io/libredb-studio/listing). The snap name is registered

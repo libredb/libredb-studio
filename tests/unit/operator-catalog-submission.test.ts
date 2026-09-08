@@ -19,10 +19,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse } from "yaml";
 import {
   blockingSubmissions,
   catalogVersions,
   compareVersions,
+  isManagedSubmission,
   submittedVersions,
   predecessorVersion,
   submissionDecision,
@@ -31,6 +33,7 @@ import {
 } from "../../scripts/operator-catalog-submission.mjs";
 
 const OPERATOR = "libredb-studio-operator";
+const FORK = "libredb/community-operators";
 
 describe("catalogVersions", () => {
   test("keeps semver directories and sorts them ascending", () => {
@@ -145,32 +148,76 @@ describe("submittedVersions", () => {
   });
 });
 
+describe("isManagedSubmission", () => {
+  const fork = "libredb/community-operators";
+
+  test("recognises the branch this workflow pushes", () => {
+    expect(isManagedSubmission({ headRepo: fork, headRef: `${OPERATOR}-0.14.1` }, fork, OPERATOR, "0.14.1")).toBe(true);
+  });
+
+  test("rejects the same branch name on a different fork", () => {
+    expect(
+      isManagedSubmission(
+        { headRepo: "someone/community-operators", headRef: `${OPERATOR}-0.14.1` },
+        fork,
+        OPERATOR,
+        "0.14.1",
+      ),
+    ).toBe(false);
+  });
+
+  test("rejects a different branch on our own fork", () => {
+    expect(isManagedSubmission({ headRepo: fork, headRef: "manual-fix" }, fork, OPERATOR, "0.14.1")).toBe(false);
+  });
+
+  test("rejects a branch for another version", () => {
+    expect(isManagedSubmission({ headRepo: fork, headRef: `${OPERATOR}-0.13.7` }, fork, OPERATOR, "0.14.1")).toBe(
+      false,
+    );
+  });
+
+  test("is false when the head is unknown", () => {
+    expect(isManagedSubmission({ headRepo: null, headRef: null }, fork, OPERATOR, "0.14.1")).toBe(false);
+  });
+});
+
 describe("blockingSubmissions", () => {
   test("an open submission for another version blocks", () => {
     // The predecessor is read from the catalog's default branch, so an
     // unmerged submission is invisible to it. Submitting past it would leave
     // the pending bundle dangling once both merge.
-    expect(blockingSubmissions([{ number: 7, versions: ["0.13.7"] }], "0.14.1")).toEqual([
+    expect(blockingSubmissions([{ number: 7, versions: ["0.13.7"], managed: false }], "0.14.1")).toEqual([
       { version: "0.13.7", number: 7 },
     ]);
   });
 
-  test("an open submission for our own version does not block", () => {
-    expect(blockingSubmissions([{ number: 7, versions: ["0.14.1"] }], "0.14.1")).toEqual([]);
+  test("our own managed pull request for this version does not block", () => {
+    // The rerun case: create-pull-request updates that branch in place.
+    expect(blockingSubmissions([{ number: 7, versions: ["0.14.1"], managed: true }], "0.14.1")).toEqual([]);
+  });
+
+  test("somebody else's pull request for this version DOES block", () => {
+    // Same version, different head. create-pull-request only ever updates its
+    // own branch, so proceeding here opens a second submission for one
+    // version - which is the duplicate the version exemption exists to avoid,
+    // arriving through the exemption itself.
+    expect(blockingSubmissions([{ number: 7, versions: ["0.14.1"], managed: false }], "0.14.1")).toEqual([
+      { version: "0.14.1", number: 7 },
+    ]);
   });
 
   test("a higher pending version blocks too", () => {
-    expect(blockingSubmissions([{ number: 7, versions: ["0.15.0"] }], "0.14.1")).toEqual([
+    expect(blockingSubmissions([{ number: 7, versions: ["0.15.0"], managed: false }], "0.14.1")).toEqual([
       { version: "0.15.0", number: 7 },
     ]);
   });
 
   test("a pull request touching no version of ours does not block", () => {
-    expect(blockingSubmissions([{ number: 7, versions: [] }], "0.14.1")).toEqual([]);
+    expect(blockingSubmissions([{ number: 7, versions: [], managed: false }], "0.14.1")).toEqual([]);
   });
 
   test("carries the pull request number, so the skip names what to go and merge", () => {
-    expect(blockingSubmissions([{ number: 7, versions: ["0.13.7"] }], "0.14.1")).toEqual([
+    expect(blockingSubmissions([{ number: 7, versions: ["0.13.7"], managed: false }], "0.14.1")).toEqual([
       { version: "0.13.7", number: 7 },
     ]);
   });
@@ -179,8 +226,8 @@ describe("blockingSubmissions", () => {
     expect(
       blockingSubmissions(
         [
-          { number: 8, versions: ["0.15.0"] },
-          { number: 7, versions: ["0.13.7", "0.15.0"] },
+          { number: 8, versions: ["0.15.0"], managed: false },
+          { number: 7, versions: ["0.13.7", "0.15.0"], managed: false },
         ],
         "0.14.1",
       ),
@@ -218,7 +265,10 @@ describe("submissionDecision", () => {
   });
 
   test("skips when an earlier submission is still open, naming it and its pull request", () => {
-    const decision = submissionDecision({ ...base, openSubmissions: [{ number: 7, versions: ["0.13.7"] }] });
+    const decision = submissionDecision({
+      ...base,
+      openSubmissions: [{ number: 7, versions: ["0.13.7"], managed: false }],
+    });
     expect(decision.enabled).toBe(false);
     expect(decision.reason).toMatch(/still open/);
     expect(decision.reason).toMatch(/0\.13\.7/);
@@ -233,7 +283,7 @@ describe("submissionDecision", () => {
     const decision = submissionDecision({
       ...base,
       entries: ["ci.yaml", "0.9.59"],
-      openSubmissions: [{ number: 12345, versions: ["0.9.59"] }],
+      openSubmissions: [{ number: 12345, versions: ["0.9.59"], managed: false }],
     });
     expect(decision.enabled).toBe(true);
     expect(decision.predecessor).toBe("0.9.59");
@@ -264,7 +314,7 @@ describe("submissionDecision", () => {
     const decision = submissionDecision({
       ...base,
       entries: ["0.9.59", "0.14.1"],
-      openSubmissions: [{ number: 7, versions: ["0.13.7"] }],
+      openSubmissions: [{ number: 7, versions: ["0.13.7"], managed: false }],
     });
     expect(decision.reason).toMatch(/already carries/);
   });
@@ -404,7 +454,10 @@ describe("CLI", () => {
    * A stand-in for the two GitHub endpoints the CLI reads: the issue search
    * and each candidate pull request's changed files.
    */
-  function apiServing(prs: Array<{ number: number; files: string[] }>, status = 200): string {
+  function apiServing(
+    prs: Array<{ number: number; files: string[]; headRepo?: string; headRef?: string }>,
+    status = 200,
+  ): string {
     const server = Bun.serve({
       port: 0,
       fetch: (req) => {
@@ -415,10 +468,17 @@ describe("CLI", () => {
         if (path === "/search/issues") {
           return Response.json({ items: prs.map((pr) => ({ number: pr.number, title: "whatever" })) });
         }
-        const match = path.match(/\/repos\/.+\/pulls\/(\d+)\/files$/);
-        if (match) {
-          const pr = prs.find((candidate) => candidate.number === Number(match[1]));
+        const files = path.match(/\/repos\/.+\/pulls\/(\d+)\/files$/);
+        if (files) {
+          const pr = prs.find((candidate) => candidate.number === Number(files[1]));
           return Response.json((pr?.files ?? []).map((filename) => ({ filename })));
+        }
+        const pull = path.match(/\/repos\/.+\/pulls\/(\d+)$/);
+        if (pull) {
+          const pr = prs.find((candidate) => candidate.number === Number(pull[1]));
+          return Response.json({
+            head: { ref: pr?.headRef ?? "somebody-elses-branch", repo: { full_name: pr?.headRepo ?? "someone/fork" } },
+          });
         }
         return new Response("unexpected path", { status: 404 });
       },
@@ -450,6 +510,8 @@ describe("CLI", () => {
       catalogDir(["ci.yaml", "0.9.59"]),
       "--repo",
       "k8s-operatorhub/community-operators",
+      "--fork",
+      FORK,
       "--api-base",
       apiServing([]),
     ]);
@@ -470,6 +532,8 @@ describe("CLI", () => {
       catalogDir(["0.9.59", "0.14.1"]),
       "--repo",
       "k8s-operatorhub/community-operators",
+      "--fork",
+      FORK,
       "--api-base",
       apiServing([], 500),
     ]);
@@ -487,6 +551,8 @@ describe("CLI", () => {
       catalogDir(null),
       "--repo",
       "k8s-operatorhub/community-operators",
+      "--fork",
+      FORK,
       "--api-base",
       apiServing([], 500),
     ]);
@@ -504,6 +570,8 @@ describe("CLI", () => {
       catalogDir(["ci.yaml", "0.9.59"]),
       "--repo",
       "k8s-operatorhub/community-operators",
+      "--fork",
+      FORK,
       "--api-base",
       apiServing([{ number: 7, files: [`operators/${OPERATOR}/0.13.7/manifests/csv.yaml`] }]),
     ]);
@@ -523,6 +591,8 @@ describe("CLI", () => {
       catalogDir(["ci.yaml", "0.9.59"]),
       "--repo",
       "k8s-operatorhub/community-operators",
+      "--fork",
+      FORK,
       "--api-base",
       apiServing([{ number: 9, files: [`operators/${OPERATOR}/ci.yaml`] }]),
     ]);
@@ -541,6 +611,8 @@ describe("CLI", () => {
       catalogDir(["ci.yaml", "0.9.59"]),
       "--repo",
       "k8s-operatorhub/community-operators",
+      "--fork",
+      FORK,
       "--api-base",
       apiServing([], 403),
     ]);
@@ -558,6 +630,8 @@ describe("CLI", () => {
       catalogDir(["ci.yaml", "0.9.59"]),
       "--repo",
       "k8s-operatorhub/community-operators",
+      "--fork",
+      FORK,
       "--api-base",
       apiServing([]),
     ]);
@@ -586,11 +660,60 @@ describe("CLI", () => {
       file,
       "--repo",
       "k8s-operatorhub/community-operators",
+      "--fork",
+      FORK,
       "--api-base",
       apiServing([]),
     ]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toMatch(/ENOTDIR|not a directory/i);
+  });
+
+  test("a rerun for our own version updates rather than blocks, but a stranger's pull request blocks", async () => {
+    const mine = await run([
+      "decide",
+      "--version",
+      "0.14.1",
+      "--operator-dir",
+      catalogDir(["ci.yaml", "0.9.59"]),
+      "--repo",
+      "k8s-operatorhub/community-operators",
+      "--fork",
+      FORK,
+      "--api-base",
+      apiServing([
+        {
+          number: 7,
+          files: [`operators/${OPERATOR}/0.14.1/manifests/csv.yaml`],
+          headRepo: FORK,
+          headRef: `${OPERATOR}-0.14.1`,
+        },
+      ]),
+    ]);
+    expect(mine.stdout).toContain("enabled=true");
+
+    const theirs = await run([
+      "decide",
+      "--version",
+      "0.14.1",
+      "--operator-dir",
+      catalogDir(["ci.yaml", "0.9.59"]),
+      "--repo",
+      "k8s-operatorhub/community-operators",
+      "--fork",
+      FORK,
+      "--api-base",
+      apiServing([
+        {
+          number: 8,
+          files: [`operators/${OPERATOR}/0.14.1/manifests/csv.yaml`],
+          headRepo: "stranger/community-operators",
+          headRef: `${OPERATOR}-0.14.1`,
+        },
+      ]),
+    ]);
+    expect(theirs.stdout).toContain("enabled=false");
+    expect(theirs.stdout).toMatch(/reason=.*0\.14\.1 \(#8\)/);
   });
 
   test("fails when the search response is not the expected shape", async () => {
@@ -604,6 +727,8 @@ describe("CLI", () => {
       catalogDir(["ci.yaml", "0.9.59"]),
       "--repo",
       "a/b",
+      "--fork",
+      FORK,
       "--api-base",
       `http://127.0.0.1:${server.port}`,
     ]);
@@ -628,6 +753,8 @@ describe("CLI", () => {
       catalogDir(["ci.yaml", "0.9.59"]),
       "--repo",
       "a/b",
+      "--fork",
+      FORK,
       "--api-base",
       `http://127.0.0.1:${server.port}`,
     ]);
@@ -646,6 +773,8 @@ describe("CLI", () => {
       catalogDir(["ci.yaml", "0.9.59"]),
       "--repo",
       "a/b",
+      "--fork",
+      FORK,
     ]);
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/--operator/);
@@ -659,15 +788,25 @@ describe("CLI", () => {
 
   test("refuses a missing or malformed version instead of guessing", async () => {
     const dir = catalogDir(["0.9.59"]);
-    const missing = await run(["decide", "--operator-dir", dir, "--repo", "a/b"]);
+    const missing = await run(["decide", "--operator-dir", dir, "--repo", "a/b", "--fork", FORK]);
     expect(missing.exitCode).toBe(2);
     expect(missing.stderr).toMatch(/--version is required/);
 
-    const noDir = await run(["decide", "--version", "0.14.1", "--repo", "a/b"]);
+    const noDir = await run(["decide", "--version", "0.14.1", "--repo", "a/b", "--fork", FORK]);
     expect(noDir.exitCode).toBe(2);
     expect(noDir.stderr).toMatch(/--operator-dir is required/);
 
-    const malformed = await run(["decide", "--version", "v0.14.1", "--operator-dir", dir, "--repo", "a/b"]);
+    const malformed = await run([
+      "decide",
+      "--version",
+      "v0.14.1",
+      "--operator-dir",
+      dir,
+      "--repo",
+      "a/b",
+      "--fork",
+      FORK,
+    ]);
     expect(malformed.exitCode).toBe(2);
     expect(malformed.stderr).toMatch(/bare semver/);
   });
@@ -701,8 +840,88 @@ describe("CLI", () => {
   });
 
   test("refuses when the target repo is not given", async () => {
-    const result = await run(["decide", "--version", "0.14.1", "--operator-dir", catalogDir(["0.9.59"])]);
+    const result = await run([
+      "decide",
+      "--version",
+      "0.14.1",
+      "--operator-dir",
+      catalogDir(["0.9.59"]),
+      "--fork",
+      FORK,
+    ]);
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/--repo is required/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Workflow wiring. The matrix that decides where a submission is pushed is
+// configuration, so nothing else in the suite would notice a typo'd slug or a
+// fork paired with the wrong upstream until a release tried it.
+// ---------------------------------------------------------------------------
+
+describe("the submit-catalogs matrix", () => {
+  const workflow = parse(
+    readFileSync(join(import.meta.dir, "../../.github/workflows/operator-release.yml"), "utf8"),
+  ) as {
+    jobs: Record<
+      string,
+      {
+        needs?: string;
+        if?: string;
+        strategy?: {
+          "fail-fast"?: boolean;
+          matrix?: { catalog?: Array<{ label: string; upstream: string; fork: string; release_config: boolean }> };
+        };
+      }
+    >;
+  };
+  const job = workflow.jobs["submit-catalogs"];
+  const catalogs = job.strategy?.matrix?.catalog ?? [];
+
+  test("covers both community catalogs", () => {
+    expect(catalogs.map((entry) => entry.upstream).sort()).toEqual([
+      "k8s-operatorhub/community-operators",
+      "redhat-openshift-ecosystem/community-operators-prod",
+    ]);
+  });
+
+  test("pairs each upstream with the fork of that same upstream", () => {
+    // A fork paired with the wrong upstream would push a bundle into the other
+    // catalog's fork and open a pull request that cannot merge. The fork name
+    // mirrors the upstream repository name, which is what makes this checkable
+    // without the network.
+    for (const entry of catalogs) {
+      expect(entry.fork).toBe(`libredb/${entry.upstream.split("/")[1]}`);
+    }
+  });
+
+  test("every fork is org-owned, because they were transferred there", () => {
+    for (const entry of catalogs) {
+      expect(entry.fork.startsWith("libredb/")).toBe(true);
+    }
+  });
+
+  test("release-config is written for the FBC catalog only", () => {
+    const withConfig = catalogs.filter((entry) => entry.release_config).map((entry) => entry.upstream);
+    expect(withConfig).toEqual(["redhat-openshift-ecosystem/community-operators-prod"]);
+  });
+
+  test("release_config is a boolean, not a string that would read as truthy", () => {
+    // `release_config: "false"` in YAML is a non-empty string, so the step's
+    // `&& matrix.catalog.release_config` guard would run for both catalogs.
+    for (const entry of catalogs) {
+      expect(typeof entry.release_config).toBe("boolean");
+    }
+  });
+
+  test("one catalog failing does not cancel the other", () => {
+    expect(job.strategy?.["fail-fast"]).toBe(false);
+  });
+
+  test("the job runs only after the controller image is pushed, and only for a submittable version", () => {
+    expect(job.needs).toBe("build-and-push");
+    expect(job.if).toContain("needs.build-and-push.outputs.skip != 'true'");
+    expect(job.if).toContain("needs.build-and-push.outputs.submittable == 'true'");
   });
 });
