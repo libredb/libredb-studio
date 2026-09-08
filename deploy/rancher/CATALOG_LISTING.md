@@ -5,8 +5,8 @@ Solutions Catalog (PCSC), requested by SUSE as part of the SUSE Ready for Ranche
 certification (see rancher/partner-charts#1158 and tracking issue #166). This file is
 the single source for the catalog text.
 The overlay Rancher renders is cut from it into `app-readme.md` beside this file, which is
-what a partner-charts submission copies, most recently on 2026-09-09 (see the delivery note
-at the end).
+what a partner-charts submission copies; the refresh submitted on 2026-09-09 is still open
+(see the delivery note at the end).
 `E2E_VALIDATION_TASK.md` covers the validation side.
 
 The listing is live at https://www.suse.com/pcsc/viewVersionPage?versionID=26969 (SUSE
@@ -196,8 +196,9 @@ pre-Couchbase app-readme, so merging it would have offered a months-old version 
 Rancher catalog. The overlay in that PR now carries the ten-engine wording from this
 file. The corrections above have **not** been mailed to SUSE yet.
 
-**2026-09-09.** rancher/partner-charts#1168 refreshes the overlay to the sixteen-engine
-wording, from `libredb/partner-charts`.
+**2026-09-09.** rancher/partner-charts#1168 is OPEN, submitted from `libredb/partner-charts`,
+and refreshes the overlay to the sixteen-engine wording.
+The catalog keeps rendering the ten-engine text until it merges.
 It had stayed on the ten-engine text from 2026-08-18 while the chart's own description moved
 to sixteen, because the file Rancher renders lives in that repository and nothing here could
 read it.
@@ -207,7 +208,8 @@ So the submitted text now lives in `app-readme.md` beside this file and is count
 
 Chart versions need no submission of their own: partner-charts runs
 `partner-charts-ci update` nightly against <https://libredb.org/libredb-studio/> and has
-carried every release since the 0.1.36 listing without a pull request.
+carried our releases since the 0.1.36 listing without a pull request, taking the newest
+chart version at each run rather than every version in between.
 An overlay edit reaches the catalog with the next version that CI integrates, because the
 overlay is copied in only when a new chart version is built.
 

@@ -1,11 +1,12 @@
 /**
  * The accuracy gate for outward-facing marketplace copy.
  *
- * These five files are submissions to somebody else's catalog: Railway,
- * DigitalOcean, SUSE PCSC, Azure Partner Center and the AWS Marketplace
- * Management Portal. Nobody in this repo reviews them again once they
- * are mailed, so the only thing standing between a corrected claim and its return is a
- * test. A previous revision replaced a false natural-language-to-SQL claim with two new
+ * These six files are copy submitted to somebody else's catalog: Railway,
+ * DigitalOcean, SUSE PCSC, Azure Partner Center, the AWS Marketplace Management Portal,
+ * and the app-readme overlay Rancher renders. Nobody in this repo reviews them again once
+ * they are submitted - the first five by mail, the last by a pull request against
+ * `rancher/partner-charts`, where no test here can reach the copy that ships - so the only
+ * thing standing between a corrected claim and its return is a test. A previous revision replaced a false natural-language-to-SQL claim with two new
  * ones - "AI query explanation on any connection" (true on 7 of the 14 engines) and
  * "never executes what it recommends" (the consented hand-over runs exactly the
  * recommended statement) - which is why the gate is phrase-level rather than a review
