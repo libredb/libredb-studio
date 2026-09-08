@@ -61,7 +61,7 @@ import {
 } from "@/lib/data-masking";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { TriangleAlert, Database, Plus } from "lucide-react";
+import { TriangleAlert, Database, Plus, Trash2 } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -194,6 +194,7 @@ export default function Studio() {
   // === Modal state ===
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
   const [editingConnection, setEditingConnection] = useState<DatabaseConnection | null>(null);
+  const [pendingDeleteConnectionId, setPendingDeleteConnectionId] = useState<string | null>(null);
   const [isCreateTableModalOpen, setIsCreateTableModalOpen] = useState(false);
   const [showDiagram, setShowDiagram] = useState(false);
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
@@ -395,6 +396,10 @@ export default function Studio() {
     tabMgr.handleTableClick(tableName, queryExec.executeQuery);
   };
 
+  const requestDeleteConnection = (id: string) => {
+    setPendingDeleteConnectionId(id);
+  };
+
   const handleDeleteConnection = (id: string) => {
     // Clean up server-side provider cache and close connections/tunnels
     fetch("/api/db/disconnect", {
@@ -412,6 +417,12 @@ export default function Studio() {
     const updated = [...managedConns, ...userConns];
     conn.setConnections(updated);
     if (conn.activeConnection?.id === id) conn.setActiveConnection(updated[0] || null);
+  };
+
+  const confirmDeleteConnection = () => {
+    if (!pendingDeleteConnectionId) return;
+    handleDeleteConnection(pendingDeleteConnectionId);
+    setPendingDeleteConnectionId(null);
   };
 
   /**
@@ -475,7 +486,7 @@ export default function Studio() {
                 isLoadingSchema={conn.isLoadingSchema}
                 schemaError={conn.schemaError}
                 onSelectConnection={conn.setActiveConnection}
-                onDeleteConnection={handleDeleteConnection}
+                onDeleteConnection={requestDeleteConnection}
                 onEditConnection={(c) => {
                   setEditingConnection(c);
                   setIsConnectionModalOpen(true);
@@ -593,7 +604,7 @@ export default function Studio() {
                       conn.setActiveConnection(c);
                       setActiveMobileTab("editor");
                     }}
-                    onDeleteConnection={handleDeleteConnection}
+                    onDeleteConnection={requestDeleteConnection}
                     onAddConnection={() => setIsConnectionModalOpen(true)}
                   />
                 </div>
@@ -859,6 +870,46 @@ export default function Studio() {
               className="flex-1 h-9 bg-warning-solid border-0 text-white text-xs font-medium hover:bg-warning-solid-hover"
             >
               Load All
+            </AlertDialogAction>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Connection Confirmation */}
+      <AlertDialog
+        open={!!pendingDeleteConnectionId}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteConnectionId(null);
+        }}
+      >
+        <AlertDialogContent className="bg-overlay border-hairline max-w-sm p-0 gap-0 overflow-hidden">
+          <div className="px-6 pt-6 pb-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500/20 to-red-500/10 flex items-center justify-center shrink-0">
+                <Trash2 strokeWidth={1.5} className="w-5 h-5 text-danger" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <AlertDialogTitle className="text-[0.8125rem] font-medium text-fg mb-1">
+                  Delete connection?
+                </AlertDialogTitle>
+                <AlertDialogDescription className="text-xs text-fg-muted leading-relaxed">
+                  <span className="text-fg-tertiary">
+                    {conn.connections.find((c) => c.id === pendingDeleteConnectionId)?.name || "This connection"}
+                  </span>{" "}
+                  will be removed. This cannot be undone.
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </div>
+          <div className="px-6 pb-6 flex gap-2">
+            <AlertDialogCancel className="flex-1 h-9 bg-fill border-0 text-fg-tertiary text-xs font-medium hover:bg-fill-strong hover:text-fg">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteConnection}
+              className="flex-1 h-9 bg-danger-solid border-0 text-white text-xs font-medium hover:bg-danger-solid-hover"
+            >
+              Delete
             </AlertDialogAction>
           </div>
         </AlertDialogContent>
