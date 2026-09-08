@@ -467,8 +467,10 @@ describe("capabilities", () => {
 
   test("Create Table is off, because the modal cannot emit valid CQL", () => {
     // `CREATE TABLE probe.t (id int PRIMARY KEY, name text)` works, but what
-    // CreateTableModal emits does not: its default column is `id SERIAL PRIMARY KEY`
-    // ("Unknown type probe.serial"), its type list offers `VARCHAR(255)`,
+    // CreateTableModal emits does not: its default column is an auto-increment primary
+    // key, which CQL has no spelling of (measured as `id SERIAL PRIMARY KEY`, "Unknown
+    // type probe.serial"; #648 made that spelling per-engine and added no CQL row), its
+    // type list offers `VARCHAR(255)`,
     // `DECIMAL(10,2)`, `INTEGER` and `JSONB` - the first two are syntax errors and
     // the last two are "Unknown type" - and its NOT NULL, UNIQUE and DEFAULT
     // checkboxes each produce "no viable alternative at input". DDL typed into the

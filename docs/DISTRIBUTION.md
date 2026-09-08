@@ -355,7 +355,10 @@ the chart values. Publishing works in two stages:
   promotion into each new OpenShift version's catalog
   (`version_promotion_strategy`, default `review-needed`). Channel
   `operatorhub-community` in `distribution/channels.yaml` tracks it
-  (`status: pending` until the first listing merges; tracking issue #152).
+  (`status: live` since both first listings merged; tracking issue #152). Both
+  are the *community* catalogs — the OpenShift console lists the operator under
+  Community with its unsupported-operator warning — and not the Red Hat
+  certified catalog, which is a separate partner programme.
 
 Two copies are kept honest by CI: the embedded chart copy
 (`operator/helm-charts/`) is enforced by the required `chart:check` gate
@@ -739,7 +742,7 @@ resolves from the community repository and every release packs and pushes automa
 > runs even though both releases published correctly. The 2026-08-24 approval set
 > `ci_enabled: true` and `status: live` in a single edit — exactly what winget got once its
 > listing merged. The community feed has moved with every release since and serves 0.13.6 today,
-> one behind, which is moderation lag; do not re-dispatch `release-artifacts` for an already-published version to
+> behind the current release, which is moderation lag; do not re-dispatch `release-artifacts` for an already-published version to
 > backfill the feed, because its asset steps would fight the immutable release — push a back
 > version by hand (the same choco container the job uses for Chocolatey; the [manual manifest
 > recipe](#windows-first-listing-checklist) for winget).
@@ -967,7 +970,7 @@ this repo: the Sealos template lives upstream in
 [`labring-actions/templates`](https://github.com/labring-actions/templates) and the Unraid template
 in [`libredb/unraid-templates`](https://github.com/libredb/unraid-templates), and neither has a
 `deploy/<provider>/` folder here at all. They are two of the eight catalog channels with no such
-folder - the others are TrueNAS SCALE, the four open submissions (CasaOS, Umbrel, Easypanel,
+folder - the others are TrueNAS SCALE, CasaOS, the three open submissions (Umbrel, Easypanel,
 Portainer) and Google Cloud Marketplace, whose artefacts live in Google's Producer Portal. The
 catalog channels that DO keep a folder keep their notes in `deploy/<provider>/README.md` - CapRover and Railway alongside the source
 descriptor itself, Dokploy, Kubero and Cosmos as notes only, since those three descriptors are also
@@ -1041,7 +1044,7 @@ no pin.
 
 **The Marketplace version is its own number.** Google requires the chart and the image tags of a
 Terraform Kubernetes app to share a MAJOR.MINOR, which the repo's chart version (`0.1.x`) and the
-application version (`0.13.x`) do not. The published copy is therefore packaged with a version of
+application version (`0.14.x`) do not. The published copy is therefore packaged with a version of
 its own — `helm package --version <n> --app-version <n>` at submission time, leaving the repo's
 chart untouched. The listing currently reads **0.10**, so a Marketplace version is not comparable
 with a release tag and must not be read as one.
@@ -1297,10 +1300,14 @@ repo's Actions secrets. The FIRST listing in each community catalog is a one-tim
    unfiltered listing would yield as many disagreeing matches as there are versions. Note what that
    pin measures: the feed lists approved versions only, so a Chocolatey `DRIFT` row means the
    version is still in moderation, not that the push failed.
-   **winget is measured by a probe, not a regex pin** (`pin.strategy: probe`, `winget-max-version`):
-   it publishes no floating "latest" document — the winget-pkgs contents listing enumerates every
-   published version — so the checker takes the highest version enumerated there. A regex pin
-   cannot express that, because it requires all matches in a source to agree.
+   **winget is measured by a probe, not a regex pin** (`pin.strategy: probe`,
+   `github-dir-max-version`): it publishes no floating "latest" document — the winget-pkgs contents
+   listing enumerates every published version — so the checker takes the highest version enumerated
+   there. A regex pin cannot express that, because it requires all matches in a source to agree.
+   The same probe measures `operatorhub-community`, with one `pin.urls` entry per community catalog.
+   Note what a `local_file` pin would have measured there instead: `operator/bundle` is only the
+   submission *source*, so it reads the version we are ready to submit, never the version either
+   catalog serves.
 
 ### Chocolatey moderation, and why its push step cannot fail a release
 
@@ -1433,7 +1440,7 @@ that skipped silently must not read as "could not measure".
 | `ghcr-tag-digest` | `docker-ghcr` | that the digest `:latest` resolves to equals the released version tag's (anonymous pull token — no secret, works from a fork) |
 | `dockerhub-tag-digest` | `docker-hub-mirror` | the same digest equality on the mirror; an absent version tag is how an expired `DOCKER_HUB_TOKEN` (whose push step skips silently) becomes visible |
 | `snap-store-channel` | `snap` | the `stable` version of every listed architecture, each as its own source, so one lagging build is drift rather than a pass; `edge` may legitimately differ and is ignored |
-| `winget-max-version` | `winget` | the highest version the catalog enumerates, because winget publishes no floating "latest" document |
+| `github-dir-max-version` | `winget`, `operatorhub-community` | the highest version each named catalog directory enumerates, because none of them publishes a floating "latest" document. Every entry under `pin.urls` is measured as its own source, so the two operator catalogs (operatorhub.io and the OpenShift console, bumped by separate upstream PRs) report separately and a lagging one is drift rather than a pass |
 
 Because a probe resolves versions in code, a channel measured this way needs no `extract`. A
 probe that reports several sources (Snap's architectures) reuses the same rule as a multi-file
@@ -1541,7 +1548,7 @@ descriptor here at all.** Two of them are pinned `remote_file` against the repos
 hold it — the Sealos template in `labring-actions/templates`, the Unraid CA template in
 `libredb/unraid-templates` — and both are documented under
 [App catalogs](#app-catalogs-unraid-sealos); TrueNAS SCALE is pinned the same way against
-`truenas/apps`. The four open submissions (CasaOS, Umbrel, Easypanel, Portainer) have nothing to
+`truenas/apps`, and CasaOS against `IceWhaleTech/CasaOS-AppStore`. The three open submissions (Umbrel, Easypanel, Portainer) have nothing to
 pin until their upstream PR merges, and each entry's note names the pin to add on that day.
 [Google Cloud Marketplace](#google-cloud-marketplace) is the one with nothing to pin even in
 principle: its artefacts are held in Google's Producer Portal and a private Artifact Registry.
@@ -1552,21 +1559,26 @@ deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none
 
 ### Manual steps still open
 
-- **Operator first listings**: the controller image is done —
+- **Operator first listings — done.** The controller image was the first half:
   `ghcr.io/libredb/libredb-studio-operator:0.9.59` was built once by manual
   `workflow_dispatch` from the post-merge `main` commit (the `0.9.59` tag
   carries neither `operator/` nor the workflow file, and GitHub only dispatches
   workflows that exist on the chosen ref) and the GHCR package is public, which
   community catalog CI requires. From 0.9.60 on the tag ref carries the
-  operator and the normal tag-pinned dispatch chain applies. What is still open
-  upstream is the operatorhub.io bundle PR
-  ([k8s-operatorhub/community-operators#8794](https://github.com/k8s-operatorhub/community-operators/pull/8794)).
-  The OpenShift catalog PR
-  ([community-operators-prod#10581](https://github.com/redhat-openshift-ecosystem/community-operators-prod/pull/10581),
-  the second half of the FBC release whose bundle merged as #10497) has since
-  merged, so the OpenShift console listing is live. Flip `operatorhub-community` in
-  `distribution/channels.yaml` from `pending` to `live` once the operatorhub.io
-  listing is visible too, and remember `release-config.yaml` for every later release (see
+  operator and the normal tag-pinned dispatch chain applies. Both catalogs then
+  merged their first listing: the OpenShift console via the FBC bundle PR
+  ([community-operators-prod#10497](https://github.com/redhat-openshift-ecosystem/community-operators-prod/pull/10497))
+  plus its rendered catalogs
+  ([community-operators-prod#10581](https://github.com/redhat-openshift-ecosystem/community-operators-prod/pull/10581)),
+  and operatorhub.io via its bundle PR
+  ([k8s-operatorhub/community-operators#8794](https://github.com/k8s-operatorhub/community-operators/pull/8794),
+  merged 2026-09-08). `operatorhub-community` is `live` accordingly. Two things
+  the merge does *not* finish: operatorhub.io serves from its own index build,
+  which lags the merge by hours (`https://operatorhub.io/api/operator?packageName=libredb-studio-operator`
+  is the read that answers for it — it returned "can't find" while a control
+  query for `argocd-operator` returned a full record), and both catalogs still
+  serve **0.9.59**, so every release from here is an upstream bump PR per
+  catalog. Remember `release-config.yaml` in each bundle PR (see
   [An FBC release is two upstream PRs](#an-fbc-release-is-two-upstream-prs)).
 - **Snap Store listing screenshots**: the description and icon ship with the snap
   (`snap/snapcraft.yaml`, `public/logo.svg`), but screenshots are a manual upload in the

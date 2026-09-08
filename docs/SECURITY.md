@@ -142,9 +142,9 @@ per replica; multi-replica deployments should enforce the same budgets at the in
 in-handler admin checks and the middleware's `/admin` redirect return their denial with no audit
 line. Tracked in [`docs/BACKLOG.md`](./BACKLOG.md), entry H12.
 
-**3.1.** Applies to `STORAGE_PROVIDER=sqlite` and `postgres` only. Six fields are encrypted;
-`host`, `port`, `user`, `database` and the TLS certificates stay readable so a dump can still be
-identified. Rotating the key makes stored credentials unreadable — the connection survives, the
+**3.1.** Applies to `STORAGE_PROVIDER=sqlite` and `postgres` only. Seven fields are encrypted;
+`host`, `port`, `user`, `agentUser`, `database`, `name` and the TLS certificates stay readable so a
+dump can still be identified. Rotating the key makes stored credentials unreadable — the connection survives, the
 field is omitted. For `STORAGE_PROVIDER=sqlite` with no `STORAGE_ENCRYPTION_KEY` set, the fallback
 key is persisted beside the SQLite file, in the same directory the Helm chart mounts as one volume
 — a backup or snapshot of it carries the key alongside the ciphertext it opens. Set

@@ -1128,9 +1128,35 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
       ci_enabled: true
     pin:
       strategy: probe
-      probe: winget-max-version
+      probe: github-dir-max-version
       urls:
-        versions: ${base}/repos/microsoft/winget-pkgs/contents/manifests/l/LibreDB/Studio
+        catalog: ${base}/repos/microsoft/winget-pkgs/contents/manifests/l/LibreDB/Studio
+`;
+  }
+
+  /**
+   * Two directory listings under one channel - the operator catalogs' real
+   * shape, where operatorhub.io and the OpenShift console publish the same
+   * bundle independently and either one can lag behind the other.
+   */
+  function twoCatalogRow(base: string): string {
+    return `  - id: operatorhub-community
+    name: OperatorHub community catalogs
+    status: live
+    category: kubernetes-operators
+    platforms: [kubernetes]
+    runtime: channel_supplied
+    tier: 3
+    kind: operator-catalog
+    update:
+      method: upstream_pr
+      sla: every_release
+    pin:
+      strategy: probe
+      probe: github-dir-max-version
+      urls:
+        operatorhub-io: ${base}/hub
+        openshift-console: ${base}/prod
 `;
   }
 
@@ -1152,6 +1178,47 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     const result = await runCheckAsync(probeFixture(wingetRow(base)));
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("| UNKNOWN | winget |");
+  });
+
+  test("two catalog listings that agree are one OK row", async () => {
+    const base = serveBase(() => Response.json([{ name: "ci.yaml" }, { name: "0.9.53" }]));
+    const result = await runCheckAsync(probeFixture(twoCatalogRow(base)));
+    expect(result.stdout).toContain("| OK | operatorhub-community |");
+  });
+
+  test("one lagging catalog is DRIFT naming both listings", async () => {
+    const base = serveBase((req) =>
+      Response.json(new URL(req.url).pathname === "/hub" ? [{ name: "0.9.40" }] : [{ name: "0.9.53" }]),
+    );
+    const result = await runCheckAsync(probeFixture(twoCatalogRow(base)));
+    expect(result.stdout).toContain("| DRIFT | operatorhub-community |");
+    expect(result.stdout).toContain("operatorhub-io=0.9.40");
+    expect(result.stdout).toContain("openshift-console=0.9.53");
+  });
+
+  test("an unreadable listing names which catalog failed", async () => {
+    const base = serveBase((req) =>
+      new URL(req.url).pathname === "/hub"
+        ? new Response("rate limited", { status: 429 })
+        : Response.json([{ name: "0.9.53" }]),
+    );
+    const result = await runCheckAsync(probeFixture(twoCatalogRow(base)));
+    expect(result.stdout).toContain("| UNKNOWN | operatorhub-community |");
+    expect(result.stdout).toContain("operatorhub-io: catalog listing unavailable");
+  });
+
+  test("a listing with no published version names which catalog is empty", async () => {
+    const base = serveBase((req) =>
+      Response.json(new URL(req.url).pathname === "/hub" ? [{ name: "ci.yaml" }] : [{ name: "0.9.53" }]),
+    );
+    const result = await runCheckAsync(probeFixture(twoCatalogRow(base)));
+    expect(result.stdout).toContain("| UNKNOWN | operatorhub-community |");
+    expect(result.stdout).toContain("operatorhub-io: no published version");
+  });
+
+  test("throws when a directory probe declares no listing url at all", () => {
+    const row = twoCatalogRow("http://127.0.0.1:1").replace(/      urls:\n(        [^\n]+\n)+/, "      urls: {}\n");
+    expect(() => parseChannels(channelsYaml(row))).toThrow(/github-dir-max-version.*at least one/);
   });
 });
 

@@ -4,6 +4,8 @@ import {
   ceilingFor,
   presentReminderLimitFor,
   retriesEmptyTurn,
+  retriesUnreadStop,
+  answersUnreadStop,
   turnTimeoutMsFor,
   planStatementRetriesFor,
   reportReminderLimitFor,
@@ -139,6 +141,23 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(planStatementRetriesFor("qwen3:14b")).toBe(1);
     expect(planStatementRetriesFor("qwen3:8b")).toBe(0);
     expect(planStatementRetriesFor("some-model-released-tomorrow:70b")).toBe(0);
+  });
+
+  test("a stop that read nothing is answered for a model nobody has measured, and not against one who has", () => {
+    /*
+      The same distinction, on the other setting that carries it. `retriesUnreadStop` reads the
+      shipped document, where all twenty-eight entries state the field and one — `nemotron3:33b` —
+      states `true`; `answersUnreadStop` is what the drive asks, and it separates a stated `false`
+      from no entry at all. The gate behind it fires only where the run called no tool, so it is
+      reachable only on a run that has already earned `no-report` and cannot cost a pass.
+    */
+    expect(retriesUnreadStop("nemotron3:33b")).toBe(true);
+    expect(retriesUnreadStop("qwen3:8b")).toBe(false);
+    expect(retriesUnreadStop("some-model-released-tomorrow:70b")).toBe(false);
+
+    expect(answersUnreadStop("nemotron3:33b")).toBe(true);
+    expect(answersUnreadStop("qwen3:8b")).toBe(false);
+    expect(answersUnreadStop("some-model-released-tomorrow:70b")).toBe(true);
   });
 
   test("a model whose turn does not fit the shipped limit is given its own", () => {

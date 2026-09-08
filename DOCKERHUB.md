@@ -96,12 +96,12 @@ The network route is the one to prefer for a real deployment: put Studio and its
 | Tag | Pushed from | Use |
 |-----|-------------|-----|
 | `latest` | `main` | Latest stable build |
-| `X.Y.Z` | `main` / release | Pin an exact version, e.g. `docker pull libredb/libredb-studio:0.12.0` (recommended for production) |
+| `X.Y.Z` | `main` / release | Pin an exact version, e.g. `docker pull libredb/libredb-studio:0.14.1` (recommended for production) |
 | `dev` | `feat/**`, `fix/**` branches | Bleeding-edge / preview (`linux/amd64` only) |
 | `sha-<commit>` | every build | Exact immutable commit |
 
 - **Architectures:** `linux/amd64` and `linux/arm64` as a multi-arch manifest for `latest`, `X.Y.Z`, `main` and their `sha-` tags. Preview builds from `feat/**` / `fix/**` branches (`dev` and their `sha-` tags) are `linux/amd64` only: CI has no native arm64 runner for this job, so arm64 is emulated, and paying for that on every branch commit is not worth it for an image no arm64 consumer pins.
-- **Primary registry:** `ghcr.io/libredb/libredb-studio` (GitHub Container Registry — no pull rate limits, preferred for Kubernetes/CI). This Docker Hub repository is a convenience mirror for discoverability; both registries serve the identical multi-arch image.
+- **Primary registry:** `ghcr.io/libredb/libredb-studio` (GitHub Container Registry). It is canonical because that is where CI publishes and where the build provenance lives, not because of pull limits: the `libredb` namespace is in the [Docker-Sponsored Open Source](https://www.docker.com/community/open-source/) programme, which removes pull rate limits for everyone pulling this public image, so `docker pull libredb/libredb-studio` needs no account either. This Docker Hub repository is a convenience mirror for discoverability; both registries serve the identical multi-arch image.
 
 ---
 

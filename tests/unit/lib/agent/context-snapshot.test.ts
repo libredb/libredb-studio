@@ -438,6 +438,104 @@ describe("captureContextSnapshot — wide PostgreSQL catalogs (B52)", () => {
   });
 });
 
+describe("captureContextSnapshot — the capture excludes each image's own extension objects (B76)", () => {
+  const SHAPES = [
+    {
+      name: "TimescaleDB",
+      // The fixed schema list is what removes this row.
+      fragment: "'_timescaledb_internal'",
+      extensionRows: [
+        {
+          table_schema: "_timescaledb_internal",
+          table_name: "_hyper_1_1_chunk",
+          columns: [{ name: "time", type: "timestamptz", nullable: "NO" }],
+        },
+      ],
+      excludedBy: (sql: string) => sql.includes("'_timescaledb_internal'"),
+    },
+    {
+      name: "Cloudberry",
+      fragment: "'gp_toolkit'",
+      extensionRows: [
+        {
+          table_schema: "gp_toolkit",
+          table_name: "gp_stats_missing",
+          columns: [{ name: "relname", type: "name", nullable: "YES" }],
+        },
+      ],
+      excludedBy: (sql: string) => sql.includes("'gp_toolkit'"),
+    },
+    {
+      name: "AlloyDB Omni",
+      // public is not a schema to exclude; only the relation ownership test can
+      // reach an object installed there.
+      fragment: "'pg_class'::regclass",
+      extensionRows: [
+        {
+          table_schema: "public",
+          table_name: "google_db_advisor_reports",
+          columns: [{ name: "id", type: "integer", nullable: "NO" }],
+        },
+      ],
+      excludedBy: (sql: string) => sql.includes("'pg_class'::regclass"),
+    },
+  ];
+
+  test("the column read carries the full engine-schema list and both ownership tests", async () => {
+    const h = harness("postgres");
+
+    await captureContextSnapshot(h.context);
+
+    const columnRead = h.statements().find((sql) => sql.includes("information_schema.columns"));
+    expect(columnRead).toBeDefined();
+
+    // The full engine-builtin list, copied from the provider's object browser.
+    for (const schema of [
+      "pg_toast",
+      "_timescaledb_internal",
+      "gp_toolkit",
+      "pg_ext_aux",
+      "mz_catalog",
+      "crdb_internal",
+      "pg_extension",
+    ]) {
+      expect(columnRead, schema).toContain(`'${schema}'`);
+    }
+    // Both ownership tests: the schema one (google_ml/ai) and the relation one
+    // (AlloyDB's public extension views).
+    expect(columnRead).toContain("'pg_namespace'::regclass");
+    expect(columnRead).toContain("'pg_class'::regclass");
+    expect(columnRead).toContain("deptype = 'e'");
+  });
+
+  for (const shape of SHAPES) {
+    test(`a ${shape.name}-shaped database reaches the fold with its internal objects excluded`, async () => {
+      const h = harness("postgres", async (sql) => {
+        if (sql.includes("information_schema.columns")) {
+          // The engine applies the composed filter before answering. The harness
+          // mirrors only this shape's own exclusion, so swapping the shapes swaps
+          // the row that is removed — each case is distinct, not a shared string.
+          return result(shape.excludedBy(sql) ? PG_COLUMNS : [...PG_COLUMNS, ...shape.extensionRows]);
+        }
+        return result([]);
+      });
+
+      const capture = await captureContextSnapshot(h.context);
+
+      expect(capture.kind).toBe("captured");
+      if (capture.kind !== "captured") throw new Error("unreachable");
+
+      // The shape-specific fragment is present in the composed column read, and
+      // the fold names only the user's tables — the extension row never survives.
+      const columnRead = h.statements().find((sql) => sql.includes("information_schema.columns"));
+      expect(columnRead, shape.name).toBeDefined();
+      expect(columnRead, shape.name).toContain(shape.fragment);
+
+      expect(capture.snapshot.tables.map((table) => table.name).sort()).toEqual(["public.customers", "public.orders"]);
+    });
+  }
+});
+
 describe("captureContextSnapshot — SQLite", () => {
   test("takes two reads, because the table DDL carries the relations as well", async () => {
     const h = harness("sqlite");

@@ -43,6 +43,15 @@ sentence verbatim, which is what the AMI product checklist asks for.
 
 Developer Tools; Database. Pick the closest subcategories the portal offers.
 
+## Region availability
+
+Thirty-three of the 36 Regions the portal lists. The two GovCloud Regions are
+excluded because they need a separately verified account, and me-central-1
+because t3.small does not exist there - a Region carrying none of the listed
+instance types fails the submission with INSTANCE_TYPES_NOT_AVAILABLE. Automatic
+enrolment in future Regions is off, because a new Region can open without
+t3.small and would fail the same way.
+
 ## Pricing
 
 Free. The buyer pays only for the EC2 instance, EBS storage and data transfer
@@ -52,7 +61,7 @@ they use. No software charges, no metering, no contract.
 
 | Field | Value |
 |---|---|
-| Version title | The app version being shipped, e.g. `0.14.0` |
+| Version title | The app version being shipped - `0.14.1` for the initial listing |
 | AMI ID | From the AWS AMI Build job summary; must exist in us-east-1 in the seller account with an unencrypted snapshot |
 | IAM access role ARN | The AMI ingestion role, published by the build job summary from the `AWS_AMI_INGESTION_ROLE_ARN` repository variable - one source, so the two cannot drift |
 | Operating system | Ubuntu 24.04 |
@@ -96,15 +105,16 @@ marker to enforce - check the portal's own counter when pasting.
 
 | Field | Value |
 |---|---|
-| Support email | Monitored mailbox, decided with the seller account (not the GitHub issue tracker alone) |
-| Support phone | The number recorded on the seller account |
+| Support email | The address in the `AWS_SUPPORT_EMAIL` repository variable - the same mailbox the build prints into every buyer's banner, so the two cannot drift |
+| Support phone | The number on the seller-account profile |
 | Support website | https://github.com/libredb/libredb-studio/issues |
 
 ## EULA and refunds
 
-EULA: the MIT licence text, which is the honest choice for an MIT-licensed
-product, unless the Standard Contract for AWS Marketplace is adopted instead
-(a legal decision, not an engineering one).
+EULA: the Standard Contract for AWS Marketplace (SCMP), chosen for the initial
+listing. The MIT licence text is the alternative and remains available through an
+update request - which of the two carries less risk for a free product is a legal
+decision, not an engineering one.
 
 Refund policy: the product is free and incurs no software charges, so no
 refunds apply. AWS infrastructure charges are handled by AWS.

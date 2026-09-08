@@ -98,6 +98,22 @@ const RESOLVED: ResolvedRow[] = [
     turnTimeoutMs: 150_000,
   },
   {
+    // The family's largest, and the slowest model the roster carries: a 378-second optimize cell
+    // against a 26-second investigation. Two settings and they were earned separately - the plan
+    // switch closed a plan cell losing to `thinking`, and the 150-second ceiling is what optimize
+    // could not close without. Deliberately NOT `suppressesAgentReasoning`, which its 12b sibling
+    // carries: that one was measured for an illness this size does not have.
+    id: "gemma4:31b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    suppressesPlanReasoning: true,
+    turnTimeoutMs: 150_000,
+  },
+  {
     id: "gemma4:26b",
     unreportedCallCeiling: 10,
     reportReminderLimit: 1,
@@ -480,7 +496,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
   test("the table covers every registered model, so a new one cannot arrive unpinned", () => {
     const pinned = new Set(RESOLVED.map((row) => row.id));
     for (const id of Object.keys(modelProfiles())) expect(pinned.has(id)).toBe(true);
-    expect(Object.keys(modelProfiles())).toHaveLength(27);
+    expect(Object.keys(modelProfiles())).toHaveLength(28);
   });
 });
 
@@ -525,6 +541,7 @@ describe("what each model records about the runs that earned its settings", () =
     "gemini-3.5-flash-lite": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
     "gemma4:12b": "9a49a9323c21ffe507698ca2ca852cc1b59647a206e73c448afeea7f1a0a674b",
     "gemma4:26b": "d8124e9d5b0929364129274fd4f80dea2640773147fdfd834cf2c68a5a08dd76",
+    "gemma4:31b": "430cdba51e7b09167b2fa59971fa033830595458d54c1272f6424341923fda54",
     "granite4.1:30b": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
     "granite4.1:8b": "a3eea21447a81fbe058e3c18a0f7194c357e5d5f22db9acfe13e6139d9198874",
     "granite4.2:8b": "c9e47190c44d1fda45bf035831dcb17ba21621e98a455259a438710775600ae0",

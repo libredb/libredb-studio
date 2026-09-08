@@ -99,8 +99,12 @@ export interface AgentModelProfile {
    * run that called nothing composed no report and has already earned `no-report`; the turn is
    * spent on a run that has lost. It cannot cost a pass, only recover a failure.
    *
-   * Off by default even so. The ten models locked at 300/300 were measured without it, and a
-   * drive-wide change is twice how this repository has handed back cells it had won.
+   * A stated `false` is obeyed even so. The ten models locked at 300/300 were measured without
+   * it, and overruling a measurement is twice how this repository has handed back cells it had
+   * won. What is NOT obeyed is an absent entry, which is not a measurement: the drive asks
+   * `answersUnreadStop`, not `retriesUnreadStop`, and that resolver offers the turn to a model
+   * nobody has measured. All twenty-eight shipped entries state this field, so no shipped model's
+   * turn count moved when the two were split.
    *
    * It SUBSUMES `retryEmptyTurn`, and that is a property of the gate rather than of the name.
    * The condition is "called nothing", with no test on what was said, so an empty completion
@@ -299,10 +303,14 @@ export const DEFAULT_RETRY_EMPTY_TURN = false;
 /**
  * A run that stops having called nothing keeps its ending, unless a model's ledger asked.
  *
- * Off despite being free to grant — the turn is spent on a run whose verdict is already
- * `no-report` — because "free" is an argument about cost, not about wording. The sentence sent
- * is read by the model and acted on by it, so it is a measured value like every other, and it
- * belongs to the models measured with it rather than to all of them at once.
+ * Off, and it stays off for every model that states it: the sentence sent is read by the model
+ * and acted on by it, so it is a measured value like every other and belongs to the models
+ * measured with it rather than to all of them at once.
+ *
+ * This constant is what a STATED field falls back to, and every shipped entry states the field,
+ * so nothing resolves through it today. It is not what a model with no entry gets — that is
+ * `answersUnreadStop`, which offers the turn, because on a run already earning `no-report` a
+ * default cannot protect a passing run and so protects nothing.
  */
 export const DEFAULT_RETRY_UNREAD_STOP = false;
 

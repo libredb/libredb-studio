@@ -213,19 +213,38 @@ const PROBES = {
     },
   },
 
-  "winget-max-version": {
-    requiredUrls: ["versions"],
+  // Catalogs that publish one directory per version and no floating "latest"
+  // document: winget-pkgs, and both community operator catalogs. Every entry
+  // under pin.urls is a separate listing measured under its own key, so a
+  // channel that spans two catalogs (operatorhub.io and the OpenShift console
+  // publish the same bundle independently) reports each one and a lagging
+  // catalog surfaces as disagreeing sources rather than as a single number.
+  "github-dir-max-version": {
+    requiredUrls: [],
+    requiresAnyUrl: true,
     async run({ pin, timeoutMs }) {
-      // A directory listing is not paginated: the contents API returns the whole
-      // directory in one response and ignores per_page (verified against
-      // winget-pkgs, 785 entries in a single body). Its documented ceiling is
-      // 1,000 entries, above which GitHub directs callers to the Git Trees API -
-      // 1,000 published winget versions is not a reachable horizon here.
-      const listing = await fetchJson(pin.urls.versions, timeoutMs, githubAuthHeaders(pin.urls.versions));
-      if (!Array.isArray(listing.body)) {
-        return { error: `catalog listing unavailable (status ${listing.status})` };
+      const versions = [];
+      for (const [source, url] of Object.entries(pin.urls)) {
+        // A directory listing is not paginated: the contents API returns the
+        // whole directory in one response and ignores per_page (verified
+        // against winget-pkgs, 785 entries in a single body). Its documented
+        // ceiling is 1,000 entries, above which GitHub directs callers to the
+        // Git Trees API - 1,000 published versions is not a reachable horizon
+        // for either catalog here.
+        const listing = await fetchJson(url, timeoutMs, githubAuthHeaders(url));
+        if (!Array.isArray(listing.body)) {
+          return { error: `${source}: catalog listing unavailable (status ${listing.status})` };
+        }
+        const measured = maxPublishedVersion(listing.body.map((entry) => entry.name));
+        if (measured.error) {
+          return { error: `${source}: ${measured.error}` };
+        }
+        // maxPublishedVersion labels its single result "catalog"; with more
+        // than one listing in play the pin key is the only label that says
+        // WHICH catalog lagged, so it replaces that placeholder.
+        versions.push({ source, version: measured.versions[0].version });
       }
-      return maxPublishedVersion(listing.body.map((entry) => entry.name));
+      return { versions };
     },
   },
 };
@@ -439,6 +458,11 @@ export function parseChannels(yamlText) {
         if (typeof pin.urls?.[key] !== "string") {
           throw new Error(`${CHANNELS_YAML}: ${id}: probe '${pin.probe}' needs pin.urls.${key}`);
         }
+      }
+      // A probe that measures "every listing named here" has no fixed url key
+      // to require, so an empty map would make it silently measure nothing.
+      if (probe.requiresAnyUrl && Object.keys(pin.urls ?? {}).length === 0) {
+        throw new Error(`${CHANNELS_YAML}: ${id}: probe '${pin.probe}' needs at least one entry under pin.urls`);
       }
       for (const key of probe.requiredArrays ?? []) {
         if (!Array.isArray(pin[key]) || pin[key].length === 0) {

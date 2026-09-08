@@ -614,8 +614,15 @@ describe("AWS AMI build workflow", () => {
     // Substrings alone let the README say the OPPOSITE of the code and stay
     // green - which is exactly how a sentence claiming a chain dispatch would
     // "fail on the unset variables" survived two reviews. Assert the claim.
+    //
+    // What the claim must say changed when the channel went live: a chained run
+    // names no version, and the gate it used to stand down on is the channel
+    // status, so with `aws-marketplace` live the same edit now builds and
+    // registers an AMI per release. The paragraph has to say that, because a
+    // reader deciding whether to add the dispatch line is deciding exactly this.
     const chain = readme.slice(readme.indexOf("dispatch-downstream"), readme.indexOf("A preflight job"));
-    expect(chain).toMatch(/stands down/);
+    expect(chain).toMatch(/register a\s+marketplace AMI on every release/);
+    expect(chain).not.toMatch(/green no-op/);
     expect(chain).not.toMatch(/would\s+fail/);
     const preflightPara = readme.slice(readme.indexOf("A preflight job"));
     expect(preflightPara).toMatch(/NAMES a version fails loudly/);

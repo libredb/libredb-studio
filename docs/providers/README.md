@@ -90,7 +90,7 @@ the support column records how much of the product actually worked:
 it has a row rather than a paragraph. It speaks the CQL wire protocol and `cassandra-driver` connects
 to it, which is exactly the kind of "connects, therefore supported" claim this table exists to refuse
 — and what the probe measured is that the parts which differ are the parts that are *not* the wire.
-Of the three doubts [cassandra.md §11](./cassandra.md#11-scylladb-is-a-partial-relative-one-absent-keyspace-cost-five-surfaces-until-d9) raised,
+Of the three doubts [cassandra.md §11](./cassandra.md#11-scylladb-is-a-partial-relative-one-absent-keyspace-cost-five-surfaces-until-2026-08-24) raised,
 two held and one was refuted: `system_views` is absent, which is still the whole of what makes the
 row above Partial - the five surfaces that read it answered an error until 2026-08-24 and answer empty since
 (re-probed 2026-08-24) - and the version string is not `release_version`-shaped, while `gossip_generation` does
@@ -246,8 +246,8 @@ grid. Each row was verified against the running container on 2026-08-19, and the
 2026-08-20 — the credentials are the ones the fixture actually accepts, not the ones its environment
 block asks for (twice those differ; see the notes).
 
-Start the thirteen always-on services with a plain `docker compose -f database-compose.yml up -d` -
-twelve engine containers plus the one-shot `couchbase-init` seed sidecar; the `Profile` column names
+Start the fourteen always-on services with a plain `docker compose -f database-compose.yml up -d` -
+thirteen engine containers plus the one-shot `couchbase-init` seed sidecar; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider, so a plain `up -d` can reproduce that
 provider's integration pass.
@@ -286,11 +286,13 @@ The port needs nothing: the compose service publishes the native protocol as `90
 also what the connection dialog prefills, so the field can be left untouched. `docker port
 libredb-cassandra` prints the mapping.
 
-**The two embedded providers have no container, and that is the whole point of them.** SQLite takes a
-path resolved *in the Studio process* and LibreDB a directory; neither reaches a network. Both also
-ship a ready-made sample connection — "Sample (Employees)" and "Sample (LibreDB)" appear in the
-sidebar with no configuration at all — so the fastest way to exercise them is to click one rather than
-to fill this dialog in. See [sqlite.md](./sqlite.md) and [libredb.md](./libredb.md).
+**The three embedded providers have no container, and that is the whole point of them.** SQLite and
+DuckDB each take a path resolved *in the Studio process* and LibreDB a directory; none of them reaches
+a network. SQLite and LibreDB also ship a ready-made sample connection, "Sample (Employees)" and
+"Sample (LibreDB)", which appear in the sidebar with no configuration at all, so the fastest way to
+exercise those two is to click one rather than to fill this dialog in. DuckDB ships no sample: build a
+local file instead, as [duckdb.md](./duckdb.md) describes. See [sqlite.md](./sqlite.md),
+[duckdb.md](./duckdb.md) and [libredb.md](./libredb.md).
 
 **Two rows differ from what the compose file's environment asks for**, which is why they are stated
 from the running container instead:

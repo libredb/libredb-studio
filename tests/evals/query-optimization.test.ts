@@ -323,6 +323,7 @@ describe("THE GATE: the verifier fails the run when the template's own artifact 
         prompts.push(promptText(turn));
         return answersProse("nothing to do")(turn);
       },
+      answersProse("nothing to do"),
     ]);
 
     expect(prompts[0]).toContain("One plan on its own answers nothing");
@@ -531,6 +532,8 @@ describe("the tools belong to the workflow, not to the model", () => {
         void turn;
         return chatToolCallStream("compare_plans", JSON.stringify({ before: "a", after: "b" }), "call_compare");
       },
+      answersProse("There is nothing here I can compare."),
+      // A refused call read nothing, so the drive names the instruments once more.
       answersProse("There is nothing here I can compare."),
     ]);
 

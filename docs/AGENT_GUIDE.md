@@ -9,7 +9,7 @@ citation is given so you can check any of it.
 It is a **separate page from [`docs/AGENT.md`](./AGENT.md) on purpose.** That document is the
 behaviour reference — durability, the ledger, the policy, the module map, the deferrals — and it is
 written for someone changing the runtime. Folding a user guide into it would bury the four questions
-a user actually has (what is a run, what are the three workflows, what does *answered* mean, what
+a user actually has (what is a run, what are the five workflows, what does *answered* mean, what
 are the meter's numbers) inside eight hundred lines about resume semantics. Where a sentence here
 needs the mechanism behind it, it links there instead of restating it.
 
@@ -243,7 +243,7 @@ inspection found and not proof that nothing else exists, and the plan is told so
 engines it works out a collection's fields from a **sample of your own documents**: no value from
 them is kept, but the existence of a field there is derived from your data rather than read from a
 catalog. The **estimated statistics** below are still PostgreSQL's and SQLite's alone; on the other
-nine the plan is told that this engine holds none it knows how to read, which means it has an
+fifteen the plan is told that this engine holds none it knows how to read, which means it has an
 inventory and no sizes — the ordinary case now rather than a rare one.
 
 On an engine that speaks no SQL, a Plan run is asked for one statement or command **in that engine's

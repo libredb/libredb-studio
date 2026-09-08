@@ -5,10 +5,12 @@ recommendation only: no store submissions, no build scaffolding in the repo.
 
 ## Status
 
-The Linux half of this recommendation is implemented (issue #232). Follow-ups 1, 3 and 4 below are
-done for Linux: the Tauri v2 shell lives in [`desktop/`](../desktop/README.md), release CI attaches
-a desktop AppImage per architecture, and [`packaging/flatpak/`](../packaging/flatpak/README.md)
-repacks that AppImage for Flathub (the submission PR itself is a manual step). Follow-up 2 shipped
+The Linux half of this recommendation is implemented (issue #232). Follow-ups 1 and 3 below are
+done for Linux: the Tauri v2 shell lives in [`desktop/`](../desktop/README.md) and release CI
+attaches a desktop AppImage per architecture. Follow-up 4 did not land: the Flathub submission
+(flathub/flathub#9538) was declined on 2026-07-30 and is not being pursued, so
+[`packaging/flatpak/`](../packaging/flatpak/README.md) is dormant and Linux desktop users get the
+same app id from the live FlatPark remote ([`packaging/flatpark/`](../packaging/flatpark/README.md)). Follow-up 2 shipped
 with #114. Two decisions changed during implementation, both recorded where they apply:
 
 - **Flathub builds by repacking the release AppImage**, not from vendored cargo/npm sources - one

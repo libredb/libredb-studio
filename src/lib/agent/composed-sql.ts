@@ -154,6 +154,119 @@ function equalsClause(column: string, value: string | undefined, field: string, 
   return ` AND ${column} = ${quoteLiteral(assertSelector(value, field), dialect)}`;
 }
 
+// ─── PostgreSQL internal-object exclusion ─────────────────────────────────
+
+/**
+ * The engine-builtin schemas a PostgreSQL grounding read must not treat as user
+ * data. This is the SAME set the provider's object browser uses
+ * (`SYSTEM_SCHEMAS` in `src/lib/db/providers/sql/postgres.ts`), copied rather
+ * than imported because the agent side must not depend on the provider module.
+ * `tests/unit/lib/agent/composed-sql.test.ts` pins the two lists together so
+ * they cannot drift. Each group is sorted by engine and checked against that
+ * engine's own documentation or, where the doc is silent, a live instance.
+ */
+const POSTGRES_SYSTEM_SCHEMAS = [
+  // PostgreSQL itself.
+  "pg_catalog",
+  "information_schema",
+  "pg_toast",
+  // Materialize - materialize.com/docs/sql/system-catalog/
+  "mz_catalog",
+  "mz_internal",
+  "mz_introspection",
+  // CockroachDB - cockroachlabs.com/docs/stable/system-catalogs enumerates exactly
+  // four schemas; the two below are the ones stock PostgreSQL does not also have.
+  "crdb_internal",
+  "pg_extension",
+  // TimescaleDB - the extension's own sql/pre_install/schemas.sql creates all seven.
+  // `_timescaledb_internal` is the one that floods: it holds every hypertable chunk.
+  "_timescaledb_catalog",
+  "_timescaledb_config",
+  "_timescaledb_functions",
+  "_timescaledb_internal",
+  "_timescaledb_cache",
+  "timescaledb_experimental",
+  "timescaledb_information",
+  // Apache Cloudberry - cloudberry.apache.org create-and-manage-schemas documents the
+  // first three. `pg_ext_aux` is not in that page but holds the PAX auxiliary tables
+  // (pg_pax_tables, pg_pax_fastsequence) on a live 2.1.0 instance, so it is here on
+  // measurement rather than on the doc's authority.
+  "gp_toolkit",
+  "pg_aoseg",
+  "pg_bitmapindex",
+  "pg_ext_aux",
+] as const;
+
+// Rendered once. Callers interpolate this into a `NOT IN (...)` clause.
+const POSTGRES_SYSTEM_SCHEMA_LIST = POSTGRES_SYSTEM_SCHEMAS.map((schema) => `'${schema}'`).join(", ");
+
+/**
+ * Schemas an EXTENSION created. AlloyDB Omni is deliberately absent from the
+ * name list above: its `google_ml` and `ai` schemas are extension-created, and
+ * those are names a user could plausibly choose for schemas of their own, so
+ * hiding them by name would make the user's tables vanish. Ownership is the
+ * question the name was standing in for, and `pg_depend` answers it directly.
+ * Same query the provider composes (`EXTENSION_OWNED_SCHEMAS_SQL`).
+ */
+const POSTGRES_EXTENSION_OWNED_SCHEMAS_SQL =
+  "SELECT n.nspname FROM pg_namespace n " +
+  "JOIN pg_depend d ON d.objid = n.oid AND d.classid = 'pg_namespace'::regclass AND d.deptype = 'e' " +
+  "JOIN pg_extension e ON e.oid = d.refobjid";
+
+/**
+ * RELATIONS (tables, views, materialized views, sequences) an extension created
+ * — the B76 sharp case. AlloyDB Omni installs 49 of its 67 extension views into
+ * `public` itself, where no schema filter can reach them, so the OBJECT must be
+ * excluded by ownership rather than by where it sits. This is the same
+ * `pg_depend` ownership test with `classid = 'pg_class'::regclass`: it returns
+ * the extension's own relations and nothing a user created, so a user's own
+ * views survive.
+ */
+const POSTGRES_EXTENSION_OWNED_RELATIONS_SQL =
+  "SELECT n.nspname, c.relname FROM pg_class c " +
+  "JOIN pg_namespace n ON n.oid = c.relnamespace " +
+  "JOIN pg_depend d ON d.objid = c.oid AND d.classid = 'pg_class'::regclass AND d.deptype = 'e' " +
+  "JOIN pg_extension e ON e.oid = d.refobjid";
+
+/**
+ * The full "this schema is not the engine's own" test for one column: a fixed
+ * list of engine-builtin schemas, plus anything an extension created. Mirrors
+ * the provider's `schemaExclusion(column)`.
+ */
+function postgresSchemaExclusion(column: string): string {
+  return `${column} NOT IN (${POSTGRES_SYSTEM_SCHEMA_LIST}) AND ${column} NOT IN (${POSTGRES_EXTENSION_OWNED_SCHEMAS_SQL})`;
+}
+
+/**
+ * The relation-level ownership test for one (schema, table) pair. Every
+ * PostgreSQL catalog read carries it, so `inspect_schema` answers the same
+ * object set whatever `kind` it is asked for: a relation an extension created
+ * is absent from columns, indexes, statistics and relations alike, and only a
+ * user's own objects survive.
+ */
+function postgresRelationExclusion(schemaColumn: string, tableColumn: string): string {
+  return `(${schemaColumn}, ${tableColumn}) NOT IN (${POSTGRES_EXTENSION_OWNED_RELATIONS_SQL})`;
+}
+
+/**
+ * The same statement with both ownership tests removed, leaving the fixed
+ * engine-builtin schema list alone. This is the agent-side mirror of the
+ * provider's `withoutExtensionOwnershipTest`: the driver serves PostgreSQL-wire
+ * engines nobody here has run, and one without `pg_depend`/`pg_extension`
+ * raises on those names, so the read retries with the fixed list alone. Kept as
+ * a pure string rewrite so the caller decides when to use it.
+ */
+export function withoutExtensionOwnershipTest(sql: string): string {
+  const withoutSchemas = sql.replace(
+    /\s+AND\s+[\w.]+ NOT IN \(SELECT n\.nspname FROM pg_namespace n JOIN pg_depend[^)]*\)/g,
+    "",
+  );
+  return withoutSchemas.replace(
+    /\s+AND\s+\([\w.]+,\s*[\w.]+\) NOT IN \(SELECT n\.nspname,\s*c\.relname FROM pg_class c JOIN pg_namespace n[^)]*\)/g,
+    "",
+  );
+}
+
 /**
  * The column inventory, one row per TABLE with its columns aggregated (B52).
  *
@@ -189,6 +302,34 @@ function equalsClause(column: string, value: string | undefined, field: string, 
  * bounds the prompt independently (`MAX_COLUMNS_PER_TABLE`,
  * `AGENT_CONTEXT_PACK_MAX_CHARS`), so a wide table does not spend the context
  * window on itself.
+ *
+ * This change closes B76: the aggregation that fixed the wide-catalog refusal
+ * then admitted the image's own objects. The WHERE clause below now excludes
+ * them three ways — the full engine-builtin schema list plus every schema an
+ * extension created (both copied from the provider's object browser), AND every
+ * RELATION an extension created (`pg_depend` with `classid = 'pg_class'::regclass`,
+ * new on the agent path). The relation test is the load-bearing half on AlloyDB
+ * Omni, whose 67 extension views mostly sit in `public` itself: no schema
+ * filter can reach them, an ownership test can, and a user's own views are
+ * never extension-owned so they survive.
+ *
+ * Every PostgreSQL catalog read carries the relation test, not only this one:
+ * `inspect_schema` serves `indexes`, `statistics` and `relations` straight to
+ * the model without passing them through `buildPostgresTables`, so a read that
+ * filtered by schema alone would show a PostGIS-owned `spatial_ref_sys` in the
+ * index and statistics inventories while hiding it from the column inventory.
+ * The exclusion is applied where each statement identifies its own table, and
+ * the four reads agree on the object set.
+ *
+ * Measured live on 2026-09-07 against the three `compat` images with two user
+ * tables seeded: the column read answers 46 → 2 object rows on TimescaleDB,
+ * 67 → 2 on Cloudberry and 70 → 2 on AlloyDB Omni. The sharp case is proven on
+ * AlloyDB, not assumed: the schema half alone leaves 51 objects (the 2 user
+ * tables plus the 49 extension views installed into `public`), `pg_depend`
+ * reports 68 extension-owned relations there, and the relation ownership test
+ * is what removes them. The committed tests pin the SQL SHAPE (the composed
+ * text carries each filter); the row counts above are the live BEHAVIOUR, and
+ * the two are asserted at different layers for that reason.
  */
 function composePostgresCatalog(selector: AgentCatalogSelector): string {
   return (
@@ -196,7 +337,8 @@ function composePostgresCatalog(selector: AgentCatalogSelector): string {
     "'name', column_name, 'type', data_type, 'nullable', is_nullable) " +
     "ORDER BY ordinal_position) AS columns " +
     "FROM information_schema.columns " +
-    "WHERE table_schema NOT IN ('pg_catalog', 'information_schema')" +
+    `WHERE ${postgresSchemaExclusion("table_schema")}` +
+    ` AND ${postgresRelationExclusion("table_schema", "table_name")}` +
     equalsClause("table_schema", selector.schema, "schema", "postgres") +
     equalsClause("table_name", selector.table, "table", "postgres") +
     " GROUP BY table_schema, table_name ORDER BY table_schema, table_name"
@@ -250,7 +392,9 @@ function composePostgresRelations(selector: AgentCatalogSelector): string {
     "JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(attnum, fattnum, ord) ON true " +
     "JOIN pg_attribute att ON att.attrelid = c.conrelid AND att.attnum = k.attnum " +
     "JOIN pg_attribute fatt ON fatt.attrelid = c.confrelid AND fatt.attnum = k.fattnum " +
-    "WHERE c.contype = 'f' AND rn.nspname NOT IN ('pg_catalog', 'information_schema')" +
+    "WHERE c.contype = 'f' AND " +
+    postgresSchemaExclusion("rn.nspname") +
+    ` AND ${postgresRelationExclusion("rn.nspname", "rel.relname")}` +
     equalsClause("rn.nspname", selector.schema, "schema", "postgres") +
     equalsClause("rel.relname", selector.table, "table", "postgres") +
     " ORDER BY rn.nspname, rel.relname, k.ord"
@@ -302,7 +446,8 @@ function composePostgresIndexes(selector: AgentCatalogSelector): string {
     "JOIN pg_namespace n ON n.oid = t.relnamespace " +
     "JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true " +
     "LEFT JOIN pg_attribute att ON att.attrelid = t.oid AND att.attnum = k.attnum " +
-    "WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')" +
+    `WHERE ${postgresSchemaExclusion("n.nspname")}` +
+    ` AND ${postgresRelationExclusion("n.nspname", "t.relname")}` +
     equalsClause("n.nspname", selector.schema, "schema", "postgres") +
     equalsClause("t.relname", selector.table, "table", "postgres") +
     " ORDER BY n.nspname, t.relname, i.relname, k.ord"
@@ -355,7 +500,9 @@ function composePostgresStatistics(selector: AgentCatalogSelector): string {
     "JOIN pg_namespace n ON n.oid = c.relnamespace " +
     "LEFT JOIN pg_stats s ON s.schemaname = n.nspname AND s.tablename = c.relname " +
     "WHERE c.relkind IN ('r', 'p') " +
-    "AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')" +
+    "AND " +
+    postgresSchemaExclusion("n.nspname") +
+    ` AND ${postgresRelationExclusion("n.nspname", "c.relname")}` +
     equalsClause("n.nspname", selector.schema, "schema", "postgres") +
     equalsClause("c.relname", selector.table, "table", "postgres") +
     " ORDER BY n.nspname, c.relname, s.attname"

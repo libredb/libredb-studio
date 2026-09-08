@@ -65,7 +65,7 @@ Three properties frame everything below, and each of them is load-bearing rather
   editor replay is ever handed the editor's writable pool. **Plan mode grounds itself the same way**
   — the server reads the schema, and on PostgreSQL and SQLite the engine's estimated statistics
   beside it, before the model's first turn — so a plan run is now ordinarily grounded on every engine,
-  including the nine where an agent run cannot read anything at all. What is left of the old engine
+  including the fourteen where an agent run cannot read anything at all. What is left of the old engine
   rule is narrower and still worth stating: the engine no longer decides WHETHER a plan run is
   grounded, only whether it is grounded through a composed statement or through its provider, and
   whether it gets statistics. A run whose reading fails — a provider that cannot describe itself, a
@@ -80,7 +80,7 @@ everything the runtime does **not** do yet is listed under
 
 Two companion pages carry what this one deliberately does not:
 
-- [`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md) — **the user guide.** What a run is, the three
+- [`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md) — **the user guide.** What a run is, the five
   workflows, what "answered" means, what the budget meter's numbers are, and how to run the agent on
   a local Ollama model. It describes the surface in the application's own words; this document
   describes the machinery under it.
@@ -143,7 +143,7 @@ run by asking `GET /api/agent/config`, the same way it discovers the storage mod
 | `LIBREDB_AGENT_THREAD_CONTEXT` | unset (on) | Whether a run may be told about the **conversation** it belongs to. A follow-up asked on the same connection continues the previous run's thread: the earlier steps' objectives and the most recent step's report are derived server-side from those runs' own ledgers and handed to the model fenced. Set `false`/`off`/`0` where no question's context may reach another. Every run then opens on its own and the rail SAYS so — a user who asks a follow-up is told the conversation is switched off on this server, rather than being left to infer it from an answer that does not resolve. `GET /api/agent/config` reports the state to an **admin** session, beside `modelTuning` and for the same reason: an operator who switches something off must not hear silence, and `curl` is how they check. It is deliberately not sent to every session — the sentence a USER needs comes from the run's own `thread.declined` at the moment their follow-up was not read as one, which is where it means something. An unrecognized value warns and is ignored, the same two-sided rule `LIBREDB_AGENT_ENABLED` follows: a typo must neither take a working surface away nor turn one on. It is the operator's counterpart to the control the user already has — the rail names the run being continued and offers "new conversation" beside it. |
 | `WORKFLOW_TARGET_WORLD` | unset (`local`) | Durable backend for run state. Exactly two values are accepted: `local` (zero-config, on-disk, **single instance**) and `@workflow/world-postgres` (opt-in, multi-replica, needs `WORKFLOW_POSTGRES_URL`). Anything else is **refused**, not defaulted. |
 | `AGENT_MODEL_TURN_TIMEOUT_MS` | unset (`90000`) | How long **one** model call may take before the drive stops waiting for it. Raise it for a LOCAL model: the default was chosen against hosted APIs, where a turn lands in seconds and a 90-second wait only ever means a request that is not coming back. Measured across 25 Ollama models on six surfaces, **nine** runs ended `model-timeout` with the model still working — one of them a reasoning model in plan mode, which holds no tools at all, cut 92 s into its **first** turn with a zero-event ledger. Those runs are scored as having answered nothing, which is a fact about this ceiling and not about the model. A value that is not a positive whole number is **ignored** and the default stands; a value is capped just under half the smallest workflow deadline, because a run has to be able to take two turns to finish. |
-| `AGENT_MODEL_TUNING_PATH` | unset | A JSON document of measured per-model settings, layered over the ones Studio ships with. Studio carries a document recording what specific models were measured under — turn limit, how many readings before it is asked to report, whether an empty turn is asked again — and a model not named in it is driven with the defaults, which is the honest treatment of a model nobody has measured. This is how a model Studio has never measured gets settings somebody else measured: mount a file in the same shape and restart, with no Studio release and no code change. Merged **per model and whole** — an entry here replaces the shipped entry for that model rather than contributing one field to it, because half of one measurement beside half of another is a configuration nobody has run. A file that is missing, unreadable or off-schema is **ignored** and the shipped measurements stand — which is the one setting here that fails **open**, so it is also the one that reports itself: `GET /api/agent/config` tells an **admin** session what became of the document (`{"modelTuning":{"state":"applied"\|"ignored"\|"unset",…}}`, with the path and the parser's reason), because an operator who mounts a file and is told nothing will believe it is in force. It carries numbers and switches only: the sentences the drive says to a model stay in Studio, so supplying this file cannot change what Studio tells a model. On Kubernetes the chart mounts it for you — see `agent.modelTuning.*` in [`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md). The document's own contract — every setting, its bounds, what happens to a key this build does not implement, and the example to start from — is [`docs/llms/model-tuning.md`](llms/model-tuning.md). |
+| `AGENT_MODEL_TUNING_PATH` | unset | A JSON document of measured per-model settings, layered over the ones Studio ships with. Studio carries a document recording what specific models were measured under — turn limit, how many readings before it is asked to report, whether an empty turn is asked again — and a model not named in it is driven with the defaults, which is the honest treatment of a model nobody has measured — bar two settings whose gates are reachable only on a run that has already fallen short, where an absent entry is read as the absence it is rather than as a value somebody wrote. This is how a model Studio has never measured gets settings somebody else measured: mount a file in the same shape and restart, with no Studio release and no code change. Merged **per model and whole** — an entry here replaces the shipped entry for that model rather than contributing one field to it, because half of one measurement beside half of another is a configuration nobody has run. A file that is missing, unreadable or off-schema is **ignored** and the shipped measurements stand — which is the one setting here that fails **open**, so it is also the one that reports itself: `GET /api/agent/config` tells an **admin** session what became of the document (`{"modelTuning":{"state":"applied"\|"ignored"\|"unset",…}}`, with the path and the parser's reason), because an operator who mounts a file and is told nothing will believe it is in force. It carries numbers and switches only: the sentences the drive says to a model stay in Studio, so supplying this file cannot change what Studio tells a model. On Kubernetes the chart mounts it for you — see `agent.modelTuning.*` in [`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md). The document's own contract — every setting, its bounds, what happens to a key this build does not implement, and the example to start from — is [`docs/llms/model-tuning.md`](llms/model-tuning.md). |
 | `WORKFLOW_LOCAL_DATA_DIR` | unset — but the packaged artifacts set it: `/app/data/workflow` from the Helm chart and (from an app version later than `0.11.0`) the container image, `~/.libredb-studio/workflow-data` under `npx`. The SDK's own fallback, which those replace, is `.workflow-data` relative to the working directory. | Where the `local` backend keeps run state, and therefore the second condition above. See [Deployment](#deployment) — the SDK's fallback is wrong in a container and wrong under `npx`, so no artifact leaves it in force. |
 
 The refusal is not pedantry. The workflow runtime reads that variable itself and treats any value
@@ -1668,7 +1668,7 @@ denial cannot be re-fed to the model as though the SQL were malformed.
 
 ## Supported models
 
-Twelve models run every agent surface. Each cleared all six — Investigate, Optimize, Assess, Operate,
+Twenty-eight models run every agent surface. Each cleared all six — Investigate, Optimize, Assess, Operate,
 Analyze and Plan — five consecutive times, at the turn limit the product ships, which is 30 of 30
 runs.
 
@@ -1694,7 +1694,7 @@ not cover, are all under [`docs/llms/`](llms/README.md).
 
 
 Nothing prevents another model from being configured — the capability probe below decides what any
-given endpoint can do, and there is no allow-list in the code. What the ten have is a measurement.
+given endpoint can do, and there is no allow-list in the code. What the twenty-eight have is a measurement.
 
 ## The model side
 
@@ -2312,14 +2312,15 @@ backend can write there. What was missing was a **default pointing at it**: the 
 environment only through `extraEnv`, so a default `helm install` left `WORKFLOW_LOCAL_DATA_DIR` unset
 and the agent honestly reported itself absent.
 
-The chart supplies that default itself, and it has to — the image cannot yet. `image.tag` defaults to
-the chart's `appVersion`, and the Dockerfile's `WORKFLOW_LOCAL_DATA_DIR` landed **after** the `0.11.0`
-tag that `appVersion` names, so the image a default install pulls today has no such ENV. Leaning on
+The chart supplies that default itself, and it did so before the image could. `image.tag` defaults to
+the chart's `appVersion`, and the Dockerfile's `WORKFLOW_LOCAL_DATA_DIR` landed after the `0.11.0`
+tag, so only an install pinned below that tag lacks the ENV; `appVersion` now names `0.14.1`, whose
+image sets the same path. Leaning on
 the image would have left the ledger resolving to `.workflow-data` under `WORKDIR /app` — read-only —
 and the probe answering `LEDGER_UNAVAILABLE` on an install the chart advertises as working. With the
 chart writing it (verified by rendering `charts/libredb-studio` at its defaults), the agent appears as
 soon as a model is configured, with an ephemeral ledger until `persistence.enabled`. Both places name
-`/app/data/workflow`, so when an image carrying the ENV ships, the two agree.
+`/app/data/workflow`, and the image now carries the ENV as well, so the two agree.
 
 **The chart now says the same thing** (chart `0.1.34`). It carries an `agent` block whose only field
 is the off-switch, and the block's whole design is to write as little as possible:
@@ -2500,12 +2501,6 @@ the role's own grants are the whole boundary (A3).
   and never what it said, so an empty completion reaches it too and a model's recorded
   `retryEmptyTurn: false` decides nothing. Pinned as it behaves rather than narrowed, because the
   narrowing would move behaviour five passing runs were measured under.
-- **B76** — the aggregated capture that fixed the wide-catalog refusal now ADMITS the image's own
-  extension views, so a grounded run on TimescaleDB, Cloudberry or AlloyDB Omni reasons over an
-  inventory that is mostly internal objects (measured: AlloyDB's least-privilege role sees 67 extension
-  views beside its 2 user tables). Not a privilege leak — the role genuinely sees them — but grounding
-  noise; the object set was the same under the flat projection, which refused before any of it reached
-  a run.
 
 **Settled as limits rather than as work.** The seven below have no entry in `docs/BACKLOG.md`, and
 that is the point: each is how the product behaves, stated where a reader of this document will meet
@@ -2555,7 +2550,7 @@ need a work item to hold that record.
 
 ## Related documentation
 
-- [`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md) — the user guide: the rail's own vocabulary, the three
+- [`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md) — the user guide: the rail's own vocabulary, the five
   workflows, what "answered" means, the meter's numbers, and the Ollama path.
 - [`docs/AGENT_DATA_FLOW.md`](./AGENT_DATA_FLOW.md) — what leaves the machine, when, and to which
   provider, written from call sites.

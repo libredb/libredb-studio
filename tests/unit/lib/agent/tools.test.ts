@@ -902,7 +902,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
         sending prose where an object goes.
 
         The paths were already named. What was gated was the SHAPE: `exampleReportCall` rebuilds a
-        whole call from the run's ledger and sits behind `refusalExamples`, which two of twenty-two
+        whole call from the run's ledger and sits behind `refusalExamples`, which two of twenty-eight
         shipped models carry. Everyone else reads "expected object" and has to guess the object.
 
         So this splits the two, on the rule the column advice was split on: a one-line skeleton is
@@ -2822,6 +2822,38 @@ describe("the grounding seam — the server's own read, outside agent mode", () 
 
     if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
     expect(outcome.refusal).toEqual({ class: "policy-denied", reasonCode: "TARGET_OUT_OF_SCOPE" });
+  });
+});
+
+describe("readCatalog — the extension-ownership fallback retry", () => {
+  test("a database error naming pg_depend retries once without the ownership tests", async () => {
+    let attempts = 0;
+    const h = harness({}, async () => {
+      attempts += 1;
+      if (attempts === 1) throw new QueryError('relation "pg_depend" does not exist', "postgres");
+      return queryResult();
+    });
+
+    const outcome = await readCatalogForGrounding(h.context, {});
+
+    expect(outcome.kind).toBe("completed");
+    expect(h.queryReadOnly).toHaveBeenCalledTimes(2);
+    const first = h.queryReadOnly.mock.calls[0][0] as string;
+    const second = h.queryReadOnly.mock.calls[1][0] as string;
+    expect(first).toContain("pg_depend");
+    expect(second).not.toContain("pg_depend");
+    expect(second).toContain("information_schema.columns");
+  });
+
+  test("a database error that does not name those catalogs is not retried", async () => {
+    const h = harness({}, async () => {
+      throw new QueryError('column "ordr_id" does not exist', "postgres");
+    });
+
+    const outcome = await readCatalogForGrounding(h.context, {});
+
+    expect(outcome.kind).toBe("refused");
+    expect(h.queryReadOnly).toHaveBeenCalledTimes(1);
   });
 });
 

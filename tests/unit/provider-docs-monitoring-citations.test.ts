@@ -25,13 +25,14 @@
  * same eight, and the docs in scope carry no `:<line>` suffix.
  *
  * SCOPE, deliberately narrow: the whole of every document in `NAMED_CITATIONS`, plus the
- * monitoring seam of the two search docs. The rest of `docs/providers/` still cites code by line
- * in quantity — a pre-existing backlog this round did not open — and the two search docs are
- * guarded only inside their monitoring section. Nothing here asserts that the uncovered
+ * monitoring seam of the two search docs, plus one file across every provider doc: `factory.ts`
+ * is cited by its entry point and never by a line. The rest of `docs/providers/` still cites code
+ * by line in quantity — a pre-existing backlog this round did not open — and the two search docs
+ * are guarded only inside their monitoring section. Nothing here asserts that the uncovered
  * citations are correct; they are simply not measured yet.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -42,6 +43,12 @@ const SEARCH_PROVIDER = "src/lib/db/providers/sql/search/index.ts";
 const BASE_PROVIDER = "src/lib/db/base-provider.ts";
 const MIGRATION_GENERATOR = "src/lib/schema-diff/migration-generator.ts";
 const FACTORY = "src/lib/db/factory.ts";
+
+/** Sorted: `readdirSync` returns filesystem order — green here, red on the next machine. */
+const PROVIDER_DOCS = readdirSync(path.join(ROOT, "docs/providers"))
+  .filter((entry) => entry.endsWith(".md"))
+  .sort()
+  .map((entry) => `docs/providers/${entry}`);
 
 /**
  * The docs this round rewrote, the source their prose links to, and the method names that now
@@ -141,6 +148,110 @@ const NAMED_CITATIONS = [
       "getActiveSessions",
     ],
   },
+  {
+    doc: "docs/providers/postgres.md",
+    source: "src/lib/db/providers/sql/postgres.ts",
+    methods: [
+      "getCapabilities",
+      "qualifyMaintenanceTarget",
+      "validate",
+      "connect",
+      "buildSSLConfig",
+      "query",
+      "cancelQuery",
+      "beginTransaction",
+      "runMaintenance",
+    ],
+  },
+  {
+    doc: "docs/providers/clickhouse.md",
+    source: "src/lib/db/providers/sql/clickhouse/index.ts",
+    // Tracks the doc, not a hand-picked subset: every `name(` it cites that index.ts declares as
+    // a class member, in declaration order. Module-level functions (`resolveConnection`) and
+    // inherited SQLBaseProvider members carry no access modifier for `declarationLine` to match.
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "prepareQuery",
+      "validate",
+      "connect",
+      "disconnect",
+      "query",
+      "mapClickHouseError",
+      "getSchema",
+      "getSchemaList",
+      "getSchemaRelations",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getActiveSessions",
+      "getTableStats",
+      "getIndexStats",
+      "getStorageStats",
+      "getHealth",
+      "runMaintenance",
+    ],
+  },
+  {
+    doc: "docs/providers/druid.md",
+    source: "src/lib/db/providers/sql/druid/index.ts",
+    // Tracks the doc, not a hand-picked subset: every `name(` it cites that index.ts declares as
+    // a class member, in declaration order. The doc links the monitoring methods to introspect.ts,
+    // where the work is; index.ts declares each as a member that delegates there.
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "prepareQuery",
+      "validate",
+      "connect",
+      "disconnect",
+      "query",
+      "mapDruidError",
+      "getSchema",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getIndexStats",
+      "getActiveSessions",
+      "getTableStats",
+      "getStorageStats",
+      "getHealth",
+      "runMaintenance",
+    ],
+  },
+  {
+    doc: "docs/providers/couchbase.md",
+    source: "src/lib/db/providers/document/couchbase/index.ts",
+    // Same rule as clickhouse: every `name(` the doc cites that index.ts declares as a class
+    // member, in declaration order. `degradeTo()` is module-level; the transport, introspection
+    // and keyspace names live in their own files.
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "prepareQuery",
+      "validate",
+      "connect",
+      "disconnect",
+      "hostFromConnectionString",
+      "query",
+      "mapCouchbaseError",
+      "primaryIndexRemedy",
+      "getSchemaList",
+      "getSchemaRelations",
+      "getSchema",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getActiveSessions",
+      "getTableStats",
+      "getIndexStats",
+      "getStorageStats",
+      "getHealth",
+      "runMaintenance",
+      "dispatchMaintenance",
+      "requireTarget",
+    ],
+  },
 ] as const;
 
 const SEARCH_DOCS = ["docs/providers/elasticsearch.md", "docs/providers/opensearch.md"] as const;
@@ -221,10 +332,22 @@ describe("redis provider doc", () => {
   });
 });
 
+describe("measured aggregate helper docs", () => {
+  test("MSSQL and Oracle pin the helper name to its source file", () => {
+    for (const doc of ["docs/providers/mssql.md", "docs/providers/oracle.md"]) {
+      expect(read(doc)).toContain(
+        "`measuredNullableAggregate()` ([`measured-aggregate.ts`](../../src/lib/db/utils/measured-aggregate.ts))",
+      );
+    }
+    expect(read("src/lib/db/utils/measured-aggregate.ts")).toMatch(/^export function measuredNullableAggregate\(/m);
+  });
+});
+
 describe("provider docs rewritten this round: code cited by name, whole file", () => {
   for (const { doc, source, methods } of NAMED_CITATIONS) {
     test(`${doc} cites no line number anywhere`, () => {
-      expect(read(doc)).not.toMatch(/\.ts:\d/);
+      // `.tsx` too: couchbase.md cited `ConnectionModal.tsx:139`, which `\.ts:` cannot see.
+      expect(read(doc)).not.toMatch(/\.tsx?:\d/);
     });
 
     test(`${doc} names methods that ${source} really declares`, () => {
@@ -238,12 +361,19 @@ describe("provider docs rewritten this round: code cited by name, whole file", (
   }
 
   test("provider docs name the factory's entry point rather than a line inside it", () => {
-    for (const { doc } of NAMED_CITATIONS.filter((citation) =>
-      read(citation.doc).includes("`createDatabaseProvider()`"),
-    )) {
+    // Selected on the entry point's NAME, not on the link: fourteen docs link `factory.ts`, and
+    // one of them (oracle.md) does so without naming the function — prose it does not owe.
+    const docs = PROVIDER_DOCS.filter((doc) => read(doc).includes("`createDatabaseProvider()`"));
+    // A derived population can derive to nothing, and a loop over nothing passes; renaming the
+    // phrase everywhere used to shed four assertions and stay green (#620).
+    expect(docs.length).toBeGreaterThan(0);
+    for (const doc of docs) {
       expect(read(doc)).toMatch(
         /`createDatabaseProvider\(\)`\s*\(\[`factory\.ts`\]\(\.\.\/\.\.\/src\/lib\/db\/factory\.ts\)\)/,
       );
+    }
+    for (const doc of PROVIDER_DOCS) {
+      expect(read(doc), `${doc} cites a line inside factory.ts`).not.toMatch(/factory\.ts:\d/);
     }
     expect(read(FACTORY)).toMatch(/^export async function createDatabaseProvider\(/m);
   });
@@ -253,6 +383,7 @@ const TOP_LEVEL_NAMED_CITATION_DOCS = [
   "docs/AGENT.md",
   "docs/FEATURES.md",
   "docs/ADDING_A_PROVIDER.md",
+  "docs/DATABASE_PROVIDERS.md",
   "docs/SECURITY.md",
 ] as const;
 
@@ -299,4 +430,87 @@ describe("provider docs that quote a label value verbatim", () => {
       );
     });
   }
+});
+
+/**
+ * #647: `SQLBaseProvider` has no placeholder logic. The real home is
+ * `positionalPlaceholder()` in `src/lib/sql/values.ts`. Docs paraphrased the
+ * capability onto the base class (or claimed inheritance); #640's `getPlaceholder`
+ * grep missed every paraphrase, and a closed phrasing list missed `mysql.md:31`.
+ *
+ * Assert on ATTRIBUTION in the sentence that contains a `placeholder(s)` match:
+ * denials ("Not in the list…", "no longer has") clear only that sentence, not a
+ * ±220-char neighborhood. Pair the negative with a control: if the helper later
+ * moves into `sql-base.ts`, the positive assertion goes red and this guard must
+ * be rewritten on purpose.
+ */
+const PLACEHOLDER_ATTRIBUTION_DOCS = [
+  "docs/ADDING_A_PROVIDER.md",
+  "docs/DATABASE_PROVIDERS.md",
+  // Every provider doc, so a sixth site in an unlisted doc cannot be invisible.
+  ...PROVIDER_DOCS,
+];
+
+/** Broad: any "placeholder" / "placeholders" — denials are sentence-scoped. */
+const PLACEHOLDER_CAPABILITY_SOURCE = String.raw`\bplaceholders?\b`;
+
+/** Sentence containing `matchIndex` in already-collapsed prose (`.!?` boundaries). */
+const sentenceAt = (collapsed: string, matchIndex: number): string => {
+  let start = 0;
+  for (const boundary of collapsed.slice(0, matchIndex).matchAll(/[.!?]\s+/g)) {
+    start = boundary.index! + boundary[0].length;
+  }
+  const rest = collapsed.slice(matchIndex);
+  const endRel = /[.!?](?:\s|$)/.exec(rest);
+  const end = endRel ? matchIndex + endRel.index! + 1 : collapsed.length;
+  return collapsed.slice(start, end);
+};
+
+/** SQLBaseProvider "provides / adds / gives for free" sections that must not list positionalPlaceholder. */
+const SQLBASE_PROVIDES_SECTIONS = [
+  {
+    doc: "docs/ADDING_A_PROVIDER.md",
+    heading: /### What SQLBaseProvider adds[\s\S]*?(?=\n### |\n## )/,
+    label: "### What SQLBaseProvider adds",
+  },
+  {
+    doc: "docs/providers/postgres.md",
+    heading: /### 2\.2 What `SQLBaseProvider` provides[\s\S]*?(?=\n### |\n## )/,
+    label: "### 2.2 What `SQLBaseProvider` provides",
+  },
+] as const;
+
+describe("docs do not credit SQLBaseProvider with placeholders (#647)", () => {
+  for (const doc of PLACEHOLDER_ATTRIBUTION_DOCS) {
+    test(`${doc} does not credit SQLBaseProvider / inheritance with placeholders`, () => {
+      const collapsed = collapse(read(doc));
+      // Fresh /g regex per test — a shared global keeps lastIndex across cases.
+      for (const match of collapsed.matchAll(new RegExp(PLACEHOLDER_CAPABILITY_SOURCE, "gi"))) {
+        const window = sentenceAt(collapsed, match.index!);
+        const credits =
+          /SQLBaseProvider/i.test(window) ||
+          (/\binherited\b/i.test(window) && !/\b(?:not|rather than)\s+inherited\b/i.test(window));
+        const denies = /\bno longer has\b|\bnot in the list\b/i.test(window);
+        expect(
+          credits && !denies,
+          `${doc} credits SQLBaseProvider/inheritance with "${match[0]}" in: …${window.slice(0, 160)}…`,
+        ).toBe(false);
+      }
+    });
+  }
+
+  for (const { doc, heading, label } of SQLBASE_PROVIDES_SECTIONS) {
+    test(`${doc} does not list positionalPlaceholder under ${label}`, () => {
+      const text = read(doc);
+      // Stop at the next heading (### or ##) so a sibling placeholders section is excluded.
+      const section = heading.exec(text)?.[0];
+      expect(section, `expected ${label} section in ${doc}`).toBeDefined();
+      expect(section!, `positionalPlaceholder must not sit under ${label}`).not.toMatch(/positionalPlaceholder/);
+    });
+  }
+
+  test("positionalPlaceholder is declared in values.ts; sql-base declares no placeholder member", () => {
+    expect(read("src/lib/sql/values.ts")).toMatch(/^export function positionalPlaceholder\(/m);
+    expect(read("src/lib/db/providers/sql/sql-base.ts")).not.toMatch(/placeholder/i);
+  });
 });

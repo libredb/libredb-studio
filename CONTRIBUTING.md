@@ -76,6 +76,14 @@ label have not been vetted for outside pickup; ask in an issue first if one inte
 
 - **Claim before you start.** Comment on the issue so two people do not build the same fix. A
   claimed issue with no activity for two weeks is open again.
+- **A claim is a courtesy, not a lock.** It cannot reach somebody who already had the issue open,
+  because GitHub sends no notification for a comment on a page you are already reading. So two
+  people do occasionally arrive at the same issue, and when that happens neither of them did
+  anything wrong. We decide by the clock rather than by the claim: work that was already in flight
+  when the claim was posted is not queue-jumping, and a pull request that is already delivered is
+  reviewed on its merits. Nobody is asked to write the same change twice, so whoever does not land
+  it is offered the nearest open issue instead, and a review on the other pull request is credited
+  here the same as code.
 - **What counts.** A PR that references its issue, includes tests and passes the gate above. During
   October we also add `hacktoberfest-accepted` to merged PRs from the labeled list, for participants
   whose program still looks for it.
@@ -136,6 +144,14 @@ honest about being one.
 
 - [Bun](https://bun.sh/) (recommended) or Node.js 24+
 - Git
+- [Helm](https://helm.sh/) 4.1.3 (the version CI runs). Ten of the eleven `helm-chart-*.test.ts` files under `tests/unit/` spawn the `helm` binary - all but `helm-chart-readme-recipes.test.ts`, which is a static lint over the chart README. Without `helm` on `PATH`, `bun run test` fails with 166 `error: Executable not found in $PATH: "helm"` errors. The PostgreSQL subchart tarball is gitignored (`*.tgz`), so a fresh clone also needs:
+
+  ```bash
+  helm repo add bitnami https://charts.bitnami.com/bitnami
+  helm dependency build charts/libredb-studio --skip-refresh
+  ```
+
+  Trap: a stale `docker login` can make that build fail with `401 Unauthorized` from `registry-1.docker.io` even though the chart is anonymously pullable. `docker logout` fixes it.
 
 ### Getting Started
 
@@ -221,7 +237,8 @@ bun run format           # Biome formatter check (format:fix to write)
 bun run lint             # oxlint, then ESLint 9
 bun run typecheck        # TypeScript strict
 bun run knip             # unused files, exports and dependencies
-bun run test             # every test layer; never bare `bun test`
+bun run test             # every test layer; never bare `bun test`. Needs Helm and the built subchart, see Prerequisites
+bun run test:ci          # the same layers with one process per file, which is what CI runs; use it to verify
 bun run test:coverage    # coverage report (merged lcov)
 bun run coverage:check   # enforce 100% line coverage on the merged lcov
 bun run readme:check     # localized README drift guard

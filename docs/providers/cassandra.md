@@ -272,7 +272,7 @@ provider's own CQL produces, and an empty panel that hides that hides it forever
 
 #### The second condition is a property of the server, not the wording of a refusal
 
-ScyllaDB has no `system_views` keyspace at all ([§11](#11-scylladb-is-a-partial-relative-one-absent-keyspace-cost-five-surfaces-until-d9)),
+ScyllaDB has no `system_views` keyspace at all ([§11](#11-scylladb-is-a-partial-relative-one-absent-keyspace-cost-five-surfaces-until-2026-08-24)),
 so the three virtual-table reads are refused by a server that is otherwise healthy. That is a fact
 about the build, not about this provider's CQL — and **the refusal does not say so**. Measured
 2026-08-24 through `cassandra-driver` 4.9.0, all four of these arrive as `ResponseError` with **code
@@ -604,8 +604,11 @@ missing guarantee. The editor builds `UPDATE <table> SET <col> = <val> WHERE <pk
 customer_id = 3` — a plausible guess on a real table — → `Some partition key parts are missing: id`.
 
 `supportsCreateTable` is `false` for the same class of reason. `CREATE TABLE probe.t (id int PRIMARY
-KEY, name text)` works, but what `CreateTableModal` emits does not: its default column is `id SERIAL
-PRIMARY KEY` (`Unknown type probe.serial`), its type list offers `VARCHAR(255)` and `DECIMAL(10,2)`
+KEY, name text)` works, but what `CreateTableModal` emits does not: its default column is an
+auto-increment primary key, which CQL has no spelling of at all (measured as `id SERIAL PRIMARY KEY`,
+`Unknown type probe.serial`; #648 made that spelling per-engine and added no CQL row, so this id
+falls back to PostgreSQL's identity clause, which CQL does not have either), its type list offers
+`VARCHAR(255)` and `DECIMAL(10,2)`
 (syntax errors — CQL types carry no length) and `INTEGER` and `JSONB` (`Unknown type`), and its NOT
 NULL, UNIQUE and DEFAULT options are each `no viable alternative at input`. DDL typed into the editor
 works normally.
@@ -929,7 +932,7 @@ docker compose -f database-compose.yml exec cassandra cqlsh -e "
 
 Then connect with host `localhost`, port `9042`, keyspace `probe`, local data centre `datacenter1`.
 
-For the ScyllaDB pass ([§11](#11-scylladb-is-a-partial-relative-one-absent-keyspace-cost-five-surfaces-until-d9))
+For the ScyllaDB pass ([§11](#11-scylladb-is-a-partial-relative-one-absent-keyspace-cost-five-surfaces-until-2026-08-24))
 the service is `scylla` on host port `9142`, and the keyspace has to be created with
 `replication = {'class':'NetworkTopologyStrategy','datacenter1':1}` — the 2026.2 line refuses
 `SimpleStrategy` outright with `ConfigurationException: SimpleStrategy doesn't support tablet

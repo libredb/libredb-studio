@@ -2645,7 +2645,12 @@ describe("planning mode runs no statement of the user's", () => {
     test("an agent run's closing prose is not a plan statement, however it is fenced", async () => {
       const b = boot(freshDataDir(), { answer: catalog });
       const run = await startRun(b, "agent");
-      const script = scriptedModel(answersProse(fenced("SELECT title FROM film")));
+      // Twice: this run reads nothing, so the drive names the instruments once before
+      // letting it stop.
+      const script = scriptedModel(
+        answersProse(fenced("SELECT title FROM film")),
+        answersProse(fenced("SELECT title FROM film")),
+      );
 
       await runInvestigation(run.runId, {
         service: b.service,
@@ -2669,6 +2674,8 @@ describe("planning mode runs no statement of the user's", () => {
     const run = await startRun(b, "agent");
     const script = scriptedModel(
       callsTool("present_answer", { artifact: "corr_1", presentation: { kind: "table" } }),
+      answersProse("understood"),
+      // A refused call read nothing, so the drive names the instruments once more.
       answersProse("understood"),
     );
 
@@ -3408,9 +3415,10 @@ describe("a run that stops having read nothing is told to read it itself", () =>
     `no-report`. The extra turn is spent on a run that has lost; it cannot turn a pass into
     a failure, only a failure into another attempt.
 
-    Per-model all the same, and off by default: the ten models locked at 300/300 were
-    measured without it, and a drive-wide change is how this repository has twice handed
-    back cells it had already won.
+    A stated `false` is obeyed all the same: the ten models locked at 300/300 were measured
+    without it, and overruling a measurement is how this repository has twice handed back
+    cells it had already won. What is NOT obeyed is an absent entry, which is not a
+    measurement — see the pair below.
   */
   const asksTheUser = answersProse("Could you please share the exact SQL statement you are running?");
 
@@ -3431,10 +3439,34 @@ describe("a run that stops having read nothing is told to read it itself", () =>
     expect(script.turns[1]?.transcript).toContain("inspect_schema");
   });
 
-  test("a model that was not measured needing it is left alone", async () => {
+  /*
+    Whose sentence it is, decided on the two answers a profile can give.
+
+    The drive holds a sentence written for exactly this ending — "Read it yourself. Call
+    inspect_schema for the tables and their columns, and inspect_plan for how a statement will
+    run" — and for a while sent it only to a model whose profile asked for it. One profile of
+    twenty-eight does, and a model nobody has measured has no profile at all, so the model most
+    in need of the sentence was the one guaranteed not to receive it.
+
+    Measured across the sweep behind 0.14.1: three hundred runs ended `model-stopped` with
+    `no-report`, and HALF of them — a hundred and fifty — had called no tool at all. Ninety-four
+    of those hundred and fifty were ended without the drive saying anything. By model:
+    `mistral-small3.1:24b` 51, `granite3.3:8b` 41, `mistral:7b` 40, `gpt-oss:20b` 18; a hundred
+    and ten of the hundred and fifty on `investigation`, the first surface a model meets.
+
+    The gate's own comment already argued the cost away: it fires only where `anyToolCalled` is
+    false, so the run composed no report and has already earned `no-report` — "the turn cannot
+    cost a pass". A bound that cannot protect a passing run is not protecting anything; what it
+    was withholding was a sentence on a run already lost.
+
+    This is the fourth setting found in this shape and the second corrected. A measured profile
+    is still obeyed: all twenty-eight state the field, so no shipped model's turn count moves.
+  */
+  test("a model NOBODY has measured is told to read, because the sentence is the server's own", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b);
-    const script = scriptedModel(asksTheUser, answersProse("Understood."));
+    // Prose, nothing read; then, once the drive has named the instruments, it uses them.
+    const script = scriptedModel(asksTheUser, callsTool("inspect_schema", { schema: "public" }), reportOn());
 
     const result = await runInvestigation(run.runId, {
       service: b.service,
@@ -3442,7 +3474,36 @@ describe("a run that stops having read nothing is told to read it itself", () =>
       resources: b.resources,
     });
 
+    const events = await eventsOf(b.store, run.runId);
+    expect(events.filter((event) => event.kind === "guidance-issued").map((event) => event.notice)).toContain(
+      "unread-stop",
+    );
+    expect(script.turns[1]?.transcript).toContain("Read it yourself");
+    // The point of the extra turn: the run ends on a report rather than where the model left it.
+    expect(result.stopReason).toBe("report-composed");
+  });
+
+  test("a profile that states false is still obeyed", async () => {
+    /*
+      The other half of the distinction, and the reason this is a second resolver rather than a
+      changed default. `qwen3:4b` states `retryUnreadStop: false` — a measurement, not an
+      absence — and a number somebody measured is not the drive's to overrule.
+    */
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(asksTheUser, answersProse("Understood."));
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, "https://api.openai.com/v1", "qwen3:4b"),
+      resources: b.resources,
+    });
+
     expect(script.turns.length).toBe(1);
+    const events = await eventsOf(b.store, run.runId);
+    expect(events.filter((event) => event.kind === "guidance-issued").map((event) => event.notice)).not.toContain(
+      "unread-stop",
+    );
     expect(result.stopReason).toBe("model-stopped");
   });
 
@@ -3554,7 +3615,9 @@ describe("a run that used its tools and then narrated is reminded once", () => {
     // then told to cite artifacts it has not got.
     const b = boot(freshDataDir());
     const run = await startRun(b);
-    const script = scriptedModel(invents, answersProse("I could not do that."));
+    // Three: an invented name reached nothing, so this run also read nothing, and the
+    // drive names the instruments once before letting it stop.
+    const script = scriptedModel(invents, answersProse("I could not do that."), answersProse("I could not do that."));
 
     const result = await runInvestigation(run.runId, {
       service: b.service,

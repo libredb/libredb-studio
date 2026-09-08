@@ -66,7 +66,7 @@ import {
   presentReminderLimitFor,
   verdictHoldLimitFor,
   retriesEmptyTurn,
-  retriesUnreadStop,
+  answersUnreadStop,
   suppressesAgentReasoning,
   suppressesPlanReasoning,
   turnTimeoutMsFor,
@@ -3516,8 +3516,10 @@ export async function runInvestigation(
 
           Granted only where the run has lost anyway. `compose_report` is one of the tools
           `anyToolCalled` counts, so a run reaching here with it false composed no report and
-          has already earned `no-report`; the turn cannot cost a pass. Once, and only for a
-          model whose ledger asked twice.
+          has already earned `no-report`; the turn cannot cost a pass. Once, and — because a
+          bound that cannot protect a passing run protects nothing — offered to whoever needs
+          it: `answersUnreadStop` reads a stated `false` as the measurement it is and an absent
+          profile as the absence it is, so a model nobody has measured is told to read.
         */
         if (
           record.mode === "agent" &&
@@ -3535,7 +3537,7 @@ export async function runInvestigation(
           // and spends the very turn this retry bought: the #350/#356 defect, paid for once.
           holdsTool("inspect_schema") &&
           holdsTool("inspect_plan") &&
-          retriesUnreadStop(model.modelId)
+          answersUnreadStop(model.modelId)
         ) {
           unreadStopRetried = true;
           messages.push(...turn.assistantMessages);

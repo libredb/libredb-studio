@@ -534,7 +534,7 @@ seed-connections.yaml (volume mount)
   └──────────────────────────────────┘
 ```
 
-**Module:** `src/lib/seed/` — 7 files, ~480 lines total
+**Module:** `src/lib/seed/` (8 files, about 700 lines total)
 
 | File | Responsibility |
 |------|---------------|
@@ -544,4 +544,5 @@ seed-connections.yaml (volume mount)
 | `connection-filter.ts` | Role filter + defaults merge |
 | `resolve-connection.ts` | Shared utility for all API routes |
 | `libredb-sample.ts` | Built-in "Sample (LibreDB)" connection: file seeding + descriptor |
+| `sqlite-sample.ts` | Built-in "Sample (Employees)" connection: vendored template copy + descriptor |
 | `index.ts` | Public API: `getManagedConnections()` |

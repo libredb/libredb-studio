@@ -454,11 +454,14 @@ channels:
       docs: deploy/dokploy/README.md
     pin:
       strategy: remote_file
-      url: https://raw.githubusercontent.com/Dokploy/templates/main/blueprints/libredb-studio/docker-compose.yml
+      url: https://raw.githubusercontent.com/Dokploy/templates/canary/blueprints/libredb-studio/docker-compose.yml
       extract: 'libredb-studio:(\d+\.\d+\.\d+)'
       note: The blueprint serves 0.9.59, bumped there by Dokploy/templates#1039 (merged 2026-08-03).
         Every bump is an upstream pull request a maintainer has to merge, so this pin drifts behind
-        the release by design and the drift row is the reminder to open the next one.
+        the release by design and the drift row is the reminder to open the next one. That repo's
+        default branch is `canary`, not main, and both of the pull requests merged there for this
+        app (931 and 1039) targeted it, so the pin URL and any bump PR must use `canary`. This URL
+        read `main` until now, which happened to report the same version and so hid the mistake.
 
   - id: cosmos
     name: Cosmos servapp marketplace
@@ -563,7 +566,7 @@ channels:
 
   - id: casaos
     name: CasaOS App Store
-    status: pending
+    status: live
     category: paas-catalogs
     platforms: [container]
     runtime: channel_supplied
@@ -578,12 +581,12 @@ channels:
       upstream_repo: https://github.com/IceWhaleTech/CasaOS-AppStore
       docs: docs/DISTRIBUTION.md
     pin:
-      strategy: none
-      note: PR IceWhaleTech/CasaOS-AppStore#992 is open, so nothing is listed yet. On merge, flip to live
-        and add a remote_file pin on
-        https://raw.githubusercontent.com/IceWhaleTech/CasaOS-AppStore/main/Apps/LibreDBStudio/docker-compose.yml
-        with extract 'libredb-studio:(\d+\.\d+\.\d+)'. Installs a Docker container on the user's own device,
-        so the platform is container.
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/IceWhaleTech/CasaOS-AppStore/main/Apps/LibreDBStudio/docker-compose.yml
+      extract: 'libredb-studio:(\d+\.\d+\.\d+)'
+      note: Merged in IceWhaleTech/CasaOS-AppStore#992 (7 Sep 2026); live in the CasaOS App Store. The pin
+        reads the image tag in Apps/LibreDBStudio/docker-compose.yml, the file a bump PR touches. Installs a
+        Docker container on the user's own device, so the platform is container.
 
   - id: umbrel
     name: Umbrel App Store
@@ -663,7 +666,7 @@ channels:
   - id: operatorhub-community
     name: OperatorHub / OpenShift community operator catalogs
     short_name: OperatorHub / OpenShift
-    status: pending
+    status: live
     category: kubernetes-operators
     platforms: [kubernetes]
     runtime: channel_supplied
@@ -675,14 +678,27 @@ channels:
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/152
       first_pr: https://github.com/redhat-openshift-ecosystem/community-operators-prod/pull/10497
+      catalog: https://operatorhub.io/operator/libredb-studio-operator
       upstream_repo: https://github.com/redhat-openshift-ecosystem/community-operators-prod
       docs: docs/DISTRIBUTION.md
     pin:
-      strategy: local_file
-      files:
-        - operator/bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml
-      extract: 'libredb-studio-operator:(\d+\.\d+\.\d+)'
-      note: The OpenShift console catalog is live at 0.9.59 (community-operators-prod#10497 merged 2026-07-27, FBC catalogs in community-operators-prod#10581); the OperatorHub.io listing (k8s-operatorhub/community-operators#8794) is still in review, so this channel stays pending until both are listed. Catalog submissions (k8s-operatorhub + community-operators-prod) start after the operator PR lands; the committed bundle is the source for both, with community-operators-prod contributed in FBC mode (fbc.enabled plus per-OCP-version catalog_mapping in ci.yaml). FBC releases in two upstream PRs - bundle first, then the rendered catalogs - and that second PR is only bot-created when the bundle directory ships a release-config.yaml, so every release must include one.
+      strategy: probe
+      probe: github-dir-max-version
+      urls:
+        operatorhub-io: https://api.github.com/repos/k8s-operatorhub/community-operators/contents/operators/libredb-studio-operator
+        openshift-console: https://api.github.com/repos/redhat-openshift-ecosystem/community-operators-prod/contents/operators/libredb-studio-operator
+      note: Both catalogs are listed - OpenShift console since 0.9.59 (bundle community-operators-prod#10497
+        merged 2026-07-27, FBC catalogs community-operators-prod#10581), operatorhub.io since
+        k8s-operatorhub/community-operators#8794 merged 2026-09-08. These are the COMMUNITY catalogs, not the
+        Red Hat certified one, so the OpenShift console lists the operator under Community with its
+        unsupported-operator warning. Measured as two directory listings rather than one local file, because
+        the committed bundle is only the submission source - a local pin would have read 0.14.1 while both
+        catalogs still served 0.9.59. Each catalog is bumped by its own upstream PR and the two merge on
+        different days, so a lagging one has to surface as its own disagreeing source. Catalog submissions
+        start once the operator controller image is public on GHCR; community-operators-prod is contributed in
+        FBC mode (fbc.enabled plus per-OCP-version catalog_mapping in ci.yaml). An FBC release is two upstream
+        PRs - bundle first, then the rendered catalogs - and that second PR is only bot-created when the
+        bundle version directory ships a release-config.yaml, so every release must include one.
 
   # ---- Tier 4: partner and curated catalogs (not self-serve) --------------
 
@@ -774,7 +790,7 @@ channels:
   - id: azure-marketplace
     name: Microsoft Azure Marketplace
     short_name: Azure Marketplace
-    status: pending
+    status: live
     category: cloud-marketplaces
     platforms: [cloud]
     runtime: channel_supplied
@@ -784,41 +800,41 @@ channels:
       method: manual_ui
       sla: on_demand
     links:
+      catalog: https://marketplace.microsoft.com/en-us/product/libredb.libredb-studio
       docs: deploy/azure/README.md
     pin:
       strategy: none
-      note: The offer is submitted and in Microsoft's certification review, so nothing is listed
-        yet. It is recorded here rather than left out because the submission exists and its whole
-        descriptor does too - deploy/azure/ holds the solution template, the ARM assets and the
-        Partner Center listing texts - which is the same reason the four open catalog submissions
-        carry an entry. On publication, flip to live and add the offer's public listing URL as
-        links.catalog; there is no pin to add, because the listed version lives in Partner Center
-        the way Google's lives in the Producer Portal.
+      note: Published 7 Sep 2026 as a free ("Get It Now") Azure Application solution template
+        (package 1.0.1). There is no pin to add, because the listed version lives in Partner
+        Center the way Google's lives in the Producer Portal.
 
   - id: aws-marketplace
     name: AWS Marketplace (free AMI product)
     short_name: AWS Marketplace
-    status: pending
+    status: live
     category: cloud-marketplaces
     platforms: [cloud]
     runtime: channel_supplied
     tier: 4
     kind: marketplace
     update:
+      # The AMI and every listing field are submitted through the AWS Marketplace
+      # Management Portal, and a visibility change is reviewed by hand by Seller
+      # Operations, so nothing here can be CI-driven.
       method: manual_ui
       sla: on_demand
     links:
+      catalog: https://aws.amazon.com/marketplace/pp/prodview-tsahkrgdqpnws
       docs: deploy/aws/README.md
     pin:
       strategy: none
-      note: Nothing is listed yet - the AMI product exists as a descriptor only (deploy/aws/ holds
-        the Packer build, the first-boot units and every portal field), the same reason the Azure
-        offer carries an entry. This status is load-bearing rather than documentation -
-        .github/workflows/aws-ami-build.yml reads it and refuses every machine-triggered build
-        while it is not live, so a release cannot register a marketplace AMI for a product that is
-        not on sale. On publication, flip to live (that alone turns the release path on) and add
-        the listing URL as links.catalog; there is no pin to add, because the listed version lives
-        in the AWS Marketplace Management Portal the way Azure's lives in Partner Center.
+      note: Published 7 Sep 2026 as a free AMI product (0.14.1, ami-08263251d25dc8ced). This status
+        is load-bearing rather than documentation - .github/workflows/aws-ami-build.yml reads it and
+        stands down on every machine-triggered path while it is not live. Live opens that workflow's
+        own release trigger, which fires only for a draft published by hand; no other workflow
+        dispatches it, so an ordinary release still builds no AMI.
+        There is no pin to read, because the listed version lives in the AWS Marketplace Management
+        Portal the way Azure's lives in Partner Center; it is checked by hand against the portal.
 
   - id: winget
     name: winget community repository (LibreDB.Studio)
@@ -843,9 +859,9 @@ channels:
       docs: docs/DISTRIBUTION.md
     pin:
       strategy: probe
-      probe: winget-max-version
+      probe: github-dir-max-version
       urls:
-        versions: https://api.github.com/repos/microsoft/winget-pkgs/contents/manifests/l/LibreDB/Studio
+        catalog: https://api.github.com/repos/microsoft/winget-pkgs/contents/manifests/l/LibreDB/Studio
       note: Listed since 0.9.59 (winget install LibreDB.Studio). winget publishes no floating "latest"
         document - the contents listing enumerates every published version - so the highest version it
         enumerates is the served state. A regex pin cannot express that (all matches in a source must

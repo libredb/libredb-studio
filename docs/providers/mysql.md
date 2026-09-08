@@ -28,7 +28,7 @@
 
 MySQL is a relational database and maps onto the `DatabaseProvider` interface much like PostgreSQL.
 It extends the shared `SQLBaseProvider` (identifier quoting with backticks, automatic `LIMIT`
-injection, `?` placeholders, cloud SSL auto-detection) and layers MySQL-specific introspection and
+injection, cloud SSL auto-detection) and layers MySQL-specific introspection and
 monitoring on top of `mysql2`.
 
 The most useful way to read this doc is **as a diff against the [PostgreSQL provider](./postgres.md)**,
@@ -1021,7 +1021,7 @@ Its reach is exactly the rules it carries, and only over statements a test actua
 installs that fixture *and* sends a `sql_text` statement, so nothing asks it the question. The guard
 closes the door on a fixture that lies when asked; it does not interrogate fixtures nobody asks.
 The list stays in this file rather than in `tests/helpers/` until a second engine has a measured
-refusal of its own — the other fourteen provider test files would receive an empty rule list, which
+refusal of its own. The other sixteen provider test files would receive an empty rule list, which
 proves nothing about their fixtures and reads as coverage. That condition is recorded in the list's
 own docblock, where a second engine's implementer will meet it.
 

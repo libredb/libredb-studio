@@ -84,6 +84,7 @@ import {
   AgentComposedSqlError,
   composeCatalogRead,
   composeEstimatingExplain,
+  withoutExtensionOwnershipTest,
 } from "./composed-sql";
 import type { AgentDeadlineDenyCode, AgentRunDeadline } from "./deadline";
 import {
@@ -2271,6 +2272,18 @@ export async function readStatementForGrounding(
   });
 }
 
+/**
+ * Whether a database error names the two catalogs the extension ownership tests
+ * join against. A postgres-typed connection can reach an engine the driver
+ * serves but nobody here has run, and one without those catalogs raises on
+ * them; the catalog read then retries without the ownership tests — the same
+ * decision the provider makes in `isMissingExtensionCatalogError`.
+ */
+function isMissingExtensionCatalogError(message: string): boolean {
+  const lowered = message.toLowerCase();
+  return lowered.includes("pg_depend") || lowered.includes("pg_extension");
+}
+
 async function readCatalog(
   context: AgentToolContext,
   selectorSchema: z.ZodType<{ kind?: AgentCatalogKind; schema?: string; table?: string }>,
@@ -2286,7 +2299,7 @@ async function readCatalog(
   } catch (error) {
     return composedSqlOutcome(error);
   }
-  const outcome = await executeAgentOperation(context, {
+  const request: AgentOperationRequest = {
     operationId: "sql.query.read",
     sql,
     grounding,
@@ -2317,7 +2330,24 @@ async function readCatalog(
     // case-sensitively, so declaring a raw `MAIN` would compose fine and then be
     // denied against a `["main"]` allowlist.
     ...(selector.schema === undefined ? {} : { target: { schema: normalizeDeclaredSchema(context, selector.schema) } }),
-  });
+  };
+  let outcome = await executeAgentOperation(context, request);
+
+  // A postgres-typed connection can reach an engine the driver serves but nobody
+  // here has run, one without the two catalogs the ownership tests join against
+  // (it raises on pg_depend/pg_extension). The provider drops the tests on that
+  // error and retries with the fixed schema list alone; mirror it here.
+  if (
+    context.connection.type === "postgres" &&
+    outcome.kind === "refused" &&
+    outcome.refusal.class === "database-error" &&
+    isMissingExtensionCatalogError(outcome.refusal.message)
+  ) {
+    const fallback = withoutExtensionOwnershipTest(sql);
+    if (fallback !== sql) {
+      outcome = await executeAgentOperation(context, { ...request, sql: fallback });
+    }
+  }
   /*
     A catalog read that matched NO OBJECT is a refusal, not a result.
 

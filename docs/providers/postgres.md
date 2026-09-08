@@ -39,7 +39,7 @@ introspection and monitoring fast, safely, and resiliently**:
   (`pg_stat_statements`) or superuser-only views (WAL) are unavailable.
 
 PostgreSQL is also the **canonical SQL provider**: the shared SQL mechanics (identifier quoting,
-`LIMIT` injection, dialect placeholders, SSL auto-detection) live in `SQLBaseProvider`, and the
+`LIMIT` injection, SSL auto-detection) live in `SQLBaseProvider`, and the
 other SQL providers (MySQL, SQLite, Oracle, SQL Server) follow the patterns established here.
 
 ---
@@ -79,16 +79,24 @@ rather than reimplementing them:
 
 | Member | Purpose |
 |--------|---------|
-| `escapeIdentifier()` ([sql-base.ts:33](../../src/lib/db/providers/sql/sql-base.ts)) | Dialect-aware quoting — `"ident"` for Postgres, `` `ident` `` for MySQL, `[ident]` for MSSQL; doubles embedded quote chars |
+| `escapeIdentifier()` ([`sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts)) | Dialect-aware quoting — `"ident"` for Postgres, `` `ident` `` for MySQL, `[ident]` for MSSQL; doubles embedded quote chars |
+| `shouldEnableSSL()` ([`sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts)) | Auto-enables SSL for known cloud hosts (supabase, neon, render, planetscale, aws, azure, gcp, …) |
+| `getDefaultSchema()` ([`sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts)) | `public` for Postgres |
+| `prepareQuery()` ([`sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts)) | Injects `LIMIT` into bare `SELECT`s — see [§5.2](#52-automatic-limit-injection) |
+
+`SQLBaseProvider` no longer has a placeholder helper (#304 removed it).
+
+### 2.2.1 Positional placeholders (shared module, not inherited)
+
+| Function | Purpose |
+|----------|---------|
 | `positionalPlaceholder()` ([values.ts](../../src/lib/sql/values.ts), shared rather than inherited) | `$1`-style placeholders for Postgres (`?` for MySQL/SQLite/Druid, `:n` Oracle, `@pn` MSSQL, `$n` Couchbase) |
-| `shouldEnableSSL()` ([sql-base.ts:75](../../src/lib/db/providers/sql/sql-base.ts)) | Auto-enables SSL for known cloud hosts (supabase, neon, render, planetscale, aws, azure, gcp, …) |
-| `getDefaultSchema()` ([sql-base.ts:91](../../src/lib/db/providers/sql/sql-base.ts)) | `public` for Postgres |
-| `prepareQuery()` ([sql-base.ts:137](../../src/lib/db/providers/sql/sql-base.ts)) | Injects `LIMIT` into bare `SELECT`s — see [§5.2](#52-automatic-limit-injection) |
 
 ### 2.3 Registration & lifecycle
 
 The factory loads the provider via dynamic import so the `pg` driver is only pulled in when a
-PostgreSQL connection is opened ([`factory.ts:62`](../../src/lib/db/factory.ts)):
+PostgreSQL connection is opened by `createDatabaseProvider()`
+([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'postgres': {
@@ -110,7 +118,8 @@ These are the non-obvious choices. Read this section before changing the provide
 ### 3.1 `MATERIALIZED` CTEs for schema introspection
 
 This is the single most important detail in the file. All schema-introspection CTEs are declared
-`AS MATERIALIZED` ([postgres.ts:86–177](../../src/lib/db/providers/sql/postgres.ts)). PostgreSQL 12+
+`AS MATERIALIZED` (the `CTE_*_INFO` consts in
+[`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)). PostgreSQL 12+
 *inlines* single-reference CTEs by default, which lets the planner re-execute these
 `information_schema`-based CTEs inside nested-loop joins (it estimates `rows=1` for them). On a
 large schema (100+ tables/constraints/indexes) that explodes into minutes of planning/execution.
@@ -306,7 +315,7 @@ default.
 ### 3.2 Schema SQL hoisted to module scope
 
 `SCHEMA_FULL_SQL`, `SCHEMA_LIST_SQL`, and `SCHEMA_RELATIONS_SQL` are module-level `const`s, not
-inline template literals inside the methods ([postgres.ts:86–226](../../src/lib/db/providers/sql/postgres.ts)).
+inline template literals inside the methods ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)).
 This is a **coverage** workaround: `bun`'s coverage instruments the interior lines of a multi-line
 template literal *in a function body* as 0-hit in any test process that imports the file but does
 not exercise that method, and the merged lcov then reports those SQL lines as uncovered. Evaluated
@@ -332,9 +341,9 @@ N+1 pattern of `1 + N*4` queries). The two-phase split is the path the UI actual
 
 Tables in the `public` schema are shown by bare name; tables in any other schema are prefixed
 (`reporting.invoices`). The same rule is applied to **foreign-key referenced tables**, so a FK that
-points across schemas renders correctly. The FK introspection CTE joins
-`constraint_column_usage` on **both** `constraint_name` and `constraint_schema`
-([postgres.ts:148–150](../../src/lib/db/providers/sql/postgres.ts)) — joining on name alone
+points across schemas renders correctly. The FK introspection CTE (`CTE_FK_INFO`,
+[`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) joins `constraint_column_usage` on
+**both** `constraint_name` and `constraint_schema` — joining on name alone
 mis-resolves same-named constraints in different schemas (this was a real bug; there is a
 regression test for it).
 
@@ -375,7 +384,7 @@ Monitoring never hard-fails on a missing optional feature:
 
 ### 3.6 Safe maintenance targets
 
-`qualifyMaintenanceTarget()` ([postgres.ts:751](../../src/lib/db/providers/sql/postgres.ts)) quotes
+`qualifyMaintenanceTarget()` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) quotes
 maintenance targets through `escapeIdentifier()`: a bare name defaults to the `public` schema; a
 `schema.table` target is quoted per-part. This prevents identifier injection in `VACUUM`/`ANALYZE`/
 `REINDEX` statements (which cannot use bind parameters for object names).
@@ -386,7 +395,7 @@ maintenance targets through `escapeIdentifier()`: a bare name defaults to the `p
 
 ### 4.1 Configuration
 
-Two forms are accepted (`validate()`, [postgres.ts:264](../../src/lib/db/providers/sql/postgres.ts)).
+Two forms are accepted (`validate()`, [`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)).
 `validate()` requires `host` **and** `database` only when no `connectionString` is given — it does
 **not** reject supplying both. If both are present the **connection string wins**: `buildPoolConfig()`
 uses it and ignores the discrete fields.
@@ -447,7 +456,7 @@ server. Paste the certificate content instead.
 
 ### 4.2 Connection pooling
 
-`connect()` builds a `pg.Pool` ([postgres.ts:281](../../src/lib/db/providers/sql/postgres.ts)) and
+`connect()` builds a `pg.Pool` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) and
 validates it by acquiring and releasing one client. Pool **sizing** comes from `ProviderOptions.pool`
 merged over `DEFAULT_POOL_CONFIG`:
 
@@ -486,7 +495,7 @@ oracledb expose no pool-level `error` event at all, which is recorded at each pr
 
 ### 4.3 SSL
 
-`buildSSLConfig()` ([postgres.ts:342](../../src/lib/db/providers/sql/postgres.ts)) resolves SSL with
+`buildSSLConfig()` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) resolves SSL with
 this precedence:
 
 1. **Explicit `connection.ssl`** (`SSLConfig`, mode = `disable` | `require` | `verify-system` |
@@ -510,7 +519,7 @@ this precedence:
 
 ### 5.1 Execution
 
-`query(sql, params?, queryId?)` ([postgres.ts:378](../../src/lib/db/providers/sql/postgres.ts))
+`query(sql, params?, queryId?)` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts))
 acquires a pooled client, optionally records its backend PID for cancellation, runs the
 (optionally parameterized — `$1`, `$2`, …) statement, and returns the standard envelope:
 
@@ -525,7 +534,7 @@ timeout → `TimeoutError`, etc.).
 ### 5.2 Automatic `LIMIT` injection
 
 `prepareQuery()` (inherited from `SQLBaseProvider`) protects the UI from runaway result sets. It
-runs the query through `analyzeQuery()` ([query-limiter.ts:88](../../src/lib/db/utils/query-limiter.ts))
+runs the query through `analyzeQuery()` ([`query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts))
 and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`**, appends one via
 `applyQueryLimit()`:
 
@@ -616,7 +625,7 @@ comment-led final `SELECT`; it now reads `isSelectQuery()` from the same classif
 ### 5.3 Query cancellation
 
 A query issued with a `queryId` records its backend PID in a `Map`. `cancelQuery(queryId)`
-([postgres.ts:412](../../src/lib/db/providers/sql/postgres.ts)) looks the PID up and calls
+([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) looks the PID up and calls
 `pg_cancel_backend(pid)` on a fresh pooled client, returning whether the cancel signalled. Exposed
 via `POST /api/db/cancel`.
 
@@ -761,7 +770,7 @@ the client is not returned to the pool until commit/rollback. Surfaced via `POST
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | Acquires a client, runs `BEGIN`, arms a **5-minute auto-rollback** timer ([postgres.ts:461](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active. |
+| `beginTransaction()` | Acquires a client, runs `BEGIN`, arms a **5-minute auto-rollback** timer ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active. |
 | `queryInTransaction(sql, params?)` | Runs on the transaction's client. Throws if none active. |
 | `commitTransaction()` / `rollbackTransaction()` | Ends the transaction, clears the timer, releases the client. Throws if none active. |
 | `expireTransaction()` | The timeout callback — auto-`ROLLBACK` to prevent leaked locks if a transaction is abandoned. |
@@ -780,7 +789,7 @@ connection — including the ten providers that answer HTTP 400.
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([postgres.ts:762](../../src/lib/db/providers/sql/postgres.ts)),
+`runMaintenance(type, target?)` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)),
 with targets quoted via [§3.6](#36-safe-maintenance-targets):
 
 | Type | With target | Without target |
@@ -824,7 +833,7 @@ really means `vacuum` here, so `vacuumActionOperation` stays absent.
 
 ## 10. Capabilities & labels
 
-### `getCapabilities()` ([postgres.ts:250](../../src/lib/db/providers/sql/postgres.ts))
+### `getCapabilities()` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts))
 
 Overrides the SQL base defaults:
 
@@ -1087,12 +1096,20 @@ path is reachable from server code and not from a request.
 Four things about the PostgreSQL side of that layer are worth knowing here:
 
 - **The catalog read is a composed bounded read**, not a new operation. `inspect_schema` takes a
-  schema/table selector and the server writes
-  `SELECT … FROM information_schema.columns WHERE table_schema NOT IN ('pg_catalog', …)`, executed as
-  `sql.query.read` like any other statement. The model never supplies that SQL. Selectors are quoted
-  with `quoteLiteral` because `queryReadOnly` binds no parameters, and a selector carrying a
-  backslash is refused outright rather than quoted — the dialect-less span reader treats it as an
-  escape, so `'a\'` would read as an unterminated literal.
+  schema/table selector and the server writes the `columns` statement itself, executed as
+  `sql.query.read` like any other statement. The model never supplies that SQL. The statement's
+  `WHERE` excludes the engine's own objects three ways: the full engine-builtin schema list (not
+  only `pg_catalog` / `information_schema`) and every schema an extension created (`pg_depend` on
+  `pg_namespace`, `deptype = 'e'`) — both copied from this provider's object browser — plus every
+  relation an extension created (`pg_depend` on `pg_class`, `deptype = 'e'`), which is new on the
+  agent path and carried by all four catalog reads, not only the column one. The relation test is
+  the one that reaches AlloyDB Omni's extension views, 49 of which sit in `public` itself where no
+  schema filter can reach them; a user's own views are never extension-owned, so they stay in the
+  inventory. Measured live on 2026-09-07 with two user tables seeded: 46 → 2 object rows on
+  TimescaleDB, 67 → 2 on Cloudberry and 70 → 2 on AlloyDB Omni.
+  Selectors are quoted with `quoteLiteral` because `queryReadOnly` binds no parameters, and a selector
+  carrying a backslash is refused outright rather than quoted — the dialect-less span reader treats it
+  as an escape, so `'a\'` would read as an unterminated literal.
 - **A run reads three catalog inventories at its start (#329 T8), not one.** `inspect_schema` takes
   a `kind` — `columns` (the default), `relations` (foreign keys, from `pg_constraint` with
   `unnest(conkey, confkey) WITH ORDINALITY` pairing the two sides) and `indexes` (from `pg_index`

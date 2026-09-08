@@ -4,7 +4,7 @@
 
 Every size listed here runs **all six agent surfaces**, five consecutive times each: 30 of 30
 runs. The 9b clears every surface with no setting of its own beyond a single extra plan turn. The
-35b is the slowest supported model on this list and needs both reasoning suppressions to get there.
+35b is the slower of the two and needs both reasoning suppressions to get there.
 
 ## What it does, and how long it takes
 
@@ -17,7 +17,7 @@ Seconds are the median of the runs that passed, per surface.
 
 Every cell is 5/5, so the table says how long rather than whether.
 
-The 35b is the slowest model this list supports, and its investigation cell is where the time
+The 35b is the slower of the two, and its investigation cell is where the time
 goes: a minute and a half against the 9b's twenty seconds for the same question and the same
 answer. Four times the weight buys nothing measurable here, and the 9b is the size to reach for.
 

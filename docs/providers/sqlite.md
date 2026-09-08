@@ -158,7 +158,7 @@ directories are created on connect.
 > authenticated user of this Studio instance) — pointing Studio at an arbitrary server-side file is
 > the intended capability, not attacker-controlled input from an untrusted client. There is
 > currently **no** option to sandbox resolvable paths to a base directory. See
-> [Known limitations](#13-known-limitations--future-work).
+> [Known limitations](#14-known-limitations--future-work).
 
 ### 3.2 PRAGMAs on connect
 
@@ -236,7 +236,7 @@ so the picker was never a security control. What it does change is **discoverabi
 self-hosted instance, every authenticated user now sees a field for typing an arbitrary server-side
 path, where reaching the same capability previously took a hand-crafted API call. The reachable set
 of files is identical either way — see
-[No path sandboxing](#13-known-limitations--future-work) — but operators of multi-user deployments
+[No path sandboxing](#14-known-limitations--future-work) — but operators of multi-user deployments
 should treat "any logged-in user can open any SQLite file the Studio process can read" as an
 explicit assumption to check against their threat model, not a corner case. Where that assumption
 does not hold, the mitigations available today are OS-level: run Studio as a user with a narrow

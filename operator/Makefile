@@ -38,6 +38,25 @@ IMAGE_TAG_BASE ?= ghcr.io/libredb/libredb-studio-operator
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
 BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:v$(VERSION)
 
+# CATALOG_REPLACES is the bundle the new one supersedes in the community
+# catalogs' update graph. k8s-operatorhub/community-operators runs the
+# operator in `updateGraph: replaces-mode`, whose rule is "every next version
+# defines which version will be replaced using the `replaces` key in the CSV" -
+# omit it and channel `alpha` gets a second head, which is a hard upstream CI
+# failure rather than a warning.
+#
+# It is NOT derivable from package.json: this is the newest version the
+# CATALOGS actually serve, which lags our releases by however many submissions
+# are still unmerged. 0.9.59 is the first (and so far only) listing in both
+# catalogs; 0.14.0 was never submitted, so replacing it would point the graph
+# at a bundle that does not exist upstream.
+#
+# TODO(owner): decide how this value is kept honest and implement the stamp
+# below. See the note in the conversation - the choice is between a
+# hand-updated variable here, a generated file the release path writes, and
+# reading the catalogs at bundle time.
+CATALOG_REPLACES ?= 0.9.59
+
 # BUNDLE_GEN_FLAGS are the flags passed to the operator-sdk generate bundle command
 BUNDLE_GEN_FLAGS ?= -q --overwrite --version $(VERSION) $(BUNDLE_METADATA_OPTS)
 

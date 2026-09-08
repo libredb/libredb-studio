@@ -346,8 +346,7 @@ The inventory's foreign keys, rendered as a relation list and fenced beside the 
 It carries table names, column names, and at the deepest detail level a table's primary-key and
 leading-index column names (`keyColumns`, `er-diagram.ts:145-157`). **Never a row value.**
 
-On the six engines that declare no foreign keys at all — MongoDB, Redis, LibreDB, Druid, ClickHouse,
-Couchbase — this block carries no relations and says why: the engine has no such constraint to
+On the ten engines that declare no foreign keys at all (MongoDB, Redis, LibreDB, Druid, ClickHouse, Couchbase, Trino, Cassandra, Elasticsearch and OpenSearch) this block carries no relations and says why: the engine has no such constraint to
 declare, so there is nothing here a reading could have missed (#414, driven from
 `ProviderCapabilities.declaresForeignKeys` rather than from the connection's type). It is one server
 sentence and no database content, which makes it the one form of this block that discloses nothing.

@@ -18,7 +18,7 @@ Seconds are the median of the runs that passed, per surface.
 
 Every cell is 5/5, so the table says how long rather than whether.
 
-**The 7b is the fastest model measured here and the second smallest.** Its median run is six
+**The 7b is the fastest model measured here and the third smallest.** Its median run is six
 seconds, its slowest of thirty is 21, and no surface of its six takes ten. Nothing else on this
 list combines those two figures; the models that match its median have tails five and ten times
 longer. If the question is which local model to put in front of a user who is waiting, this is

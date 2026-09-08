@@ -42,7 +42,7 @@ size on data-analysis, expect it to need a second attempt more often than the ta
 
 ### `qwen3.5:9b`
 
-**a 150-second turn limit.** Five surfaces clear the shipped 90 seconds comfortably; its plan turn lands at 92 to 94. It was the first model to need it and is now one of six that carry it; the limit stays 90 for the other sixteen.
+**a 150-second turn limit.** Five surfaces clear the shipped 90 seconds comfortably; its plan turn lands at 92 to 94. It was the first model to need it and is now one of seven that carry it; the limit stays 90 for the other twenty-one.
 
 **empty-turn retry.** Its optimization runs stopped answering after being corrected, leaving no text behind.
 
