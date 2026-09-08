@@ -120,9 +120,13 @@ is overridden, for the trailing-clause trap in [§3.8](#38-the-preparequery-over
 |--------|---------|
 | `escapeIdentifier()` | Double-quoted, since `this.type` (`clickhouse`) falls through to the default branch — the same quoting PostgreSQL uses. Both quoted and unquoted forms parse (live-verified) |
 | `buildLimitClause()` | `LIMIT n` / `LIMIT n OFFSET m` |
-| `getPlaceholder()` | Falls through to `?`, but is moot here: ClickHouse binds only named `{name:Type}` parameters over HTTP, and `query()` throws rather than send an unbound `?` ([§5.1](#51-execution)) |
 | `shouldEnableSSL()` | Inherited but **never called**, and deliberately so. It infers TLS from substrings in the host (`cloud`, `aws`, …), which would silently switch a self-hosted node whose hostname merely contains one of them. TLS here comes from the connection's own `ssl` config or from an `https://` scheme, never from a guess ([§4.3](#43-tls)) |
 | `prepareQuery()` (base) | The shared query limiter; `ClickHouseProvider` calls it first and only overrides the trailing-clause case |
+
+Not in the list: a placeholder helper. `SQLBaseProvider` no longer has one (#304 removed it), and
+ClickHouse would not use it anyway — the HTTP interface binds only named `{name:Type}` parameters,
+so a positional `?` never applies, and `query()` throws rather than send one unbound
+([§5.1](#51-execution)).
 
 ### 2.4 Registration & lifecycle
 
