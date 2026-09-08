@@ -131,7 +131,7 @@ case 'couchbase': {
 }
 ```
 
-`connect()` ([index.ts:335](../../src/lib/db/providers/document/couchbase/index.ts)) proves
+`connect()` ([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)) proves
 reachability *and* credentials with one `GET /pools/default` — the cheapest call that needs no RBAC
 role beyond cluster read — then keeps the transport. `disconnect()` clears the transport's cached
 endpoint discovery; there are no sockets to close. API routes use `getOrCreateProvider()`, which
@@ -172,7 +172,7 @@ operations.
 ### 3.2 The transport seam: one interface, one implementation
 
 Provider logic never calls `fetch`. It goes through `CouchbaseTransport`
-([transport.ts:87](../../src/lib/db/providers/document/couchbase/transport.ts)), so adopting the SDK
+([`transport.ts`](../../src/lib/db/providers/document/couchbase/transport.ts)), so adopting the SDK
 later would be one new file implementing the same contract rather than a rewrite:
 
 ```ts
@@ -186,8 +186,8 @@ interface CouchbaseTransport {
 }
 ```
 
-The result type is deliberately **neutral** rather than the REST envelope
-([transport.ts:45](../../src/lib/db/providers/document/couchbase/transport.ts)):
+The result type, `CouchbaseQueryResult`, is deliberately **neutral** rather than the REST
+envelope ([`transport.ts`](../../src/lib/db/providers/document/couchbase/transport.ts)):
 
 ```ts
 interface CouchbaseQueryResult {
@@ -203,7 +203,7 @@ An interface shaped like `{ results, signature, status, metrics, errors }` would
 SDK adapter to fabricate fields only the REST API produces. Both sources produce the shape above
 without inventing anything. Errors follow the same rule: the transport throws a normalized
 `CouchbaseError { code, message, retriable }`
-([transport.ts:105](../../src/lib/db/providers/document/couchbase/transport.ts)) whose `code` is a
+([`transport.ts`](../../src/lib/db/providers/document/couchbase/transport.ts)) whose `code` is a
 single numeric space — SQL++ codes (3000, 4000, 13014, …) and HTTP codes (401, 403, 503) both land
 there, so provider-level mapping is one switch.
 
@@ -221,18 +221,20 @@ are required for overview, performance and storage metrics under any transport.
 endpoint. Only the **management** port is stored (8091, or 18091 with TLS); the query endpoint comes
 from `GET /pools/default/nodeServices`, reading `nodesExt[].services.n1ql` (or `n1qlSSL` under TLS)
 and preferring `alternateAddresses.external` when present — which is what makes NAT, Docker port
-mapping and Capella work
-([http-transport.ts:445](../../src/lib/db/providers/document/couchbase/http-transport.ts)). With no
+mapping and Capella work (`pickQueryEndpoint()`,
+[`http-transport.ts`](../../src/lib/db/providers/document/couchbase/http-transport.ts)). With no
 `n1ql` entry anywhere the transport falls back to 8093 / 18093.
 
 Discovery is cached **as a promise**, so concurrent first queries share one round trip — but a
 *failed* discovery is not cached, or one unreachable moment would poison every later query on the
-connection ([http-transport.ts:431](../../src/lib/db/providers/document/couchbase/http-transport.ts)).
+connection (`getQueryEndpoint()`,
+[`http-transport.ts`](../../src/lib/db/providers/document/couchbase/http-transport.ts)).
 
 Capella endpoints (`couchbases://cb.<id>.cloud.couchbase.com`) are SRV records, so a host given
 without an explicit port is resolved through `_couchbases._tcp.<host>` first; a DNS failure or an
 empty answer falls back to treating the host as a plain A record, which is what every self-hosted
-cluster needs anyway ([http-transport.ts:418](../../src/lib/db/providers/document/couchbase/http-transport.ts)).
+cluster needs anyway (`resolveHost()`,
+[`http-transport.ts`](../../src/lib/db/providers/document/couchbase/http-transport.ts)).
 
 ### 3.4 Keyspace flattening follows the PostgreSQL rule
 
@@ -250,7 +252,7 @@ keyspacePath({ bucket: 'travel', scope: 'inventory', collection: 'hotel' })
 
 **Quoting is a security boundary.** SQL++ has no bind parameter for identifiers, so keyspace paths
 are assembled by concatenation; `quoteIdentifier()`
-([keyspace.ts:31](../../src/lib/db/providers/document/couchbase/keyspace.ts)) doubles embedded
+([`keyspace.ts`](../../src/lib/db/providers/document/couchbase/keyspace.ts)) doubles embedded
 backticks so a hostile identifier cannot terminate its own quoting and have the remainder parsed as
 SQL++. Backticks are also required for a second, mundane reason: **`bucket` and `scope` are reserved
 words** in SQL++, and an unquoted projection over `system:keyspaces` fails with error 3000 (verified
@@ -260,8 +262,9 @@ on Server 8.0.2).
 
 The Query Service returns syntax and semantic errors **inside a 200 response** with
 `status: "errors"`. The transport therefore inspects the payload *before* the HTTP code
-([http-transport.ts:249](../../src/lib/db/providers/document/couchbase/http-transport.ts)); skipping
-that check reports a failed statement as "0 rows".
+(`throwIfFailed()`,
+[`http-transport.ts`](../../src/lib/db/providers/document/couchbase/http-transport.ts));
+skipping that check reports a failed statement as "0 rows".
 
 ### 3.6 `SELECT *` nests documents, so generated queries project the key explicitly
 
@@ -274,10 +277,11 @@ SELECT META(d).id AS __id, d.* FROM `travel`.`inventory`.`hotel` AS d LIMIT 50;
 ```
 
 The alias `__id` matches `COUCHBASE_DOCUMENT_KEY_COLUMN` in the introspection module
-([introspect.ts:58](../../src/lib/db/providers/document/couchbase/introspect.ts)), so the schema tree
+([`introspect.ts`](../../src/lib/db/providers/document/couchbase/introspect.ts)), so the schema tree
 and the result grid name the key identically. A hand-written `SELECT *` still works; its columns are
 then derived from the rows, because a wildcard signature tells the transport nothing
-([http-transport.ts:183](../../src/lib/db/providers/document/couchbase/http-transport.ts)).
+(`fieldNamesFromSignature()`,
+[`http-transport.ts`](../../src/lib/db/providers/document/couchbase/http-transport.ts)).
 
 ### 3.7 Read-your-writes: `scan_consistency` defaults to `request_plus`
 
@@ -288,7 +292,8 @@ three, and the same `SELECT` returned three rows seconds later — a user insert
 sees nothing.
 
 The transport therefore sends `scan_consistency: "request_plus"` on **every** statement
-([http-transport.ts:55](../../src/lib/db/providers/document/couchbase/http-transport.ts)), so a user
+(`DEFAULT_SCAN_CONSISTENCY`,
+[`http-transport.ts`](../../src/lib/db/providers/document/couchbase/http-transport.ts)), so a user
 always sees their own writes. Callers that prefer latency over freshness opt out per statement:
 
 ```ts
@@ -322,7 +327,7 @@ prerequisite.
 **Server 7.0 to 7.2 — it fails with error 4000.** Sequential scan does not exist there, so the same
 statement returns "No index available on keyspace". The provider re-raises it as a `QueryError`
 carrying the runnable remedy, quoted for the exact keyspace the statement read from
-([index.ts:473](../../src/lib/db/providers/document/couchbase/index.ts)):
+(`primaryIndexRemedy()`, [`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)):
 
 ```text
 No index available on keyspace `travel`.`inventory`.`hotel` that matches your query.
@@ -338,8 +343,8 @@ without any index on every supported version
 
 `system:completed_requests`, `system:active_requests` and the index-service statistics require the
 **Query System Catalog** RBAC role, so a denial is the *normal* case for a restricted user. Every
-monitoring source funnels through one helper
-([index.ts:189](../../src/lib/db/providers/document/couchbase/index.ts)):
+monitoring source funnels through one helper, `degradeTo()`
+([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)):
 
 ```ts
 async function degradeTo<T>(operation: () => Promise<T>, fallback: T): Promise<T> {
@@ -350,7 +355,7 @@ async function degradeTo<T>(operation: () => Promise<T>, fallback: T): Promise<T
 A source the connected user cannot read yields the fallback instead of breaking an otherwise working
 connection. `getSchemaRelations()` is the deliberate exception: an empty index list *is* the
 un-indexed signal of §3.8, so degrading a failed catalog read to empty would fabricate that signal
-for the whole bucket ([introspect.ts:327](../../src/lib/db/providers/document/couchbase/introspect.ts)).
+for the whole bucket ([`introspect.ts`](../../src/lib/db/providers/document/couchbase/introspect.ts)).
 
 ### 3.10 INFER output is nested, and every flavour is unioned
 
@@ -365,7 +370,7 @@ a `~meta` pseudo-property whose nested `id` describes the document key. Verified
 ```
 
 `columnsFromFlavours()`
-([introspect.ts:178](../../src/lib/db/providers/document/couchbase/introspect.ts)) unions **all**
+([`introspect.ts`](../../src/lib/db/providers/document/couchbase/introspect.ts)) unions **all**
 flavours — taking only the first would drop every field the other shapes carry. A field is nullable
 when `%docs < 100`, when `null` is among its observed types, or when it is missing from some
 flavour. Multiple observed types render as `mixed(a|b)`, the same convention the MongoDB provider
@@ -374,7 +379,7 @@ uses. `~meta` becomes the leading `__id` column, marked primary.
 ### 3.11 EXPLAIN reuses the shared tree model
 
 `ExplainFormat` gains `"couchbase-json"`
-([`src/lib/db/types.ts:93`](../../src/lib/db/types.ts)), with the strategy in
+([`src/lib/db/types.ts`](../../src/lib/db/types.ts)), with the strategy in
 [`src/lib/explain/couchbase-json.ts`](../../src/lib/explain/couchbase-json.ts):
 
 - `buildSql()` returns `EXPLAIN ${sql}` for `SELECT` statements, in **both** modes — it produces the
@@ -385,8 +390,8 @@ uses. `~meta` becomes the leading `__id` column, marked primary.
   same reason.
 
   Returning `null` for analyze would not narrow the feature, it would disable it: the direct Explain
-  action always builds with mode `analyze`
-  ([`use-query-execution.ts:165`](../../src/hooks/use-query-execution.ts)) and refuses the run when
+  action always builds with mode `analyze` (`explainAccepted`,
+  [`use-query-execution.ts`](../../src/hooks/use-query-execution.ts)) and refuses the run when
   the strategy declines, so the button would be dead while only the background pre-warm worked.
   A non-`SELECT` is still declined in both modes.
 - `toRenderModel()` walks `#operator` into the existing `{ kind: "tree" }` model.
@@ -415,9 +420,9 @@ cardinality can appear on CE plans.
 | `ssl` | No | See [§4.3](#43-tls) |
 
 `database` being the bucket is the one field that surprises people, so the form says so:
-`ConnectionModal` renders the label "Bucket" for `type === 'couchbase'`
-([`ConnectionModal.tsx:139`](../../src/components/ConnectionModal.tsx)), and `validate()` rejects a
-connection without one ([index.ts:325](../../src/lib/db/providers/document/couchbase/index.ts)):
+`ConnectionModal` renders the label "Bucket" for `type === 'couchbase'` (`databaseFieldLabel`,
+[`ConnectionModal.tsx`](../../src/components/ConnectionModal.tsx)), and `validate()` rejects a
+connection without one ([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)):
 
 ```text
 Couchbase requires a bucket (use the "database" field)
@@ -441,8 +446,8 @@ const connection = {
 
 ### 4.2 Connection strings
 
-`supportsConnectionString` is `true`, and the UI parser
-([`connection-string-parser.ts:138`](../../src/lib/connection-string-parser.ts)) decomposes the URL
+`supportsConnectionString` is `true`, and the UI parser, `parseConnectionString()`
+([`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)), decomposes the URL
 into discrete fields before the provider sees it:
 
 | Input | host | port | database (bucket) |
@@ -460,7 +465,8 @@ self-signed, so only the SSL panel turns verification on.
 A connection that carries *only* a connection string has its hostname lifted out for the transport
 and nothing else — the URL's port is deliberately not used, because a `couchbase://` URL from an
 application config carries the KV port, not the management port, and discovery handles the rest
-([index.ts:368](../../src/lib/db/providers/document/couchbase/index.ts)).
+(`hostFromConnectionString()`,
+[`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)).
 `detectConnectionStringType()` maps both schemes to `couchbase`.
 
 A Capella endpoint carries neither a port nor a bucket path, so the bucket must be filled in by
@@ -481,7 +487,8 @@ does **not** verify the chain, because a self-hosted Couchbase node ships a self
 endpoint can satisfy exactly as pasted, since its certificate is signed by a public root and there is
 no PEM to go looking for — while `verify-ca`/`verify-full` verify against a pasted `caCert`. An
 explicit `ssl.rejectUnauthorized` always wins
-([http-transport.ts:256](../../src/lib/db/providers/document/couchbase/http-transport.ts)).
+(`buildTlsMaterial()`,
+[`http-transport.ts`](../../src/lib/db/providers/document/couchbase/http-transport.ts)).
 
 ---
 
@@ -489,7 +496,7 @@ explicit `ssl.rejectUnauthorized` always wins
 
 ### 5.1 Execution
 
-`query(sql, params?)` ([index.ts:408](../../src/lib/db/providers/document/couchbase/index.ts)) sends
+`query(sql, params?)` ([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)) sends
 one SQL++ statement. Positional parameters map to `$1`-style placeholders:
 
 ```ts
@@ -545,7 +552,7 @@ direct action and the background pre-warm show the estimated plan.
 ## 6. Schema introspection
 
 `getSchemaList()` is the primary path used by `/api/db/schema/list`, so columns are produced there
-([introspect.ts:306](../../src/lib/db/providers/document/couchbase/introspect.ts)):
+([`introspect.ts`](../../src/lib/db/providers/document/couchbase/introspect.ts)):
 
 | Data | Source |
 |------|--------|
@@ -565,7 +572,8 @@ Three details are load-bearing:
   SELECT on the collection, and the collection is empty (error 7014, "No documents found, unable to
   infer schema") — are both states the explorer should render, not fail on. Coverage is *not*
   truncated to a fixed number of collections; the concurrency bound of 4 is what keeps the cost of
-  schema loading in hand ([introspect.ts:245](../../src/lib/db/providers/document/couchbase/introspect.ts)).
+  schema loading in hand (`mapWithConcurrency()`,
+  [`introspect.ts`](../../src/lib/db/providers/document/couchbase/introspect.ts)).
 
 `getSchema()` merges both halves. A primary index carries no `index_key`, so it is reported with the
 synthetic column `META().id`; `unique` is true only for primary indexes, because no secondary GSI
@@ -621,7 +629,7 @@ edge one. Omitted, the same panels render `N/A` / "Not measured" and score the c
 ## 8. Maintenance
 
 `runMaintenance(type, target?)`
-([index.ts:762](../../src/lib/db/providers/document/couchbase/index.ts)). All three operations
+([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)). All three operations
 **require** a target.
 
 | Type | Couchbase action | Notes |
@@ -668,7 +676,7 @@ stays absent, and that card never renders either.
 
 ## 9. Capabilities & labels
 
-### `getCapabilities()` ([index.ts:276](../../src/lib/db/providers/document/couchbase/index.ts))
+### `getCapabilities()` ([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts))
 
 | Capability | Value |
 |------------|-------|
@@ -690,7 +698,7 @@ stays absent, and that card never renders either.
 list, while Couchbase collections are schemaless and `CREATE COLLECTION` takes no columns. Leaving
 the flag on would render a control that can only emit invalid SQL++.
 
-### `getLabels()` ([index.ts:293](../../src/lib/db/providers/document/couchbase/index.ts))
+### `getLabels()` ([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts))
 
 Document vocabulary: entity -> *Collection*, row -> *document*, select -> *Select Documents*,
 analyze -> *Update Statistics* (the card text names the Enterprise-only restriction), vacuum ->
@@ -730,7 +738,7 @@ would carry if it ever returns.
 The transport normalizes every failure into `CouchbaseError { code, message, retriable }`; the
 provider maps that one numeric space onto the shared classes from
 [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
-([index.ts:444](../../src/lib/db/providers/document/couchbase/index.ts)):
+(`mapCouchbaseError()`, [`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)):
 
 | Code | Meaning | Error raised |
 |------|---------|--------------|

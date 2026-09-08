@@ -192,6 +192,39 @@ const NAMED_CITATIONS = [
       "runMaintenance",
     ],
   },
+  {
+    doc: "docs/providers/couchbase.md",
+    source: "src/lib/db/providers/document/couchbase/index.ts",
+    // Same rule as clickhouse: every `name(` the doc cites that index.ts declares as a class
+    // member, in declaration order. `degradeTo()` is module-level; the transport, introspection
+    // and keyspace names live in their own files.
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "prepareQuery",
+      "validate",
+      "connect",
+      "disconnect",
+      "hostFromConnectionString",
+      "query",
+      "mapCouchbaseError",
+      "primaryIndexRemedy",
+      "getSchemaList",
+      "getSchemaRelations",
+      "getSchema",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getActiveSessions",
+      "getTableStats",
+      "getIndexStats",
+      "getStorageStats",
+      "getHealth",
+      "runMaintenance",
+      "dispatchMaintenance",
+      "requireTarget",
+    ],
+  },
 ] as const;
 
 const SEARCH_DOCS = ["docs/providers/elasticsearch.md", "docs/providers/opensearch.md"] as const;
@@ -275,7 +308,8 @@ describe("redis provider doc", () => {
 describe("provider docs rewritten this round: code cited by name, whole file", () => {
   for (const { doc, source, methods } of NAMED_CITATIONS) {
     test(`${doc} cites no line number anywhere`, () => {
-      expect(read(doc)).not.toMatch(/\.ts:\d/);
+      // `.tsx` too: couchbase.md cited `ConnectionModal.tsx:139`, which `\.ts:` cannot see.
+      expect(read(doc)).not.toMatch(/\.tsx?:\d/);
     });
 
     test(`${doc} names methods that ${source} really declares`, () => {
