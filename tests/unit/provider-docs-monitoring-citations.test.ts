@@ -193,6 +193,33 @@ const NAMED_CITATIONS = [
     ],
   },
   {
+    doc: "docs/providers/druid.md",
+    source: "src/lib/db/providers/sql/druid/index.ts",
+    // Tracks the doc, not a hand-picked subset: every `name(` it cites that index.ts declares as
+    // a class member, in declaration order. The doc links the monitoring methods to introspect.ts,
+    // where the work is; index.ts declares each as a member that delegates there.
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "prepareQuery",
+      "validate",
+      "connect",
+      "disconnect",
+      "query",
+      "mapDruidError",
+      "getSchema",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getIndexStats",
+      "getActiveSessions",
+      "getTableStats",
+      "getStorageStats",
+      "getHealth",
+      "runMaintenance",
+    ],
+  },
+  {
     doc: "docs/providers/couchbase.md",
     source: "src/lib/db/providers/document/couchbase/index.ts",
     // Same rule as clickhouse: every `name(` the doc cites that index.ts declares as a class
@@ -302,6 +329,17 @@ describe("redis provider doc", () => {
     expect(text).toContain("`getMonitoringData()` from\n[`base-provider.ts`](../../src/lib/db/base-provider.ts)");
     expect(text).not.toMatch(/base-provider\.ts:\d/);
     expect(declarationLine(read(BASE_PROVIDER), "getMonitoringData")).toBeGreaterThan(-1);
+  });
+});
+
+describe("measured aggregate helper docs", () => {
+  test("MSSQL and Oracle pin the helper name to its source file", () => {
+    for (const doc of ["docs/providers/mssql.md", "docs/providers/oracle.md"]) {
+      expect(read(doc)).toContain(
+        "`measuredNullableAggregate()` ([`measured-aggregate.ts`](../../src/lib/db/utils/measured-aggregate.ts))",
+      );
+    }
+    expect(read("src/lib/db/utils/measured-aggregate.ts")).toMatch(/^export function measuredNullableAggregate\(/m);
   });
 });
 

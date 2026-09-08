@@ -469,7 +469,7 @@ proving each statement had landed:
 `autoCommit: true` on the call is load-bearing, not decoration: `oracledb.autoCommit` defaults to
 `false`, and measured without it the `INSERT` still reported `rowsAffected: 1` while a second
 session saw `COUNT(*) = 0`, and the row was gone for good once the writing connection went back to
-the pool. Bind parameters use Oracle's `:1`-style placeholders (`getPlaceholder()` from the base).
+the pool. Bind parameters use Oracle's `:1`-style placeholders.
 Native errors are normalised through `mapDatabaseError()` (see [§11](#11-error-handling)).
 
 ### 5.2 Query cancellation
@@ -1003,8 +1003,8 @@ A schema that really measures `0` is a **reading** and is kept, and here that ca
 than hypothetical: a freshly created user owns no segment, so `SUM(BYTES)` answers one row of `NULL`,
 which the provider maps to `0`; the tab then formats the `0 B` it was given. If the driver returns no
 row, no expected column, or a non-finite value, the measurement is absent and the string stays `N/A`.
-The shared `measuredNullableAggregate()` boundary preserves those states without a falsy test that
-would erase a genuine zero.
+The shared `measuredNullableAggregate()` ([`measured-aggregate.ts`](../../src/lib/db/utils/measured-aggregate.ts))
+boundary preserves those states without a falsy test that would erase a genuine zero.
 
 ---
 

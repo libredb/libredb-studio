@@ -9,7 +9,7 @@ packer {
 
 variable "version" {
   type        = string
-  description = "LibreDB Studio release tag — image pin + snapshot name (e.g. 0.9.59). Must exist on ghcr.io/libredb/libredb-studio."
+  description = "LibreDB Studio release tag — image pin + snapshot name (e.g. 0.14.1). Must exist on ghcr.io/libredb/libredb-studio."
 }
 
 source "digitalocean" "ubuntu" {
