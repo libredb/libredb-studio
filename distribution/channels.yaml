@@ -454,11 +454,14 @@ channels:
       docs: deploy/dokploy/README.md
     pin:
       strategy: remote_file
-      url: https://raw.githubusercontent.com/Dokploy/templates/main/blueprints/libredb-studio/docker-compose.yml
+      url: https://raw.githubusercontent.com/Dokploy/templates/canary/blueprints/libredb-studio/docker-compose.yml
       extract: 'libredb-studio:(\d+\.\d+\.\d+)'
       note: The blueprint serves 0.9.59, bumped there by Dokploy/templates#1039 (merged 2026-08-03).
         Every bump is an upstream pull request a maintainer has to merge, so this pin drifts behind
-        the release by design and the drift row is the reminder to open the next one.
+        the release by design and the drift row is the reminder to open the next one. That repo's
+        default branch is `canary`, not main, and both of the pull requests merged there for this
+        app (931 and 1039) targeted it, so the pin URL and any bump PR must use `canary`. This URL
+        read `main` until now, which happened to report the same version and so hid the mistake.
 
   - id: cosmos
     name: Cosmos servapp marketplace

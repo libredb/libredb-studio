@@ -31,7 +31,7 @@ the pin deliberately, in both places, after reviewing upstream changes.
 ## Build
 
 **GitHub Actions (recommended):** Actions → "DO Packer Build" → Run workflow →
-enter a version (semver, e.g. `0.9.59` — must exist as a tag on
+enter a version (semver, e.g. `0.14.1` — must exist as a tag on
 `ghcr.io/libredb/libredb-studio`). The snapshot ID appears in the job summary.
 Requires the `DIGITALOCEAN_TOKEN` repo secret (read+write PAT).
 
@@ -44,8 +44,8 @@ curl -fsSLo scripts/90-cleanup.sh   "https://raw.githubusercontent.com/digitaloc
 curl -fsSLo scripts/99-img-check.sh "https://raw.githubusercontent.com/digitalocean/marketplace-partners/${MP_SHA}/scripts/99-img-check.sh"
 export DIGITALOCEAN_TOKEN=dop_v1_...
 packer init .
-packer validate -var "version=0.9.59" .
-packer build -var "version=0.9.59" .
+packer validate -var "version=0.14.1" .
+packer build -var "version=0.14.1" .
 ```
 
 ## Critical build rules
