@@ -73,16 +73,11 @@ describe("CreateTableModal", () => {
     });
     expect(baseElement.querySelectorAll('input[placeholder="column_name"]').length).toBe(2);
 
-    // Find trash/remove buttons — they are the last button in each column row
-    const trashButtons = baseElement.querySelectorAll("button");
-    const removeButtons = Array.from(trashButtons).filter((btn) => {
-      const icon = btn.querySelector('[data-icon="Trash2"]') || btn.querySelector("svg");
-      return icon !== null && btn.textContent === "";
-    });
+    const removeButton = body.getByRole("button", { name: "Remove column 2" });
 
     // Click the last remove button (removes the newly added column)
     act(() => {
-      fireEvent.click(removeButtons[removeButtons.length - 1]);
+      fireEvent.click(removeButton);
     });
 
     expect(baseElement.querySelectorAll('input[placeholder="column_name"]').length).toBe(1);
