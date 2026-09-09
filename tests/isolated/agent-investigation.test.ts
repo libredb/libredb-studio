@@ -3558,7 +3558,7 @@ describe("a run that stops having read nothing is told to read it itself", () =>
     The drive holds a sentence written for exactly this ending — "Read it yourself. Call
     inspect_schema for the tables and their columns, and inspect_plan for how a statement will
     run" — and for a while sent it only to a model whose profile asked for it. One profile of
-    twenty-eight does, and a model nobody has measured has no profile at all, so the model most
+    thirty does, and a model nobody has measured has no profile at all, so the model most
     in need of the sentence was the one guaranteed not to receive it.
 
     Measured across the sweep behind 0.14.1: three hundred runs ended `model-stopped` with
@@ -3573,7 +3573,7 @@ describe("a run that stops having read nothing is told to read it itself", () =>
     was withholding was a sentence on a run already lost.
 
     This is the fourth setting found in this shape and the second corrected. A measured profile
-    is still obeyed: all twenty-eight state the field, so no shipped model's turn count moves.
+    is still obeyed: every shipped entry states the field, so no model's turn count moved on it.
   */
   test("a model NOBODY has measured is told to read, because the sentence is the server's own", async () => {
     const b = boot(freshDataDir());

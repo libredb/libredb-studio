@@ -103,8 +103,9 @@ export interface AgentModelProfile {
    * it, and overruling a measurement is twice how this repository has handed back cells it had
    * won. What is NOT obeyed is an absent entry, which is not a measurement: the drive asks
    * `answersUnreadStop`, not `retriesUnreadStop`, and that resolver offers the turn to a model
-   * nobody has measured. All twenty-eight shipped entries state this field, so no shipped model's
-   * turn count moved when the two were split.
+   * nobody has measured. All twenty-eight shipped entries stated this field when the two were
+   * split, so no shipped model's turn count moved then; thirty state it now, three of them `true`
+   * — which is a record of what their runs were driven with, not a preference.
    *
    * It SUBSUMES `retryEmptyTurn`, and that is a property of the gate rather than of the name.
    * The condition is "called nothing", with no test on what was said, so an empty completion

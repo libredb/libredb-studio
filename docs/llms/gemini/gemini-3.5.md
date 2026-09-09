@@ -1,7 +1,7 @@
 # gemini-3.5
 
 Every size listed here runs **all six agent surfaces**, five consecutive times each: 30 of 30
-runs. The one hosted model on this list, measured exactly as the twenty-seven local ones were.
+runs. The one hosted model on this list, measured exactly as the twenty-nine local ones were.
 
 ## What it does, and how long it takes
 
