@@ -244,6 +244,18 @@ export function useStorageSync(): StorageSyncState {
   useEffect(() => {
     mountedRef.current = true;
     return () => {
+      // A pending debounce is a mutation that exists ONLY in localStorage — the
+      // server has never seen it. Clearing the timer without flushing used to
+      // drop it outright, and worse: the next mount's pullFromServer() then
+      // overwrote localStorage with server data, destroying the write forever.
+      // Flushing here sends it before teardown; the flush's own failure branch
+      // re-queues what it can't deliver, and its `!mountedRef.current` guard
+      // already keeps a failed post-teardown flush from arming stray timers.
+      // Guarded on server mode: in local mode the queue is always empty and
+      // appFetch would be pointless work.
+      if (serverModeRef.current && pendingCollectionsRef.current.size > 0) {
+        flushPendingRef.current();
+      }
       mountedRef.current = false;
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
