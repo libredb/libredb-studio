@@ -672,6 +672,7 @@ export function OperationsTab() {
                           size="icon"
                           className="h-6 w-6 text-fg-subtle hover:text-danger hover:bg-danger-tint/10 opacity-0 group-hover:opacity-100 transition-all"
                           onClick={() => handleKillClick(session)}
+                          aria-label={`Terminate session ${session.pid}`}
                           disabled={killingPid === session.pid}
                         >
                           {killingPid === session.pid ? (
