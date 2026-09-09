@@ -92,6 +92,43 @@ describe("factory: getStorageProvider", () => {
     expect(mockInitialize).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * Two requests can arrive before the first has finished initializing — the
+   * page-load GET /api/storage races a PUT /api/storage/[collection]. Before
+   * the in-flight promise was memoized, both fell through the
+   * `_provider && _initialized` check, each constructed a provider, and the
+   * second assignment overwrote the first mid-initialize: two initialize()
+   * calls, a duplicated provider, and a leaked connection pool.
+   */
+  test("concurrent first calls share one provider and one initialize()", async () => {
+    process.env.STORAGE_PROVIDER = "sqlite";
+
+    const [first, second] = await Promise.all([getStorageProvider(), getStorageProvider()]);
+
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(first).toBe(second);
+    // Exactly one build+initialize, no matter how many callers raced.
+    expect(mockInitialize).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The memoized promise must not outlive a failure: a rejected initialize
+   * that stayed cached would make every later request await the same dead
+   * promise forever, turning one transient DB outage into a permanent one.
+   */
+  test("a failed initialize is not memoized — the next call retries from scratch", async () => {
+    process.env.STORAGE_PROVIDER = "sqlite";
+    mockInitialize.mockRejectedValueOnce(new Error("DB init failed"));
+
+    await expect(getStorageProvider()).rejects.toThrow("DB init failed");
+
+    mockInitialize.mockClear();
+    const provider = await getStorageProvider();
+    expect(provider).not.toBeNull();
+    expect(mockInitialize).toHaveBeenCalledTimes(1);
+  });
+
   test("propagates error when initialize() throws", async () => {
     process.env.STORAGE_PROVIDER = "sqlite";
     mockInitialize.mockRejectedValueOnce(new Error("DB init failed"));
