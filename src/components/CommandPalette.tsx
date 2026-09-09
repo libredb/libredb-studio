@@ -202,7 +202,7 @@ export function CommandPalette({
                 <Bookmark strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-purple" />
                 <span>{sq.name}</span>
                 <span className="ml-auto text-xs text-fg-subtle truncate max-w-[150px]">
-                  {sq.query.substring(0, 40)}...
+                  {sq.query.length > 40 ? sq.query.substring(0, 40) + "..." : sq.query}
                 </span>
               </CommandItem>
             ))}
