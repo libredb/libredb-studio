@@ -460,7 +460,14 @@ export async function getOrCreateProvider(
 
   // A saved timeout change must reach the next query, even when the connection is already open.
   if (cached && cached.provider.config.queryTimeout !== connection.queryTimeout) {
-    await cached.provider.disconnect();
+    try {
+      await cached.provider.disconnect();
+    } catch (error) {
+      logger.warn(`[DB] Error disconnecting provider after query timeout change`, {
+        connectionId: connection.id,
+        error: String(error),
+      });
+    }
     providerCache.delete(cacheKey);
   } else if (cached?.provider.isConnected()) {
     cached.lastUsed = Date.now();
@@ -624,7 +631,14 @@ export async function acquireExecutionProfileProvider(
   const cacheKey = profiledCacheKey(connection.id, profile);
   const cached = profiledProviderCache.get(cacheKey);
   if (cached && cached.provider.config.queryTimeout !== connection.queryTimeout) {
-    await cached.provider.disconnect();
+    try {
+      await cached.provider.disconnect();
+    } catch (error) {
+      logger.warn(`[DB] Error disconnecting provider after query timeout change`, {
+        connectionId: connection.id,
+        error: String(error),
+      });
+    }
     profiledProviderCache.delete(cacheKey);
   } else if (cached?.provider.isConnected()) {
     cached.lastUsed = Date.now();

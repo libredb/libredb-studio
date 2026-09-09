@@ -1738,6 +1738,27 @@ describe("grounding a plan run while the writable provider holds the file (B49)"
 
 describe("cached connection query timeout", () => {
   test.each([false, true])(
+    "replaces the cached provider even when disconnect rejects (profiled: %s)",
+    async (profiled) => {
+      const acquire = (connection: DatabaseConnection) =>
+        profiled ? acquireExecutionProfileProvider(connection, "agent-read-only") : getOrCreateProvider(connection);
+      const connection = makeConnection("postgres");
+      const initial = await acquire(connection);
+      initial.disconnect = mock(async () => {
+        throw new Error("socket already gone");
+      });
+      const changed = { ...connection, queryTimeout: 120000 };
+      const fresh = await acquire(changed);
+      expect(fresh).not.toBe(initial);
+      expect(fresh.isConnected()).toBe(true);
+      expect(await acquire(changed)).toBe(fresh);
+      const restored = await acquire(connection);
+      expect(restored).not.toBe(initial);
+      expect(restored).not.toBe(fresh);
+      expect(restored.isConnected()).toBe(true);
+    },
+  );
+  test.each([false, true])(
     "recreates a provider after changing or clearing the timeout (profiled: %s)",
     async (profiled) => {
       const acquire = (connection: DatabaseConnection) =>

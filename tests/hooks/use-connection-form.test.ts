@@ -85,6 +85,19 @@ describe("useConnectionForm", () => {
 
   // ── Default State ──────────────────────────────────────────────────────────
 
+  test("whitespace-only query timeout keeps the provider default", async () => {
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) }),
+    );
+    act(() => result.current.setQueryTimeout("   "));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(onConnect.mock.calls[0][0].queryTimeout).toBeUndefined();
+  });
+
   test("query timeout is optional and saved in milliseconds", async () => {
     const onConnect = mock((_connection: DatabaseConnection) => {});
     const onTestConnection = mock(async () => ({ success: true }));
