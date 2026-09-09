@@ -227,7 +227,11 @@ export function registerSQLCompletionProvider(
 
       // Monaco replaces only the current word. A qualified table suggestion must
       // match and replace the already typed qualifier as well as that word.
-      const qualifier = line.substring(0, word.startColumn - 1).match(/((?:[\w$]+\.)+)$/)?.[1] ?? "";
+      const typedQualifier = line.substring(0, word.startColumn - 1).match(/((?:[\w$]+\.)+)$/)?.[1] ?? "";
+      const qualifiedMatch = schemaCompletionCache.tableItems.some((table) =>
+        table.labelLower.startsWith(typedQualifier.toLowerCase() + prefix),
+      );
+      const qualifier = typedQualifier && qualifiedMatch ? typedQualifier : "";
       const tablePrefix = qualifier.toLowerCase() + prefix;
       const tableRange = { ...range, startColumn: range.startColumn - qualifier.length };
       const tableSuggestions = schemaCompletionCache.tableItems
