@@ -314,6 +314,8 @@ describe("Schema-qualified table completion edits", () => {
     ["SELECT * FROM SAMPLE.dem", "SELECT * FROM sample.demo", "sample.demo"],
     ["SELECT * FROM catalog.sample.dem", "SELECT * FROM catalog.sample.demo", "catalog.sample.demo"],
     ["SELECT * FROM sam", "SELECT * FROM sample.demo", "sample.demo"],
+    ["SELECT * FROM public.dem", "SELECT * FROM public.demo", "demo"],
+    ["SELECT * FROM mydb.dem", "SELECT * FROM mydb.demo", "demo"],
   ])("applies the table edit to %s", (line, expected, label) => {
     const monaco = createMockMonaco();
     registerSQLCompletionProvider(
