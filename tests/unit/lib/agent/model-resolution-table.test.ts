@@ -154,6 +154,19 @@ const RESOLVED: ResolvedRow[] = [
     turnTimeoutMs: undefined,
   },
   {
+    // Six cells on the first attempt with NOT ONE setting spent, which is what the whole table is
+    // for: the row is short because the model asked for nothing.
+    id: "qwen3.5:27b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    retriesUnreadStop: true,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  {
     id: "qwen3.5:9b",
     unreportedCallCeiling: 12,
     reportReminderLimit: 1,
@@ -173,6 +186,21 @@ const RESOLVED: ResolvedRow[] = [
     planStatementRetries: 0,
     presentReminderLimit: 1,
     retriesEmptyTurn: false,
+    refusalExamples: false,
+    suppressesPlanReasoning: true,
+    suppressesAgentReasoning: true,
+    turnTimeoutMs: 150_000,
+  },
+  {
+    // Its 27b sibling's set, taken whole and then re-measured under: optimize went from 2-4/5 to
+    // 5/5 and the runs fell from 200-350 seconds to 13-29.
+    id: "qwen3.6:35b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    retriesUnreadStop: true,
     refusalExamples: false,
     suppressesPlanReasoning: true,
     suppressesAgentReasoning: true,
@@ -496,7 +524,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
   test("the table covers every registered model, so a new one cannot arrive unpinned", () => {
     const pinned = new Set(RESOLVED.map((row) => row.id));
     for (const id of Object.keys(modelProfiles())) expect(pinned.has(id)).toBe(true);
-    expect(Object.keys(modelProfiles())).toHaveLength(28);
+    expect(Object.keys(modelProfiles())).toHaveLength(30);
   });
 });
 
@@ -558,8 +586,10 @@ describe("what each model records about the runs that earned its settings", () =
     "qwen2.5:32b": "71885a95b0d717ca4f6814cfa4575bfa5f3cc20b7086c4de44f79835be3bcb1a",
     "qwen2.5:7b": "09631668500b307a79ca06e1a7de2dfdffc1632f4bd5bb4a460abab6caf09857",
     "qwen3.5:4b": "204b6f6beb8710155508938a2271cbf34013235fa612b40ecebf98ff5dcff061",
+    "qwen3.5:27b": "d83ddd506de32534c2b705b05ec2d44bef6ec19199094e86ec77ffbd2b38f59b",
     "qwen3.5:9b": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
     "qwen3.6:27b": "d0ebde3fdf25b9c56ab7bcad4adc3b54510a413285e51edcb46aec261e661157",
+    "qwen3.6:35b": "3b35d7070adca4f15fcc95bd522fd0ca0d5d77e5d4306be8f400da09c6899e25",
     "qwen3.8:latest": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
     "qwen3:14b": "96e0d729224168eff3eddc16ed1bd588dd28cd133441c85790670ffd3e36dddd",
     "qwen3:4b": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",

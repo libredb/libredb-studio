@@ -255,6 +255,14 @@ export interface AgentNotices {
   readonly presentBeforeReport: string;
   /** A run that stopped without calling anything, having asked for what it could have read. */
   readonly unreadStop: string;
+  /**
+   * A tool call the ENDPOINT could not parse, handed back to the model that wrote it.
+   *
+   * The one failure here that is not the drive's judgement of a turn but the provider's: the
+   * arguments did not parse, so no call was made and no ledger entry exists. Re-sending the same
+   * request produces the same failure, which is why this is a sentence rather than a retry.
+   */
+  readonly unreadableToolCall: string;
 }
 
 /**

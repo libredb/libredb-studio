@@ -8,10 +8,10 @@ writes beautiful prose about a database and never calls a tool answers nothing h
 question these pages answer is not what a model knows but what it DOES on a run, and every figure
 comes from a run whose ledger is on disk.
 
-**Twenty-eight models are supported.** Each cleared all six surfaces — Investigate, Optimize, Assess,
-Operate, Analyze and Plan — five consecutive times: 840 runs, 840 passes.
+**Thirty models are supported.** Each cleared all six surfaces — Investigate, Optimize, Assess,
+Operate, Analyze and Plan — five consecutive times: 900 runs, 900 passes.
 
-Twenty-one of the twenty-eight cleared them at the 90-second per-turn limit the product ships. Seven carry a
+Twenty-two of the thirty cleared them at the 90-second per-turn limit the product ships. Eight carry a
 150-second limit of their own — `qwen3.5:9b`, `gemma4:12b`, `gemma4:31b`, `nemotron-3.5-lightning:30b`,
 `nemotron-3-nano:30b`, `muse-glimmer:latest` and `qwen3.6:27b` — because one turn of theirs does
 not fit inside 90 while every other surface does. The limit stays 90 for every other model, and
@@ -50,7 +50,7 @@ each page says what its model needed.
 
 The durations are from one machine and are comparable with each other rather than portable: every
 figure was taken the same way, on the same database, through the same six surfaces. What they are
-for is choosing between these twenty-eight — the fastest reaches the same verdicts as the slowest in
+for is choosing between these thirty — the fastest reaches the same verdicts as the slowest in
 an eighteenth of the time.
 
 One page per model version. Sizes are rows inside it, because `ollama pull qwen3:4b` is how a
