@@ -309,6 +309,66 @@ describe("Dot-triggered completions", () => {
 // General completions (keywords, functions, tables, snippets)
 // ---------------------------------------------------------------------------
 
+describe("Schema-qualified table completion edits", () => {
+  test.each([
+    ["SELECT * FROM SAMPLE.dem", "SELECT * FROM sample.demo", "sample.demo"],
+    ["SELECT * FROM catalog.sample.dem", "SELECT * FROM catalog.sample.demo", "catalog.sample.demo"],
+    ["SELECT * FROM sam", "SELECT * FROM sample.demo", "sample.demo"],
+  ])("applies the table edit to %s", (line, expected, label) => {
+    const monaco = createMockMonaco();
+    registerSQLCompletionProvider(
+      monaco,
+      createSchemaCache({ tableItems: [{ label, labelLower: label.toLowerCase(), rowCount: 1, columnNames: "id" }] }),
+    );
+    const result = monaco
+      ._getProvider()!
+      .provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1));
+    const suggestion = result.suggestions.find((item) => item.label === label)!;
+    expect(suggestion).toBeDefined();
+    const range = suggestion.range as Monaco.IRange;
+    expect(line.slice(0, range.startColumn - 1) + suggestion.insertText + line.slice(range.endColumn - 1)).toBe(
+      expected,
+    );
+  });
+
+  test("a table alias still provides columns when it shares a schema name", () => {
+    const monaco = createMockMonaco();
+    registerSQLCompletionProvider(
+      monaco,
+      createSchemaCache({
+        tableItems: [{ label: "sample.demo", labelLower: "sample.demo", rowCount: 1, columnNames: "id" }],
+      }),
+    );
+    const line = "SELECT * FROM users sample WHERE sample.";
+    const result = monaco
+      ._getProvider()!
+      .provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1));
+    expect(result.suggestions.map((item) => item.label)).toEqual(["id", "name", "email"]);
+    expect(result.suggestions.every((item) => item.kind === 3)).toBe(true);
+  });
+
+  test.each(["", "d", "de", "dem"])("completes sample.%s without duplicating the schema", (prefix) => {
+    const monaco = createMockMonaco();
+    const cache = createSchemaCache({
+      tableItems: [
+        { label: "sample.demo", labelLower: "sample.demo", rowCount: 1, columnNames: "id, name" },
+        { label: "other.demo", labelLower: "other.demo", rowCount: 1, columnNames: "id" },
+      ],
+    });
+    registerSQLCompletionProvider(monaco, cache);
+    const line = `SELECT * FROM sample.${prefix}`;
+    const result = monaco
+      ._getProvider()!
+      .provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1));
+    const suggestion = result.suggestions.find((item) => item.label === "sample.demo");
+    expect(suggestion).toBeDefined();
+    const range = suggestion!.range as Monaco.IRange;
+    const accepted = line.slice(0, range.startColumn - 1) + suggestion!.insertText + line.slice(range.endColumn - 1);
+    expect(accepted).toBe("SELECT * FROM sample.demo");
+    expect(result.suggestions.some((item) => item.label === "other.demo")).toBe(false);
+  });
+});
+
 describe("General completions", () => {
   test("returns keywords, functions, tables, and snippets with short prefix", () => {
     const monaco = createMockMonaco();
