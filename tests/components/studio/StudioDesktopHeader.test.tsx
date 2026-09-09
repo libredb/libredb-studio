@@ -230,6 +230,22 @@ describe("StudioDesktopHeader", () => {
 
   // ── User Dropdown Menu ──
 
+  test.each([
+    ["anonymous", null, false],
+    ["regular user", { role: "user" }, false],
+    ["admin", { role: "admin" }, true],
+  ] as const)("%s sees settings only in an actionable admin menu item", (_name, user, isAdmin) => {
+    const { container } = render(<StudioDesktopHeader {...defaultProps} user={user} isAdmin={isAdmin} />);
+    const settingsIcons = container.querySelectorAll("svg.lucide-settings");
+    expect(settingsIcons.length).toBe(isAdmin ? 1 : 0);
+    for (const icon of settingsIcons) {
+      const action = icon.closest('[role="menuitem"]');
+      expect(action).not.toBeNull();
+      fireEvent.click(action!);
+      expect(mockRouterPush).toHaveBeenCalledWith("/admin");
+    }
+  });
+
   describe("user dropdown menu", () => {
     test("renders user dropdown when user exists", () => {
       const { container } = render(<StudioDesktopHeader {...defaultProps} />);
