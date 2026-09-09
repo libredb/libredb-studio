@@ -85,14 +85,14 @@ Refresh your feature branch before asking for review:
 
 ```bash
 git status                      # commit or stash first; rebase refuses to run dirty
-git fetch upstream              # or `git fetch origin` when you work in a clone, not a fork
-git rebase upstream/main
+git fetch upstream              # in a direct clone: git fetch origin
+git rebase upstream/main        # in a direct clone: git rebase origin/main
 git push --force-with-lease     # never plain --force
 ```
 
 Rebase before review for three reasons that are specific to this repository.
 Required status checks are not strict, so a green run can be against a `main` that has already moved and GitHub will not force the branch to update.
-The [Security Scanning](#security-scanning) secret check scans the commits in `origin/main..HEAD`, so deleting a credential in a later commit does not clear the finding; rewrite the commit that introduced it instead.
+The [Security Scanning](#security-scanning) secret check scans the commits your branch adds, so deleting a credential in a later commit does not clear the finding; rewrite the commit that introduced it instead.
 A stale branch that edits a shared file can merge cleanly while restoring an older version of someone else's work, and rebasing surfaces that drift before review.
 
 `--force-with-lease` refuses the push when the remote branch has moved since your last fetch, which is the case where plain `--force` could delete someone else's commit.
@@ -109,7 +109,7 @@ Use `git rebase --abort` to return to where you started.
 Do not rebase after a maintainer has started reviewing unless they ask you to.
 Force-pushing replaces commit SHAs and loses the review's line anchors, so prefer new commits during review and rebase once at the end when asked.
 
-After a rebase, run the complete local gate from step 4 again.
+After a rebase, run the complete local gate from the **Run the checks locally** step again.
 The whole branch is re-verified from scratch, so do not rely on results from before the history rewrite.
 
 ### Contributor programs
