@@ -70,6 +70,7 @@ jobs:
     # patterns above; this guard re-checks anyway for workflow_dispatch runs.
     name: Validate release version
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -129,6 +130,7 @@ jobs:
     # stopped publishing.
     name: Resolve channel automation
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     continue-on-error: true
     outputs:
       docker_hub_mirror: ${{ steps.flags.outputs.docker_hub_mirror }}
@@ -161,6 +163,7 @@ jobs:
     name: Ensure draft release
     needs: guard
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: write
     steps:
@@ -200,6 +203,7 @@ jobs:
           - runner: macos-14
             platform: darwin-arm64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -248,6 +252,7 @@ jobs:
     # (their manifests point at this exact asset) and npx on win32.
     needs: guard
     runs-on: windows-latest
+    timeout-minutes: 20
     defaults:
       run:
         # Git Bash: keeps the packaging scripts single-source with the POSIX
@@ -378,6 +383,7 @@ jobs:
     name: Attach artifacts to release
     needs: [guard, build, windows-package, draft, channels]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
       # SLSA build provenance (issue #123): id-token mints the OIDC identity
@@ -510,6 +516,7 @@ jobs:
     # one-command regeneration from the immutable digest.
     needs: [guard, draft]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
       id-token: write
@@ -694,6 +701,7 @@ jobs:
     # amd64 runner, and attach the packages to the release.
     needs: [guard, build, draft]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       # SLSA build provenance (issue #123) - one attestation per matrix arch.
@@ -862,6 +870,7 @@ jobs:
     # release - so a release missing either would strand that path.
     needs: [guard, build, draft]
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     permissions:
       contents: write
       # SLSA build provenance (issue #123). Users run the AppImage directly and
@@ -983,6 +992,7 @@ jobs:
             runner: ubuntu-24.04-arm
             tarball_arch: arm64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - name: Check Snap Store availability
         id: snapstore
@@ -1107,6 +1117,7 @@ jobs:
     name: Verify assets and publish release
     needs: [guard, publish, sbom, linux-packages, desktop-appimage, snap]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -1179,6 +1190,7 @@ jobs:
     name: Dispatch npm and Docker publish
     needs: [guard, publish-release]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       # gh workflow run calls the Actions API, and an explicit permissions
       # block disables every scope it does not name.
@@ -1221,6 +1233,7 @@ jobs:
     # had published fine. See docs/DISTRIBUTION.md ("Windows").
     needs: [guard, publish-release, channels]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check Chocolatey availability
         id: choco
@@ -1351,6 +1364,7 @@ jobs:
     # detection of its own).
     needs: [guard, publish-release, channels]
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - name: Check winget submission availability
         id: winget

@@ -29,6 +29,7 @@ jobs:
     if: github.event_name != 'release' || !startsWith(github.event.release.tag_name, 'libredb-studio-')
     name: Validate
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -78,6 +79,7 @@ jobs:
   publish:
     name: Publish to NPM
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: validate
     permissions:
       contents: read
@@ -157,6 +159,7 @@ jobs:
     needs: publish
     if: inputs.dry_run != true
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       actions: write
     steps:
