@@ -10,6 +10,22 @@ import { createHash } from "node:crypto";
 import { createReadStream, existsSync, renameSync, rmSync } from "node:fs";
 import * as path from "node:path";
 
+export const DEFAULT_PORT = "3000";
+
+/**
+ * Format a local startup link without changing the server's bind address.
+ * @param {string | null | undefined} hostname
+ * @param {string | number | null | undefined} port
+ * @returns {string}
+ */
+export function startupUrl(hostname, port) {
+  let host = hostname || "127.0.0.1";
+  if (host === "0.0.0.0") host = "127.0.0.1";
+  else if (host === "::" || host === "[::]") host = "[::1]";
+  else if (host.includes(":") && !host.startsWith("[")) host = `[${host}]`;
+  return `http://${host}:${port || DEFAULT_PORT}`;
+}
+
 /**
  * Platform/arch pairs the release workflow builds standalone payloads for
  * (must mirror the build jobs in .github/workflows/release-artifacts.yml).
