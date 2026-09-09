@@ -151,15 +151,11 @@ describe("SessionsTab", () => {
 
   test("calls onKillSession after confirming terminate action", async () => {
     const onKillSession = mock(async () => true);
-    const { container, queryByText } = render(
+    const { getByRole, queryByText } = render(
       <SessionsTab data={makeData()} loading={false} onKillSession={onKillSession} isAdmin />,
     );
 
-    const killButtons = Array.from(container.querySelectorAll("button")).filter((btn) =>
-      btn.className.includes("text-destructive"),
-    );
-    expect(killButtons.length).toBeGreaterThan(0);
-    fireEvent.click(killButtons[0]!);
+    fireEvent.click(getByRole("button", { name: "Terminate session 101" }));
 
     expect(queryByText("Terminate Session?")).not.toBeNull();
     const terminateButton = queryByText("Terminate");
