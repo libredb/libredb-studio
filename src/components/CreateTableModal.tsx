@@ -523,6 +523,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated, dbType }: Cr
                     size="icon"
                     className="h-8 w-8 text-fg-subtle hover:text-danger hover:bg-danger-tint/10 mb-0.5"
                     onClick={() => removeColumn(index)}
+                    aria-label={`Remove column ${index + 1}`}
                   >
                     <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5" />
                   </Button>
