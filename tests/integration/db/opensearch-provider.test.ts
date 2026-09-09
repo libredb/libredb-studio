@@ -896,6 +896,7 @@ describe("OpenSearchProvider query", () => {
     // engine, so a connected transport is evidence that the type-id names the
     // product actually listening.
     expect(sqlWith("SELECT 1")).toBe("SELECT 1");
+    expect(sentBodies[0]).toEqual({ query: "SELECT 1" });
     expect(sentPaths).toEqual(["/_plugins/_sql"]);
   });
 

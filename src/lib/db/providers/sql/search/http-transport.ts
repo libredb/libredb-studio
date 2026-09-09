@@ -281,7 +281,7 @@ interface SearchDialectSpec {
   readonly sqlPath: string;
   readonly sqlQuery: string;
   /** Whether SQL should tolerate multi-valued fields. Elasticsearch supports this request option. */
-  readonly fieldMultiValueLeniency?: boolean;
+  readonly fieldMultiValueLeniency: boolean;
   /** The success envelope's declared-columns key. */
   readonly columnsKey: string;
   /**
@@ -361,6 +361,7 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
     label: "OpenSearch",
     sqlPath: "/_plugins/_sql",
     sqlQuery: "",
+    fieldMultiValueLeniency: false,
     columnsKey: "schema",
     aliasKey: "alias",
     rowsKey: "datarows",
@@ -884,7 +885,7 @@ export class SearchHttpTransport implements SearchTransport {
         signal,
         JSON.stringify({
           query: sql,
-          ...(this.spec.fieldMultiValueLeniency === true ? { field_multi_value_leniency: true } : {}),
+          ...(this.spec.fieldMultiValueLeniency ? { field_multi_value_leniency: true } : {}),
         }),
       ),
     );

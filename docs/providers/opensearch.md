@@ -621,6 +621,10 @@ where `elasticsearch` is `"standard"` (a backslash there is data).
 than a mapped field and because the same statement is not portable to the sibling type-id
 ([§6](#6-schema-introspection)).
 
+**Multi-valued fields stay arrays here.** On the pinned 3.8.0 image, `SELECT tags FROM arrprobe`
+returns the whole array with no extra request option. That is deliberately asymmetric with
+Elasticsearch 9.1.4, which needs `field_multi_value_leniency` and projects one value instead.
+
 **Block comments do not nest**, same as upstream: `SELECT /* a /* b */ 1 AS a` is HTTP 200, so the
 first `*/` closed the run.
 
