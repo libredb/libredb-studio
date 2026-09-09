@@ -122,7 +122,14 @@ export function PoolTab({ connection }: PoolTabProps) {
           <Server strokeWidth={1.5} className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />
           <h2 className="text-xs sm:text-base font-medium">Connection Pool</h2>
         </div>
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={reload} disabled={loading}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={reload}
+          disabled={loading}
+          aria-label="Refresh connection pool"
+        >
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
         </Button>
       </div>
