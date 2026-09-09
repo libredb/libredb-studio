@@ -301,7 +301,7 @@ src/
 ```bash
 bun dev                  # development server (Turbopack)
 bun run build            # production build
-bun start                # production server (Turbopack)
+bun start                # production server
 bun run format           # Biome formatter check (format:fix to write)
 bun run lint             # oxlint, then ESLint 9
 bun run typecheck        # TypeScript strict
