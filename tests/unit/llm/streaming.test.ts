@@ -159,7 +159,12 @@ describe("createErrorStream", () => {
 // streamFromAsyncIterable
 // ============================================================================
 
-import { streamFromAsyncIterable, createStreamFromSSEResponse, mergeStreams, isStreamCancelled } from "@/lib/llm/utils/streaming";
+import {
+  streamFromAsyncIterable,
+  createStreamFromSSEResponse,
+  mergeStreams,
+  isStreamCancelled,
+} from "@/lib/llm/utils/streaming";
 
 describe("streamFromAsyncIterable", () => {
   test("transforms async iterable items into stream chunks", async () => {
@@ -295,18 +300,16 @@ describe("isStreamCancelled", () => {
   });
 
   /**
-   * A closed/errored stream: desiredSize is null regardless of error shape.
-   * controller.close() is used to force the null state deterministically —
-   * reader.cancel() does NOT null desiredSize in Bun's runtime (it stays 0),
-   * so the closed state is the only runtime-independent way to reach the
-   * first branch.
+   * An errored stream: desiredSize is null per the WHATWG spec — the only
+   * state where that is true (closed/cancelled streams keep 0 in Bun).
+   * controller.error() forces it deterministically.
    */
-  test("returns true when desiredSize is null (closed stream)", () => {
+  test("returns true when desiredSize is null (errored stream)", () => {
     let captured: ReadableStreamDefaultController<Uint8Array> | null = null;
     const probe = new ReadableStream<Uint8Array>({
       start(c) {
         captured = c;
-        c.close(); // closed → desiredSize is null
+        c.error(new Error("forced error state")); // errored → desiredSize is null
       },
     });
     void probe;

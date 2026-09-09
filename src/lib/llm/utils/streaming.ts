@@ -129,15 +129,6 @@ export function streamFromAsyncIterable<T>(
     async start(controller) {
       try {
         for await (const item of iterable) {
-          // Cancellation check INSIDE the loop: once the consumer has
-          // cancelled, no reader will ever come. Continuing to pull from the
-          // SDK iterable here generates a full completion nobody reads (and
-          // billable tokens nobody wanted); the next enqueue would also throw
-          // TypeError into the catch below. desiredSize is null exactly when
-          // the stream is closed/cancelled/errored, so bail out there.
-          if (controller.desiredSize === null) {
-            return;
-          }
           const chunk = transform(item);
           if (chunk) {
             controller.enqueue(chunk);
@@ -145,11 +136,12 @@ export function streamFromAsyncIterable<T>(
         }
         controller.close();
       } catch (error) {
-        // A cancel racing this loop can still make an enqueue (or close)
-        // throw TypeError — the consumer is gone, not broken. Surfacing that
-        // as a stream error turned every client-side abort of a Gemini
-        // completion into a spurious error. Treating cancellation as a
-        // normal exit leaves the abort as the non-event it is.
+        // A consumer that cancelled mid-stream makes the next enqueue (or the
+        // close above) throw TypeError — the consumer is gone, not broken.
+        // Surfacing that as a stream error turned every client-side abort of
+        // a Gemini completion into a spurious error; treating cancellation as
+        // a normal exit also stops the loop from pulling the rest of the SDK
+        // iterable (a full completion generated — and billed — for nobody).
         if (isStreamCancelled(controller, error)) {
           return;
         }
@@ -161,18 +153,19 @@ export function streamFromAsyncIterable<T>(
 
 /**
  * Distinguish "the consumer cancelled/errored this stream" from a real
- * pipeline failure. Web streams raise TypeError with a message about a
- * closed/cancelled controller on enqueue-after-cancel; Chrome (and Bun's
- * implementation) also mark the controller unusable. Message text varies
- * across runtimes, so both signals are checked.
+ * pipeline failure. A cancel mid-stream makes the next enqueue/close throw a
+ * TypeError whose message names the stream's unusable state (wording varies
+ * across runtimes: "canceled", "closed", "invalid state"). An errored stream
+ * also reports desiredSize === null per the WHATWG spec — the only state
+ * where that is true. Both signals are checked.
  *
- * Exported for direct unit testing: the race it guards (a cancel landing
- * between the in-loop check and an enqueue) is timing-dependent and cannot
- * be made deterministic from the stream's public surface alone.
+ * Exported for direct unit testing: the cancel race it guards (a cancel
+ * landing between two enqueues) is timing-dependent and cannot be made
+ * deterministic from the stream's public surface alone.
  */
 export function isStreamCancelled(controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): boolean {
   if (controller.desiredSize === null) {
-    // The stream is closed, cancelled or errored: no reader will ever come.
+    // The stream was errored: no reader will ever come.
     return true;
   }
   return error instanceof TypeError && /cancel|closed|invalid state/i.test(error.message);
