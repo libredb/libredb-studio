@@ -38,6 +38,8 @@ import {
   assessNodeRuntime,
   assessProvenance,
   extractArchive,
+  DEFAULT_PORT,
+  startupUrl,
   LauncherUsageError,
   parseLauncherArgs,
   parseSha256Sums,
@@ -67,7 +69,7 @@ network only prints a warning; an archive whose provenance is actively
 rejected stops the launcher (override: LIBREDB_STUDIO_SKIP_PROVENANCE=1).
 
 Options:
-  --port <n>        Port to listen on (default: $PORT or 3000)
+  --port <n>        Port to listen on (default: $PORT or ${DEFAULT_PORT})
   --host <addr>     Address to bind (default: $HOSTNAME or 127.0.0.1;
                     use --host 0.0.0.0 to expose on the network)
   --archive <path>  Start from a local standalone archive instead of
@@ -316,7 +318,7 @@ function startServer(payloadDir, port, host) {
   if (!env.WORKFLOW_LOCAL_DATA_DIR) env.WORKFLOW_LOCAL_DATA_DIR = resolveLedgerDir(os.homedir());
   // Log-line contract: npx-engine-smoke.yml parses the resolved version from
   // "Starting LibreDB Studio <version> " - keep the prefix stable.
-  console.log(`Starting LibreDB Studio ${pkg.version} on http://${env.HOSTNAME}:${env.PORT || "3000"}`);
+  console.log(`Starting LibreDB Studio ${pkg.version} on ${startupUrl(env.HOSTNAME, env.PORT)}`);
   const child = spawn(process.execPath, ["server.js"], { cwd: payloadDir, env, stdio: "inherit" });
   child.on("error", (error) => fail(`Could not start server.js: ${error.message}`));
   for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) {
