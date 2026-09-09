@@ -175,7 +175,7 @@ export function isStreamCancelled(controller: ReadableStreamDefaultController<Ui
     // The stream is closed, cancelled or errored: no reader will ever come.
     return true;
   }
-  return error instanceof TypeError && /cancell|closed|invalid state/i.test(error.message);
+  return error instanceof TypeError && /cancel|closed|invalid state/i.test(error.message);
 }
 
 /**

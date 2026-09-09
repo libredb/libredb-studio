@@ -263,7 +263,11 @@ describe("isStreamCancelled", () => {
     // Reach the controller via a stream whose start() captures it; a held
     // reader keeps desiredSize non-null (stream is live, not closed).
     let captured: ReadableStreamDefaultController<Uint8Array> | null = null;
-    const probe = new ReadableStream<Uint8Array>({ start(c) { captured = c; } });
+    const probe = new ReadableStream<Uint8Array>({
+      start(c) {
+        captured = c;
+      },
+    });
     const probeReader = probe.getReader(); // keep desiredSize non-null
     void probeReader;
 
@@ -274,9 +278,15 @@ describe("isStreamCancelled", () => {
 
   /** A TypeError whose message names the cancelled/closed controller state. */
   test("returns true for a TypeError naming cancellation or closed state", () => {
+    // Reach the controller via a stream whose start() captures it; a held
+    // reader keeps desiredSize non-null (stream is live, not closed).
     let captured: ReadableStreamDefaultController<Uint8Array> | null = null;
-    const probe = new ReadableStream<Uint8Array>({ start(c) { captured = c; } });
-    const probeReader = probe.getReader();
+    const probe = new ReadableStream<Uint8Array>({
+      start(c) {
+        captured = c;
+      },
+    });
+    const probeReader = probe.getReader(); // keep desiredSize non-null
     void probeReader;
 
     expect(isStreamCancelled(captured!, new TypeError("Cannot enqueue on a canceled stream"))).toBe(true);
@@ -284,12 +294,22 @@ describe("isStreamCancelled", () => {
     expect(isStreamCancelled(captured!, new TypeError("The stream is in an invalid state"))).toBe(true);
   });
 
-  /** A closed/cancelled stream: desiredSize is null regardless of error shape. */
-  test("returns true when desiredSize is null (closed/cancelled stream)", async () => {
+  /**
+   * A closed/errored stream: desiredSize is null regardless of error shape.
+   * controller.close() is used to force the null state deterministically —
+   * reader.cancel() does NOT null desiredSize in Bun's runtime (it stays 0),
+   * so the closed state is the only runtime-independent way to reach the
+   * first branch.
+   */
+  test("returns true when desiredSize is null (closed stream)", () => {
     let captured: ReadableStreamDefaultController<Uint8Array> | null = null;
-    const probe = new ReadableStream<Uint8Array>({ start(c) { captured = c; } });
-    const reader = probe.getReader();
-    await reader.cancel();
+    const probe = new ReadableStream<Uint8Array>({
+      start(c) {
+        captured = c;
+        c.close(); // closed → desiredSize is null
+      },
+    });
+    void probe;
 
     expect(captured!.desiredSize).toBeNull();
     expect(isStreamCancelled(captured!, new Error("anything"))).toBe(true);
