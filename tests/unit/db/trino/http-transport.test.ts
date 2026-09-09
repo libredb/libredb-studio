@@ -460,6 +460,12 @@ describe("TrinoHttpTransport request", () => {
     expect(firstCall().headers["X-Trino-Schema"]).toBeUndefined();
   });
 
+  test("pins the connection's schema for unqualified table names", async () => {
+    await makeTransport({ schema: "tiny" }).query("SELECT 1");
+
+    expect(firstCall().headers["X-Trino-Schema"]).toBe("tiny");
+  });
+
   // Introspection legitimately reads a catalog other than the pinned one, and the
   // alternative - USE - is the session mutation this stateless transport discards.
   test("lets one statement override the catalog and name a schema", async () => {

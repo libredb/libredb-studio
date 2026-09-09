@@ -813,6 +813,7 @@ describe("TrinoProvider query", () => {
     const result = await provider.query("SET SESSION query_max_run_time = '10m'");
 
     expect(result.warnings?.[0]?.message).toContain("will not affect the next one");
+    expect(result.warnings?.[0]?.message).toContain("Set Catalog Name and Schema Name");
   });
 
   test("carries the engine's own remarks through", async () => {

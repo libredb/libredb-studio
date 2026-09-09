@@ -231,7 +231,6 @@ describe("SeedConnectionSchema: Trino's schema", () => {
       port: 8080,
       database: "memory",
       user: "app",
-      password: "s3cret",
       schema: "default",
       roles: ["*"],
     });

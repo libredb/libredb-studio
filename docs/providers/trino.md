@@ -421,7 +421,8 @@ Rather than let a user set a session property and watch the next query ignore it
 attach a `QueryWarning`:
 
 > *`"SET SESSION"` succeeded, but each statement is sent on its own connection, so it will not affect
-> the next one. Qualify names in full instead.*
+> the next one. Set Catalog Name and Schema Name on the Trino connection for a persistent namespace,
+> or qualify names in full.*
 
 The engine's own remarks travel the same way — measured, a redundant `ORDER BY` in a subquery answers
 with rows plus `REDUNDANT_ORDER_BY`. They are de-duplicated, because the same remark is repeated on

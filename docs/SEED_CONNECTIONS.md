@@ -108,6 +108,8 @@ connections:
     port: 8080                # The client protocol and the web UI share this port
     database: hive            # The CATALOG, not a database. Pins what the tree shows;
                               # a fully qualified name still reaches any other catalog.
+    schema: default            # The session schema for unqualified table names. Without it,
+                               # qualify names as schema.table in every statement.
     user: "${TRINO_USER}"
     roles: ["*"]
     environment: production
@@ -149,6 +151,7 @@ connections:
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**) |
+| `connections[].schema` | No | — | Trino session schema, used to resolve unqualified table names inside the configured catalog |
 | `connections[].user` | No | — | Username |
 | `connections[].password` | No | — | Password (use `${ENV_VAR}` syntax) |
 | `connections[].connectionString` | No | — | Full connection string (use `${ENV_VAR}`). Druid and Trino have no URI form this build parses — those connections need `host` and are addressed by host and port only |

@@ -557,9 +557,12 @@ export function ConnectionModal({
 
                   {takesConnectionField(type, "schema") && (
                     <div className="space-y-2">
-                      <Label htmlFor="schema" className="text-xs font-medium text-fg-muted">
-                        Schema Name
-                      </Label>
+                      <div className="flex items-center gap-2 mb-1">
+                        <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="schema" className="text-xs font-mediumr text-fg-muted">
+                          Schema Name
+                        </Label>
+                      </div>
                       <Input
                         id="schema"
                         value={schema}

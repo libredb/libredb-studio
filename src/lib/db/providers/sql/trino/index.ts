@@ -200,7 +200,7 @@ function engineWarnings(result: TrinoQueryResult): QueryWarning[] {
 
   if (result.operation !== null && SESSION_SCOPED_OPERATIONS.has(result.operation)) {
     warnings.push({
-      message: `"${result.operation}" succeeded, but each statement is sent on its own connection, so it will not affect the next one. Qualify names in full instead.`,
+      message: `"${result.operation}" succeeded, but each statement is sent on its own connection, so it will not affect the next one. Set Catalog Name and Schema Name on the Trino connection for a persistent namespace, or qualify names in full.`,
     });
   }
 
