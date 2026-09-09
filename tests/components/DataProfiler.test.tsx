@@ -814,3 +814,68 @@ describe("DataProfiler", () => {
     expect(body.tableName).toBe("users");
   });
 });
+  // ── Data profile export ────────────────────────────────────────────────────
+
+  test("shows CSV and JSON export options after profile loads", async () => {
+    const props = createDefaultProps();
+    const { container } = render(<DataProfiler {...props} />);
+    const view = within(container);
+
+    await waitFor(() => {
+      expect(view.queryByText("Export")).not.toBeNull();
+    });
+
+    fireEvent.click(view.getByText("Export"));
+
+    expect(view.queryByText("Export as CSV")).not.toBeNull();
+    expect(view.queryByText("Export as JSON")).not.toBeNull();
+  });
+
+  test("downloads the data profile as CSV", async () => {
+    const createObjectURL = mock(() => "blob:test");
+    const revokeObjectURL = mock(() => {});
+
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+
+    const clickSpy = mock(() => {});
+    const originalCreateElement = document.createElement.bind(document);
+
+    const createElementSpy = mock((tagName: string) => {
+      const element = originalCreateElement(tagName);
+
+      if (tagName.toLowerCase() === "a") {
+        Object.defineProperty(element, "click", {
+          configurable: true,
+          value: clickSpy,
+        });
+      }
+
+      return element;
+    });
+
+    document.createElement = createElementSpy as typeof document.createElement;
+
+    const props = createDefaultProps();
+    const { container } = render(<DataProfiler {...props} />);
+    const view = within(container);
+
+    await waitFor(() => {
+      expect(view.queryByText("Export")).not.toBeNull();
+    });
+
+    fireEvent.click(view.getByText("Export"));
+    fireEvent.click(view.getByText("Export as CSV"));
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+
+    document.createElement = originalCreateElement;
+  });
