@@ -72,6 +72,46 @@ Feature suggestions are welcome! Please provide:
    as `README.md` and quote install commands verbatim; `bun run readme:check` enforces it.
 7. **Follow the coding style**, write clear commit messages, and update documentation with the code.
 
+### Keeping your branch current
+
+Set up the upstream remote once after cloning your fork:
+
+```bash
+git remote add upstream https://github.com/libredb/libredb-studio.git
+git remote -v
+```
+
+Refresh your feature branch before asking for review:
+
+```bash
+git status                      # commit or stash first; rebase refuses to run dirty
+git fetch upstream              # or `git fetch origin` when you work in a clone, not a fork
+git rebase upstream/main
+git push --force-with-lease     # never plain --force
+```
+
+Rebase before review for three reasons that are specific to this repository.
+Required status checks are not strict, so a green run can be against a `main` that has already moved and GitHub will not force the branch to update.
+The [Security Scanning](#security-scanning) secret check scans the commits in `origin/main..HEAD`, so deleting a credential in a later commit does not clear the finding; rewrite the commit that introduced it instead.
+A stale branch that edits a shared file can merge cleanly while restoring an older version of someone else's work, and rebasing surfaces that drift before review.
+
+`--force-with-lease` refuses the push when the remote branch has moved since your last fetch, which is the case where plain `--force` could delete someone else's commit.
+
+If rebase reports conflicts, resolve each file, then continue:
+
+```bash
+git add <file>
+git rebase --continue
+```
+
+Use `git rebase --abort` to return to where you started.
+
+Do not rebase after a maintainer has started reviewing unless they ask you to.
+Force-pushing replaces commit SHAs and loses the review's line anchors, so prefer new commits during review and rebase once at the end when asked.
+
+After a rebase, run the complete local gate from step 4 again.
+The whole branch is re-verified from scratch, so do not rely on results from before the history rewrite.
+
 ### Contributor programs
 
 The issues we have vetted for outside pickup are labeled
@@ -261,7 +301,7 @@ src/
 ```bash
 bun dev                  # development server (Turbopack)
 bun run build            # production build
-bun start                # production server
+bun start                # production server (Turbopack)
 bun run format           # Biome formatter check (format:fix to write)
 bun run lint             # oxlint, then ESLint 9
 bun run typecheck        # TypeScript strict
