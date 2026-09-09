@@ -159,7 +159,7 @@ describe("createErrorStream", () => {
 // streamFromAsyncIterable
 // ============================================================================
 
-import { streamFromAsyncIterable, createStreamFromSSEResponse, mergeStreams } from "@/lib/llm/utils/streaming";
+import { streamFromAsyncIterable, createStreamFromSSEResponse, mergeStreams, isStreamCancelled } from "@/lib/llm/utils/streaming";
 
 describe("streamFromAsyncIterable", () => {
   test("transforms async iterable items into stream chunks", async () => {
@@ -216,6 +216,83 @@ describe("streamFromAsyncIterable", () => {
     } catch (error) {
       expect((error as Error).message).toBe("iteration error");
     }
+  });
+
+  /**
+   * A consumer that cancels mid-stream is a non-event, not an error. The
+   * pull loop used to keep consuming the source iterable — generating a
+   * full completion nobody reads — until an enqueue threw TypeError into
+   * the generic catch and surfaced as a spurious stream error.
+   */
+  test("stops consuming the iterable when the consumer cancels", async () => {
+    let pulled = 0;
+    async function* generate() {
+      // Far more items than the consumer reads: if the loop keeps pulling
+      // after cancel, pulled grows well past what was consumed.
+      for (let i = 0; i < 100; i++) {
+        pulled += 1;
+        yield `chunk-${i}`;
+      }
+    }
+
+    const stream = streamFromAsyncIterable(generate(), (item) => encodeText(item));
+    const reader = stream.getReader();
+
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(decodeText(first.value!)).toBe("chunk-0");
+
+    await reader.cancel();
+
+    // Give the pull loop a chance to (wrongly) keep draining the iterable.
+    await new Promise((r) => setTimeout(r, 50));
+    // Only the item in flight when the cancel landed may be pulled after the
+    // read of chunk-0 — not the whole iterable.
+    expect(pulled).toBeLessThan(5);
+  });
+});
+
+// ============================================================================
+// isStreamCancelled (direct branch coverage; the race it guards is
+// timing-dependent — see the export's doc comment)
+// ============================================================================
+
+describe("isStreamCancelled", () => {
+  /** A live controller: desiredSize is a number and real errors are not cancels. */
+  test("returns false for a real error on a live controller", () => {
+    // Reach the controller via a stream whose start() captures it; a held
+    // reader keeps desiredSize non-null (stream is live, not closed).
+    let captured: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const probe = new ReadableStream<Uint8Array>({ start(c) { captured = c; } });
+    const probeReader = probe.getReader(); // keep desiredSize non-null
+    void probeReader;
+
+    expect(isStreamCancelled(captured!, new Error("iteration error"))).toBe(false);
+    expect(isStreamCancelled(captured!, new TypeError("network hiccup"))).toBe(false);
+    expect(isStreamCancelled(captured!, "not an error")).toBe(false);
+  });
+
+  /** A TypeError whose message names the cancelled/closed controller state. */
+  test("returns true for a TypeError naming cancellation or closed state", () => {
+    let captured: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const probe = new ReadableStream<Uint8Array>({ start(c) { captured = c; } });
+    const probeReader = probe.getReader();
+    void probeReader;
+
+    expect(isStreamCancelled(captured!, new TypeError("Cannot enqueue on a canceled stream"))).toBe(true);
+    expect(isStreamCancelled(captured!, new TypeError("Controller is already closed"))).toBe(true);
+    expect(isStreamCancelled(captured!, new TypeError("The stream is in an invalid state"))).toBe(true);
+  });
+
+  /** A closed/cancelled stream: desiredSize is null regardless of error shape. */
+  test("returns true when desiredSize is null (closed/cancelled stream)", async () => {
+    let captured: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const probe = new ReadableStream<Uint8Array>({ start(c) { captured = c; } });
+    const reader = probe.getReader();
+    await reader.cancel();
+
+    expect(captured!.desiredSize).toBeNull();
+    expect(isStreamCancelled(captured!, new Error("anything"))).toBe(true);
   });
 });
 
