@@ -42,6 +42,13 @@ describe("RootLayout", () => {
     expect(metadata.description).toBe("Manage PostgreSQL, MySQL, MongoDB, and Redis in one web-based interface.");
   });
 
+  test("links the web app manifest and iOS home-screen icon", () => {
+    expect(metadata.manifest).toBe("/site.webmanifest");
+    expect(metadata.icons).toMatchObject({
+      apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+    });
+  });
+
   test("renders children", () => {
     const { getByText } = render(
       <RootLayout>

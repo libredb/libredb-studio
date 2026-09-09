@@ -14,13 +14,14 @@ import { Toaster } from "@/components/ui/sonner";
 export const metadata: Metadata = {
   title: "LibreDB Studio | Universal Database Editor",
   description: "Manage PostgreSQL, MySQL, MongoDB, and Redis in one web-based interface.",
+  manifest: "/site.webmanifest",
   icons: {
     icon: [
       { url: "/favicon.ico?v=2", sizes: "any" },
       { url: "/logo.svg?v=2", type: "image/svg+xml" },
     ],
     shortcut: "/favicon.ico?v=2",
-    apple: "/favicon-32x32.png?v=2",
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
 };
 
