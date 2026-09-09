@@ -820,6 +820,7 @@ export function connectionIdentity(connection: DatabaseConnection): string {
         connection.host ?? "",
         connection.port ?? "",
         connection.database ?? "",
+        connection.schema ?? "",
         connection.connectionString ?? "",
         connection.serviceName ?? "",
         connection.instanceName ?? "",

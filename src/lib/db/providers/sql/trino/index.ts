@@ -458,7 +458,7 @@ export class TrinoProvider extends SQLBaseProvider {
     const catalog = this.config.database;
     if (catalog === undefined || catalog === "") {
       throw new DatabaseConfigError(
-        `This connection pins no ${this.dialect.displayName} catalog, so there is no schema to list. Set the catalog on the connection, or qualify every name in full.`,
+        `This connection pins no ${this.dialect.displayName} catalog, so there is no schema to list. Set the catalog on the connection to list its tables. Set a session schema as well to use unqualified table names in queries and Create Table.`,
         this.type,
       );
     }

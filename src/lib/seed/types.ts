@@ -84,6 +84,7 @@ export const SeedConnectionSchema = z.object({
   // deployment). Optional because the driver falls back to the database being opened,
   // which is right only when the two are the same.
   authSource: z.string().optional(),
+  schema: z.string().optional(),
 });
 
 export const SeedConfigSchema = z

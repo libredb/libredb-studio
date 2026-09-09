@@ -108,7 +108,7 @@ describe("db-ui-config", () => {
     test("trino exposes its label, coordinator port and connection fields", () => {
       expect(getDBConfig("trino").label).toBe("Trino");
       expect(getDBConfig("trino").defaultPort).toBe("8080");
-      expect(getDBConfig("trino").connectionFields).toEqual(["host", "port", "user", "password", "database"]);
+      expect(getDBConfig("trino").connectionFields).toEqual(["host", "port", "user", "password", "database", "schema"]);
     });
 
     test("trino keeps the database field, because it selects the catalog", () => {

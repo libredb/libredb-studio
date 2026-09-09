@@ -436,7 +436,7 @@ describe("Trino introspection statements", () => {
 // ============================================================================
 
 describe("Trino getSchema", () => {
-  test("names every table schema-qualified, because a bare name resolves against no session schema", async () => {
+  test("names every table schema-qualified, regardless of the connection session schema", async () => {
     const { runner } = fakeRunner();
     const schema = await getSchema(runner, CATALOG);
 

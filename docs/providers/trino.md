@@ -475,12 +475,23 @@ quote character in its grammar at all.
 | `host` | **Yes** | The coordinator. The only validated requirement |
 | `port` | No | Defaults to `8080`, for both `http://` and `https://` |
 | `database` | No | **The catalog** to pin ([§3.2](#32-the-connections-database-field-pins-one-catalog)). Without it the editor works and the tree does not |
+| `schema` | No | Session schema for unqualified table names, sent as `X-Trino-Schema` |
 | `username` | No | Sent as `X-Trino-User`. Defaults to `libredb`; never omitted ([§3.6](#36-a-password-is-a-tls-only-credential)) |
 | `password` | No | `Authorization: Basic`, **and only over TLS** ([§4.3](#43-tls-and-the-password-rule)) |
 | `ssl` | No | Selects `https://` |
 
-There is no field for a session schema, which is why every generated name is qualified
-`schema.table`: Trino resolves a bare name only when the session has a schema.
+The connection form exposes **Catalog Name** and **Schema Name**. Set both to run
+unqualified statements in the editor and Create Table: for example, Catalog `memory`
+and Schema `default` let `SELECT * FROM widgets` and `CREATE TABLE t (id INTEGER NOT NULL)`
+resolve inside `memory.default`. `SHOW SCHEMAS` lists the catalog's available schemas.
+No schema is guessed: an omitted or empty value sends no schema header, so existing
+connections keep their behavior until edited. Without a session schema, qualify table names.
+
+Per-statement `TrinoQueryOptions.schema` overrides the connection default; an explicit empty
+string omits the header for that statement. Headers still use the dialect's prefix. The schema
+tree continues to list the whole catalog and qualify names as `schema.table`, so selecting a
+table outside the session schema still targets that table. Fully qualified queries can still
+reach other catalogs. The session schema is also supported in seeded connections.
 
 ### 4.2 There is no connection string — yet
 

@@ -46,6 +46,23 @@ test.describe("Connection Management", () => {
     await expect(page.locator('input[value="localhost"]').first()).toBeVisible();
   });
 
+  test("Trino sends the catalog and session schema entered in the form", async ({ page }) => {
+    await page.route("**/api/db/test-connection", (route) => route.fulfill({ json: { success: true, latency: 1 } }));
+    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
+    await sidebarButtons.last().click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "Trino", exact: true }).click();
+    await dialog.getByLabel("Catalog Name").fill("memory");
+    await dialog.getByLabel("Schema Name").fill("default");
+    const request = page.waitForRequest("**/api/db/test-connection");
+    await dialog.getByRole("button", { name: "Test Connection", exact: true }).click();
+    expect((await request).postDataJSON()).toMatchObject({
+      type: "trino",
+      database: "memory",
+      schema: "default",
+    });
+  });
+
   test("connection modal can be closed", async ({ page }) => {
     const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
     await sidebarButtons.last().click();

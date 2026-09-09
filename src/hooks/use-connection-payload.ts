@@ -94,6 +94,7 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   user: "resolution",
   password: "resolution",
   database: "resolution",
+  schema: "resolution",
   connectionString: "resolution",
   serviceName: "resolution",
   instanceName: "resolution",

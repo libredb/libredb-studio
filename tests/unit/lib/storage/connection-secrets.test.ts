@@ -91,6 +91,7 @@ describe("the classification is exhaustive by construction", () => {
         "connectionString",
         "createdAt",
         "database",
+        "schema",
         "environment",
         "group",
         "host",

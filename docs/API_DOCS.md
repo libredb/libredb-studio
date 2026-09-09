@@ -1282,6 +1282,7 @@ interface DatabaseConnection {
   user?: string;           // Username
   password?: string;       // Password
   database?: string;       // Database name (Couchbase: the bucket; Druid: unused, it has one catalog; Trino: the CATALOG; Cassandra: the KEYSPACE)
+  schema?: string;         // Trino: session schema for unqualified table names
   connectionString?: string; // Full connection string (alternative; Druid has no URI form, host + port only; Cassandra has none either, no URI carries localDataCenter)
   createdAt: Date;         // Creation timestamp
   color?: string;          // UI accent for this connection

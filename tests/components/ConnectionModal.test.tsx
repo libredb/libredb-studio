@@ -179,6 +179,8 @@ function getDefaultForm() {
     setInstanceName: mockSetInstanceName,
     localDataCenter: "",
     setLocalDataCenter: mockSetLocalDataCenter,
+    schema: "",
+    setSchema: mock(() => {}),
     authSource: "",
     setAuthSource: mockSetAuthSource,
     showSSH: false,
@@ -234,6 +236,7 @@ mock.module("@/hooks/use-connection-form", () => ({
 // passes or fails against THIS list, not against src/lib/db-ui-config.ts. The real table is
 // the authority and tests/unit/lib/db-ui-config.test.ts derives it from the providers.
 const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
+  trino: ["host", "port", "user", "password", "database", "schema"],
   sqlite: ["database"],
   libredb: ["database"],
   duckdb: ["database"],
@@ -840,6 +843,16 @@ describe("ConnectionModal", () => {
     expect(queryByText(/The Trino catalog to open/)).not.toBeNull();
   });
 
+  test("Trino exposes an editable session schema beside the catalog", () => {
+    const setSchema = mock(() => {});
+    mockFormOverrides = { type: "trino", schema: "tiny", setSchema };
+    const { getByLabelText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const input = getByLabelText("Schema Name") as HTMLInputElement;
+    expect(input.value).toBe("tiny");
+    fireEvent.change(input, { target: { value: "default" } });
+    expect(setSchema).toHaveBeenCalledWith("default");
+  });
+
   test("Trino warns that a password needs TLS, before the connection can 401 on it", () => {
     // Measured on 476 with authentication DISABLED: `Authorization: Basic` over plain
     // HTTP is answered 401, "Password not allowed for insecure authentication". So
@@ -857,6 +870,7 @@ describe("ConnectionModal", () => {
     const { queryByText } = render(React.createElement(ConnectionModal, props));
 
     expect(queryByText("Catalog Name")).toBeNull();
+    expect(queryByText("Schema Name")).toBeNull();
     expect(queryByText(/refuses a password over plain HTTP/)).toBeNull();
   });
 

@@ -549,9 +549,9 @@ function readTableAddresses(rows: TrinoRow[]): TableAddress[] {
  * the cluster has configured being reachable.
  *
  * A table's display name is therefore `schema.table`, always qualified: Trino
- * resolves an unqualified name only when the SESSION has a schema, and this
- * transport pins a catalog and no schema (there is no connection field for one),
- * so a bare name in a generated statement would not resolve at all.
+ * lists tables across every schema in the catalog, regardless of the optional
+ * session schema pinned on the connection. Qualifying names keeps tree-generated
+ * statements targeting the selected table even when it is outside that schema.
  */
 export async function getSchema(runner: TrinoQueryRunner, catalog: string): Promise<TableSchema[]> {
   const [tableRows, columnRows] = await Promise.all([

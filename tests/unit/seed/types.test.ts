@@ -220,3 +220,36 @@ describe("SeedConnectionSchema: Cassandra's localDataCenter", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("SeedConnectionSchema: Trino's schema", () => {
+  it("accepts a seeded connection that names its session schema", () => {
+    const result = SeedConnectionSchema.safeParse({
+      id: "memory",
+      name: "Shop",
+      type: "trino",
+      host: "trino.internal",
+      port: 8080,
+      database: "memory",
+      user: "app",
+      password: "s3cret",
+      schema: "default",
+      roles: ["*"],
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.schema).toBe("default");
+  });
+
+  it("rejects a session schema that is not a string", () => {
+    const result = SeedConnectionSchema.safeParse({
+      id: "memory",
+      name: "Shop",
+      type: "trino",
+      host: "trino.internal",
+      schema: 1,
+      roles: ["*"],
+    });
+
+    expect(result.success).toBe(false);
+  });
+});

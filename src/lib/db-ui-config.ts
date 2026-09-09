@@ -35,6 +35,7 @@ export interface DatabaseUIConfig {
     | "user"
     | "password"
     | "database"
+    | "schema"
     | "connectionString"
     | "serviceName"
     | "instanceName"
@@ -255,7 +256,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // `SHOW CATALOGS` answers jmx, memory, system, tpcds, tpch) and a connection pins
     // one, the way a PostgreSQL connection pins a database. The form labels it
     // "Catalog" rather than "Database" - see ConnectionModal.tsx.
-    connectionFields: ["host", "port", "user", "password", "database"],
+    connectionFields: ["host", "port", "user", "password", "database", "schema"],
   },
   cassandra: {
     icon: CassandraIcon,

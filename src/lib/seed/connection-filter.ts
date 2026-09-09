@@ -41,6 +41,7 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
       // MongoDB's auth database. Dropping it here would list a seeded connection that
       // authenticates against the wrong database and reports a credentials error.
       authSource: conn.authSource,
+      schema: conn.schema,
       createdAt: new Date(),
       managed: conn.managed ?? true,
       roles: conn.roles,
