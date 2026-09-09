@@ -111,6 +111,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 variant="ghost"
                 size="icon"
                 onClick={() => router.push("/")}
+                aria-label="Back"
                 className="h-8 w-8 sm:h-9 sm:w-auto sm:px-3"
               >
                 <ArrowLeft className="h-4 w-4" />
