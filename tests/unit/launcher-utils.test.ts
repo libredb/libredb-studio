@@ -8,6 +8,7 @@ import * as os from "os";
 import * as path from "path";
 import {
   artifactName,
+  startupUrl,
   assertReleaseVersion,
   assessNodeRuntime,
   assessProvenance,
@@ -564,5 +565,57 @@ describe("assessProvenance", () => {
     const result = assess({ stderr: POLICY_MISMATCH, version: "0.9.0" });
     expect(result.action).toBe("fail");
     expect(result.message).toContain(ARTIFACT);
+  });
+});
+
+describe("launcher startup URL", () => {
+  test.each([
+    ["0.0.0.0", "http://127.0.0.1:3000"],
+    ["::", "http://[::1]:3000"],
+    ["127.0.0.1", "http://127.0.0.1:3000"],
+  ])("prints a usable URL for %s without changing the bind address", (host, url) => {
+    const home = fs.mkdtempSync(path.join(tempDir, "startup-"));
+    const root = path.resolve(import.meta.dir, "../..");
+    const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+    const payload = path.join(home, ".libredb-studio", version, "payload");
+    fs.mkdirSync(payload, { recursive: true });
+    fs.writeFileSync(path.join(payload, "server.js"), 'console.log("BIND=" + process.env.HOSTNAME);');
+    const preload = path.join(home, "home-fixture.mjs");
+    fs.writeFileSync(
+      preload,
+      'import os from "node:os"; import { syncBuiltinESMExports } from "node:module"; ' +
+        `os.homedir = () => ${JSON.stringify(home)}; syncBuiltinESMExports();`,
+    );
+    const node = Bun.which("node");
+    expect(node).not.toBeNull();
+    const run = Bun.spawnSync([node!, "--import", preload, path.join(root, "bin/studio.js"), "--host", host], {
+      env: { PATH: process.env.PATH },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(run.exitCode).toBe(0);
+    const output = run.stdout.toString();
+    expect(output).toContain(`Starting LibreDB Studio ${version} on ${url}\n`);
+    expect(output).toContain(`BIND=${host}\n`);
+    expect(output.match(/^Starting LibreDB Studio ([0-9][0-9.]*) /m)?.[1]).toBe(version);
+  });
+});
+
+describe("startupUrl", () => {
+  test.each([
+    ["0.0.0.0", "4000", "http://127.0.0.1:4000"],
+    ["::", "4000", "http://[::1]:4000"],
+    ["[::]", "4000", "http://[::1]:4000"],
+    ["fe80::1", "4000", "http://[fe80::1]:4000"],
+    ["[fe80::1]", "4000", "http://[fe80::1]:4000"],
+    ["127.0.0.1", "4000", "http://127.0.0.1:4000"],
+    ["example.internal", "4000", "http://example.internal:4000"],
+    ["", "4000", "http://127.0.0.1:4000"],
+    [undefined, undefined, "http://127.0.0.1:3000"],
+    [null, null, "http://127.0.0.1:3000"],
+    ["127.0.0.1", "", "http://127.0.0.1:3000"],
+    ["127.0.0.1", 4000, "http://127.0.0.1:4000"],
+  ])("formats host %s and port %s", (host, port, expected) => {
+    expect(startupUrl(host, port)).toBe(expected);
   });
 });
