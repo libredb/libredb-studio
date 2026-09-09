@@ -193,11 +193,72 @@ describe("TableItem", () => {
     expect(queryByText("users")).not.toBeNull();
   });
 
-  test("renders row count formatted as K for >= 1000", () => {
+  test.each([
+    [0, "0"],
+    [999, "999"],
+    [1500, "1.5K"],
+    [999999, "1M"],
+    [2500000, "2.5M"],
+    [1200000000, "1.2B"],
+    [3000000000000, "3T"],
+  ])("renders row count %i as %s", (rowCount, label) => {
     const { queryByText } = render(
-      <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} />,
+      <TableItem table={{ ...largeTable, rowCount }} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} />,
     );
-    expect(queryByText("1.5k")).not.toBeNull();
+    expect(queryByText(label) !== null).toBe(true);
+  });
+
+  test.each(["dropdown", "context-menu"])("Select Table Count uses the count handler in %s", (menu) => {
+    const onGenerateCount = mock((_name: string) => {});
+    const onTableClick = mock((_name: string) => {});
+    const onToggle = mock(() => {});
+    const { getByTestId } = render(
+      <TableItem
+        table={largeTable}
+        isExpanded={false}
+        onToggle={onToggle}
+        isAdmin={false}
+        capabilities={caps({ queryLanguage: "sql" })}
+        onGenerateCount={onGenerateCount}
+        onTableClick={onTableClick}
+      />,
+    );
+    fireEvent.click(within(getByTestId(menu)).getByText("Select Table Count"));
+    expect(onGenerateCount).toHaveBeenCalledTimes(1);
+    expect(onGenerateCount).toHaveBeenCalledWith("users");
+    expect(onTableClick).not.toHaveBeenCalled();
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    undefined,
+    caps({ queryLanguage: "json" }),
+    caps({ queryLanguage: "sql", tablesAreDerivedGroupings: true }),
+  ])("hides Select Table Count without addressable SQL tables", (capabilities) => {
+    const { queryAllByText } = render(
+      <TableItem
+        table={largeTable}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin={false}
+        capabilities={capabilities}
+        onGenerateCount={mock(() => {})}
+      />,
+    );
+    expect(queryAllByText("Select Table Count")).toHaveLength(0);
+  });
+
+  test("hides Select Table Count when a host supplies no count handler", () => {
+    const { queryAllByText } = render(
+      <TableItem
+        table={largeTable}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin={false}
+        capabilities={caps({ queryLanguage: "sql" })}
+      />,
+    );
+    expect(queryAllByText("Select Table Count")).toHaveLength(0);
   });
 
   test("renders raw row count for < 1000", () => {

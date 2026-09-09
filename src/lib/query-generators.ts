@@ -319,8 +319,8 @@ function redisScan(base: string): string {
  * The terminator a generated statement ends with: `;` everywhere, and nothing on a
  * product whose grammar has none.
  *
- * Only the two shapes a user reaches by CLICKING are bounded here - the schema tree's
- * "Select Top N" and "Generate Query" - because those are the statements this file
+ * The shapes a user reaches by CLICKING are bounded here - the schema tree's
+ * "Select Top N", "Generate Query" and "Select Table Count" - because those are the statements this file
  * writes on the user's behalf. The dialect-specific returns above keep their own
  * literal `;`: each of those engines accepts one, and this is the fallthrough every
  * other SQL engine shares, which is where the two search products land. See
@@ -328,6 +328,11 @@ function redisScan(base: string): string {
  */
 function terminator(capabilities: ProviderCapabilities): string {
   return capabilities.statementTerminator === "none" ? "" : ";";
+}
+
+export function generateCountQuery(tableName: string, capabilities: ProviderCapabilities): string | null {
+  if (capabilities.queryLanguage !== "sql" || capabilities.tablesAreDerivedGroupings) return null;
+  return `SELECT COUNT(*) FROM ${quoteQualifiedName(tableName, capabilities)}${terminator(capabilities)}`;
 }
 
 /**

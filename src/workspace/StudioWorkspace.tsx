@@ -320,6 +320,7 @@ export function StudioWorkspace({
                 onAddConnection={noop}
                 onTableClick={onTableClick}
                 onGenerateSelect={tabMgr.handleGenerateSelect}
+                onGenerateCount={tabMgr.handleGenerateCount}
                 onCreateTableClick={undefined}
                 onShowDiagram={features.schemaDiagram ? () => setShowDiagram(true) : undefined}
                 isAdmin={false}

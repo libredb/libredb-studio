@@ -45,6 +45,7 @@ const mockUpdateCurrentTab = mock(() => {});
 const mockUpdateTabById = mock(() => {});
 const mockHandleTableClick = mock(() => {});
 const mockHandleGenerateSelect = mock(() => {});
+const mockHandleGenerateCount = mock(() => {});
 // Transaction Control
 const mockResetTransactionState = mock(() => {});
 const mockSetPlaygroundMode = mock(() => {});
@@ -154,6 +155,7 @@ mock.module("@/hooks/use-tab-manager", () => ({
     updateTabById: mockUpdateTabById,
     handleTableClick: mockHandleTableClick,
     handleGenerateSelect: mockHandleGenerateSelect,
+    handleGenerateCount: mockHandleGenerateCount,
     ...tabMgrOverride,
   })),
 }));
@@ -533,6 +535,7 @@ describe("Studio", () => {
     mockUpdateTabById.mockClear();
     mockHandleTableClick.mockClear();
     mockHandleGenerateSelect.mockClear();
+    mockHandleGenerateCount.mockClear();
     mockResetTransactionState.mockClear();
     mockHandleTransaction.mockClear();
     mockSetPlaygroundMode.mockClear();
@@ -1580,6 +1583,17 @@ describe("Studio", () => {
     act(() => genFn("users"));
     expect(mockHandleGenerateSelect).toHaveBeenCalledWith("users");
     expect(queryByTestId("schema-explorer")).toBeNull();
+  });
+
+  test("desktop and mobile schema surfaces generate a count without executing", () => {
+    connMgrOverride = { activeConnection: pgConn };
+    const { queryByTestId } = render(<Studio />);
+    expect(capturedSidebarProps.onGenerateCount).toBe(mockHandleGenerateCount);
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
+    act(() => (capturedSchemaExplorerProps.onGenerateCount as (name: string) => void)("users"));
+    expect(mockHandleGenerateCount).toHaveBeenCalledWith("users");
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+    expect(queryByTestId("schema-explorer") === null).toBe(true);
   });
 
   test("mobile schema tab table tool callbacks open modals and maintenance", () => {

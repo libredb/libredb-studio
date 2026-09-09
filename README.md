@@ -130,6 +130,7 @@ And nothing is held back. Single sign-on, ER diagrams, the AI features and the N
 - **Smart Autocomplete**: Schema-aware suggestions for tables, columns, and SQL keywords.
 - **Command Palette**: Quick access to tables, connections, saved queries, and actions with `Cmd/Ctrl+K`.
 - **Multi-Tab Workspace**: Handle parallel tasks with independent execution states.
+- **Table Counts**: Explorer badges use compact K/M/B/T notation. For SQL tables, Select Table Count opens an editable `SELECT COUNT(*)` in a new tab; add filters and run it when ready. The existing badge remains the provider's reported count, which may be an estimate.
 - **Visual EXPLAIN**: Graphical execution plans to identify performance bottlenecks.
 - **Interactive ER Diagrams**: Visual schema graph with real foreign key edges, cardinality labels, MiniMap navigation, table search/filter, compact mode, and PNG/SVG export. Automatic hierarchical layout powered by ELK.js.
 - **Schema Diff & Migration**: Compare schema snapshots or cross-connection schemas side-by-side. Color-coded diff view (added/removed/modified) with automatic migration SQL generation for PostgreSQL, MySQL, SQLite, Oracle, and SQL Server, plus ClickHouse column modifications.

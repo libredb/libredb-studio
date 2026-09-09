@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import type { DatabaseConnection, TableSchema, QueryTab } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
-import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
+import { generateTableQuery, generateSelectQuery, generateCountQuery } from "@/lib/query-generators";
 import { resolveTabType } from "@/lib/editor/tab-language";
 import { logger } from "@/lib/logger";
 import { newLocalId } from "@/lib/ids";
@@ -239,6 +239,27 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
     [metadata, schema],
   );
 
+  const handleGenerateCount = useCallback(
+    (tableName: string) => {
+      const query = metadata ? generateCountQuery(tableName, metadata.capabilities) : null;
+      if (!query) return;
+      const id = newLocalId();
+      setTabs((prev) => [
+        ...prev,
+        {
+          id,
+          name: `Count: ${tableName}`,
+          query,
+          result: null,
+          isExecuting: false,
+          type: "sql",
+        },
+      ]);
+      setActiveTabId(id);
+    },
+    [metadata],
+  );
+
   return {
     tabs,
     setTabs,
@@ -255,5 +276,6 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
     updateTabById,
     handleTableClick,
     handleGenerateSelect,
+    handleGenerateCount,
   };
 }

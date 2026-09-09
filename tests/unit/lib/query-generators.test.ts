@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import {
   generateTableQuery,
   generateSelectQuery,
+  generateCountQuery,
   shouldRefreshSchema,
   quoteIdentifier,
   quoteQualifiedName,
@@ -33,6 +34,34 @@ const sampleColumns: ColumnSchema[] = [
   { name: "id", type: "integer", nullable: false, isPrimary: true },
   { name: "name", type: "varchar(255)", nullable: false, isPrimary: false },
 ];
+
+describe("generateCountQuery", () => {
+  test.each([
+    [makeCaps(), "public.Order", 'SELECT COUNT(*) FROM public."Order";'],
+    [makeCaps({ defaultPort: 3306 }), "odd`table", "SELECT COUNT(*) FROM `odd``table`;"],
+    [makeCaps({ defaultPort: 1433 }), "odd]table", "SELECT COUNT(*) FROM [odd]]table];"],
+    [makeCaps({ defaultPort: 1521 }), "APP.users", 'SELECT COUNT(*) FROM APP."users";'],
+    [makeCaps({ defaultPort: 8091 }), "bucket.scope.orders", "SELECT COUNT(*) FROM `bucket`.`scope`.`orders`;"],
+    [makeCaps({ defaultPort: 8888 }), "druid.orders", 'SELECT COUNT(*) FROM "druid"."orders";'],
+    [
+      makeCaps({ identifierQuoting: "double", statementTerminator: "none" }),
+      'odd"index',
+      'SELECT COUNT(*) FROM "odd""index"',
+    ],
+    [
+      makeCaps({ identifierQuoting: "backtick", statementTerminator: "none" }),
+      "order-items",
+      "SELECT COUNT(*) FROM `order-items`",
+    ],
+  ])("quotes %s / %s and respects the statement terminator", (capabilities, table, expected) => {
+    expect(generateCountQuery(table, capabilities)).toBe(expected);
+  });
+
+  test("refuses non-SQL providers and derived key groupings", () => {
+    expect(generateCountQuery("users", makeCaps({ queryLanguage: "json" }))).toBeNull();
+    expect(generateCountQuery("users:*", makeCaps({ tablesAreDerivedGroupings: true }))).toBeNull();
+  });
+});
 
 // ============================================================================
 // generateTableQuery

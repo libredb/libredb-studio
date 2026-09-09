@@ -307,6 +307,59 @@ describe("useTabManager", () => {
     expect(result.current.activeTabId).toBe(newTab.id);
   });
 
+  test("handleGenerateCount opens an editable count without executing or replacing another query", () => {
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection(),
+        metadata: defaultMetadata,
+        schema: testSchema,
+      }),
+    );
+    act(() => result.current.updateCurrentTab({ query: "SELECT 42;" }));
+    act(() => result.current.handleGenerateCount("public.Order"));
+    const tab = result.current.currentTab;
+    expect(result.current.tabs).toHaveLength(2);
+    expect(result.current.tabs[0].query).toBe("SELECT 42;");
+    expect(tab).toMatchObject({
+      name: "Count: public.Order",
+      query: 'SELECT COUNT(*) FROM public."Order";',
+      type: "sql",
+      result: null,
+      isExecuting: false,
+    });
+    act(() =>
+      result.current.updateCurrentTab({
+        query: 'SELECT COUNT(*) FROM public."Order" WHERE active;',
+      }),
+    );
+    expect(result.current.currentTab.query).toContain("WHERE active");
+    act(() => result.current.handleGenerateCount("users"));
+    expect(result.current.tabs).toHaveLength(3);
+    expect(result.current.currentTab.id).not.toBe(tab.id);
+  });
+
+  test.each([
+    null,
+    {
+      ...defaultMetadata,
+      capabilities: {
+        ...defaultMetadata.capabilities,
+        queryLanguage: "json" as const,
+      },
+    },
+  ])("handleGenerateCount ignores absent or non-SQL capabilities", (metadata) => {
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection(),
+        metadata,
+        schema: testSchema,
+      }),
+    );
+    const before = result.current.tabs;
+    act(() => result.current.handleGenerateCount("users"));
+    expect(result.current.tabs).toEqual(before);
+  });
+
   test("setActiveTabId changes the active tab", () => {
     const { result } = renderHook(() =>
       useTabManager({

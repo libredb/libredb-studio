@@ -24,6 +24,7 @@ interface SidebarProps {
   onAddConnection: () => void;
   onTableClick?: (tableName: string) => void;
   onGenerateSelect?: (tableName: string) => void;
+  onGenerateCount?: (tableName: string) => void;
   onCreateTableClick?: () => void;
   onShowDiagram?: () => void;
   isAdmin?: boolean;
@@ -47,6 +48,7 @@ export function Sidebar({
   onAddConnection,
   onTableClick,
   onGenerateSelect,
+  onGenerateCount,
   onCreateTableClick,
   onShowDiagram,
   isAdmin = false,
@@ -107,6 +109,7 @@ export function Sidebar({
               schemaError={schemaError}
               onTableClick={onTableClick}
               onGenerateSelect={onGenerateSelect}
+              onGenerateCount={onGenerateCount}
               onCreateTableClick={onCreateTableClick}
               isAdmin={isAdmin}
               onOpenMaintenance={onOpenMaintenance}

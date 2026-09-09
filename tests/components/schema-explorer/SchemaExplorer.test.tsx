@@ -9,16 +9,20 @@ import { setupFramerMotionMock } from "../../helpers/mock-monaco";
 setupFramerMotionMock();
 
 // Mock the child TableItem component to simplify testing
+let capturedGenerateCount: unknown;
 mock.module("@/components/schema-explorer/TableItem", () => ({
   TableItem: ({
     table,
     isExpanded,
     onToggle,
+    onGenerateCount,
   }: {
     table: { name: string };
     isExpanded: boolean;
     onToggle: () => void;
+    onGenerateCount?: (name: string) => void;
   }) => {
+    capturedGenerateCount = onGenerateCount;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     return React.createElement(
@@ -94,6 +98,11 @@ function createDefaultProps(overrides: Partial<Parameters<typeof SchemaExplorer>
 }
 
 describe("SchemaExplorer", () => {
+  test("forwards the count action to table rows", () => {
+    const onGenerateCount = mock(() => {});
+    render(<SchemaExplorer {...createDefaultProps()} onGenerateCount={onGenerateCount} />);
+    expect(capturedGenerateCount).toBe(onGenerateCount);
+  });
   afterEach(() => {
     cleanup();
   });

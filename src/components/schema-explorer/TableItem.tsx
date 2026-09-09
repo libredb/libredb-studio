@@ -36,6 +36,11 @@ import { toast } from "sonner";
 import { writeToClipboard } from "@/components/copy-button";
 import { ColumnList } from "./ColumnList";
 
+const rowCountFormat = new Intl.NumberFormat("en", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
 interface TableItemProps {
   table: TableSchema;
   isExpanded: boolean;
@@ -47,6 +52,7 @@ interface TableItemProps {
   isAdmin: boolean;
   onTableClick?: (tableName: string) => void;
   onGenerateSelect?: (tableName: string) => void;
+  onGenerateCount?: (tableName: string) => void;
   onProfileTable?: (tableName: string) => void;
   onGenerateCode?: (tableName: string) => void;
   onGenerateTestData?: (tableName: string) => void;
@@ -55,7 +61,13 @@ interface TableItemProps {
 
 type TableItemCallbacks = Pick<
   TableItemProps,
-  "onTableClick" | "onGenerateSelect" | "onProfileTable" | "onGenerateCode" | "onGenerateTestData" | "onOpenMaintenance"
+  | "onTableClick"
+  | "onGenerateSelect"
+  | "onGenerateCount"
+  | "onProfileTable"
+  | "onGenerateCode"
+  | "onGenerateTestData"
+  | "onOpenMaintenance"
 >;
 
 /**
@@ -115,6 +127,12 @@ function renderMenuItems({
         <Funnel strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
         {labels?.generateAction || "Generate Query"}
       </Item>
+      {rowsAreAddressable && capabilities?.queryLanguage === "sql" && callbacks.onGenerateCount && (
+        <Item onClick={() => callbacks.onGenerateCount?.(table.name)}>
+          <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
+          Select Table Count
+        </Item>
+      )}
       <Item onClick={() => copyToClipboard(table.name, `${labels?.entityName || "Table"} name`)}>
         <Copy strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
         {"Copy Name"}
@@ -198,6 +216,7 @@ export const TableItem = React.memo(function TableItem({
   isAdmin,
   onTableClick,
   onGenerateSelect,
+  onGenerateCount,
   onProfileTable,
   onGenerateCode,
   onGenerateTestData,
@@ -217,6 +236,7 @@ export const TableItem = React.memo(function TableItem({
   const callbacks = {
     onTableClick,
     onGenerateSelect,
+    onGenerateCount,
     onProfileTable,
     onGenerateCode,
     onGenerateTestData,
@@ -263,7 +283,7 @@ export const TableItem = React.memo(function TableItem({
             <div className="shrink-0 relative w-8 h-6 flex items-center justify-center">
               {table.rowCount !== undefined && (
                 <span className="absolute inset-0 flex items-center justify-center text-[0.625rem] font-mono text-muted-foreground/70 whitespace-nowrap opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none">
-                  {table.rowCount >= 1000 ? `${(table.rowCount / 1000).toFixed(1)}k` : table.rowCount}
+                  {rowCountFormat.format(table.rowCount)}
                 </span>
               )}
               <DropdownMenu>

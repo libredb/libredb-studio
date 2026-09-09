@@ -495,6 +495,7 @@ export default function Studio() {
                 onAddConnection={() => setIsConnectionModalOpen(true)}
                 onTableClick={onTableClick}
                 onGenerateSelect={tabMgr.handleGenerateSelect}
+                onGenerateCount={tabMgr.handleGenerateCount}
                 onCreateTableClick={() => setIsCreateTableModalOpen(true)}
                 onShowDiagram={() => setShowDiagram(true)}
                 isAdmin={isAdmin}
@@ -625,6 +626,10 @@ export default function Studio() {
                       }}
                       onGenerateSelect={(tableName) => {
                         tabMgr.handleGenerateSelect(tableName);
+                        setActiveMobileTab("editor");
+                      }}
+                      onGenerateCount={(tableName) => {
+                        tabMgr.handleGenerateCount(tableName);
                         setActiveMobileTab("editor");
                       }}
                       onCreateTableClick={() => setIsCreateTableModalOpen(true)}

@@ -36,6 +36,7 @@ const mockUpdateCurrentTab = mock(() => {});
 const mockUpdateTabById = mock(() => {});
 const mockHandleTableClick = mock(() => {});
 const mockHandleGenerateSelect = mock(() => {});
+const mockHandleGenerateCount = mock(() => {});
 // Query adapter
 const mockExecuteQuery = mock(() => {});
 const mockForceExecuteQuery = mock(() => {});
@@ -137,6 +138,7 @@ mock.module("@/hooks/use-tab-manager", () => ({
       updateTabById: mockUpdateTabById,
       handleTableClick: mockHandleTableClick,
       handleGenerateSelect: mockHandleGenerateSelect,
+      handleGenerateCount: mockHandleGenerateCount,
       ...tabMgrOverride,
     };
   }),
@@ -372,6 +374,7 @@ describe("StudioWorkspace", () => {
     mockUpdateTabById.mockClear();
     mockHandleTableClick.mockClear();
     mockHandleGenerateSelect.mockClear();
+    mockHandleGenerateCount.mockClear();
     mockExecuteQuery.mockClear();
     mockForceExecuteQuery.mockClear();
     mockCancelQuery.mockClear();
@@ -694,6 +697,7 @@ describe("StudioWorkspace", () => {
     renderWorkspace();
     expect(capturedSidebarProps.onSelectConnection).toBe(mockSetActiveConnection);
     expect(capturedSidebarProps.onGenerateSelect).toBe(mockHandleGenerateSelect);
+    expect(capturedSidebarProps.onGenerateCount).toBe(mockHandleGenerateCount);
     expect(capturedSidebarProps.isAdmin).toBe(false);
     // noop callbacks do not throw
     act(() => (capturedSidebarProps.onDeleteConnection as () => void)());
