@@ -1270,7 +1270,7 @@ The object is one shape on the wire. Fields the server reads from a request body
 change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
 `host`, `port`, `user`, `password`, `database`, `schema`, `connectionString`), plus `ssl`,
 `sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
-`authSource` (MongoDB), `agentUser`, and `agentPassword`. `color`, `environment`, `group`,
+`authSource` (MongoDB), `queryTimeout`, `agentUser`, and `agentPassword`. `color`, `environment`, `group`,
 `managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
 
 ```typescript
@@ -1285,6 +1285,7 @@ interface DatabaseConnection {
   database?: string;       // Database name (Couchbase: the bucket; Druid: unused, it has one catalog; Trino: the CATALOG; Cassandra: the KEYSPACE)
   schema?: string;         // Trino: session schema for unqualified table names
   connectionString?: string; // Full connection string (alternative; Druid has no URI form, host + port only; Cassandra has none either, no URI carries localDataCenter)
+  queryTimeout?: number;  // Query timeout in milliseconds; omitted uses 60000 (60 seconds)
   createdAt: Date;         // Creation timestamp
   color?: string;          // UI accent for this connection
   environment?: ConnectionEnvironment; // production | staging | development | local | other
@@ -1304,6 +1305,11 @@ interface DatabaseConnection {
 type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';
 type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 ```
+
+The connection form exposes **Query Timeout (ms)** as an optional positive whole number, up to
+2147483647. Leave it blank (or clear a saved value) to retain the 60-second default. Changing a
+saved timeout refreshes its cached provider on the next request. Explicit provider options take
+precedence; the connectivity check still uses its own 10000 ms timeout.
 
 ### TableSchema
 

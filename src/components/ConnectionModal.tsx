@@ -91,6 +91,8 @@ export function ConnectionModal({
     setDatabase,
     schema,
     setSchema,
+    queryTimeout,
+    setQueryTimeout,
     connectionString,
     setConnectionString,
     mongoConnectionMode,
@@ -285,6 +287,27 @@ export function ConnectionModal({
               placeholder="My Database"
               className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="queryTimeout" className="text-xs font-mediumr text-fg-muted">
+              Query Timeout (ms)
+            </Label>
+            <Input
+              id="queryTimeout"
+              type="number"
+              min={1}
+              max={2147483647}
+              step={1}
+              value={queryTimeout}
+              onChange={(e) => setQueryTimeout(e.target.value)}
+              placeholder="60000"
+              aria-describedby="queryTimeout-hint"
+              className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
+            />
+            <p id="queryTimeout-hint" className="text-xs text-fg-muted">
+              Leave blank to use the default of 60 seconds.
+            </p>
           </div>
 
           {/* Environment Selector */}

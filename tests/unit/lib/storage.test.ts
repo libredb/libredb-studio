@@ -78,6 +78,13 @@ function makeChart(overrides: Partial<SavedChartConfig> = {}): SavedChartConfig 
 // ============================================================================
 
 describe("storage: connections", () => {
+  test("round-trips a custom query timeout and clears it on update", () => {
+    storage.saveConnection(makeConnection({ queryTimeout: 120000 }));
+    expect(storage.getConnections()[0].queryTimeout).toBe(120000);
+    storage.saveConnection(makeConnection());
+    expect(storage.getConnections()[0].queryTimeout).toBeUndefined();
+  });
+
   test("getConnections returns empty array when nothing stored", () => {
     expect(storage.getConnections()).toEqual([]);
   });

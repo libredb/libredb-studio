@@ -69,6 +69,9 @@ export async function createDatabaseProvider(
   const sanitize = (v: string) => v.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
   console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);
 
+  // Explicit overrides (such as the connectivity probe) take precedence over saved settings.
+  options = { ...options, queryTimeout: options.queryTimeout ?? connection.queryTimeout };
+
   switch (connection.type) {
     // SQL Databases - dynamically imported to reduce memory
     case "postgres": {
@@ -455,7 +458,11 @@ export async function getOrCreateProvider(
   // Check cache
   const cached = providerCache.get(cacheKey);
 
-  if (cached?.provider.isConnected()) {
+  // A saved timeout change must reach the next query, even when the connection is already open.
+  if (cached && cached.provider.config.queryTimeout !== connection.queryTimeout) {
+    await cached.provider.disconnect();
+    providerCache.delete(cacheKey);
+  } else if (cached?.provider.isConnected()) {
     cached.lastUsed = Date.now();
     return cached.provider;
   }
@@ -616,7 +623,10 @@ export async function acquireExecutionProfileProvider(
 
   const cacheKey = profiledCacheKey(connection.id, profile);
   const cached = profiledProviderCache.get(cacheKey);
-  if (cached?.provider.isConnected()) {
+  if (cached && cached.provider.config.queryTimeout !== connection.queryTimeout) {
+    await cached.provider.disconnect();
+    profiledProviderCache.delete(cacheKey);
+  } else if (cached?.provider.isConnected()) {
     cached.lastUsed = Date.now();
     return cached.provider;
   }
