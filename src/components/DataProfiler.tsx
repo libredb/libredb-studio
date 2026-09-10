@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { TableSchema, DatabaseConnection } from "@/lib/types";
 import { detectSensitiveColumns, maskValue } from "@/lib/data-masking";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
-import { csvRow } from "@/lib/export/csv";
+import { dataProfileText, type ColumnProfile, type ProfileData } from "@/lib/export/data-profile";
 import { downloadText } from "@/lib/export/download";
 import { Button } from "./ui/button";
 import {
@@ -16,25 +16,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-interface ColumnProfile {
-  name: string;
-  type?: string;
-  totalRows: number;
-  nullCount: number;
-  nullPercent: number;
-  distinctCount: number;
-  minValue?: string;
-  maxValue?: string;
-  sampleValues?: string[];
-  error?: string;
-}
-
-interface ProfileData {
-  tableName: string;
-  totalRows: number;
-  columns: ColumnProfile[];
-}
 
 interface DataProfilerProps {
   isOpen: boolean;
@@ -73,75 +54,15 @@ export function DataProfiler({
     return detectSensitiveColumns(tableSchema.columns.map((c) => c.name));
   }, [tableSchema]);
 
-  const getExportColumn = (col: ColumnProfile) => {
-    const rule = sensitiveColumnNames.get(col.name);
-
-    return {
-      name: col.name,
-      type: col.type || "",
-      totalRows: col.totalRows,
-      nullCount: col.nullCount,
-      nullPercent: col.nullPercent,
-      distinctCount: col.distinctCount,
-      minValue: col.minValue && rule ? maskValue(col.minValue, rule) : col.minValue || "",
-      maxValue: col.maxValue && rule ? maskValue(col.maxValue, rule) : col.maxValue || "",
-      sampleValues: col.sampleValues?.map((value) => (rule ? maskValue(value, rule) : value)) || [],
-      error: col.error || "",
-    };
-  };
-
   const exportProfile = (format: "csv" | "json") => {
     if (!profile) return;
 
-    const exportedColumns = profile.columns.map(getExportColumn);
     const safeTableName = profile.tableName.replace(/[^a-zA-Z0-9_-]/g, "_") || "table";
-    const fileName = `data_profile_${safeTableName}_${Date.now()}.${format}`;
-
-    if (format === "csv") {
-      const headers = [
-        "Column",
-        "Type",
-        "Total Rows",
-        "Null Count",
-        "Null %",
-        "Distinct Count",
-        "Min",
-        "Max",
-        "Sample Values",
-        "Error",
-      ];
-
-      const rows = exportedColumns.map((col) =>
-        csvRow([
-          col.name,
-          col.type,
-          col.totalRows,
-          col.nullCount,
-          col.nullPercent,
-          col.distinctCount,
-          col.minValue,
-          col.maxValue,
-          col.sampleValues.join(" | "),
-          col.error,
-        ]),
-      );
-
-      downloadText([csvRow(headers), ...rows].join("\n"), "text/csv", fileName);
-      return;
-    }
 
     downloadText(
-      JSON.stringify(
-        {
-          tableName: profile.tableName,
-          totalRows: profile.totalRows,
-          columns: exportedColumns,
-        },
-        null,
-        2,
-      ),
-      "application/json",
-      fileName,
+      dataProfileText(profile, sensitiveColumnNames, format),
+      format === "csv" ? "text/csv" : "application/json",
+      `data_profile_${safeTableName}_${Date.now()}.${format}`,
     );
   };
 

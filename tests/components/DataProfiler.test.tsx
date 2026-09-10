@@ -816,149 +816,116 @@ describe("DataProfiler", () => {
   });
 
   // ── Data profile export ───────────────────────────────────────────────────
+  //
+  // What gets WRITTEN is asserted in tests/unit/lib/export/data-profile.test.ts.
+  // These two cover the wiring only: that the menu reaches the export with the
+  // format the item names, and that the masking map the screen uses is the one
+  // handed to it.
+  //
+  // The download itself is taken through the real `downloadText`, so the stubs
+  // below are `URL` and `document.createElement`. `mock.module` would be the
+  // shorter route and is the wrong one here: it is process-wide, and this file
+  // shares its process with QueryHistory's own download test.
 
-  test("exports the data profile as CSV with sensitive values masked", async () => {
-    const user = userEvent.setup();
-    const mockRule = { pattern: /email/i, label: "Email", mask: (v: string) => v };
+  interface CapturedDownload {
+    blob: Blob;
+    fileName: string;
+    restore: () => void;
+  }
 
-    (detectSensitiveColumns as ReturnType<typeof mock>).mockImplementation(
-      () => new Map([["email", mockRule]]),
-    );
-    (maskValue as ReturnType<typeof mock>).mockImplementation(() => "****");
-
-    const createObjectURLMock = mock(() => "blob:profile-csv");
-    const clickMock = mock(() => {});
+  function captureDownload(): CapturedDownload {
+    const captured = { blob: new Blob([]), fileName: "" };
     const originalCreateElement = document.createElement.bind(document);
     const originalCreateObjectURL = URL.createObjectURL;
     const originalRevokeObjectURL = URL.revokeObjectURL;
 
-    URL.createObjectURL = createObjectURLMock;
+    URL.createObjectURL = mock((blob: Blob) => {
+      captured.blob = blob;
+      return "blob:data-profile";
+    });
     URL.revokeObjectURL = mock(() => {});
 
     document.createElement = mock((tagName: string) => {
       const element = originalCreateElement(tagName);
 
       if (tagName.toLowerCase() === "a") {
-        element.click = clickMock;
+        element.click = mock(() => {
+          captured.fileName = (element as HTMLAnchorElement).download;
+        });
       }
 
       return element;
     }) as unknown as typeof document.createElement;
 
+    return {
+      get blob() {
+        return captured.blob;
+      },
+      get fileName() {
+        return captured.fileName;
+      },
+      restore() {
+        document.createElement = originalCreateElement;
+        URL.createObjectURL = originalCreateObjectURL;
+        URL.revokeObjectURL = originalRevokeObjectURL;
+      },
+    };
+  }
+
+  async function clickExport(item: string) {
+    const user = userEvent.setup();
+    const { container } = render(<DataProfiler {...createDefaultProps()} />);
+
+    await waitFor(() => {
+      expect(within(container).queryByText("Export")).not.toBeNull();
+    });
+
+    await user.click(within(container).getByText("Export"));
+    // Radix renders the menu content in a portal, so it is not inside `container`.
+    await user.click(within(document.body).getByText(item));
+  }
+
+  test("the CSV item writes the profile, masked, as a CSV named after the table", async () => {
+    const download = captureDownload();
+    (detectSensitiveColumns as ReturnType<typeof mock>).mockImplementation(
+      () => new Map([["email", { pattern: /email/i, label: "Email", mask: (v: string) => v }]]),
+    );
+
     try {
-      const { container } = render(<DataProfiler {...createDefaultProps()} />);
+      await clickExport("Export as CSV");
 
-      await waitFor(() => {
-        expect(within(container).queryByText("Export")).not.toBeNull();
-      });
+      expect(download.blob.type).toStartWith("text/csv");
+      expect(download.fileName).toMatch(/^data_profile_users_\d+\.csv$/);
 
-      await user.click(within(container).getByText("Export"));
-      await user.click(within(document.body).getByText("Export as CSV"));
+      const text = await download.blob.text();
 
-      expect(createObjectURLMock).toHaveBeenCalledTimes(1);
-      expect(clickMock).toHaveBeenCalledTimes(1);
-
-      const blob = createObjectURLMock.mock.calls[0][0] as Blob;
-      const csv = await blob.text();
-
-      expect(csv).toBe(
-        "\uFEFFColumn,Type,Total Rows,Null Count,Null %,Distinct Count,Min,Max,Sample Values,Error\n" +
-          "id,integer,100,0,0,100,1,100,1 | 2 | 3,\n" +
-          "name,varchar(255),100,5,5,90,Alice,Zara,Alice | Bob | Carol,\n" +
-          "email,varchar(255),100,0,0,100,****,****,**** | ****,",
-      );
+      // One header row and one row per profiled column.
+      expect(text.split("\n")).toHaveLength(4);
+      // The masked column reaches the file masked, and the addresses on screen do
+      // not reach it at all.
+      expect(text).toContain("email,varchar(255),100,0,0,100,****,****,**** | ****,");
+      expect(text).not.toContain("alice@example.com");
     } finally {
-      document.createElement = originalCreateElement;
-      URL.createObjectURL = originalCreateObjectURL;
-      URL.revokeObjectURL = originalRevokeObjectURL;
+      download.restore();
       (detectSensitiveColumns as ReturnType<typeof mock>).mockImplementation(() => new Map());
-      (maskValue as ReturnType<typeof mock>).mockImplementation(() => "****");
     }
   });
 
-  test("exports the data profile as JSON", async () => {
-    const user = userEvent.setup();
-    const createObjectURLMock = mock(() => "blob:profile-json");
-    const clickMock = mock(() => {});
-    const originalCreateElement = document.createElement.bind(document);
-    const originalCreateObjectURL = URL.createObjectURL;
-    const originalRevokeObjectURL = URL.revokeObjectURL;
-
-    URL.createObjectURL = createObjectURLMock;
-    URL.revokeObjectURL = mock(() => {});
-
-    document.createElement = mock((tagName: string) => {
-      const element = originalCreateElement(tagName);
-
-      if (tagName.toLowerCase() === "a") {
-        element.click = clickMock;
-      }
-
-      return element;
-    }) as unknown as typeof document.createElement;
+  test("the JSON item writes the same profile as JSON", async () => {
+    const download = captureDownload();
 
     try {
-      const { container } = render(<DataProfiler {...createDefaultProps()} />);
+      await clickExport("Export as JSON");
 
-      await waitFor(() => {
-        expect(within(container).queryByText("Export")).not.toBeNull();
-      });
+      expect(download.blob.type).toStartWith("application/json");
+      expect(download.fileName).toMatch(/^data_profile_users_\d+\.json$/);
 
-      await user.click(within(container).getByText("Export"));
-      await user.click(within(document.body).getByText("Export as JSON"));
+      const written = JSON.parse(await download.blob.text());
 
-      expect(createObjectURLMock).toHaveBeenCalledTimes(1);
-      expect(clickMock).toHaveBeenCalledTimes(1);
-
-      const blob = createObjectURLMock.mock.calls[0][0] as Blob;
-      const json = JSON.parse(await blob.text());
-
-      expect(json).toEqual({
-        tableName: "users",
-        totalRows: 100,
-        columns: [
-          {
-            name: "id",
-            type: "integer",
-            totalRows: 100,
-            nullCount: 0,
-            nullPercent: 0,
-            distinctCount: 100,
-            minValue: "1",
-            maxValue: "100",
-            sampleValues: ["1", "2", "3"],
-            error: "",
-          },
-          {
-            name: "name",
-            type: "varchar(255)",
-            totalRows: 100,
-            nullCount: 5,
-            nullPercent: 5,
-            distinctCount: 90,
-            minValue: "Alice",
-            maxValue: "Zara",
-            sampleValues: ["Alice", "Bob", "Carol"],
-            error: "",
-          },
-          {
-            name: "email",
-            type: "varchar(255)",
-            totalRows: 100,
-            nullCount: 0,
-            nullPercent: 0,
-            distinctCount: 100,
-            minValue: "alice@example.com",
-            maxValue: "zara@example.com",
-            sampleValues: ["alice@example.com", "bob@example.com"],
-            error: "",
-          },
-        ],
-      });
+      expect(written).toMatchObject({ tableName: "users", totalRows: 100 });
+      expect(written.columns).toHaveLength(3);
     } finally {
-      document.createElement = originalCreateElement;
-      URL.createObjectURL = originalCreateObjectURL;
-      URL.revokeObjectURL = originalRevokeObjectURL;
+      download.restore();
     }
   });
 });
