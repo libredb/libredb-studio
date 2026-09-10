@@ -8,7 +8,7 @@ import { FileBraces, Hash, Plus, X } from "lucide-react";
 // Cmd/Ctrl+T and Cmd/Ctrl+N belong to the browser, so no page can bind them;
 // Cmd/Ctrl+Shift+X is unclaimed by Chrome, Firefox and Safari (checked against
 // their published shortcut lists) and stays reachable on every platform.
-const NEW_TAB_SHORTCUT_KEY = "x";
+const NEW_TAB_SHORTCUT_CODE = "KeyX";
 const NEW_TAB_SHORTCUT_LABEL = "Ctrl+Shift+X";
 
 interface StudioTabBarProps {
@@ -56,19 +56,14 @@ export function StudioTabBar({
     e.preventDefault();
   };
 
-  // The "+" button's keyboard twin (#745): registered on `document` because the
-  // shortcut must work wherever focus is, and guarded against editable targets
-  // so typing (or an editor chord) can never mint tabs by accident.
+  // The "+" button's keyboard twin (#745): register on `document` so it also
+  // works while Monaco owns focus (Monaco uses a hidden textarea). Only the
+  // tab rename input is excluded so the shortcut does not interrupt renaming.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== NEW_TAB_SHORTCUT_KEY || !(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
+      if (event.code !== NEW_TAB_SHORTCUT_CODE || !(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
       const target = event.target;
-      if (
-        target instanceof HTMLElement &&
-        (target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA")
-      ) {
-        return;
-      }
+      if (target instanceof HTMLInputElement && target.getAttribute("aria-label")?.startsWith("Rename ")) return;
       event.preventDefault();
       onAddTab();
     };
