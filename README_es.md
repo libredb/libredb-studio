@@ -27,8 +27,9 @@
   Listado también en la documentación oficial de
   <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>,
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>
+  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>
   y
-  <a href="https://druid.apache.org/libraries">Apache Druid</a>
+  <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>
 </p>
 
 <p align="center">
