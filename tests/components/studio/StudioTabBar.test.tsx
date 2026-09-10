@@ -328,19 +328,19 @@ describe("StudioTabBar", () => {
 
   // ── New-tab keyboard shortcut (#745) ───────────────────────────────────
 
-  test("Ctrl+Shift+X anywhere in the document opens a new tab", () => {
+  test("real Ctrl+Shift+X browser event opens a new tab", () => {
     const onAddTab = mock(() => {});
     const props = createDefaultProps({ onAddTab });
     render(<StudioTabBar {...props} />);
-    fireEvent.keyDown(document, { key: "x", ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(document, { key: "X", code: "KeyX", ctrlKey: true, shiftKey: true });
     expect(onAddTab).toHaveBeenCalledTimes(1);
   });
 
-  test("Cmd+Shift+X anywhere in the document opens a new tab", () => {
+  test("real Cmd+Shift+X browser event opens a new tab", () => {
     const onAddTab = mock(() => {});
     const props = createDefaultProps({ onAddTab });
     render(<StudioTabBar {...props} />);
-    fireEvent.keyDown(document, { key: "x", metaKey: true, shiftKey: true });
+    fireEvent.keyDown(document, { key: "X", code: "KeyX", metaKey: true, shiftKey: true });
     expect(onAddTab).toHaveBeenCalledTimes(1);
   });
 
@@ -348,19 +348,30 @@ describe("StudioTabBar", () => {
     const onAddTab = mock(() => {});
     const props = createDefaultProps({ onAddTab });
     render(<StudioTabBar {...props} />);
-    fireEvent.keyDown(document, { key: "x", ctrlKey: true });
-    fireEvent.keyDown(document, { key: "x", shiftKey: true });
-    fireEvent.keyDown(document, { key: "x" });
+    fireEvent.keyDown(document, { key: "x", code: "KeyX", ctrlKey: true });
+    fireEvent.keyDown(document, { key: "X", code: "KeyX", shiftKey: true });
+    fireEvent.keyDown(document, { key: "x", code: "KeyX" });
     expect(onAddTab).not.toHaveBeenCalled();
   });
 
-  test("shortcut is ignored while typing in an editable target", () => {
+  test("shortcut is ignored while renaming a tab", () => {
     const onAddTab = mock(() => {});
     const props = createDefaultProps({ editingTabId: "tab-1", editingTabName: "Query 1", onAddTab });
     const { container } = render(<StudioTabBar {...props} />);
     const input = container.querySelector("input")!;
-    fireEvent.keyDown(input, { key: "x", ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(input, { key: "X", code: "KeyX", ctrlKey: true, shiftKey: true });
     expect(onAddTab).not.toHaveBeenCalled();
+  });
+
+  test("shortcut remains active from a textarea such as Monaco's hidden input", () => {
+    const onAddTab = mock(() => {});
+    const props = createDefaultProps({ onAddTab });
+    render(<StudioTabBar {...props} />);
+    const textarea = document.createElement("textarea");
+    document.body.appendChild(textarea);
+    fireEvent.keyDown(textarea, { key: "X", code: "KeyX", ctrlKey: true, shiftKey: true });
+    expect(onAddTab).toHaveBeenCalledTimes(1);
+    textarea.remove();
   });
 
   test("new tab button title advertises the shortcut", () => {
@@ -374,7 +385,7 @@ describe("StudioTabBar", () => {
     const props = createDefaultProps({ onAddTab });
     const { unmount } = render(<StudioTabBar {...props} />);
     unmount();
-    fireEvent.keyDown(document, { key: "x", ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(document, { key: "X", code: "KeyX", ctrlKey: true, shiftKey: true });
     expect(onAddTab).not.toHaveBeenCalled();
   });
 
