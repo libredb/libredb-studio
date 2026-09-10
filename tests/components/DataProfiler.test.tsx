@@ -12,6 +12,7 @@ mock.module("@/lib/data-masking", () => ({
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { render, fireEvent, within, waitFor, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import React from "react";
 import { mockGlobalFetch, restoreGlobalFetch, type MockFetchResponse } from "../helpers/mock-fetch";
 
@@ -813,69 +814,151 @@ describe("DataProfiler", () => {
     expect(body.connection).toBeUndefined();
     expect(body.tableName).toBe("users");
   });
-});
-  // ── Data profile export ────────────────────────────────────────────────────
 
-  test("shows CSV and JSON export options after profile loads", async () => {
-    const props = createDefaultProps();
-    const { container } = render(<DataProfiler {...props} />);
-    const view = within(container);
+  // ── Data profile export ───────────────────────────────────────────────────
 
-    await waitFor(() => {
-      expect(view.queryByText("Export")).not.toBeNull();
-    });
+  test("exports the data profile as CSV with sensitive values masked", async () => {
+    const user = userEvent.setup();
+    const mockRule = { pattern: /email/i, label: "Email", mask: (v: string) => v };
 
-    fireEvent.click(view.getByText("Export"));
+    (detectSensitiveColumns as ReturnType<typeof mock>).mockImplementation(
+      () => new Map([["email", mockRule]]),
+    );
+    (maskValue as ReturnType<typeof mock>).mockImplementation(() => "****");
 
-    expect(view.queryByText("Export as CSV")).not.toBeNull();
-    expect(view.queryByText("Export as JSON")).not.toBeNull();
-  });
-
-  test("downloads the data profile as CSV", async () => {
-    const createObjectURL = mock(() => "blob:test");
-    const revokeObjectURL = mock(() => {});
-
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      value: createObjectURL,
-    });
-
-    Object.defineProperty(URL, "revokeObjectURL", {
-      configurable: true,
-      value: revokeObjectURL,
-    });
-
-    const clickSpy = mock(() => {});
+    const createObjectURLMock = mock(() => "blob:profile-csv");
+    const clickMock = mock(() => {});
     const originalCreateElement = document.createElement.bind(document);
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
 
-    const createElementSpy = mock((tagName: string) => {
+    URL.createObjectURL = createObjectURLMock;
+    URL.revokeObjectURL = mock(() => {});
+
+    document.createElement = mock((tagName: string) => {
       const element = originalCreateElement(tagName);
 
       if (tagName.toLowerCase() === "a") {
-        Object.defineProperty(element, "click", {
-          configurable: true,
-          value: clickSpy,
-        });
+        element.click = clickMock;
       }
 
       return element;
-    });
+    }) as unknown as typeof document.createElement;
 
-    document.createElement = createElementSpy as typeof document.createElement;
+    try {
+      const { container } = render(<DataProfiler {...createDefaultProps()} />);
 
-    const props = createDefaultProps();
-    const { container } = render(<DataProfiler {...props} />);
-    const view = within(container);
+      await waitFor(() => {
+        expect(within(container).queryByText("Export")).not.toBeNull();
+      });
 
-    await waitFor(() => {
-      expect(view.queryByText("Export")).not.toBeNull();
-    });
+      await user.click(within(container).getByText("Export"));
+      await user.click(within(document.body).getByText("Export as CSV"));
 
-    fireEvent.click(view.getByText("Export"));
-    fireEvent.click(view.getByText("Export as CSV"));
+      expect(createObjectURLMock).toHaveBeenCalledTimes(1);
+      expect(clickMock).toHaveBeenCalledTimes(1);
 
-    expect(createObjectURL).toHaveBeenCalledTimes(1);
-    expect(clickSpy).toHaveBeenCalledTimes(1);
+      const blob = createObjectURLMock.mock.calls[0][0] as Blob;
+      const csv = await blob.text();
 
-    document.createElement = originalCreateElement;
+      expect(csv).toBe(
+        "\uFEFFColumn,Type,Total Rows,Null Count,Null %,Distinct Count,Min,Max,Sample Values,Error\n" +
+          "id,integer,100,0,0,100,1,100,1 | 2 | 3,\n" +
+          "name,varchar(255),100,5,5,90,Alice,Zara,Alice | Bob | Carol,\n" +
+          "email,varchar(255),100,0,0,100,****,****,**** | ****,",
+      );
+    } finally {
+      document.createElement = originalCreateElement;
+      URL.createObjectURL = originalCreateObjectURL;
+      URL.revokeObjectURL = originalRevokeObjectURL;
+      (detectSensitiveColumns as ReturnType<typeof mock>).mockImplementation(() => new Map());
+      (maskValue as ReturnType<typeof mock>).mockImplementation(() => "****");
+    }
   });
+
+  test("exports the data profile as JSON", async () => {
+    const user = userEvent.setup();
+    const createObjectURLMock = mock(() => "blob:profile-json");
+    const clickMock = mock(() => {});
+    const originalCreateElement = document.createElement.bind(document);
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+
+    URL.createObjectURL = createObjectURLMock;
+    URL.revokeObjectURL = mock(() => {});
+
+    document.createElement = mock((tagName: string) => {
+      const element = originalCreateElement(tagName);
+
+      if (tagName.toLowerCase() === "a") {
+        element.click = clickMock;
+      }
+
+      return element;
+    }) as unknown as typeof document.createElement;
+
+    try {
+      const { container } = render(<DataProfiler {...createDefaultProps()} />);
+
+      await waitFor(() => {
+        expect(within(container).queryByText("Export")).not.toBeNull();
+      });
+
+      await user.click(within(container).getByText("Export"));
+      await user.click(within(document.body).getByText("Export as JSON"));
+
+      expect(createObjectURLMock).toHaveBeenCalledTimes(1);
+      expect(clickMock).toHaveBeenCalledTimes(1);
+
+      const blob = createObjectURLMock.mock.calls[0][0] as Blob;
+      const json = JSON.parse(await blob.text());
+
+      expect(json).toEqual({
+        tableName: "users",
+        totalRows: 100,
+        columns: [
+          {
+            name: "id",
+            type: "integer",
+            totalRows: 100,
+            nullCount: 0,
+            nullPercent: 0,
+            distinctCount: 100,
+            minValue: "1",
+            maxValue: "100",
+            sampleValues: ["1", "2", "3"],
+            error: "",
+          },
+          {
+            name: "name",
+            type: "varchar(255)",
+            totalRows: 100,
+            nullCount: 5,
+            nullPercent: 5,
+            distinctCount: 90,
+            minValue: "Alice",
+            maxValue: "Zara",
+            sampleValues: ["Alice", "Bob", "Carol"],
+            error: "",
+          },
+          {
+            name: "email",
+            type: "varchar(255)",
+            totalRows: 100,
+            nullCount: 0,
+            nullPercent: 0,
+            distinctCount: 100,
+            minValue: "alice@example.com",
+            maxValue: "zara@example.com",
+            sampleValues: ["alice@example.com", "bob@example.com"],
+            error: "",
+          },
+        ],
+      });
+    } finally {
+      document.createElement = originalCreateElement;
+      URL.createObjectURL = originalCreateObjectURL;
+      URL.revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+});
