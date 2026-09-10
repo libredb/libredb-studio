@@ -44,6 +44,12 @@ describe("deriveTableName", () => {
 });
 
 describe("buildResultExport — csv", () => {
+  test.each([";", "\t"] as const)("passes the chosen CSV delimiter to the shared writer (%s)", (csvDelimiter) => {
+    const file = buildResultExport("csv", source({ csvDelimiter }));
+    expect(file.content).toBe(`id${csvDelimiter}name\n1${csvDelimiter}Ada`);
+    expect(file.extension).toBe("csv");
+    expect(file.mimeType).toBe("text/csv;charset=utf-8");
+  });
   test("writes an escaped CSV under the declared columns", () => {
     const file = buildResultExport("csv", source({ rows: [{ id: 1, name: 'A,"B"' }] }));
 

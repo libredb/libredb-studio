@@ -102,6 +102,14 @@ mock.module("@/lib/llm/types", () => ({
       error instanceof MockLLMSafetyError ||
       error instanceof MockLLMConfigError
     ) && error instanceof MockLLMError,
+  /*
+    The same reason, one export later. `investigation.ts` imports this beside `isRetryableError`,
+    so omitting it takes the module down for every importer exactly as omitting that one did —
+    which is the failure this comment was written after, repeated because the note said what had
+    happened and not that the NEXT export would do it too.
+  */
+  isToolCallParseError: (error: unknown): boolean =>
+    error instanceof MockLLMStreamError && /parsing tool call/i.test(error.message),
 }));
 
 const { guardRoute } = await import("@/lib/api/require-session");

@@ -8,7 +8,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import type { MonitoringData } from "@/lib/db/types";
 import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
-import { evaluateThreshold, getThresholdColor, DEFAULT_THRESHOLDS } from "@/lib/monitoring-thresholds";
+import { evaluateThreshold, getThresholdColor, thresholdFor } from "@/lib/monitoring-thresholds";
+import { storage } from "@/lib/storage";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { MetricChart } from "./MetricChart";
 import { PanelUnavailable } from "../PanelUnavailable";
@@ -138,21 +139,20 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
     bufferPoolUsage === undefined ? undefined : { usage: bufferPoolUsage, ...getHealthStatus(bufferPoolUsage) };
   const deadlocks = performance?.deadlocks;
 
-  // Threshold evaluations. An absent metric scores "healthy" so the card border stays
-  // neutral: colouring it would rate the absence, which is what the stand-in 100 below
-  // does for the cache ratio.
-  const cacheThreshold = evaluateThreshold(
-    cacheHitRatio ?? 100,
-    DEFAULT_THRESHOLDS.find((t) => t.metric === "cacheHitRatio")!,
-  );
+  // Read storage here: storage-facade imports the defaults, so the threshold helper
+  // must stay pure to avoid a circular dependency.
+  const thresholds = storage.getThresholdConfig();
+  // An absent metric remains ungraded regardless of the saved thresholds.
+  const cacheThreshold =
+    cacheHitRatio === undefined
+      ? "healthy"
+      : evaluateThreshold(cacheHitRatio, thresholdFor(thresholds, "cacheHitRatio"));
   const bufferThreshold =
     bufferPoolUsage === undefined
       ? "healthy"
-      : evaluateThreshold(bufferPoolUsage, DEFAULT_THRESHOLDS.find((t) => t.metric === "bufferPoolUsage")!);
+      : evaluateThreshold(bufferPoolUsage, thresholdFor(thresholds, "bufferPoolUsage"));
   const deadlockThreshold =
-    deadlocks === undefined
-      ? "healthy"
-      : evaluateThreshold(deadlocks, DEFAULT_THRESHOLDS.find((t) => t.metric === "deadlocks")!);
+    deadlocks === undefined ? "healthy" : evaluateThreshold(deadlocks, thresholdFor(thresholds, "deadlocks"));
 
   // Build trend data from history. See `metricSeries` for why a missing sample is
   // dropped rather than read as a zero.

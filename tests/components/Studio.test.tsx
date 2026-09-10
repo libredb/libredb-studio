@@ -466,6 +466,7 @@ mock.module("@/components/ui/resizable", () => {
 // The dynamic import resolves against the mock registry instead.
 
 const { default: Studio } = await import("@/components/Studio");
+import type { DatabaseConnection } from "@/lib/types";
 
 // =============================================================================
 // Test data
@@ -819,6 +820,65 @@ describe("Studio", () => {
   });
 
   // --- onAddConnection ---
+  test.each(["desktop", "mobile"])("duplicate opens a detached copy in the %s connection editor", (surface) => {
+    const source: DatabaseConnection = {
+      ...pgConn,
+      type: "postgres",
+      createdAt: new Date(0),
+      managed: false,
+      seedId: "sample",
+      host: "db.example.test",
+      port: 5432,
+      user: "fixture_user",
+      password: "fixture_password",
+      database: "app",
+      color: "#123456",
+      environment: "development",
+      group: "team",
+      agentUser: "agent_ro",
+      agentPassword: "fixture_agent",
+      ssl: { mode: "verify-full", caCert: "fixture-ca" },
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.example.test",
+        port: 22,
+        username: "ops",
+        authMethod: "password",
+        password: "fixture_ssh",
+      },
+    };
+    const original = structuredClone(source);
+    render(<Studio />);
+    if (surface === "mobile") {
+      act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("database"));
+    }
+    const props = surface === "mobile" ? capturedConnectionsListProps : capturedSidebarProps;
+    act(() => (props.onDuplicateConnection as (conn: DatabaseConnection) => void)(source));
+    const copy = capturedConnectionModalProps.editConnection as DatabaseConnection;
+    expect(capturedConnectionModalProps.isOpen).toBe(true);
+    expect(copy.id).not.toBe(source.id);
+    expect(copy).toEqual({
+      ...source,
+      id: copy.id,
+      name: `${source.name} (copy)`,
+      createdAt: copy.createdAt,
+      seedId: undefined,
+      managed: false,
+    });
+    expect(copy.createdAt.getTime()).toBeGreaterThan(source.createdAt.getTime());
+    expect(copy.ssl).not.toBe(source.ssl);
+    expect(copy.sshTunnel).not.toBe(source.sshTunnel);
+    expect(mockStorageSaveConnection).not.toHaveBeenCalled();
+    act(() => (capturedConnectionModalProps.onClose as () => void)());
+    expect(mockStorageSaveConnection).not.toHaveBeenCalled();
+    act(() => (props.onDuplicateConnection as (conn: DatabaseConnection) => void)(source));
+    const secondCopy = capturedConnectionModalProps.editConnection as DatabaseConnection;
+    expect(secondCopy.id).not.toBe(copy.id);
+    act(() => (capturedConnectionModalProps.onConnect as (conn: DatabaseConnection) => void)(secondCopy));
+    expect(mockStorageSaveConnection).toHaveBeenCalledWith(secondCopy);
+    expect(source).toEqual(original);
+  });
+
   test("onAddConnection opens connection modal", () => {
     render(<Studio />);
     const fn = capturedSidebarProps.onAddConnection as () => void;
@@ -852,6 +912,27 @@ describe("Studio", () => {
   });
 
   // --- exportResults ---
+  test.each([";", "\t"])("CSV export forwards the chosen delimiter (%s)", async (delimiter) => {
+    tabMgrOverride = {
+      currentTab: {
+        id: "tab-1",
+        name: "Users",
+        query: "SELECT 1",
+        result: testResult,
+        isExecuting: false,
+        type: "sql",
+      },
+    };
+    render(<Studio />);
+    const exportFn = capturedBottomPanelProps.onExportResults as (
+      format: string,
+      artifact: null,
+      delimiter: string,
+    ) => void;
+    act(() => exportFn("csv", null, delimiter));
+    const blob = (mockCreateObjectURL.mock.calls[0] as unknown[])[0] as Blob;
+    expect((await blob.text()).split("\n")[0].replace(/^\uFEFF/, "")).toBe(testResult.fields.join(delimiter));
+  });
   test("exportResults CSV creates text/csv blob", () => {
     tabMgrOverride = {
       currentTab: {

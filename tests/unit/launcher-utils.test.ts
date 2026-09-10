@@ -586,3 +586,51 @@ describe("startupUrl", () => {
     expect(startupUrl(host, port)).toBe(expected);
   });
 });
+
+/**
+ * The pure table above covers every formatting rule; these three cases cover the
+ * wiring, that `bin/studio.js` passes the real HOSTNAME and PORT through the helper
+ * and leaves the bind address alone. They spawn the launcher, so they need an
+ * ambient `node` at or above its floor: the `Unit & Integration Tests` job pins
+ * Node 24 for exactly this reason (.github/workflows/ci.yml). Originally written by
+ * @mikevillari in #709 and removed there while that job still ran on the runner's
+ * default Node 22.
+ */
+describe("launcher startup URL", () => {
+  test.each([
+    ["0.0.0.0", "http://127.0.0.1:3000"],
+    ["::", "http://[::1]:3000"],
+    ["127.0.0.1", "http://127.0.0.1:3000"],
+  ])("prints a usable URL for %s without changing the bind address", (host, url) => {
+    const node = Bun.which("node");
+    expect(node).not.toBeNull();
+    // Below the floor the launcher refuses and exits 1, which reads here as a bare
+    // exit code with no reason. Ask the launcher's own check first so the failure
+    // arrives as its sentence instead.
+    const ambient = Bun.spawnSync([node!, "-p", "process.versions.node"]).stdout.toString().trim();
+    expect(assessNodeRuntime(ambient).message).toBeNull();
+
+    const home = fs.mkdtempSync(path.join(tempDir, "startup-"));
+    const root = path.resolve(import.meta.dir, "../..");
+    const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+    const payload = path.join(home, ".libredb-studio", version, "payload");
+    fs.mkdirSync(payload, { recursive: true });
+    fs.writeFileSync(path.join(payload, "server.js"), 'console.log("BIND=" + process.env.HOSTNAME);');
+    const preload = path.join(home, "home-fixture.mjs");
+    fs.writeFileSync(
+      preload,
+      'import os from "node:os"; import { syncBuiltinESMExports } from "node:module"; ' +
+        `os.homedir = () => ${JSON.stringify(home)}; syncBuiltinESMExports();`,
+    );
+    const run = Bun.spawnSync([node!, "--import", preload, path.join(root, "bin/studio.js"), "--host", host], {
+      env: { PATH: process.env.PATH },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(run.exitCode).toBe(0);
+    const output = run.stdout.toString();
+    expect(output).toContain(`Starting LibreDB Studio ${version} on ${url}\n`);
+    expect(output).toContain(`BIND=${host}\n`);
+    expect(output.match(/^Starting LibreDB Studio ([0-9][0-9.]*) /m)?.[1]).toBe(version);
+  });
+});

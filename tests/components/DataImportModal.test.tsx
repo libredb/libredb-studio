@@ -116,6 +116,38 @@ describe("DataImportModal", () => {
 
   // ── CSV file upload → Preview step ─────────────────────────────────────────
 
+  test.each([";", "\t"])("delimiter picker reparses preview and keeps headerless import (%s)", (delimiter) => {
+    const onImport = mock((_sql: string) => {});
+    const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={onImport} tables={[]} />);
+    act(() => simulateFileUpload(baseElement, `Alice${delimiter}30\nBob${delimiter}25`, "data.csv"));
+    const body = within(baseElement);
+    fireEvent.change(body.getByRole("combobox", { name: "CSV delimiter" }), { target: { value: delimiter } });
+    expect(body.getByText("1 rows, 2 columns").textContent).toBe("1 rows, 2 columns");
+    fireEvent.click(body.getByRole("checkbox", { name: "First row is header" }));
+    expect(body.getByText("2 rows, 2 columns").textContent).toBe("2 rows, 2 columns");
+    expect(body.getByRole("cell", { name: "Alice" }).textContent).toBe("Alice");
+    fireEvent.click(body.getByText("Configure Import"));
+    fireEvent.click(body.getByText("New Table"));
+    fireEvent.click(body.getByText("Review SQL"));
+    fireEvent.click(body.getByText("Execute Import"));
+    expect(onImport.mock.calls[0][0]).toContain("('Alice', 30)");
+    expect(onImport.mock.calls[0][0]).toContain("('Bob', 25)");
+  });
+
+  test("reset restores the comma delimiter and JSON hides the picker", () => {
+    const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={[]} />);
+    const body = within(baseElement);
+    act(() => simulateFileUpload(baseElement, "name;age\nAlice;30", "data.csv"));
+    fireEvent.change(body.getByRole("combobox", { name: "CSV delimiter" }), { target: { value: ";" } });
+    fireEvent.click(body.getByText("Reset"));
+    act(() => simulateFileUpload(baseElement, "name,age\nBob,25", "next.csv"));
+    expect((body.getByRole("combobox", { name: "CSV delimiter" }) as HTMLSelectElement).value).toBe(",");
+    expect(body.getByRole("cell", { name: "Bob" }).textContent).toBe("Bob");
+    fireEvent.click(body.getByText("Reset"));
+    act(() => simulateFileUpload(baseElement, '[{"name":"Alice"}]', "data.json"));
+    expect(body.queryByRole("combobox", { name: "CSV delimiter" }) === null).toBe(true);
+  });
+
   test("advances to preview step after CSV file upload", () => {
     const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={sampleTables} />);
 
@@ -140,6 +172,117 @@ describe("DataImportModal", () => {
     const body = within(baseElement);
     expect(body.queryByText('Alice "The Ace"')).not.toBeNull();
     expect(body.queryByText("loves, commas")).not.toBeNull();
+  });
+
+  test("headerless CSV preserves the first row through preview, mapping, and SQL import", () => {
+    const onImport = mock((sql: string) => sql);
+    const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={onImport} tables={sampleTables} />);
+    act(() => simulateFileUpload(baseElement, "Alice,30\nBob,25", "headerless.csv"));
+
+    const body = within(baseElement);
+    const checkbox = body.getByRole("checkbox", { name: "First row is header" }) as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+    expect(body.getByText("1 rows, 2 columns")).not.toBeNull();
+    act(() => fireEvent.click(checkbox));
+
+    expect(checkbox.checked).toBe(false);
+    expect(body.getByRole("columnheader", { name: "column_1" })).not.toBeNull();
+    expect(body.getByRole("columnheader", { name: "column_2" })).not.toBeNull();
+    expect(body.getByRole("cell", { name: "Alice" })).not.toBeNull();
+    expect(body.getByRole("cell", { name: "Bob" })).not.toBeNull();
+    expect(body.getByText("2 rows, 2 columns")).not.toBeNull();
+
+    act(() => fireEvent.click(body.getByText("Configure Import")));
+    expect((body.getByLabelText("Target column for column_1") as HTMLInputElement).value).toBe("column_1");
+    act(() => {
+      fireEvent.click(body.getByText("New Table"));
+      fireEvent.change(body.getByLabelText("Target column for column_1"), { target: { value: "name" } });
+    });
+    act(() => fireEvent.click(body.getByText("Review SQL")));
+    act(() => fireEvent.click(body.getByText("Execute Import")));
+
+    expect(onImport).toHaveBeenCalledTimes(1);
+    const sql = onImport.mock.calls[0][0];
+    expect(sql).toContain("CREATE TABLE imported_data");
+    expect(sql).toContain("INSERT INTO imported_data (name, column_2)");
+    expect(sql).toContain("('Alice', 30)");
+    expect(sql).toContain("('Bob', 25)");
+  });
+
+  test("the header option can be toggled repeatedly for a single-row CSV", () => {
+    const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={[]} />);
+    act(() => simulateFileUpload(baseElement, "Alice,30", "single.csv"));
+    const body = within(baseElement);
+    const checkbox = body.getByRole("checkbox", { name: "First row is header" });
+
+    act(() => fireEvent.click(checkbox));
+    expect(body.getByText("1 rows, 2 columns")).not.toBeNull();
+    expect(body.getByRole("cell", { name: "Alice" })).not.toBeNull();
+    act(() => fireEvent.click(checkbox));
+    expect(body.getByText("0 rows, 2 columns")).not.toBeNull();
+    expect(body.getByRole("columnheader", { name: "Alice" })).not.toBeNull();
+    act(() => fireEvent.click(checkbox));
+    expect(body.getByText("1 rows, 2 columns")).not.toBeNull();
+    expect(body.getAllByRole("cell")).toHaveLength(2);
+  });
+
+  test.each([
+    ["name", "age"],
+    ["column_1", "column_2"],
+    ["name", "column_2"],
+  ])("preserves target column mappings through header toggles for %s,%s", (firstHeader, secondHeader) => {
+    const onImport = mock((sql: string) => sql);
+    const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={onImport} tables={[]} />);
+    act(() => simulateFileUpload(baseElement, `${firstHeader},${secondHeader}\nAlice,30`, "mapped.csv"));
+    const body = within(baseElement);
+
+    act(() => fireEvent.click(body.getByText("Configure Import")));
+    act(() => {
+      fireEvent.click(body.getByText("New Table"));
+      fireEvent.change(body.getByLabelText(`Target column for ${firstHeader}`), { target: { value: "full_name" } });
+      fireEvent.change(body.getByLabelText(`Target column for ${secondHeader}`), { target: { value: "user_age" } });
+    });
+    act(() => fireEvent.click(body.getByText("Back")));
+    act(() => fireEvent.click(body.getByRole("checkbox", { name: "First row is header" })));
+    act(() => fireEvent.click(body.getByText("Configure Import")));
+
+    expect((body.getByLabelText("Target column for column_1") as HTMLInputElement).value).toBe(
+      firstHeader === "column_1" ? "full_name" : "column_1",
+    );
+    expect((body.getByLabelText("Target column for column_2") as HTMLInputElement).value).toBe(
+      secondHeader === "column_2" ? "user_age" : "column_2",
+    );
+
+    act(() => fireEvent.click(body.getByText("Back")));
+    act(() => fireEvent.click(body.getByRole("checkbox", { name: "First row is header" })));
+    act(() => fireEvent.click(body.getByText("Configure Import")));
+    expect((body.getByLabelText(`Target column for ${firstHeader}`) as HTMLInputElement).value).toBe("full_name");
+    expect((body.getByLabelText(`Target column for ${secondHeader}`) as HTMLInputElement).value).toBe("user_age");
+    act(() => fireEvent.click(body.getByText("Review SQL")));
+    act(() => fireEvent.click(body.getByText("Execute Import")));
+
+    expect(onImport).toHaveBeenCalledTimes(1);
+    expect(onImport.mock.calls[0][0]).toContain("INSERT INTO imported_data (full_name, user_age)");
+    expect(onImport.mock.calls[0][0]).toContain("('Alice', 30)");
+  });
+
+  test("Reset restores header handling for the next CSV upload", () => {
+    const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={[]} />);
+    act(() => simulateFileUpload(baseElement, "name,age\nAlice,30", "first.csv"));
+    const body = within(baseElement);
+    act(() => fireEvent.click(body.getByText("Configure Import")));
+    act(() => fireEvent.change(body.getByLabelText("Target column for name"), { target: { value: "full_name" } }));
+    act(() => fireEvent.click(body.getByText("Back")));
+    act(() => fireEvent.click(body.getByRole("checkbox", { name: "First row is header" })));
+    act(() => fireEvent.click(body.getByText("Reset")));
+    act(() => simulateFileUpload(baseElement, "name,age\nBob,25", "second.csv"));
+
+    expect((body.getByRole("checkbox", { name: "First row is header" }) as HTMLInputElement).checked).toBe(true);
+    expect(body.getByRole("columnheader", { name: "name" })).not.toBeNull();
+    expect(body.getByRole("cell", { name: "Bob" })).not.toBeNull();
+    expect(body.getByText("1 rows, 2 columns")).not.toBeNull();
+    act(() => fireEvent.click(body.getByText("Configure Import")));
+    expect((body.getByLabelText("Target column for name") as HTMLInputElement).value).toBe("name");
   });
 
   test("shows preview table headers from CSV", () => {
@@ -223,6 +366,7 @@ describe("DataImportModal", () => {
     // File name appears in header + preview body
     expect(body.queryAllByText("data.json").length).toBeGreaterThanOrEqual(1);
     expect(body.queryByText(/1 row/)).not.toBeNull();
+    expect(body.queryByRole("checkbox", { name: "First row is header" })).toBeNull();
   });
 
   // ── Error handling ─────────────────────────────────────────────────────────

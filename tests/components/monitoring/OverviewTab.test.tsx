@@ -6,6 +6,7 @@ import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { OverviewTab } from "@/components/monitoring/tabs/OverviewTab";
+import { storage } from "@/lib/storage";
 import type { MonitoringData } from "@/lib/db/types";
 import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
 
@@ -53,6 +54,45 @@ function makeHistory(): TimeSeriesPoint<MonitoringData>[] {
 describe("OverviewTab", () => {
   afterEach(() => {
     cleanup();
+    localStorage.removeItem("libredb_threshold_config");
+  });
+
+  test("uses saved monitoring thresholds and falls back for missing metrics", () => {
+    const data = makeData();
+    const { getByText, rerender } = render(<OverviewTab data={data} loading={false} />);
+    const connectionCard = () => getByText("Connections").closest('[data-slot="card"]')!;
+    const cacheCard = () => getByText("Cache Hit").closest('[data-slot="card"]')!;
+    expect(connectionCard().className).toContain("border-hue-green");
+    expect(cacheCard().className).toContain("border-hue-green");
+
+    storage.saveThresholdConfig([
+      { metric: "connectionPercent", warning: 5, critical: 7, direction: "above", label: "Connections" },
+      { metric: "cacheHitRatio", warning: 99, critical: 97, direction: "below", label: "Cache" },
+    ]);
+    rerender(<OverviewTab data={data} loading={false} />);
+    expect(connectionCard().className).toContain("border-hue-red");
+    expect(cacheCard().className).toContain("border-hue-red");
+
+    storage.saveThresholdConfig([]);
+    rerender(<OverviewTab data={data} loading={false} />);
+    expect(connectionCard().className).toContain("border-hue-green");
+    expect(cacheCard().className).toContain("border-hue-green");
+  });
+
+  test("does not grade missing readings at saved boundaries", () => {
+    storage.saveThresholdConfig([
+      { metric: "connectionPercent", warning: 0, critical: 0, direction: "above", label: "Connections" },
+      { metric: "cacheHitRatio", warning: 100, critical: 100, direction: "below", label: "Cache" },
+    ]);
+    const base = makeData();
+    const data = {
+      ...base,
+      overview: { ...base.overview, maxConnections: 0 },
+      performance: { ...base.performance, cacheHitRatio: undefined },
+    } as MonitoringData;
+    const { getByText } = render(<OverviewTab data={data} loading={false} />);
+    expect(getByText("Connections").closest('[data-slot="card"]')!.className).toContain("border-hue-green");
+    expect(getByText("Cache Hit").closest('[data-slot="card"]')!.className).toContain("border-hue-green");
   });
 
   test("renders skeleton while loading without data", () => {

@@ -57,6 +57,10 @@ const CONNECT_PROBE = "SELECT 1";
 /** Both the endpoint path and the query string are product-specific (measured). */
 const SQL_PATH = "/_sql?format=json";
 
+const SQL_QUERY_OPTIONS = {
+  field_multi_value_leniency: true,
+} as const;
+
 function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
   return {
     id: "es-1",
@@ -1056,6 +1060,20 @@ describe("ElasticsearchProvider lifecycle", () => {
 // ============================================================================
 
 describe("ElasticsearchProvider query", () => {
+  test("queries a multi-valued event_subindustry keyword field with SQL leniency enabled", async () => {
+    const provider = await connectProvider();
+    overrideSql(ok('{"columns":[{"name":"event_subindustry","type":"keyword"}],"rows":[["Healthcare"]]}'));
+
+    const result = await provider.query("SELECT event_subindustry FROM probe_orders");
+
+    expect(result.rows).toEqual([{ event_subindustry: "Healthcare" }]);
+    expect(result.fields).toEqual(["event_subindustry"]);
+    expect(sqlRequests()[1].body).toEqual({
+      query: "SELECT event_subindustry FROM probe_orders",
+      ...SQL_QUERY_OPTIONS,
+    });
+  });
+
   test("returns the rows, the declared column order and a measured duration", async () => {
     // The duration is this process's measurement of the exchange, because neither
     // answer carries any server-side timing at all - it is the only number in
@@ -1211,7 +1229,10 @@ describe("ElasticsearchProvider query", () => {
 
     const paging = sqlRequests().slice(1);
     expect(paging).toHaveLength(2);
-    expect(paging[0].body).toEqual({ query: "SELECT k, COUNT(*) FROM probe_buckets GROUP BY k" });
+    expect(paging[0].body).toEqual({
+      query: "SELECT k, COUNT(*) FROM probe_buckets GROUP BY k",
+      ...SQL_QUERY_OPTIONS,
+    });
     expect(paging[1].body).toEqual({ cursor: AGGREGATION_CURSOR });
     // Nothing else was asked: no /_sql/close, because no cursor was left holding.
     expect(pathsSent()).toEqual([SQL_PATH, SQL_PATH, SQL_PATH]);
@@ -1268,7 +1289,10 @@ describe("ElasticsearchProvider query", () => {
 
     // The whole shape, so a count smuggled in under any name would fail here.
     expect(Object.keys(result).sort()).toEqual(["columnTypes", "executionTime", "fields", "rowCount", "rows"]);
-    expect(sqlRequests()[1].body).toEqual({ query: "SELECT id FROM probe_orders" });
+    expect(sqlRequests()[1].body).toEqual({
+      query: "SELECT id FROM probe_orders",
+      ...SQL_QUERY_OPTIONS,
+    });
   });
 
   test("arms one deadline per statement, and it is the client's alone", async () => {

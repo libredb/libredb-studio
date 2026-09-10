@@ -8,7 +8,7 @@ import {
   DEFAULT_MODELS,
   DEFAULT_API_URLS,
 } from "@/lib/llm/utils/config";
-import { LLMConfigError, type LLMProviderType } from "@/lib/llm/types";
+import { LLMConfigError, type LLMConfig, type LLMProviderType } from "@/lib/llm/types";
 
 // ============================================================================
 // Environment Variable Helpers
@@ -299,5 +299,75 @@ describe("getSafeConfigForLogging", () => {
     });
 
     expect(safe.apiKey).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// Absent credentials vs an unfinished setup
+// ============================================================================
+
+/** Runs validateConfig and hands back the LLMConfigError it raised. */
+function configErrorFrom(config: LLMConfig): LLMConfigError {
+  try {
+    validateConfig(config);
+  } catch (error) {
+    if (error instanceof LLMConfigError) {
+      return error;
+    }
+    throw error;
+  }
+  throw new Error("validateConfig accepted a config it should have rejected");
+}
+
+describe("naming a provider is a statement of intent", () => {
+  test("no LLM_PROVIDER leaves the provider implicit", () => {
+    expect(resolveConfig().providerExplicit).toBe(false);
+  });
+
+  test("LLM_PROVIDER marks the provider explicit", () => {
+    process.env.LLM_PROVIDER = "gemini";
+    expect(resolveConfig().providerExplicit).toBe(true);
+  });
+
+  test("a blank LLM_PROVIDER is not a choice", () => {
+    process.env.LLM_PROVIDER = "   ";
+    expect(resolveConfig().providerExplicit).toBe(false);
+  });
+
+  test("a provider override is explicit even with no env var", () => {
+    expect(resolveConfig({ provider: "openai" }).providerExplicit).toBe(true);
+  });
+
+  test("a misspelled LLM_PROVIDER still counts as intent, though the provider falls back", () => {
+    process.env.LLM_PROVIDER = "gemni";
+    const originalError = console.error;
+    console.error = () => {};
+    const config = resolveConfig();
+    console.error = originalError;
+
+    expect(config.provider).toBe("gemini");
+    expect(config.providerExplicit).toBe(true);
+  });
+});
+
+describe("validateConfig separates absent credentials from an unfinished setup", () => {
+  test("gemini without a key is unconfigured when no provider was named", () => {
+    const error = configErrorFrom({ provider: "gemini", model: DEFAULT_MODELS.gemini });
+    expect(error.reason).toBe("missing_credentials");
+  });
+
+  test("gemini without a key is an unfinished setup once the provider is named", () => {
+    const error = configErrorFrom({ provider: "gemini", model: DEFAULT_MODELS.gemini, providerExplicit: true });
+    expect(error.reason).toBeUndefined();
+  });
+
+  test("openai without a key is unconfigured when no provider was named", () => {
+    const error = configErrorFrom({ provider: "openai", model: DEFAULT_MODELS.openai });
+    expect(error.reason).toBe("missing_credentials");
+  });
+
+  test("openai without a key is an unfinished setup once the provider is named", () => {
+    const error = configErrorFrom({ provider: "openai", model: DEFAULT_MODELS.openai, providerExplicit: true });
+    expect(error.reason).toBeUndefined();
   });
 });

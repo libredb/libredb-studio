@@ -594,6 +594,45 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       expect(answer.modelText).toContain("presentation");
     });
 
+    test("and names what ARRIVED, because a model told only what was expected sends it again", async () => {
+      /*
+        The other half of the sentence above, and by a wide margin the largest single refusal
+        this project has measured. Across twelve hours of sweeps on the build this branch
+        carries, `compose_report` was declined 1530 times and ONE issue is 1110 of them:
+
+            the fields that did not match — claims: expected array
+
+        True, and still not enough to act on. A model that serialized `claims` as a JSON
+        STRING reads "expected array" and agrees with it — what it sent is an array, as far as
+        it can tell — so it sends the same bytes again. The test above records exactly that
+        loop being fixed once by naming the field; this is the same loop surviving because the
+        message names one side of a comparison and not the other.
+
+        The rule the message is bounded by does not stand in the way, and this file already
+        states it: what crosses over is "the path and the expected type ... and never the
+        value the model sent". A TYPE is structural, like a field name. `string` is not the
+        model's text; it is the shape of it.
+
+        Zod 4 drops `received` from the issue, so the type is read off the arguments the tool
+        was actually handed, by walking the issue's own path.
+      */
+      const h = analysis();
+      const { artifact, events } = await readWithLedger(h.context);
+
+      const answer = presentAnswerTool(
+        h.context,
+        { runId: h.context.runId, events, autoExecute: false },
+        // `presentation` declared as an object and sent as a number: expected against arrived.
+        { artifact: artifact.correlationId, presentation: 7 },
+      );
+
+      expect(answer.kind).toBe("unavailable");
+      if (answer.kind !== "unavailable") return;
+      expect(answer.reasonCode).toBe("INVALID_TOOL_INPUT");
+      expect(answer.modelText).toContain("presentation");
+      expect(answer.modelText).toContain("received number");
+    });
+
     test("refuses a string that is not JSON at all, in the contract's own words", async () => {
       const h = analysis();
       const { artifact, events } = await readWithLedger(h.context);
@@ -902,7 +941,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
         sending prose where an object goes.
 
         The paths were already named. What was gated was the SHAPE: `exampleReportCall` rebuilds a
-        whole call from the run's ledger and sits behind `refusalExamples`, which two of twenty-eight
+        whole call from the run's ledger and sits behind `refusalExamples`, which two of thirty
         shipped models carry. Everyone else reads "expected object" and has to guess the object.
 
         So this splits the two, on the rule the column advice was split on: a one-line skeleton is

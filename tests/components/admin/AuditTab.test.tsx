@@ -45,6 +45,9 @@ const defaultHistory = () => [
 
 let mockHistory: ReturnType<typeof defaultHistory> = defaultHistory();
 
+const mockDownloadText = mock((_content: string, _mimeType: string, _fileName: string) => {});
+mock.module("@/lib/export/download", () => ({ downloadText: mockDownloadText }));
+
 mock.module("@/lib/storage", () => ({
   storage: {
     getHistory: mock(() => mockHistory),
@@ -79,6 +82,7 @@ describe("AuditTab", () => {
   let fetchMock: ReturnType<typeof mockGlobalFetch>;
 
   beforeEach(() => {
+    mockDownloadText.mockClear();
     mockHistory = defaultHistory();
     fetchMock = mockGlobalFetch({
       "/api/admin/audit": {
@@ -126,6 +130,110 @@ describe("AuditTab", () => {
     expect(queryByText("Operations")).not.toBeNull();
     expect(queryByText("Queries")).not.toBeNull();
     expect(queryByText("Stats")).not.toBeNull();
+  });
+
+  test.each(["csv", "json"])("exports only the filtered operations as %s", async (format) => {
+    const event = {
+      id: "audit-export",
+      timestamp: "2026-09-09T10:00:00.000Z",
+      type: "maintenance",
+      action: "VACUUM",
+      target: 'users,"archive"\n2026',
+      connectionName: "团队,DB",
+      user: "=admin",
+      result: "success",
+      duration: 0,
+      details: 'completed "safely"',
+      ip: "192.0.2.1",
+      reason: "origin_mismatch",
+      bucket: "login_client",
+      correlationId: "op-1",
+    };
+    fetchMock = mockGlobalFetch({
+      "/api/admin/audit": (req: Request) => ({
+        json: {
+          events:
+            new URL(req.url).searchParams.get("type") === "maintenance"
+              ? [event, { ...event, id: "hidden-by-search", target: "orders" }]
+              : [event, { ...event, id: "hidden-by-type", type: "kill_session", action: "KILL" }],
+        },
+      }),
+    });
+    const user = userEvent.setup();
+    const view = render(<AuditTab />);
+    await waitFor(() => expect(view.queryByText("KILL")).not.toBeNull());
+    fireEvent.keyDown(view.getByRole("combobox"), { key: "ArrowDown" });
+    fireEvent.keyDown(view.getByRole("option", { name: "Maintenance" }), { key: "Enter" });
+    await waitFor(() => expect(view.queryByText("orders")).not.toBeNull());
+    fireEvent.change(view.getByPlaceholderText("Search..."), { target: { value: "archive" } });
+    await user.click(view.getByRole("button", { name: "Export" }));
+    await user.click(view.getByRole("menuitem", { name: `Export as ${format.toUpperCase()}` }));
+    const [content, mime, fileName] = mockDownloadText.mock.calls.at(-1)!;
+    expect(fileName).toMatch(new RegExp(`^audit_operations_\\d+\\.${format}$`));
+    if (format === "json") {
+      expect(mime).toBe("application/json");
+      expect(content).toBe(JSON.stringify([event], null, 2));
+    } else {
+      expect(mime).toBe("text/csv");
+      expect(content).toBe(
+        'Timestamp,Type,Action,Target,Connection,User,Result,Duration (ms),Details,IP,Reason,Bucket,Correlation ID,ID\n2026-09-09T10:00:00.000Z,maintenance,VACUUM,"users,""archive""\n2026","团队,DB","\'=admin",success,0,"completed ""safely""",192.0.2.1,origin_mismatch,login_client,op-1,audit-export',
+      );
+    }
+  });
+
+  test.each(["csv", "json"])(
+    "exports only filtered query history as %s with the history export shape",
+    async (format) => {
+      mockHistory = [
+        { ...defaultHistory()[0], query: "SELECT 'selected'", executedAt: new Date("2026-09-09T10:00:00Z") },
+        { ...defaultHistory()[1], query: "SELECT 'selected'" },
+        { ...defaultHistory()[0], id: "h3", query: "SELECT 'hidden'" },
+      ];
+      const user = userEvent.setup();
+      const view = render(<AuditTab />);
+      await user.click(view.getByRole("tab", { name: "Queries" }));
+      fireEvent.keyDown(view.getByRole("combobox"), { key: "ArrowDown" });
+      fireEvent.keyDown(view.getByRole("option", { name: "Success" }), { key: "Enter" });
+      fireEvent.change(view.getByPlaceholderText("Search query..."), { target: { value: "selected" } });
+      await user.click(view.getByRole("button", { name: "Export" }));
+      await user.click(view.getByRole("menuitem", { name: `Export as ${format.toUpperCase()}` }));
+      const [content, mime, fileName] = mockDownloadText.mock.calls.at(-1)!;
+      expect(fileName).toMatch(new RegExp(`^query_history_\\d+\\.${format}$`));
+      if (format === "json") {
+        expect(mime).toBe("application/json");
+        expect(content).toBe(JSON.stringify([mockHistory[0]], null, 2));
+      } else {
+        expect(mime).toBe("text/csv");
+        expect(content).toBe(
+          "Executed At,Status,Connection,Tab,Execution Time (ms),Rows,Query,Error\n2026-09-09T10:00:00.000Z,success,TestDB,,10,1,SELECT 'selected',",
+        );
+      }
+    },
+  );
+
+  test("audit export is disabled while refreshing and when no filtered rows remain", async () => {
+    const view = render(<AuditTab />);
+    expect(view.getByRole("button", { name: "Export" }).hasAttribute("disabled")).toBe(true);
+    await waitFor(() => expect(view.queryByText("VACUUM")).not.toBeNull());
+    fireEvent.click(view.getByRole("button", { name: "Refresh" }));
+    expect(view.getByRole("button", { name: "Export" }).hasAttribute("disabled")).toBe(true);
+    await waitFor(() => expect(view.getByRole("button", { name: "Export" }).hasAttribute("disabled")).toBe(false));
+    fireEvent.change(view.getByPlaceholderText("Search..."), { target: { value: "missing-row" } });
+    expect(view.getByRole("button", { name: "Export" }).hasAttribute("disabled")).toBe(true);
+    expect(mockDownloadText).not.toHaveBeenCalled();
+  });
+
+  test("query export includes every matching row beyond the table display limit", async () => {
+    mockHistory = Array.from({ length: 201 }, (_, index) => ({ ...defaultHistory()[0], id: `query-${index}` }));
+    const user = userEvent.setup();
+    const view = render(<AuditTab />);
+    await user.click(view.getByRole("tab", { name: "Queries" }));
+    expect(view.container.querySelectorAll("tbody tr").length).toBe(200);
+    await user.click(view.getByRole("button", { name: "Export" }));
+    await user.click(view.getByRole("menuitem", { name: "Export as JSON" }));
+    expect(JSON.parse(mockDownloadText.mock.calls.at(-1)![0])).toHaveLength(201);
+    fireEvent.change(view.getByPlaceholderText("Search query..."), { target: { value: "no-match" } });
+    expect(view.getByRole("button", { name: "Export" }).hasAttribute("disabled")).toBe(true);
   });
 
   test("operations tab fetches audit events", async () => {

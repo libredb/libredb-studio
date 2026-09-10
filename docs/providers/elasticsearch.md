@@ -628,6 +628,14 @@ column ([§6](#6-schema-introspection)) — and the fork *allows* the container 
 deliberately not branched on, because a starter query that works on one product and fails on the other
 is worse than one that works on both.
 
+**Multi-valued fields are selectable, but the projected value is lossy.** Measured on 9.1.4:
+`SELECT tags FROM arrprobe` is HTTP 400 unless SQL field leniency is enabled, so the provider sets
+`field_multi_value_leniency` on Elasticsearch queries. The result still contains only one element
+rather than the complete array. The important trap is that filtering sees the whole field while
+projection does not: `SELECT tags FROM arrprobe WHERE tags = 'alpha'` matched the row while
+displaying `zebra` for `tags`. The value shown in the grid therefore is not necessarily the value that
+satisfied the predicate. A 1200-document probe also confirmed that the setting survives cursor paging.
+
 ### 5.5 The `prepareQuery()` override: there is no second page
 
 Measured: `SELECT customer FROM probe_orders LIMIT 2 OFFSET 1` is HTTP 400,

@@ -84,6 +84,8 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   group: "cosmetic",
   environment: "cosmetic",
   createdAt: "cosmetic",
+  // Query timing does not change the database or the principal it authenticates as.
+  queryTimeout: "cosmetic",
   // Both sides of a comparison are already matched on seedId, and `managed` is what
   // selects the comparison rather than a term in it.
   managed: "cosmetic",

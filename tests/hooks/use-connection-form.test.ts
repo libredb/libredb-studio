@@ -85,6 +85,96 @@ describe("useConnectionForm", () => {
 
   // ── Default State ──────────────────────────────────────────────────────────
 
+  test("whitespace-only query timeout keeps the provider default", async () => {
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) }),
+    );
+    act(() => result.current.setQueryTimeout("   "));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(onConnect.mock.calls[0][0].queryTimeout).toBeUndefined();
+  });
+
+  test("query timeout is optional and saved in milliseconds", async () => {
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const onTestConnection = mock(async () => ({ success: true }));
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect, onTestConnection }));
+    expect(result.current.queryTimeout).toBe("");
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect.mock.calls[0][0].queryTimeout).toBeUndefined();
+    act(() => result.current.setQueryTimeout("120000"));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect.mock.calls[1][0].queryTimeout).toBe(120000);
+    expect(result.current.queryTimeout).toBe("");
+  });
+
+  test("reopens a saved timeout and clearing it restores the default", async () => {
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const editConnection: DatabaseConnection = {
+      id: "timeout",
+      name: "Reporting",
+      type: "postgres",
+      createdAt: new Date(),
+      queryTimeout: 120000,
+    };
+    const { result, rerender } = renderHook(
+      ({ connection }) =>
+        useConnectionForm({
+          ...defaultProps,
+          editConnection: connection,
+          onConnect,
+          onTestConnection: async () => ({ success: true }),
+        }),
+      { initialProps: { connection: editConnection } },
+    );
+    expect(result.current.queryTimeout).toBe("120000");
+    act(() => result.current.setQueryTimeout(""));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect.mock.calls[0][0].queryTimeout).toBeUndefined();
+    rerender({ connection: { ...editConnection, queryTimeout: 5000 } });
+    expect(result.current.queryTimeout).toBe("5000");
+    rerender({ connection: { ...editConnection, queryTimeout: undefined } });
+    expect(result.current.queryTimeout).toBe("");
+  });
+
+  test("closing a new connection resets its timeout", () => {
+    const { result, rerender } = renderHook(({ isOpen }) => useConnectionForm({ ...defaultProps, isOpen }), {
+      initialProps: { isOpen: true },
+    });
+    act(() => result.current.setQueryTimeout("5000"));
+    rerender({ isOpen: false });
+    expect(result.current.queryTimeout).toBe("");
+  });
+
+  test.each(["0", "-1", "1.5", "abc", "Infinity", "2147483648"])(
+    "rejects invalid timeout %s before testing or saving",
+    async (value) => {
+      const onConnect = mock(() => {});
+      const onTestConnection = mock(async () => ({ success: true }));
+      const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect, onTestConnection }));
+      act(() => result.current.setQueryTimeout(value));
+      await act(async () => {
+        await result.current.handleTestConnection();
+      });
+      expect(result.current.testResult?.message).toMatch(/Query timeout must be a whole number/);
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      expect(result.current.testResult?.tone).toBe("error");
+      expect(onTestConnection).not.toHaveBeenCalled();
+      expect(onConnect).not.toHaveBeenCalled();
+    },
+  );
+
   test("default state has type postgres, host localhost, port 5432", () => {
     const { result } = renderHook(() => useConnectionForm(defaultProps));
 
@@ -534,6 +624,71 @@ describe("useConnectionForm", () => {
   });
 
   // ── handleConnect calls onConnect on successful test ───────────────────────
+
+  test.each(["unchanged", "tls", "host", "port", "environment"])(
+    "saving a copy preserves applicable connection settings: %s",
+    async (changed) => {
+      const source: DatabaseConnection = {
+        id: "independent-copy",
+        name: "Team (copy)",
+        type: "postgres",
+        host: "db.example.test",
+        port: 5432,
+        user: "fixture_user",
+        password: "fixture_password",
+        database: "app",
+        createdAt: new Date(0),
+        color: "#123456",
+        environment: "development",
+        group: "team",
+        agentUser: "agent_ro",
+        agentPassword: "fixture_agent",
+        ssl: {
+          mode: "require",
+          rejectUnauthorized: true,
+          caCert: "fixture-ca",
+          clientCert: "fixture-cert",
+          clientKey: "fixture-key",
+        },
+        sshTunnel: {
+          enabled: true,
+          host: "bastion.example.test",
+          port: 22,
+          username: "ops",
+          authMethod: "password",
+          password: "fixture_ssh",
+          hostKeyFingerprint: "SHA256:fixture-host-fingerprint",
+        },
+      };
+      const original = structuredClone(source);
+      const onConnect = mock((_connection: DatabaseConnection) => {});
+      const { result } = renderHook(() =>
+        useConnectionForm({
+          ...defaultProps,
+          editConnection: source,
+          onConnect,
+          onTestConnection: async () => ({ success: true }),
+        }),
+      );
+      act(() => {
+        if (changed === "tls") result.current.setSSLMode("verify-full");
+        if (changed === "host") result.current.setSSHHost("new-bastion.example.test");
+        if (changed === "port") result.current.setSSHPort("2222");
+        if (changed === "environment") result.current.setEnvironment("production");
+      });
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      const saved = onConnect.mock.calls[0][0];
+      expect(saved.ssl?.rejectUnauthorized).toBe(changed === "tls" ? undefined : true);
+      expect(saved.sshTunnel?.hostKeyFingerprint).toBe(
+        changed === "host" || changed === "port" ? undefined : source.sshTunnel?.hostKeyFingerprint,
+      );
+      if (changed === "unchanged") expect(saved).toEqual(source);
+      if (changed === "environment") expect(saved.color).not.toBe(source.color);
+      expect(source).toEqual(original);
+    },
+  );
 
   test("handleConnect calls onConnect on successful test", async () => {
     mockGlobalFetch({

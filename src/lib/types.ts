@@ -153,6 +153,8 @@ export interface DatabaseConnection {
   /** Trino: the session schema used to resolve unqualified table names. */
   schema?: string;
   connectionString?: string;
+  /** Query timeout in milliseconds. Unset uses the provider default of 60 seconds. */
+  queryTimeout?: number;
   createdAt: Date;
   color?: string;
   environment?: ConnectionEnvironment;

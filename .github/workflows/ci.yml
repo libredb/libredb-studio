@@ -122,6 +122,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
+      - name: Setup Node
+        # The suite runs under Bun, but tests that spawn `bin/studio.js` get
+        # whatever `node` the image happens to ship - currently 22.x, below the
+        # launcher's own Node 24 floor, so the launcher refuses and the test
+        # dies on a bare exit 1. Pin the product's baseline instead of
+        # inheriting the runner's default (#709 was red on exactly this).
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:

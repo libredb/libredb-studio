@@ -43,6 +43,7 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   // against it is the secret, and it is classified above.
   authSource: "public",
   schema: "public",
+  queryTimeout: "public",
   managed: "public",
   seedId: "public",
   agentUser: "public",

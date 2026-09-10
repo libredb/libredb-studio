@@ -280,6 +280,8 @@ interface SearchDialectSpec {
   /** The SQL endpoint, and the query string it needs (empty when it needs none). */
   readonly sqlPath: string;
   readonly sqlQuery: string;
+  /** Whether SQL should tolerate multi-valued fields. Elasticsearch supports this request option. */
+  readonly fieldMultiValueLeniency: boolean;
   /** The success envelope's declared-columns key. */
   readonly columnsKey: string;
   /**
@@ -321,6 +323,7 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
     label: "Elasticsearch",
     sqlPath: "/_sql",
     sqlQuery: "format=json",
+    fieldMultiValueLeniency: true,
     columnsKey: "columns",
     // Elasticsearch folds the alias into `name`, so there is no separate member.
     aliasKey: null,
@@ -358,6 +361,7 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
     label: "OpenSearch",
     sqlPath: "/_plugins/_sql",
     sqlQuery: "",
+    fieldMultiValueLeniency: false,
     columnsKey: "schema",
     aliasKey: "alias",
     rowsKey: "datarows",
@@ -875,7 +879,16 @@ export class SearchHttpTransport implements SearchTransport {
   public async query(sql: string, signal?: AbortSignal): Promise<SearchQueryResult> {
     const path = `${this.spec.sqlPath}${this.spec.sqlQuery === "" ? "" : `?${this.spec.sqlQuery}`}`;
 
-    const first = asRecord(await this.request(path, signal, JSON.stringify({ query: sql })));
+    const first = asRecord(
+      await this.request(
+        path,
+        signal,
+        JSON.stringify({
+          query: sql,
+          ...(this.spec.fieldMultiValueLeniency ? { field_multi_value_leniency: true } : {}),
+        }),
+      ),
+    );
     if (first === null) throw unreadableBody(this.spec, "a SQL result");
 
     const result = toQueryResult(this.spec, first);

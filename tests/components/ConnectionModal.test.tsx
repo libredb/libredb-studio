@@ -94,6 +94,7 @@ mock.module("@/components/ui/label", () => ({
 // ── Mock useConnectionForm hook ─────────────────────────────────────────────
 const mockSetType = mock(() => {});
 const mockSetName = mock(() => {});
+const mockSetQueryTimeout = mock(() => {});
 const mockSetHost = mock(() => {});
 const mockSetPort = mock(() => {});
 const mockSetUser = mock(() => {});
@@ -137,6 +138,8 @@ function getDefaultForm() {
     setType: mockSetType,
     name: "",
     setName: mockSetName,
+    queryTimeout: "",
+    setQueryTimeout: mockSetQueryTimeout,
     host: "localhost",
     setHost: mockSetHost,
     port: "5432",
@@ -312,6 +315,7 @@ describe("ConnectionModal", () => {
     mockFormOverrides = {};
     mockSetType.mockClear();
     mockSetName.mockClear();
+    mockSetQueryTimeout.mockClear();
     mockSetHost.mockClear();
     mockSetPort.mockClear();
     mockSetShowPasteInput.mockClear();
@@ -321,6 +325,29 @@ describe("ConnectionModal", () => {
   });
 
   // ── 1. Does not render when isOpen=false ────────────────────────────────────
+
+  test("shows an optional query timeout with the default hint and forwards edits", () => {
+    const { getByLabelText, getByText, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const input = getByLabelText("Query Timeout (ms)") as HTMLInputElement;
+    expect(input.value).toBe("");
+    expect(input.placeholder).toBe("60000");
+    expect(input.min).toBe("1");
+    expect(input.max).toBe("2147483647");
+    expect(input.step).toBe("1");
+    expect(getByText("Leave blank to use the default of 60 seconds.")).toBeDefined();
+    fireEvent.change(input, { target: { value: "120000" } });
+    expect(mockSetQueryTimeout).toHaveBeenCalledWith("120000");
+    mockFormOverrides = { queryTimeout: "120000" };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    fireEvent.change(input, { target: { value: "" } });
+    expect(mockSetQueryTimeout).toHaveBeenCalledWith("");
+  });
+
+  test("shows the saved query timeout when editing", () => {
+    mockFormOverrides = { isEditMode: true, queryTimeout: "120000" };
+    const { getByLabelText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect((getByLabelText("Query Timeout (ms)") as HTMLInputElement).value).toBe("120000");
+  });
 
   test("does not render dialog content when isOpen is false", () => {
     const props = createDefaultProps({ isOpen: false });

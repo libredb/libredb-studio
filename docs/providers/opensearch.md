@@ -621,6 +621,10 @@ where `elasticsearch` is `"standard"` (a backslash there is data).
 than a mapped field and because the same statement is not portable to the sibling type-id
 ([§6](#6-schema-introspection)).
 
+**Multi-valued fields stay multi-valued.** Measured on 3.8.0: `SELECT tags FROM arrprobe`
+returns the complete array in the result cell with an ordinary SQL request. No additional query option
+is required.
+
 **Block comments do not nest**, same as upstream: `SELECT /* a /* b */ 1 AS a` is HTTP 200, so the
 first `*/` closed the run.
 

@@ -22,7 +22,10 @@ class MockLLMError extends Error {
   }
 }
 class MockLLMConfigError extends MockLLMError {
-  constructor(msg: string) {
+  constructor(
+    msg: string,
+    public readonly reason?: "missing_credentials",
+  ) {
     super(msg);
     this.name = "LLMConfigError";
   }
@@ -148,6 +151,20 @@ describe("POST /api/ai/query-safety", () => {
 
     const res = await POST(req as never);
     expect(res.status).toBe(503);
+    expect((await parseResponseJSON<{ code: string }>(res)).code).toBe("LLM_CONFIG");
+  });
+
+  test("missing credentials reach the client as LLM_UNCONFIGURED", async () => {
+    mockCreateLLMProvider.mockImplementation(async () => {
+      throw new MockLLMConfigError("API key is required", "missing_credentials");
+    });
+    const req = createMockRequest("/api/ai/query-safety", {
+      method: "POST",
+      body: { query: "DELETE FROM users" },
+    });
+    const res = await POST(req as never);
+    expect(res.status).toBe(503);
+    expect((await parseResponseJSON<{ code: string }>(res)).code).toBe("LLM_UNCONFIGURED");
   });
 
   test("returns 401 on LLMAuthError", async () => {

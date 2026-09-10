@@ -12,10 +12,33 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 
+const title = "LibreDB Studio | Universal Database Editor";
+const description =
+  "A self-hosted, web-based SQL IDE for PostgreSQL, MySQL, MongoDB and more, with AI-assisted queries, schema exploration, and support for SQL and NoSQL engines.";
+// Project previews use the public demo documented in README, including on private deployments.
+const siteUrl = "https://app.libredb.org";
+const previewImage = {
+  url: `${siteUrl}/screenshots/hero-editor.png`,
+  alt: "LibreDB Studio SQL editor and query results",
+};
+
 export const metadata: Metadata = {
-  title: "LibreDB Studio | Universal Database Editor",
-  description:
-    "A self-hosted, web-based SQL IDE for PostgreSQL, MySQL, MongoDB and more, with AI-assisted queries, schema exploration, and support for SQL and NoSQL engines.",
+  title,
+  description,
+  openGraph: {
+    type: "website",
+    url: siteUrl,
+    title,
+    description,
+    siteName: "LibreDB Studio",
+    images: [{ ...previewImage, width: 1440, height: 900 }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title,
+    description,
+    images: [previewImage],
+  },
   manifest: withBasePath("/site.webmanifest"),
   icons: {
     icon: [

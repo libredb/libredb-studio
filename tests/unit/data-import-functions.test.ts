@@ -14,6 +14,22 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("parseCSV", () => {
+  test.each([";", "\t"] as const)(
+    "parses the chosen delimiter with quoted separators and decimal commas (%s)",
+    (delimiter) => {
+      const text = `name${delimiter}amount\r\n"Snow${delimiter}""quote"""${delimiter}1,5\r\n`;
+      expect(parseCSV(text, true, delimiter)).toEqual({
+        headers: ["name", "amount"],
+        rows: [[`Snow${delimiter}"quote"`, "1,5"]],
+        totalRows: 1,
+      });
+      expect(parseCSV(`Alice${delimiter}30`, false, delimiter)).toEqual({
+        headers: ["column_1", "column_2"],
+        rows: [["Alice", "30"]],
+        totalRows: 1,
+      });
+    },
+  );
   test("parses simple CSV", () => {
     const result = parseCSV("name,age\nAlice,30\nBob,25");
     expect(result.headers).toEqual(["name", "age"]);
@@ -29,6 +45,29 @@ describe("parseCSV", () => {
     expect(result.headers).toEqual([]);
     expect(result.rows).toEqual([]);
     expect(result.totalRows).toBe(0);
+  });
+
+  test("preserves every row and generates column names for headerless CSV", () => {
+    expect(parseCSV("Alice,30\r\n\r\nBob,25\r\n", false)).toEqual({
+      headers: ["column_1", "column_2"],
+      rows: [
+        ["Alice", "30"],
+        ["Bob", "25"],
+      ],
+      totalRows: 2,
+    });
+  });
+
+  test("preserves a single headerless row with quoted and empty fields", () => {
+    expect(parseCSV('"Alice, Smith","She said ""hi""",,Alice', false)).toEqual({
+      headers: ["column_1", "column_2", "column_3", "column_4"],
+      rows: [["Alice, Smith", 'She said "hi"', "", "Alice"]],
+      totalRows: 1,
+    });
+  });
+
+  test("returns empty data for a blank headerless CSV", () => {
+    expect(parseCSV(" \r\n\r\n", false)).toEqual({ headers: [], rows: [], totalRows: 0 });
   });
 
   test("returns empty for whitespace-only input", () => {
