@@ -175,6 +175,7 @@ jobs:
     needs: build-and-push
     if: needs.build-and-push.outputs.skip != 'true' && needs.build-and-push.outputs.submittable == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     strategy:

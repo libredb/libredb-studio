@@ -16,14 +16,14 @@ const EXPECTED_TIMEOUTS: Record<string, Record<string, number>> = {
   "flatpak-smoke.yml": { appimage: 30, flatpak: 20 },
   "integration-check.yml": { "integration-rules": 10 },
   "npm-publish.yml": { validate: 25, publish: 15, "dispatch-smoke": 5 },
-  "npx-engine-smoke.yml": { "npx-smoke": 15 },
-  "operator-release.yml": { "build-and-push": 30 },
+  "npx-engine-smoke.yml": { "npx-smoke": 30 },
+  "operator-release.yml": { "build-and-push": 30, "submit-catalogs": 30 },
   "release-artifacts.yml": {
     guard: 5,
     channels: 10,
     draft: 5,
     build: 20,
-    "windows-package": 20,
+    "windows-package": 30,
     publish: 15,
     sbom: 15,
     "linux-packages": 20,
@@ -54,7 +54,7 @@ function readTimeouts(file: string): Record<string, unknown> {
 
 describe("workflow job timeouts", () => {
   test.each(Object.entries(EXPECTED_TIMEOUTS))("%s has a deliberate timeout for every job", (file, expected) => {
-    expect(readTimeouts(file)).toEqual(expected);
+    expect(readTimeouts(file)).toStrictEqual(expected);
   });
 
   test("uses limits sized for different kinds of work", () => {

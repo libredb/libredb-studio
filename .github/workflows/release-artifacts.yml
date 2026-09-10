@@ -252,7 +252,7 @@ jobs:
     # (their manifests point at this exact asset) and npx on win32.
     needs: guard
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
         # Git Bash: keeps the packaging scripts single-source with the POSIX

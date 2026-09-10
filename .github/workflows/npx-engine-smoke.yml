@@ -38,7 +38,7 @@ jobs:
     name: bare npx on Node ${{ matrix.node-version }} (${{ matrix.expect }})
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
