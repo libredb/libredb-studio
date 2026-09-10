@@ -188,6 +188,39 @@ describe("ConnectionItem", () => {
     expect(defaultOnSelect).toHaveBeenCalledTimes(0);
   });
 
+  test("duplicate requests an independent connection without selecting or deleting the source", () => {
+    const onDuplicate = mock(() => {});
+    const view = render(
+      <ConnectionItem
+        connection={mockPostgresConnection}
+        isActive={false}
+        onSelect={defaultOnSelect}
+        onDelete={defaultOnDelete}
+        onEdit={defaultOnEdit}
+        onDuplicate={onDuplicate}
+      />,
+    );
+    fireEvent.click(view.getByRole("button", { name: "Duplicate connection" }));
+    expect(onDuplicate).toHaveBeenCalledWith(mockPostgresConnection);
+    expect(defaultOnSelect).not.toHaveBeenCalled();
+    expect(defaultOnDelete).not.toHaveBeenCalled();
+    expect(defaultOnEdit).not.toHaveBeenCalled();
+  });
+
+  test("duplicate is absent for managed connections and hosts without a duplication handler", () => {
+    const props = {
+      connection: { ...mockPostgresConnection, managed: true },
+      isActive: false,
+      onSelect: defaultOnSelect,
+      onDelete: defaultOnDelete,
+      onDuplicate: mock(() => {}),
+    };
+    const view = render(<ConnectionItem {...props} />);
+    expect(view.queryByRole("button", { name: "Duplicate connection" })).toBeNull();
+    view.rerender(<ConnectionItem {...props} connection={mockPostgresConnection} onDuplicate={undefined} />);
+    expect(view.queryByRole("button", { name: "Duplicate connection" })).toBeNull();
+  });
+
   test("onDelete fires on delete button click with stopPropagation", () => {
     const { container } = render(
       <ConnectionItem

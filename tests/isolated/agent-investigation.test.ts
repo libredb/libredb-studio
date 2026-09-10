@@ -3108,6 +3108,119 @@ describe("the run loop is bounded", () => {
       // One turn only: the second scripted entry is never reached.
       expect(script.turns).toHaveLength(1);
     });
+
+    /*
+      The other half, and the reason the re-ask above is not enough on its own.
+
+      A broken frame is an accident: the same bytes sent again land. A tool call the ENDPOINT
+      could not parse is not an accident, and re-sending byte-identical bytes asks the model to
+      make the same mistake a second time. Measured on `gpt-oss:20b`, database-assessment, on the
+      build this branch carries: three runs, each re-asked the full two allowed times, six
+      attempts, all six dead the same way, and the run ended `model-unavailable` seventeen seconds
+      into a 630-second budget having called four tools.
+
+      The endpoint says exactly what is wrong and hands back the model's own text:
+
+          error parsing tool call: raw='We need to answer: "Where is this database's data
+          incomplete or surprising?" ... First, profile salary.{"depth":"basic","table":"salary"}'
+          err=invalid character 'W' looking for beginning of value
+
+      A reasoning model writing its thinking into the argument field, with valid JSON after it.
+      Studio holds that sentence, throws it away, and ends the run without telling the model
+      anything — which is the shape this repository has now corrected five times.
+
+      Free, on the same argument as every other recovery here: the alternative is the throw two
+      lines below, so the run is already over. The turn cannot cost a pass.
+    */
+    test("a tool call the endpoint could not read is answered, not re-sent unchanged", async () => {
+      const b = boot(freshDataDir());
+      const run = await startRun(b);
+      const unreadable = () => {
+        throw new LLMStreamError(
+          `error parsing tool call: raw='We need to answer. First, profile salary.{"depth":"basic","table":"salary"}', err=invalid character 'W' looking for beginning of value`,
+          "openai",
+        );
+      };
+      // The call that could not be read, then the same work done readably.
+      const script = scriptedModel(unreadable, callsTool("inspect_schema", { schema: "public" }), reportOn());
+
+      const result = await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+      });
+
+      // Three turns: the unreadable call, the read it makes once told, and the report. Not the
+      // four a run spends re-sending the identical bytes twice before dying.
+      expect(script.turns).toHaveLength(3);
+      const events = await eventsOf(b.store, run.runId);
+      expect(events.filter((event) => event.kind === "guidance-issued").map((event) => event.notice)).toContain(
+        "tool-call-unreadable",
+      );
+      // The sentence names the fault, so the model has something to do differently.
+      expect(script.turns[1]?.transcript).toContain("could not be read");
+      expect(result.stopReason).toBe("report-composed");
+    });
+
+    test("a SECOND unreadable call is answered too, because the fault recurs within one run", async () => {
+      /*
+        The correction to this bound, measured rather than argued.
+
+        It shipped as once per run on the reasoning that a model which hears the sentence and
+        writes the same unparseable arguments again is not rescued by hearing it twice. On
+        `gpt-oss:20b` that is wrong in the way that matters: of ten runs four met the fault, TWO
+        heard the sentence once and went on to answer, and the other two met it a SECOND time
+        later in the run and were ended `model-unavailable` by the bound rather than by anything
+        the model did. Both endings are on the ledger as `failed / model-unavailable` after
+        exactly one `tool-call-unreadable`.
+
+        The sentence works when it is allowed to be said. What the flag encoded was the assumption
+        that the mistake happens once; a long run of a reasoning model makes it more than once, in
+        different turns and over different arguments.
+      */
+      const b = boot(freshDataDir());
+      const run = await startRun(b);
+      const unreadable = () => {
+        throw new LLMStreamError("error parsing tool call: raw='thinking'", "openai");
+      };
+      const script = scriptedModel(
+        unreadable,
+        callsTool("inspect_schema", { schema: "public" }),
+        // The same fault again, turns later and over different arguments.
+        unreadable,
+        reportOn(),
+      );
+
+      const result = await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+      });
+
+      const notices = (await eventsOf(b.store, run.runId))
+        .filter((event) => event.kind === "guidance-issued")
+        .map((event) => event.notice);
+      expect(notices.filter((notice) => notice === "tool-call-unreadable")).toHaveLength(2);
+      expect(result.stopReason).toBe("report-composed");
+    });
+
+    test("a third ends the run, so a model that cannot comply still fails fast", async () => {
+      const b = boot(freshDataDir());
+      const run = await startRun(b);
+      const unreadable = () => {
+        throw new LLMStreamError("error parsing tool call: raw='thinking'", "openai");
+      };
+      // Told twice and unable to act on it, which is the case the bound exists for.
+      const script = scriptedModel(unreadable, unreadable, unreadable, unreadable, unreadable, unreadable);
+
+      await expect(
+        runInvestigation(run.runId, {
+          service: b.service,
+          model: await modelOver(script.fetch),
+          resources: b.resources,
+        }),
+      ).rejects.toThrow(/parsing tool call/);
+    });
   });
 
   describe("a turn the ceiling cut is given back, because the RUN still has its time", () => {
@@ -3445,7 +3558,7 @@ describe("a run that stops having read nothing is told to read it itself", () =>
     The drive holds a sentence written for exactly this ending — "Read it yourself. Call
     inspect_schema for the tables and their columns, and inspect_plan for how a statement will
     run" — and for a while sent it only to a model whose profile asked for it. One profile of
-    twenty-eight does, and a model nobody has measured has no profile at all, so the model most
+    thirty does, and a model nobody has measured has no profile at all, so the model most
     in need of the sentence was the one guaranteed not to receive it.
 
     Measured across the sweep behind 0.14.1: three hundred runs ended `model-stopped` with
@@ -3460,7 +3573,7 @@ describe("a run that stops having read nothing is told to read it itself", () =>
     was withholding was a sentence on a run already lost.
 
     This is the fourth setting found in this shape and the second corrected. A measured profile
-    is still obeyed: all twenty-eight state the field, so no shipped model's turn count moves.
+    is still obeyed: every shipped entry states the field, so no model's turn count moved on it.
   */
   test("a model NOBODY has measured is told to read, because the sentence is the server's own", async () => {
     const b = boot(freshDataDir());

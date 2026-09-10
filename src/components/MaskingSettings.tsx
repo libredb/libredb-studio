@@ -34,6 +34,10 @@ const ALL_MASK_TYPES: MaskType[] = [
   "custom",
 ];
 
+const MASKING_PRESETS = DEFAULT_MASKING_CONFIG.patterns.filter((pattern) =>
+  ["email", "phone", "card", "ssn"].includes(pattern.maskType),
+);
+
 export function MaskingSettings() {
   const [config, setConfig] = useState<MaskingConfig>(() => loadMaskingConfig());
   const [editingPattern, setEditingPattern] = useState<MaskingPattern | null>(null);
@@ -96,6 +100,13 @@ export function MaskingSettings() {
     setEditCustomMask("");
     setIsNewPattern(true);
     setIsDialogOpen(true);
+  }, []);
+
+  const prefillPreset = useCallback((preset: MaskingPattern) => {
+    setEditName(preset.name);
+    setEditMaskType(preset.maskType);
+    setEditColumnPatterns(preset.columnPatterns.join("\n"));
+    setEditCustomMask(preset.customMask || "");
   }, []);
 
   const handleDialogSave = useCallback(() => {
@@ -345,6 +356,25 @@ export function MaskingSettings() {
             <DialogTitle>{isNewPattern ? "Add Masking Pattern" : "Edit Masking Pattern"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            {isNewPattern && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-fg-secondary">Start from a preset</p>
+                <div className="flex flex-wrap gap-2">
+                  {MASKING_PRESETS.map((preset) => (
+                    <Button
+                      key={preset.id}
+                      variant="outline"
+                      size="sm"
+                      aria-label={`Use ${preset.name} preset`}
+                      onClick={() => prefillPreset(preset)}
+                    >
+                      {preset.name}
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-xs text-fg-muted">Review and edit the column patterns before saving.</p>
+              </div>
+            )}
             <div className="space-y-2">
               <label htmlFor="masking-pattern-name" className="text-xs font-medium text-fg-secondary">
                 Name

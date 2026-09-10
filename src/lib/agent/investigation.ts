@@ -45,7 +45,7 @@
 
 import { createHash } from "node:crypto";
 import { logger } from "@/lib/logger";
-import { isRetryableError } from "@/lib/llm/types";
+import { isRetryableError, isToolCallParseError } from "@/lib/llm/types";
 import { type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
 import { z } from "zod";
 import {
@@ -91,6 +91,7 @@ import {
   AGENT_MODEL_TURN_TIMEOUT_MS,
   AGENT_REPORT_RESERVE_MS,
   AGENT_TRANSPORT_TURN_RETRIES,
+  AGENT_UNREADABLE_TOOL_CALL_ANSWERS,
   AGENT_REPORT_RESERVE_TURNS,
   AGENT_WORKFLOW_BUDGETS,
 } from "./execution-policy";
@@ -2467,6 +2468,7 @@ export function guidanceDelivered(events: readonly AgentRunEvent[]): Readonly<Re
     "present-before-report": 0,
     "cite-what-you-read": 0,
     "compare-before-report": 0,
+    "tool-call-unreadable": 0,
   };
   for (const event of events) {
     if (event.kind === "guidance-issued") counts[event.notice] += 1;
@@ -2679,6 +2681,18 @@ export async function runInvestigation(
     const delivered = guidanceDelivered(record.events);
     /** Whether this RUN has already answered a stop that read nothing; see `retryUnreadStop`. */
     let unreadStopRetried = delivered["unread-stop"] > 0;
+    /**
+     * Whether this RUN has already been told a tool call of its own could not be parsed.
+     *
+     * Read off the ledger like every other bound here (B51), because it is a property of the RUN
+     * and a second drive of the same run has already spent what it spent.
+     *
+     * A COUNT rather than a flag, and that is a correction this repository measured on itself.
+     * See `AGENT_UNREADABLE_TOOL_CALL_ANSWERS`: the fault recurs within a single run, in different
+     * turns and over different arguments, and the runs that met it twice were ended by the bound
+     * rather than by the model.
+     */
+    let unreadableToolCallAnswers = delivered["tool-call-unreadable"];
     const priorProgress = describePriorProgress(record);
     if (priorProgress !== null) messages.push({ role: "user", content: priorProgress });
 
@@ -3359,8 +3373,36 @@ export async function runInvestigation(
           Bounded by the run's own clock and by a small count, so a provider that is genuinely down
           still ends the run — with its own error, finally meaning it.
         */
+        /*
+          A tool call the ENDPOINT could not parse, which the re-ask above cannot reach.
+
+          Both arrive here as `LLMStreamError` and only one of them is an accident. A broken frame
+          is worth the identical bytes a second time; arguments the provider failed to read are
+          not, and sending them again asks the model to repeat itself. Measured on `gpt-oss:20b`,
+          database-assessment: three runs, six re-asks between them, six identical failures, every
+          run dead seventeen seconds into a 630-second budget with four tools already called.
+
+          The endpoint hands back what it could not read, so the fault is known and specific — a
+          reasoning model writing its thinking into the argument field with valid JSON after it —
+          and Studio was throwing that away and ending the run without saying anything.
+
+          Free, because the alternative is the throw below: the run is over either way, so the turn
+          cannot cost a pass. Once per run, and the second one ends it.
+        */
+        if (
+          isToolCallParseError(error) &&
+          unreadableToolCallAnswers < AGENT_UNREADABLE_TOOL_CALL_ANSWERS &&
+          turns < maxTurns &&
+          resources.deadline.remainingMs() > 0
+        ) {
+          unreadableToolCallAnswers += 1;
+          messages.push({ role: "user", content: notice(BASELINE_NOTICES.unreadableToolCall) });
+          await issueGuidance("tool-call-unreadable");
+          return null;
+        }
         if (
           !isRetryableError(error) ||
+          isToolCallParseError(error) ||
           transportRetries >= AGENT_TRANSPORT_TURN_RETRIES ||
           resources.deadline.remainingMs() <= 0
         ) {

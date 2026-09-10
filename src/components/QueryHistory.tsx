@@ -3,7 +3,7 @@
 import React, { useState, useMemo } from "react";
 import { storage } from "@/lib/storage";
 import { QueryHistoryItem } from "@/lib/types";
-import { csvRow } from "@/lib/export/csv";
+import { queryHistoryText } from "@/lib/export/query-history";
 import { downloadText } from "@/lib/export/download";
 import {
   CircleCheck,
@@ -100,35 +100,11 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
   };
 
   const exportHistory = (format: "csv" | "json") => {
-    let content = "";
-    let mimeType = "";
-    const fileName = `query_history_${new Date().getTime()}.${format}`;
-
-    if (format === "csv") {
-      const headers = ["Executed At", "Status", "Connection", "Tab", "Execution Time (ms)", "Rows", "Query", "Error"];
-      // Every field goes through the shared writer. The query and the error message
-      // used to be the only two that were escaped, so a connection or tab name
-      // holding a comma shifted every column after it for that row.
-      const rows = filteredHistory.map((item) =>
-        csvRow([
-          item.executedAt,
-          item.status,
-          item.connectionName || item.connectionId,
-          item.tabName || "",
-          item.executionTime,
-          item.rowCount || 0,
-          item.query,
-          item.errorMessage || "",
-        ]),
-      );
-      content = [csvRow(headers), ...rows].join("\n");
-      mimeType = "text/csv";
-    } else {
-      content = JSON.stringify(filteredHistory, null, 2);
-      mimeType = "application/json";
-    }
-
-    downloadText(content, mimeType, fileName);
+    downloadText(
+      queryHistoryText(filteredHistory, format),
+      format === "csv" ? "text/csv" : "application/json",
+      `query_history_${Date.now()}.${format}`,
+    );
   };
 
   return (

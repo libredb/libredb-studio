@@ -3,6 +3,7 @@ import { mockToastSuccess, mockToastError } from "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
 
 import { mock } from "bun:test";
+import { DEFAULT_MASKING_CONFIG, detectSensitiveColumnsFromConfig, type MaskingConfig } from "@/lib/data-masking";
 
 // Build mock config that matches the shape from the real module
 const mockConfig = {
@@ -31,8 +32,13 @@ const mockConfig = {
   },
 };
 
-const mockSaveMaskingConfig = mock(() => {});
-const mockLoadMaskingConfig = mock(() => structuredClone(mockConfig));
+// Keep the real preset definitions before replacing persistence for this isolated group.
+const realDefaults = DEFAULT_MASKING_CONFIG;
+const presetConfig = structuredClone(realDefaults);
+const detectColumns = detectSensitiveColumnsFromConfig;
+
+const mockSaveMaskingConfig = mock((_config: MaskingConfig) => {});
+const mockLoadMaskingConfig = mock((): MaskingConfig => structuredClone(mockConfig));
 
 mock.module("@/lib/data-masking", () => ({
   loadMaskingConfig: mockLoadMaskingConfig,
@@ -403,6 +409,96 @@ describe("MaskingSettings", () => {
   });
 
   // ── handleDialogSave — validation ────────────────────────────────────
+
+  test.each(["Email", "Phone", "Credit Card", "SSN"])(
+    "prefills an editable %s preset before creating a pattern",
+    (name) => {
+      const preset = presetConfig.patterns.find((pattern) => pattern.name === name)!;
+      const { container, baseElement } = render(<MaskingSettings />);
+      const view = within(container);
+      fireEvent.click(view.getByText("Add Pattern"));
+      fireEvent.click(within(baseElement).getByRole("button", { name: `Use ${preset.name} preset` }));
+      expect(within(baseElement).queryByText("Add Masking Pattern") !== null).toBe(true);
+      expect((within(baseElement).getByLabelText("Name") as HTMLInputElement).value).toBe(preset.name);
+      expect((within(baseElement).getByLabelText("Column Patterns (one per line)") as HTMLTextAreaElement).value).toBe(
+        preset.columnPatterns.join("\n"),
+      );
+      expect(within(baseElement).getByLabelText("Mask Type").textContent).toContain(preset.maskType);
+      expect(container.querySelectorAll(".lucide-pencil").length).toBe(2);
+      expect(mockSaveMaskingConfig).not.toHaveBeenCalled();
+      fireEvent.click(within(baseElement).getByRole("button", { name: "Save" }));
+      fireEvent.click(view.getByText("Save Config"));
+
+      const saved = mockSaveMaskingConfig.mock.calls.at(-1)![0];
+      expect(saved.patterns.slice(0, 2)).toEqual(mockConfig.patterns);
+      expect(saved.roleSettings).toEqual(mockConfig.roleSettings);
+      const added = saved.patterns.at(-1)!;
+      expect(added).toMatchObject({
+        name: preset.name,
+        maskType: preset.maskType,
+        columnPatterns: preset.columnPatterns,
+        enabled: true,
+        isBuiltin: false,
+      });
+      expect(added.id).not.toBe(preset.id);
+      expect(added.columnPatterns).not.toBe(preset.columnPatterns);
+
+      const editButtons = container.querySelectorAll(".lucide-pencil");
+      fireEvent.click(editButtons[editButtons.length - 1].closest("button")!);
+      expect(within(baseElement).queryByText("Start from a preset")).toBeNull();
+      fireEvent.change(within(baseElement).getByLabelText("Name"), { target: { value: "Team pattern" } });
+      fireEvent.change(within(baseElement).getByLabelText("Column Patterns (one per line)"), {
+        target: { value: "team_contact" },
+      });
+      fireEvent.click(within(baseElement).getByRole("button", { name: "Save" }));
+      fireEvent.click(view.getByText("Save Config"));
+      const edited = mockSaveMaskingConfig.mock.calls.at(-1)![0];
+      expect(edited.patterns.at(-1)).toMatchObject({
+        id: added.id,
+        name: "Team pattern",
+        columnPatterns: ["team_contact"],
+      });
+      expect(edited.patterns.slice(0, 2)).toEqual(mockConfig.patterns);
+      expect(realDefaults).toEqual(presetConfig);
+    },
+  );
+
+  test("switching presets then cancelling leaves the real default patterns unchanged", () => {
+    mockLoadMaskingConfig.mockImplementation(() => structuredClone(presetConfig));
+    const { container, baseElement } = render(<MaskingSettings />);
+    const view = within(container);
+    fireEvent.click(view.getByText("Add Pattern"));
+    for (const name of ["Email", "Phone"]) {
+      fireEvent.click(within(baseElement).getByRole("button", { name: `Use ${name} preset` }));
+      expect((within(baseElement).getByLabelText("Name") as HTMLInputElement).value).toBe(name);
+      expect(container.querySelectorAll(".lucide-pencil").length).toBe(presetConfig.patterns.length);
+    }
+    fireEvent.click(within(baseElement).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(view.getByText("Save Config"));
+    expect(mockSaveMaskingConfig.mock.calls.at(-1)![0]).toEqual(presetConfig);
+  });
+
+  test("adapting a preset from the real defaults masks a new column without shadowing the builtin", () => {
+    mockLoadMaskingConfig.mockImplementation(() => structuredClone(presetConfig));
+    const { container, baseElement } = render(<MaskingSettings />);
+    const view = within(container);
+    fireEvent.click(view.getByText("Add Pattern"));
+    fireEvent.click(within(baseElement).getByRole("button", { name: "Use Email preset" }));
+    fireEvent.change(within(baseElement).getByLabelText("Name"), { target: { value: "Billing contact" } });
+    fireEvent.change(within(baseElement).getByLabelText("Column Patterns (one per line)"), {
+      target: { value: "billing_contact" },
+    });
+    fireEvent.click(within(baseElement).getByRole("button", { name: "Save" }));
+    fireEvent.click(view.getByText("Save Config"));
+    const saved = mockSaveMaskingConfig.mock.calls.at(-1)![0];
+    expect(saved.patterns.slice(0, -1)).toEqual(presetConfig.patterns);
+    const matches = detectColumns(["email", "user_email", "contact_email", "billing_contact"], saved);
+    expect(matches.get("email")?.id).toBe("builtin-email");
+    expect(matches.get("user_email")?.id).toBe("builtin-email");
+    expect(matches.get("contact_email")?.id).toBe("builtin-email");
+    expect(matches.get("billing_contact")?.id).toBe(saved.patterns.at(-1)!.id);
+    expect(matches.get("billing_contact")?.isBuiltin).toBe(false);
+  });
 
   test("dialog save with empty name shows error toast", () => {
     const { container, baseElement } = render(<MaskingSettings />);

@@ -1,6 +1,6 @@
 # qwen3.5
 
-`ollama pull qwen3.5:<size>` · sizes supported: 4b, 9b
+`ollama pull qwen3.5:<size>` · sizes supported: 4b, 9b, 27b
 
 Every size listed here runs **all six agent surfaces**, five consecutive times each: 30 of 30
 runs.
@@ -13,11 +13,22 @@ Seconds are the median of the runs that passed, per surface.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **4b** | 3.4 GB | 5s | 41s | 21s | 7s | 34s | 1s | **11s** | 2:47 |
 | **9b** | 5.8 GB | 31s | 31s | 52s | 21s | 26s | 1:38 | **33s** | 1:38 |
+| **27b** | 17 GB | 78s | 91s | 149s | 41s | 66s | 48s | **78s** | 2:29 |
 
 Every cell is 5/5, so the table says how long rather than whether.
 
 The 4b is three times the 9b's speed at two thirds of its disk, which is not the direction size
 usually runs. Its tail is the price: 2:47 against the 9b's 1:38.
+
+**The 27b is the one that asked for nothing.** It cleared all six surfaces on its first attempt at
+the compiled defaults, the whole model in 52 minutes, with not one setting spent — the only size in
+this family whose row in `measured-profiles.json` carries no departure from the defaults at all. It
+is also the slowest of the three, and both facts are worth stating together: what a model costs in
+seconds and what it costs in configuration are separate questions, and this one answers them in
+opposite directions.
+
+Its optimize cell is the figure to notice. Three other models measured the same week could not open
+that surface at any setting; this one took it 5/5 unaided.
 
 ## What it needs that the defaults do not give it
 

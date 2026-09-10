@@ -29,6 +29,14 @@ export const DEFAULT_API_URLS: Record<string, string> = {
 // Environment Resolution
 // ============================================================================
 
+/**
+ * Whether the operator named a provider at all. A misspelling still counts: they meant to use AI,
+ * and `resolveProvider` silently falls back, so the key error is the only thing left to tell them.
+ */
+function isProviderNamed(): boolean {
+  return (process.env.LLM_PROVIDER ?? "").trim() !== "";
+}
+
 function resolveProvider(): LLMProviderType {
   const provider = process.env.LLM_PROVIDER?.toLowerCase();
 
@@ -96,6 +104,7 @@ export function resolveConfig(overrides?: Partial<LLMConfig>): LLMConfig {
 
   return {
     provider,
+    providerExplicit: overrides?.provider !== undefined || isProviderNamed(),
     apiKey: overrides?.apiKey ?? resolveApiKey(provider),
     model: overrides?.model ?? resolveModel(provider),
     apiUrl: overrides?.apiUrl ?? resolveApiUrl(provider),
@@ -105,6 +114,14 @@ export function resolveConfig(overrides?: Partial<LLMConfig>): LLMConfig {
 // ============================================================================
 // Configuration Validation
 // ============================================================================
+
+/**
+ * Why credentials are absent: switched off, or a setup someone started and did not finish. Only the
+ * first is silent to the caller, so a named provider never hides its own missing key.
+ */
+export function unconfiguredReason(config: LLMConfig): "missing_credentials" | undefined {
+  return config.providerExplicit ? undefined : "missing_credentials";
+}
 
 /**
  * Validate LLM configuration
@@ -121,11 +138,19 @@ export function validateConfig(config: LLMConfig): void {
 
   // Validate API key requirements
   if (config.provider === "gemini" && !config.apiKey) {
-    throw new LLMConfigError("Gemini API key is required. Set LLM_API_KEY environment variable.", "gemini");
+    throw new LLMConfigError(
+      "Gemini API key is required. Set LLM_API_KEY environment variable.",
+      "gemini",
+      unconfiguredReason(config),
+    );
   }
 
   if (config.provider === "openai" && !config.apiKey) {
-    throw new LLMConfigError("OpenAI API key is required. Set LLM_API_KEY environment variable.", "openai");
+    throw new LLMConfigError(
+      "OpenAI API key is required. Set LLM_API_KEY environment variable.",
+      "openai",
+      unconfiguredReason(config),
+    );
   }
 
   // Validate API URL for custom provider

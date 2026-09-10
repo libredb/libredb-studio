@@ -316,6 +316,19 @@ beforeEach(async () => {
 // ─── createDatabaseProvider ────────────────────────────────────────────────
 
 describe("createDatabaseProvider", () => {
+  test.each([
+    [undefined, undefined, 60000],
+    [120000, undefined, 120000],
+    [5000, undefined, 5000],
+    [120000, 10000, 10000],
+  ])("resolves connection timeout %s with override %s to %s ms", async (saved, override, expected) => {
+    const provider = await createDatabaseProvider(makeConnection("postgres", { queryTimeout: saved }), {
+      queryTimeout: override,
+    });
+    // Read the effective value consumed by drivers, not just the saved configuration.
+    expect((provider as unknown as { queryTimeout: number }).queryTimeout).toBe(expected);
+  });
+
   test("throws DatabaseConfigError for unknown type", async () => {
     const conn = makeConnection("unknown");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(/Unknown database type: unknown/);
@@ -1721,4 +1734,46 @@ describe("grounding a plan run while the writable provider holds the file (B49)"
     if (capture.kind !== "unavailable") throw new Error("unreachable");
     expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
   });
+});
+
+describe("cached connection query timeout", () => {
+  test.each([false, true])(
+    "replaces the cached provider even when disconnect rejects (profiled: %s)",
+    async (profiled) => {
+      const acquire = (connection: DatabaseConnection) =>
+        profiled ? acquireExecutionProfileProvider(connection, "agent-read-only") : getOrCreateProvider(connection);
+      const connection = makeConnection("postgres");
+      const initial = await acquire(connection);
+      initial.disconnect = mock(async () => {
+        throw new Error("socket already gone");
+      });
+      const changed = { ...connection, queryTimeout: 120000 };
+      const fresh = await acquire(changed);
+      expect(fresh).not.toBe(initial);
+      expect(fresh.isConnected()).toBe(true);
+      expect(await acquire(changed)).toBe(fresh);
+      const restored = await acquire(connection);
+      expect(restored).not.toBe(initial);
+      expect(restored).not.toBe(fresh);
+      expect(restored.isConnected()).toBe(true);
+    },
+  );
+  test.each([false, true])(
+    "recreates a provider after changing or clearing the timeout (profiled: %s)",
+    async (profiled) => {
+      const acquire = (connection: DatabaseConnection) =>
+        profiled ? acquireExecutionProfileProvider(connection, "agent-read-only") : getOrCreateProvider(connection);
+      const connection = makeConnection("postgres");
+      const initial = await acquire(connection);
+      const updated = await acquire({ ...connection, queryTimeout: 120000 });
+      expect(updated).not.toBe(initial);
+      expect(initial.isConnected()).toBe(false);
+      expect((updated as unknown as { queryTimeout: number }).queryTimeout).toBe(120000);
+      expect(await acquire({ ...connection, queryTimeout: 120000 })).toBe(updated);
+      const cleared = await acquire(connection);
+      expect(cleared).not.toBe(updated);
+      expect(updated.isConnected()).toBe(false);
+      expect((cleared as unknown as { queryTimeout: number }).queryTimeout).toBe(60000);
+    },
+  );
 });

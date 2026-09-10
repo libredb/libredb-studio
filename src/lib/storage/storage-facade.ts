@@ -136,6 +136,27 @@ export const storage = {
     dispatchChange("saved_queries", filtered);
   },
 
+  importSavedQueries: (incoming: readonly SavedQuery[]) => {
+    const existing = storage.getSavedQueries();
+    const ids = new Set(existing.map((query) => query.id));
+    const added: SavedQuery[] = [];
+    const collisions: string[] = [];
+    for (const query of incoming) {
+      if (ids.has(query.id)) {
+        collisions.push(query.id);
+      } else {
+        ids.add(query.id);
+        added.push(query);
+      }
+    }
+    if (added.length > 0) {
+      const merged = [...existing, ...added];
+      if (!writeJSON("saved_queries", merged)) throw new Error("Could not save imported queries.");
+      dispatchChange("saved_queries", merged);
+    }
+    return { imported: added.length, collisions };
+  },
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Schema Snapshots
   // ═══════════════════════════════════════════════════════════════════════════

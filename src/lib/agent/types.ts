@@ -654,6 +654,12 @@ export type AgentGuidanceNotice =
    */
   | "unread-stop"
   /**
+   * A tool call the model endpoint could not parse, answered rather than re-sent.
+   * Delivered as a `user` message; once per run, because a model that cannot comply
+   * with it should still fail fast.
+   */
+  | "tool-call-unreadable"
+  /**
    * A `compose_report` on an answering workflow with a presentable read and no
    * presentation. Delivered as a TOOL RESULT instead of running the call, so it rides
    * the `call-held` entry; bounded by the model's own `presentReminderLimit`.

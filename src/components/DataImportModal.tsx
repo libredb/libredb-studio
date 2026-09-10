@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import type { DatabaseType, TableSchema } from "@/lib/types";
 import { quoteLiteral } from "@/lib/sql/values";
+import type { CsvDelimiter } from "@/lib/export/csv";
 
 interface DataImportModalProps {
   isOpen: boolean;
@@ -37,7 +38,7 @@ export interface ParsedData {
 
 type ImportStep = "upload" | "preview" | "configure" | "ready";
 
-export function parseCSV(text: string, firstRowIsHeader = true): ParsedData {
+export function parseCSV(text: string, firstRowIsHeader = true, delimiter: CsvDelimiter = ","): ParsedData {
   const lines = text.split(/\r?\n/).filter((line) => line.trim());
   if (lines.length === 0) return { headers: [], rows: [], totalRows: 0 };
 
@@ -58,7 +59,7 @@ export function parseCSV(text: string, firstRowIsHeader = true): ParsedData {
         } else {
           inQuotes = false;
         }
-      } else if (ch === "," && !inQuotes) {
+      } else if (ch === delimiter && !inQuotes) {
         result.push(current.trim());
         current = "";
       } else {
@@ -211,12 +212,14 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const csvTextRef = useRef("");
+  const [csvDelimiter, setCsvDelimiter] = useState<CsvDelimiter>(",");
 
   const resetState = useCallback(() => {
     setStep("upload");
     setParsedData(null);
     setFileName("");
     setFirstRowIsHeader(true);
+    setCsvDelimiter(",");
     csvTextRef.current = "";
     setTargetTable("");
     setCreateNewTable(false);
@@ -278,6 +281,20 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
   }, []);
+
+  const updateCsvPreview = (hasHeader: boolean, delimiter: CsvDelimiter) => {
+    const data = parseCSV(csvTextRef.current, hasHeader, delimiter);
+    setFirstRowIsHeader(hasHeader);
+    setCsvDelimiter(delimiter);
+    setParsedData(data);
+    if (data.headers.some((header, index) => header !== parsedData?.headers[index])) {
+      // Retain mappings when switching header or delimiter interpretations and back.
+      setColumnMapping((mapping) => ({
+        ...Object.fromEntries(data.headers.map((header) => [header, header])),
+        ...mapping,
+      }));
+    }
+  };
 
   const generatedSQL = useMemo(
     () =>
@@ -425,27 +442,34 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
               </div>
 
               {fileType === "csv" && (
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={firstRowIsHeader}
-                    onChange={(e) => {
-                      const hasHeader = e.target.checked;
-                      const data = parseCSV(csvTextRef.current, hasHeader);
-                      setFirstRowIsHeader(hasHeader);
-                      setParsedData(data);
-                      if (data.headers.some((header, index) => header !== parsedData.headers[index])) {
-                        // Retain both header interpretations so a round trip preserves the user's edits.
-                        setColumnMapping((mapping) => ({
-                          ...Object.fromEntries(data.headers.map((header) => [header, header])),
-                          ...mapping,
-                        }));
-                      }
-                    }}
-                    className="rounded border-edge bg-panel"
-                  />
-                  <span className="text-xs text-fg-secondary">First row is header</span>
-                </label>
+                <div className="flex flex-wrap items-center gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={firstRowIsHeader}
+                      onChange={(e) => updateCsvPreview(e.target.checked, csvDelimiter)}
+                      className="rounded border-edge bg-panel"
+                    />
+                    <span className="text-xs text-fg-secondary">First row is header</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-fg-secondary">
+                    CSV delimiter
+                    <select
+                      value={csvDelimiter}
+                      onChange={(e) => {
+                        const delimiter = e.target.value;
+                        if (delimiter === "," || delimiter === ";" || delimiter === "\t") {
+                          updateCsvPreview(firstRowIsHeader, delimiter);
+                        }
+                      }}
+                      className="rounded border border-edge bg-panel px-2 py-1 text-fg"
+                    >
+                      <option value=",">Comma (,)</option>
+                      <option value=";">Semicolon (;)</option>
+                      <option value={"\t"}>Tab</option>
+                    </select>
+                  </label>
+                </div>
               )}
 
               {/* Preview Table */}

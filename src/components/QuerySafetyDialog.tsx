@@ -1,6 +1,7 @@
 "use client";
 
 import { appFetch } from "@/lib/config/base-path";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import React, { useState, useEffect, useMemo } from "react";
 import { ShieldAlert, ShieldCheck, TriangleAlert, LoaderCircle, Play, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -166,6 +167,8 @@ export function QuerySafetyDialog({
 
         if (!response.ok) {
           const errData = await response.json();
+          // AI is optional; an unconfigured provider still leaves the local confirmation in place.
+          if (errData.code === ApiErrorCode.LLM_UNCONFIGURED) return;
           throw new Error(errData.error || "Analysis failed");
         }
 
@@ -317,6 +320,11 @@ export function QuerySafetyDialog({
 
           {!isAnalyzing && !analysis && rawResponse && !error && (
             <div className="text-xs text-fg-tertiary whitespace-pre-wrap">{rawResponse}</div>
+          )}
+          {!isAnalyzing && !analysis && !rawResponse && !error && (
+            <p className="text-xs text-fg-tertiary">
+              This statement may change data, database objects, or permissions. Review the query before proceeding.
+            </p>
           )}
         </div>
 

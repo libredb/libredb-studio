@@ -3,6 +3,8 @@ import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import type { Mock } from "bun:test";
 import { createErrorResponse } from "@/lib/api/errors";
 import { RateLimitError } from "@/lib/api/rate-limit";
+import { validateConfig } from "@/lib/llm/utils/config";
+import type { LLMConfig, LLMProviderType } from "@/lib/llm/types";
 import {
   DatabaseError,
   DatabaseConfigError,
@@ -158,6 +160,36 @@ describe("createErrorResponse", () => {
     const body = await res.json();
     expect(body.code).toBe("LLM_CONFIG");
     expect(body.statusCode).toBe(503);
+  });
+
+  test.each(["gemini", "openai"] as const)("missing %s credentials have their own code", async (provider) => {
+    let failure: unknown;
+    try {
+      validateConfig({ provider, model: "test-model" });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(LLMConfigError);
+    const response = createErrorResponse(failure);
+    expect(response.status).toBe(503);
+    expect((await response.json()).code).toBe("LLM_UNCONFIGURED");
+  });
+
+  test.each([
+    { provider: "gemni" as LLMProviderType, model: "test-model" },
+    { provider: "ollama", model: "" },
+    { provider: "custom", model: "test-model" },
+  ] satisfies LLMConfig[])("invalid AI settings retain LLM_CONFIG: %j", async (config) => {
+    let failure: unknown;
+    try {
+      validateConfig(config);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(LLMConfigError);
+    const response = createErrorResponse(failure);
+    expect(response.status).toBe(503);
+    expect((await response.json()).code).toBe("LLM_CONFIG");
   });
 
   test("LLMStreamError returns 502 with code LLM_STREAM", async () => {

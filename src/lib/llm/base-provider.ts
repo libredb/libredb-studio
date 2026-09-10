@@ -4,7 +4,7 @@
  */
 
 import { type LLMConfig, type LLMProvider, type LLMProviderType, type LLMStreamOptions, LLMConfigError } from "./types";
-import { validateConfig, getSafeConfigForLogging } from "./utils/config";
+import { validateConfig, getSafeConfigForLogging, unconfiguredReason } from "./utils/config";
 import { withRetry, type RetryOptions } from "./utils/retry";
 
 // ============================================================================
@@ -88,7 +88,11 @@ export abstract class BaseLLMProvider implements LLMProvider {
    */
   protected ensureApiKey(): string {
     if (!this.config.apiKey) {
-      throw new LLMConfigError(`API key is required for ${this.name} provider`, this.name);
+      throw new LLMConfigError(
+        `API key is required for ${this.name} provider`,
+        this.name,
+        unconfiguredReason(this.config),
+      );
     }
     return this.config.apiKey;
   }
