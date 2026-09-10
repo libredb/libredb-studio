@@ -12,7 +12,8 @@
   <a href="README.md">English</a> ·
   <a href="README_zh.md">简体中文</a> ·
   <a href="README_ja.md">日本語</a> ·
-  <b>Español</b>
+  <b>Español</b> ·
+  <a href="README_ur.md">اردو</a>
 </p>
 
 <p align="center">
