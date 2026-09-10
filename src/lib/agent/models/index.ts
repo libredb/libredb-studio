@@ -177,8 +177,9 @@ export function retriesUnreadStop(modelId: string): boolean {
  * drive saying anything — `mistral-small3.1:24b` 51, `granite3.3:8b` 41, `mistral:7b` 40,
  * `gpt-oss:20b` 18, a hundred and ten of them on `investigation`, the first surface a model meets.
  *
- * A measured model is untouched: all twenty-eight profiles state the field, so no shipped model's
- * turn count moves.
+ * A measured model is untouched. All twenty-eight profiles stated the field when the two were
+ * split, so not one shipped model's turn count moved on the day this landed; thirty state it now,
+ * and the three that say `true` say it because that is what their runs were taken under.
  */
 export function answersUnreadStop(modelId: string): boolean {
   return resolve(modelId, "retryUnreadStop") ?? true;

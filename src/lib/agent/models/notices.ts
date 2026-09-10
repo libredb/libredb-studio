@@ -55,4 +55,9 @@ export const BASELINE_NOTICES: AgentNotices = Object.freeze({
     "Read it yourself. Call inspect_schema for the tables and their columns, and inspect_plan for how a statement will run, then call compose_report with what you found.",
     CITATION_RULE,
   ].join(" "),
+  unreadableToolCall: [
+    "Your last tool call could not be read: this server's model endpoint refused to parse its arguments, so no tool ran and nothing about it reached this run.",
+    "The arguments of a tool call must be a JSON object and nothing else. Do not write your reasoning, a sentence, or a code fence in the argument field — send only the object, starting at its opening brace.",
+    "Make the call again, arguments only.",
+  ].join(" "),
 });

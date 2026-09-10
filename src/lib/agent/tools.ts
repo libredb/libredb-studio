@@ -1996,7 +1996,37 @@ function parseToolInput<T>(
   const parsed = schema.safeParse(input);
   return parsed.success
     ? { ok: true, value: parsed.data }
-    : { ok: false, problems: describeIssues(parsed.error.issues) };
+    : { ok: false, problems: describeIssues(parsed.error.issues, input) };
+}
+
+/**
+ * The TYPE that arrived where a type was expected, read off the arguments the tool was handed.
+ *
+ * The other half of a comparison this layer was only ever stating one side of, and by a wide
+ * margin the largest single refusal measured here. Across twelve hours of sweeps `compose_report`
+ * was declined 1530 times and ONE issue is 1110 of them — `claims: expected array` — with models
+ * from three vendors sending the same bytes again after reading it. They are not ignoring the
+ * message: a model that serialized `claims` as a JSON STRING agrees with "expected array", because
+ * what it sent IS an array as far as it can tell. Nothing in the sentence contradicts it.
+ *
+ * Bounded by the rule the message already carries and stated in `describeIssues`: what crosses
+ * over is server-authored — the path, and the type or rule — and never the VALUE. A type is
+ * structural in exactly the way a field name is. `string` is not the model's text; it is the
+ * shape of it, which is the thing the model got wrong and the one thing it was not told.
+ *
+ * Read from the input rather than from the issue because Zod 4 no longer carries `received`.
+ * `null` is named as itself: `typeof null` is `object`, which would send a model looking for a
+ * field it did not omit.
+ */
+function arrivedAt(input: unknown, path: readonly PropertyKey[]): string {
+  let value: unknown = input;
+  for (const key of path) {
+    if (value === null || typeof value !== "object") return "nothing";
+    value = (value as Record<PropertyKey, unknown>)[key];
+  }
+  if (value === null) return "null";
+  if (value === undefined) return "nothing";
+  return Array.isArray(value) ? "array" : typeof value;
 }
 
 /**
@@ -2022,10 +2052,11 @@ function parseToolInput<T>(
  * Three at most, because a model that got the shape wrong is not helped by a fourth, and a
  * long list read as prose is how a refusal becomes another wall.
  */
-function describeIssues(issues: readonly z.core.$ZodIssue[]): string {
+function describeIssues(issues: readonly z.core.$ZodIssue[], input: unknown): string {
   const named = issues.slice(0, 3).map((issue) => {
     const where = issue.path.length === 0 ? "the arguments object" : issue.path.join(".");
-    if (issue.code === "invalid_type") return `${where}: expected ${issue.expected}`;
+    if (issue.code === "invalid_type")
+      return `${where}: expected ${issue.expected}, received ${arrivedAt(input, issue.path)}`;
     if (issue.code === "unrecognized_keys") return `${where}: remove ${issue.keys.join(", ")}`;
     /*
       A closed set is named, because "invalid value" was not something a model could act on.

@@ -1,5 +1,7 @@
 "use client";
 
+import type { CsvDelimiter } from "@/lib/export/csv";
+
 import React, { useMemo } from "react";
 import type { DatabaseConnection, QueryTab, TableSchema, QueryResult } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
@@ -166,7 +168,11 @@ interface BottomPanelProps {
   // The second argument is the artifact the rows on screen came from, or null when
   // they are the tab's own: the export writes what it is GIVEN rather than reading the
   // tab back, which is what lets the menu stay open over a hydrated result (B34).
-  onExportResults: (format: ResultExportFormat, hydrated: AgentArtifactHydration | null) => void;
+  onExportResults: (
+    format: ResultExportFormat,
+    hydrated: AgentArtifactHydration | null,
+    csvDelimiter?: CsvDelimiter,
+  ) => void;
   /**
    * A result an agent run stored, shown in the surface that already renders that
    * kind of result (#329 T11). Optional so every other caller — the embedded shell
@@ -389,6 +395,18 @@ export function BottomPanel({
                   className="text-xs cursor-pointer"
                 >
                   Export as CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => onExportResults("csv", exportArtifact, ";")}
+                  className="text-xs cursor-pointer"
+                >
+                  Export as CSV (semicolon)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => onExportResults("csv", exportArtifact, "\t")}
+                  className="text-xs cursor-pointer"
+                >
+                  Export as CSV (tab)
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => onExportResults("json", exportArtifact)}

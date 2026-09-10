@@ -1668,7 +1668,7 @@ denial cannot be re-fed to the model as though the SQL were malformed.
 
 ## Supported models
 
-Twenty-eight models run every agent surface. Each cleared all six — Investigate, Optimize, Assess, Operate,
+Thirty models run every agent surface. Each cleared all six — Investigate, Optimize, Assess, Operate,
 Analyze and Plan — five consecutive times, at the turn limit the product ships, which is 30 of 30
 runs.
 
@@ -1694,7 +1694,7 @@ not cover, are all under [`docs/llms/`](llms/README.md).
 
 
 Nothing prevents another model from being configured — the capability probe below decides what any
-given endpoint can do, and there is no allow-list in the code. What the twenty-eight have is a measurement.
+given endpoint can do, and there is no allow-list in the code. What the thirty have is a measurement.
 
 ## The model side
 

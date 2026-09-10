@@ -2,7 +2,7 @@ import type { DatabaseType } from "@/lib/types";
 import { isBareIdentifier, quoteIdentifier } from "@/lib/sql/identifier";
 import { quoteLiteral } from "@/lib/sql/values";
 import { asBytes, binaryText } from "./binary";
-import { cellOf, resolveColumns, toCsv } from "./csv";
+import { cellOf, resolveColumns, toCsv, type CsvDelimiter } from "./csv";
 import { jsonText } from "./json";
 
 /**
@@ -32,6 +32,8 @@ export interface ResultExportSource {
    * common case — then the DDL form infers a type from a value instead.
    */
   columnTypes?: Record<string, string>;
+  /** CSV separator; omitted for the backward-compatible comma default. */
+  csvDelimiter?: CsvDelimiter;
 }
 
 export interface ResultExportFile {
@@ -813,7 +815,7 @@ export function buildResultExport(format: ResultExportFormat, source: ResultExpo
   if (format === "csv") {
     // The charset is stated even though the download layer's byte order mark is what
     // Excel actually reads, because every other consumer reads the type.
-    return { content: toCsv(rows, columns), mimeType: "text/csv;charset=utf-8", extension: "csv" };
+    return { content: toCsv(rows, columns, source.csvDelimiter), mimeType: "text/csv;charset=utf-8", extension: "csv" };
   }
 
   const sql = (content: string): ResultExportFile => ({ content, mimeType: "text/sql", extension: "sql" });

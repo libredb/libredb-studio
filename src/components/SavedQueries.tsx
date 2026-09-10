@@ -1,12 +1,16 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { storage } from "@/lib/storage";
 import { SavedQuery } from "@/lib/types";
-import { Bookmark, Search, Trash2, PenLine, Tag, Calendar } from "lucide-react";
+import { Bookmark, Search, Trash2, PenLine, Tag, Calendar, Download, Upload } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { format } from "date-fns";
+import { downloadText } from "@/lib/export/download";
+import { jsonText } from "@/lib/export/json";
+import { parseSavedQueries } from "@/lib/saved-query-import";
+import { toast } from "sonner";
 
 interface SavedQueriesProps {
   onSelectQuery: (query: string) => void;
@@ -17,6 +21,8 @@ interface SavedQueriesProps {
 export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: SavedQueriesProps) {
   const [queries, setQueries] = useState<SavedQuery[]>(() => storage.getSavedQueries());
   const [search, setSearch] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   // `refreshTrigger` is bumped by whoever writes a saved query. Adjusting state during
   // render is React's prescribed replacement for a setState-in-effect, and unlike a `key`
@@ -42,12 +48,66 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
     }
   };
 
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setIsImporting(true);
+    try {
+      const incoming = parseSavedQueries(await file.text());
+      const result = storage.importSavedQueries(incoming);
+      setQueries(storage.getSavedQueries());
+      if (result.collisions.length > 0) {
+        toast("Import finished with ID conflicts", {
+          description: `Added ${result.imported}; skipped duplicate IDs: ${result.collisions.join(", ")}.`,
+        });
+      } else {
+        toast.success("Saved queries import finished", { description: `Added ${result.imported}.` });
+      }
+    } catch {
+      toast.error("Could not import saved queries. Check the JSON file and available browser storage.");
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col bg-surface">
       <div className="p-4 border-b border-hairline flex flex-col gap-4">
         <h3 className="text-xs font-medium text-fg-tertiary flex items-center gap-2">
           <Bookmark strokeWidth={1.5} className="w-3.5 h-3.5" /> Saved Queries
         </h3>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs gap-2"
+            aria-label="Export all saved queries as JSON"
+            disabled={queries.length === 0}
+            onClick={() => downloadText(jsonText(queries, 2), "application/json", `saved_queries_${Date.now()}.json`)}
+          >
+            <Download className="w-3 h-3" /> Export all
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs gap-2"
+            disabled={isImporting}
+            onClick={() => fileInput.current?.click()}
+          >
+            <Upload className="w-3 h-3" /> Import JSON
+          </Button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept="application/json,.json"
+            aria-label="Import saved queries JSON"
+            className="hidden"
+            disabled={isImporting}
+            onChange={handleImport}
+          />
+        </div>
 
         <div className="relative">
           <Search strokeWidth={1.5} className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-fg-muted" />

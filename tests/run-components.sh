@@ -30,7 +30,7 @@ FAIL=0
 # green summary line reported a group count no run had.
 # Drifted again before this line was touched: it read 30 while 32 `run_group` calls
 # existed, so every green run reported a group count no run had. 33 is the grep below.
-TOTAL_GROUPS=34
+TOTAL_GROUPS=35
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -282,7 +282,10 @@ run_group "Group 15/16: Remaining components" \
   tests/components/monitoring/StorageTab.test.tsx \
   tests/components/monitoring/SessionsTab.test.tsx \
   tests/components/monitoring/TablesTab.test.tsx \
-  tests/components/monitoring/QueriesTab.test.tsx \
+  tests/components/monitoring/QueriesTab.test.tsx
+
+# Read the real threshold storage without the other group's partial storage mocks.
+run_group "Group 22: Saved monitoring thresholds" \
   tests/components/monitoring/PerformanceTab.test.tsx \
   tests/components/monitoring/OverviewTab.test.tsx
 

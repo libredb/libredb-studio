@@ -1,11 +1,33 @@
 import { describe, test, expect } from "bun:test";
 import {
+  thresholdFor,
   evaluateThreshold,
   getThresholdColor,
   getThresholdBadgeVariant,
   DEFAULT_THRESHOLDS,
   type ThresholdConfig,
 } from "@/lib/monitoring-thresholds";
+
+describe("thresholdFor", () => {
+  test("prefers a saved threshold over its default", () => {
+    const saved: ThresholdConfig = {
+      metric: "cacheHitRatio",
+      warning: 99,
+      critical: 97,
+      direction: "below",
+      label: "Cache Hit Ratio",
+    };
+    expect(thresholdFor([saved], "cacheHitRatio")).toBe(saved);
+  });
+
+  test.each(DEFAULT_THRESHOLDS)("falls back to the default for an omitted metric: $metric", (config) => {
+    expect(thresholdFor([], config.metric)).toBe(config);
+  });
+
+  test("rejects an unknown metric instead of returning undefined", () => {
+    expect(() => thresholdFor([], "unknown")).toThrow("Unknown monitoring metric: unknown");
+  });
+});
 
 // ============================================================================
 // evaluateThreshold — direction='above'

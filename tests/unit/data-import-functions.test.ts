@@ -14,6 +14,22 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("parseCSV", () => {
+  test.each([";", "\t"] as const)(
+    "parses the chosen delimiter with quoted separators and decimal commas (%s)",
+    (delimiter) => {
+      const text = `name${delimiter}amount\r\n"Snow${delimiter}""quote"""${delimiter}1,5\r\n`;
+      expect(parseCSV(text, true, delimiter)).toEqual({
+        headers: ["name", "amount"],
+        rows: [[`Snow${delimiter}"quote"`, "1,5"]],
+        totalRows: 1,
+      });
+      expect(parseCSV(`Alice${delimiter}30`, false, delimiter)).toEqual({
+        headers: ["column_1", "column_2"],
+        rows: [["Alice", "30"]],
+        totalRows: 1,
+      });
+    },
+  );
   test("parses simple CSV", () => {
     const result = parseCSV("name,age\nAlice,30\nBob,25");
     expect(result.headers).toEqual(["name", "age"]);

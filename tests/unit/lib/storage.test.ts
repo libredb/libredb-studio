@@ -78,6 +78,13 @@ function makeChart(overrides: Partial<SavedChartConfig> = {}): SavedChartConfig 
 // ============================================================================
 
 describe("storage: connections", () => {
+  test("round-trips a custom query timeout and clears it on update", () => {
+    storage.saveConnection(makeConnection({ queryTimeout: 120000 }));
+    expect(storage.getConnections()[0].queryTimeout).toBe(120000);
+    storage.saveConnection(makeConnection());
+    expect(storage.getConnections()[0].queryTimeout).toBeUndefined();
+  });
+
   test("getConnections returns empty array when nothing stored", () => {
     expect(storage.getConnections()).toEqual([]);
   });
@@ -173,6 +180,60 @@ describe("storage: saved queries", () => {
     const result = storage.getSavedQueries();
     expect(result.length).toBe(1);
     expect(result[0].id).toBe("b");
+  });
+
+  test("importSavedQueries preserves metadata and reports existing and within-file ID collisions", () => {
+    storage.saveQuery(makeSavedQuery({ id: "existing" }));
+    const original = storage.getSavedQueries()[0];
+    const imported = makeSavedQuery({
+      id: "new",
+      createdAt: new Date("2020-01-01"),
+      updatedAt: new Date("2021-01-01"),
+      tags: ["backup"],
+    });
+    const input = [
+      makeSavedQuery({ id: "existing", query: "replacement" }),
+      imported,
+      { ...imported, query: "duplicate" },
+    ];
+    expect(storage.importSavedQueries(input)).toEqual({ imported: 1, collisions: ["existing", "new"] });
+    expect(storage.getSavedQueries()).toEqual([original, imported]);
+    expect(input[1]).toEqual(imported);
+  });
+
+  test("importSavedQueries writes and emits one complete merged collection", () => {
+    const events: CustomEvent[] = [];
+    const listener = (event: Event) => events.push(event as CustomEvent);
+    window.addEventListener("libredb-storage-change", listener);
+    const incoming = [makeSavedQuery({ id: "a" }), makeSavedQuery({ id: "b" })];
+    try {
+      expect(storage.importSavedQueries(incoming)).toEqual({ imported: 2, collisions: [] });
+      expect(events).toHaveLength(1);
+      expect(events[0].detail).toEqual({ collection: "saved_queries", data: incoming });
+      expect(storage.getSavedQueries()).toEqual(incoming);
+      expect(storage.importSavedQueries([])).toEqual({ imported: 0, collisions: [] });
+      expect(storage.importSavedQueries(incoming)).toEqual({ imported: 0, collisions: ["a", "b"] });
+      expect(events).toHaveLength(1);
+    } finally {
+      window.removeEventListener("libredb-storage-change", listener);
+    }
+  });
+
+  test("importSavedQueries leaves the old library intact when storage rejects the write", () => {
+    storage.saveQuery(makeSavedQuery({ id: "existing" }));
+    const original = localStorage.getItem("libredb_saved_queries");
+    const setItem = localStorage.setItem;
+    localStorage.setItem = () => {
+      throw new Error("Storage full");
+    };
+    try {
+      expect(() => storage.importSavedQueries([makeSavedQuery({ id: "new" })])).toThrow(
+        "Could not save imported queries.",
+      );
+      expect(localStorage.getItem("libredb_saved_queries")).toBe(original);
+    } finally {
+      localStorage.setItem = setItem;
+    }
   });
 });
 

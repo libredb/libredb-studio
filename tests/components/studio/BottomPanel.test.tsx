@@ -628,6 +628,17 @@ describe("BottomPanel", () => {
    * dismissing the artifact leaves it exactly as it was.
    */
   describe("agent artifact hydration", () => {
+    test.each([
+      ["semicolon", ";"],
+      ["tab", "\t"],
+    ])("CSV delimiter option %s carries the selected artifact", async (label, delimiter) => {
+      const onExportResults = mock(() => {});
+      const props = hydratedProps({ onExportResults }) as React.ComponentProps<typeof BottomPanel>;
+      const { getByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+      await userEvent.click(getByText("Export"));
+      await userEvent.click(within(document.body as HTMLElement).getByText(`Export as CSV (${label})`));
+      expect(onExportResults).toHaveBeenCalledWith("csv", props.agentArtifact, delimiter);
+    });
     const TAB_RESULT = { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 10 };
     const ARTIFACT_RESULT = {
       rows: [

@@ -3,10 +3,12 @@ import "../../helpers/mock-sonner";
 import "../../helpers/mock-navigation";
 
 import { mock } from "bun:test";
+let capturedDuplicateHandler: unknown;
 
 // Mock child components to isolate Sidebar logic
 mock.module("@/components/sidebar/ConnectionsList", () => ({
   ConnectionsList: (props: Record<string, unknown>) => {
+    capturedDuplicateHandler = props.onDuplicateConnection;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     const connections = props.connections as Array<Record<string, unknown>> | undefined;
@@ -192,15 +194,18 @@ describe("Sidebar", () => {
 
   test("passes correct props to ConnectionsList", () => {
     const connections = [mockPostgresConnection, mockMySQLConnection];
+    const onDuplicateConnection = mock(() => {});
     const props = createDefaultProps({
       connections,
       activeConnection: mockPostgresConnection,
+      onDuplicateConnection,
     });
     const { getByTestId } = render(<Sidebar {...props} />);
 
     const connList = getByTestId("connections-list");
     expect(connList.getAttribute("data-connections-count")).toBe("2");
     expect(connList.getAttribute("data-active-connection")).toBe(mockPostgresConnection.id);
+    expect(capturedDuplicateHandler).toBe(onDuplicateConnection);
   });
 
   /**

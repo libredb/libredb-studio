@@ -15,6 +15,14 @@ export const DEFAULT_THRESHOLDS: ThresholdConfig[] = [
   { metric: "bufferPoolUsage", warning: 85, critical: 95, direction: "above", label: "Buffer Pool Usage" },
 ];
 
+export function thresholdFor(thresholds: ThresholdConfig[], metric: string): ThresholdConfig {
+  const config =
+    thresholds.find((threshold) => threshold.metric === metric) ??
+    DEFAULT_THRESHOLDS.find((threshold) => threshold.metric === metric);
+  if (!config) throw new Error(`Unknown monitoring metric: ${metric}`);
+  return config;
+}
+
 export function evaluateThreshold(value: number, config: ThresholdConfig): ThresholdLevel {
   if (config.direction === "above") {
     if (value >= config.critical) return "critical";

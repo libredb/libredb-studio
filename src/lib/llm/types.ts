@@ -18,6 +18,12 @@ export interface LLMConfig {
   apiKey?: string;
   model: string;
   apiUrl?: string;
+  /**
+   * True when the provider was named rather than defaulted. Naming one is a statement of intent to
+   * use AI, so missing credentials are then an unfinished setup to report, not an absence to pass
+   * over. Absent means implicit, which keeps a hand-built config on the quiet path.
+   */
+  providerExplicit?: boolean;
 }
 
 // ============================================================================
@@ -90,7 +96,11 @@ export class LLMError extends Error {
  * Configuration error - missing or invalid config
  */
 export class LLMConfigError extends LLMError {
-  constructor(message: string, provider?: LLMProviderType) {
+  constructor(
+    message: string,
+    provider?: LLMProviderType,
+    public readonly reason?: "missing_credentials",
+  ) {
     super(message, provider);
     this.name = "LLMConfigError";
     Object.setPrototypeOf(this, LLMConfigError.prototype);
@@ -170,4 +180,26 @@ export function isRetryableError(error: unknown): boolean {
 
   // Rate limit and stream errors may be retryable
   return true;
+}
+
+/**
+ * Whether the endpoint refused the model's TOOL CALL because it could not parse it.
+ *
+ * A distinction `isRetryableError` cannot draw and must not: both arrive as `LLMStreamError`, and
+ * a broken frame genuinely is worth sending the same bytes again. This one is not. The endpoint
+ * read the model's arguments, failed on them, and hands the raw text back — so re-sending the
+ * identical request asks the model to make the identical mistake, which is what it does.
+ *
+ * Measured on `gpt-oss:20b`, database-assessment: three runs, each re-asked the full two allowed
+ * times, six attempts, six identical failures, the run ending seventeen seconds into a
+ * 630-second budget with four tools already called. The endpoint's own message is
+ * `error parsing tool call: raw='<the model's text>', err=<why>` — a reasoning model writing its
+ * thinking into the argument field with valid JSON after it.
+ *
+ * Matched on the endpoint's wording, which is narrow on purpose. The alternative — treating every
+ * stream error as a model fault — would stop re-asking the broken frames that the re-ask above
+ * was measured to rescue.
+ */
+export function isToolCallParseError(error: unknown): boolean {
+  return error instanceof LLMStreamError && /parsing tool call/i.test(error.message);
 }

@@ -11,6 +11,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Wrench,
   Search as SearchIcon,
   ChartColumn,
@@ -19,6 +25,7 @@ import {
   RefreshCw,
   Clock,
   Activity,
+  Download,
 } from "lucide-react";
 import type { AuditEvent } from "@/lib/audit";
 import { storage } from "@/lib/storage";
@@ -27,6 +34,31 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recha
 import { format, subDays, startOfDay } from "date-fns";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 import { chartTooltipStyle } from "@/lib/charts/palette";
+import { csvRow } from "@/lib/export/csv";
+import { jsonText } from "@/lib/export/json";
+import { queryHistoryText } from "@/lib/export/query-history";
+import { downloadText } from "@/lib/export/download";
+
+interface AuditExportProps {
+  disabled: boolean;
+  onExport: (format: "csv" | "json") => void;
+}
+
+function AuditExport({ disabled, onExport }: AuditExportProps) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-8 text-xs gap-2" disabled={disabled}>
+          <Download className="w-3 h-3" /> Export
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => onExport("csv")}>Export as CSV</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onExport("json")}>Export as JSON</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 export function AuditTab() {
   return (
@@ -144,6 +176,54 @@ function OperationsAudit() {
     );
   }, [events, searchQuery]);
 
+  const exportEvents = (format: "csv" | "json") => {
+    let content: string;
+    if (format === "csv") {
+      const headers = [
+        "Timestamp",
+        "Type",
+        "Action",
+        "Target",
+        "Connection",
+        "User",
+        "Result",
+        "Duration (ms)",
+        "Details",
+        "IP",
+        "Reason",
+        "Bucket",
+        "Correlation ID",
+        "ID",
+      ];
+      const rows = filteredEvents.map((event) =>
+        csvRow([
+          event.timestamp,
+          event.type,
+          event.action,
+          event.target,
+          event.connectionName,
+          event.user,
+          event.result,
+          event.duration,
+          event.details,
+          event.ip,
+          event.reason,
+          event.bucket,
+          event.correlationId,
+          event.id,
+        ]),
+      );
+      content = [csvRow(headers), ...rows].join("\n");
+    } else {
+      content = jsonText(filteredEvents, 2);
+    }
+    downloadText(
+      content,
+      format === "csv" ? "text/csv" : "application/json",
+      `audit_operations_${Date.now()}.${format}`,
+    );
+  };
+
   const successCount = events.filter((e) => e.result === "success").length;
   const successRate = events.length > 0 ? Math.round((successCount / events.length) * 100) : 0;
 
@@ -184,6 +264,7 @@ function OperationsAudit() {
           <RefreshCw className={`w-3 h-3 mr-1.5 ${loading ? "animate-spin" : ""}`} />
           Refresh
         </Button>
+        <AuditExport disabled={loading || filteredEvents.length === 0} onExport={exportEvents} />
       </div>
 
       {/* Stats Summary */}
@@ -286,8 +367,16 @@ function QueryAudit() {
         (h) => h.query.toLowerCase().includes(q) || (h.connectionName || "").toLowerCase().includes(q),
       );
     }
-    return items.slice(0, 200);
+    return items;
   }, [history, searchQuery, statusFilter]);
+
+  const exportHistory = (format: "csv" | "json") => {
+    downloadText(
+      queryHistoryText(filteredHistory, format),
+      format === "csv" ? "text/csv" : "application/json",
+      `query_history_${Date.now()}.${format}`,
+    );
+  };
 
   const successCount = history.filter((h) => h.status === "success").length;
   const successRate = history.length > 0 ? Math.round((successCount / history.length) * 100) : 0;
@@ -317,6 +406,7 @@ function QueryAudit() {
           <span className="mx-2">&middot;</span>
           <span className="text-success font-bold">{successRate}%</span> success
         </div>
+        <AuditExport disabled={filteredHistory.length === 0} onExport={exportHistory} />
       </div>
 
       {/* Query History Table */}
@@ -343,7 +433,7 @@ function QueryAudit() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredHistory.map((item, idx) => (
+              {filteredHistory.slice(0, 200).map((item, idx) => (
                 <TableRow key={idx} className="border-hairline hover:bg-fill">
                   <TableCell className="py-2">
                     {item.status === "success" ? (
