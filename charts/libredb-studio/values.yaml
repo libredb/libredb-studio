@@ -56,6 +56,8 @@ secrets:
     adminPassword: admin-password
     userEmail: user-email
     userPassword: user-password
+    adminTotpSecret: admin-totp-secret
+    userTotpSecret: user-totp-secret
     llmApiKey: llm-api-key
     oidcClientId: oidc-client-id
     oidcClientSecret: oidc-client-secret
@@ -75,6 +77,16 @@ secrets:
   # -- Regular user account password. Optional: the non-admin account exists only when set;
   # it is never generated.
   userPassword: ""
+  # -- Base32 TOTP secret for the admin account (RFC 4648: A-Z and 2-7). Optional and
+  # local-provider only: when set, admin login requires a 6-digit authenticator code after the
+  # password. A value that is not base32 stops login with a clear 503 rather than silently
+  # dropping the second factor. Under config.authProvider=oidc the login page shows no password
+  # form and MFA belongs to the identity provider, but this still guards POST /api/auth/login
+  # whenever a password is also set. Generate one with: openssl rand 20 | base32 | tr -d '='
+  adminTotpSecret: ""
+  # -- Base32 TOTP secret for the regular user account. Same rules as adminTotpSecret; inert
+  # unless userPassword is also set, since without it there is no user account to protect.
+  userTotpSecret: ""
   # -- LLM API key (optional, for AI features)
   llmApiKey: ""
   # -- OIDC client ID (required when authProvider=oidc)

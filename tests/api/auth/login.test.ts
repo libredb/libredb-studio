@@ -2,6 +2,8 @@ import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from "bun:
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AuthConfigError } from "@/lib/auth-errors";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { clearTotpReplayState } from "@/lib/totp";
+import { RFC6238_SECRET } from "../../helpers/rfc6238";
 
 // ─── Mock @/lib/auth BEFORE importing the route ─────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -24,13 +26,17 @@ describe("POST /api/auth/login", () => {
   // afterEach — so a failing assertion mid-test can never leak env state into
   // later tests (a plain restore() at the end of a test body would be skipped
   // when an earlier expect() throws).
-  const MUTATED_ENV_KEYS = ["ADMIN_PASSWORD", "USER_PASSWORD"] as const;
+  const MUTATED_ENV_KEYS = ["ADMIN_PASSWORD", "USER_PASSWORD", "ADMIN_TOTP_SECRET", "USER_TOTP_SECRET"] as const;
   const envSnapshot: Record<string, string | undefined> = {};
 
   beforeEach(() => {
     clearRateLimitState();
     mockLogin.mockClear();
     for (const key of MUTATED_ENV_KEYS) envSnapshot[key] = process.env[key];
+    // The TOTP variables are absent for every case that predates MFA, so the single-step flow is
+    // what those cases actually exercise regardless of the ambient environment.
+    delete process.env.ADMIN_TOTP_SECRET;
+    delete process.env.USER_TOTP_SECRET;
   });
 
   afterEach(() => {
@@ -369,5 +375,158 @@ describe("POST /api/auth/login", () => {
     expect(res.status).toBe(401);
     expect(data.success).toBe(false);
     expect(data.message).toBe("Invalid email or password");
+  });
+
+  describe("TOTP second factor", () => {
+    /** RFC 6238 Appendix B seed; "287082" is its six-digit code for the step containing T=59. */
+    const SECRET = RFC6238_SECRET;
+    const CODE = "287082";
+    const FROZEN_NOW = 59_000;
+
+    let nowSpy: ReturnType<typeof spyOn<DateConstructor, "now">>;
+
+    beforeEach(() => {
+      // Both the code check and the replay guard read the wall clock, so the whole flow is
+      // pinned to the instant the published vector is valid at.
+      nowSpy = spyOn(Date, "now").mockReturnValue(FROZEN_NOW);
+      clearTotpReplayState();
+      process.env.ADMIN_TOTP_SECRET = SECRET;
+    });
+
+    afterEach(() => {
+      nowSpy.mockRestore();
+      clearTotpReplayState();
+    });
+
+    type MfaBody = { success: boolean; message: string; mfaRequired?: boolean; role?: string };
+
+    function attempt(body: Record<string, unknown>, address = "203.0.113.40") {
+      return POST(
+        createMockRequest("/api/auth/login", {
+          method: "POST",
+          headers: { "x-forwarded-for": address },
+          body,
+        }) as never,
+      );
+    }
+
+    test("asks for a code instead of signing in when the account carries a secret", async () => {
+      const res = await attempt({ email: "admin@libredb.org", password: "LibreDB.2026" });
+      const data = await parseResponseJSON<MfaBody>(res);
+
+      expect(res.status).toBe(401);
+      expect(data.mfaRequired).toBe(true);
+      expect(data.message).toBe("Enter the 6-digit code from your authenticator app");
+      // The decisive assertion: no session was created on the strength of the password alone.
+      expect(mockLogin).not.toHaveBeenCalled();
+    });
+
+    test("signs in once the correct code is presented", async () => {
+      const res = await attempt({ email: "admin@libredb.org", password: "LibreDB.2026", totp: CODE });
+      const data = await parseResponseJSON<MfaBody>(res);
+
+      expect(res.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.role).toBe("admin");
+      expect(mockLogin).toHaveBeenCalledWith("admin", "admin@libredb.org");
+    });
+
+    test("distinguishes a wrong code from a missing one", async () => {
+      const res = await attempt({ email: "admin@libredb.org", password: "LibreDB.2026", totp: "000000" });
+      const data = await parseResponseJSON<MfaBody>(res);
+
+      expect(res.status).toBe(401);
+      expect(data.mfaRequired).toBe(true);
+      expect(data.message).toBe("Invalid authentication code");
+      expect(mockLogin).not.toHaveBeenCalled();
+    });
+
+    test("refuses a code that has already been spent (RFC 6238 replay guard)", async () => {
+      expect((await attempt({ email: "admin@libredb.org", password: "LibreDB.2026", totp: CODE })).status).toBe(200);
+
+      const replay = await attempt({ email: "admin@libredb.org", password: "LibreDB.2026", totp: CODE });
+      const data = await parseResponseJSON<MfaBody>(replay);
+
+      expect(replay.status).toBe(401);
+      expect(data.message).toBe("Invalid authentication code");
+      expect(mockLogin).toHaveBeenCalledTimes(1);
+    });
+
+    test("treats a non-string code as no code rather than a 500", async () => {
+      const res = await attempt({ email: "admin@libredb.org", password: "LibreDB.2026", totp: 287082 });
+      const data = await parseResponseJSON<MfaBody>(res);
+
+      expect(res.status).toBe(401);
+      expect(data.message).toBe("Enter the 6-digit code from your authenticator app");
+    });
+
+    test("keeps the uniform 401 when the password is wrong, even alongside a valid code", async () => {
+      const res = await attempt({ email: "admin@libredb.org", password: "wrong", totp: CODE });
+      const data = await parseResponseJSON<MfaBody>(res);
+
+      expect(res.status).toBe(401);
+      expect(data.message).toBe("Invalid email or password");
+      // No mfaRequired flag: whether this account has a second factor must stay unstated to
+      // anyone who has not already proved they hold the password.
+      expect(data.mfaRequired).toBeUndefined();
+    });
+
+    test("leaves an account without a secret on the single-step flow", async () => {
+      delete process.env.ADMIN_TOTP_SECRET;
+
+      const res = await attempt({ email: "admin@libredb.org", password: "LibreDB.2026" });
+
+      expect(res.status).toBe(200);
+    });
+
+    test("does not spend the client budget on the code prompt itself", async () => {
+      // The client bucket allows five FAILURES. Six prompts is past that, so if the prompt were
+      // charged, the code below would meet a 429 instead of a session — five ordinary logins a
+      // window is not a usable limit.
+      for (let i = 0; i < 6; i += 1) {
+        const res = await attempt({ email: "admin@libredb.org", password: "LibreDB.2026" });
+        expect(res.status).toBe(401);
+      }
+
+      const res = await attempt({ email: "admin@libredb.org", password: "LibreDB.2026", totp: CODE });
+
+      expect(res.status).toBe(200);
+    });
+
+    test("does spend the budget on a wrong code, so guessing is bounded", async () => {
+      for (let i = 0; i < 5; i += 1) {
+        const res = await attempt({ email: "admin@libredb.org", password: "LibreDB.2026", totp: "000000" });
+        expect(res.status).toBe(401);
+      }
+
+      const res = await attempt({ email: "admin@libredb.org", password: "LibreDB.2026", totp: CODE });
+
+      expect(res.status).toBe(429);
+    });
+
+    test("returns an actionable 503 when the configured secret is not base32", async () => {
+      process.env.ADMIN_TOTP_SECRET = "not-base32!";
+
+      const res = await attempt({ email: "admin@libredb.org", password: "LibreDB.2026" });
+      const data = await parseResponseJSON<MfaBody>(res);
+
+      expect(res.status).toBe(503);
+      expect(data.message).toContain("ADMIN_TOTP_SECRET");
+    });
+
+    test("still returns 401 when the mfa_required audit emit throws", async () => {
+      const logSpy = spyOn(console, "log").mockImplementation(() => {
+        throw new Error("audit sink unavailable");
+      });
+      try {
+        const res = await attempt({ email: "admin@libredb.org", password: "LibreDB.2026" });
+        const data = await parseResponseJSON<MfaBody>(res);
+
+        expect(res.status).toBe(401);
+        expect(data.mfaRequired).toBe(true);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
   });
 });

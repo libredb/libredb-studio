@@ -918,6 +918,7 @@ extraEnvFrom:
 | [Local models](docs/llms/README.md) | Which local model can actually drive an agent run, measured across three workflows, one page per model |
 | [Agent Runtime](docs/AGENT.md) | Agent behaviour, bounds, deployment and known limitations |
 | [OIDC SSO](docs/OIDC.md) | SSO setup (Auth0, Keycloak, Okta, Azure AD, Zitadel, Google) + subsystem internals & security model |
+| [Two-Factor Auth](docs/MFA.md) | TOTP on the local provider — generating a secret, enrolling an app, Docker/Helm wiring, and what it does not cover |
 | [Theming Guide](docs/ui/theming.md) | CSS theming, dark mode, and styling customization |
 | [Login Page](docs/ui/login-page.md) | Login page layout, OIDC/local modes, and design system |
 | [Editor Docs](docs/editor/) | SQL editor internals — completion, performance, query optimization |

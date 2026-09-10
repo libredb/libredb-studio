@@ -36,6 +36,7 @@ Two consequences worth stating before the table:
 | 1.3 | State-changing requests are checked against the deployment's own origin | Implemented | [`src/lib/api/origin-check.ts`](../src/lib/api/origin-check.ts), [`src/proxy.ts`](../src/proxy.ts) | [`tests/security/csrf-origin.test.ts`](../tests/security/csrf-origin.test.ts) |
 | 1.4 | Authentication transitions and denials are audited | Partial | [`src/lib/audit.ts`](../src/lib/audit.ts), [`src/lib/api/require-session.ts`](../src/lib/api/require-session.ts) | [`tests/security/auth-audit.test.ts`](../tests/security/auth-audit.test.ts) |
 | 1.5 | The login comparison is constant time and its failure response is uniform | Implemented | [`src/lib/auth-compare.ts`](../src/lib/auth-compare.ts), [`src/app/api/auth/login/route.ts`](../src/app/api/auth/login/route.ts) | [`tests/security/login-enumeration.test.ts`](../tests/security/login-enumeration.test.ts) |
+| 1.6 | A local account with a TOTP secret configured cannot be signed in with its password alone, and an accepted code cannot be used twice | Implemented | [`src/lib/totp.ts`](../src/lib/totp.ts), [`src/lib/local-auth.ts`](../src/lib/local-auth.ts), [`src/app/api/auth/login/route.ts`](../src/app/api/auth/login/route.ts) | [`tests/security/mfa-second-factor.test.ts`](../tests/security/mfa-second-factor.test.ts) |
 | 2.1 | Secrets, dependencies and the container image are scanned in CI | Implemented | [`.github/workflows/security-scan.yml`](../.github/workflows/security-scan.yml), [`.gitleaks.toml`](../.gitleaks.toml), [`.trivyignore.yaml`](../.trivyignore.yaml) | [`tests/unit/security-scan-workflow.test.ts`](../tests/unit/security-scan-workflow.test.ts), [`tests/unit/gitleaks-config.test.ts`](../tests/unit/gitleaks-config.test.ts), [`tests/unit/trivyignore-policy.test.ts`](../tests/unit/trivyignore-policy.test.ts) |
 | 2.2 | An SBOM is published with every release | Implemented | [`.github/workflows/release-artifacts.yml`](../.github/workflows/release-artifacts.yml) | [`tests/unit/release-sbom.test.ts`](../tests/unit/release-sbom.test.ts) |
 | 2.3 | No TypeScript error is suppressed at build time | Implemented | [`next.config.ts`](../next.config.ts) | [`tests/unit/next-config-typecheck.test.ts`](../tests/unit/next-config-typecheck.test.ts) |
@@ -141,6 +142,26 @@ per replica; multi-replica deployments should enforce the same budgets at the in
 **1.4.** Marked Partial: sessions and origin failures are audited, role failures are not. Four
 in-handler admin checks and the middleware's `/admin` redirect return their denial with no audit
 line. Tracked in [`docs/BACKLOG.md`](./BACKLOG.md), entry H12.
+
+**1.6.** Opt-in: a second factor exists for an account exactly when `ADMIN_TOTP_SECRET` /
+`USER_TOTP_SECRET` is set, so the row claims nothing about a deployment that sets neither.
+Verification is RFC 6238 with HMAC-SHA-1, six digits, a 30-second step and one step of skew either
+side. Three things are worth stating precisely.
+
+It guards `POST /api/auth/login`, and that route is **not** disabled by
+`NEXT_PUBLIC_AUTH_PROVIDER=oidc` — the provider setting changes what the login page renders, not
+what the API accepts. A deployment that runs OIDC while still setting `ADMIN_PASSWORD` therefore
+keeps a way in that never reaches the issuer, and so never meets the MFA policy configured there;
+these variables are honoured in that mode too, which is how it is closed
+([`docs/MFA.md`](./MFA.md), [`docs/OIDC.md`](./OIDC.md)).
+
+Replies distinguish "code required" from "invalid code", which is not the enumeration oracle 1.5
+removes: both are reachable only with a correct password, and without MFA that same request would
+have returned a session.
+
+The spent-code set that makes an accepted code single-use lives in the application process, like
+the counters in 1.2 — with more than one replica each process enforces its own view, so a captured
+code can be replayed once per replica inside its 90-second window.
 
 **3.1.** Applies to `STORAGE_PROVIDER=sqlite` and `postgres` only. Seven fields are encrypted;
 `host`, `port`, `user`, `agentUser`, `database`, `name` and the TLS certificates stay readable so a

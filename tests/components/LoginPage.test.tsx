@@ -461,3 +461,168 @@ describe("LoginPage showcase (issue #425)", () => {
     }
   });
 });
+
+/**
+ * The second-factor step of the local login flow. The form is deliberately ignorant of whether
+ * an account is MFA-protected until the server says so, so every case here drives that state the
+ * only way the real app can: through a response body.
+ */
+describe("LoginPage TOTP step", () => {
+  const MFA_PROMPT = "Enter the 6-digit code from your authenticator app";
+  const MFA_INVALID = "Invalid authentication code";
+
+  function respondWith(...bodies: object[]) {
+    let call = 0;
+    const mockFetch = mock(() => {
+      const body = bodies[Math.min(call, bodies.length - 1)];
+      call += 1;
+      return Promise.resolve(new Response(JSON.stringify(body)));
+    });
+    globalThis.fetch = mockFetch as never;
+    return mockFetch;
+  }
+
+  function codeInput(container: HTMLElement) {
+    return container.querySelector("#totp") as HTMLInputElement | null;
+  }
+
+  /** Fills in the credentials and submits once, leaving the form on whatever step it reached. */
+  async function submitCredentials(result: ReturnType<typeof renderLogin>) {
+    await result.user.type(result.emailInput, "admin@libredb.org");
+    await result.user.type(result.passwordInput, "LibreDB.2026");
+    fireEvent.submit(result.form);
+  }
+
+  beforeEach(() => {
+    mockRouterPush.mockClear();
+    mockRouterRefresh.mockClear();
+    mockToastSuccess.mockClear();
+    mockToastError.mockClear();
+    globalThis.fetch = mock(() => Promise.resolve(new Response("{}"))) as never;
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("hides the code field until the server asks for one", () => {
+    const { container } = renderLogin();
+    expect(codeInput(container)).toBeNull();
+  });
+
+  test("reveals the code field when the server answers mfaRequired", async () => {
+    respondWith({ success: false, mfaRequired: true, message: MFA_PROMPT });
+
+    const result = renderLogin();
+    await submitCredentials(result);
+
+    await waitFor(() => expect(codeInput(result.container)).not.toBeNull());
+    expect(result.getByText("Verify code")).not.toBeNull();
+  });
+
+  test("does not frame the first prompt as an error", async () => {
+    respondWith({ success: false, mfaRequired: true, message: MFA_PROMPT });
+
+    const result = renderLogin();
+    await submitCredentials(result);
+
+    // The field appearing is the message. A toast here would read as a failure to a user who
+    // has done nothing wrong yet.
+    await waitFor(() => expect(codeInput(result.container)).not.toBeNull());
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("offers the code field to the platform autofill rather than a bare text box", async () => {
+    respondWith({ success: false, mfaRequired: true, message: MFA_PROMPT });
+
+    const result = renderLogin();
+    await submitCredentials(result);
+
+    await waitFor(() => expect(codeInput(result.container)).not.toBeNull());
+    const field = codeInput(result.container)!;
+    expect(field.autocomplete).toBe("one-time-code");
+    expect(field.inputMode).toBe("numeric");
+    // `number` would strip the leading zero that one code in six starts with.
+    expect(field.type).toBe("text");
+  });
+
+  test("sends the code alongside the credentials on the second request", async () => {
+    const mockFetch = respondWith(
+      { success: false, mfaRequired: true, message: MFA_PROMPT },
+      { success: true, role: "admin" },
+    );
+
+    const result = renderLogin();
+    await submitCredentials(result);
+    await waitFor(() => expect(codeInput(result.container)).not.toBeNull());
+
+    await result.user.type(codeInput(result.container)!, "287082");
+    fireEvent.submit(result.form);
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+    const [, options] = mockFetch.mock.calls[1] as unknown as [string, RequestInit];
+    expect(JSON.parse(options.body as string)).toEqual({
+      email: "admin@libredb.org",
+      password: "LibreDB.2026",
+      totp: "287082",
+    });
+    await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/admin"));
+  });
+
+  test("surfaces the server's wording when a code is rejected, and clears the field", async () => {
+    respondWith(
+      { success: false, mfaRequired: true, message: MFA_PROMPT },
+      { success: false, mfaRequired: true, message: MFA_INVALID },
+    );
+
+    const result = renderLogin();
+    await submitCredentials(result);
+    await waitFor(() => expect(codeInput(result.container)).not.toBeNull());
+
+    await result.user.type(codeInput(result.container)!, "000000");
+    fireEvent.submit(result.form);
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith(MFA_INVALID));
+    expect(codeInput(result.container)!.value).toBe("");
+  });
+
+  test("refuses to submit an empty code rather than spending a rate-limit slot on it", async () => {
+    const mockFetch = respondWith({ success: false, mfaRequired: true, message: MFA_PROMPT });
+
+    const result = renderLogin();
+    await submitCredentials(result);
+    await waitFor(() => expect(codeInput(result.container)).not.toBeNull());
+
+    fireEvent.submit(result.form);
+
+    expect(mockToastError).toHaveBeenCalledWith("Please enter your authentication code");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("drops back to the password step when the email is edited", async () => {
+    respondWith({ success: false, mfaRequired: true, message: MFA_PROMPT });
+
+    const result = renderLogin();
+    await submitCredentials(result);
+    await waitFor(() => expect(codeInput(result.container)).not.toBeNull());
+
+    await result.user.type(result.emailInput, "x");
+
+    // A code minted for the previous account would fail and cost that account a slot in the
+    // per-account limiter, so the step resets with the credentials it was issued against.
+    await waitFor(() => expect(codeInput(result.container)).toBeNull());
+    expect(result.getByText("Sign In")).not.toBeNull();
+  });
+
+  test("drops back to the password step when the password is edited", async () => {
+    respondWith({ success: false, mfaRequired: true, message: MFA_PROMPT });
+
+    const result = renderLogin();
+    await submitCredentials(result);
+    await waitFor(() => expect(codeInput(result.container)).not.toBeNull());
+
+    await result.user.type(result.passwordInput, "x");
+
+    await waitFor(() => expect(codeInput(result.container)).toBeNull());
+  });
+});

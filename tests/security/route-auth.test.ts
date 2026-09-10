@@ -399,6 +399,7 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/seed": "reads seed connection metadata from config; never connects",
     "@/lib/storage/factory": "the app's own storage backend (STORAGE_PROVIDER), not a user database",
     "@/lib/storage/types": "the storage backend's interfaces",
+    "@/lib/totp": "second-factor verification: an HMAC over the submitted code and an in-process spent-step map",
   };
 
   /**

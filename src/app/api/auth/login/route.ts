@@ -12,8 +12,9 @@ import {
   type RateLimitBucket,
 } from "@/lib/api/rate-limit";
 import { hmacHex, secretsMatch } from "@/lib/auth-compare";
-import { emitAuditEvent, MAX_AUDIT_FIELD_LENGTH } from "@/lib/audit";
+import { emitAuditEvent, MAX_AUDIT_FIELD_LENGTH, type AuditReason } from "@/lib/audit";
 import { logger } from "@/lib/logger";
+import { claimTotpStep, verifyTotp } from "@/lib/totp";
 
 const ROUTE = "POST /api/auth/login";
 
@@ -24,6 +25,11 @@ const ROUTE = "POST /api/auth/login";
  * an enumeration oracle independent of the response body.
  */
 const DUMMY_PASSWORD = "libredb-dummy-password-never-a-credential";
+
+// Single-line and module-scoped, matching the auth messages in local-auth.ts and auth-env.ts:
+// bun's line coverage under-counts the continuation lines of a wrapped string.
+const MFA_REQUIRED_MESSAGE = "Enter the 6-digit code from your authenticator app";
+const MFA_INVALID_MESSAGE = "Invalid authentication code";
 
 type LoginBucket = Extract<RateLimitBucket, "login_client" | "login_account">;
 
@@ -71,8 +77,9 @@ export async function POST(request: NextRequest) {
 
     let email: unknown;
     let password: unknown;
+    let totp: unknown;
     try {
-      ({ email, password } = await request.json());
+      ({ email, password, totp } = await request.json());
     } catch {
       // A malformed body is a client error, not a server error, and - like a wrong password - is
       // a wasted attempt from this address: consume the client bucket so a caller who floods this
@@ -104,6 +111,9 @@ export async function POST(request: NextRequest) {
     // distinguishable response.
     const submittedEmail = typeof email === "string" ? email : "";
     const submittedPassword = typeof password === "string" ? password : "";
+    // Same coercion, same reason: a non-string `totp` must read as "no code supplied", never
+    // reach verifyTotp's string methods and become a 500 that stands out from the uniform 401.
+    const submittedTotp = typeof totp === "string" ? totp.trim() : "";
     // MAX_AUDIT_FIELD_LENGTH, not a locally redeclared copy of the same number: the actor becomes
     // an AuditEvent field either way, so both truncations must move together.
     const actor = submittedEmail.slice(0, MAX_AUDIT_FIELD_LENGTH) || "anonymous";
@@ -120,6 +130,58 @@ export async function POST(request: NextRequest) {
     const candidate = user?.password ?? DUMMY_PASSWORD;
     const passwordMatches = secretsMatch(submittedPassword, candidate);
     const matched = user && passwordMatches ? user : null;
+
+    // Second factor. Reached only once the password already matched, so answering "code required"
+    // here is not the account-enumeration oracle the uniform 401 below exists to prevent: an
+    // unknown email and a known email with a wrong password both still take that path, and a
+    // caller who can reach this branch necessarily holds a working password for the account -
+    // without MFA configured, that same request would simply have logged them in.
+    if (matched?.totpSecret) {
+      const step = submittedTotp ? verifyTotp(matched.totpSecret, submittedTotp) : null;
+      // claimTotpStep is what makes an accepted code single-use (RFC 6238 §5.2). A replayed code
+      // verifies but fails to claim, and lands here as an ordinary bad code.
+      const accepted = step !== null && claimTotpStep(accountKey, step);
+
+      if (!accepted) {
+        const reason: AuditReason = submittedTotp ? "bad_totp" : "mfa_required";
+        // A wrong code is a failed attempt and is charged for: it is the only thing between an
+        // attacker holding a stolen password and a session, so guessing has to be bounded. Not
+        // having supplied one yet is NOT a failed attempt - it is the first half of a
+        // two-request flow, and charging it would spend the whole five-failure client budget on
+        // five ordinary logins.
+        if (reason === "bad_totp") {
+          consumeRateLimit("login_client", clientKey);
+          consumeRateLimit("login_account", accountKey);
+        }
+        // Isolated like every other emit in this route: the 401 below is already decided, and a
+        // broken audit sink must not turn it into an unrelated 500. The mfa_required branch is
+        // uncharged and therefore unbounded in volume for whoever holds the password - the same
+        // property login_success already has, since a successful login resets both buckets.
+        try {
+          emitAuditEvent({
+            type: "login_failure",
+            action: "login",
+            target: ROUTE,
+            user: matched.email,
+            result: "failure",
+            reason,
+            ip,
+          });
+        } catch (auditError) {
+          logger.error("Failed to record login_failure audit event", auditError, { route: ROUTE });
+        }
+        // `mfaRequired` tells the client to render the code field. It carries no information the
+        // caller did not already supply the password to learn (see the note above this block).
+        return NextResponse.json(
+          {
+            success: false,
+            mfaRequired: true,
+            message: reason === "bad_totp" ? MFA_INVALID_MESSAGE : MFA_REQUIRED_MESSAGE,
+          },
+          { status: 401 },
+        );
+      }
+    }
 
     if (matched) {
       await login(matched.role, matched.email);

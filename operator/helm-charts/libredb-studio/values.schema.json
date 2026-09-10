@@ -103,6 +103,16 @@
           "type": "string",
           "description": "User account password"
         },
+        "adminTotpSecret": {
+          "type": "string",
+          "pattern": "^$|^[A-Za-z2-7][A-Za-z2-7 =-]*$",
+          "description": "Admin TOTP secret: empty (no second factor) or base32 (RFC 4648: A-Z and 2-7, spacing and = padding allowed)"
+        },
+        "userTotpSecret": {
+          "type": "string",
+          "pattern": "^$|^[A-Za-z2-7][A-Za-z2-7 =-]*$",
+          "description": "User TOTP secret: empty (no second factor) or base32 (RFC 4648: A-Z and 2-7, spacing and = padding allowed)"
+        },
         "llmApiKey": {
           "type": "string",
           "description": "LLM API key"
