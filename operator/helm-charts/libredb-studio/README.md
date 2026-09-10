@@ -153,10 +153,17 @@ Optional, local-provider only, and opt-in per account. Set a base32 secret and t
 present a 6-digit authenticator code after its password:
 
 ```bash
+# Generate it, enrol the printed value in your authenticator app, then install.
+ADMIN_TOTP_SECRET="$(openssl rand 20 | base32 | tr -d '=')"
+echo "$ADMIN_TOTP_SECRET"
+
 helm upgrade --install libredb libredb/libredb-studio \
   --set secrets.adminPassword=MyAdmin123 \
-  --set secrets.adminTotpSecret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+  --set secrets.adminTotpSecret="$ADMIN_TOTP_SECRET"
 ```
+
+No example secret is printed here on purpose. One that looks real invites being copied and left in
+place, and a second factor whose secret is published is worse than none.
 
 The value travels in the chart's Secret and is referenced from the pod, so it never appears in the
 Deployment spec - which is why `extraEnv` is the wrong tool for it. Both `ADMIN_TOTP_SECRET` and

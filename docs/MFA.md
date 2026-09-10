@@ -35,9 +35,14 @@ A TOTP secret is base32 (RFC 4648: the letters `A`–`Z` and the digits `2`–`7
 RFC 4226 recommends:
 
 ```bash
-openssl rand 20 | base32 | tr -d '='
-# => JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+ADMIN_TOTP_SECRET="$(openssl rand 20 | base32 | tr -d '=')"
+echo "$ADMIN_TOTP_SECRET"
 ```
+
+Keep that shell open: every step below refers to `$ADMIN_TOTP_SECRET`, so the value never has to be
+pasted anywhere it can be forgotten. This page prints no example secret on purpose. A real-looking
+one invites being copied and left in place, and a second factor whose secret is published is worse
+than none: every screen still says the account is protected while anyone can generate its codes.
 
 `base32` comes with GNU coreutils. On a machine without it, any authenticator app can generate a
 secret for you — create a manual entry and copy the key it shows.
@@ -48,8 +53,12 @@ secret for you — create a manual entry and copy the key it shows.
 NEXT_PUBLIC_AUTH_PROVIDER=local
 ADMIN_EMAIL=admin@libredb.org
 ADMIN_PASSWORD=your_secure_admin_password
-ADMIN_TOTP_SECRET=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+ADMIN_TOTP_SECRET=the_secret_you_generated_in_step_1
 ```
+
+Both values above are placeholders, and neither is valid for its variable: the TOTP one is not
+base32, so a file left exactly like this stops login with a `503` naming the variable rather than
+quietly installing a factor anyone can compute.
 
 Restart the server. The variable is read per login attempt, so nothing is cached across a restart.
 
@@ -73,7 +82,7 @@ Studio does not mint one, because doing so would mean the server handing the sha
 over HTTP after startup:
 
 ```
-otpauth://totp/LibreDB%20Studio:admin@libredb.org?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=LibreDB%20Studio
+otpauth://totp/LibreDB%20Studio:admin@libredb.org?secret=YOUR_SECRET_HERE&issuer=LibreDB%20Studio
 ```
 
 ### 4. Sign in
@@ -122,7 +131,7 @@ you configured there. Two ways to close it, and they compose:
 docker run -d -p 3000:3000 \
   -e JWT_SECRET="$(openssl rand -base64 32)" \
   -e ADMIN_PASSWORD=your_secure_admin_password \
-  -e ADMIN_TOTP_SECRET=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP \
+  -e ADMIN_TOTP_SECRET="$ADMIN_TOTP_SECRET" \
   ghcr.io/libredb/libredb-studio:latest
 ```
 
@@ -139,7 +148,7 @@ never appears in the Deployment spec:
 ```bash
 helm install libredb-studio oci://ghcr.io/libredb/charts/libredb-studio \
   --set secrets.adminPassword=MyAdmin123 \
-  --set secrets.adminTotpSecret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+  --set secrets.adminTotpSecret="$ADMIN_TOTP_SECRET"
 ```
 
 Bringing your own Secret works too — add the keys `admin-totp-secret` and `user-totp-secret`
@@ -189,6 +198,14 @@ Submitting a **wrong** code does count, against both login buckets: `RATE_LIMIT_
 5 minutes, per client address) and `RATE_LIMIT_LOGIN_ACCOUNT_MAX` (20 per 5 minutes, per account).
 Guessing a 6-digit code is therefore bounded to a few dozen tries per window against roughly a
 million values.
+
+The client bucket is keyed on the **address**, not the account, so wrong codes spend a budget the
+whole address shares. Measured: five wrong codes for the admin from one address, then a correct
+password for the *other* account from that same address, answers `429` for the rest of the window.
+This matters for the common split of protecting the admin and leaving an automation-owned account
+on a password alone: behind one NAT or one ingress they draw on the same bucket, so an admin whose
+phone clock has drifted can stall the automation for five minutes. Give the automation its own
+egress address, or raise `RATE_LIMIT_LOGIN_MAX`, if that coupling is unacceptable.
 
 Locked out of your own account? The secret is an environment variable, so recovery is the same as
 for a lost password: blank `ADMIN_TOTP_SECRET` and restart. There are no recovery codes, and none
