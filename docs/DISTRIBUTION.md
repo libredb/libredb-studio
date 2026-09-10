@@ -398,20 +398,26 @@ carries a `release-config.yaml`**; otherwise the release pipeline just prints
 the manual instructions in its summary comment. 0.9.59 shipped without one, so
 its catalog PR
 ([community-operators-prod#10581](https://github.com/redhat-openshift-ecosystem/community-operators-prod/pull/10581))
-was rendered and opened by hand. From 0.9.60 on, include this file in the
-bundle PR as `operators/libredb-studio-operator/<version>/release-config.yaml`:
+was rendered and opened by hand. Every submission since carries the file at
+`operators/libredb-studio-operator/<version>/release-config.yaml`, written by
+the `submit-catalogs` job rather than by hand:
 
 ```yaml
 ---
 catalog_templates:
   - template_name: basic.yaml
     channels: [alpha]
-    skipRange: '>=0.0.0 <<version>'
+    replaces: libredb-studio-operator.v<previous version in this catalog>
 ```
 
-`skipRange` is what wires the new bundle into the update graph, and it is
-deliberately *not* `replaces` — see
-[The update graph is carried by skipRange, not replaces](#the-update-graph-is-carried-by-skiprange-not-replaces).
+`replaces` and not `skipRange`. A skipRange contributes no edge to the FBC
+graph, so the rendered channel keeps two heads and `opm validate` rejects the
+catalog with `multiple channel heads found in graph` - measured on
+community-operators-prod#11106, whose `add-bundle-to-fbc-dryrun` failed exactly
+that way before the field was changed. The value is the same derived
+predecessor the CSV's `spec.replaces` carries and is written at submission
+time rather than stored in this repo; see
+[The update graph](#the-update-graph).
 Per the pipeline's own schema
 ([`release-config-schema.json`](https://github.com/redhat-openshift-ecosystem/operator-pipelines/blob/main/operatorcert/schemas/release-config-schema.json))
 only `template_name` and `channels` are required; `replaces`, `skips` and
@@ -422,47 +428,103 @@ each *newly added* OpenShift version's catalog) and does not substitute for
 (k8s-operatorhub/community-operators) has no such second step: its
 bundle-directory PR is the whole listing.
 
-### The update graph is carried by skipRange, not replaces
+### Automated submission
 
-Both catalogs need to know where a new bundle sits relative to the last one, or
-the older bundle becomes *dangling* — reachable from no channel head — which is
-a hard failure of `check_dangling_bundles` in
-[operatorcert](https://github.com/redhat-openshift-ecosystem/operator-pipelines/blob/main/operatorcert/static_tests/community/bundle.py).
-The obvious field for that is `spec.replaces`, and it is the wrong one here:
-its value is *the newest version the catalogs actually serve*, which is not
-derivable from anything in this repo. It lags our releases by however many
-submissions are unmerged (`operatorhub-community` in `distribution/channels.yaml`
-measures exactly that lag), so it would have become a fourth hand-maintained
-version string with no offline gate able to notice it going stale.
+Both submissions are opened by the `submit-catalogs` job in
+[`.github/workflows/operator-release.yml`](../.github/workflows/operator-release.yml) (issue #656).
+It runs with `needs: build-and-push`, because the catalog pipelines pull the controller image onto a real cluster and it has to exist and be public first.
+The job is a matrix over the two catalogs with `fail-fast: false`: they have independent review queues and one failing must not cancel the other.
 
-`olm.skipRange` carries the same graph edge and *is* derivable: `make -C
-operator bundle` stamps `>=0.0.0 <$(VERSION)` into the CSV annotations, next to
-the `containerImage` stamp and verified the same way. "Supersede everything
-below me" stays true no matter how many releases go unsubmitted. Upstream reads
-it in `_resolve_skip_range`, which seeds the update graph *before* the
-`replaces`/`skips` pointers are considered, so replaces-mode is satisfied
-without a `replaces` key — and the same range goes in the FBC
-`release-config.yaml`, where the schema accepts it as an alternative to
-`replaces`.
+The submission is switched from `distribution/channels.yaml` like every other optional channel, via `update.ci_enabled` on `operatorhub-community`.
+Every "nothing to do" branch exits 0 and names the condition, so a legitimately impossible submission never paints a release run red.
+A skip that means a release did not reach a catalog is a `::warning::` rather than a `::notice::`, because one of them mutes every later release until somebody acts on it:
 
-Three details that are load bearing:
+| Condition | Why it is not a failure |
+|---|---|
+| `update.ci_enabled` is not `true` | the channel is switched off in the inventory |
+| `OPERATOR_CATALOG_TOKEN` absent | a fork has no token, and the workflow still has to run |
+| the operator has no directory in that catalog | a first listing needs review and metadata this path does not carry |
+| the catalog already carries this version | a rerun after a merge |
+| an open submission for any other version | see below, this one is a hard stop |
+| the release is a prerelease | the catalogs take bare semver directories only |
 
-- **The upper bound is exclusive.** `<=$(VERSION)` would put the bundle inside
-  its own skip range.
-- **An unparseable range is ignored, not rejected.** `_resolve_skip_range`
-  catches the parse error and logs `Invalid skipRange: ... is ignored`, so a
-  botched stamp reaches the catalog as "no skipRange at all" and fails there as
-  a dangling bundle. That is why the Makefile greps its own stamp back and why
-  `tests/unit/operator-bundle-update-graph.test.ts` asserts the committed
-  annotation offline. The range is parsed by `semantic_version.NpmSpec`.
-- **Do not switch `updateGraph` to `semver-mode` to avoid all this.** It would
-  also remove the hand-maintained value (the graph is then just the sorted
-  bundle list), but upstream marks the switch as one-way and forbids
-  `spec.replaces` under it, which would permanently cost us the ability to
-  publish a leaf or out-of-order bundle. Note also that the prose docs call
-  `semver-mode` the default while the implementation defaults to
-  `replaces-mode` (`config.get("updateGraph", "replaces-mode")`), so the mode
-  stays written out explicitly in each submission's `ci.yaml`.
+Three conditions are hard failures rather than skips, because each is a misconfiguration on our side that would otherwise break the channel quietly:
+the controller image is not anonymously pullable, the fork's `parent` is not the upstream, and a GitHub API read fails.
+
+Two things it refuses rather than guesses.
+A GitHub API read that fails stops the job instead of defaulting to "submit", because a decision made on an unread search is how a duplicate or a graph-breaking pull request gets opened.
+And a fork whose `parent` is not the upstream stops the job: `gh repo sync --source` cannot be trusted for that check, since it calls `POST /merge-upstream` first and that endpoint takes neither a source nor a force parameter, so a fork pointing at the wrong parent would sync from the wrong repository and still exit 0.
+The job asserts the parent, calls `merge-upstream` directly, then asserts the fork is `identical` or `behind`.
+
+**Any unmerged submission for another version is a hard stop.**
+The predecessor is derived from the catalog's `main`, so a submission that is open but unmerged is invisible to it.
+Submitting past a pending version points the graph over it, and once both merge the pending bundle is dangling.
+The skip names the blocking version and its pull request number, because a skip that does not say what to go and merge is a mute.
+A version the catalog already carries is never treated as pending, whatever an open pull request does to its directory.
+This is what lost VictoriaMetrics 0.48.2, and their record is the reason to take it seriously: `victoriametrics-bot` landed 45 of 50 submissions on operatorhub.io, and four of the five that did not land are versions the catalog has never carried.
+
+Detection is **path-based, never title-based**.
+The hub rewrites submission titles on open and on every push, inserting markers in a fixed order (`operator [O] [R] [N] [CI] [PK] <name> (<versions>)`) and listing more than one version for a multi-version pull request.
+Our own #8794 was accepted and renamed to `operator [N] [CI] libredb-studio-operator (0.9.59)`.
+So the job searches for open pull requests mentioning the operator and then reads each one's changed files, treating `operators/<operator>/<version>/...` as the submission and ignoring a `ci.yaml` edit or the bot's `catalogs/v4.x/...` follow-up.
+`scripts/operator-catalog-submission.mjs` holds that logic as pure functions, tested in `tests/unit/operator-catalog-submission.test.ts`; the workflow step is a thin caller.
+
+**Identity matters more than the fork does.**
+Upstream's authorization check compares the account that OPENED the pull request against the operator's `ci.yaml` `reviewers` list on the base branch, and nothing reads the fork owner or the commit author: `opp-env.sh` does it case-insensitively for the hub's `authorized-changes` label, and `check_permissions.py` does the same for the prod `approved` label.
+Our list is `cevheri` and `yusuf-gundogdu`, so the token must belong to one of them; a separate bot identity would have to be added upstream first, and every PR would wait for a human label until it was.
+`OPERATOR_CATALOG_TOKEN` is therefore a **classic** PAT with `public_repo` on one of those accounts: a fine-grained token cannot be granted pull-request write on a repository we do not own, and `wingetcreate`'s secret carries the same constraint for the same reason.
+
+Signing is DCO, not GPG.
+`create-pull-request` writes the `Signed-off-by` trailer from its **committer** input, whose default is `github-actions[bot]`, so `committer` and `author` are both set to the same real identity; `sign-commits` stays off, because it recreates commits through the API and discards those identities, leaving a trailer that no longer matches the author.
+
+The forks are `libredb/community-operators` and `libredb/community-operators-prod`.
+They were **transferred** from the `cevheri` account rather than re-forked, which is the only way that keeps `parent` pointing at the upstream: an org fork created from a personal fork records the personal fork as its parent, a parent cannot be changed afterwards, and the only escape ("leave fork network") is permanent and destroys the pull requests.
+The job asserts that parent on every run for the same reason.
+
+What stays manual: the first listing in each catalog, the merge itself (the hub automerges once its checks pass, prod merges on its own pipeline), and the operatorhub.io index publication, which lags a merge by hours.
+
+### The update graph
+
+Both catalogs need to know where a new bundle sits relative to the last one, or the older bundle becomes a *dangling* bundle and the catalog build fails.
+The graph is expressed in two fields, and only one of them is knowable from this repo.
+
+**`olm.skipRange`, owned by the repo.**
+`make -C operator bundle` stamps `>=0.0.0 <$(VERSION)` into the CSV annotations, next to the `containerImage` stamp, and greps it back.
+"Supersede everything below me" is derivable from `package.json` and stays true however many releases go unsubmitted.
+The upper bound is exclusive on purpose; `<=` would put the bundle inside its own skip range.
+Note the upstream failure mode this stamp-and-verify guards against: an unparseable range is *ignored with a log warning* by `_resolve_skip_range` rather than rejected, so a typo would degrade to no range at all and only surface later as a dangling bundle.
+The range is parsed by `semantic_version.NpmSpec`.
+
+**`spec.replaces`, injected at submission time and deliberately absent here.**
+Its only correct value is the version immediately preceding this one *in the catalog being submitted to*.
+That is external state: it lags our releases by however many submissions are unmerged, and the two catalogs disagree with each other.
+Nothing in this repo can derive it, so nothing in this repo declares it.
+The submission path derives it from the catalog itself and patches it into the bundle copy.
+
+The consequence looks like an omission and is not: **the committed bundle on its own does not pass `opm index add --mode replaces`.**
+Measured, with a local registry and two bundle images:
+
+| `--mode` | bundle | exit |
+|---|---|---|
+| `replaces` | committed bundle, skipRange only | 1, `add prunes bundle libredb-studio-operator.v0.9.59` |
+| `replaces` | with `spec.replaces` injected | 0 |
+| `semver` | committed bundle, skipRange only | 0 |
+
+`tests/unit/operator-bundle-update-graph.test.ts` asserts that absence rather than merely documenting it, because the obvious "fix" is to add a declared value back, and a declared value is correct only by coincidence and stale by default.
+
+Two facts about the gates, both learned the hard way on the first 0.14.1 submission:
+
+- **The binding gate is the deploy job, not the static check.**
+  The k8s-operatorhub deploy jobs (`kiwi`, `lemon`, `orange`) build a test catalog with `opm index add --mode replaces`, and the mode is read straight from the submission's `ci.yaml`: `Setting index add mode from 'updateGraph' value to 'replaces'` in the job log.
+  That command reads `spec.replaces` and `spec.skips` and never `olm.skipRange`.
+- **A green `check_dangling_bundles` proves nothing about that.**
+  The static check in [operatorcert](https://github.com/redhat-openshift-ecosystem/operator-pipelines/blob/main/operatorcert/static_tests/community/bundle.py) seeds its graph from `_resolve_skip_range` before it looks at the pointers, so it passes on a skipRange alone; it is also decorated `@skip_fbc`, so it never runs for community-operators-prod.
+  A submission that passes it can still fail to build.
+
+**Do not switch `updateGraph` to `semver-mode` to avoid the pointer.**
+It works, and it would remove the pointer entirely, since the graph becomes the sorted bundle list.
+But upstream marks the switch as one-way and forbids `spec.replaces` under it, which would permanently cost us the ability to publish a leaf or out-of-order bundle.
+Note also that the prose docs call `semver-mode` the default while the implementation defaults to `replaces-mode` (`config.get("updateGraph", "replaces-mode")`), so the mode stays written out explicitly in each submission's `ci.yaml`.
 
 ## npx
 
@@ -1284,6 +1346,7 @@ setups still publish the rest:
 | `DOCKER_HUB_TOKEN` (+ `DOCKER_HUB_USERNAME` and `DOCKER_HUB_ORGANIZATION` variables) | The Docker Hub mirror push. Two variables, not one: `DOCKER_HUB_USERNAME` is the **owner who logs in** (an organization cannot sign in), `DOCKER_HUB_ORGANIZATION` is the **namespace the image is published under**. They were the same value while `libredb` was a user account; converting it to an organization on 2026-09-01 split them | GHCR-only publish |
 | `CHOCO_API_KEY` | The chocolatey job: `choco pack` + `choco push` to `https://push.chocolatey.org/` (API key of the `libredb` community account) | Chocolatey publish skipped; the win32 zip still attaches to the release |
 | — | Every row above whose channel is switchable also needs `update.ci_enabled: true` in [`distribution/channels.yaml`](../distribution/channels.yaml): the secret says CI *can* publish, the flag says it *should*. See [Turning a channel's automation off](#turning-a-channels-automation-off) | Channel skipped with a notice; the release publishes normally |
+| `OPERATOR_CATALOG_TOKEN` | The `submit-catalogs` job in `operator-release.yml`: bundle PRs to `k8s-operatorhub/community-operators` and `redhat-openshift-ecosystem/community-operators-prod`. Classic PAT with `public_repo` on an account in the operator's upstream `ci.yaml` reviewers list, because that login is what upstream authorizes | Catalog submission skipped with a notice |
 | `WINGETCREATE_GITHUB_TOKEN` | The winget job: `wingetcreate update --submit` PRs to `microsoft/winget-pkgs`. Classic PAT with `public_repo` scope — wingetcreate does not support fine-grained PATs | winget submission skipped |
 
 The chocolatey and winget jobs run strictly **after** `publish-release`: both channels download
@@ -1551,14 +1614,16 @@ secret is present.
 
 Three deliberate constraints:
 
-- **Only optional channels may carry the flag:** `docker-hub-mirror`, `homebrew`, `snap`,
-  `winget`, `chocolatey`. The core release path (`github-release`, `docker-ghcr`, `npm`, `helm`)
+- **Only optional channels may carry the flag:** the set is
+  `SWITCHABLE_CHANNEL_IDS` in [`scripts/distribution-check.mjs`](../scripts/distribution-check.mjs),
+  which is the list - it is not restated here, because a copy would go stale
+  the next time a channel joins. The core release path (`github-release`, `docker-ghcr`, `npm`, `helm`)
   and the assets `publish-release` requires (`.deb`/`.rpm`, AppImage, the win32 zip) have no
   switch, because one mistyped `false` there would silently ship a release with no npm package or
   no image. `parseChannels` **rejects** the flag anywhere else, so this is enforced, not just
   documented.
-- **It is required, never defaulted,** on those five: CI behaviour for a channel has to be a
-  stated decision in this file, not an omission.
+- **It is required, never defaulted,** on every channel in that set: CI behaviour for a channel
+  has to be a stated decision in this file, not an omission.
 - **Failure leaves channels off, never the release blocked.** The `channels` job is
   `continue-on-error`; if it cannot run, its outputs are empty, every gate reads "not true", and
   the optional channels skip while the release publishes normally. A forgotten re-enable surfaces
@@ -1607,7 +1672,10 @@ deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none
 
 ### Manual steps still open
 
-- **Operator first listings — done.** The controller image was the first half:
+- **Operator first listings and per-release submissions: done.**
+  Submissions are automated, see [Automated submission](#automated-submission).
+  What follows is how the first ones landed.
+  The controller image was the first half:
   `ghcr.io/libredb/libredb-studio-operator:0.9.59` was built once by manual
   `workflow_dispatch` from the post-merge `main` commit (the `0.9.59` tag
   carries neither `operator/` nor the workflow file, and GitHub only dispatches
@@ -1620,14 +1688,16 @@ deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none
   ([community-operators-prod#10581](https://github.com/redhat-openshift-ecosystem/community-operators-prod/pull/10581)),
   and operatorhub.io via its bundle PR
   ([k8s-operatorhub/community-operators#8794](https://github.com/k8s-operatorhub/community-operators/pull/8794),
-  merged 2026-09-08). `operatorhub-community` is `live` accordingly. Two things
-  the merge does *not* finish: operatorhub.io serves from its own index build,
-  which lags the merge by hours (`https://operatorhub.io/api/operator?packageName=libredb-studio-operator`
-  is the read that answers for it — it returned "can't find" while a control
-  query for `argocd-operator` returned a full record), and both catalogs still
-  serve **0.9.59**, so every release from here is an upstream bump PR per
-  catalog. Remember `release-config.yaml` in each bundle PR (see
-  [An FBC release is two upstream PRs](#an-fbc-release-is-two-upstream-prs)).
+  merged 2026-09-08). `operatorhub-community` is `live` accordingly.
+  Both catalogs carried only 0.9.59 for weeks after that, which is why the
+  per-release submission is now automated; 0.14.1 was the catch-up, landing as
+  k8s-operatorhub/community-operators#9219 and community-operators-prod#11106.
+  One thing a merge still does not finish: operatorhub.io serves from its own
+  index build, which lags by hours.
+  `https://operatorhub.io/api/operator?packageName=libredb-studio-operator` is
+  the read that answers for it, and it returned "can't find" for hours after
+  #8794 merged while a control query for `argocd-operator` returned a full
+  record.
 - **Snap Store listing screenshots**: the description and icon ship with the snap
   (`snap/snapcraft.yaml`, `public/logo.svg`), but screenshots are a manual upload in the
   Snap Store web UI (https://snapcraft.io/libredb-studio/listing). The snap name is registered

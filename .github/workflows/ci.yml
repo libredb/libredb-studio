@@ -250,6 +250,10 @@ jobs:
           USER_EMAIL: user@libredb.org
           USER_PASSWORD: test-user
 
+      - name: Run subpath deployment E2E
+        # Separate build, after the root-path servers have stopped.
+        run: bun run test:e2e:base-path
+
       - name: Upload Playwright report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -552,8 +556,11 @@ jobs:
     # run is yours, Actions secrets come back, and the analysis is both
     # possible and wanted. PR #394 is the worked example - red while Dependabot
     # owned it, green on the very next human push to the same branch.
+    # The SonarCloud project belongs to the canonical repository; fork-owned
+    # runs cannot authenticate to it, including pushes and fork-local PRs.
     if: >-
-      github.actor != 'dependabot[bot]'
+      github.repository == 'libredb/libredb-studio'
+      && github.actor != 'dependabot[bot]'
       && (github.event.pull_request.head.repo.full_name == github.repository
         || github.event_name == 'push')
     runs-on: ubuntu-latest

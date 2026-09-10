@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   storage,
@@ -78,7 +79,7 @@ export function useStorageSync(): StorageSyncState {
     /** Resolves to whether the collection actually reached the server. */
     const pushToServer = async (collection: string, data: unknown): Promise<boolean> => {
       try {
-        const res = await fetch(`/api/storage/${collection}`, {
+        const res = await appFetch(`/api/storage/${collection}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ data }),
@@ -159,7 +160,7 @@ export function useStorageSync(): StorageSyncState {
   const pullFromServer = useCallback(async () => {
     setIsSyncing(true);
     try {
-      const res = await fetch("/api/storage");
+      const res = await appFetch("/api/storage");
       if (!res.ok) return;
       const data = (await res.json()) as Partial<StorageData>;
 
@@ -220,7 +221,7 @@ export function useStorageSync(): StorageSyncState {
         return;
       }
 
-      const res = await fetch("/api/storage/migrate", {
+      const res = await appFetch("/api/storage/migrate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(allData),
@@ -255,7 +256,7 @@ export function useStorageSync(): StorageSyncState {
 
     async function init() {
       try {
-        const res = await fetch("/api/storage/config");
+        const res = await appFetch("/api/storage/config");
         if (!res.ok || cancelled) return;
         const config = (await res.json()) as StorageConfigResponse;
 

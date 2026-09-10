@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useRef } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
@@ -52,7 +53,7 @@ export function useProviderMetadata(connection: DatabaseConnection | null): {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    fetch("/api/db/provider-meta", {
+    appFetch("/api/db/provider-meta", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // `buildConnectionPayload`, not the connection object: a managed (seed)

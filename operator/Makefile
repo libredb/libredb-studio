@@ -207,13 +207,13 @@ bundle: kustomize operator-sdk ## Generate bundle manifests and metadata, then v
 	# fail the build, not ship an unstamped CSV.
 	@grep -q 'containerImage: $(IMG)$$' bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml || \
 		{ echo "ERROR: containerImage stamp failed - restore the containerImage annotation in config/manifests/bases"; exit 1; }
-	# Stamp the update-graph range the community catalogs read. k8s-operatorhub
-	# runs this operator in replaces-mode, whose dangling-bundle static check
-	# seeds its graph from olm.skipRange before it looks at spec.replaces - so
-	# this annotation carries the graph and no version of it has to be
-	# remembered by hand: "supersede everything below me" stays true however
-	# many releases go unsubmitted. The upper bound is exclusive on purpose; a
-	# <= would make the bundle skip itself.
+	# Stamp the half of the update graph this repo can know. "Supersede
+	# everything below me" is derivable from $(VERSION) and stays true however
+	# many releases go unsubmitted, so it belongs here. The other half,
+	# spec.replaces, names a version in a specific catalog and is injected at
+	# submission time instead - see docs/DISTRIBUTION.md, "The update graph".
+	# The upper bound is exclusive on purpose; a <= would make the bundle skip
+	# itself.
 	sed -e "s|olm.skipRange: '>=0.0.0 <.*'|olm.skipRange: '>=0.0.0 <$(VERSION)'|" \
 		bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml > bundle/manifests/.csv.tmp
 	mv bundle/manifests/.csv.tmp bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml

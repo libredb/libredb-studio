@@ -92,6 +92,9 @@ secrets:
 authProvider: "local"
 
 config:
+  # -- Must match BASE_PATH baked into a custom image. Prefixes default health probes;
+  # this value cannot change the routes in a prebuilt image. Empty means root.
+  basePath: ""
   # -- Log level
   logLevel: "info"
   # -- Address the container listens on, written to HOSTNAME. Empty is the

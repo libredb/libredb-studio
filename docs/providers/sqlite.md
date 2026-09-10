@@ -147,7 +147,7 @@ on the normal path, and carrying the read-only flag only when
 
 ### 3.1 File path resolution & the admin-trusted path model
 
-`getDatabasePath()` ([sqlite.ts:133](../../src/lib/db/providers/sql/sqlite.ts)) resolves the target:
+`getDatabasePath()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) resolves the target:
 `connectionString` (stripping a `file:` prefix) → else `database` → else `:memory:`. Non-`:memory:`
 paths are `path.resolve()`-d to an absolute path and **rejected if they contain a NUL byte**. Parent
 directories are created on connect.
@@ -162,16 +162,17 @@ directories are created on connect.
 
 ### 3.2 PRAGMAs on connect
 
-`connect()` opens the file with `{ create: true, readwrite: true }` and sets
+`connect()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) opens the file with
+`{ create: true, readwrite: true }` and sets
 `PRAGMA foreign_keys = ON`, `journal_mode = WAL`, `synchronous = NORMAL`
-([sqlite.ts:104](../../src/lib/db/providers/sql/sqlite.ts)) — FK enforcement on, WAL for better
+— FK enforcement on, WAL for better
 concurrency, NORMAL sync for a speed/durability balance. The agent read-only profile runs a
 different open sequence entirely — `journal_mode = WAL` is itself a write and fails on a read-only
 handle ([§12.1](#121-where-the-boundary-is)).
 
 ### 3.3 Read vs write dispatch
 
-`query()` ([sqlite.ts:159](../../src/lib/db/providers/sql/sqlite.ts)) branches on
+`query()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) branches on
 `isReadOnlyQuery(sql)` (inherited): reads use `stmt.all()` and return rows; writes use `stmt.run()`
 and return `{ changes }`. `rowCount = rows.length || changes`. Both drivers are **synchronous** —
 the provider wraps them in the async signature but there is no real concurrency or cancellation.
@@ -210,7 +211,7 @@ const c = { id: 'lite-3', name: 'App', type: 'sqlite',
   connectionString: 'file:/data/app.db', createdAt: new Date() };
 ```
 
-`validate()` ([sqlite.ts:67](../../src/lib/db/providers/sql/sqlite.ts)) requires either `database`
+`validate()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) requires either `database`
 or `connectionString` (else "Database file path is required … or `:memory:`"). Note
 `getCapabilities().supportsConnectionString` is `false`, yet `connectionString` *is* honoured as a
 path by `getDatabasePath()` — the flag reflects that there is no network DSN, not that the field is
@@ -309,7 +310,7 @@ pinned by tests rather than left to be discovered.
 
 ## 6. Schema introspection
 
-`getSchema()` ([sqlite.ts:203](../../src/lib/db/providers/sql/sqlite.ts)) reads `sqlite_master`
+`getSchema()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) reads `sqlite_master`
 (excluding `sqlite_*` internal objects) and, per table, runs the SQLite PRAGMAs:
 
 | Data | Source |
@@ -447,7 +448,7 @@ placeholder `indexSize` already used, and every consumer gates on the absent `ta
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)` ([sqlite.ts:432](../../src/lib/db/providers/sql/sqlite.ts)); `analyze`
+`runMaintenance(type, target?)` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)); `analyze`
 and `reindex` targets are quoted via `escapeIdentifier()`:
 
 | Type | Action |
@@ -495,7 +496,7 @@ answers with nothing both while it is in flight and when it failed.
 
 ## 9. Capabilities & labels
 
-### `getCapabilities()` ([sqlite.ts:133](../../src/lib/db/providers/sql/sqlite.ts))
+### `getCapabilities()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts))
 
 | Capability | Value |
 |------------|-------|

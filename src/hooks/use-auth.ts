@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
@@ -17,7 +18,7 @@ export function useAuth() {
   useEffect(() => {
     const fetchUser = async () => {
       try {
-        const res = await fetch("/api/auth/me");
+        const res = await appFetch("/api/auth/me");
         if (res.ok) {
           const data = await res.json();
           setUser(data.user);
@@ -36,7 +37,7 @@ export function useAuth() {
 
   const handleLogout = useCallback(async () => {
     try {
-      const res = await fetch("/api/auth/logout", { method: "POST" });
+      const res = await appFetch("/api/auth/logout", { method: "POST" });
       const data = await res.json();
       toast({ title: "Logged out", description: "You have been successfully logged out." });
 

@@ -5,7 +5,7 @@
  * proxy.ts, oidc.ts) into one module with the strictest semantics:
  * - missing in production -> AuthConfigError (login route maps it to a clear 503)
  * - missing outside production -> well-known development fallback (with warning)
- * - present but shorter than 32 characters -> AuthConfigError
+ * - present but shorter than JWT_SECRET_MIN_LENGTH -> AuthConfigError
  *
  * The reader is stateless and reads the environment on every call; consumers
  * that want memoization keep their own lazy cache so a module-level throw can
@@ -14,14 +14,6 @@
 
 import { AuthConfigError } from "@/lib/auth-errors";
 
-// Single-line messages, hoisted to module scope: bun's line coverage under-counts
-// the continuation lines of multi-line string concatenation, which would show as
-// uncovered "new code" in SonarCloud even though the throw is exercised by tests.
-export const JWT_SECRET_MISSING_MESSAGE =
-  "Login is unavailable: the server's JWT_SECRET is not configured. Set JWT_SECRET (at least 32 characters) and restart the server.";
-export const JWT_SECRET_TOO_SHORT_MESSAGE =
-  "Login is unavailable: the server's JWT_SECRET is too short; it must be at least 32 characters. Update JWT_SECRET and restart the server.";
-
 /**
  * Minimum accepted JWT_SECRET length. Single source of truth: the boot preflight
  * (auth-preflight.ts) and the bootstrap file reader (auth-bootstrap.ts) enforce
@@ -29,7 +21,14 @@ export const JWT_SECRET_TOO_SHORT_MESSAGE =
  */
 export const JWT_SECRET_MIN_LENGTH = 32;
 
-const DEV_FALLBACK_SECRET = "development-fallback-secret-32ch";
+// Single-line messages, hoisted to module scope: bun's line coverage under-counts
+// the continuation lines of multi-line string concatenation, which would show as
+// uncovered "new code" in SonarCloud even though the throw is exercised by tests.
+export const JWT_SECRET_MISSING_MESSAGE = `Login is unavailable: the server's JWT_SECRET is not configured. Set JWT_SECRET (at least ${JWT_SECRET_MIN_LENGTH} characters) and restart the server.`;
+export const JWT_SECRET_TOO_SHORT_MESSAGE = `Login is unavailable: the server's JWT_SECRET is too short; it must be at least ${JWT_SECRET_MIN_LENGTH} characters. Update JWT_SECRET and restart the server.`;
+
+/** Exported for the guard that checks the development fallback meets the enforced minimum. */
+export const DEV_FALLBACK_SECRET = "development-fallback-secret-32ch";
 
 export interface JwtSecretOptions {
   /**

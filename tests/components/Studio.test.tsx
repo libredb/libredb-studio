@@ -3,7 +3,7 @@ import "../helpers/mock-sonner";
 import { mockRouterPush } from "../helpers/mock-navigation";
 
 import { describe, test, expect, afterEach, beforeEach, mock } from "bun:test";
-import { render, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
+import { render, cleanup, act, fireEvent, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { setupMonacoMock, setupRechartssMock, setupXYFlowMock, setupFramerMotionMock } from "../helpers/mock-monaco";
 
@@ -747,16 +747,58 @@ describe("Studio", () => {
   });
 
   // --- handleDeleteConnection ---
-  test("handleDeleteConnection removes connection and updates list", () => {
+  test("onDeleteConnection asks for confirmation instead of deleting immediately", () => {
+    connMgrOverride = { activeConnection: pgConn, connections: [pgConn] };
+    render(<Studio />);
+    const requestDelete = capturedSidebarProps.onDeleteConnection as (id: string) => void;
+    act(() => requestDelete("c1"));
+    expect(mockStorageDeleteConnection).not.toHaveBeenCalled();
+    const dialog = within(document.body as HTMLElement);
+    expect(dialog.getByText("Delete connection?")).toBeTruthy();
+    expect(dialog.getByText(pgConn.name)).toBeTruthy();
+  });
+
+  test("confirming the delete dialog removes connection and updates list", () => {
     const remaining = [{ id: "c2", type: "mysql", name: "MySQL" }];
     mockStorageGetConnections.mockReturnValue(remaining);
     connMgrOverride = { activeConnection: pgConn, connections: [pgConn, remaining[0]] };
     render(<Studio />);
-    const deleteFn = capturedSidebarProps.onDeleteConnection as (id: string) => void;
-    act(() => deleteFn("c1"));
+    const requestDelete = capturedSidebarProps.onDeleteConnection as (id: string) => void;
+    act(() => requestDelete("c1"));
+    const dialog = within(document.body as HTMLElement);
+    fireEvent.click(dialog.getByText("Delete"));
     expect(mockStorageDeleteConnection).toHaveBeenCalledWith("c1");
     expect(mockSetConnections).toHaveBeenCalledWith(remaining);
     expect(mockSetActiveConnection).toHaveBeenCalledWith(remaining[0]);
+    expect(dialog.queryByText("Delete connection?")).toBeNull();
+  });
+
+  /**
+   * Studio mounts the connections list twice: the desktop `Sidebar` above the breakpoint and the
+   * mobile database tab below it. Both were wired to the confirmation, but reverting only the mobile
+   * one to `handleDeleteConnection` left every test above green, so nothing held that half. The
+   * crowded-sidebar misclick this dialog exists for is likeliest on a phone.
+   */
+  test("the mobile connections list asks for confirmation too", () => {
+    connMgrOverride = { activeConnection: pgConn, connections: [pgConn] };
+    render(<Studio />);
+    const onTabChange = capturedMobileNavProps.onTabChange as (tab: string) => void;
+    act(() => onTabChange("database"));
+    const requestDelete = capturedConnectionsListProps.onDeleteConnection as (id: string) => void;
+    act(() => requestDelete("c1"));
+    expect(mockStorageDeleteConnection).not.toHaveBeenCalled();
+    expect(within(document.body as HTMLElement).getByText("Delete connection?")).toBeTruthy();
+  });
+
+  test("cancelling the delete dialog leaves the connection untouched", () => {
+    connMgrOverride = { activeConnection: pgConn, connections: [pgConn] };
+    render(<Studio />);
+    const requestDelete = capturedSidebarProps.onDeleteConnection as (id: string) => void;
+    act(() => requestDelete("c1"));
+    const dialog = within(document.body as HTMLElement);
+    fireEvent.click(dialog.getByText("Cancel"));
+    expect(mockStorageDeleteConnection).not.toHaveBeenCalled();
+    expect(dialog.queryByText("Delete connection?")).toBeNull();
   });
 
   // --- onTableClick ---

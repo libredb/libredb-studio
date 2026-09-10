@@ -1,3 +1,4 @@
+import { withBasePathEnv } from "../../helpers/base-path";
 import "../../setup-dom";
 import "../../helpers/mock-sonner";
 import "../../helpers/mock-navigation";
@@ -140,6 +141,28 @@ describe("OverviewTab", () => {
 
   afterEach(() => {
     restoreGlobalFetch();
+  });
+
+  test("fleet cards keep native anchor navigation inside the mount", async () => {
+    await withBasePathEnv("/tools/libredb", async () => {
+      const { container } = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+      await waitFor(() => {
+        const link = Array.from(container.querySelectorAll("[href]")).find((element) =>
+          element.textContent?.includes("PG Dev"),
+        );
+        expect(link?.getAttribute("href")).toBe("/tools/libredb/admin/monitoring");
+        for (const [label, path] of [
+          ["Maintenance", "/admin/operations"],
+          ["Security & Masking", "/admin/security"],
+          ["Real-time Monitoring", "/admin/monitoring"],
+        ]) {
+          const action = Array.from(container.querySelectorAll("[href]")).find((element) =>
+            element.textContent?.includes(label),
+          );
+          expect(action?.getAttribute("href")).toBe(`/tools/libredb${path}`);
+        }
+      });
+    });
   });
 
   test("renders when user provided", async () => {

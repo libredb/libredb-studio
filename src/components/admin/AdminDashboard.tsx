@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -27,7 +28,7 @@ export default function AdminDashboard({ children }: AdminDashboardProps) {
   const activeSection = adminSectionFromPathname(pathname);
 
   const handleLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await appFetch("/api/auth/logout", { method: "POST" });
     toast.success("Logged out successfully");
     router.push("/login");
     router.refresh();

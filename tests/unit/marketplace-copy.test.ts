@@ -1,11 +1,14 @@
 /**
  * The accuracy gate for outward-facing marketplace copy.
  *
- * These five files are submissions to somebody else's catalog: Railway,
- * DigitalOcean, SUSE PCSC, Azure Partner Center and the AWS Marketplace
- * Management Portal. Nobody in this repo reviews them again once they
- * are mailed, so the only thing standing between a corrected claim and its return is a
- * test. A previous revision replaced a false natural-language-to-SQL claim with two new
+ * These six files are copy submitted to somebody else's catalog: Railway,
+ * DigitalOcean, SUSE PCSC, Azure Partner Center, the AWS Marketplace Management Portal,
+ * and the app-readme overlay Rancher renders. Nobody in this repo reviews them again once
+ * they are submitted - the first five by mail, the last by a pull request against
+ * `rancher/partner-charts`, where no test here can reach the copy that ships - so the only
+ * thing standing between a corrected claim and its return is a test.
+ *
+ * A previous revision replaced a false natural-language-to-SQL claim with two new
  * ones - "AI query explanation on any connection" (true on 7 of the 14 engines) and
  * "never executes what it recommends" (the consented hand-over runs exactly the
  * recommended statement) - which is why the gate is phrase-level rather than a review
@@ -23,6 +26,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DB_UI_CONFIG, getDBConfig } from "@/lib/db-ui-config";
+import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
 
 const REPO_ROOT = join(import.meta.dir, "../..");
@@ -34,6 +38,7 @@ const LISTINGS = {
   rancher: "deploy/rancher/CATALOG_LISTING.md",
   azure: "deploy/azure/listing/listing-fields.md",
   aws: "deploy/aws/listing/listing-fields.md",
+  rancherAppReadme: "deploy/rancher/app-readme.md",
 } as const;
 
 /**
@@ -155,6 +160,147 @@ describe("no listing claims the agent never runs what it recommends", () => {
       expect(submittedCopy(path)).not.toMatch(/\bwhat it recommends\b|\bnothing it recommends\b/i);
     });
   }
+});
+
+/**
+ * A provider file that declares inline row editing, anchored to the start of a line for
+ * the same reason `DECLARES_EXPLAIN_FORMAT` is.
+ */
+const DECLARES_INLINE_ROW_EDIT = /^\s*supportsInlineRowEdit:\s*true/m;
+
+/** The engines whose provider declares inline row editing. */
+const editable: DatabaseType[] = providerFiles(PROVIDER_ROOT)
+  .filter((file) => DECLARES_INLINE_ROW_EDIT.test(readFileSync(file, "utf8")))
+  .map(typeIdOf)
+  .filter((id): id is DatabaseType => id in DB_UI_CONFIG)
+  .sort();
+
+/**
+ * The engines a data-management claim may NOT name. Taken as the complement of the `true`
+ * declarations rather than by scanning for the `false` ones: `providers/sql/search/index.ts`
+ * serves TWO type-ids and its path reads as neither, so scanning the false side would leave
+ * Elasticsearch and OpenSearch out of the set a listing is checked against.
+ *
+ * `supportsInlineRowEdit` defaults to true in `base-provider.ts`, so a provider declaring
+ * nothing lands here even though it can edit. That direction is deliberate: its cost is a
+ * failing gate somebody reads, where the other direction's cost is an overclaim standing in
+ * somebody else's catalog, which is the thing this file exists to prevent.
+ */
+const notEditable = EXTERNAL_DATABASE_TYPES.filter((type) => !editable.includes(type)).sort();
+
+/**
+ * The sentences claiming the product MANAGES data, which is the one phrase
+ * `deploy/rancher/CATALOG_LISTING.md` singles out by name: browsing and querying reach
+ * every engine, editing does not, so "manage data across ..." must never be written over
+ * the whole list.
+ *
+ * Only that phrase, not "editing data": the canonical long description opens an editing
+ * sentence with "Editing data follows the engine rather than the IDE" and then names the
+ * engines that CANNOT edit, one reason each, which is the nuance the gate asks for rather
+ * than the overclaim it forbids.
+ */
+function manageDataClaims(content: string): string[] {
+  return content
+    .replace(/\n(?![\n\-*|>])/g, " ")
+    .split(/(?<=\.)\s+|\n/)
+    .filter((sentence) => /manag(?:e|es|ing)\s+(?:your\s+)?data/i.test(sentence));
+}
+
+/** The engines a manage-data sentence names that cannot edit. */
+function overclaimed(claim: string): DatabaseType[] {
+  return notEditable.filter((type) => claim.includes(getDBConfig(type).label));
+}
+
+describe("no listing claims data management on an engine that cannot edit", () => {
+  test("the derived editable set is a real, non-trivial subset", () => {
+    // A regex that matched nothing would make every assertion below vacuous, and one that
+    // matched every provider would make the complement empty.
+    expect(editable.length).toBeGreaterThan(0);
+    expect(notEditable.length).toBeGreaterThan(0);
+    for (const type of ["postgres", "mysql", "sqlite"]) {
+      expect(editable).toContain(type as DatabaseType);
+    }
+    for (const type of ["mongodb", "redis", "elasticsearch", "opensearch"]) {
+      expect(notEditable).toContain(type as DatabaseType);
+    }
+  });
+
+  test("the checker rejects the sentence that reached rancher/partner-charts#1168", () => {
+    // The submitted wording, verbatim. The two gates above passed on it: the count was
+    // right and it made no explanation claim, so nothing here read the verb. It named
+    // nine engines that report the editing controls as unsupported.
+    const submitted =
+      "Browse schemas, run queries and manage data across sixteen engines: PostgreSQL, MySQL, " +
+      "Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, " +
+      "Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra.";
+    const claims = manageDataClaims(submitted);
+    expect(claims).toHaveLength(1);
+    expect(overclaimed(claims[0])).toEqual(notEditable);
+  });
+
+  test("an editing sentence that names what cannot edit is left alone", () => {
+    // The canonical form. It names the engines that cannot edit ON PURPOSE, and the phrase
+    // gate must not read that as the claim it bans.
+    expect(
+      manageDataClaims(
+        "Editing data follows the engine rather than the IDE: inline row editing on PostgreSQL, and Elasticsearch SQL has no mutation in its grammar at all.",
+      ),
+    ).toEqual([]);
+  });
+
+  for (const [name, path] of Object.entries(LISTINGS)) {
+    test(`${name} claims no data management it cannot deliver`, () => {
+      for (const claim of manageDataClaims(submittedCopy(path))) {
+        expect(overclaimed(claim)).toEqual([]);
+      }
+    });
+  }
+});
+
+/**
+ * The storage mode the chart actually installs with, read from the chart rather than
+ * restated here. The overlay is copy about THIS chart, so its "by default" sentences are
+ * checkable against `values.yaml` in a way the other five listings' are not: the Azure and
+ * DigitalOcean images configure SQLite themselves, and a chart-derived rule applied to them
+ * would fail true copy.
+ */
+const STORAGE_MODES = ["local", "sqlite", "postgres"];
+
+const CHART_STORAGE_DEFAULT = ((): string => {
+  const values = readFileSync(join(REPO_ROOT, "charts/libredb-studio/values.yaml"), "utf8");
+  const declared = /^\s*storageProvider:\s*"([a-z]+)"/m.exec(values)?.[1];
+  // Thrown rather than defaulted. A chart whose default cannot be read is a chart this
+  // gate cannot check, and a fallback would turn that into a passing test.
+  if (!declared) {
+    throw new Error("charts/libredb-studio/values.yaml: config.storageProvider is unreadable");
+  }
+  return declared;
+})();
+
+/** The storage mode a sentence calls the default, if it names one. */
+function storageDefaultsClaimed(copy: string): string[] {
+  return STORAGE_MODES.filter((mode) => new RegExp(`${mode}[^.]*\\bby default\\b`, "i").test(copy));
+}
+
+describe("the Rancher overlay names no storage default the chart does not set", () => {
+  test("the chart's default is one of the modes, and the checker sees a wrong one", () => {
+    // Without both halves the assertion below passes on a chart default nothing recognises
+    // and on a checker that matches nothing.
+    expect(STORAGE_MODES).toContain(CHART_STORAGE_DEFAULT);
+    // The sentence that reached rancher/partner-charts#1168, verbatim. `values.yaml` sets
+    // `config.storageProvider: "local"`; the copy promoted the SQLite mode to the default.
+    expect(
+      storageDefaultsClaimed(
+        "Runs entirely on your own infrastructure with SQLite storage by default, so no external database is required to operate the IDE itself.",
+      ),
+    ).toEqual(["sqlite"]);
+  });
+
+  test("the submitted overlay claims only the chart's default, if any", () => {
+    for (const mode of storageDefaultsClaimed(submittedCopy(LISTINGS.rancherAppReadme))) {
+      expect(mode).toBe(CHART_STORAGE_DEFAULT);
+    }
+  });
 });
 
 describe("the Druid write claim matches the provider documentation", () => {

@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import { buildConnectionPayload } from "./use-connection-payload";
@@ -113,7 +114,7 @@ export function useMonitoringData(
     setError(null);
 
     try {
-      const res = await fetch("/api/db/monitoring", {
+      const res = await appFetch("/api/db/monitoring", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -217,7 +218,7 @@ export function useMonitoringData(
       if (!currentConnection) return false;
 
       try {
-        const res = await fetch("/api/db/maintenance", {
+        const res = await appFetch("/api/db/maintenance", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -254,7 +255,7 @@ export function useMonitoringData(
       if (!currentConnection) return false;
 
       try {
-        const res = await fetch("/api/db/maintenance", {
+        const res = await appFetch("/api/db/maintenance", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

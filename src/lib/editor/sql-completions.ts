@@ -225,6 +225,27 @@ export function registerSQLCompletionProvider(
 
       const suggestions: Monaco.languages.CompletionItem[] = [];
 
+      // Monaco replaces only the current word. A qualified table suggestion must
+      // match and replace the already typed qualifier as well as that word.
+      const typedQualifier = line.substring(0, word.startColumn - 1).match(/((?:[\w$]+\.)+)$/)?.[1] ?? "";
+      const qualifiedMatch = schemaCompletionCache.tableItems.some((table) =>
+        table.labelLower.startsWith(typedQualifier.toLowerCase() + prefix),
+      );
+      const qualifier = typedQualifier && qualifiedMatch ? typedQualifier : "";
+      const tablePrefix = qualifier.toLowerCase() + prefix;
+      const tableRange = { ...range, startColumn: range.startColumn - qualifier.length };
+      const tableSuggestions = schemaCompletionCache.tableItems
+        .filter((table) => (!qualifier && prefix.length < 2) || table.labelLower.startsWith(tablePrefix))
+        .map((table) => ({
+          label: table.label,
+          kind: monaco.languages.CompletionItemKind.Class,
+          insertText: table.label,
+          range: tableRange,
+          detail: `Table (${table.rowCount} rows)`,
+          documentation: table.columnNames,
+          sortText: "2" + table.label,
+        }));
+
       // Dot-triggered: Show columns for specific table or alias
       if (lastChar === ".") {
         const matches = line.substring(0, position.column - 1).match(/(\w+)\.$/);
@@ -280,6 +301,7 @@ export function registerSQLCompletionProvider(
             });
           }
         }
+        if (qualifier && suggestions.length === 0) suggestions.push(...tableSuggestions);
         return { suggestions };
       }
 
@@ -322,19 +344,7 @@ export function registerSQLCompletionProvider(
       });
 
       // Tables
-      schemaCompletionCache.tableItems.forEach((table) => {
-        if (!shouldFilter || table.labelLower.startsWith(prefix)) {
-          suggestions.push({
-            label: table.label,
-            kind: monaco.languages.CompletionItemKind.Class,
-            insertText: table.label,
-            range,
-            detail: `Table (${table.rowCount} rows)`,
-            documentation: table.columnNames,
-            sortText: "2" + table.label,
-          });
-        }
-      });
+      suggestions.push(...tableSuggestions);
 
       // Columns - only show in appropriate context
       if (isColumnContext) {

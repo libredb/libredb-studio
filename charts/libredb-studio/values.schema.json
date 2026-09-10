@@ -124,6 +124,12 @@
     "config": {
       "type": "object",
       "properties": {
+        "basePath": {
+          "type": "string",
+          "description": "Build-time BASE_PATH of the custom image; prefixes default probes, not a runtime app setting",
+          "pattern": "^$|^(/[A-Za-z0-9._~-]+)+$",
+          "not": { "pattern": "(^|/)\\.\\.?(/|$)" }
+        },
         "logLevel": {
           "type": "string",
           "enum": ["debug", "info", "warn", "error"],

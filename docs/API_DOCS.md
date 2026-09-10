@@ -546,7 +546,8 @@ carries a plain statement. Four things differ from the other SQL providers:
   catalog in full: `SELECT * FROM other_catalog.some_schema.t` runs unchanged. A connection with no
   catalog runs fully qualified statements fine, but `GET /api/db/schema` refuses with the reason.
 - **There is no `connectionString`.** `jdbc:trino://host:port/catalog/schema` exists, but the shared
-  parser does not accept it, so a connection is `host` + `port` (+ optional `database`, `username`).
+  parser does not accept it, so a connection is `host` + `port` (+ optional `database` catalog,
+  `schema`, and `username`).
   A **`password` requires `ssl: true`**: the coordinator answers `401 Password not allowed for
   insecure authentication` over plain HTTP even with authentication switched off, so a password on
   an `http://` connection is refused by the provider rather than sent and rejected.
@@ -1267,7 +1268,7 @@ Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ 
 
 The object is one shape on the wire. Fields the server reads from a request body — and that
 change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
-`host`, `port`, `user`, `password`, `database`, `connectionString`), plus `ssl`,
+`host`, `port`, `user`, `password`, `database`, `schema`, `connectionString`), plus `ssl`,
 `sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
 `authSource` (MongoDB), `agentUser`, and `agentPassword`. `color`, `environment`, `group`,
 `managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
@@ -1282,6 +1283,7 @@ interface DatabaseConnection {
   user?: string;           // Username
   password?: string;       // Password
   database?: string;       // Database name (Couchbase: the bucket; Druid: unused, it has one catalog; Trino: the CATALOG; Cassandra: the KEYSPACE)
+  schema?: string;         // Trino: session schema for unqualified table names
   connectionString?: string; // Full connection string (alternative; Druid has no URI form, host + port only; Cassandra has none either, no URI carries localDataCenter)
   createdAt: Date;         // Creation timestamp
   color?: string;          // UI accent for this connection

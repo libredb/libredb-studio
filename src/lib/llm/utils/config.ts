@@ -18,6 +18,8 @@ export const DEFAULT_MODELS: Record<LLMProviderType, string> = {
   custom: "gpt-3.5-turbo",
 };
 
+const VALID_PROVIDERS = Object.keys(DEFAULT_MODELS) as LLMProviderType[];
+
 export const DEFAULT_API_URLS: Record<string, string> = {
   ollama: "http://localhost:11434/v1",
   openai: "https://api.openai.com/v1",
@@ -27,20 +29,14 @@ export const DEFAULT_API_URLS: Record<string, string> = {
 // Environment Resolution
 // ============================================================================
 
-function getEnvVar(key: string): string | undefined {
-  return process.env[key];
-}
-
 function resolveProvider(): LLMProviderType {
-  const provider = getEnvVar("LLM_PROVIDER")?.toLowerCase();
+  const provider = process.env.LLM_PROVIDER?.toLowerCase();
 
   if (!provider) {
     return DEFAULT_PROVIDER;
   }
 
-  const validProviders: LLMProviderType[] = ["gemini", "openai", "ollama", "custom"];
-
-  if (!validProviders.includes(provider as LLMProviderType)) {
+  if (!VALID_PROVIDERS.includes(provider as LLMProviderType)) {
     console.error(`[LLM] Invalid provider "${provider}", falling back to "${DEFAULT_PROVIDER}"`);
     return DEFAULT_PROVIDER;
   }
@@ -49,7 +45,7 @@ function resolveProvider(): LLMProviderType {
 }
 
 function resolveApiKey(provider: LLMProviderType): string | undefined {
-  const apiKey = getEnvVar("LLM_API_KEY");
+  const apiKey = process.env.LLM_API_KEY;
 
   // Ollama doesn't require API key
   if (!apiKey && provider === "ollama") {
@@ -60,13 +56,13 @@ function resolveApiKey(provider: LLMProviderType): string | undefined {
 }
 
 function resolveModel(provider: LLMProviderType): string {
-  const model = getEnvVar("LLM_MODEL");
+  const model = process.env.LLM_MODEL;
   return model || DEFAULT_MODELS[provider];
 }
 
 function resolveApiUrl(provider: LLMProviderType): string | undefined {
   // Primary: LLM_API_URL
-  const apiUrl = getEnvVar("LLM_API_URL");
+  const apiUrl = process.env.LLM_API_URL;
   if (apiUrl) {
     return apiUrl;
   }
@@ -116,10 +112,9 @@ export function resolveConfig(overrides?: Partial<LLMConfig>): LLMConfig {
  */
 export function validateConfig(config: LLMConfig): void {
   // Validate provider
-  const validProviders: LLMProviderType[] = ["gemini", "openai", "ollama", "custom"];
-  if (!validProviders.includes(config.provider)) {
+  if (!VALID_PROVIDERS.includes(config.provider)) {
     throw new LLMConfigError(
-      `Invalid provider: ${config.provider}. Valid options: ${validProviders.join(", ")}`,
+      `Invalid provider: ${config.provider}. Valid options: ${VALID_PROVIDERS.join(", ")}`,
       config.provider,
     );
   }

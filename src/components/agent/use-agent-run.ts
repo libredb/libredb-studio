@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isAgentModelCapability } from "@/lib/agent/capability-labels";
 // Type-only, so nothing of the probe — or of the AI SDK it runs — reaches this bundle.
@@ -443,7 +444,7 @@ export function useAgentRun(): AgentRunFollower {
   );
 
   const follow = useCallback(async (id: string, signal: AbortSignal): Promise<void> => {
-    const res = await fetch(`/api/agent/runs/${encodeURIComponent(id)}/stream`, { signal });
+    const res = await appFetch(`/api/agent/runs/${encodeURIComponent(id)}/stream`, { signal });
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as StartResponse;
       throw new Error(
@@ -499,7 +500,7 @@ export function useAgentRun(): AgentRunFollower {
       let openedRunId: string;
       let openedThread: AgentThreadContext | null = null;
       try {
-        const res = await fetch("/api/agent/runs", {
+        const res = await appFetch("/api/agent/runs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
@@ -578,7 +579,7 @@ export function useAgentRun(): AgentRunFollower {
       // controller: aborting is how this component stops following a run, and a
       // stop request is the opposite — the run is expected to keep reporting until
       // its loop reaches a checkpoint.
-      const res = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}`, {
+      const res = await appFetch(`/api/agent/runs/${encodeURIComponent(runId)}`, {
         method: "DELETE",
         signal: abortRef.current?.signal,
       });

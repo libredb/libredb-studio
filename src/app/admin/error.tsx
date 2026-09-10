@@ -1,5 +1,6 @@
 "use client";
 
+import { withBasePath } from "@/lib/config/base-path";
 import { useEffect } from "react";
 
 export default function AdminError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
@@ -24,7 +25,7 @@ export default function AdminError({ error, reset }: { error: Error & { digest?:
           </button>
           <button
             onClick={() => {
-              window.location.href = "/";
+              window.location.href = withBasePath("/");
             }}
             className="px-5 py-2.5 border border-edge hover:border-edge-hover text-fg-secondary rounded-lg text-sm font-medium transition-colors"
           >

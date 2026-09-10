@@ -1,3 +1,4 @@
+import { withBasePathEnv } from "../helpers/base-path";
 import "../setup-dom";
 import { mockToastSuccess, mockToastError } from "../helpers/mock-sonner";
 import { mockRouterPush, mockRouterRefresh } from "../helpers/mock-navigation";
@@ -372,5 +373,24 @@ describe("useAuth", () => {
 
     // The fetch didn't throw, so logout path should succeed
     expect(mockRouterPush).toHaveBeenCalledWith("/login");
+  });
+  test("auth hook sends requests under basePath and leaves Next router navigation logical", async () => {
+    await withBasePathEnv("/~/libredb", async () => {
+      const fetchMock = mockGlobalFetch({
+        "/~/libredb/api/auth/me": { json: { user: { role: "user" } } },
+        "/~/libredb/api/auth/logout": { json: { success: true } },
+      });
+      const { result, unmount } = renderHook(() => useAuth());
+      try {
+        await waitFor(() => expect(result.current.user).toEqual({ role: "user" }));
+        expect(fetchMock).toHaveBeenCalledWith("/~/libredb/api/auth/me");
+        await act(async () => result.current.handleLogout());
+        expect(fetchMock).toHaveBeenCalledWith("/~/libredb/api/auth/logout", { method: "POST" });
+        expect(mockRouterPush).toHaveBeenCalledWith("/login");
+      } finally {
+        unmount();
+        restoreGlobalFetch();
+      }
+    });
   });
 });

@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import React, { useState } from "react";
 import { FileText, LoaderCircle, Search, Sparkles, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -59,7 +60,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
         }
       }
 
-      const response = await fetch("/api/ai/describe-schema", {
+      const response = await appFetch("/api/ai/describe-schema", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

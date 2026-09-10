@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch, withBasePath } from "@/lib/config/base-path";
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -205,7 +206,7 @@ export function OverviewTab({ user }: OverviewTabProps) {
 
   // Fetch audit events for activity feed
   useEffect(() => {
-    fetch("/api/admin/audit?limit=10")
+    appFetch("/api/admin/audit?limit=10")
       .then((r) => r.json())
       .then((d) => setAuditEvents(d.events || []))
       .catch(() => {});
@@ -232,7 +233,7 @@ export function OverviewTab({ user }: OverviewTabProps) {
     async function load() {
       setFleetLoading(true);
       try {
-        const res = await fetch("/api/admin/fleet-health", {
+        const res = await appFetch("/api/admin/fleet-health", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ connections: targets }),
@@ -710,7 +711,7 @@ function FleetHealthSection({
             return (
               <motion.a
                 key={item.connectionId}
-                href="/admin/monitoring"
+                href={withBasePath("/admin/monitoring")}
                 variants={itemVariants}
                 whileHover={{ scale: 1.02, y: -2 }}
                 className={`group relative rounded-xl border-2 ${colors.border} bg-panel p-4 transition-all duration-200 hover:bg-fill ${colors.glow} cursor-pointer block overflow-hidden`}
@@ -1078,7 +1079,7 @@ function QuickActionsSection() {
         {actions.map((action) => (
           <motion.a
             key={action.label}
-            href={action.href}
+            href={withBasePath(action.href)}
             whileHover={{ scale: 1.02, y: -4 }}
             className={`group relative rounded-xl border border-hairline ${action.borderColor} bg-panel p-5 transition-all duration-200 cursor-pointer block overflow-hidden hover:shadow-[0_0_30px_rgba(59,130,246,0.06)]`}
           >

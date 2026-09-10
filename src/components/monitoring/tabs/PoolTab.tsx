@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import React, { useState, useEffect, useCallback } from "react";
 import { Server, Activity, Clock, LoaderCircle, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,7 +40,7 @@ export function PoolTab({ connection }: PoolTabProps) {
     if (connection === null || requestKey === null) return;
     let ignore = false;
 
-    fetch("/api/db/pool-stats", {
+    appFetch("/api/db/pool-stats", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // The seed id, not the object: a managed connection arrives here with its
@@ -121,7 +122,14 @@ export function PoolTab({ connection }: PoolTabProps) {
           <Server strokeWidth={1.5} className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />
           <h2 className="text-xs sm:text-base font-medium">Connection Pool</h2>
         </div>
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={reload} disabled={loading}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={reload}
+          disabled={loading}
+          aria-label="Refresh connection pool"
+        >
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
         </Button>
       </div>

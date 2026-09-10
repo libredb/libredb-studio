@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useCallback, useRef, useState } from "react";
 import type { AgentChartSpec } from "@/lib/agent/types";
 import type { ExplainFormat } from "@/lib/db/types";
@@ -69,7 +70,7 @@ export function useAgentArtifact(options: AgentArtifactOptions): AgentArtifactHo
     const ask = latestAsk.current + 1;
     latestAsk.current = ask;
     try {
-      const res = await fetch(
+      const res = await appFetch(
         `/api/agent/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(correlationId)}`,
       );
       const body = (await res.json().catch(() => ({}))) as { error?: unknown };

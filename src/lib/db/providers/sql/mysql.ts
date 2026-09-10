@@ -29,6 +29,7 @@ import {
 } from "../../types";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
+import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
 /**
@@ -1292,7 +1293,8 @@ export class MySQLProvider extends SQLBaseProvider {
 
       // Get database size
       const [sizeRows] = await runStatement(conn, OVERVIEW_DATABASE_SIZE_SQL, [this.config.database]);
-      const databaseSizeBytes = parseInt(sizeRows[0]?.size_bytes || "0");
+      const databaseSizeBytes = measuredNullableAggregate(sizeRows[0], "size_bytes");
+      const databaseSize = databaseSizeBytes === undefined ? "N/A" : formatBytes(databaseSizeBytes);
 
       // Get table and index count
       const [countRows] = await runStatement(conn, OVERVIEW_OBJECT_COUNTS_SQL, [this.config.database]);
@@ -1308,8 +1310,8 @@ export class MySQLProvider extends SQLBaseProvider {
         ...(uptimeSeconds === undefined ? {} : { startTime: new Date(Date.now() - uptimeSeconds * 1000) }),
         ...(activeConnections === undefined ? {} : { activeConnections }),
         maxConnections,
-        databaseSize: formatBytes(databaseSizeBytes),
-        databaseSizeBytes,
+        databaseSize,
+        ...(databaseSizeBytes === undefined ? {} : { databaseSizeBytes }),
         tableCount: parseInt(tableCountRows[0]?.cnt || "0"),
         indexCount: parseInt(countRows[0]?.index_count || "0"),
       };

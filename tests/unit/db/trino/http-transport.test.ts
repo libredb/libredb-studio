@@ -460,17 +460,26 @@ describe("TrinoHttpTransport request", () => {
     expect(firstCall().headers["X-Trino-Schema"]).toBeUndefined();
   });
 
+  test("pins the connection's schema for unqualified table names", async () => {
+    await makeTransport({ schema: "tiny" }).query("SELECT 1");
+
+    expect(firstCall().headers["X-Trino-Schema"]).toBe("tiny");
+  });
+
   // Introspection legitimately reads a catalog other than the pinned one, and the
   // alternative - USE - is the session mutation this stateless transport discards.
   test("lets one statement override the catalog and name a schema", async () => {
-    await makeTransport({ database: "tpch" }).query("SELECT 1", { catalog: "memory", schema: "default" });
+    await makeTransport({ database: "tpch", schema: "tiny" }).query("SELECT 1", {
+      catalog: "memory",
+      schema: "default",
+    });
 
     expect(firstCall().headers["X-Trino-Catalog"]).toBe("memory");
     expect(firstCall().headers["X-Trino-Schema"]).toBe("default");
   });
 
-  test("sends no catalog or schema header when neither is configured", async () => {
-    await makeTransport().query("SELECT 1", { catalog: "", schema: "" });
+  test("lets an explicit empty override omit the pinned catalog and schema headers", async () => {
+    await makeTransport({ database: "tpch", schema: "tiny" }).query("SELECT 1", { catalog: "", schema: "" });
 
     expect(firstCall().headers["X-Trino-Catalog"]).toBeUndefined();
     expect(firstCall().headers["X-Trino-Schema"]).toBeUndefined();

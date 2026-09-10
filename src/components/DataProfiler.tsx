@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useMemo } from "react";
 import { LoaderCircle, ChartColumn, X, Hash, CircleAlert, Sparkles, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -81,7 +82,7 @@ export function DataProfiler({
         setAiSummary(result);
       } else {
         // Default: existing fetch behavior
-        const response = await fetch("/api/ai/describe-schema", {
+        const response = await appFetch("/api/ai/describe-schema", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -128,7 +129,7 @@ export function DataProfiler({
       } else {
         // Default: existing fetch behavior
         const columns = tableSchema.columns?.map((c) => c.name) || [];
-        const response = await fetch("/api/db/profile", {
+        const response = await appFetch("/api/db/profile", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           // The seed id for a managed connection: the browser's copy has had its

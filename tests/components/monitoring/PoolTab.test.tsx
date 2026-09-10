@@ -90,13 +90,12 @@ describe("PoolTab", () => {
   });
 
   test("the refresh button re-issues the request", async () => {
-    const { container, queryByText } = render(<PoolTab connection={conn} />);
+    const { getByRole, queryByText } = render(<PoolTab connection={conn} />);
     await waitFor(() => {
       expect(queryByText("10")).not.toBeNull();
     });
 
-    // The header refresh control is the only button on the settled tab.
-    const refreshButton = container.querySelector("button");
+    const refreshButton = getByRole("button", { name: "Refresh connection pool" });
     expect(refreshButton).not.toBeNull();
 
     await act(async () => {

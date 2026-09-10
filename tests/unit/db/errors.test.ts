@@ -51,8 +51,23 @@ describe("DatabaseError", () => {
       message: "test",
       provider: "mysql",
       code: ApiErrorCode.QUERY_ERROR,
-      query: "SELECT 1...",
+      query: "SELECT 1",
     });
+  });
+
+  test("toJSON() preserves a query at the preview limit", () => {
+    const query = "A".repeat(100);
+    const json = new DatabaseError("msg", "postgres", undefined, query).toJSON();
+    expect(json.query).toBe(query);
+    expect(json.query?.endsWith("...")).toBe(false);
+  });
+
+  test("toJSON() marks a query just beyond the preview limit", () => {
+    const query = "A".repeat(101);
+    const json = new DatabaseError("msg", "postgres", undefined, query).toJSON();
+    expect(json.query).toBe("A".repeat(100) + "...");
+    expect(json.query?.length).toBe(103);
+    expect(json.query?.endsWith("...")).toBe(true);
   });
 
   test("toJSON() truncates query to 100 chars", () => {

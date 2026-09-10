@@ -598,6 +598,12 @@ outright on Doris for a filter the statement does not need ([#573](https://githu
 and the narrowest fix changes only what a grammar refuses. `getOverview()` also costs one round trip
 fewer than before, reading uptime and connections out of the same result set.
 
+**Database size is absent, never zeroed, when it is not measured.** `getOverview()` sizes the
+database with `SUM(DATA_LENGTH + INDEX_LENGTH)` over `information_schema.tables`. A missing result
+row, or a row without the `size_bytes` column, is no measurement at all: `databaseSizeBytes` is
+omitted and `databaseSize` stays `"N/A"`. Only a returned SQL `NULL` — an empty database — is a
+measured zero, and that reading is published as `0`/`"0 B"`.
+
 **Graceful degradation — note the *different* failure modes:**
 - `getHealth()` slow-queries: the digest rows, or **an empty list** — never a placeholder row, and
   on this path **the reason is dropped**. It used to answer a single fabricated row

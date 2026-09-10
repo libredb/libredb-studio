@@ -35,7 +35,7 @@ None of it is a GitHub issue.
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
-- [Chart configuration surface](#chart-configuration-surface) — N1, N3 · 2
+- [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 2
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
@@ -987,39 +987,6 @@ Note the naming collision: `route.*` in `values.yaml` means Gateway API as of #3
 
 **Done when:** an OpenShift cluster can be served by the chart alone, with TLS termination selectable,
 and the README says which of the three exposure mechanisms belongs to which platform.
-
-### N3. Subpath deployment is build-time only, which is why #369 is deferred rather than scheduled
-
-[#369](https://github.com/libredb/libredb-studio/issues/369) asks to serve Studio under a path prefix
-on a shared domain — `https://example.com/libredb` next to `https://example.com/grafana`.
-`next.config.ts` sets no `basePath` and no `assetPrefix`, so there is zero support today.
-
-The constraint, recorded so nobody rediscovers it: **Next.js `basePath` is baked at build, not read at
-runtime.** Asset URLs (`/_next/static/...`) are emitted into the HTML and JS at build time and there
-is no supported runtime override. So a `BASE_PATH` env var on the prebuilt image cannot work — the
-feature has to be a build arg and a rebuilt image.
-
-A reverse-proxy `StripPrefix` is not a workaround either. The browser asks for `/libredb/`, the proxy
-strips it, the app answers with HTML referencing `/_next/static/...` at the root, and that follow-up
-request no longer matches the `/libredb` router rule. Grafana can do this at runtime because it is a
-Go server templating its own HTML; a statically built Next.js app is structurally different.
-
-The surface a build-time implementation touches: roughly 40 `fetch('/api/...')` call sites, roughly 15
-`router.push('/...')`, the cookie `path: "/"` in `src/lib/auth.ts` and the OIDC login route, OIDC
-redirect URIs, the `src/proxy.ts` matcher, the Docker healthcheck, the chart's ingress and route
-paths, the npm library surface, the E2E suite and the docs of roughly 27 distribution channels.
-`next/link` and the app-router `router` prefix automatically; `fetch`, middleware redirects and cookie
-paths do not.
-
-Deferred rather than scheduled because the acquisition-relevant PaaS one-click listings hand out
-subdomains, not subpaths, so no shipped channel needs it.
-
-Related sharp edge, same silent-no-op class as #366: `values.yaml` already lets a user set
-`ingress.hosts[].paths[].path` to `/libredb`, the install succeeds, and the app is unreachable.
-
-**Done when:** a `BASE_PATH` build arg produces an image reachable under a path prefix — assets, API
-calls, auth cookie and OIDC redirect included — verified against a real path-routing proxy, or the
-chart refuses a non-root ingress path outright.
 
 ---
 

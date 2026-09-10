@@ -1,3 +1,4 @@
+import { getBasePath } from "@/lib/config/base-path";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies, headers } from "next/headers";
 import { logger } from "@/lib/logger";
@@ -157,11 +158,11 @@ export async function login(role: Role, username?: string) {
     // - are covered by the Origin check in src/proxy.ts (src/lib/api/origin-check.ts).
     sameSite: "lax",
     maxAge: 60 * 60 * 24, // 1 day
-    path: "/",
+    path: getBasePath() || "/",
   });
 }
 
 export async function logout() {
   const cookieStore = await cookies();
-  cookieStore.delete("auth-token");
+  cookieStore.delete({ name: "auth-token", path: getBasePath() || "/" });
 }

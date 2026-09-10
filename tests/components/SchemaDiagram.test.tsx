@@ -399,11 +399,9 @@ describe("SchemaDiagram", () => {
   test("onClose fires when close button clicked", () => {
     const onClose = mock(() => {});
     const props = createDefaultProps({ onClose });
-    const { container } = render(<SchemaDiagram {...props} />);
+    const { getByRole } = render(<SchemaDiagram {...props} />);
 
-    const closeButton = Array.from(container.querySelectorAll("button")).find((btn) =>
-      btn.className.includes("rounded-full"),
-    );
+    const closeButton = getByRole("button", { name: "Close schema diagram" });
     expect(closeButton).not.toBeNull();
 
     fireEvent.click(closeButton!);

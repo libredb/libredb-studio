@@ -869,13 +869,9 @@ describe("OperationsTab", () => {
     await act(async () => {
       renderResult = render(<OperationsTab />);
     });
-    const { container, baseElement } = renderResult!;
+    const { getByRole, baseElement } = renderResult!;
 
-    // Click kill button
-    const cells = container.querySelectorAll("td");
-    const pidCell = Array.from(cells).find((td) => td.textContent?.includes("1234"));
-    const row = pidCell!.closest("tr");
-    const killBtn = row!.querySelector("td:last-child button");
+    const killBtn = getByRole("button", { name: "Terminate session 1234" });
     await act(async () => {
       fireEvent.click(killBtn!);
     });

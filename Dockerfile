@@ -36,6 +36,9 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DOCKER_BUILD=true
 
+# Next.js bakes this prefix into routes and browser bundles. Rebuild to change it.
+ARG BASE_PATH=""
+
 ARG JWT_SECRET_BUILD="build-time-placeholder-secret-32ch"
 ARG ADMIN_PASSWORD_BUILD="build"
 ARG USER_PASSWORD_BUILD="build"

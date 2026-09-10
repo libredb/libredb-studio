@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import React, { useState, useEffect, useMemo } from "react";
 import { ShieldAlert, ShieldCheck, TriangleAlert, LoaderCircle, Play, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -157,7 +158,7 @@ export function QuerySafetyDialog({
         setAnalysis(result);
       } else {
         // Default: existing fetch behavior
-        const response = await fetch("/api/ai/query-safety", {
+        const response = await appFetch("/api/ai/query-safety", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query, schemaContext: filteredSchema, databaseType }),

@@ -109,8 +109,9 @@ services:
     #   - ./seed-connections.yaml:/app/config/seed-connections.yaml:ro
 
     # Image runs as node:24.16.0-trixie-slim (no curl/wget) — use Node's built-in fetch.
+    # BASE_PATH must match a custom image built with that prefix (docs/SUBPATH.md).
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/db/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000${BASE_PATH:-}/api/db/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3

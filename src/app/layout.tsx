@@ -1,3 +1,4 @@
+import { withBasePath } from "@/lib/config/base-path";
 import { GeistMono } from "geist/font/mono";
 // Self-hosted Geist (the `geist` package wraps next/font/local around the woff2
 // files it ships). next/font/google would fetch fonts.googleapis.com at BUILD
@@ -13,15 +14,16 @@ import { Toaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
   title: "LibreDB Studio | Universal Database Editor",
-  description: "Manage PostgreSQL, MySQL, MongoDB, and Redis in one web-based interface.",
-  manifest: "/site.webmanifest",
+  description:
+    "A self-hosted, web-based SQL IDE for PostgreSQL, MySQL, MongoDB and more, with AI-assisted queries, schema exploration, and support for SQL and NoSQL engines.",
+  manifest: withBasePath("/site.webmanifest"),
   icons: {
     icon: [
-      { url: "/favicon.ico?v=2", sizes: "any" },
-      { url: "/logo.svg?v=2", type: "image/svg+xml" },
+      { url: withBasePath("/favicon.ico?v=2"), sizes: "any" },
+      { url: withBasePath("/logo.svg?v=2"), type: "image/svg+xml" },
     ],
-    shortcut: "/favicon.ico?v=2",
-    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+    shortcut: withBasePath("/favicon.ico?v=2"),
+    apple: [{ url: withBasePath("/apple-touch-icon.png"), sizes: "180x180", type: "image/png" }],
   },
 };
 

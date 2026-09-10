@@ -34,6 +34,7 @@ tests
 playwright-report
 test-results
 data-e2e-offline
+data-e2e-base-path
 .loop
 loop
 .claude
@@ -72,6 +73,7 @@ docs
 # Development files
 .vscode
 .idea
+.devcontainer
 *.swp
 *.swo
 *~

@@ -690,6 +690,7 @@ export class TrinoHttpTransport implements TrinoTransport {
   private readonly origin: string;
   private readonly user: string;
   private readonly catalog: string | undefined;
+  private readonly schema: string | undefined;
   private readonly authorization: string | undefined;
 
   constructor(dialect: TrinoDialect, config: DatabaseConnection) {
@@ -706,6 +707,7 @@ export class TrinoHttpTransport implements TrinoTransport {
     // boundary: a fully qualified statement still reaches any catalog the session
     // can see.
     this.catalog = config.database;
+    this.schema = config.schema;
 
     if (config.password === undefined || config.password === "") {
       this.authorization = undefined;
@@ -880,14 +882,13 @@ export class TrinoHttpTransport implements TrinoTransport {
    */
   private submitHeaders(options: TrinoQueryOptions): Record<string, string> {
     const catalog = options.catalog ?? this.catalog;
+    const schema = options.schema ?? this.schema;
     return {
       ...this.sessionHeaders(),
       "content-type": SQL_CONTENT_TYPE,
       [this.header(HEADER_SUFFIXES.TIME_ZONE)]: CLIENT_TIME_ZONE,
       ...(catalog === undefined || catalog === "" ? {} : { [this.header(HEADER_SUFFIXES.CATALOG)]: catalog }),
-      ...(options.schema === undefined || options.schema === ""
-        ? {}
-        : { [this.header(HEADER_SUFFIXES.SCHEMA)]: options.schema }),
+      ...(schema === undefined || schema === "" ? {} : { [this.header(HEADER_SUFFIXES.SCHEMA)]: schema }),
     };
   }
 

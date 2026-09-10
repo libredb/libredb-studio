@@ -445,6 +445,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
                   size="icon"
                   className="rounded-full bg-raised border-hairline-strong hover:bg-fill"
                   onClick={onClose}
+                  aria-label="Close schema diagram"
                 >
                   <X strokeWidth={1.5} className="w-3.5 h-3.5" />
                 </Button>

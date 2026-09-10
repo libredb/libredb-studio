@@ -126,13 +126,10 @@ function diffIndexes(sourceIndexes: IndexSchema[], targetIndexes: IndexSchema[])
     if (!targetIdx) continue;
 
     const changes: string[] = [];
-    // Code-point sort (not localeCompare) so this equality check is deterministic
-    // and locale-independent — see columnKey above.
-    const sortedJoin = (cols: string[]) => [...cols].sort().join(",");
-    const sourceColStr = sortedJoin(sourceIdx.columns);
-    const targetColStr = sortedJoin(targetIdx.columns);
-
-    if (sourceColStr !== targetColStr) {
+    // Index columns are ordered: (a, b) and (b, a) have different leading keys.
+    // Serialize the array instead of joining, so commas inside identifiers cannot
+    // make distinct column lists compare equal. Neither input is mutated.
+    if (JSON.stringify(sourceIdx.columns) !== JSON.stringify(targetIdx.columns)) {
       changes.push(`Columns changed: (${sourceIdx.columns.join(", ")}) → (${targetIdx.columns.join(", ")})`);
     }
     if (sourceIdx.unique !== targetIdx.unique) {

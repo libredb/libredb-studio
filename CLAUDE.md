@@ -6,7 +6,7 @@ Guidance for Claude Code in this repo — conventions, rules, and gotchas only. 
 
 ## Project Overview
 
-Web-based SQL IDE for cloud-native teams: 17 engines — the `DatabaseType` union in [`src/lib/types.ts`](src/lib/types.ts) is the list, never a prose enumeration — plus AI query assistance. It runs **two ways** — standalone Next.js app and published npm package — and the two render different chrome, so a UI change verified in one is not verified in the other.
+Web-based SQL IDE for cloud-native teams: sixteen external engines, plus the embedded LibreDB store — `EXTERNAL_DATABASE_TYPES` in [`src/lib/db/compatibility.ts`](src/lib/db/compatibility.ts) is the external-engine list, never a prose enumeration — plus AI query assistance. It runs **two ways** — standalone Next.js app and published npm package — and the two render different chrome, so a UI change verified in one is not verified in the other.
 
 ## Branching & PRs
 

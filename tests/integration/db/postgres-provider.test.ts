@@ -432,10 +432,10 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
     });
   }
 
-  // getOverview: database size (pg_database_size with pretty + bytes)
+  // getOverview: database size, the byte figure only - `databaseSize` is formatBytes() over it.
   if (normalized.includes("pg_database_size") && normalized.includes("database_size_bytes")) {
     return Promise.resolve({
-      rows: [{ database_size: "512 MB", database_size_bytes: "536870912" }],
+      rows: [{ database_size_bytes: "536870912" }],
       fields: [],
       rowCount: 1,
     });
@@ -2348,6 +2348,109 @@ describe("PostgresProvider", () => {
 
       // 90061 seconds = 1d 1h 1m
       expect(overview.uptime).toBe("1d 1h 1m");
+    });
+
+    test("a size result without the expected column leaves overview size absent", async () => {
+      mockQueryFn = async (sql: string) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_database_size") && normalized.includes("database_size_bytes")) {
+          return Promise.resolve({ rows: [{ unexpected_column: "512 MB" }], fields: [], rowCount: 1 });
+        }
+        return defaultMockQuery(sql);
+      };
+
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
+    test("a size read with no result row leaves overview size absent", async () => {
+      mockQueryFn = async (sql: string) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_database_size") && normalized.includes("database_size_bytes")) {
+          return Promise.resolve({ rows: [], fields: [], rowCount: 0 });
+        }
+        return defaultMockQuery(sql);
+      };
+
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
+    test("a non-finite size leaves overview size absent", async () => {
+      mockQueryFn = async (sql: string) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_database_size") && normalized.includes("database_size_bytes")) {
+          return Promise.resolve({
+            rows: [{ database_size_bytes: Number.POSITIVE_INFINITY }],
+            fields: [],
+            rowCount: 1,
+          });
+        }
+        return defaultMockQuery(sql);
+      };
+
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
+    test("a database that measures zero bytes keeps its measured zero size", async () => {
+      // The anti-vacuity twin of the tests above: a null aggregate is a MEASURED zero the
+      // provider must keep publishing, never an absence. It pins the shared helper's
+      // contract rather than a state this engine produces - `pg_database_size()` is a
+      // function, not an aggregate, and measured on PostgreSQL 18 a freshly created
+      // database answers 7774735 bytes, never NULL and never zero. MySQL's `SUM()` over an
+      // empty schema is where the null row is real.
+      mockQueryFn = async (sql: string) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_database_size") && normalized.includes("database_size_bytes")) {
+          return Promise.resolve({
+            rows: [{ database_size_bytes: null }],
+            fields: [],
+            rowCount: 1,
+          });
+        }
+        return defaultMockQuery(sql);
+      };
+
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(true);
+      expect(overview.databaseSizeBytes).toBe(0);
+      expect(overview.databaseSize).toBe("0 B");
+    });
+
+    test("the overview size read asks for the byte figure only", async () => {
+      const seen: string[] = [];
+      mockQueryFn = async (sql: string) => {
+        seen.push(sql);
+        return defaultMockQuery(sql);
+      };
+
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.getOverview();
+
+      const sizeRead = seen.find((sql) => sql.includes("pg_database_size"));
+      expect(sizeRead).toBeDefined();
+      // `databaseSize` is `formatBytes(databaseSizeBytes)` now, the shape `mssql.ts`
+      // uses, so a selected `pg_size_pretty()` would be a column nothing reads - and
+      // one whose value disagreed with the published string on every rounding boundary.
+      expect(sizeRead).not.toContain("pg_size_pretty");
+      expect(sizeRead).toContain("database_size_bytes");
     });
   });
 

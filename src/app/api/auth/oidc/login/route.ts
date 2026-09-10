@@ -1,3 +1,4 @@
+import { getBasePath, withBasePath } from "@/lib/config/base-path";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getOIDCConfig, discoverProvider, generateAuthUrl, encryptState, getPublicOrigin } from "@/lib/oidc";
@@ -10,7 +11,7 @@ export async function GET(request: Request) {
     const config = await discoverProvider(oidcConfig);
 
     const origin = getPublicOrigin(request);
-    const redirectUri = `${origin}/api/auth/oidc/callback`;
+    const redirectUri = `${origin}${withBasePath("/api/auth/oidc/callback")}`;
 
     const { url, state } = await generateAuthUrl(config, redirectUri, oidcConfig.scope);
 
@@ -24,13 +25,13 @@ export async function GET(request: Request) {
       secure: await shouldMarkCookieSecure(),
       sameSite: "lax",
       maxAge: 300, // 5 minutes
-      path: "/",
+      path: getBasePath() || "/",
     });
 
     return NextResponse.redirect(url.toString());
   } catch (error) {
     logger.error("OIDC login error", error, { route: "GET /api/auth/oidc/login" });
     const origin = getPublicOrigin(request);
-    return NextResponse.redirect(`${origin}/login?error=oidc_config`);
+    return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_config`);
   }
 }

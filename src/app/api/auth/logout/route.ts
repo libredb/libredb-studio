@@ -1,3 +1,4 @@
+import { withBasePath } from "@/lib/config/base-path";
 import { getSession, logout } from "@/lib/auth";
 import { buildLogoutUrl, getPublicOrigin } from "@/lib/oidc";
 import { NextRequest, NextResponse } from "next/server";
@@ -42,7 +43,7 @@ export async function POST(request: NextRequest) {
     const authProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER || "local";
     if (authProvider === "oidc") {
       const origin = getPublicOrigin(request);
-      const returnTo = `${origin}/login`;
+      const returnTo = `${origin}${withBasePath("/login")}`;
       const oidcLogoutUrl = await buildLogoutUrl(returnTo);
 
       if (oidcLogoutUrl) {

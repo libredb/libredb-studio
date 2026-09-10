@@ -211,7 +211,7 @@ mock.module("@/components/monitoring/tabs/PoolTab", () => ({
 }));
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { render, act, cleanup, waitFor } from "@testing-library/react";
+import { render, act, cleanup, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 
@@ -338,6 +338,18 @@ describe("MonitoringDashboard", () => {
 
     // Restore
     (storageModule.storage as unknown as Record<string, unknown>).getConnections = originalGetConnections;
+  });
+
+  test("back button remains named when its responsive text is hidden", async () => {
+    mockRouterPush.mockClear();
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<MonitoringDashboard />);
+    });
+    // Model the small-screen CSS state in the DOM test environment.
+    view!.getByText("Back").style.display = "none";
+    fireEvent.click(view!.getByRole("button", { name: "Back" }));
+    expect(mockRouterPush).toHaveBeenCalledWith("/");
   });
 
   test("isEmbedded=true hides back button", async () => {

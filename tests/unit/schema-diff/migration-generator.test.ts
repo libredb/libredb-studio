@@ -184,17 +184,18 @@ describe("generateMigrationSQL: CREATE TABLE", () => {
     const sql = generateMigrationSQL(makeAddedTableDiff(), "mssql");
     expect(sql).toContain("CREATE TABLE [users]");
     expect(sql).toContain("[id] integer NOT NULL");
-    expect(sql).toContain("BEGIN;");
+    expect(sql).toContain("BEGIN TRANSACTION;");
   });
 
   test("oracle uses double-quoted identifiers", () => {
     const sql = generateMigrationSQL(makeAddedTableDiff(), "oracle");
     expect(sql).toContain('CREATE TABLE "users"');
-    expect(sql).toContain("BEGIN;");
+    expect(sql).not.toContain("BEGIN;");
+    expect(sql).not.toContain("COMMIT;");
   });
 
-  test("unlisted dialect falls back to double-quoted identifiers", () => {
-    const sql = generateMigrationSQL(makeAddedTableDiff(), "mongodb");
+  test("duckdb uses double-quoted identifiers", () => {
+    const sql = generateMigrationSQL(makeAddedTableDiff(), "duckdb");
     expect(sql).toContain('CREATE TABLE "users"');
     expect(sql).toContain('"id" integer NOT NULL');
   });
@@ -939,16 +940,16 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     mysql: "key-follows-in-an-alter",
     oracle: "key-follows-in-an-alter",
     mssql: "key-follows-in-an-alter",
-    clickhouse: "key-follows-in-an-alter",
-    couchbase: "key-follows-in-an-alter",
-    druid: "key-follows-in-an-alter",
-    trino: "key-follows-in-an-alter",
-    elasticsearch: "key-follows-in-an-alter",
-    opensearch: "key-follows-in-an-alter",
+    clickhouse: "engine-has-no-foreign-key",
+    couchbase: "engine-has-no-foreign-key",
+    druid: "engine-has-no-foreign-key",
+    trino: "engine-has-no-foreign-key",
+    elasticsearch: "engine-has-no-foreign-key",
+    opensearch: "engine-has-no-foreign-key",
     cassandra: "engine-has-no-foreign-key",
-    mongodb: "key-follows-in-an-alter",
-    redis: "key-follows-in-an-alter",
-    libredb: "key-follows-in-an-alter",
+    mongodb: "engine-has-no-foreign-key",
+    redis: "engine-has-no-foreign-key",
+    libredb: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1215,7 +1216,11 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
 
     test(`${dialect}: modified column emits a comment naming the limitation, never PostgreSQL DDL`, () => {
       const sql = generateMigrationSQL(makeModifiedTableDiff(), dialect as DatabaseType);
-      expect(sql).toContain(`-- ${expected.label}: Cannot alter column "name".`);
+      if (["couchbase", "druid", "elasticsearch", "opensearch", "mongodb", "redis", "libredb"].includes(dialect)) {
+        expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
+      } else {
+        expect(sql).toContain(`-- ${expected.label}: Cannot alter column "name".`);
+      }
       expect(sql).toContain(expected.reason);
       expect(sql).not.toContain("ALTER COLUMN");
       expect(sql).not.toContain("MODIFY COLUMN");
@@ -1229,60 +1234,40 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
  * `DatabaseType` fails typecheck here until it is classified, so it cannot silently
  * inherit the wrapper meant for PostgreSQL and MySQL (#284).
  *
- * `"wrapped"` — the dialect's DDL is bracketed in `BEGIN;` / `COMMIT;`.
- * `"unwrapped"` — no wrapper reaches the migration text. mssql and oracle are
- * deliberately absent from this table's classification of "unwrapped" — they still
- * read `"wrapped"` here, UNCHANGED from today's behaviour, because the module
- * docstring and the issue itself say their real wrapper forms (`BEGIN TRANSACTION;`
- * for MSSQL; whether Oracle needs one at all, given DDL there auto-commits) want
- * checking against a live server before they are settled, the way #264/#265 were -
- * and this PR does not have one available. Tracked as the named follow-up rather than
- * guessed here.
+ * Each wrapped dialect names its exact opening statement; false means no wrapper.
  */
-const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "wrapped" | "unwrapped"> = {
-  postgres: "wrapped",
-  mysql: "wrapped",
+const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANSACTION;" | false> = {
+  postgres: "BEGIN;",
+  mysql: "BEGIN;",
   // Measured live via @duckdb/node-api 1.5.5-r.4 (DuckDB v1.5.5, in-process, no server
   // needed): `BEGIN;` opens a real transaction around DDL, so a `CREATE TABLE` issued
   // inside one is undone by `ROLLBACK;` and kept by `COMMIT;`. Both arms are EXECUTED in
   // the "generateMigrationSQL: duckdb" describe block above, which is where that
   // measurement is pinned; this line only classifies it.
-  duckdb: "wrapped",
-  // UNCHANGED — see this table's own doc comment above.
-  mssql: "wrapped",
-  oracle: "wrapped",
-  sqlite: "unwrapped", // runs its own transaction (module docstring)
-  libsql: "unwrapped", // SQLite fork, same reasoning, plus its own Hrana-stream note (module docstring)
-  cassandra: "unwrapped", // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
+  duckdb: "BEGIN;",
+  mssql: "BEGIN TRANSACTION;",
+  oracle: false, // DDL commits implicitly; BEGIN starts a PL/SQL block.
+  sqlite: false, // runs its own transaction (module docstring)
+  libsql: false, // SQLite fork, same reasoning, plus its own Hrana-stream note (module docstring)
+  cassandra: false, // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
   // The remaining nine each have a recorded reason for having no `BEGIN;` to emit, in this
   // same module (`NO_COLUMN_MODIFICATION`), in `src/lib/sql/grammar.ts` (`NON_SQL_DIALECTS`)
   // or in the provider doc named on the line — this table applies those established facts to
   // the wrapper fallback rather than asserting fresh ones, so none of the nine needs a new
   // live probe. What none of them means is "the wrapper bracketed nothing": see the
   // added-table fixture below.
-  mongodb: "unwrapped", // not SQL text at all (`NON_SQL_DIALECTS`); wrapping non-SQL in SQL statements is wrong regardless of Mongo's own transaction API
-  redis: "unwrapped", // same: command-line grammar, not SQL (`NON_SQL_DIALECTS`)
-  libredb: "unwrapped", // "a JSON command grammar, not SQL DDL" (NO_COLUMN_MODIFICATION's own words)
-  couchbase: "unwrapped", // has transactions, but spells them `BEGIN TRANSACTION` + a txid every later statement must carry — not something a flat file expresses (docs/providers/couchbase.md §13)
-  druid: "unwrapped", // "Druid SQL has no ALTER TABLE" and no transaction concept at all (NO_COLUMN_MODIFICATION)
-  clickhouse: "unwrapped", // ClickHouse's transaction support is experimental and setting-gated, not a safe default; today's code wraps it anyway, which this fixes
-  elasticsearch: "unwrapped", // `BEGIN` is not in the grammar (NO_COLUMN_MODIFICATION's measured statement list; docs/providers/elasticsearch.md §9)
-  opensearch: "unwrapped", // same, measured separately on OpenSearch 3.8.0 (docs/providers/opensearch.md §9)
-  trino: "unwrapped", // connector-dependent at best; no portable BEGIN/COMMIT (NO_COLUMN_MODIFICATION)
+  mongodb: false, // not SQL text at all (`NON_SQL_DIALECTS`); wrapping non-SQL in SQL statements is wrong regardless of Mongo's own transaction API
+  redis: false, // same: command-line grammar, not SQL (`NON_SQL_DIALECTS`)
+  libredb: false, // "a JSON command grammar, not SQL DDL" (NO_COLUMN_MODIFICATION's own words)
+  couchbase: false, // has transactions, but spells them `BEGIN TRANSACTION` + a txid every later statement must carry — not something a flat file expresses (docs/providers/couchbase.md §13)
+  druid: false, // "Druid SQL has no ALTER TABLE" and no transaction concept at all (NO_COLUMN_MODIFICATION)
+  clickhouse: false, // ClickHouse's transaction support is experimental and setting-gated, not a safe default; today's code wraps it anyway, which this fixes
+  elasticsearch: false, // `BEGIN` is not in the grammar (NO_COLUMN_MODIFICATION's measured statement list; docs/providers/elasticsearch.md §9)
+  opensearch: false, // same, measured separately on OpenSearch 3.8.0 (docs/providers/opensearch.md §9)
+  trino: false, // connector-dependent at best; no portable BEGIN/COMMIT (NO_COLUMN_MODIFICATION)
 };
 
-/**
- * Two fixtures, because one of them alone cannot see the thing that matters here.
- *
- * `generateMigrationSQL` reads NO provider capability — not `supportsCreateTable`, not
- * anything else — so its added-table branch emits a real `CREATE TABLE` for every id
- * except `cassandra`, which is the one the generator refuses outright
- * (`CASSANDRA_NO_CREATE_TABLE`). A modified-table diff on an id in
- * `NO_COLUMN_MODIFICATION` really does reduce to comments, so a table driven only by
- * that fixture would let "this dialect never gets DDL, so the wrapper bracketed nothing"
- * stand unchallenged. It is false: the wrapper this set removes was bracketing runnable
- * DDL for those ids too, which is why removing it is a fix rather than a tidy-up.
- */
+// Both creation and modification paths must use the same wrapper policy.
 const WRAPPER_FIXTURES = [
   { label: "a modified table", makeDiff: makeModifiedTableDiff, emitsCreateTable: false },
   { label: "an added table", makeDiff: makeAddedTableDiff, emitsCreateTable: true },
@@ -1291,18 +1276,23 @@ const WRAPPER_FIXTURES = [
 describe("generateMigrationSQL: transaction wrapper by dialect", () => {
   for (const [dialect, expected] of Object.entries(TRANSACTION_WRAPPER_COVERAGE)) {
     for (const fixture of WRAPPER_FIXTURES) {
-      test(`${dialect}: ${expected === "wrapped" ? "wraps DDL in BEGIN;/COMMIT;" : "emits no transaction wrapper"} for ${fixture.label}`, () => {
+      test(`${dialect}: ${expected ? `wraps DDL in ${expected}/COMMIT;` : "emits no transaction wrapper"} for ${fixture.label}`, () => {
         const sql = generateMigrationSQL(fixture.makeDiff(), dialect as DatabaseType);
         // Non-vacuity guard: on the added-table fixture the wrapper assertion below is
         // about text that brackets a real statement, not an empty run of comments.
-        if (fixture.emitsCreateTable && dialect !== "cassandra") {
+        if (
+          fixture.emitsCreateTable &&
+          !["cassandra", "mongodb", "redis", "libredb", "couchbase", "druid", "elasticsearch", "opensearch"].includes(
+            dialect,
+          )
+        ) {
           expect(sql).toMatch(/^CREATE TABLE /m);
         }
-        if (expected === "wrapped") {
-          expect(sql).toContain("BEGIN;");
+        if (expected) {
+          expect(sql).toContain(expected);
           expect(sql).toContain("COMMIT;");
         } else {
-          expect(sql).not.toContain("BEGIN;");
+          expect(sql).not.toMatch(/^BEGIN(?: TRANSACTION)?;$/m);
           expect(sql).not.toContain("COMMIT;");
         }
       });

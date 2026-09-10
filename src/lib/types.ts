@@ -150,6 +150,8 @@ export interface DatabaseConnection {
   user?: string;
   password?: string;
   database?: string;
+  /** Trino: the session schema used to resolve unqualified table names. */
+  schema?: string;
   connectionString?: string;
   createdAt: Date;
   color?: string;

@@ -200,7 +200,7 @@ function engineWarnings(result: TrinoQueryResult): QueryWarning[] {
 
   if (result.operation !== null && SESSION_SCOPED_OPERATIONS.has(result.operation)) {
     warnings.push({
-      message: `"${result.operation}" succeeded, but each statement is sent on its own connection, so it will not affect the next one. Qualify names in full instead.`,
+      message: `"${result.operation}" succeeded, but each statement is sent on its own connection, so it will not affect the next one. Set Catalog Name and Schema Name on the Trino connection for a persistent namespace, or qualify names in full.`,
     });
   }
 
@@ -458,7 +458,7 @@ export class TrinoProvider extends SQLBaseProvider {
     const catalog = this.config.database;
     if (catalog === undefined || catalog === "") {
       throw new DatabaseConfigError(
-        `This connection pins no ${this.dialect.displayName} catalog, so there is no schema to list. Set the catalog on the connection, or qualify every name in full.`,
+        `This connection pins no ${this.dialect.displayName} catalog, so there is no schema to list. Set the catalog on the connection to list its tables. Set a session schema as well to use unqualified table names in queries and Create Table.`,
         this.type,
       );
     }

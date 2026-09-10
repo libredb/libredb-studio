@@ -128,6 +128,7 @@ And nothing is held back. Single sign-on, ER diagrams, the AI features and the N
 ### Professional SQL IDE
 - **Monaco Engine**: Powered by the same core as VS Code.
 - **Smart Autocomplete**: Schema-aware suggestions for tables, columns, and SQL keywords.
+- **Command Palette**: Quick access to tables, connections, saved queries, and actions with `Cmd/Ctrl+K`.
 - **Multi-Tab Workspace**: Handle parallel tasks with independent execution states.
 - **Visual EXPLAIN**: Graphical execution plans to identify performance bottlenecks.
 - **Interactive ER Diagrams**: Visual schema graph with real foreign key edges, cardinality labels, MiniMap navigation, table search/filter, compact mode, and PNG/SVG export. Automatic hierarchical layout powered by ELK.js.
@@ -572,7 +573,7 @@ bun run test:coverage
 
 - **Test runner**: `bun:test` (built-in, Jest-compatible API) with `happy-dom` for DOM environment
 - **Component isolation**: Component tests run in 6 isolated groups via `tests/run-components.sh` to prevent `mock.module()` cross-contamination
-- **E2E**: Playwright with Chromium, runs against a production build (`bun run build && bun start`)
+- **E2E**: Playwright runs the full suite on Chromium and the `security-headers` spec on WebKit (`webkit-security`), against a production build (`bun run build && bun start`)
 - **CI**: GitHub Actions runs lint + typecheck + build, unit/integration tests with coverage, E2E tests, and SonarCloud analysis
 - **Coverage**: `bun test --coverage` generates lcov reports for SonarCloud integration
 
@@ -624,10 +625,12 @@ Deploy your own instance of LibreDB Studio with a single click on DigitalOcean, 
 | `OIDC_ADMIN_ROLES` | ❌ | Comma-separated admin role values (default: `admin`) |
 | `OIDC_ROLE_CLAIM` | ❌ | Claim path for role (e.g. `realm_access.roles`) |
 | `OIDC_SCOPE` | ❌ | OIDC scope (default: `openid profile email`) |
-| `LLM_PROVIDER` | ❌ | AI provider: `gemini`, `openai`, `ollama` |
+| `LLM_PROVIDER` | ❌ | AI: `gemini`, `openai`, `ollama`, `custom` (self-hosted OpenAI-compatible endpoint) |
 | `LLM_API_KEY` | ❌ | API key for AI features |
 | `LLM_MODEL` | ❌ | Model name (e.g., `gemini-2.5-flash`) |
+| `LLM_API_URL` | ❌ | API URL for `ollama` and `custom`; required for `custom`, defaults to `http://localhost:11434/v1` for `ollama` |
 | `STORAGE_PROVIDER` | ❌ | Storage provider: `local` (default), `sqlite`, or `postgres` |
+| `STORAGE_SQLITE_PATH` | ❌ | SQLite file path (e.g. `/app/data/libredb-storage.db`) |
 | `STORAGE_POSTGRES_URL` | ❌ | PostgreSQL connection URL (required when `STORAGE_PROVIDER=postgres`) |
 | `SEED_CONFIG_PATH` | ❌ | Path to seed connections YAML config (see [Seed Connections](#seed-connections-pre-configured-databases)) |
 | `SEED_CACHE_TTL_MS` | ❌ | Seed config cache TTL in ms (default: `60000`) |
@@ -638,6 +641,9 @@ Deploy your own instance of LibreDB Studio with a single click on DigitalOcean, 
 
 ## Deployment (DevOps)
 
+For a reverse-proxy path such as `/tools/libredb`, build with `BASE_PATH` and follow the
+[subpath deployment guide](docs/SUBPATH.md). Prebuilt images use the root path.
+
 > Maintainers: every distribution channel is inventoried in
 > [`distribution/channels.yaml`](distribution/channels.yaml); `bun run distribution:check`
 > reports version drift across all of them (see
@@ -645,11 +651,11 @@ Deploy your own instance of LibreDB Studio with a single click on DigitalOcean, 
 
 ### Koyeb
 
-1. **Fork this repository**
-2. **Connect to Koyeb**: [app.koyeb.com](https://app.koyeb.com) → New → Blueprint
-3. **Select your forked repo** and Koyeb will auto-detect `koyeb.yaml`
-4. **Set Environment Variables** in Koyeb Dashboard:
-5. **Deploy!**
+1. Use the **Deploy to Koyeb** button under [One-Click Deploy](#one-click-deploy) to run the prebuilt `ghcr.io/libredb/libredb-studio:latest` image.
+2. Set a strong `JWT_SECRET` (32+ characters) and real `ADMIN_PASSWORD` / `USER_PASSWORD` in the deploy form before launching. Koyeb cannot auto-generate secrets; the prefilled values are placeholders.
+3. For connections to survive redeploys, set `STORAGE_PROVIDER=postgres` and `STORAGE_POSTGRES_URL` to a Koyeb managed Postgres or Neon connection string. The button defaults to `STORAGE_PROVIDER=local`, which keeps connection metadata in the browser.
+
+See [`deploy/koyeb/`](deploy/koyeb/) for the complete setup and storage options.
 
 ### Railway
 
@@ -919,10 +925,10 @@ extraEnvFrom:
 
 ### Cross-browser testing
 
-The product is a browser application, so a browser bug is a product bug. CI runs Playwright against
-desktop Chromium, which is the limit of what a headless runner sees: Safari and older WebKit
-regressions, mobile layout, and the WebKitGTK engine behind the Linux desktop build need real
-devices. This project is tested with BrowserStack.
+The product is a browser application, so a browser bug is a product bug. CI runs the full Playwright
+suite on desktop Chromium and the `security-headers` spec on WebKit (`webkit-security`). Beyond that
+one WebKit spec, Safari and older WebKit regressions, mobile layout, and the WebKitGTK engine behind
+the Linux desktop build need real devices. This project is tested with BrowserStack.
 
 ---
 
@@ -960,10 +966,10 @@ one covers and what attribution is owed in return are at
   usable without an account. Since 2026-09-01.
 
 - **[BrowserStack](https://www.browserstack.com/opensource)** — the BrowserStack
-  Open Source programme behind the cross-browser testing that runs Playwright
-  against desktop Chromium, which is the limit of what a headless runner sees:
-  Safari and older WebKit regressions, mobile layout, and the WebKitGTK engine
-  behind the Linux desktop build need real devices. Since 2026-08-31.
+  Open Source programme behind the cross-browser testing that runs the full Playwright
+  suite on desktop Chromium and the `security-headers` spec on WebKit (`webkit-security`).
+  Beyond that one WebKit spec, Safari and older WebKit regressions, mobile layout, and the
+  WebKitGTK engine behind the Linux desktop build need real devices. Since 2026-08-31.
 
 - **[Tailscale](https://tailscale.com/opensource)** — the Community on GitHub
   plan behind the private network maintainers use to reach the database probe

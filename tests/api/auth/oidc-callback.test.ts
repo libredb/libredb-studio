@@ -1,3 +1,4 @@
+import { withBasePathEnv } from "../../helpers/base-path";
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 
 // ─── Mock dependencies ─────────────────────────────────────────────────────
@@ -25,7 +26,8 @@ const defaultClaims = {
   preferred_username: "testuser",
 };
 
-const mockExchangeCode = mock(async () => ({ ...defaultClaims }) as Record<string, unknown> | null);
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const mockExchangeCode = mock(async (..._args: unknown[]) => ({ ...defaultClaims }) as Record<string, unknown> | null);
 
 const mockMapOIDCRole = mock(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -125,7 +127,7 @@ describe("GET /api/auth/oidc/callback", () => {
     const req = new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state");
     await GET(req);
 
-    expect(mockCookieStore.delete).toHaveBeenCalledWith("oidc-state");
+    expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-state", path: "/" });
   });
 
   test("redirects to /login?error=oidc_state_missing when no cookie", async () => {
@@ -148,7 +150,7 @@ describe("GET /api/auth/oidc/callback", () => {
 
     expect(res.status).toBe(307);
     expect(res.headers.get("location")).toContain("error=oidc_state_invalid");
-    expect(mockCookieStore.delete).toHaveBeenCalledWith("oidc-state");
+    expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-state", path: "/" });
   });
 
   test("redirects to /login?error=oidc_no_claims when no claims", async () => {
@@ -193,5 +195,32 @@ describe("GET /api/auth/oidc/callback", () => {
       "roles",
       ["admin"],
     );
+  });
+  test("OIDC callback preserves the mount through exchange, redirect and state cleanup", async () => {
+    await withBasePathEnv("/tools/libredb", async () => {
+      mockCookieGet.mockReturnValue({ value: "encrypted-state-cookie" });
+      mockDecryptState.mockResolvedValue({ code_verifier: "v", state: "s", nonce: "n" });
+      mockGetOIDCConfig.mockImplementation(() => ({
+        issuer: "https://example.auth0.com",
+        clientId: "id",
+        clientSecret: "secret",
+        scope: "openid",
+        roleClaim: "roles",
+        adminRoles: ["admin"],
+      }));
+      mockExchangeCode.mockResolvedValue({ ...defaultClaims });
+      mockExchangeCode.mockClear();
+      mockMapOIDCRole.mockReturnValue("user");
+      mockCookieStore.delete.mockClear();
+      const url = "https://studio.example/tools/libredb/api/auth/oidc/callback?code=c&state=s";
+      const response = await GET(new Request(url));
+      expect(mockExchangeCode.mock.calls[0]?.[1]?.toString()).toBe(url);
+      expect(response.headers.get("location")).toBe("https://studio.example/tools/libredb/");
+      expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-state", path: "/tools/libredb" });
+      mockCookieGet.mockReturnValue(undefined);
+      expect((await GET(new Request(url))).headers.get("location")).toBe(
+        "https://studio.example/tools/libredb/login?error=oidc_state_missing",
+      );
+    });
   });
 });

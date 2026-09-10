@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.60 \
+  --version 0.1.62 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -391,6 +391,7 @@ would otherwise lose reachability. One line in the pod log names the address it 
 `config.bindAddress` overrules the resolver when you would rather state it than leave it to the
 image:
 
+| `config.basePath` | Must match `BASE_PATH` baked into your custom image; prefixes default health probes | `""` |
 | `config.bindAddress` | Effect |
 |---|---|
 | `""` (default) | the container resolves it, preferring a verified dual-stack `::` |
@@ -639,3 +640,14 @@ fixed `runAsUser`/`runAsGroup`/`fsGroup` so the SCC can assign valid IDs;
 UIDs: every writable path is a volume mount. Set `force` to always adapt (for
 example when templating manifests offline for an OpenShift cluster) or
 `disabled` to keep the fixed IDs everywhere.
+
+## Deployment under a subpath
+
+Build a custom image with `docker build --build-arg BASE_PATH=/tools/libredb ...`, then set
+`config.basePath: /tools/libredb` and the matching image repository/tag. This prefixes the default
+startup, readiness and liveness probes. It does not change routes in an already-built image.
+Explicit custom probe paths are preserved. Set Ingress paths or HTTPRoute matches to the same
+prefix and preserve it when forwarding; do not strip or rewrite it.
+
+See [subpath deployment](https://github.com/libredb/libredb-studio/blob/main/docs/SUBPATH.md)
+for complete build, reverse-proxy and OIDC examples.

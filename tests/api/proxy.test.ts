@@ -1,3 +1,4 @@
+import { withBasePathEnv } from "../helpers/base-path";
 import { describe, test, expect, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
@@ -328,6 +329,41 @@ describe("proxy", () => {
 
         expect(isRedirect(await proxy(req))).toBe(true);
       }
+    });
+  });
+});
+
+describe("proxy under a nested basePath", () => {
+  for (const [path, role, destination] of [
+    ["/admin", undefined, "/login"],
+    ["/login", "admin", "/admin"],
+    ["/login", "user", "/"],
+    ["/admin", "user", "/"],
+    ["/", "expired", "/login"],
+  ] as const) {
+    test(`${path} (${role ?? "anonymous"}) redirects inside the mount`, async () => {
+      await withBasePathEnv("/~/libredb", async () => {
+        const token = role ? await createToken(role, role === "expired" ? "-1h" : "1h") : undefined;
+        const request = new NextRequest(`http://localhost:3000/~/libredb${path}`, {
+          headers: token ? { cookie: `auth-token=${token}` } : {},
+          nextConfig: { basePath: "/~/libredb" },
+        });
+        expect(request.nextUrl.pathname).toBe(path);
+        expect((await proxy(request)).headers.get("location")).toBe(`http://localhost:3000/~/libredb${destination}`);
+      });
+    });
+  }
+  test("prefixed health is public and prefixed API writes still reject hostile origins", async () => {
+    await withBasePathEnv("/tools/libredb", async () => {
+      const url = "http://localhost:3000/tools/libredb/api/db/health";
+      const options = { nextConfig: { basePath: "/tools/libredb" } };
+      expect((await proxy(new NextRequest(url, options))).status).toBe(200);
+      const request = new NextRequest(url, {
+        ...options,
+        method: "POST",
+        headers: { host: "localhost:3000", origin: "https://evil.example" },
+      });
+      expect((await proxy(request)).status).toBe(403);
     });
   });
 });

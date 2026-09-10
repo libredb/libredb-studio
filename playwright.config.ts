@@ -45,7 +45,7 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
       // offline-editor.spec.ts runs under "chromium-offline-editor" below, against its own server.
-      testIgnore: /offline-editor\.spec\.ts/,
+      testIgnore: /(?:offline-editor|base-path)\.spec\.ts/,
     },
     {
       // Every other spec in this suite signs in as the same shared user@libredb.org account

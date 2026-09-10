@@ -386,3 +386,12 @@ Return the PostgreSQL URL when subchart is enabled
 {{- define "libredb-studio.postgresql.url" -}}
 {{- printf "postgresql://%s:$(POSTGRES_PASSWORD)@%s:5432/%s" .Values.postgresql.auth.username (include "libredb-studio.postgresql.fullname" .) .Values.postgresql.auth.database }}
 {{- end }}
+
+{{/* Prefix only the shipped health path; preserve explicit HTTP/exec/TCP probes. */}}
+{{- define "libredb-studio.probe" -}}
+{{- $probe := deepCopy .probe -}}
+{{- if and $probe.httpGet (eq ($probe.httpGet.path | default "") "/api/db/health") -}}
+{{- $_ := set $probe.httpGet "path" (printf "%s/api/db/health" .basePath) -}}
+{{- end -}}
+{{- toYaml $probe -}}
+{{- end -}}

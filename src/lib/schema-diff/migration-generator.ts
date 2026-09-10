@@ -1,49 +1,14 @@
 /**
- * Migration SQL from a schema diff.
+ * Migration SQL from a schema diff. Dialect-specific DDL is emitted where the
+ * engine supports it; otherwise a comment names the limitation (#284).
  *
- * **Only part of this generator is dialect-aware, and the rest emits one shape for
- * everyone (#284).** Stated here because the difference is invisible from a call
- * site: `generateMigrationSQL(diff, dialect)` takes a dialect either way.
+ * SQL Server uses BEGIN TRANSACTION; Oracle DDL commits implicitly, so it has
+ * no wrapper. Oracle drops omit version-dependent IF EXISTS clauses. The live
+ * regression probe is tests/live/schema-diff-dialects.ts.
  *
- * - Dialect-aware: the modified-column path, which branches per engine and names
- *   the limitation in a comment where an engine has no such statement (#269); the
- *   `ADD` / `DROP` keyword, which CQL spells without `COLUMN`; `CREATE TABLE`,
- *   which is refused outright for Cassandra (see CASSANDRA_NO_CREATE_TABLE); the
- *   transaction wrapper (see NO_TRANSACTION_WRAPPER), which twelve of the
- *   seventeen type ids do without, each for its own named reason; and the foreign-key
- *   statements, which CQL has no grammar for at all and which SQLite's grammar
- *   takes only inside `CREATE TABLE` (see FOREIGN_KEY_ONLY_IN_CREATE_TABLE).
- * - Not yet: MSSQL and Oracle's own transaction-wrapper forms (`BEGIN;` is not
- *   `BEGIN TRANSACTION;`, and Oracle DDL auto-commits regardless of what wraps
- *   it) — both still get today's PostgreSQL-shaped `BEGIN;`/`COMMIT;`, because
- *   settling their real forms wants checking against a live server first, the
- *   way #264 and #265 did, and that measurement is the tracked follow-up to this
- *   fix rather than part of it.
- *
- *   Two more MSSQL/Oracle questions surfaced while checking the rest of this
- *   docstring's claims, and both belong in that same follow-up rather than
- *   being guessed at here: the `ADD COLUMN` keyword — the modified-column path
- *   a few lines below already spells Oracle's own ALTER as `MODIFY (...)`,
- *   with no `COLUMN` keyword in its grammar at all, and MSSQL's documented
- *   `ADD` clause has none either, yet the generic added-column branch hands
- *   both the same literal `ADD COLUMN` every other engine gets; and whether
- *   `DROP TABLE`/`DROP INDEX`/`DROP CONSTRAINT ... IF EXISTS` are valid there
- *   at all — Oracle had no conditional DDL clause before 23ai. Both are
- *   internal inconsistencies or open questions this pass surfaced rather than
- *   fresh guesses, but neither is fixed here.
- *
- *   For every OTHER dialect, `ADD`/`DROP COLUMN` and the index/FK `IF EXISTS`
- *   fallbacks were checked against the same questions and found to already
- *   agree with each one's documented grammar via the existing
- *   Cassandra/SQLite/libSQL/DuckDB/MySQL branches, so nothing there needed
- *   changing in this pass.
- *
- * Cassandra is ahead of MSSQL and Oracle here for a reason worth stating (see
- * NO_TRANSACTION_WRAPPER for the measurement): it is a dialect whose OTHER
- * statements were each measured against a live server too, so its wrapper and FK
- * lines would have been the only unrunnable lines in an otherwise runnable
- * migration. For MSSQL and Oracle they are one problem among several, and the
- * emitted forms still want checking against a live server first.
+ * A diff is not a complete migration plan: source constraint names, schema
+ * qualifiers and cross-table dependency order are not recorded here. Review
+ * the generated SQL before executing it against the target database.
  */
 import type { DatabaseType } from "@/lib/types";
 // The shared quoter, which also escapes an embedded closing quote character — this
@@ -204,21 +169,11 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
  * exists; and `clickhouse`'s transaction support is experimental and setting-gated rather
  * than a safe default — this set is what removes it from the wrapper it used to inherit.
  *
- * What none of these nine reasons is: "this generator emits nothing for that id anyway".
- * It has no capability gate - `supportsCreateTable` is read by the schema explorer, not
- * here - so its added-table branch emits a real `CREATE TABLE` for every id except
- * `cassandra` (see CASSANDRA_NO_CREATE_TABLE). The wrapper this set removes was bracketing
- * runnable DDL for these ids, not just comments, which is what makes removing it a fix.
- * `tests/unit/schema-diff/migration-generator.test.ts` drives the coverage table over an
- * added-table diff as well as a modified-table one so that stays measured.
- *
- * `mssql` and `oracle` are deliberately ABSENT from this set — they still get the
- * PostgreSQL-shaped wrapper, UNCHANGED, because their real forms (`BEGIN TRANSACTION;`
- * for MSSQL; whether Oracle needs a wrapper at all, given DDL there auto-commits) want
- * checking against a live server first, the way #264 and #265 were, and remain tracked
- * in the module docstring above as the follow-up this PR does not attempt.
+ * Oracle DDL commits implicitly and BEGIN opens a PL/SQL block, not a transaction.
+ * SQL Server is handled separately with BEGIN TRANSACTION.
  */
 const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
+  "oracle",
   "sqlite",
   "libsql",
   "cassandra",
@@ -233,8 +188,40 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "trino",
 ]);
 
+// These engines cannot apply a relational table diff through SQL. In particular,
+// Couchbase has index/collection DDL, but no CREATE/ALTER TABLE column grammar.
+// The reasons are already documented and tested by the modified-column path.
+const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
+  "mongodb",
+  "redis",
+  "libredb",
+  "couchbase",
+  "druid",
+  "elasticsearch",
+  "opensearch",
+]);
+
+// IndexDiff carries column names/uniqueness, not ClickHouse's index expression,
+// kind and granularity. It also cannot distinguish its synthetic sorting-key rows.
+// Trino has no index or foreign-key grammar (docs/providers/trino.md §3.8).
+const NO_PORTABLE_INDEX_DDL: Partial<Record<DatabaseType, string>> = {
+  clickhouse:
+    "ClickHouse: Cannot generate index DDL. The diff does not record the index kind, expression or granularity; write the index change by hand.",
+  trino: "Trino: Cannot generate index DDL. Indexes belong to the connector's underlying system, not Trino SQL.",
+};
+const NO_FOREIGN_KEYS: Partial<Record<DatabaseType, string>> = {
+  clickhouse: "ClickHouse",
+  trino: "Trino",
+};
+
+// Object names are untrusted metadata. Quoting protects SQL identifiers, but a
+// newline in a -- comment can start an executable statement outside that quote.
+function commentName(name: string): string {
+  return name.replace(/[\r\n\u2028\u2029]/g, " ");
+}
+
 function generateColumnDef(col: ColumnDiff, dialect: DatabaseType): string {
-  const type = col.targetType || col.sourceType || "TEXT";
+  const type = col.targetType || col.sourceType || (dialect === "oracle" ? "VARCHAR2(255)" : "TEXT");
   // A CQL column definition is a name and a type, full stop. Measured on 5.0.9:
   // `name TEXT NOT NULL`, `name TEXT UNIQUE` and `name TEXT DEFAULT 'x'` are each
   // "no viable alternative at input" - none of the three qualifiers exists in the
@@ -243,7 +230,9 @@ function generateColumnDef(col: ColumnDiff, dialect: DatabaseType): string {
   if (dialect === "cassandra") return `${escapeIdentifier(col.columnName, dialect)} ${type}`;
   const nullable = col.targetNullable === false ? " NOT NULL" : "";
   const defaultVal = col.targetDefault ? ` DEFAULT ${col.targetDefault}` : "";
-  return `${escapeIdentifier(col.columnName, dialect)} ${type}${nullable}${defaultVal}`;
+  // Oracle's column grammar puts DEFAULT before inline constraints such as NOT NULL.
+  const modifiers = dialect === "oracle" ? `${defaultVal}${nullable}` : `${nullable}${defaultVal}`;
+  return `${escapeIdentifier(col.columnName, dialect)} ${type}${modifiers}`;
 }
 
 /**
@@ -323,7 +312,7 @@ function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
 
   // Declined whole, indexes and foreign keys included: there would be no table for them to attach to.
   if (dialect === "cassandra") {
-    return `-- Apache Cassandra: Cannot generate CREATE TABLE for ${id}. ${CASSANDRA_NO_CREATE_TABLE}`;
+    return `-- Apache Cassandra: Cannot generate CREATE TABLE for ${commentName(id)}. ${CASSANDRA_NO_CREATE_TABLE}`;
   }
 
   const colDefs = table.columns.filter((c) => c.action === "added").map((c) => `  ${generateColumnDef(c, dialect)}`);
@@ -338,7 +327,7 @@ function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
 
   lines.push(`CREATE TABLE ${id} (`);
   lines.push(colDefs.join(",\n"));
-  if (pkCols.length > 0) {
+  if (pkCols.length > 0 && dialect !== "trino") {
     lines.push(`,  PRIMARY KEY (${pkCols.join(", ")})`);
   }
   if (keyIsTableConstraint) {
@@ -360,11 +349,19 @@ function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
     });
   }
   lines.push(");");
+  if (pkCols.length > 0 && dialect === "trino") {
+    lines.push("-- Trino: Cannot declare a primary key. Trino SQL has no primary-key constraint.");
+  }
 
   // Indexes
   table.indexes
     .filter((i) => i.action === "added")
     .forEach((idx) => {
+      const refusal = NO_PORTABLE_INDEX_DDL[dialect];
+      if (refusal) {
+        lines.push(`-- ${refusal}`);
+        return;
+      }
       const unique = idx.targetUnique ? "UNIQUE " : "";
       const cols = (idx.targetColumns || []).map((c) => escapeIdentifier(c, dialect)).join(", ");
       lines.push(`CREATE ${unique}INDEX ${escapeIdentifier(idx.indexName, dialect)} ON ${id} (${cols});`);
@@ -374,6 +371,11 @@ function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
   // for everyone else this separate ALTER is the shape that has always been emitted here.
   if (!keyIsTableConstraint) {
     addedForeignKeys.forEach((fk) => {
+      const label = NO_FOREIGN_KEYS[dialect];
+      if (label) {
+        lines.push(`-- ${label}: Cannot add a foreign key. The engine has no foreign-key constraint.`);
+        return;
+      }
       lines.push(
         `ALTER TABLE ${id} ADD CONSTRAINT ${escapeIdentifier(`fk_${table.tableName}_${fk.columnName}`, dialect)} FOREIGN KEY (${escapeIdentifier(fk.columnName, dialect)}) REFERENCES ${escapeIdentifier(fk.targetReferencedTable || "", dialect)}(${escapeIdentifier(fk.targetReferencedColumn || "", dialect)});`,
       );
@@ -384,14 +386,74 @@ function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
 }
 
 function generateDropTable(table: TableDiff, dialect: DatabaseType): string {
-  return `DROP TABLE IF EXISTS ${escapeIdentifier(table.tableName, dialect)};`;
+  const conditional = dialect === "oracle" ? "" : " IF EXISTS";
+  return `DROP TABLE${conditional} ${escapeIdentifier(table.tableName, dialect)};`;
 }
 
 function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
   const lines: string[] = [];
   const id = escapeIdentifier(table.tableName, dialect);
 
-  lines.push(`-- Alter table: ${table.tableName}`);
+  lines.push(`-- Alter table: ${commentName(table.tableName)}`);
+
+  // Drop recorded dependencies before altering their columns or reusing their names.
+  // Removed foreign keys
+  table.foreignKeys
+    .filter((fk) => fk.action === "removed")
+    .forEach((fk) => {
+      const label = NO_FOREIGN_KEYS[dialect];
+      if (label) {
+        lines.push(`-- ${label}: Cannot drop a foreign key. The engine has no foreign-key constraint.`);
+        return;
+      }
+      const constraintName = escapeIdentifier(`fk_${table.tableName}_${fk.columnName}`, dialect);
+      if (dialect === "mysql") {
+        lines.push(`ALTER TABLE ${id} DROP FOREIGN KEY ${constraintName};`);
+      } else if (dialect === "sqlite") {
+        lines.push(`-- SQLite: Cannot drop foreign key directly. Requires table recreation.`);
+      } else if (dialect === "libsql") {
+        // The generic `DROP CONSTRAINT` branch below is not parseable here, measured on
+        // sqld 0.24.33: `ALTER TABLE t DROP CONSTRAINT fk_x` is "near CONSTRAINT …
+        // syntax error". Same limit as SQLite, named separately so the comment names
+        // the engine the reader connected to.
+        lines.push(`-- libSQL: Cannot drop a foreign key directly. Requires table recreation.`);
+      } else if (dialect === "duckdb") {
+        // The generic branch below is refused here too, measured on v1.5.5: `ALTER
+        // TABLE t DROP CONSTRAINT IF EXISTS fk_x` is "Not implemented Error: No
+        // support for that ALTER TABLE option yet!" - and a `Not implemented` is not
+        // an `IF EXISTS` no-op, so the line would fail a migration rather than skip.
+        lines.push(`-- DuckDB: Cannot drop a foreign key directly. Requires table recreation.`);
+      } else if (dialect === "cassandra") {
+        // `DROP CONSTRAINT IF EXISTS fk_x` is "mismatched input 'IF' expecting EOF"
+        // (measured), and dropping what was never declarable is not a statement.
+        lines.push(`-- Apache Cassandra: Cannot drop a foreign key. CQL never declared one.`);
+      } else if (dialect === "oracle") {
+        lines.push(`ALTER TABLE ${id} DROP CONSTRAINT ${constraintName};`);
+      } else {
+        lines.push(`ALTER TABLE ${id} DROP CONSTRAINT IF EXISTS ${constraintName};`);
+      }
+    });
+
+  // Changed indexes need replacement too. Drop the old definition before column
+  // changes, then recreate it with the target columns and uniqueness below.
+  table.indexes
+    .filter((i) => i.action === "removed" || i.action === "modified")
+    .forEach((idx) => {
+      const refusal = NO_PORTABLE_INDEX_DDL[dialect];
+      if (refusal) {
+        lines.push(`-- ${refusal}`);
+        return;
+      }
+      if (dialect === "mysql") {
+        lines.push(`DROP INDEX ${escapeIdentifier(idx.indexName, dialect)} ON ${id};`);
+      } else if (dialect === "mssql") {
+        lines.push(`DROP INDEX IF EXISTS ${escapeIdentifier(idx.indexName, dialect)} ON ${id};`);
+      } else if (dialect === "oracle") {
+        lines.push(`DROP INDEX ${escapeIdentifier(idx.indexName, dialect)};`);
+      } else {
+        lines.push(`DROP INDEX IF EXISTS ${escapeIdentifier(idx.indexName, dialect)};`);
+      }
+    });
 
   // Added columns
   table.columns
@@ -400,8 +462,13 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
       // CQL spells it without the COLUMN keyword, measured on 5.0.9: `ADD COLUMN extra
       // TEXT` is "line 1:42 mismatched input 'TEXT' expecting EOF" while `ADD extra
       // text` succeeds.
-      const keyword = dialect === "cassandra" ? "ADD" : "ADD COLUMN";
-      lines.push(`ALTER TABLE ${id} ${keyword} ${generateColumnDef(col, dialect)};`);
+      const definition = generateColumnDef(col, dialect);
+      if (dialect === "oracle") {
+        lines.push(`ALTER TABLE ${id} ADD (${definition});`);
+      } else {
+        const keyword = dialect === "cassandra" || dialect === "mssql" ? "ADD" : "ADD COLUMN";
+        lines.push(`ALTER TABLE ${id} ${keyword} ${definition};`);
+      }
     });
 
   // Removed columns
@@ -409,7 +476,9 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
     .filter((c) => c.action === "removed")
     .forEach((col) => {
       if (dialect === "sqlite") {
-        lines.push(`-- SQLite: Cannot drop column "${col.columnName}" directly. Requires table recreation.`);
+        lines.push(
+          `-- SQLite: Cannot drop column "${commentName(col.columnName)}" directly. Requires table recreation.`,
+        );
       } else {
         // Same measurement in the other direction: `DROP COLUMN extra` is "mismatched
         // input 'extra' expecting EOF" on CQL, while `DROP extra` succeeds.
@@ -424,7 +493,9 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
     .filter((c) => c.action === "modified")
     .forEach((col) => {
       if (dialect === "sqlite") {
-        lines.push(`-- SQLite: Cannot alter column "${col.columnName}" type directly. Requires table recreation.`);
+        lines.push(
+          `-- SQLite: Cannot alter column "${commentName(col.columnName)}" type directly. Requires table recreation.`,
+        );
       } else if (dialect === "mysql") {
         const type = col.targetType || col.sourceType || "TEXT";
         const nullable = col.targetNullable === false ? " NOT NULL" : " NULL";
@@ -468,12 +539,14 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
             lines.push(`ALTER TABLE ${id} MODIFY COLUMN ${column} REMOVE ${kind};`);
           } else {
             lines.push(
-              `-- ClickHouse: Cannot remove the ${kind} property of column "${col.columnName}". REMOVE accepts DEFAULT, MATERIALIZED or ALIAS only; recreate the column.`,
+              `-- ClickHouse: Cannot remove the ${kind} property of column "${commentName(col.columnName)}". REMOVE accepts DEFAULT, MATERIALIZED or ALIAS only; recreate the column.`,
             );
           }
         }
       } else if (inexpressible) {
-        lines.push(`-- ${inexpressible.label}: Cannot alter column "${col.columnName}". ${inexpressible.reason}`);
+        lines.push(
+          `-- ${inexpressible.label}: Cannot alter column "${commentName(col.columnName)}". ${inexpressible.reason}`,
+        );
       } else {
         // PostgreSQL
         if (col.sourceType !== col.targetType) {
@@ -500,30 +573,29 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
       }
     });
 
-  // Added indexes
+  // Added and replaced indexes
   table.indexes
-    .filter((i) => i.action === "added")
+    .filter((i) => i.action === "added" || i.action === "modified")
     .forEach((idx) => {
+      const refusal = NO_PORTABLE_INDEX_DDL[dialect];
+      if (refusal) {
+        lines.push(`-- ${refusal}`);
+        return;
+      }
       const unique = idx.targetUnique ? "UNIQUE " : "";
       const cols = (idx.targetColumns || []).map((c) => escapeIdentifier(c, dialect)).join(", ");
       lines.push(`CREATE ${unique}INDEX ${escapeIdentifier(idx.indexName, dialect)} ON ${id} (${cols});`);
-    });
-
-  // Removed indexes
-  table.indexes
-    .filter((i) => i.action === "removed")
-    .forEach((idx) => {
-      if (dialect === "mysql") {
-        lines.push(`DROP INDEX ${escapeIdentifier(idx.indexName, dialect)} ON ${id};`);
-      } else {
-        lines.push(`DROP INDEX IF EXISTS ${escapeIdentifier(idx.indexName, dialect)};`);
-      }
     });
 
   // Added foreign keys
   table.foreignKeys
     .filter((fk) => fk.action === "added")
     .forEach((fk) => {
+      const label = NO_FOREIGN_KEYS[dialect];
+      if (label) {
+        lines.push(`-- ${label}: Cannot add a foreign key. The engine has no foreign-key constraint.`);
+        return;
+      }
       const constraintName = escapeIdentifier(`fk_${table.tableName}_${fk.columnName}`, dialect);
       // Cassandra has no foreign key to add: `ADD CONSTRAINT ... FOREIGN KEY` is
       // "mismatched input 'FOREIGN' expecting EOF" (measured on 5.0.9), which is also
@@ -533,7 +605,7 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
       // connection's, so a relational schema's keys arrive with a CQL dialect.
       if (dialect === "cassandra") {
         lines.push(
-          `-- Apache Cassandra: Cannot add a foreign key on ${escapeIdentifier(fk.columnName, dialect)}. The clause is not in CQL's grammar; enforce the relationship in the application.`,
+          `-- Apache Cassandra: Cannot add a foreign key on ${commentName(escapeIdentifier(fk.columnName, dialect))}. The clause is not in CQL's grammar; enforce the relationship in the application.`,
         );
         return;
       }
@@ -548,43 +620,13 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
       const declined = FOREIGN_KEY_ONLY_IN_CREATE_TABLE[dialect];
       if (declined) {
         lines.push(
-          `-- ${declined.label}: Cannot add a foreign key on ${escapeIdentifier(fk.columnName, dialect)}. ${declined.reason}`,
+          `-- ${declined.label}: Cannot add a foreign key on ${commentName(escapeIdentifier(fk.columnName, dialect))}. ${declined.reason}`,
         );
         return;
       }
       lines.push(
         `ALTER TABLE ${id} ADD CONSTRAINT ${constraintName} FOREIGN KEY (${escapeIdentifier(fk.columnName, dialect)}) REFERENCES ${escapeIdentifier(fk.targetReferencedTable || "", dialect)}(${escapeIdentifier(fk.targetReferencedColumn || "", dialect)});`,
       );
-    });
-
-  // Removed foreign keys
-  table.foreignKeys
-    .filter((fk) => fk.action === "removed")
-    .forEach((fk) => {
-      const constraintName = escapeIdentifier(`fk_${table.tableName}_${fk.columnName}`, dialect);
-      if (dialect === "mysql") {
-        lines.push(`ALTER TABLE ${id} DROP FOREIGN KEY ${constraintName};`);
-      } else if (dialect === "sqlite") {
-        lines.push(`-- SQLite: Cannot drop foreign key directly. Requires table recreation.`);
-      } else if (dialect === "libsql") {
-        // The generic `DROP CONSTRAINT` branch below is not parseable here, measured on
-        // sqld 0.24.33: `ALTER TABLE t DROP CONSTRAINT fk_x` is "near CONSTRAINT …
-        // syntax error". Same limit as SQLite, named separately so the comment names
-        // the engine the reader connected to.
-        lines.push(`-- libSQL: Cannot drop a foreign key directly. Requires table recreation.`);
-      } else if (dialect === "duckdb") {
-        // The generic branch below is refused here too, measured on v1.5.5: `ALTER
-        // TABLE t DROP CONSTRAINT IF EXISTS fk_x` is "Not implemented Error: No
-        // support for that ALTER TABLE option yet!" - and a `Not implemented` is not
-        // an `IF EXISTS` no-op, so the line would fail a migration rather than skip.
-        lines.push(`-- DuckDB: Cannot drop a foreign key directly. Requires table recreation.`);
-      } else if (dialect === "cassandra") {
-        // `DROP CONSTRAINT IF EXISTS fk_x` is "mismatched input 'IF' expecting EOF"
-        // (measured), and dropping what was never declarable is not a statement.
-        lines.push(`-- Apache Cassandra: Cannot drop a foreign key. CQL never declared one.`);
-      } else {
-        lines.push(`ALTER TABLE ${id} DROP CONSTRAINT IF EXISTS ${constraintName};`);
-      }
     });
 
   return lines.join("\n");
@@ -603,13 +645,19 @@ export function generateMigrationSQL(diff: SchemaDiff, dialect: DatabaseType): s
   );
   sections.push("");
 
+  if (NO_TABLE_DDL.has(dialect)) {
+    const limitation = NO_COLUMN_MODIFICATION[dialect]!;
+    sections.push(`-- ${limitation.label}: Cannot generate table DDL. ${limitation.reason}`);
+    return sections.join("\n");
+  }
+
   // ONE definition, read twice: the opening and the closing halves of this wrapper used
   // to be two independent conditions, which is a shape that can diverge into a `BEGIN;`
   // with no `COMMIT;`. See NO_TRANSACTION_WRAPPER for why each excluded id is excluded.
   const wrapsInTransaction = !NO_TRANSACTION_WRAPPER.has(dialect);
 
   if (wrapsInTransaction) {
-    sections.push("BEGIN;");
+    sections.push(dialect === "mssql" ? "BEGIN TRANSACTION;" : "BEGIN;");
     sections.push("");
   }
 

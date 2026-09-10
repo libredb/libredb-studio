@@ -50,8 +50,9 @@ Closes #
 - [ ] My changes generate no new warnings
 - [ ] I have added tests that prove my fix is effective or that my feature works
 - [ ] New and existing unit tests pass locally with my changes
+- [ ] The required CI test job passes the **100% line-coverage gate** (`bun run test:coverage` and `bun run coverage:check`)
+- [ ] If I changed `src/lib/db/providers/`, I updated the matching `docs/providers/` documentation and `tests/integration/db/` tests in the same PR (provider triad)
 - [ ] Any dependent changes have been merged and published
 
 ## Additional Notes
 <!-- Add any additional notes or context about the PR -->
-

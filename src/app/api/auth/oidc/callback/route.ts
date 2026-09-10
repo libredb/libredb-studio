@@ -1,3 +1,4 @@
+import { getBasePath, withBasePath } from "@/lib/config/base-path";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { login } from "@/lib/auth";
@@ -45,7 +46,7 @@ export async function GET(request: Request) {
 
     if (!stateCookie) {
       auditFailure("oidc_state_missing", ip);
-      return NextResponse.redirect(`${origin}/login?error=oidc_state_missing`);
+      return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_state_missing`);
     }
 
     // Decrypt and validate state
@@ -57,9 +58,9 @@ export async function GET(request: Request) {
         route: ROUTE,
         error: decryptError instanceof Error ? decryptError.message : "Unknown",
       });
-      cookieStore.delete("oidc-state");
+      cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
       auditFailure("oidc_state_invalid", ip);
-      return NextResponse.redirect(`${origin}/login?error=oidc_state_invalid`);
+      return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_state_invalid`);
     }
 
     // Exchange code for tokens
@@ -75,7 +76,7 @@ export async function GET(request: Request) {
     if (!claims) {
       logger.warn("OIDC callback: no claims returned from token exchange", { route: "oidc/callback" });
       auditFailure("oidc_no_claims", ip);
-      return NextResponse.redirect(`${origin}/login?error=oidc_no_claims`);
+      return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_no_claims`);
     }
 
     // Map role from claims
@@ -86,7 +87,7 @@ export async function GET(request: Request) {
     await login(role, username);
 
     // Clean up state cookie
-    cookieStore.delete("oidc-state");
+    cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
 
     // Isolated in its own try/catch, separate from login() above: a real session already exists by
     // this point, so a failure to record it must never turn a successful login into a recorded (or
@@ -105,7 +106,7 @@ export async function GET(request: Request) {
     }
 
     // Redirect based on role
-    return NextResponse.redirect(`${origin}${role === "admin" ? "/admin" : "/"}`);
+    return NextResponse.redirect(`${origin}${withBasePath(role === "admin" ? "/admin" : "/")}`);
   } catch (error) {
     logger.error("OIDC callback error", error, { route: ROUTE });
     // Typed, not message substring matching: `error instanceof Error && error.message.includes(
@@ -118,6 +119,6 @@ export async function GET(request: Request) {
     // configured but the server's auth secret isn't" with one type check.
     const errorCode = error instanceof AuthConfigError ? "oidc_config" : "oidc_failed";
     auditFailure(errorCode, ip);
-    return NextResponse.redirect(`${origin}/login?error=${errorCode}`);
+    return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=${errorCode}`);
   }
 }

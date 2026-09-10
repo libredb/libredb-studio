@@ -49,11 +49,9 @@ const HKDF_SALT = new Uint8Array(0);
 
 // Single-line messages, hoisted to module scope: bun's line coverage under-counts the continuation
 // lines of a wrapped string literal, which then reads as uncovered code. Same reason as
-// src/lib/config/auth-env.ts:20.
-export const STORAGE_ENCRYPTION_KEY_TOO_SHORT_MESSAGE =
-  "STORAGE_ENCRYPTION_KEY is too short; it must be at least 32 characters. Update it and restart the server.";
-export const STORAGE_ENCRYPTION_KEY_MISSING_MESSAGE =
-  "Server storage cannot encrypt credentials: neither STORAGE_ENCRYPTION_KEY nor JWT_SECRET is configured. Set one (at least 32 characters) and restart the server.";
+// src/lib/config/auth-env.ts.
+export const STORAGE_ENCRYPTION_KEY_TOO_SHORT_MESSAGE = `STORAGE_ENCRYPTION_KEY is too short; it must be at least ${JWT_SECRET_MIN_LENGTH} characters. Update it and restart the server.`;
+export const STORAGE_ENCRYPTION_KEY_MISSING_MESSAGE = `Server storage cannot encrypt credentials: neither STORAGE_ENCRYPTION_KEY nor JWT_SECRET is configured. Set one (at least ${JWT_SECRET_MIN_LENGTH} characters) and restart the server.`;
 
 /**
  * Derived once per process. A key is on the write path of every storage push, so re-deriving per

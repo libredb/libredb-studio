@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useState, useCallback } from "react";
 import {
   DatabaseConnection,
@@ -46,6 +47,7 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   user: "edited",
   password: "edited",
   database: "edited",
+  schema: "edited",
   connectionString: "edited",
   createdAt: "edited",
   color: "edited",
@@ -133,6 +135,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
   const [database, setDatabase] = useState("");
+  const [schema, setSchema] = useState("");
   const [isTesting, setIsTesting] = useState(false);
   const [connectionString, setConnectionString] = useState("");
   const [mongoConnectionMode, setMongoConnectionMode] = useState<"host" | "connectionString">("host");
@@ -198,6 +201,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       setUser(editConnection.user || "");
       setPassword(editConnection.password || "");
       setDatabase(editConnection.database || "");
+      setSchema(editConnection.schema || "");
       setConnectionString(editConnection.connectionString || "");
       setEnvironment(editConnection.environment || "local");
       if (editConnection.connectionString) {
@@ -273,6 +277,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         setUser("");
         setPassword("");
         setDatabase("");
+        setSchema("");
         setConnectionString("");
         setMongoConnectionMode("host");
         setType("postgres");
@@ -341,6 +346,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       ...(addressedFields.has("user") ? { user } : {}),
       ...(addressedFields.has("password") ? { password } : {}),
       ...(addressedFields.has("database") ? { database } : {}),
+      ...(addressedFields.has("schema") && schema ? { schema } : {}),
       createdAt: editConnection?.createdAt || new Date(),
       environment,
       color: ENVIRONMENT_COLORS[environment],
@@ -381,6 +387,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     user,
     password,
     database,
+    schema,
     environment,
     mongoConnectionMode,
     connectionString,
@@ -403,7 +410,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // Platform adapter: use callback instead of fetch
       if (onTestConnection) return await onTestConnection(conn);
 
-      const response = await fetch("/api/db/test-connection", {
+      const response = await appFetch("/api/db/test-connection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(conn),
@@ -623,7 +630,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     password,
     setPassword,
     database,
+    schema,
     setDatabase,
+    setSchema,
     connectionString,
     setConnectionString,
     mongoConnectionMode,

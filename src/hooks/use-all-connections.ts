@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import { storage } from "@/lib/storage";
@@ -23,7 +24,7 @@ export function useAllConnections() {
       const dismissed = new Set(storage.getDismissedSeeds());
 
       try {
-        const res = await fetch("/api/connections/managed");
+        const res = await appFetch("/api/connections/managed");
         if (res.ok) {
           const { connections: managedConns } = await res.json();
           if (managedConns?.length > 0 && !cancelled) {

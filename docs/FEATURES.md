@@ -10,6 +10,7 @@
 *   **Power Snippets:** Integrated templates for CTEs, Joins, and complex CRUD operations.
 *   **Modern Editor Specs:** Font ligatures, smooth scrolling, bracket pair colorization, and parameter hints enabled.
 *   **Keyboard Shortcuts:** `Cmd/Ctrl + Enter` to execute, `Alt + Shift + F` to format.
+*   **Command Palette:** Quick access to tables, connections, saved queries, and actions with `Cmd/Ctrl+K`.
 
 > See [`docs/editor/`](editor/) for the editor internals — completion provider, alias resolution, and performance design.
 

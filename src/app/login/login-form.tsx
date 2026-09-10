@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch, withBasePath } from "@/lib/config/base-path";
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,7 +41,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
 
     setIsLoading(true);
     try {
-      const response = await fetch("/api/auth/login", {
+      const response = await appFetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -237,7 +238,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                     className="w-full h-11 text-base font-medium shadow-lg shadow-primary/20 active:scale-[0.98] transition-all gap-2"
                     onClick={() => {
                       setIsLoading(true);
-                      window.location.href = "/api/auth/oidc/login";
+                      window.location.href = withBasePath("/api/auth/oidc/login");
                     }}
                     disabled={isLoading}
                   >

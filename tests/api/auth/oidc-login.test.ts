@@ -1,3 +1,4 @@
+import { withBasePathEnv } from "../../helpers/base-path";
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 
 // ─── Mock dependencies ─────────────────────────────────────────────────────
@@ -145,5 +146,14 @@ describe("GET /api/auth/oidc/login", () => {
     expect(res.status).toBe(307);
     const location = res.headers.get("location");
     expect(location).toContain("/login?error=oidc_config");
+  });
+  test("OIDC authorization and state cookie share the prefixed callback path", async () => {
+    await withBasePathEnv("/~/libredb", async () => {
+      mockGenerateAuthUrl.mockClear();
+      mockCookieSet.mockClear();
+      await GET(new Request("https://studio.example/~/libredb/api/auth/oidc/login"));
+      expect(mockGenerateAuthUrl.mock.calls[0][1]).toBe("https://studio.example/~/libredb/api/auth/oidc/callback");
+      expect(mockCookieSet.mock.calls[0][2]).toMatchObject({ path: "/~/libredb", sameSite: "lax", httpOnly: true });
+    });
   });
 });

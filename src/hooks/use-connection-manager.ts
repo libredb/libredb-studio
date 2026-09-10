@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import type { DatabaseConnection, TableSchema, TableRelations } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
@@ -62,7 +63,7 @@ export function useConnectionManager(storageReady = false) {
 
       // Phase 1 — structural list (blocks; this is what the explorer needs)
       try {
-        const response = await fetch(...init("/api/db/schema/list"));
+        const response = await appFetch(...init("/api/db/schema/list"));
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.error || "Failed to fetch schema");
@@ -84,7 +85,7 @@ export function useConnectionManager(storageReady = false) {
 
       // Phase 2 — relationships + indexes (best-effort; never breaks the list)
       try {
-        const relRes = await fetch(...init("/api/db/schema/relations"));
+        const relRes = await appFetch(...init("/api/db/schema/relations"));
         if (!relRes.ok) {
           const errorData = await relRes.json().catch(() => ({}));
           throw new Error(errorData.error || "Failed to fetch schema relations");
@@ -167,7 +168,7 @@ export function useConnectionManager(storageReady = false) {
       pendingSeeds: string[];
       failed: boolean;
     }> => {
-      const managedRes = await fetch("/api/connections/managed");
+      const managedRes = await appFetch("/api/connections/managed");
       // A non-OK response is a transient failure, NOT "nothing pending" — the
       // poll below must keep retrying (bounded by its attempt budget) instead
       // of treating it as an authoritative empty pendingSeeds.
@@ -297,7 +298,7 @@ export function useConnectionManager(storageReady = false) {
     if (!activeConnection) return;
     const checkHealth = async () => {
       try {
-        const res = await fetch("/api/db/health", {
+        const res = await appFetch("/api/db/health", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(buildConnectionPayload(activeConnection)),

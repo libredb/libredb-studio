@@ -139,8 +139,20 @@ const STATUS_ORDER = { live: 0, pending: 1, deprecated: 2 };
  * there would be a way to ship a release with no npm package or no image, and
  * one mistyped `false` would do it silently. parseChannels rejects the flag
  * anywhere else, so that invariant is enforced, not merely documented.
+ *
+ * `operatorhub-community` qualifies on exactly the stated grounds (issue #656):
+ * its submission is an upstream pull request that a human merges, the first
+ * listing in a catalog is manual, and the token it needs may be absent - none
+ * of which should paint a release run red.
  */
-export const SWITCHABLE_CHANNEL_IDS = new Set(["docker-hub-mirror", "homebrew", "snap", "winget", "chocolatey"]);
+export const SWITCHABLE_CHANNEL_IDS = new Set([
+  "docker-hub-mirror",
+  "homebrew",
+  "snap",
+  "winget",
+  "chocolatey",
+  "operatorhub-community",
+]);
 
 /**
  * Probes measure channels whose served state is not one document a single
@@ -686,17 +698,26 @@ export function platformCell(platforms) {
     .join(", ");
 }
 
-/** Who bumps this channel and how fast. A dash for retired channels. */
+/**
+ * Who bumps this channel and how fast. A dash for retired channels.
+ *
+ * Three states, not two. `upstream_pr` with a CI switch means the submission
+ * is opened by our release workflow but merged by somebody else's maintainers
+ * (the community operator catalogs, issue #656) - calling that "Automated"
+ * would promise a landing we do not control, and "Manual" would hide the
+ * automation that exists.
+ */
 export function updateSummary(channel) {
   if (channel.status === "deprecated") {
     return "—";
   }
-  const automation =
-    channel.update.method === "ci_publish"
-      ? channel.update.ci_enabled === false
-        ? "Automated (paused)"
-        : "Automated"
-      : "Manual";
+  const paused = channel.update.ci_enabled === false;
+  let automation = "Manual";
+  if (channel.update.method === "ci_publish") {
+    automation = paused ? "Automated (paused)" : "Automated";
+  } else if (channel.update.method === "upstream_pr" && channel.update.ci_enabled !== undefined) {
+    automation = paused ? "Automated PR (paused)" : "Automated PR";
+  }
   return `${automation}, ${humanizeSla(channel.update.sla).toLowerCase()}`;
 }
 

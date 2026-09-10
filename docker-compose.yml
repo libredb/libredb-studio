@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        BASE_PATH: ${BASE_PATH:-}
     ports:
       - "3000:3000"
     environment:

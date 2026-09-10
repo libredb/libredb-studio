@@ -237,6 +237,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labe
                             size="icon"
                             className="h-6 w-6 sm:h-8 sm:w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
                             onClick={() => handleKillClick(session)}
+                            aria-label={`Terminate session ${session.pid}`}
                             disabled={killingPid === session.pid}
                           >
                             {killingPid === session.pid ? (

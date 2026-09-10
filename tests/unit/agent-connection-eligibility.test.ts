@@ -107,6 +107,12 @@ describe("which connection a run may be started on", () => {
     expect(startableId(browserCopy(server, { database: "somewhere-else" }), loaded(server))).toBeNull();
   });
 
+  test("a Trino copy with a different session schema is not startable by the seed id", () => {
+    const server = descriptor({ type: "trino", database: "memory", schema: "default" });
+    expect(startableId(browserCopy(server), loaded(server))).toBe("seed:sales");
+    expect(startableId(browserCopy(server, { schema: "other" }), loaded(server))).toBeNull();
+  });
+
   test("a copy given different credentials is not startable", () => {
     const server = descriptor();
 

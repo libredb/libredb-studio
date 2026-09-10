@@ -45,13 +45,22 @@ Feature suggestions are welcome! Please provide:
    lines lands with its tests in the same PR. The CI gate is 100% line coverage
    (`scripts/check-coverage.mjs` fails the required `Unit & Integration Tests` job below it), so a
    PR without tests cannot merge no matter how small the change.
-4. **Run the local gate before pushing.** It mirrors the required CI checks:
+4. **Run the checks locally when your environment supports them.** They mirror the required CI checks:
 
    ```bash
    bun run format && bun run lint && bun run typecheck && bun run knip \
      && bun run readme:check && bun run chart:check && bun run channels:showcase:check \
      && bun run security:check && bun run test && bun run build
    ```
+
+   **CI is the merge gate.** If you cannot run a command locally, list that command and the reason
+   under a `Testing` heading in your PR body; submit the PR, and a maintainer will approve the fork's
+   workflow run so CI can verify it. You do not need to withdraw correct work because a local tool
+   is unavailable.
+
+   If your sandbox can reach the npm registry, `npm install -g bun` is another way to install Bun.
+   Helm is only needed for the chart tests in the test suite, not for editing the app or running
+   typecheck. The [devcontainer setup](#devcontainer--codespaces) below provides both tools.
 
    Always `bun run test`, never bare `bun test`: component tests need the isolated execution groups
    the script sets up. `bun run test:coverage && bun run coverage:check` prints the exact uncovered
@@ -90,6 +99,10 @@ label have not been vetted for outside pickup; ask in an issue first if one inte
 - **What does not count.** PRs that only reformat, rename, fix a typo without an issue, add a
   trailing comment or bump a version are closed with the `spam` or `invalid` label. Machine-generated
   PRs that do not run the tests fall in the same bin.
+- **Maintainers:** the block pasted at the foot of a curated issue lives in
+  [`.github/curated-issue-footer.md`](.github/curated-issue-footer.md). Copy it from there rather
+  than retyping it; `tests/unit/curated-issue-footer.test.ts` holds its CI-gate paragraph to the
+  copy in step 4 above.
 
 The repository keeps the `hacktoberfest` topic for discoverability. Note that Hacktoberfest 2026
 itself is organised around in-person and online events and no longer counts pull requests; the
@@ -139,6 +152,22 @@ complete — completeness cannot be measured in a shallow CI clone, so it stays 
 honest about being one.
 
 ## Development Setup
+
+### Devcontainer / Codespaces
+
+Open the repository in GitHub Codespaces, or use **Dev Containers: Reopen in Container** in VS Code
+with Docker running. [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json) provides
+Node.js 24, Bun 1.4.2 and Helm 4.1.3, matching the required Node version and the Bun/Helm versions
+used by CI, plus 7-Zip for the packaging tests. The first creation installs the locked JavaScript
+dependencies and builds the chart's PostgreSQL dependency, so it needs access to the npm registry
+and the chart registries.
+
+JavaScript dependencies live in a container volume, keeping Linux native modules separate from
+any dependencies installed on your host and avoiding slow shared-filesystem installs on Docker Desktop.
+
+Once setup finishes, run the checks from step 4 in the container terminal. Start the app with
+`bun run dev`; the container forwards port 3000. Database containers are optional and are not
+started by this setup.
 
 ### Prerequisites
 

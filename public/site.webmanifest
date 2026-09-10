@@ -1,16 +1,16 @@
 {
   "name": "LibreDB Studio",
   "short_name": "LibreDB",
-  "start_url": "/",
+  "start_url": ".",
   "display": "standalone",
   "icons": [
     {
-      "src": "/web-app-icon-192x192.png",
+      "src": "web-app-icon-192x192.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/web-app-icon-512x512.png",
+      "src": "web-app-icon-512x512.png",
       "sizes": "512x512",
       "type": "image/png"
     }

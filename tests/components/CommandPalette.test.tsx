@@ -78,7 +78,7 @@ mock.module("@/lib/db-ui-config", () => ({
 }));
 
 import { describe, test, expect, afterEach } from "bun:test";
-import { render, fireEvent, cleanup } from "@testing-library/react";
+import { render, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import React from "react";
 
 import { CommandPalette } from "@/components/CommandPalette";
@@ -300,6 +300,35 @@ describe("CommandPalette", () => {
 
     // Restore default
     (storage.getSavedQueries as ReturnType<typeof mock>).mockReturnValue([]);
+  });
+
+  test.each([
+    ["short", "SELECT id FROM users", "SELECT id FROM users"],
+    ["at the limit", "A".repeat(40), "A".repeat(40)],
+    ["beyond the limit", "A".repeat(41), "A".repeat(40) + "..."],
+  ])("saved-query preview %s marks only truncated text", async (_case, query, preview) => {
+    (storage.getSavedQueries as ReturnType<typeof mock>).mockReturnValue([
+      {
+        id: "preview-regression",
+        name: "Preview regression",
+        query,
+        connectionType: "postgres" as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]);
+    try {
+      const onLoadSavedQuery = mock(() => {});
+      const { getByText } = render(<CommandPalette {...createDefaultProps({ onLoadSavedQuery })} />);
+      fireEvent.keyDown(document, { key: "k", metaKey: true });
+      expect(getByText(preview, { exact: true })).not.toBeNull();
+      const item = getByText("Preview regression").closest('[role="option"]');
+      expect(item).not.toBeNull();
+      fireEvent.click(item!);
+      await waitFor(() => expect(onLoadSavedQuery).toHaveBeenCalledWith(query));
+    } finally {
+      (storage.getSavedQueries as ReturnType<typeof mock>).mockReturnValue([]);
+    }
   });
 
   test("Recent Queries group renders from history", () => {

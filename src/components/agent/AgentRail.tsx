@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, ChevronDown, ChevronRight, LoaderCircle, PencilLine, Play, Square, TriangleAlert, X } from "lucide-react";
 import { CopyButton } from "@/components/copy-button";
@@ -1277,7 +1278,7 @@ export function AgentRail({
    */
   const classifyObjective = async (text: string): Promise<AgentWorkflowClassification> => {
     try {
-      const res = await fetch("/api/agent/classify", {
+      const res = await appFetch("/api/agent/classify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ objective: text }),

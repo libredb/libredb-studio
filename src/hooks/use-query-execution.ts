@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateAction, type RefObject } from "react";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
@@ -320,7 +321,7 @@ export function useQueryExecution({
 
       try {
         if (isPlaygroundRun) {
-          const beginRes = await fetch("/api/db/transaction", {
+          const beginRes = await appFetch("/api/db/transaction", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ ...buildConnectionPayload(activeConnection), action: "begin" }),
@@ -368,7 +369,7 @@ export function useQueryExecution({
           : useMultiQuery
             ? "/api/db/multi-query"
             : "/api/db/query";
-        const mainQueryPromise = fetch(queryEndpoint, {
+        const mainQueryPromise = appFetch(queryEndpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -405,7 +406,7 @@ export function useQueryExecution({
           // the statement, and every strategy answers it the same way. The
           // statement the engine sees is built on the server (#574).
           if (explainStrategy.buildSql(queryToExecute, "estimate") !== null) {
-            explainPromise = fetch("/api/db/query", {
+            explainPromise = appFetch("/api/db/query", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -577,7 +578,7 @@ export function useQueryExecution({
         // Playground mode: auto-rollback after getting results
         if (isPlaygroundRun) {
           try {
-            await fetch("/api/db/transaction", {
+            await appFetch("/api/db/transaction", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ ...buildConnectionPayload(activeConnection), action: "rollback" }),
@@ -612,7 +613,7 @@ export function useQueryExecution({
         // Playground mode: rollback on error too
         if (isPlaygroundRun) {
           try {
-            await fetch("/api/db/transaction", {
+            await appFetch("/api/db/transaction", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ ...buildConnectionPayload(activeConnection), action: "rollback" }),
@@ -707,7 +708,7 @@ export function useQueryExecution({
 
       const startTime = Date.now();
       try {
-        const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/handover`, { method: "POST" });
+        const response = await appFetch(`/api/agent/runs/${encodeURIComponent(runId)}/handover`, { method: "POST" });
         const payload = await response.json();
         if (!response.ok) {
           throw new Error(payload.error || "The hand-over could not be run");
@@ -779,7 +780,7 @@ export function useQueryExecution({
       // it does not stop the statement the engine is still executing.
       if (activeConnection) {
         try {
-          await fetch("/api/db/cancel", {
+          await appFetch("/api/db/cancel", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

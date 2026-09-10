@@ -89,6 +89,8 @@ export function ConnectionModal({
     setPassword,
     database,
     setDatabase,
+    schema,
+    setSchema,
     connectionString,
     setConnectionString,
     mongoConnectionMode,
@@ -550,6 +552,28 @@ export function ConnectionModal({
                           keyspace in full.
                         </p>
                       )}
+                    </div>
+                  )}
+
+                  {takesConnectionField(type, "schema") && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="schema" className="text-xs font-mediumr text-fg-muted">
+                          Schema Name
+                        </Label>
+                      </div>
+                      <Input
+                        id="schema"
+                        value={schema}
+                        onChange={(e) => setSchema(e.target.value)}
+                        placeholder="default"
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
+                      />
+                      <p className="text-xs text-fg-muted">
+                        Used for unqualified table names in queries and Create Table. Leave empty to qualify names
+                        yourself. Run SHOW SCHEMAS to list the catalog's schemas.
+                      </p>
                     </div>
                   )}
 

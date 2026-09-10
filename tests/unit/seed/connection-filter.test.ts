@@ -67,6 +67,14 @@ describe("filterByRoles: engine-specific fields", () => {
 
     expect(managed.authSource).toBe("admin");
   });
+  it("carries a Trino connection's session schema through to the managed connection", () => {
+    const [managed] = filterByRoles(
+      [{ ...baseConn, type: "trino", port: 8080, database: "memory", schema: "default" }],
+      ["user"],
+    );
+
+    expect(managed.schema).toBe("default");
+  });
 });
 
 describe("filterByRoles", () => {

@@ -38,8 +38,14 @@ describe("RootLayout", () => {
     expect(metadata.title).toBe("LibreDB Studio | Universal Database Editor");
   });
 
-  test("exports correct metadata description", () => {
-    expect(metadata.description).toBe("Manage PostgreSQL, MySQL, MongoDB, and Redis in one web-based interface.");
+  test("describes the database scope in a search-result snippet", () => {
+    const description = metadata.description ?? "";
+    expect(description.length).toBeGreaterThanOrEqual(150);
+    expect(description.length).toBeLessThanOrEqual(160);
+    expect(description).toContain("self-hosted");
+    expect(description).toContain("SQL and NoSQL");
+    expect(description).toContain("and more");
+    expect(description).not.toMatch(/\d/);
   });
 
   test("links the web app manifest and iOS home-screen icon", () => {

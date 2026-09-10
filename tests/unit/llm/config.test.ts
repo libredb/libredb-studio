@@ -8,7 +8,7 @@ import {
   DEFAULT_MODELS,
   DEFAULT_API_URLS,
 } from "@/lib/llm/utils/config";
-import { LLMConfigError } from "@/lib/llm/types";
+import { LLMConfigError, type LLMProviderType } from "@/lib/llm/types";
 
 // ============================================================================
 // Environment Variable Helpers
@@ -129,6 +129,22 @@ describe("resolveConfig", () => {
 // ============================================================================
 
 describe("validateConfig", () => {
+  test("accepts every provider in DEFAULT_MODELS and rejects an unknown provider", () => {
+    for (const provider of Object.keys(DEFAULT_MODELS) as LLMProviderType[]) {
+      expect(() =>
+        validateConfig({
+          provider,
+          model: DEFAULT_MODELS[provider],
+          apiKey: "test-key",
+          apiUrl: "https://example.test/v1",
+        }),
+      ).not.toThrow();
+    }
+    expect(() => validateConfig({ provider: "unknown-provider" as LLMProviderType, model: "test-model" })).toThrow(
+      LLMConfigError,
+    );
+  });
+
   test("valid gemini config with key passes", () => {
     expect(() =>
       validateConfig({

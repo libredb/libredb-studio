@@ -1,3 +1,4 @@
+import { withBasePath } from "@/lib/config/base-path";
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 import { AGENT_DRIVE_HEADER, AGENT_DRIVE_PATH, verifyAgentDriveToken } from "@/lib/agent/drive-token";
@@ -31,6 +32,8 @@ const ORIGIN_MISMATCH_BODY = {
 };
 
 export async function proxy(request: NextRequest) {
+  // NextURL removes the configured basePath before exposing pathname; Next also
+  // prefixes config.matcher at build time. Keep authorization checks app-relative.
   const { pathname } = request.nextUrl;
   const isStaticAsset = /\.[a-z0-9]+$/i.test(pathname);
 
@@ -84,7 +87,9 @@ export async function proxy(request: NextRequest) {
         const { payload } = await jwtVerify(token, jwtSecret());
         const role = payload.role as string;
         // Redirect authenticated users based on their role
-        return withSecurityHeaders(NextResponse.redirect(new URL(role === "admin" ? "/admin" : "/", request.url)));
+        return withSecurityHeaders(
+          NextResponse.redirect(new URL(withBasePath(role === "admin" ? "/admin" : "/"), request.url)),
+        );
       } catch {
         // Invalid token, allow access to login page
         logger.debug("Invalid token on login page, allowing access", { route: "proxy" });
@@ -122,7 +127,7 @@ export async function proxy(request: NextRequest) {
   }
 
   if (!token) {
-    return withSecurityHeaders(NextResponse.redirect(new URL("/login", request.url)));
+    return withSecurityHeaders(NextResponse.redirect(new URL(withBasePath("/login"), request.url)));
   }
 
   try {
@@ -156,13 +161,13 @@ export async function proxy(request: NextRequest) {
           logger.error("Failed to record insufficient_role audit event", auditError, { route: "proxy" });
         }
       }
-      return withSecurityHeaders(NextResponse.redirect(new URL("/", request.url)));
+      return withSecurityHeaders(NextResponse.redirect(new URL(withBasePath("/"), request.url)));
     }
 
     return withSecurityHeaders(NextResponse.next());
   } catch {
     logger.warn("JWT verification failed, redirecting to login", { route: "proxy" });
-    return withSecurityHeaders(NextResponse.redirect(new URL("/login", request.url)));
+    return withSecurityHeaders(NextResponse.redirect(new URL(withBasePath("/login"), request.url)));
   }
 }
 
@@ -200,5 +205,8 @@ export const config = {
      * carry the CSP or HSTS.
      */
     "/((?!api/storage/config|_next/static|_next/image|.*\\..*).*)",
+    // The catch-all requires a slash after basePath. Next compiles this explicit
+    // root matcher to also cover the bare mount path (for example /tools/libredb).
+    "/",
   ],
 };

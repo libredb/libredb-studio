@@ -239,6 +239,7 @@ run_group "Group 11/12: Smoke tests" \
   tests/components/ConnectionSignature.test.tsx \
   tests/components/GitHubRepoLink.test.tsx \
   tests/components/MonitoringPage.test.tsx \
+  tests/components/monitoring/PanelUnavailable.test.tsx \
   tests/components/monitoring/MetricChart.test.tsx
 
 # Group 12: MaskingSettings (isolated — mocks @/lib/data-masking with different shape than ResultsGrid/DataProfiler)

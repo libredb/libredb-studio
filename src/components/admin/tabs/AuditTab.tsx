@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useEffect, useMemo, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -78,7 +79,7 @@ async function loadAuditEvents(type: string): Promise<AuditEvent[]> {
   try {
     const params = new URLSearchParams({ limit: "200" });
     if (type !== "all") params.set("type", type);
-    const res = await fetch(`/api/admin/audit?${params}`);
+    const res = await appFetch(`/api/admin/audit?${params}`);
     const data = await res.json();
     return data.events || [];
   } catch {

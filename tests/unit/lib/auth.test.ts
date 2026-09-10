@@ -1,3 +1,4 @@
+import { withBasePathEnv } from "../../helpers/base-path";
 import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
 import * as jose from "jose";
 import { logger } from "@/lib/logger";
@@ -9,7 +10,7 @@ import { logger } from "@/lib/logger";
 
 let mockCookieStore: Record<string, { value: string } | undefined> = {};
 let mockSetCalls: Array<{ name: string; value: string; opts: unknown }> = [];
-let mockDeleteCalls: string[] = [];
+let mockDeleteCalls: Array<string | { name: string; path: string }> = [];
 
 // ============================================================================
 // Module Mocks — only next/headers
@@ -25,9 +26,9 @@ mock.module("next/headers", () => ({
       mockSetCalls.push({ name, value, opts });
       mockCookieStore[name] = { value };
     },
-    delete: (name: string) => {
-      mockDeleteCalls.push(name);
-      delete mockCookieStore[name];
+    delete: (cookie: string | { name: string; path: string }) => {
+      mockDeleteCalls.push(cookie);
+      delete mockCookieStore[typeof cookie === "string" ? cookie : cookie.name];
     },
   }),
   headers: async () => {
@@ -335,7 +336,17 @@ describe("auth", () => {
   describe("logout()", () => {
     test("deletes auth-token cookie", async () => {
       await logout();
-      expect(mockDeleteCalls).toContain("auth-token");
+      expect(mockDeleteCalls).toContainEqual({ name: "auth-token", path: "/" });
+    });
+  });
+  test("session creation and deletion use the same nested cookie path", async () => {
+    await withBasePathEnv("/tools/libredb", async () => {
+      mockSetCalls = [];
+      mockDeleteCalls = [];
+      await login("user", "prefix-user");
+      expect(mockSetCalls[0].opts).toMatchObject({ path: "/tools/libredb", httpOnly: true, sameSite: "lax" });
+      await logout();
+      expect(mockDeleteCalls).toContainEqual({ name: "auth-token", path: "/tools/libredb" });
     });
   });
 });

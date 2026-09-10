@@ -1,3 +1,4 @@
+import { withBasePathEnv } from "../../helpers/base-path";
 import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from "bun:test";
 import { parseResponseJSON } from "../../helpers/mock-next";
 
@@ -151,5 +152,19 @@ describe("POST /api/auth/logout (oidc)", () => {
     await POST(makeRequest() as never);
 
     expect(mockLogout).toHaveBeenCalledTimes(1);
+  });
+  test("OIDC logout returns to login under the build's prefix", async () => {
+    const previous = process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
+    try {
+      await withBasePathEnv("/tools/libredb", async () => {
+        mockBuildLogoutUrl.mockClear();
+        await POST(new Request("https://studio.example/tools/libredb/api/auth/logout", { method: "POST" }) as never);
+        expect(mockBuildLogoutUrl).toHaveBeenCalledWith("https://studio.example/tools/libredb/login");
+      });
+    } finally {
+      if (previous === undefined) delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+      else process.env.NEXT_PUBLIC_AUTH_PROVIDER = previous;
+    }
   });
 });

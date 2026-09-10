@@ -12,6 +12,7 @@ import { getDataDir } from "@/lib/data-dir";
 import { JWT_SECRET_MIN_LENGTH } from "@/lib/config/auth-env";
 
 export const BOOTSTRAP_FILE_NAME = "auth-bootstrap.json";
+export const BOOTSTRAP_JWT_SECRET_INVALID_MESSAGE = `bootstrap file jwtSecret is not a string of at least ${JWT_SECRET_MIN_LENGTH} chars`;
 
 interface BootstrapFile {
   jwtSecret?: string;
@@ -62,7 +63,7 @@ function readBootstrapFile(filePath: string): BootstrapFile {
     // hand-edited short secret must regenerate here instead of being injected
     // and wedging every login on a misleading "JWT_SECRET too short" 503.
     if (jwtSecret !== undefined && (typeof jwtSecret !== "string" || jwtSecret.length < JWT_SECRET_MIN_LENGTH)) {
-      throw new Error("bootstrap file jwtSecret is not a string of at least 32 chars");
+      throw new Error(BOOTSTRAP_JWT_SECRET_INVALID_MESSAGE);
     }
     if (adminPassword !== undefined && typeof adminPassword !== "string") {
       throw new Error("bootstrap file adminPassword is not a string");

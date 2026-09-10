@@ -6,6 +6,8 @@
 import type { DatabaseType } from "./types";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 
+const QUERY_PREVIEW_MAX_LENGTH = 100;
+
 // ============================================================================
 // Base Database Error
 // ============================================================================
@@ -32,7 +34,11 @@ export class DatabaseError extends Error {
       provider: this.provider,
       code: this.code,
       // Don't expose full query in production for security
-      query: this.query ? this.query.substring(0, 100) + "..." : undefined,
+      query: this.query
+        ? this.query.length > QUERY_PREVIEW_MAX_LENGTH
+          ? this.query.substring(0, QUERY_PREVIEW_MAX_LENGTH) + "..."
+          : this.query
+        : undefined,
     };
   }
 }

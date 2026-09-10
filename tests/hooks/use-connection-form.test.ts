@@ -24,6 +24,7 @@ const DEFAULT_PORTS: Record<string, string> = {
 // list that omitted `user` while the provider authenticated with it. The real table is the
 // authority; tests/unit/lib/db-ui-config.test.ts derives it from the provider sources.
 const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
+  trino: ["host", "port", "user", "password", "database", "schema"],
   sqlite: ["database"],
   libredb: ["database"],
   duckdb: ["database"],
@@ -1639,6 +1640,125 @@ describe("useConnectionForm", () => {
     rerender({ ...defaultProps, isOpen: false });
 
     expect(result.current.authSource).toBe("");
+  });
+
+  test("buildConnection includes the Trino schema", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 20 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType("trino");
+      result.current.setSchema("default");
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/test-connection"),
+    );
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.schema).toBe("default");
+  });
+
+  test.each(["default", ""])("saving an edited Trino connection writes schema %s", async (schema) => {
+    mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true } },
+    });
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const editConnection: DatabaseConnection = {
+      id: "trino-1",
+      name: "Trino",
+      type: "trino",
+      host: "localhost",
+      database: "memory",
+      schema: "tiny",
+      createdAt: new Date(),
+    };
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect, editConnection }));
+    act(() => result.current.setSchema(schema));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).toHaveBeenCalledWith(expect.objectContaining({ database: "memory" }));
+    const saved = onConnect.mock.calls[0]![0];
+    expect(saved.schema).toBe(schema || undefined);
+  });
+
+  test("a schema typed for another engine is not sent", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 20 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType("postgres");
+      result.current.setSchema("default");
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/test-connection"),
+    );
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.schema).toBeUndefined();
+  });
+
+  test("populates the Trino schema in edit mode, and clears it when there is none", () => {
+    const withSchema: DatabaseConnection = {
+      id: "m1",
+      name: "Shop",
+      type: "trino",
+      host: "trino.internal",
+      port: 8080,
+      database: "memory",
+      schema: "default",
+      createdAt: new Date(),
+    };
+    const withoutSchema: DatabaseConnection = {
+      id: "m2",
+      name: "Other",
+      type: "trino",
+      host: "trino-2.internal",
+      port: 8080,
+      database: "memory",
+      createdAt: new Date(),
+    };
+
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, editConnection: withSchema },
+    });
+
+    expect(result.current.schema).toBe("default");
+
+    rerender({ ...defaultProps, editConnection: withoutSchema });
+
+    expect(result.current.schema).toBe("");
+  });
+
+  test("clearing the modal clears the schema before the next new connection", () => {
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true },
+    });
+
+    act(() => {
+      result.current.setType("trino");
+      result.current.setSchema("default");
+    });
+
+    expect(result.current.schema).toBe("default");
+
+    rerender({ ...defaultProps, isOpen: false });
+
+    expect(result.current.schema).toBe("");
   });
 
   // ── buildConnection with MSSQL instanceName ────────────────────────────

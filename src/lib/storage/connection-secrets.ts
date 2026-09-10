@@ -42,6 +42,7 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   // A DATABASE NAME (`admin`), not a credential. The password that authenticates
   // against it is the secret, and it is classified above.
   authSource: "public",
+  schema: "public",
   managed: "public",
   seedId: "public",
   agentUser: "public",

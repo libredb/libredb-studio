@@ -62,7 +62,7 @@ Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 5 · K
 | [Docker image (GHCR)](https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio) | Containers | Container | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Docker Hub mirror](https://hub.docker.com/r/libredb/libredb-studio) | Containers | Container | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Helm chart](https://artifacthub.io/packages/helm/libredb-studio/libredb-studio) | Kubernetes & operators | Kubernetes | live | Automated, every release | [HELM_CHART.md](HELM_CHART.md) |
-| [OperatorHub / OpenShift](https://operatorhub.io/operator/libredb-studio-operator) | Kubernetes & operators | Kubernetes | live | Manual, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [OperatorHub / OpenShift](https://operatorhub.io/operator/libredb-studio-operator) | Kubernetes & operators | Kubernetes | live | Automated PR, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Rancher Partner Charts](https://www.suse.com/pcsc/viewVersionPage?versionID=26969) | Kubernetes & operators | Kubernetes | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Chocolatey](https://community.chocolatey.org/packages/libredb-studio) | Package managers | Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [FlatPark (Flatpak)](https://flatpark.org/) | Package managers | Linux | live | Manual, every release | [packaging/flatpark/README.md](../packaging/flatpark/README.md) |

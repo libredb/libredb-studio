@@ -617,6 +617,26 @@ describe("TrinoProvider validation", () => {
 });
 
 describe("TrinoProvider lifecycle", () => {
+  test.each(["SELECT * FROM widgets", "CREATE TABLE t (id INTEGER NOT NULL)"])(
+    "sends the pinned schema for %s",
+    async (sql) => {
+      const provider = await connectProvider({ database: "memory", schema: "default" });
+      await provider.query(sql);
+      const submissions = sentHeaders.filter((_, index) => sentMethods[index]?.method === "POST");
+      expect(submissions.length).toBeGreaterThan(1);
+      for (const headers of submissions) {
+        expect(headers.get("X-Trino-Catalog")).toBe("memory");
+        expect(headers.get("X-Trino-Schema")).toBe("default");
+      }
+    },
+  );
+
+  test.each([undefined, ""])("omits the schema header when the connection schema is %s", async (schema) => {
+    const provider = await connectProvider({ schema });
+    await provider.query("SELECT 1");
+    expect(sentHeaders.every((headers) => !headers.has("X-Trino-Schema"))).toBe(true);
+  });
+
   test("probes the cluster with the cheapest statement there is", async () => {
     const provider = await connectProvider();
 
@@ -793,6 +813,7 @@ describe("TrinoProvider query", () => {
     const result = await provider.query("SET SESSION query_max_run_time = '10m'");
 
     expect(result.warnings?.[0]?.message).toContain("will not affect the next one");
+    expect(result.warnings?.[0]?.message).toContain("Set Catalog Name and Schema Name");
   });
 
   test("carries the engine's own remarks through", async () => {
@@ -1004,8 +1025,8 @@ describe("TrinoProvider query preparation", () => {
 // ============================================================================
 
 describe("TrinoProvider schema", () => {
-  test("lists every table of the pinned catalog, schema-qualified", async () => {
-    const provider = await connectProvider();
+  test.each([undefined, "tiny"])("lists every catalog table with session schema %s", async (schemaName) => {
+    const provider = await connectProvider({ schema: schemaName });
     const schema = await provider.getSchema();
 
     expect(schema.map((table) => table.name)).toEqual(["sf1.customer", "tiny.nation", "tiny.region"]);
@@ -1034,6 +1055,7 @@ describe("TrinoProvider schema", () => {
     const provider = await connectProvider({ database: undefined });
 
     await expect(provider.getSchema()).rejects.toThrow("pins no Trino catalog");
+    await expect(provider.getSchema()).rejects.toThrow("Set a session schema as well");
   });
 
   test("surfaces a pinned catalog that does not exist rather than showing an empty tree", async () => {

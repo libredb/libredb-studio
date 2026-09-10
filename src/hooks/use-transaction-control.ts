@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useState, useCallback } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
@@ -19,7 +20,7 @@ export function useTransactionControl({ activeConnection }: UseTransactionContro
       if (!activeConnection) return;
 
       try {
-        const res = await fetch("/api/db/transaction", {
+        const res = await appFetch("/api/db/transaction", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

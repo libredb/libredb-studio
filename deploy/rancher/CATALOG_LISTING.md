@@ -3,8 +3,10 @@
 Canonical listing content for LibreDB Studio in the SUSE Partner Certification &
 Solutions Catalog (PCSC), requested by SUSE as part of the SUSE Ready for Rancher
 certification (see rancher/partner-charts#1158 and tracking issue #166). This file is
-the single source for the catalog text; the partner-charts `app-readme.md` overlay is
-refreshed from it, most recently on 2026-08-18 (see the delivery note at the end).
+the single source for the catalog text.
+The overlay Rancher renders is cut from it into `app-readme.md` beside this file, which is
+what a partner-charts submission copies; the refresh submitted on 2026-09-09 is still open
+(see the delivery note at the end).
 `E2E_VALIDATION_TASK.md` covers the validation side.
 
 The listing is live at https://www.suse.com/pcsc/viewVersionPage?versionID=26969 (SUSE
@@ -193,6 +195,33 @@ was dropped rather than carried alongside: it pinned appVersion 0.9.44 and the
 pre-Couchbase app-readme, so merging it would have offered a months-old version in the
 Rancher catalog. The overlay in that PR now carries the ten-engine wording from this
 file. The corrections above have **not** been mailed to SUSE yet.
+
+**2026-09-09.** rancher/partner-charts#1168 is OPEN, submitted from `libredb/partner-charts`,
+and refreshes the overlay to the sixteen-engine wording.
+The catalog keeps rendering the ten-engine text until it merges.
+It had stayed on the ten-engine text from 2026-08-18 while the chart's own description moved
+to sixteen, because the file Rancher renders lives in that repository and nothing here could
+read it.
+So the submitted text now lives in `app-readme.md` beside this file and is counted by
+`tests/unit/lib/catalog-copy-engine-count.test.ts` and scoped by
+`tests/unit/marketplace-copy.test.ts`, the same two gates the copy above answers to.
+
+Review of that submission found two claims those gates did not cover, and both are now
+covered by `tests/unit/marketplace-copy.test.ts` rather than by this prose.
+The overlay had written "manage data across sixteen engines", which the rule above forbids
+by name and which prose alone did not prevent; the checker now derives the editable set
+from `supportsInlineRowEdit` and fails any manage-data sentence that names an engine
+outside it.
+It had also called SQLite the default storage, where `charts/libredb-studio/values.yaml`
+sets `config.storageProvider` to `local`; a storage default named in the overlay is now
+read back from the chart.
+
+Chart versions need no submission of their own: partner-charts runs
+`partner-charts-ci update` nightly against <https://libredb.org/libredb-studio/> and has
+carried our releases since the 0.1.36 listing without a pull request, taking the newest
+chart version at each run rather than every version in between.
+An overlay edit reaches the catalog with the next version that CI integrates, because the
+overlay is copied in only when a new chart version is built.
 
 Vendor naming, as settled: the page heads the partner as **Sekoya** (the legal entity,
 Sekoya Grup Bilisim ve Teknoloji Ltd. Sti.) with the product named **LibreDB Studio**.

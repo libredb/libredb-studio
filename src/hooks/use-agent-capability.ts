@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import { useEffect, useState } from "react";
 import { logger } from "@/lib/logger";
 
@@ -33,7 +34,7 @@ export function useAgentCapability(): boolean {
 
     async function probe(): Promise<void> {
       try {
-        const res = await fetch("/api/agent/config");
+        const res = await appFetch("/api/agent/config");
         if (cancelled) return;
         if (!res.ok) return;
         const body = (await res.json()) as { enabled?: unknown };

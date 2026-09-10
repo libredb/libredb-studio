@@ -1,3 +1,4 @@
+import { withBasePathEnv } from "../../helpers/base-path";
 import { afterEach, describe, expect, test } from "bun:test";
 import { configureMonacoLoader, DEFAULT_MONACO_VS_PATH, resolveMonacoVsPath } from "@/lib/editor/monaco-loader";
 
@@ -57,5 +58,13 @@ describe("configureMonacoLoader", () => {
     configureMonacoLoader(fakeLoader);
 
     expect(fakeLoader.calls).toEqual([{ paths: { vs: "/embedded/monaco/vs" } }]);
+  });
+});
+
+test("default Monaco assets follow basePath while an explicit asset origin remains exact", async () => {
+  await withBasePathEnv("/~/libredb", () => {
+    expect(resolveMonacoVsPath(undefined)).toBe("/~/libredb/monaco/vs");
+    expect(resolveMonacoVsPath("https://assets.example/vs/")).toBe("https://assets.example/vs");
+    expect(resolveMonacoVsPath("/custom/vs")).toBe("/custom/vs");
   });
 });

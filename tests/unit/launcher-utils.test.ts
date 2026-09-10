@@ -8,6 +8,7 @@ import * as os from "os";
 import * as path from "path";
 import {
   artifactName,
+  startupUrl,
   assertReleaseVersion,
   assessNodeRuntime,
   assessProvenance,
@@ -564,5 +565,24 @@ describe("assessProvenance", () => {
     const result = assess({ stderr: POLICY_MISMATCH, version: "0.9.0" });
     expect(result.action).toBe("fail");
     expect(result.message).toContain(ARTIFACT);
+  });
+});
+
+describe("startupUrl", () => {
+  test.each([
+    ["0.0.0.0", "4000", "http://127.0.0.1:4000"],
+    ["::", "4000", "http://[::1]:4000"],
+    ["[::]", "4000", "http://[::1]:4000"],
+    ["fe80::1", "4000", "http://[fe80::1]:4000"],
+    ["[fe80::1]", "4000", "http://[fe80::1]:4000"],
+    ["127.0.0.1", "4000", "http://127.0.0.1:4000"],
+    ["example.internal", "4000", "http://example.internal:4000"],
+    ["", "4000", "http://127.0.0.1:4000"],
+    [undefined, undefined, "http://127.0.0.1:3000"],
+    [null, null, "http://127.0.0.1:3000"],
+    ["127.0.0.1", "", "http://127.0.0.1:3000"],
+    ["127.0.0.1", 4000, "http://127.0.0.1:4000"],
+  ])("formats host %s and port %s", (host, port, expected) => {
+    expect(startupUrl(host, port)).toBe(expected);
   });
 });

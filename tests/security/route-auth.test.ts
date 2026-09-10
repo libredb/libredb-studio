@@ -384,6 +384,7 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/auth": "session cookie minting and reading",
     "@/lib/auth-compare": "constant-time credential comparison",
     "@/lib/auth-errors": "the auth failure taxonomy",
+    "@/lib/config/base-path": "prefixes redirect URLs and cookie paths; these routes use no fetch or provider",
     "@/lib/local-auth": "the local email/password credential store",
     "@/lib/logger": "structured logging",
     "@/lib/oidc": "the OIDC discovery and PKCE exchange",

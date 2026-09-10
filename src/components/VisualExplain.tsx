@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import {
   Zap,
@@ -489,7 +490,7 @@ function AIExplainTab({
     abortControllerRef.current = abortController;
 
     try {
-      const response = await fetch("/api/ai/explain", {
+      const response = await appFetch("/api/ai/explain", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

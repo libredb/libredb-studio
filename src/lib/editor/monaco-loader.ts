@@ -1,3 +1,4 @@
+import { withBasePath } from "@/lib/config/base-path";
 import { loader } from "@monaco-editor/react";
 
 /**
@@ -21,7 +22,7 @@ interface MonacoLoaderLike {
  */
 export function resolveMonacoVsPath(override: string | undefined): string {
   const trimmed = override?.trim();
-  if (!trimmed) return DEFAULT_MONACO_VS_PATH;
+  if (!trimmed) return withBasePath(DEFAULT_MONACO_VS_PATH);
   return trimmed.replace(/\/+$/, "");
 }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/config/base-path";
 import React, { useState, useMemo, useCallback } from "react";
 import {
   GitCompare,
@@ -102,7 +103,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
       setFetchingRemote(true);
       try {
-        const res = await fetch("/api/db/schema-snapshot", {
+        const res = await appFetch("/api/db/schema-snapshot", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(

@@ -57,6 +57,11 @@ const PROVIDER_DOCS = readdirSync(path.join(ROOT, "docs/providers"))
  */
 const NAMED_CITATIONS = [
   {
+    doc: "docs/providers/sqlite.md",
+    source: "src/lib/db/providers/sql/sqlite.ts",
+    methods: ["getCapabilities", "validate", "connect", "getDatabasePath", "query", "getSchema", "runMaintenance"],
+  },
+  {
     doc: "docs/providers/mssql.md",
     source: "src/lib/db/providers/sql/mssql.ts",
     methods: [
