@@ -9,14 +9,13 @@
 *   **Custom DB Theme:** Specialized `db-dark` theme for high-contrast SQL syntax highlighting.
 *   **Power Snippets:** Integrated templates for CTEs, Joins, and complex CRUD operations.
 *   **Modern Editor Specs:** Font ligatures, smooth scrolling, bracket pair colorization, and parameter hints enabled.
-*   **Keyboard Shortcuts:** `Cmd/Ctrl + Enter` to execute, `Alt + Shift + F` to format.
+*   **Keyboard Shortcuts:** `Cmd/Ctrl + Enter` to execute, `Alt + Shift + F` to format, `Cmd/Ctrl + Shift + X` to open a new query tab.
 *   **Command Palette:** Quick access to tables, connections, saved queries, and actions with `Cmd/Ctrl+K`.
 
 > See [`docs/editor/`](editor/) for the editor internals — completion provider, alias resolution, and performance design.
 
 ### 2. Multi-Tab Query Management
 *   **Workspace Tabs:** Open multiple queries simultaneously in separate tabs.
-*   **New Tab Shortcut:** `Cmd/Ctrl + Shift + X` opens a new query tab from anywhere in Studio.
 *   **Independent Results:** Each tab maintains its own execution state and results grid.
 *   **Persistent Tabs:** Switch between tasks without losing your work.
 
