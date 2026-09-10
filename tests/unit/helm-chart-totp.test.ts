@@ -14,6 +14,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { parseAllDocuments } from "yaml";
 import { RFC6238_SECRET } from "../helpers/rfc6238";
+import { decodeBase32, TOTP_MIN_SECRET_BYTES } from "@/lib/totp";
 
 const CHART_DIR = join(import.meta.dir, "../../charts/libredb-studio");
 const RELEASE = "release-under-test";
@@ -116,18 +117,43 @@ describe("charts/libredb-studio TOTP second factor", () => {
     expect(envVar(env, "USER_TOTP_SECRET")?.valueFrom?.secretKeyRef?.name).toBe("byo-auth");
   });
 
-  test("rejects a secret that is not base32 at install time, not at first login", () => {
-    // values.schema.json is the only place this can be caught before the pod runs; without it
-    // the operator learns about the typo from a 503 on the login screen.
-    const run = Bun.spawnSync(
-      ["helm", "template", RELEASE, CHART_DIR, "--set", "secrets.adminTotpSecret=not-base32!"],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
+  /**
+   * values.schema.json is the only place a bad secret can be caught before the pod runs, and the
+   * chart README promises exactly that. The promise only holds while the pattern and the app's
+   * own reader agree, and they did not: `AB=CD` and a single `A` passed the schema and then took
+   * the login route down with a 503, while a hyphen-grouped or space-prefixed secret the app
+   * accepts happily was refused at install.
+   *
+   * So the expectation is computed from the app's reader rather than written down beside it.
+   * Either side changing alone shows up here as a failure instead of as an operator's 503.
+   */
+  describe("the install-time check agrees with the app's own reader", () => {
+    const CASES = [
+      RFC6238_SECRET,
+      RFC6238_SECRET.toLowerCase(),
+      RFC6238_SECRET.replace(/(.{4})/g, "$1 ").trim(),
+      `${RFC6238_SECRET}====`,
+      `-${RFC6238_SECRET}`,
+      ` ${RFC6238_SECRET}`,
+      "not-base32!",
+      "AB=CD",
+      "A",
+      RFC6238_SECRET.slice(0, 25),
+    ];
 
-    expect(run.exitCode).not.toBe(0);
-    expect(run.stderr.toString()).toContain("adminTotpSecret");
+    for (const value of CASES) {
+      const decoded = decodeBase32(value);
+      const appAccepts = decoded !== null && decoded.length >= TOTP_MIN_SECRET_BYTES;
+
+      test(`${appAccepts ? "installs" : "refuses"} ${JSON.stringify(value)}`, () => {
+        const run = Bun.spawnSync(
+          ["helm", "template", RELEASE, CHART_DIR, "--set-string", `secrets.adminTotpSecret=${value}`],
+          { stdout: "pipe", stderr: "pipe" },
+        );
+
+        expect(run.exitCode === 0).toBe(appAccepts);
+        if (!appAccepts) expect(run.stderr.toString()).toContain("adminTotpSecret");
+      });
+    }
   });
 });

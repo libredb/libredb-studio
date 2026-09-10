@@ -132,6 +132,39 @@ describe("local-auth getAuthUsers()", () => {
       expect(getAuthUsers()[0].totpSecret).toBeUndefined();
     });
 
+    /**
+     * RFC 4226 R6 makes 128 bits a MUST, and a secret below it is not a weaker second factor but
+     * an absent one: a single observed code narrows an 8-bit key to one candidate. The alphabet
+     * check alone let `AA` through, which reads as MFA everywhere in the UI and the docs while
+     * costing an attacker nothing. Sliced off the RFC seed so the boundary is unmistakable.
+     */
+    test("rejects a secret below the 128 bits RFC 4226 requires", () => {
+      process.env.ADMIN_TOTP_SECRET = VALID_SECRET.slice(0, 25); // 125 bits -> 15 whole bytes
+
+      expect(() => getAuthUsers()).toThrow(AuthConfigError);
+    });
+
+    test("says the secret is too short rather than repeating the base32 hint", () => {
+      process.env.ADMIN_TOTP_SECRET = VALID_SECRET.slice(0, 25);
+
+      expect(() => getAuthUsers()).toThrow(/ADMIN_TOTP_SECRET is too short/);
+    });
+
+    test("accepts a secret of exactly the minimum length", () => {
+      process.env.ADMIN_TOTP_SECRET = VALID_SECRET.slice(0, 26); // 130 bits -> 16 whole bytes
+
+      expect(getAuthUsers()[0].totpSecret).toBe(VALID_SECRET.slice(0, 26));
+    });
+
+    test("measures the decoded length, not the pasted one, so grouping does not fake it", () => {
+      // 16 base32 characters is 10 bytes however it is spaced out; the separators are not payload.
+      process.env.ADMIN_TOTP_SECRET = VALID_SECRET.slice(0, 16)
+        .replace(/(.{4})/g, "$1 ")
+        .trim();
+
+      expect(() => getAuthUsers()).toThrow(/ADMIN_TOTP_SECRET is too short/);
+    });
+
     test("throws AuthConfigError when ADMIN_TOTP_SECRET is not base32", () => {
       process.env.ADMIN_TOTP_SECRET = "definitely-not-base32!";
 

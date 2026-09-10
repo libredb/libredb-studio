@@ -77,7 +77,8 @@ secrets:
   # -- Regular user account password. Optional: the non-admin account exists only when set;
   # it is never generated.
   userPassword: ""
-  # -- Base32 TOTP secret for the admin account (RFC 4648: A-Z and 2-7). Optional and
+  # -- Base32 TOTP secret for the admin account (RFC 4648: A-Z and 2-7), at least 26 characters
+  # so the decoded secret carries the 128 bits RFC 4226 requires. Optional and
   # local-provider only: when set, admin login requires a 6-digit authenticator code after the
   # password. A value that is not base32 stops login with a clear 503 rather than silently
   # dropping the second factor. Under config.authProvider=oidc the login page shows no password

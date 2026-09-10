@@ -91,10 +91,13 @@ created only once that code verifies.
 | `USER_TOTP_SECRET` | No | Base32 secret for the optional non-admin account. Inert unless `USER_PASSWORD` is also set — with no password there is no user account to protect. |
 
 **Formatting is forgiving, content is not.** Lowercase, spaces, hyphens and `=` padding are all
-normalized away, so you can paste a secret exactly as your password manager displays it. A value
-containing anything outside the base32 alphabet is a **misconfiguration, not a disabled factor**:
-login stops with a `503` naming the offending variable, rather than silently letting the password
-through or rejecting every correct code. To turn MFA off, blank or unset the variable.
+normalized away, so you can paste a secret exactly as your password manager displays it. Two things
+are rejected outright, both as a **misconfiguration, not a disabled factor**: a value containing
+anything outside the base32 alphabet, and a value that decodes to fewer than 16 bytes, which is the
+128-bit minimum RFC 4226 requires (26 base32 characters; the generator in step 1 gives you 32).
+Either one stops login with a `503` naming the offending variable, rather than silently letting the
+password through, rejecting every correct code, or leaving a second factor too small to be worth
+having. To turn MFA off, blank or unset the variable.
 
 Each account is independent — protect the admin and leave an automation-owned user account on a
 password alone if that is what you need.
@@ -202,12 +205,15 @@ function of the current time, and the accepted window is ±30 seconds. Check the
 **"Invalid authentication code" for a code that just worked.** Each code is single-use. Wait for the
 next one rather than resubmitting the same digits.
 
-**A 503 naming `ADMIN_TOTP_SECRET` or `USER_TOTP_SECRET`.** The value is not valid base32. Copy it
-again from the authenticator app — `0`, `1`, `8` and `9` are not in the alphabet, and a secret
-containing them was mistyped.
+**A 503 naming `ADMIN_TOTP_SECRET` or `USER_TOTP_SECRET`.** Two causes, and the message says which.
+"is not a valid base32 secret" is a typo: `0`, `1`, `8` and `9` are not in the alphabet. "is too
+short" means the value decodes to fewer than the 128 bits RFC 4226 requires; generate a fresh one
+with the command in step 1 rather than padding the old one out.
 
-**The code field never appears.** The account has no secret configured, or the deployment is running
-`NEXT_PUBLIC_AUTH_PROVIDER=oidc`, where these variables are ignored.
+**The code field never appears.** The account has no secret configured, or the deployment runs
+`NEXT_PUBLIC_AUTH_PROVIDER=oidc`, where the login page renders no password form for the field to
+follow. The variables are still honoured in that mode: `POST /api/auth/login` stays guarded, there
+is simply no page step to show. See [Running both](#running-both).
 
 **Nothing happens after a correct code.** Check for a `429`: the client bucket may have tripped from
 earlier wrong codes. It clears on its own within the window.

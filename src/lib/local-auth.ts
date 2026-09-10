@@ -5,7 +5,7 @@
  */
 import type { Role } from "@/lib/auth";
 import { AuthConfigError } from "@/lib/auth-errors";
-import { decodeBase32 } from "@/lib/totp";
+import { decodeBase32, TOTP_MIN_SECRET_BYTES } from "@/lib/totp";
 
 export interface AuthUser {
   email: string;
@@ -28,23 +28,32 @@ const ADMIN_PASSWORD_MISSING_MESSAGE =
 const TOTP_SECRET_INVALID_HINT =
   "is not a valid base32 secret. Copy the secret exactly as your authenticator app shows it (letters A-Z and digits 2-7 only) and restart the server.";
 
+// Same shape, for a secret that decodes cleanly but carries too little entropy to be a factor.
+const TOTP_SECRET_SHORT_HINT = `is too short: RFC 4226 requires a shared secret of at least ${TOTP_MIN_SECRET_BYTES * 8} bits. Generate one with "openssl rand 20 | base32" and restart the server.`;
+
 /**
- * Read one account's TOTP secret, rejecting a secret that could never verify anything.
+ * Read one account's TOTP secret, rejecting a secret that could never protect anything.
  *
- * A malformed secret has to be fatal rather than ignored, and it has to fail loudly rather than
- * silently: ignoring it would drop the second factor without telling anyone, and accepting it
- * would refuse every correct code the operator's phone produces. Neither failure is one the
- * operator could diagnose from a "Invalid email or password" screen, so this becomes an
- * AuthConfigError and the login route renders its message as a 503.
+ * Two ways a configured value is wrong, and both have to be fatal rather than ignored. A
+ * malformed secret would refuse every correct code the operator's phone produces; a secret below
+ * the RFC's minimum would accept them all while being worth almost nothing. Neither is
+ * diagnosable from an "Invalid email or password" screen, and silently dropping the factor in
+ * either case would leave a deployment that believes it has MFA and does not. So both become an
+ * AuthConfigError and the login route renders the message as a 503 naming the variable.
  *
- * @throws {AuthConfigError} when the variable is set to something that is not base32.
+ * @throws {AuthConfigError} when the variable is not base32, or decodes below the RFC minimum.
  */
 function readTotpSecret(variable: string): string | undefined {
   const raw = process.env[variable]?.trim();
   // Unset and empty are the same answer — no second factor — so an operator can disable MFA by
   // blanking the variable rather than having to unset it, which some orchestrators cannot do.
   if (!raw) return undefined;
-  if (!decodeBase32(raw)) throw new AuthConfigError(`Login is unavailable: ${variable} ${TOTP_SECRET_INVALID_HINT}`);
+  const decoded = decodeBase32(raw);
+  if (!decoded) throw new AuthConfigError(`Login is unavailable: ${variable} ${TOTP_SECRET_INVALID_HINT}`);
+  // Measured on the decoded bytes, never on the pasted string: spaces, hyphens and `=` padding are
+  // presentation that decodeBase32 strips, so a grouped short secret must not read as long enough.
+  if (decoded.length < TOTP_MIN_SECRET_BYTES)
+    throw new AuthConfigError(`Login is unavailable: ${variable} ${TOTP_SECRET_SHORT_HINT}`);
   return raw;
 }
 

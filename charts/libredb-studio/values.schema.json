@@ -105,13 +105,13 @@
         },
         "adminTotpSecret": {
           "type": "string",
-          "pattern": "^$|^[A-Za-z2-7][A-Za-z2-7 =-]*$",
-          "description": "Admin TOTP secret: empty (no second factor) or base32 (RFC 4648: A-Z and 2-7, spacing and = padding allowed)"
+          "pattern": "^$|^[-\\s]*(?:[A-Za-z2-7][-\\s]*){26,}=*$",
+          "description": "Admin TOTP secret: empty (no second factor) or base32 (RFC 4648: A-Z and 2-7; spaces, hyphens and trailing = are stripped), at least 26 characters so the decoded secret carries the 128 bits RFC 4226 requires"
         },
         "userTotpSecret": {
           "type": "string",
-          "pattern": "^$|^[A-Za-z2-7][A-Za-z2-7 =-]*$",
-          "description": "User TOTP secret: empty (no second factor) or base32 (RFC 4648: A-Z and 2-7, spacing and = padding allowed)"
+          "pattern": "^$|^[-\\s]*(?:[A-Za-z2-7][-\\s]*){26,}=*$",
+          "description": "User TOTP secret: empty (no second factor) or base32 (RFC 4648: A-Z and 2-7; spaces, hyphens and trailing = are stripped), at least 26 characters so the decoded secret carries the 128 bits RFC 4226 requires"
         },
         "llmApiKey": {
           "type": "string",

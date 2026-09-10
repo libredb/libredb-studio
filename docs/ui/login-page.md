@@ -122,6 +122,11 @@ When local auth is active, the right panel shows:
 
 1. **Email/password form** with icon-prefixed inputs
 2. **"Sign In" button** — calls `POST /api/auth/login` with JSON body
+3. **Authentication code field**, rendered only after the server answers `mfaRequired` for those
+   credentials, with the button relabelled "Verify code". The form never predicts this: whether an
+   account carries a second factor is server-side configuration, and deciding it client-side would
+   publish which accounts are protected. Editing either credential drops back to step 1, so a code
+   minted for one account is never submitted against another. See [MFA.md](../MFA.md).
 
 On successful login, the user is redirected based on their role:
 - `admin` → `/admin`
@@ -130,6 +135,11 @@ On successful login, the user is redirected based on their role:
 On failure, the form surfaces the API's `message` via a toast instead of a
 generic error:
 - Wrong credentials → `"Invalid email or password"` (401).
+- TOTP account, no code yet → `"Enter the 6-digit code from your authenticator app"` (401,
+  `mfaRequired: true`). Deliberately no toast: the field appearing is the message, and an error
+  toast would frame a normal step of the flow as a failure.
+- TOTP account, wrong or replayed code → `"Invalid authentication code"` (401, `mfaRequired: true`),
+  toasted, and the field is cleared.
 - Server not configured (missing `ADMIN_PASSWORD`, or a missing/too-short
   `JWT_SECRET`) → the actionable `AuthConfigError` message (503), e.g. *"Login
   is unavailable: this server has no administrator password configured. Set
@@ -175,7 +185,7 @@ The login page follows the app's premium dark aesthetic:
 | `src/lib/db-showcase.ts` | Showcase order and the derived engine list |
 | `src/lib/distribution/channels.generated.ts` | Generated live-channel list (`bun run channels:showcase`) |
 | `src/lib/agent/engine-support.ts` | The engines the agent card may claim execution on |
-| `tests/components/LoginPage.test.tsx` | Component tests — rendering, form submission, OIDC mode, and the pinned agent claim |
+| `tests/components/LoginPage.test.tsx` | Component tests — rendering, form submission, OIDC mode, the TOTP step, and the pinned agent claim |
 | `e2e/login.spec.ts` | Browser assertions that both showcase blocks render every derived entry, desktop and mobile |
 
 ---

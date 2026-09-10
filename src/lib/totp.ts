@@ -35,6 +35,19 @@ const TOTP_WINDOW_STEPS = 1;
 
 const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
+/**
+ * Smallest shared secret that may be configured, in decoded bytes. RFC 4226 R6 makes 128 bits a
+ * MUST and RFC 6238 inherits it.
+ *
+ * `decodeBase32` only rejects a secret with no whole byte in it, which is a far lower bar than the
+ * RFC's: `AA` decodes to one byte and, without this, is a working second factor worth 8 bits — one
+ * observed code narrows it to a single candidate. That failure is invisible, because every screen
+ * and every doc still says the account has MFA. Enforced by the caller that reads the operator's
+ * value (src/lib/local-auth.ts) rather than by verifyTotp, so it surfaces once as a configuration
+ * error naming the variable instead of as a rejected code on every login.
+ */
+export const TOTP_MIN_SECRET_BYTES = 16;
+
 /** Matches a submitted code once its whitespace has been stripped. */
 const CODE_PATTERN = new RegExp(`^\\d{${TOTP_DIGITS}}$`);
 
@@ -138,9 +151,14 @@ export function verifyTotp(secret: string, code: string, now: number = Date.now(
 const spentSteps = new Map<string, number>();
 
 /**
- * Generous, and bounded only so that a flood of unknown account keys cannot grow this map without
- * limit. Each entry is a short string and a number. Eviction fails OPEN (an evicted pair becomes
- * replayable) because a replay guard must never become the reason a legitimate login is refused.
+ * A ceiling on the map, not a defence against one.
+ *
+ * Nothing an attacker sends can grow this: claimTotpStep is reached only after a code verifies
+ * against a configured account, and the local provider defines at most two of those, so pruning
+ * by expiry alone holds the map at a handful of entries. The cap exists for the shape this module
+ * would take if accounts ever became data rather than environment. Eviction fails OPEN (an
+ * evicted pair becomes replayable) because a replay guard must never be the reason a legitimate
+ * login is refused.
  */
 const MAX_SPENT_ENTRIES = 4096;
 

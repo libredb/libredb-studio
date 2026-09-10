@@ -153,14 +153,17 @@ Optional, local-provider only, and opt-in per account. Set a base32 secret and t
 present a 6-digit authenticator code after its password:
 
 ```bash
-helm upgrade --install libredb libredb/libredb-studio   --set secrets.adminPassword=MyAdmin123   --set secrets.adminTotpSecret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+helm upgrade --install libredb libredb/libredb-studio \
+  --set secrets.adminPassword=MyAdmin123 \
+  --set secrets.adminTotpSecret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
 ```
 
 The value travels in the chart's Secret and is referenced from the pod, so it never appears in the
 Deployment spec - which is why `extraEnv` is the wrong tool for it. Both `ADMIN_TOTP_SECRET` and
 `USER_TOTP_SECRET` refs are always optional, including in strict mode, so a second factor nobody
-asked for can never keep the pod from starting. `values.schema.json` rejects a value that is not
-base32 at install time rather than leaving it to fail at the login screen.
+asked for can never keep the pod from starting. `values.schema.json` applies the same test the app
+does, base32 and at least the 128 bits RFC 4226 requires, so a bad secret fails at install time
+rather than at the login screen.
 
 Under `authProvider=oidc` the login page shows no password form and MFA belongs to the identity
 provider - but `POST /api/auth/login` stays reachable whenever `secrets.adminPassword` is also set,

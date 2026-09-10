@@ -137,7 +137,12 @@ export async function POST(request: NextRequest) {
     // caller who can reach this branch necessarily holds a working password for the account -
     // without MFA configured, that same request would simply have logged them in.
     if (matched?.totpSecret) {
-      const step = submittedTotp ? verifyTotp(matched.totpSecret, submittedTotp) : null;
+      // No "did they send one?" pre-check: verifyTotp's own digit test already answers null for
+      // an empty or malformed code, so a guard here would be a second copy of that decision - and
+      // a user-controlled value guarding the session mint is what CodeQL flags as
+      // js/user-controlled-bypass. `submittedTotp` still picks the audit reason below, which is a
+      // logging branch and decides nothing.
+      const step = verifyTotp(matched.totpSecret, submittedTotp);
       // claimTotpStep is what makes an accepted code single-use (RFC 6238 §5.2). A replayed code
       // verifies but fails to claim, and lands here as an ordinary bad code.
       const accepted = step !== null && claimTotpStep(accountKey, step);
