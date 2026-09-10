@@ -109,6 +109,11 @@ export async function createDatabaseProvider(
       return new MSSQLProvider(connection, options);
     }
 
+    case "db2": {
+      const { Db2Provider } = await import("./providers/sql/db2");
+      return new Db2Provider(connection, options);
+    }
+
     case "clickhouse": {
       // The explicit /index specifier keeps this dynamic import statically
       // analysable: a bare directory resolves only at runtime, which the bundler
@@ -186,7 +191,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/unit/db/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, db2, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, libredb`,
         connection.type,
       );
   }

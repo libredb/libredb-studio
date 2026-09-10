@@ -71,6 +71,10 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // is not: CQL is a language, and ScyllaDB speaks it too, so reading `cql` as
   // "this was written for Cassandra" would put a claim in the model's mouth.
   cassandra: true,
+  // A ```db2 block holds a statement the editor can run against a Db2 connection. No
+  // alias is registered below: `luw` is not a fence tag anyone writes, and `db2` is
+  // already the type-id.
+  db2: true,
 });
 
 /**

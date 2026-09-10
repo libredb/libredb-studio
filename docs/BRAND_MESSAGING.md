@@ -59,7 +59,7 @@ One umbrella claim, three entry doors into it, three assurance layers underneath
 **The three doors** are three ways into that one claim. A campaign picks a door. It does not argue all three at once, because a piece that opens on three arguments has opened on none.
 
 1. You created the database. The editor is already beside it.
-2. One tab, sixteen databases.
+2. One tab, seventeen databases.
 3. Nothing sits behind an Enterprise wall.
 
 **Door 3 is deliberately third, and stays third.** Leading with it would define LibreDB as another company's opponent rather than as a position of its own, and it would put our credibility at the mercy of their pricing page. Third, the same fact reads as reassurance rather than accusation.
@@ -80,12 +80,12 @@ Each door carries five parts. A promise whose proof does not resolve to a row in
 
 This is the sharpest of the three. It is the one claim no competitor can currently make.
 
-### Door 2 — One tab, sixteen databases.
+### Door 2 — One tab, seventeen databases.
 
 - **Audience:** teams running more than one kind of database, and the engineers who join them.
 - **Pain:** four databases, four clients, four sets of credentials, and a connection-string hunt for anyone new.
-- **Promise:** sixteen engines in one interface, with the same exploration everywhere, and ER diagrams, schema diff and monitoring wherever the engine has something to show. (Not "across all of them": a search cluster declares no foreign keys, so its ER diagram has no edges, and item 4 below forbids the sentence that hides that.)
-- **Proof:** sixteen providers, each with its own reference document under `docs/providers/`.
+- **Promise:** seventeen engines in one interface, with the same exploration everywhere, and ER diagrams, schema diff and monitoring wherever the engine has something to show. (Not "across all of them": a search cluster declares no foreign keys, so its ER diagram has no edges, and item 4 below forbids the sentence that hides that.)
+- **Proof:** seventeen providers, each with its own reference document under `docs/providers/`.
 - **Difference:** CloudBeaver Community bundles 18 driver modules and every one of them is SQL. MongoDB and Redis are not among them.
 
 The claim here is the span, never the count. See the honesty limits.
@@ -124,7 +124,7 @@ Facts drift. Provider counts, channel counts and competitor editions all change,
 
 | Claim | Evidence | Source | Verified |
 | :--- | :--- | :--- | :--- |
-| Sixteen database engines | One reference document per engine: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra. A seventeenth, `libredb.md`, is the embedded provider and is not an external engine. The count is derived, not written: `SHIPPED` in `src/lib/db/compatibility.ts` is an exhaustive record over `DatabaseType`, so the compiler refuses a missing id — read the count from there, minus `libredb` | `docs/providers/`, `src/lib/db/compatibility.ts` | 2026-08-20 |
+| Seventeen database engines | One reference document per engine: PostgreSQL, MySQL, Oracle, SQL Server, IBM Db2 LUW, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra. An eighteenth, `libredb.md`, is the embedded provider and is not an external engine. The count is derived, not written: `SHIPPED` in `src/lib/db/compatibility.ts` is an exhaustive record over `DatabaseType`, so the compiler refuses a missing id — read the count from there, minus `libredb` | `docs/providers/`, `src/lib/db/compatibility.ts` | 2026-08-20 |
 | Published as an embeddable npm package | `"name": "@libredb/studio"`, version 0.14.1 | `package.json` | 2026-09-07 |
 | MIT licensed | "MIT License / Copyright (c) 2025 LibreDB" | `LICENSE` | 2026-08-07 |
 | 36 distribution channels, 30 live | "36 channels · 30 live · 5 pending · 1 deprecated" | `docs/CHANNELS.md` | 2026-09-07 |

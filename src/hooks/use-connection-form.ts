@@ -660,6 +660,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "cassandra",
     "libsql",
     "duckdb",
+    "db2",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

@@ -65,6 +65,13 @@ describe("generateTableQuery", () => {
     expect(result).toBe("SELECT TOP 50 * FROM users;");
   });
 
+  test("Db2 (port 50000) uses FETCH FIRST 50 ROWS ONLY", () => {
+    const result = generateTableQuery("users", makeCaps({ defaultPort: 50000 }));
+    expect(result).toContain("FETCH FIRST 50 ROWS ONLY");
+    // Db2 has no LIMIT clause, so the PostgreSQL fallback would emit invalid SQL.
+    expect(result).not.toContain("LIMIT");
+  });
+
   // #424 Phase 1, measured 2026-08-19 against Elasticsearch 9.1.4 and OpenSearch
   // 3.8.0. Elasticsearch SQL has no statement terminator in its grammar: the
   // generator's own `SELECT * FROM orders LIMIT 50;` answered
@@ -279,6 +286,12 @@ describe("generateSelectQuery", () => {
     expect(result).toContain("SELECT TOP 100");
     expect(result).toContain("id");
     expect(result).toContain("name");
+  });
+
+  test("Db2 uses FETCH FIRST 100 ROWS ONLY", () => {
+    const result = generateSelectQuery("users", sampleColumns, makeCaps({ defaultPort: 50000 }));
+    expect(result).toContain("FETCH FIRST 100 ROWS ONLY");
+    expect(result).not.toContain("LIMIT");
   });
 });
 

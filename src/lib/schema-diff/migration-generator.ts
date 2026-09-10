@@ -543,6 +543,27 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
             );
           }
         }
+      } else if (dialect === "db2") {
+        // Db2 LUW spells a type change `ALTER COLUMN c SET DATA TYPE t` (the PostgreSQL
+        // `else` below emits the invalid `... TYPE t`), and nullability and default use
+        // the same `SET`/`DROP` verbs PostgreSQL does. Each facet is emitted as its own
+        // ALTER, which is Db2's own grammar. Not live-probed against a server yet — the
+        // syntax is Db2's documented standard SQL; the byte-exact behaviour is confirmed
+        // on the gate-4 pass (docs/providers/db2.md).
+        const column = escapeIdentifier(col.columnName, dialect);
+        if (col.sourceType !== col.targetType) {
+          lines.push(`ALTER TABLE ${id} ALTER COLUMN ${column} SET DATA TYPE ${col.targetType};`);
+        }
+        if (col.sourceNullable !== col.targetNullable) {
+          lines.push(`ALTER TABLE ${id} ALTER COLUMN ${column} ${col.targetNullable ? "DROP" : "SET"} NOT NULL;`);
+        }
+        if (col.sourceDefault !== col.targetDefault) {
+          lines.push(
+            col.targetDefault
+              ? `ALTER TABLE ${id} ALTER COLUMN ${column} SET DEFAULT ${col.targetDefault};`
+              : `ALTER TABLE ${id} ALTER COLUMN ${column} DROP DEFAULT;`,
+          );
+        }
       } else if (inexpressible) {
         lines.push(
           `-- ${inexpressible.label}: Cannot alter column "${commentName(col.columnName)}". ${inexpressible.reason}`,
@@ -628,6 +649,77 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
         `ALTER TABLE ${id} ADD CONSTRAINT ${constraintName} FOREIGN KEY (${escapeIdentifier(fk.columnName, dialect)}) REFERENCES ${escapeIdentifier(fk.targetReferencedTable || "", dialect)}(${escapeIdentifier(fk.targetReferencedColumn || "", dialect)});`,
       );
     });
+
+  // Db2 LUW places a table in REORG-pending after certain structural ALTERs — dropping
+  // a column, changing a column's data type, and changing nullability all trigger it —
+  // and the table is read-restricted (SQL0668N reason code 7) until a REORG materializes
+  // the change. This is emitted as an ADVISORY COMMENT, not an executable statement, and
+  // that follows the same pattern the rest of this generator uses for anything it cannot
+  // emit as both correct AND safe to run blindly (NO_PORTABLE_INDEX_DDL's "write the
+  // index change by hand", SQLite's "Requires table recreation"). Two reasons a REORG
+  // must not be auto-run here:
+  //   * It can be VERY slow and lock-heavy — proportional to table size — so a migration
+  //     file that runs it unattended could block a large table for a long time. When and
+  //     how to REORG (off-hours, INPLACE vs offline, resource limits) is an operational
+  //     decision the person applying the migration has to make, not one this file should
+  //     make for them.
+  //   * REORG cannot run inside the BEGIN;/COMMIT; unit of work this file wraps DDL in
+  //     (ADMIN_CMD commits internally), so emitting it as a live statement between the
+  //     wrapper's bounds would be wrong regardless of size.
+  // A single REORG clears any number of changes batched into one unit of work, so one
+  // advisory per table is emitted rather than one per column. What triggers it, verified
+  // against IBM's Db2 LUW documentation ("Multiple ALTER TABLE operations within a single
+  // unit of work": "Certain ALTER TABLE operations, like dropping a column, altering a
+  // column type, or altering the nullability property of a column may put the table into
+  // a reorg pending state"):
+  //   * DROP COLUMN — a removed column;
+  //   * SET DATA TYPE — a modified column whose type changed;
+  //   * SET/DROP NOT NULL — a modified column whose nullability changed.
+  // What does NOT trigger it, and is deliberately excluded so the advisory is not a false
+  // positive:
+  //   * ADD COLUMN — immediate on Db2 LUW (this is the z/OS-vs-LUW difference; some z/OS
+  //     ADD forms go AREOR, LUW's do not);
+  //   * a DEFAULT-only change (SET/DROP DEFAULT with no type or nullability change) —
+  //     metadata-only, so a column modified only in its default must not raise the
+  //     advisory;
+  //   * index and foreign-key changes.
+  // Two nuances IBM's page states that this advisory does NOT try to model, because they
+  // are operational rather than generatable, and getting them wrong in emitted SQL would
+  // be worse than leaving them to the DBA: (1) the state is not immediate per statement —
+  // LUW lets an unlimited number of these ALTERs run across up to ~31 units of work before
+  // REORG TABLE is *forced*, and (2) since 10.5.0.5 a column's data type may be altered
+  // only ONCE while the table is already reorg-pending before a REORG is required. A
+  // migration this generator writes is one file the DBA applies once, so a single trailing
+  // REORG advisory per table is the correct guidance regardless of either threshold.
+  //
+  // The advisory is a COMMENT, not an executable statement — the same pattern the rest of
+  // this generator uses for anything it cannot emit as both correct AND safe to run
+  // blindly (NO_PORTABLE_INDEX_DDL's "write the index change by hand", SQLite's "Requires
+  // table recreation"). Two reasons a REORG must not be auto-run here:
+  //   * It can be VERY slow and lock-heavy — proportional to table size — so a migration
+  //     file that runs it unattended could block a large table for a long time. When and
+  //     how to REORG (off-hours, INPLACE vs offline, resource limits) is an operational
+  //     decision the person applying the migration has to make, not one this file should
+  //     make for them.
+  //   * REORG cannot run inside the BEGIN;/COMMIT; unit of work this file wraps DDL in
+  //     (ADMIN_CMD commits internally), so emitting it as a live statement between the
+  //     wrapper's bounds would be wrong regardless of size.
+  if (dialect === "db2") {
+    const triggersReorg = table.columns.some(
+      (c) =>
+        c.action === "removed" ||
+        (c.action === "modified" && (c.sourceType !== c.targetType || c.sourceNullable !== c.targetNullable)),
+    );
+    if (triggersReorg) {
+      lines.push(
+        `-- Db2: the ALTERs above may leave "${commentName(table.tableName)}" in REORG-pending, where many query types are blocked until it is reorganized.`,
+      );
+      lines.push(
+        `-- Run this OUTSIDE the transaction above, and mind that it can be slow and lock-heavy on a large table:`,
+      );
+      lines.push(`--   CALL SYSPROC.ADMIN_CMD('REORG TABLE ${id}');`);
+    }
+  }
 
   return lines.join("\n");
 }

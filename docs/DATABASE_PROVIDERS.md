@@ -39,6 +39,7 @@ src/lib/db/
 │   │   │   └── values.ts       #   result -> QueryResult and DuckDB type text -> the product's own names
 │   │   ├── oracle.ts           # Oracle Strategy
 │   │   ├── mssql.ts            # SQL Server Strategy
+│   │   ├── db2.ts              # IBM Db2 LUW Strategy (DRDA over the ibm_db native driver)
 │   │   ├── clickhouse/         # ClickHouse Strategy (SQL over HTTP, no driver)
 │   │   │   ├── index.ts        #   ClickHouseProvider
 │   │   │   ├── transport.ts    #   ClickHouseTransport seam + neutral result types
@@ -93,6 +94,7 @@ BaseDatabaseProvider (abstract)
 │   ├── DuckDBProvider                      │
 │   ├── OracleProvider                      │
 │   ├── MSSQLProvider                       │
+│   ├── Db2Provider                         │
 │   ├── ClickHouseProvider                  │
 │   ├── DruidProvider                       │
 │   ├── ElasticsearchProvider               │
@@ -159,7 +161,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Seventeen type-ids are supported by sixteen provider modules — `elasticsearch` and `opensearch` share
+Eighteen type-ids are supported by seventeen provider modules — `elasticsearch` and `opensearch` share
 one, `providers/sql/search/`. The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice. For
 the per-provider reference (driver, pooling, query format,
@@ -171,6 +173,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | MySQL | `mysql` | SQL | [providers/mysql.md](./providers/mysql.md) |
 | Oracle | `oracle` | SQL | [providers/oracle.md](./providers/oracle.md) |
 | Microsoft SQL Server | `mssql` | SQL | [providers/mssql.md](./providers/mssql.md) |
+| IBM Db2 LUW | `db2` | SQL | [providers/db2.md](./providers/db2.md) |
 | SQLite | `sqlite` | SQL (embedded) | [providers/sqlite.md](./providers/sqlite.md) |
 | libSQL | `libsql` | SQL (SQLite over a network) | [providers/libsql.md](./providers/libsql.md) |
 | DuckDB | `duckdb` | SQL (embedded, analytical) | [providers/duckdb.md](./providers/duckdb.md) |
@@ -355,7 +358,7 @@ DatabaseError (base)
 Provider-specific behaviour — pooling model, SSL/encryption, pagination, monitoring sources,
 maintenance operations, and known limitations — is documented per provider under
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
-Oracle, SQL Server, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid,
+Oracle, SQL Server, IBM Db2 LUW, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid,
 Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, or LibreDB.
 
 Not every provider has every feature, and the docs record the absences rather than glossing over

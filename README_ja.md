@@ -84,9 +84,9 @@ LibreDB Studioは逆向きです。**データをツールのところへ持っ�
 
 ## 主な機能
 
-### 16のエンジン、1つのインターフェース
+### 17のエンジン、1つのインターフェース
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
+PostgreSQL · MySQL · Oracle · SQL Server · IBM Db2 LUW · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
 
 スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。Druid、Elasticsearch、OpenSearch、TrinoはこのビルドがパースできるURI形式を持たないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。検索クラスタのER図は箱だけで線がありません。インデックスは外部キーを宣言せず、エンジンのモデルにも宣言できる外部キーが存在しないためです。
 
@@ -96,6 +96,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **MySQL** | `mysql2` | フルSQL IDE、EXPLAIN、トランザクション、クエリキャンセル（`KILL QUERY`） |
 | **Oracle** | `oracledb`（Thinモード） | フルSQL IDE、`FETCH FIRST N ROWS`、`V$`監視ビュー、`ANALYZE TABLE`、`ALTER INDEX REBUILD`、トランザクション |
 | **SQL Server** | `mssql` (tedious) | フルSQL IDE、`TOP N` / `OFFSET FETCH`、`sys.dm_*` DMV、`UPDATE STATISTICS`、`DBCC CHECKDB`、トランザクション、Azure SQL自動判別 |
+| **IBM Db2 LUW** | `ibm_db`（ネイティブアドオン、インストール時にIBM CLIドライバを取得） | DRDAプロトコル上のSQL IDE、`FETCH FIRST` / `OFFSET FETCH`、`SYSCAT.*` カタログ参照、`RUNSTATS` と `REORG TABLE` のメンテナンス。EXPLAINと対話型トランザクションツールバーは未接続 |
 | **SQLite** | `bun:sqlite` / `node:sqlite`（実行時選択） | フルSQL IDE、ファイル型・インメモリ型 |
 | **libSQL** | ドライバなし、HTTPのみ（Hranaプロトコル、`POST /v2/pipeline`、8080） | フルSQL IDE。自前運用のlibSQLサーバー（`sqld`）とTurso Cloudの両方に同じtype-idで接続します。ネットワーク越しのSQLite方言で、`dbstat`による実測のテーブル・インデックスサイズが読めます。認証情報はパスワードではなくauthトークンです。メンテナンスはReindexと整合性チェックのみ。`VACUUM`、`ANALYZE`、`PRAGMA optimize`はサーバー側が拒否します |
 | **DuckDB** | `@duckdb/node-api`（ネイティブN-APIアドオン、プラットフォームごとに約68MBのバインディング） | アプリが動作するサーバ上のローカルDuckDBファイル、または`:memory:`に対するフルSQL IDE。`EXPLAIN (FORMAT JSON)`による物理プランツリー、`duckdb_*`カタログの自省、`pragma_storage_info`のブロック割り当てから得られる実際のテーブル別バイト数、ドライバ自身の`interrupt()`によるクエリキャンセル。メンテナンス操作は`VACUUM`・`ANALYZE`・`CHECKPOINT`の3つです。`REINDEX`はこのエンジンではパースエラーであり、`PRAGMA integrity_check`も`PRAGMA optimize`も存在しないため、それらの操作は提供しません。スロークエリログもセッション一覧もありません。DuckDBはどちらも公開していないため、これらのパネルは0を表示するのではなくその旨を伝えます。データベースファイルを開けるOSプロセスは1つだけで、読み取り専用モードでも2つ目は拒否されるため、このインスタンスが保持しているファイルを別のStudioインスタンスが開くことはできません |

@@ -515,6 +515,10 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
   redis: NOTHING_STANDS_ALONE,
   libredb: NOTHING_STANDS_ALONE,
   couchbase: NOTHING_STANDS_ALONE,
+  // Db2 LUW takes INSERT/CREATE TABLE, but no standalone-safe type names have been
+  // measured against a live server yet, so every bare name is re-spelled portably
+  // rather than kept as Db2's private word. Promote measured names here after gate 4.
+  db2: NOTHING_STANDS_ALONE,
 };
 
 /**
@@ -667,6 +671,10 @@ const BINARY_LITERAL: Record<DatabaseType, BinaryLiteral> = {
   duckdb: "unhex",
   clickhouse: "unhex",
   couchbase: "text",
+  // Db2 LUW spells a binary literal `X'0102deadbeef'` and `HEX()` returns uppercase hex
+  // — the same `standard-hex` shape as MySQL and SQLite. Documented Db2 behaviour, not
+  // yet live-verified; confirm on the gate-4 pass.
+  db2: "standard-hex",
 };
 
 /**

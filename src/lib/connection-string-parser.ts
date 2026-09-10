@@ -86,6 +86,7 @@ export const ENGINE_URI_SCHEMES: Partial<Record<DatabaseType, string>> = {
   couchbase: "couchbase",
   clickhouse: "clickhouse",
   libsql: "libsql",
+  db2: "db2",
 };
 
 /**
@@ -136,6 +137,15 @@ export function parseConnectionString(input: string): ParsedConnection | null {
   // MSSQL / SQL Server
   if (trimmed.startsWith("mssql://") || trimmed.startsWith("sqlserver://")) {
     return parseGenericURL(trimmed, "mssql", "1433");
+  }
+
+  // Db2 LUW — `db2://host:port/database`. There is no single vendor URI convention
+  // (the driver's native form is a `KEY=VALUE;` attribute list), but `db2://` is the
+  // scheme common ORMs and tools emit, and it maps cleanly onto the host/port/database
+  // form. The provider re-reads the fields, so the pasted URL is not itself sent to the
+  // driver. Pinned by tests/unit/lib/connection-string-parser.test.ts.
+  if (trimmed.startsWith("db2://")) {
+    return parseGenericURL(trimmed, "db2", "50000");
   }
 
   // Couchbase — the TLS scheme is checked first, it is not a prefix of the plain one.
@@ -573,6 +583,7 @@ export function detectConnectionStringType(input: string): DatabaseType | null {
   if (trimmed.startsWith("redis://") || trimmed.startsWith("rediss://")) return "redis";
   if (trimmed.startsWith("oracle://")) return "oracle";
   if (trimmed.startsWith("mssql://") || trimmed.startsWith("sqlserver://")) return "mssql";
+  if (trimmed.startsWith("db2://")) return "db2";
   if (trimmed.startsWith("couchbase://") || trimmed.startsWith("couchbases://")) return "couchbase";
   if (trimmed.startsWith("libsql://")) return "libsql";
   if (trimmed.startsWith("clickhouse://") || trimmed.startsWith("http://") || trimmed.startsWith("https://"))

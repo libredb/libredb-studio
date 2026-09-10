@@ -8,6 +8,13 @@ const COUCHBASE_PORT = 8091;
 const DRUID_PORT = 8888;
 
 /**
+ * Db2 LUW DRDA port, the capability signal for its `FETCH FIRST` pagination. Db2 has
+ * no `LIMIT` clause, so the shared PostgreSQL fallback would emit a statement it
+ * refuses; this port routes it to the same `FETCH FIRST` branch Oracle uses.
+ */
+const DB2_PORT = 50000;
+
+/**
  * Alias every generated Couchbase statement binds its keyspace to. SQL++ needs a
  * name to hang `META()` and field references off, and the generator has only the
  * collection name to work from, so the alias is fixed rather than derived: `d`
@@ -388,6 +395,10 @@ export function generateTableQuery(
   if (capabilities.defaultPort === 1521) {
     return `SELECT * FROM ${table} FETCH FIRST 50 ROWS ONLY;`;
   }
+  // Db2 LUW — same FETCH FIRST clause as Oracle; it has no LIMIT.
+  if (capabilities.defaultPort === DB2_PORT) {
+    return `SELECT * FROM ${table} FETCH FIRST 50 ROWS ONLY;`;
+  }
   // MSSQL
   if (capabilities.defaultPort === 1433) {
     return `SELECT TOP 50 * FROM ${table};`;
@@ -544,6 +555,10 @@ export function generateSelectQuery(
   const cols = columns.map((c) => `  ${quoteIdentifier(c.name, capabilities)}`).join(",\n") || "  *";
   // Oracle
   if (capabilities.defaultPort === 1521) {
+    return `SELECT\n${cols}\nFROM ${table}\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY;`;
+  }
+  // Db2 LUW — same FETCH FIRST clause as Oracle; it has no LIMIT.
+  if (capabilities.defaultPort === DB2_PORT) {
     return `SELECT\n${cols}\nFROM ${table}\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY;`;
   }
   // MSSQL

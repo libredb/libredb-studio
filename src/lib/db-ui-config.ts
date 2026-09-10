@@ -17,6 +17,7 @@ import {
   CassandraIcon,
   LibSQLIcon,
   DuckDBIcon,
+  Db2Icon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 
@@ -156,6 +157,20 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     defaultPort: "1433",
     showConnectionStringToggle: false,
     connectionFields: ["host", "port", "user", "password", "database", "instanceName"],
+  },
+  db2: {
+    icon: Db2Icon,
+    // IBM's brand blue. `hue-blue` is PostgreSQL's and `hue-sky` is SQL Server's;
+    // `hue-blue-alt` is the nearest free shade, and the distinct-colour assertion in
+    // tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
+    color: "text-hue-blue-alt",
+    label: "Db2 LUW",
+    // The DRDA listener's conventional port on Db2 LUW.
+    defaultPort: "50000",
+    // `ibm_db` takes a DRDA connection string (a `KEY=VALUE;` attribute list), so a
+    // pasted string is honoured; the provider declares supportsConnectionString: true.
+    showConnectionStringToggle: true,
+    connectionFields: ["host", "port", "user", "password", "database", "connectionString"],
   },
   couchbase: {
     icon: CouchbaseIcon,

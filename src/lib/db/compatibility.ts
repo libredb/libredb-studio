@@ -64,6 +64,11 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   couchbase: true,
   redis: true,
   libredb: true,
+  // IBM Db2 LUW (#424 follow-on): its own provider, doc and integration test. A
+  // driver rather than a relative of anything here - it speaks the DRDA wire
+  // protocol, which no other shipped id speaks, so no engine is wire-compatible
+  // with it and nothing is recorded as a relative below.
+  db2: true,
 });
 
 /**
@@ -79,10 +84,10 @@ export const SHIPPED_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(Obj
 /**
  * Which shipped ids are databases a user already runs, and which one is not.
  *
- * `libredb` is the embedded store this app carries with it; the other sixteen are
+ * `libredb` is the embedded store this app carries with it; the other seventeen are
  * external engines you point the product at. Everything published as a database
- * count means the external sixteen - README.md's "sixteen drivers reach
- * forty-two named engines", the login hero's engine claim - so the split needs a
+ * count means the external seventeen - README.md's "seventeen drivers reach
+ * forty-three named engines", the login hero's engine claim - so the split needs a
  * definition somewhere, and it belongs beside `SHIPPED` rather than in the UI that
  * prints it. That is the same reason `SHIPPED` itself lives here.
  *
@@ -113,6 +118,9 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
   libredb: false,
+  // A server the user already runs, reached over the network like every other
+  // external engine.
+  db2: true,
 });
 
 /**
@@ -564,7 +572,7 @@ export function compatibleEnginesFor(type: DatabaseType): readonly WireCompatibl
  * app at it, so the embedded store is out of both halves of the sum.
  *
  * Still no runtime consumer: README.md and the docs table are markdown and quote the
- * number as prose, and the login hero prints the two halves separately - sixteen in
+ * number as prose, and the login hero prints the two halves separately - seventeen in
  * the proof row, twenty-six in the relatives line - rather than their sum. This exists
  * so the arithmetic has one definition, and the unit test pins it.
  */
