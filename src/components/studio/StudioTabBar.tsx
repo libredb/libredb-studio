@@ -1,9 +1,15 @@
 "use client";
 
-import React, { type Dispatch, type SetStateAction } from "react";
+import React, { useEffect, type Dispatch, type SetStateAction } from "react";
 import type { QueryTab } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { FileBraces, Hash, Plus, X } from "lucide-react";
+
+// Cmd/Ctrl+T and Cmd/Ctrl+N belong to the browser, so no page can bind them;
+// Cmd/Ctrl+Shift+X is unclaimed by Chrome, Firefox and Safari (checked against
+// their published shortcut lists) and stays reachable on every platform.
+const NEW_TAB_SHORTCUT_KEY = "x";
+const NEW_TAB_SHORTCUT_LABEL = "Ctrl+Shift+X";
 
 interface StudioTabBarProps {
   tabs: QueryTab[];
@@ -49,6 +55,26 @@ export function StudioTabBar({
     else return;
     e.preventDefault();
   };
+
+  // The "+" button's keyboard twin (#745): registered on `document` because the
+  // shortcut must work wherever focus is, and guarded against editable targets
+  // so typing (or an editor chord) can never mint tabs by accident.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== NEW_TAB_SHORTCUT_KEY || !(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA")
+      ) {
+        return;
+      }
+      event.preventDefault();
+      onAddTab();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onAddTab]);
 
   return (
     <div
@@ -151,6 +177,7 @@ export function StudioTabBar({
       <button
         type="button"
         aria-label="New tab"
+        title={`New Query Tab (${NEW_TAB_SHORTCUT_LABEL})`}
         className="text-fg-muted cursor-pointer hover:text-fg-bright mx-2"
         onClick={onAddTab}
       >

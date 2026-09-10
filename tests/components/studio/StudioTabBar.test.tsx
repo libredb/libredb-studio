@@ -326,6 +326,58 @@ describe("StudioTabBar", () => {
     expect(result[0].name).toBe("Blur Name");
   });
 
+  // ── New-tab keyboard shortcut (#745) ───────────────────────────────────
+
+  test("Ctrl+Shift+X anywhere in the document opens a new tab", () => {
+    const onAddTab = mock(() => {});
+    const props = createDefaultProps({ onAddTab });
+    render(<StudioTabBar {...props} />);
+    fireEvent.keyDown(document, { key: "x", ctrlKey: true, shiftKey: true });
+    expect(onAddTab).toHaveBeenCalledTimes(1);
+  });
+
+  test("Cmd+Shift+X anywhere in the document opens a new tab", () => {
+    const onAddTab = mock(() => {});
+    const props = createDefaultProps({ onAddTab });
+    render(<StudioTabBar {...props} />);
+    fireEvent.keyDown(document, { key: "x", metaKey: true, shiftKey: true });
+    expect(onAddTab).toHaveBeenCalledTimes(1);
+  });
+
+  test("shortcut fires only with the full Ctrl/Cmd+Shift+X chord", () => {
+    const onAddTab = mock(() => {});
+    const props = createDefaultProps({ onAddTab });
+    render(<StudioTabBar {...props} />);
+    fireEvent.keyDown(document, { key: "x", ctrlKey: true });
+    fireEvent.keyDown(document, { key: "x", shiftKey: true });
+    fireEvent.keyDown(document, { key: "x" });
+    expect(onAddTab).not.toHaveBeenCalled();
+  });
+
+  test("shortcut is ignored while typing in an editable target", () => {
+    const onAddTab = mock(() => {});
+    const props = createDefaultProps({ editingTabId: "tab-1", editingTabName: "Query 1", onAddTab });
+    const { container } = render(<StudioTabBar {...props} />);
+    const input = container.querySelector("input")!;
+    fireEvent.keyDown(input, { key: "x", ctrlKey: true, shiftKey: true });
+    expect(onAddTab).not.toHaveBeenCalled();
+  });
+
+  test("new tab button title advertises the shortcut", () => {
+    const props = createDefaultProps();
+    const { getByRole } = render(<StudioTabBar {...props} />);
+    expect(getByRole("button", { name: "New tab" }).getAttribute("title")).toBe("New Query Tab (Ctrl+Shift+X)");
+  });
+
+  test("shortcut listener is removed when the tab bar unmounts", () => {
+    const onAddTab = mock(() => {});
+    const props = createDefaultProps({ onAddTab });
+    const { unmount } = render(<StudioTabBar {...props} />);
+    unmount();
+    fireEvent.keyDown(document, { key: "x", ctrlKey: true, shiftKey: true });
+    expect(onAddTab).not.toHaveBeenCalled();
+  });
+
   // ── A11y semantics (#100) ─────────────────────────────────────────────
 
   describe("a11y semantics", () => {
