@@ -16,6 +16,7 @@
 
 ### 2. Multi-Tab Query Management
 *   **Workspace Tabs:** Open multiple queries simultaneously in separate tabs.
+*   **New Tab Shortcut:** `Cmd/Ctrl + Shift + X` opens a new query tab from anywhere in Studio.
 *   **Independent Results:** Each tab maintains its own execution state and results grid.
 *   **Persistent Tabs:** Switch between tasks without losing your work.
 
