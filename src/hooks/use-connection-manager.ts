@@ -177,9 +177,10 @@ export function useConnectionManager(storageReady = false) {
 
         const objectsRes = await appFetch(...init("/api/db/objects/inventory", { ...objectPayload, kinds }));
         if (objectsRes.ok) {
-          const { objects, truncated } = (await objectsRes.json()) as {
+          const { objects, truncated, defaultContainer } = (await objectsRes.json()) as {
             objects?: DatabaseObject[];
             truncated?: { limit: number; reason: string };
+            defaultContainer?: string[];
           };
           // A saturated inventory leaves its tail untagged, and untagged reads as "nothing
           // was declared about this object" in every consumer. Nothing on screen separates
@@ -193,7 +194,16 @@ export function useConnectionManager(storageReady = false) {
               reason: truncated.reason,
             });
           }
-          if (objects !== undefined && isCurrent()) setSchema((prev) => tagObjectKinds(prev, objects));
+          // The session default container travels with the inventory and breaks the tie this
+          // join could not: the flat reading above is a reading of ONE container and drops
+          // that container from every name it writes, so a bare `orders` answers to every
+          // `orders` on the server. Measured on SQL Server holding `dbo.orders` as a view
+          // beside `sales.orders`: the entry came back untagged, and untagged is KEPT by
+          // `rowWritableObjects`, so the view was offered row writes (#789). Absent when the
+          // engine could not say, and the join keeps its refusal then.
+          if (objects !== undefined && isCurrent()) {
+            setSchema((prev) => tagObjectKinds(prev, objects, defaultContainer));
+          }
         } else {
           const body = await objectsRes.json().catch(() => ({}));
           logger.debug("Object inventory unavailable; the schema keeps no kinds", {

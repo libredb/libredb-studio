@@ -1421,6 +1421,60 @@ describe("tagging the schema with the object surface", () => {
     ]);
   });
 
+  /*
+    The session default container, carried from the inventory into the join (#789).
+
+    The flat reading is a reading of ONE container and drops it from every name it writes,
+    so a bare `orders` answers to every `orders` on the server and the join refused the
+    tie. The inventory route reads `Container.isSessionDefault` off the walk it already
+    does, and the hook hands it to `tagObjectKinds` as the tie-breaker.
+  */
+  test("a bare flat name takes the object in the session default container", async () => {
+    const contestedObjects: InventoryObject[] = [
+      { name: "orders", kind: "view", path: ["public", "orders"] },
+      { name: "orders", kind: "table", path: ["sales", "orders"] },
+    ];
+
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/schema/list": { ok: true, json: [{ name: "orders", columns: [], indexes: [], foreignKeys: [] }] },
+      "/api/db/objects/inventory": { ok: true, json: { objects: contestedObjects, defaultContainer: ["public"] } },
+      "/api/db/schema/relations": { ok: true, json: [] },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    // A VIEW, which is the half that mattered: untagged is kept by `rowWritableObjects`,
+    // so before this the flat `orders` was offered row writes.
+    expect(result.current.schema.map((object) => [object.name, object.kind])).toEqual([["orders", "view"]]);
+  });
+
+  test("an inventory that answers no default container leaves the contested name untagged", async () => {
+    const contestedObjects: InventoryObject[] = [
+      { name: "orders", kind: "view", path: ["public", "orders"] },
+      { name: "orders", kind: "table", path: ["sales", "orders"] },
+    ];
+
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/schema/list": { ok: true, json: [{ name: "orders", columns: [], indexes: [], foreignKeys: [] }] },
+      "/api/db/objects/inventory": { ok: true, json: { objects: contestedObjects } },
+      "/api/db/schema/relations": { ok: true, json: [] },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(result.current.schema.map((object) => [object.name, object.kind])).toEqual([["orders", undefined]]);
+  });
+
   test("the inventory names the relation kinds, so the fan-out is three listings per container and not seven", async () => {
     // The cost half of the same finding. Every kind named here is one sequential
     // `listObjects` round trip per container inside the route, on every connection select

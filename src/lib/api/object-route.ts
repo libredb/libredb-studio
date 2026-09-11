@@ -5,7 +5,7 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import { ApiErrorCode } from "@/lib/api/error-codes";
-import type { DatabaseConnection, DatabaseObject, DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
+import type { Container, DatabaseConnection, DatabaseObject, DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
 
 /**
  * Shared request handling for the six object-tree routes under /api/db/objects (#789).
@@ -235,26 +235,57 @@ export function resolveKinds(provider: DatabaseProvider, requested?: readonly st
 }
 
 /**
+ * What one walk of the container tree answered.
+ *
+ * The default travels WITH the containers because it is read off the same walk: the engine
+ * answers `isSessionDefault` on `listContainers`, and asking for it separately would be a second
+ * full enumeration for one boolean.
+ */
+export interface ContainerEnumeration {
+  readonly containers: readonly (readonly string[])[];
+  /**
+   * The container the SESSION is in, where exactly one deepest-level container says so.
+   *
+   * Absent is a fact and not a default: several engines cannot say, and a caller handed `[]`
+   * instead would be told the root container, which on a two-level engine no object sits in. Its
+   * reader, the object browser's flat join, keeps its refusal when it is absent rather than
+   * guessing.
+   */
+  readonly defaultContainer?: readonly string[];
+}
+
+/**
  * Every container that can hold an object, walked one level at a time down to the declared depth.
  *
  * An engine with no container level answers a single empty path rather than an empty list: SQLite
  * and friends address every object by a bare name, so there IS one container to scan and it is the
- * connection itself. An empty list there would inventory nothing at all.
+ * connection itself. An empty list there would inventory nothing at all. That single container is
+ * also the session's, trivially, being the only one there is.
+ *
+ * The default is taken at the DEEPEST level only, and standing ruling 5a2 is why: a provider with
+ * container levels marks `isSessionDefault` at EVERY level, so a two-level engine flags its
+ * catalog as well as its schema, while an object's container is the full `[catalog, schema]`. A
+ * catalog path would name a container no object sits in and break no tie. More than one flagged
+ * container at the deepest level is a provider defect, and it is answered as no default rather
+ * than by picking one.
  */
-export async function enumerateContainers(provider: DatabaseProvider): Promise<readonly (readonly string[])[]> {
+export async function enumerateContainers(provider: DatabaseProvider): Promise<ContainerEnumeration> {
   const depth = containerDepth(provider.getCapabilities());
-  if (depth === 0) return [[]];
+  if (depth === 0) return { containers: [[]], defaultContainer: [] };
 
   const listContainers = requireMethod(provider, "listContainers");
-  let level = (await listContainers()).map((container) => container.path);
+  let level = await listContainers();
   for (let below = 1; below < depth; below++) {
-    const next: (readonly string[])[] = [];
+    const next: Container[] = [];
     for (const parent of level) {
-      next.push(...(await listContainers(parent)).map((container) => container.path));
+      next.push(...(await listContainers(parent.path)));
     }
     level = next;
   }
-  return level;
+
+  const defaults = level.filter((container) => container.isSessionDefault === true);
+  const containers = level.map((container) => container.path);
+  return defaults.length === 1 ? { containers, defaultContainer: defaults[0].path } : { containers };
 }
 
 /** The hard ceiling on the objects one inventory read returns. Never a caller parameter (#789). */
@@ -282,4 +313,13 @@ export interface ObjectInventory {
   readonly objects: readonly DatabaseObject[];
   /** Absent when the whole inventory fits. Never absent when it did not. */
   readonly truncated?: { readonly limit: number; readonly reason: string };
+  /**
+   * The container this connection's session is in, where the enumeration could say (#789).
+   *
+   * It is what the object browser's FLAT reading is a reading of, and so what breaks a tie when a
+   * bare flat name answers to two objects in two containers. Absent whenever the walk did not
+   * happen or did not say, which includes every call that named its own containers: a default
+   * answered from a walk that never ran would be an invention.
+   */
+  readonly defaultContainer?: readonly string[];
 }

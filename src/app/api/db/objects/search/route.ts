@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     const term = requireString(body, "term").toLowerCase();
     const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
 
-    const containers = await enumerateContainers(provider);
+    const { containers } = await enumerateContainers(provider);
     const listObjects = requireMethod(provider, "listObjects");
 
     // Sequential on purpose, and the `no-await-in-loop` warning is accepted here. Every listing

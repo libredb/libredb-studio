@@ -999,4 +999,97 @@ describe("POST /api/db/objects/inventory", () => {
     expect(error).toContain("listContainers");
     expect(error).toContain("couchbase");
   });
+
+  /*
+    The session default container, read off the walk this route already does (#789).
+
+    The flat schema reading the object browser joins against is a reading of ONE container
+    and drops that container from every name it writes, so a bare flat name ties against
+    every same-named object on the server and the join refused the tie. The default
+    container is what breaks it, and this is the only surface that knows it: the provider
+    answers `isSessionDefault` on `listContainers`, which nothing downstream sees. No extra
+    round trip, because the enumeration is already happening.
+  */
+  test("answers the session default container off the enumeration it already ran", async () => {
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async () => [
+        { path: ["ops"], name: "ops", level: 0 },
+        { path: ["app"], name: "app", level: 0, isSessionDefault: true },
+      ]),
+      listObjects: mock(async (container: readonly string[]) => [object([...container, "orders"], "table")]),
+    });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", { method: "POST", body: { connection } }) as never,
+    );
+
+    expect((await parseResponseJSON<{ defaultContainer: unknown }>(response)).defaultContainer).toEqual(["app"]);
+  });
+
+  test("the default is the DEEPEST level's, which is the one an object's container is", async () => {
+    // Standing ruling 5a2: a two-level engine marks `isSessionDefault` at EVERY level, so
+    // the outer catalog carries the flag too. An object's container is `[catalog, schema]`,
+    // and answering `[main]` would name a container no object sits in and break no tie.
+    activeProvider = objectProvider({
+      containerLevels: [CATALOG_LEVEL, SCHEMA_LEVEL],
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async (parent?: readonly string[]) =>
+        parent === undefined
+          ? [{ path: ["main"], name: "main", level: 0, isSessionDefault: true }]
+          : [
+              { path: [...parent, "sales"], name: "sales", level: 1 },
+              { path: [...parent, "dbo"], name: "dbo", level: 1, isSessionDefault: true },
+            ],
+      ),
+      listObjects: mock(async (container: readonly string[]) => [object([...container, "orders"], "table")]),
+    });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", { method: "POST", body: { connection } }) as never,
+    );
+
+    expect((await parseResponseJSON<{ defaultContainer: unknown }>(response)).defaultContainer).toEqual([
+      "main",
+      "dbo",
+    ]);
+  });
+
+  test("omits the default when no container declares itself the session's", async () => {
+    // Absent is a fact: several engines cannot say which container the session is in, and
+    // a caller told `[]` would be told the root container, which on a two-level engine is
+    // not a container at all. The join keeps its refusal instead.
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
+      listObjects: mock(async (container: readonly string[]) => [object([...container, "orders"], "table")]),
+    });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", { method: "POST", body: { connection } }) as never,
+    );
+
+    const body = await parseResponseJSON<Record<string, unknown>>(response);
+    expect("defaultContainer" in body).toBe(false);
+  });
+
+  test("omits the default when the caller named the containers, because nothing was enumerated", async () => {
+    // The flag lives on `listContainers`, and a body naming containers skips that call
+    // entirely. Answering a default from a walk that never happened would be an invention.
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0, isSessionDefault: true }]),
+      listObjects: mock(async (container: readonly string[]) => [object([...container, "orders"], "table")]),
+    });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, containers: [["ops"]] },
+      }) as never,
+    );
+
+    const body = await parseResponseJSON<Record<string, unknown>>(response);
+    expect("defaultContainer" in body).toBe(false);
+  });
 });

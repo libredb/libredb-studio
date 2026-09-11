@@ -51,7 +51,12 @@ export async function POST(req: NextRequest) {
 
     // Deduplicated before the fan-out is built, not after: a repeated container costs one full
     // listing round trip per kind, and a body may name the same one any number of times.
-    const containers = dedupePaths(named ?? (await enumerateContainers(provider)));
+    //
+    // The enumeration also answers which container the SESSION is in, off the same walk and at
+    // no extra round trip. A body that NAMED its containers skips the walk, so there is no
+    // default to report and none is invented (#789).
+    const enumerated = named === undefined ? await enumerateContainers(provider) : { containers: named };
+    const containers = dedupePaths(enumerated.containers);
     const listObjects = requireMethod(provider, "listObjects");
 
     // Flattened to one loop so each limit is checked in one place. Nested loops would need a label
@@ -91,7 +96,14 @@ export async function POST(req: NextRequest) {
 
     // `truncated` is reported when a limit lands exactly on a boundary with work still unread: what
     // was not scanned cannot be claimed as absent, and over-reporting incompleteness is the only
-    // safe direction here.
-    return truncated === undefined ? { objects } : { objects, truncated };
+    // safe direction here. Both optional fields are SPREAD rather than assigned `undefined`, since
+    // an omitted key and an explicit `undefined` are the same bytes on the wire and a reader
+    // testing `"defaultContainer" in body` must see the absence.
+    const { defaultContainer } = enumerated;
+    return {
+      objects,
+      ...(truncated === undefined ? {} : { truncated }),
+      ...(defaultContainer === undefined ? {} : { defaultContainer }),
+    };
   });
 }

@@ -222,3 +222,62 @@ describe("tagObjectKinds joins on every suffix, not only the first and the last"
     expect(tagged[0].kind).toBe("table");
   });
 });
+
+/**
+ * The session default container, which the join used to resolve without (#789, address fix
+ * round 1).
+ *
+ * The flat reading is a reading OF one container: `mssql.ts` strips `dbo.`, `postgres.ts`
+ * strips `public.`, `mysql.ts` is always bare. The object reading is a walk over EVERY
+ * container the engine publishes. So a name the flat side leaves bare ties against every
+ * same-named object on the server, and the reviewer measured the worst outcome this epic
+ * has produced from it: a SQL Server `dbo` VIEW came back untagged, and an untagged entry
+ * is KEPT by `rowWritableObjects`, so a view was offered row writes.
+ *
+ * The default container is what the flat reading is pinned to, so it is what breaks the
+ * tie. `/api/db/objects/inventory` answers it and the hook passes it in.
+ */
+describe("tagObjectKinds resolves from the container the flat reading is a reading of", () => {
+  const flat = (name: string): DetailedObject => ({ name, columns: [], indexes: [] });
+  const listed = (kind: string, ...path: string[]): DatabaseObject => ({
+    name: path[path.length - 1],
+    kind,
+    path,
+  });
+  const sqlServer = [listed("view", "shop", "dbo", "orders"), listed("table", "shop", "sales", "orders")];
+
+  test("SQL Server: a bare flat name takes the object in the session default schema", () => {
+    const tagged = tagObjectKinds([flat("orders")], sqlServer, ["shop", "dbo"]);
+    expect(tagged[0].kind).toBe("view");
+    expect(tagged[0].path).toEqual(["shop", "dbo", "orders"]);
+  });
+
+  test("and the view it resolves to is then refused row writes, which is the whole point", () => {
+    // The measured consequence, asserted through the filter that met it. Untagged reads as
+    // "nothing was declared about this object" and every filter keeps it, so the kindless
+    // `dbo` view passed a WRITE-capability filter.
+    const capabilities = {
+      queryLanguage: "sql",
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+      ],
+    } as unknown as ProviderCapabilities;
+
+    expect(rowWritableObjects(tagObjectKinds([flat("orders")], sqlServer, ["shop", "dbo"]), capabilities)).toEqual([]);
+    expect(rowWritableObjects(tagObjectKinds([flat("orders")], sqlServer), capabilities).map((o) => o.name)).toEqual([
+      "orders",
+    ]);
+  });
+
+  test("a container holding neither candidate leaves the entry untagged", () => {
+    // The direction that must not move: the default container breaks a tie it is a party
+    // to, and a genuine ambiguity between two other containers is still refused.
+    const tagged = tagObjectKinds([flat("orders")], sqlServer, ["shop", "warehouse"]);
+    expect(tagged[0].kind).toBeUndefined();
+  });
+
+  test("an inventory read that answered no default container keeps the refusal", () => {
+    expect(tagObjectKinds([flat("orders")], sqlServer)[0].kind).toBeUndefined();
+  });
+});
