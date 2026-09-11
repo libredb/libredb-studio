@@ -2100,8 +2100,18 @@ function fixtureRead(read: string, inputs: Record<string, unknown>, sql: string)
   switch (read) {
     case "databases":
       return { recordset: FIXTURE_DATABASES, rowsAffected: [FIXTURE_DATABASES.length] };
-    case "schemas":
-      return { recordset: [{ name: "app" }, { name: "dbo" }, { name: "reporting" }], rowsAffected: [3] };
+    case "schemas": {
+      // `SCHEMA_NAME()` and `DB_NAME()` are evaluated in the CONNECTED database whichever
+      // catalog the statement is three-part named at, which is why the provider carries
+      // `connected_database` back rather than interpolating a name to compare in SQL. The
+      // fixture's login is `sa`, whose default schema is `dbo`.
+      const rows = [
+        { name: "app", is_session_schema: 0, connected_database: "libredb_objects" },
+        { name: "dbo", is_session_schema: 1, connected_database: "libredb_objects" },
+        { name: "reporting", is_session_schema: 0, connected_database: "libredb_objects" },
+      ];
+      return { recordset: rows, rowsAffected: [rows.length] };
+    }
     case "counts": {
       const rows = FIXTURE_COUNTS[schema ?? ""];
       return { recordset: rows, rowsAffected: [rows.length] };
@@ -2227,6 +2237,10 @@ describe("object surface", () => {
       ["libredb_objects_two", "reporting"],
     ]);
     expect(schemas.every((container) => container.level === 1)).toBe(true);
+    // Not the connected database, so no schema here is the session's: `SCHEMA_NAME()`
+    // answers for the database the session is IN, and naming `dbo` under every catalog
+    // would point first paint at a schema this session has nothing to do with.
+    expect(schemas.every((container) => container.isSessionDefault === false)).toBe(true);
 
     // Two measured exclusions, and a statement is the only place a mocked recordset can
     // show them. `sys` and `INFORMATION_SCHEMA` can hold nothing a person wrote
@@ -2245,6 +2259,15 @@ describe("object surface", () => {
     const schemaRead = issued.at(-1)!.sql;
     expect(schemaRead).toContain("[libredb_objects_two].sys.schemas");
     expect(schemaRead).not.toContain("[libredb_objects].sys.schemas");
+
+    // Last, because the assertions above read the statement issued most recently. The
+    // connected database is where `SCHEMA_NAME()` IS about the catalog being listed, and
+    // first paint needs it: it walks to the session default at the DEEPEST declared level
+    // and counts there (#789), so an engine marking only its outer level opens a database
+    // and stops with no folder and no count.
+    const ownSchemas = await provider.listContainers(["libredb_objects"]);
+    expect(ownSchemas.find((container) => container.name === "dbo")?.isSessionDefault).toBe(true);
+    expect(ownSchemas.find((container) => container.name === "app")?.isSessionDefault).toBe(false);
 
     await provider.disconnect();
   });

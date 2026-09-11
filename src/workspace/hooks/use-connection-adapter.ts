@@ -19,6 +19,9 @@ export function useConnectionAdapter({ connections: externalConnections, onSchem
         type: c.type,
         createdAt: new Date(),
         managed: true,
+        // A hand-written field list, so a host field this forgets is dropped in silence.
+        // Forgetting this one reads the catalog the host asked it not to (#765).
+        skipObjectScan: c.skipObjectScan,
       })),
     [externalConnections],
   );
@@ -31,6 +34,8 @@ export function useConnectionAdapter({ connections: externalConnections, onSchem
   const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null);
   const [schema, setSchema] = useState<TableSchema[]>([]);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
+  /** The connection whose deferred catalog read the user has explicitly asked for, by id. */
+  const [scanRequested, setScanRequested] = useState<string | null>(null);
 
   // Resolution is by id ONLY — no positional tail. An embedded shell still shows
   // the host's first connection when nothing has been chosen yet, but that fallback
@@ -58,7 +63,7 @@ export function useConnectionAdapter({ connections: externalConnections, onSchem
     setActiveConnectionId(conn?.id ?? null);
   }, []);
 
-  const fetchSchema = useCallback(
+  const readSchema = useCallback(
     async (conn: DatabaseConnection) => {
       setIsLoadingSchema(true);
       try {
@@ -72,6 +77,40 @@ export function useConnectionAdapter({ connections: externalConnections, onSchem
     },
     [onSchemaFetch],
   );
+
+  /**
+   * Whether THIS connection's catalog reads are deferred right now (#765).
+   *
+   * The same rule as `src/hooks/use-connection-manager.ts`, written again rather than
+   * shared, because these two hooks share no state and no request layer: one reads the
+   * studio's own routes and the other calls back into the host. What is shared is the
+   * FIELD, and the reader's request is held here too as the connection's id rather than as
+   * a boolean, so the next deferred connection is not already loaded.
+   */
+  const scanDeferred = useCallback(
+    (conn: DatabaseConnection) => conn.skipObjectScan === true && scanRequested !== conn.id,
+    [scanRequested],
+  );
+
+  const fetchSchema = useCallback(
+    async (conn: DatabaseConnection) => {
+      if (scanDeferred(conn)) {
+        // Nothing was read for THIS connection, so the previous one's tables may not stay
+        // on screen under its name (D31). `readSchema` is the only other writer.
+        setSchema([]);
+        return;
+      }
+      await readSchema(conn);
+    },
+    [readSchema, scanDeferred],
+  );
+
+  /** Read what opening this connection would have read, because the user asked. */
+  const loadObjects = useCallback(() => {
+    if (activeConnection === null) return;
+    setScanRequested(activeConnection.id);
+    void readSchema(activeConnection);
+  }, [activeConnection, readSchema]);
 
   const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
 
@@ -102,6 +141,9 @@ export function useConnectionAdapter({ connections: externalConnections, onSchem
     isLoadingSchema,
     connectionPulse: null as "healthy" | "degraded" | "error" | null,
     fetchSchema,
+    /** Whether the active connection is holding its catalog reads back. */
+    objectScanDeferred: activeConnection !== null && scanDeferred(activeConnection),
+    loadObjects,
     schemaContext,
   };
 }

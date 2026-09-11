@@ -14,11 +14,13 @@ import type { DatabaseConnection } from "@/lib/types";
  *
  * Two product decisions are pinned here and nowhere else.
  *
- * Decision A: first paint issues exactly TWO catalog reads on an engine that names its
- * session container - the container list, and the kind counts for that one container,
- * which is expanded. No object names and no columns. The container is resolved from the
- * ENGINE, through `Container.isSessionDefault`, so an engine that publishes no such fact
- * reads ONCE and opens nothing. PostgreSQL is that engine on purpose
+ * Decision A: first paint reads NO object names and NO columns. It walks the container
+ * chain down to the session default at the DEEPEST declared level and reads the kind
+ * counts there, so the number of reads is a consequence of the engine's shape and not the
+ * rule: two on a one-level engine (containers, counts) and three on a two-level one
+ * (catalogs, that catalog's schemas, counts). The container is resolved from the ENGINE at
+ * every level, through `Container.isSessionDefault`, so an engine that publishes no such
+ * fact reads ONCE and opens nothing. PostgreSQL is that engine on purpose
  * (`src/lib/db/types.ts` records why: a `search_path` names several schemas and none of
  * them owns the session), which is why the two-read fixture below is Oracle-shaped and
  * the one-read fixture is PostgreSQL-shaped. Guessing `public` here would be exactly the
@@ -112,7 +114,7 @@ afterEach(() => {
 });
 
 describe("opening a connection", () => {
-  test("issues exactly two catalog reads: the containers, then the counts of the active one", async () => {
+  test("a one-level engine reads the containers, then the counts of the active one, and stops", async () => {
     const calls = installFetch({
       "/api/db/objects/containers": ownerContainers,
       "/api/db/objects/counts": { table: { count: 2 }, view: { count: 0 } },
@@ -158,21 +160,38 @@ describe("opening a connection", () => {
   });
 
   /**
-   * The generalisation of decision A on a two-level engine, which is the shape Task 11
-   * onwards lands: the counts of the active container cannot be reached without listing
-   * the level between, so first paint is three reads and not two. The alternative,
-   * stopping at the catalog, would leave the tree closed on an engine that DOES name its
-   * session schema.
+   * The same rule on the repo's only two-level engine, and the fixture is SQL Server's own
+   * shape rather than an invented one (standing ruling 5a). Measured from
+   * `src/lib/db/providers/sql/mssql.ts`: `listContainers()` answers every database this
+   * login can open with `DB_ID()` marking the connected one, `listContainers([db])` answers
+   * that database's schemas, and `SCHEMA_NAME()` marks the session's own schema for the
+   * connected database ONLY, so `master`'s schemas carry no mark at all. Task 7 added that
+   * second mark to the provider; before it, first paint on the only two-level engine in
+   * the repo opened a database and stopped with no folder and no count.
+   *
+   * Three reads, not two, and that is the rule holding rather than bending: the counts of
+   * the active container cannot be reached without listing the level between.
    */
   test("a two-level engine descends to the session default at each level", async () => {
     const calls = installFetch({
-      "/api/db/objects/containers": (body: unknown) =>
-        (body as { parent?: string[] }).parent === undefined
+      "/api/db/objects/containers": (body: unknown) => {
+        const parent = (body as { parent?: string[] }).parent;
+        if (parent === undefined) {
+          return [
+            { path: ["shop"], name: "shop", level: 0, isSessionDefault: true },
+            { path: ["master"], name: "master", level: 0, isSessionDefault: false },
+          ];
+        }
+        // Only the connected database's schemas carry the mark: `SCHEMA_NAME()` answers for
+        // the database the session is in, so naming `dbo` under `master` too would point
+        // first paint at a schema the session has nothing to do with.
+        return parent[0] === "shop"
           ? [
-              { path: ["shop"], name: "shop", level: 0, isSessionDefault: true },
-              { path: ["master"], name: "master", level: 0, isSessionDefault: false },
+              { path: ["shop", "app"], name: "app", level: 1, isSessionDefault: false },
+              { path: ["shop", "dbo"], name: "dbo", level: 1, isSessionDefault: true },
             ]
-          : [{ path: ["shop", "dbo"], name: "dbo", level: 1, isSessionDefault: true }],
+          : [{ path: ["master", "dbo"], name: "dbo", level: 1, isSessionDefault: false }];
+      },
       "/api/db/objects/counts": { table: { count: 7 } },
     });
 

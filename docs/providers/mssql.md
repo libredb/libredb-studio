@@ -639,6 +639,33 @@ would answer the connected database's schemas under every catalog in the tree an
 it. Measured: `listContainers(['libredb_objects_two'])` answers `db_owner, dbo, guest, warehouse`
 while `listContainers(['libredb_objects'])` answers `app, dbo, guest, reporting`.
 
+**The schema level marks `isSessionDefault` too, for the connected database only.**
+
+```sql
+SELECT s.name,
+       CASE WHEN s.name = SCHEMA_NAME() THEN 1 ELSE 0 END AS is_session_schema,
+       DB_NAME() AS connected_database
+FROM [caller_db].sys.schemas s ...
+```
+
+`SCHEMA_NAME()` is the session's own default schema, `dbo` for a login that has not been given
+another, and it is evaluated in the database the session is IN whichever catalog the statement is
+three-part named at. So the flag is only about the connected database, and `DB_NAME()` travels back
+with the rows for the provider to apply that restriction against the catalog it asked for. Comparing
+in TypeScript rather than in SQL avoids interpolating a database NAME as a string literal beside the
+identifier that is already interpolated as a name.
+
+Why the level needs it at all: first paint walks the container chain down to the session default at
+the DEEPEST declared level and reads the counts there (#789). An engine that marks only its outer
+level opens a database and stops, with no folder and no count. This is the only two-level engine, so
+it is the only one where the distinction exists.
+
+> **UNVERIFIED against a live server.** The two columns are implemented from Microsoft's documented
+> behaviour of `SCHEMA_NAME()` and `DB_NAME()`; no SQL Server was available when they were added. The
+> fixture in `tests/integration/db/mssql-provider.test.ts` states what that behaviour produces, and
+> the restriction itself is pinned there in both directions: `dbo` is marked under
+> `libredb_objects` and no schema is marked under `libredb_objects_two`. Task 27 measures it live.
+
 Two schemas are excluded, and both exclusions are measured rather than tidied:
 
 | Excluded | Why | Measured |

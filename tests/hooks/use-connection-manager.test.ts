@@ -1060,11 +1060,57 @@ describe("deferring the object scan", () => {
     });
 
     expect(catalogPaths(fetchMock)).toEqual([]);
+    expect(result.current.isLoadingSchema).toBe(false);
+  });
+
+  /**
+   * D31, which this file already states at the top: the previous connection's list is not
+   * evidence about this one. A deferred connection reads nothing, so it has NO objects,
+   * and the four surfaces fed from here - `schemaContext` into the AI panels and the agent
+   * rail, the ER diagram, the mobile explorer, and the profiler/codegen/test-data lookups -
+   * must not be handed the last connection's tables under this connection's name. Feeding
+   * them to a model as grounding is the failure class #414 measured.
+   *
+   * The assertion this replaces was vacuous: `schema` is `[]` from mount, so asserting
+   * emptiness after a deferred read proved nothing. The scan of A is the control.
+   */
+  test("deferring a connection drops the tables the PREVIOUS connection loaded", async () => {
+    const fetchMock = installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-a" }));
+    });
+    expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]);
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-b", skipObjectScan: true }));
+    });
+
     expect(result.current.schema).toEqual([]);
-    // Nothing failed, so nothing may be reported as a failure: an empty panel that
+    expect(result.current.schemaContext).toBe("[]");
+    // Nothing failed either, so nothing may be reported as a failure: an empty panel that
     // blames the engine for a read nobody issued is worse than an empty panel.
     expect(result.current.schemaError).toBeNull();
-    expect(result.current.isLoadingSchema).toBe(false);
+    expect(catalogPaths(fetchMock)).toEqual(["/api/db/schema/list", "/api/db/schema/relations"]);
+  });
+
+  test("deferring a connection also drops the PREVIOUS connection's failure", async () => {
+    mockGlobalFetch({ "/api/db/schema/list": { ok: false, status: 500, json: { error: "'(' expected" } } });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-a" }));
+    });
+    expect(result.current.schemaError).toBe("'(' expected");
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-b", skipObjectScan: true }));
+    });
+
+    expect(result.current.schemaError).toBeNull();
   });
 
   // The control for the assertion above. Same hook, same routes, same counter, and

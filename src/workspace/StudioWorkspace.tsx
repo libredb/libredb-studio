@@ -341,6 +341,8 @@ export function StudioWorkspace({
                 onObjectClick={onObjectClick}
                 onShowDiagram={features.schemaDiagram ? () => setShowDiagram(true) : undefined}
                 metadata={conn.metadata}
+                objectScanDeferred={conn.objectScanDeferred}
+                onLoadObjects={conn.loadObjects}
               />
             </ResizablePanel>
             <ResizableHandle className="w-1 bg-transparent hover:bg-brand-tint/30 transition-colors" />

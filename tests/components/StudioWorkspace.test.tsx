@@ -29,6 +29,7 @@ let capturedTabManagerArgs: Record<string, unknown> = {};
 const mockSetConnections = mock(() => {});
 const mockSetActiveConnection = mock(() => {});
 const mockSetSchema = mock(() => {});
+const mockLoadObjects = mock(() => {});
 const mockFetchSchema = mock(() => {});
 // Tab manager
 const mockSetTabs = mock(() => {});
@@ -90,6 +91,8 @@ mock.module("@/workspace/hooks/use-connection-adapter", () => ({
     isLoadingSchema: false,
     connectionPulse: null,
     fetchSchema: mockFetchSchema,
+    objectScanDeferred: false,
+    loadObjects: mockLoadObjects,
     schemaContext: JSON.stringify([usersTable]),
     metadata: null,
     ...connAdapterOverride,
@@ -759,6 +762,21 @@ describe("StudioWorkspace", () => {
       }),
     );
     expect(mockHandleTableClick).not.toHaveBeenCalled();
+  });
+
+  // #765, embedded. The two shells render different chrome, so the wiring is asserted here
+  // as well as in `tests/components/Studio.test.tsx`: a host connection that defers its
+  // scan must reach the tree as deferred and be offered the adapter's own load action.
+  test("the host's deferred scan and its load action reach the object tree", () => {
+    connAdapterOverride = { objectScanDeferred: true, loadObjects: mockLoadObjects };
+    renderWorkspace();
+    expect(capturedSidebarProps.objectScanDeferred).toBe(true);
+    expect(capturedSidebarProps.onLoadObjects).toBe(mockLoadObjects);
+  });
+
+  test("control: a host connection that does not defer hands the tree no deferral", () => {
+    renderWorkspace();
+    expect(capturedSidebarProps.objectScanDeferred).toBe(false);
   });
 
   test("sidebar noop callbacks and references are wired", () => {

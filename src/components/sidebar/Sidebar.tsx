@@ -9,6 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ObjectTree } from "@/components/object-tree";
 import { GitHubRepoLink } from "@/components/github-repo-link";
 import { getAppVersion } from "@/lib/app-version";
+import { cn } from "@/lib/utils";
 import { ConnectionsList } from "./ConnectionsList";
 
 interface SidebarProps {
@@ -80,50 +81,56 @@ export function Sidebar({
         </div>
       </div>
 
-      <ScrollArea className="flex-1 min-h-0 px-2 py-4">
-        <div className="space-y-6">
-          <ConnectionsList
-            connections={connections}
-            activeConnection={activeConnection}
-            onSelectConnection={onSelectConnection}
-            onDeleteConnection={onDeleteConnection}
-            onEditConnection={onEditConnection}
-            onDuplicateConnection={onDuplicateConnection}
-            onAddConnection={onAddConnection}
-          />
-
-          {/*
-            The object tree replaces the flat table list (#789). It reads the catalog
-            itself, lazily, so the sidebar hands it the connection and the declaration and
-            keeps no copy of what it found.
-
-            Nothing is drawn while the declaration is missing, and that is not caution: an
-            absent `containerLevels` reads as depth 0, which is a REAL answer for five
-            engines, so a placeholder declaration would make a one-level engine read the
-            counts of a container that does not exist instead of listing its schemas.
-          */}
-          {activeConnection &&
-            (metadata ? (
-              <div className="h-[60vh]">
-                <ObjectTree
-                  connection={activeConnection}
-                  capabilities={metadata.capabilities}
-                  deferred={objectScanDeferred}
-                  onLoad={onLoadObjects}
-                  onObjectClick={onObjectClick}
-                />
-              </div>
-            ) : (
-              <div
-                data-testid="sidebar-provider-pending"
-                className="flex flex-col items-center justify-center py-12 text-muted-foreground"
-              >
-                <LoaderCircle strokeWidth={1.5} className="w-6 h-6 animate-spin text-brand/40" />
-                <span className="mt-3 text-xs font-medium">Reading the connection...</span>
-              </div>
-            ))}
-        </div>
+      {/*
+        The connection list scrolls with the sidebar; the tree does NOT, and the split is
+        load-bearing rather than cosmetic. The tree windows its rows against the height of
+        its own scroll box, so nesting it in this ScrollArea would make it measure a box
+        with no bottom and mount rows against the wrong height - and the fixed height that
+        hid that is what left it unable to use the panel it is in.
+      */}
+      <ScrollArea className={cn("min-h-0 px-2 py-4", activeConnection ? "shrink-0 max-h-[45%]" : "flex-1")}>
+        <ConnectionsList
+          connections={connections}
+          activeConnection={activeConnection}
+          onSelectConnection={onSelectConnection}
+          onDeleteConnection={onDeleteConnection}
+          onEditConnection={onEditConnection}
+          onDuplicateConnection={onDuplicateConnection}
+          onAddConnection={onAddConnection}
+        />
       </ScrollArea>
+
+      {/*
+        The object tree replaces the flat table list (#789). It reads the catalog itself,
+        lazily, so the sidebar hands it the connection and the declaration and keeps no copy
+        of what it found.
+
+        Nothing is drawn while the declaration is missing, and that is not caution: an
+        absent `containerLevels` reads as depth 0, which is a REAL answer for five engines,
+        so a placeholder declaration would make a one-level engine read the counts of a
+        container that does not exist instead of listing its schemas.
+      */}
+      {activeConnection && (
+        <div className="flex-1 min-h-0 px-2 pb-4">
+          {metadata ? (
+            <ObjectTree
+              connection={activeConnection}
+              capabilities={metadata.capabilities}
+              deferred={objectScanDeferred}
+              onLoad={onLoadObjects}
+              onObjectClick={onObjectClick}
+            />
+          ) : (
+            <div
+              data-testid="sidebar-provider-pending"
+              className="flex flex-col items-center justify-center py-12 text-muted-foreground"
+            >
+              <LoaderCircle strokeWidth={1.5} className="w-6 h-6 animate-spin text-brand/40" />
+              <span className="mt-3 text-xs font-medium">Reading the connection...</span>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="p-3 border-t border-border bg-card/50 backdrop-blur-md">
         <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-muted/30 border border-border/50">

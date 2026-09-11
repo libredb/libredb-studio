@@ -473,4 +473,108 @@ describe("useConnectionAdapter", () => {
       expect(result.current.metadata?.labels).toBeUndefined();
     });
   });
+
+  // ── The no-scan escape hatch, embedded (#765) ──────────────────────────────
+  //
+  // The two shells render different chrome and a change verified in one is not verified
+  // in the other (CLAUDE.md), so the deferral is asserted here on its own terms: this hook
+  // is the embedded shell's whole connection layer, and the host is the only party that
+  // can declare the flag.
+  describe("deferring the object scan", () => {
+    test("a host connection that defers its scan is never read", async () => {
+      const onSchemaFetch = mock(() => Promise.resolve(makeSchema()));
+      const connections = [makeWorkspaceConnection({ id: "c1", skipObjectScan: true })];
+
+      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+
+      await act(async () => {
+        await result.current.fetchSchema(result.current.connections[0]);
+      });
+
+      expect(onSchemaFetch).not.toHaveBeenCalled();
+      expect(result.current.objectScanDeferred).toBe(true);
+    });
+
+    // The control for the assertion above: same hook, same host callback, flag removed.
+    test("control: the same connection without the flag is read", async () => {
+      const onSchemaFetch = mock(() => Promise.resolve(makeSchema()));
+      const connections = [makeWorkspaceConnection({ id: "c1" })];
+
+      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+
+      await act(async () => {
+        await result.current.fetchSchema(result.current.connections[0]);
+      });
+
+      expect(onSchemaFetch).toHaveBeenCalledWith("c1");
+      expect(result.current.objectScanDeferred).toBe(false);
+    });
+
+    test("the host's flag survives the mapping into a DatabaseConnection", () => {
+      const onSchemaFetch = mock(() => Promise.resolve([]));
+      const connections = [makeWorkspaceConnection({ id: "c1", skipObjectScan: true })];
+
+      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+
+      // The mapper writes a fixed field list, so a field it forgets is dropped silently -
+      // and the tree would then read the catalog the host asked it not to.
+      expect(result.current.connections[0].skipObjectScan).toBe(true);
+    });
+
+    test("loadObjects performs the read the host deferred, and stops deferring", async () => {
+      const onSchemaFetch = mock(() => Promise.resolve(makeSchema()));
+      const connections = [makeWorkspaceConnection({ id: "c1", skipObjectScan: true })];
+
+      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+
+      await act(async () => {
+        await result.current.fetchSchema(result.current.connections[0]);
+      });
+      expect(onSchemaFetch).not.toHaveBeenCalled();
+
+      await act(async () => {
+        result.current.loadObjects();
+      });
+
+      expect(onSchemaFetch).toHaveBeenCalledWith("c1");
+      expect(result.current.objectScanDeferred).toBe(false);
+      expect(result.current.schema).toHaveLength(2);
+    });
+
+    // D31, embedded: the host's previous connection is not evidence about this one.
+    test("deferring a connection drops the tables the previous one loaded", async () => {
+      const onSchemaFetch = mock(() => Promise.resolve(makeSchema()));
+      const connections = [
+        makeWorkspaceConnection({ id: "c1" }),
+        makeWorkspaceConnection({ id: "c2", skipObjectScan: true }),
+      ];
+
+      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+
+      await act(async () => {
+        await result.current.fetchSchema(result.current.connections[0]);
+      });
+      expect(result.current.schema).toHaveLength(2);
+
+      await act(async () => {
+        await result.current.fetchSchema(result.current.connections[1]);
+      });
+
+      expect(result.current.schema).toEqual([]);
+      expect(result.current.schemaContext).toBe("[]");
+    });
+
+    test("loadObjects with no active connection reads nothing", async () => {
+      const onSchemaFetch = mock(() => Promise.resolve(makeSchema()));
+
+      const { result } = renderHook(() => useConnectionAdapter({ connections: [], onSchemaFetch }));
+
+      await act(async () => {
+        result.current.loadObjects();
+      });
+
+      expect(onSchemaFetch).not.toHaveBeenCalled();
+      expect(result.current.objectScanDeferred).toBe(false);
+    });
+  });
 });

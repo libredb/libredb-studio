@@ -136,7 +136,17 @@ export function useConnectionManager(storageReady = false) {
 
   const fetchSchema = useCallback(
     async (conn: DatabaseConnection) => {
-      if (scanDeferred(conn)) return;
+      if (scanDeferred(conn)) {
+        // Nothing was read for THIS connection, so nothing may stay on screen or in the AI
+        // prompt as its objects. `readSchema` is the only writer of these two, so returning
+        // without clearing them leaves the PREVIOUS connection's tables under this
+        // connection's name - D31 again (see `readSchema`'s own catch), and the grounding
+        // failure #414 measured, since `schemaContext` is what the AI panels and the agent
+        // rail are handed.
+        setSchema([]);
+        setSchemaError(null);
+        return;
+      }
       await readSchema(conn);
     },
     [readSchema, scanDeferred],

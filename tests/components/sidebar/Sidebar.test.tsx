@@ -171,6 +171,23 @@ describe("Sidebar", () => {
     expect(result2.queryByTestId("object-tree")).toBeNull();
   });
 
+  /**
+   * The tree windows its own rows against the height of its scroll box and scrolls itself.
+   * Inside the sidebar's `ScrollArea` it would be a scroller inside a scroller, measuring a
+   * box the reader cannot see the bottom of, and Task 6's windowing would read the wrong
+   * height - which is what a fixed `h-[60vh]` was papering over. So the connections list
+   * keeps the ScrollArea and the tree gets the panel's remaining height.
+   */
+  test("the tree is not nested inside the sidebar's own scroll area", () => {
+    const props = createDefaultProps();
+    const { getByTestId } = render(<Sidebar {...props} />);
+
+    expect(getByTestId("object-tree").closest('[data-slot="scroll-area"]')).toBeNull();
+    // The control: the element that IS meant to scroll with the sidebar still does, so
+    // this is not passing because the ScrollArea disappeared.
+    expect(getByTestId("connections-list").closest('[data-slot="scroll-area"]')).not.toBeNull();
+  });
+
   // The tree reads the catalog itself, so what it needs from the sidebar is the
   // connection to read and the declaration that says what to read for it.
   test("the active connection and its capabilities reach the tree", () => {

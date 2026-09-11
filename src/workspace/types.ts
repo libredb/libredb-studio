@@ -27,6 +27,19 @@ export interface WorkspaceConnection {
   capabilities?: ProviderCapabilities;
   /** This provider's UI wording, as `getLabels()` reports it. See `capabilities`. */
   labels?: ProviderLabels;
+  /**
+   * Read no catalog when this connection opens (#765).
+   *
+   * The host is the only party that can declare it, for the same reason it declares
+   * `capabilities`: it owns the connection and knows which of its tenants' databases holds
+   * tens of thousands of objects. The workspace then shows a load action in place of the
+   * object tree and reads nothing until the user presses it; the editor and query
+   * execution are unaffected.
+   *
+   * Additive and optional, like every field on this published interface. Absent reads
+   * exactly as it did before the field existed.
+   */
+  skipObjectScan?: boolean;
 }
 
 // === User (platform → studio) ===

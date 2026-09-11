@@ -715,11 +715,17 @@ SELECT, Profile table, Generate code, Generate test data, per-table Maintenance 
 reachable only from `src/components/schema-explorer/TableItem.tsx`, so on the desktop sidebar they are
 now reachable from nowhere, in both shells.
 
-What each shell still has: the standalone app keeps all six on its mobile schema tab, which still
-renders the old explorer (`src/components/Studio.tsx`). The embedded workspace has no second surface,
-so `DataProfiler`, `CodeGenerator` and `TestDataGenerator` stay mounted in `StudioWorkspace.tsx` with
-nothing able to set `profilerTable`, `codeGenTable` or `testDataTable`, and `features.codeGenerator`
-and `features.testDataGenerator` now gate modals no user can open.
+What each shell still has, counted per shell rather than once:
+
+- **Standalone**: all six survive on the mobile schema tab, which still renders the old explorer
+  (`src/components/Studio.tsx`). The desktop sidebar has none of them.
+- **Embedded**: FOUR are lost, not three. `DataProfiler`, `CodeGenerator` and `TestDataGenerator` stay
+  mounted in `StudioWorkspace.tsx` with nothing able to set `profilerTable`, `codeGenTable` or
+  `testDataTable`, so `features.codeGenerator` and `features.testDataGenerator` now gate modals no user
+  can open; and Generate SELECT goes with them, because `tabMgr.handleGenerateSelect` had its only
+  reference in the sidebar call and now has none in that file at all. Per-table Maintenance and Create
+  table are NOT losses there: that shell passed `onOpenMaintenance={noop}` and
+  `onCreateTableClick={undefined}` before any of this.
 
 The spec's consumer table says `components/sidebar/*` and `components/schema-explorer/*` are "rewritten
 as the tree", so a row action surface is implied by the design and is absent from the task

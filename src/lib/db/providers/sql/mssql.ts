@@ -526,13 +526,24 @@ const CONTAINERS_SQL = `
  * that does is listed. So the count for a whole database always equals the sum over the
  * schemas this statement lists, because a schema it drops holds nothing to count.
  *
- * No `isSessionDefault` at this level, deliberately. SQL Server publishes the session's
- * default schema as `SCHEMA_NAME()`, but only for the database the session is IN, so
- * marking a row here would be wrong for every catalog except the connected one.
+ * `isSessionDefault` is answered for the CONNECTED database only, and that restriction is
+ * the whole of it: SQL Server publishes the session's default schema as `SCHEMA_NAME()`,
+ * which is evaluated in the database the session is in, so marking a row under any other
+ * catalog would name a schema the session has nothing to do with. `DB_NAME()` travels back
+ * with the rows so the caller can apply that restriction against the catalog it asked for,
+ * rather than this statement interpolating a database NAME as a literal to compare.
+ *
+ * The tree needs it at this level: first paint walks the container chain down to the
+ * session default at the DEEPEST declared level and reads the counts there, so an engine
+ * that marks only its outer level opens a catalog and stops, with no folder and no count
+ * (#789). `SCHEMA_NAME()` is the connection's own default schema, which is `dbo` for a
+ * login that has not been given another.
  */
 function schemasSql(database: string): string {
   return `
-        SELECT s.name AS name
+        SELECT s.name AS name,
+               CASE WHEN s.name = SCHEMA_NAME() THEN 1 ELSE 0 END AS is_session_schema,
+               DB_NAME() AS connected_database
         FROM ${database}.sys.schemas s
         JOIN ${database}.sys.database_principals p ON p.principal_id = s.principal_id
         WHERE s.name NOT IN ('sys', 'INFORMATION_SCHEMA')
@@ -740,6 +751,10 @@ interface ContainerRow {
 /** One row of `schemasSql`. */
 interface SchemaNameRow {
   name: string;
+  /** `SCHEMA_NAME()`, which is the session's default schema IN THE CONNECTED DATABASE. */
+  is_session_schema: number;
+  /** `DB_NAME()`, so the caller can tell whether the column above is about this catalog. */
+  connected_database: string;
 }
 
 /** One row of `countsSql`: a kind id and how many of it the container holds. */
@@ -1686,7 +1701,16 @@ export class MSSQLProvider extends SQLBaseProvider {
     // is the one place a path becomes named segments (standing ruling 5g, #789).
     const catalog = requiredSegment(containerSegments(capabilities, parentPath), "catalog");
     const rows = await this.runObjectRows<SchemaNameRow>(schemasSql(this.objectCatalog(catalog)));
-    return rows.map((row) => ({ path: [...parentPath, row.name], name: row.name, level }));
+    return rows.map((row) => ({
+      path: [...parentPath, row.name],
+      name: row.name,
+      level,
+      // `SCHEMA_NAME()` answered for the connected database, so it says nothing about any
+      // other catalog in the tree. Both segments come from this server's own catalog
+      // (`d.name` above and `DB_NAME()` here), so they are compared as the strings SQL
+      // Server itself produced.
+      isSessionDefault: Number(row.is_session_schema) === 1 && row.connected_database === catalog,
+    }));
   }
 
   /**
