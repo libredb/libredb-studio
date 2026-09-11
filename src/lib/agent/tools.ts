@@ -73,7 +73,16 @@ import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/executi
 import { inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
-import type { KindCount, DatabaseProvider, ObjectKindSpec, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import type {
+  Container,
+  KindCount,
+  DatabaseProvider,
+  ObjectKindSpec,
+  ProviderCapabilities,
+  ProviderLabels,
+} from "@/lib/db/types";
+import type { ContainerEnumeration } from "@/lib/db/container-walk";
+import { sessionDefaultContainer } from "@/lib/db/container-walk";
 import { containerDepth, declaredKinds, isCountSampled, isCountUnavailable } from "@/lib/db/object-kinds";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
@@ -2350,7 +2359,18 @@ const AGENT_INVENTORY_PAIR_TRUNCATION_REASON = "container and kind pair limit re
  * the rows are groupings this server derived rather than objects anybody named.
  */
 export type AgentObjectInventoryRead =
-  | { readonly kind: "completed"; readonly inventory: AgentInventory }
+  | {
+      readonly kind: "completed";
+      readonly inventory: AgentInventory;
+      /**
+       * The container the session is in, where the walk could say (#789).
+       *
+       * Beside the inventory rather than on it, because it is a fact about the READ and
+       * not about what was read: it breaks a tie in `context-snapshot.ts`'s join and is
+       * not part of the snapshot the run reasons over or fingerprints.
+       */
+      readonly defaultContainer?: readonly string[];
+    }
   /** This engine declares no object kinds, so there is nothing to tag and nothing was read. */
   | { readonly kind: "unsupported" }
   | { readonly kind: "unavailable"; readonly modelText: string }
@@ -2416,6 +2436,7 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
   if (declared.length === 0) return { kind: "unsupported" };
 
   let inventory: AgentInventory = { objects: [], kinds: [] };
+  let defaultContainer: readonly string[] | undefined;
   let outcome: AgentToolOutcome;
   try {
     outcome = await runAuditedAgentCall(context, {
@@ -2439,7 +2460,9 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
           );
         });
         try {
-          inventory = await Promise.race([walkObjectInventory(provider, context.capabilities, declared), overran]);
+          const walked = await Promise.race([walkObjectInventory(provider, context.capabilities, declared), overran]);
+          inventory = walked.inventory;
+          defaultContainer = walked.defaultContainer;
         } catch (error) {
           if (error instanceof AgentSchemaReadTimeout) throw error;
           throw asReadingFailure(error, context.connection.type);
@@ -2467,7 +2490,9 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
   }
 
   if (outcome.kind !== "completed") return { kind: "unavailable", modelText: outcome.modelText };
-  return { kind: "completed", inventory };
+  return defaultContainer === undefined
+    ? { kind: "completed", inventory }
+    : { kind: "completed", inventory, defaultContainer };
 }
 
 /**
@@ -2488,15 +2513,15 @@ async function walkObjectInventory(
   provider: DatabaseProvider,
   capabilities: ProviderCapabilities,
   declared: readonly ObjectKindSpec[],
-): Promise<AgentInventory> {
+): Promise<{ readonly inventory: AgentInventory; readonly defaultContainer?: readonly string[] }> {
   const listObjects = provider.listObjects?.bind(provider);
   // Nothing to walk rather than a thrown refusal: until Task 26 the four object methods
   // are optional on the interface, so a provider that declares kinds and cannot list them
   // is a state the TYPE still allows. An empty inventory tags nothing, which leaves the
   // run exactly as grounded as it was before this read existed.
-  if (listObjects === undefined) return { objects: [], kinds: [] };
+  if (listObjects === undefined) return { inventory: { objects: [], kinds: [] } };
 
-  const containers = await enumerateGroundingContainers(provider, capabilities);
+  const { containers, defaultContainer } = await enumerateGroundingContainers(provider, capabilities);
   const sampledFrom = new Map<string, string>();
   const objects: AgentInventoryObject[] = [];
   let truncated: AgentInventory["truncated"];
@@ -2546,33 +2571,46 @@ async function walkObjectInventory(
     ...(capabilities.tablesAreDerivedGroupings === true && spec.role === "relation" ? { derivedGroupings: true } : {}),
   }));
 
-  return truncated === undefined ? { objects, kinds } : { objects, kinds, truncated };
+  const inventory: AgentInventory = truncated === undefined ? { objects, kinds } : { objects, kinds, truncated };
+  return defaultContainer === undefined ? { inventory } : { inventory, defaultContainer };
 }
 
 /**
- * Every container the inventory covers, derived from the declared depth.
+ * Every container the inventory covers, derived from the declared depth, and the SESSION
+ * DEFAULT among them.
  *
  * `containerDepth()` decides, never `containerLevels.length`, and a zero-level engine has
- * exactly one container: the empty path.
+ * exactly one container: the empty path, which is trivially the session's as well.
+ *
+ * The default is read off this walk and carried out of it because the join downstream ties
+ * without it (#789). A bare `orders` in the flat reading answers two databases on any
+ * MySQL server holding `app` beside `app_test`, and the object side of the join walks both
+ * while the flat side is a reading of ONE. `sessionDefaultContainer` is the shared rule for
+ * which container that is, taken at the DEEPEST level only under ruling 5a2, and this walk
+ * reads it rather than `enumerateContainers` for one reason: the depth here comes from the
+ * capabilities the RUN CONTEXT holds, not from `provider.getCapabilities()`.
  */
 async function enumerateGroundingContainers(
   provider: DatabaseProvider,
   capabilities: ProviderCapabilities,
-): Promise<readonly (readonly string[])[]> {
+): Promise<ContainerEnumeration> {
   const depth = containerDepth(capabilities);
-  if (depth === 0) return [[]];
+  if (depth === 0) return { containers: [[]], defaultContainer: [] };
   const listContainers = provider.listContainers?.bind(provider);
-  if (listContainers === undefined) return [];
+  if (listContainers === undefined) return { containers: [] };
 
-  let level = (await listContainers()).map((container) => container.path);
+  let level = await listContainers();
   for (let below = 1; below < depth; below += 1) {
-    const next: (readonly string[])[] = [];
+    const next: Container[] = [];
     for (const parent of level) {
-      next.push(...(await listContainers(parent)).map((container) => container.path));
+      next.push(...(await listContainers(parent.path)));
     }
     level = next;
   }
-  return level;
+
+  const containers = level.map((container) => container.path);
+  const defaultContainer = sessionDefaultContainer(level);
+  return defaultContainer === undefined ? { containers } : { containers, defaultContainer };
 }
 
 /** One container's counts, or none where the provider declares no counting. */

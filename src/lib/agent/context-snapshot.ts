@@ -74,7 +74,8 @@
 
 import { createHash } from "node:crypto";
 import type { AgentCatalogKind } from "./composed-sql";
-import { addressKeys } from "./inventory-address";
+import { addressContainer, addressKeys } from "./inventory-address";
+import { preferredCandidate } from "@/lib/db/object-address";
 import { type AgentInventoryNoun, TABLE_INVENTORY_NOUN } from "./inventory-noun";
 import { parseSqliteIndexDdl, parseSqliteTableDdl } from "./sqlite-ddl";
 import {
@@ -918,9 +919,11 @@ async function tagWithObjectKinds(
     (read.inventory.kinds ?? []).filter((kind) => kind.role === "relation").map((kind) => kind.id),
   );
   const joinable = read.inventory.objects.map((object) =>
-    object.kind !== undefined && relationKinds.has(object.kind) ? joinKeys(object) : [],
+    object.kind !== undefined && relationKinds.has(object.kind)
+      ? { keys: joinKeys(object), container: addressContainer(object) }
+      : { keys: [], container: [] },
   );
-  const matched = joinFlatEntries(joinable, unmatched);
+  const matched = joinFlatEntries(joinable, unmatched, read.defaultContainer);
 
   const objects = read.inventory.objects.map((object, index) => {
     const columns = matched.get(index);
@@ -982,29 +985,49 @@ const joinKeys = addressKeys;
  * and `dbo`'s bare `orders` in the third, rather than the bare key taking whichever object
  * the walk happened to reach first.
  *
- * A key two objects claim in the same round is left UNJOINED on both. The columns would be
- * one object's and the other's would be wrong, and this read costing a column list is the
- * failure the module already accepts; handing a model another object's columns is not.
+ * A key two objects claim in the same round is a TIE, and `preferredContainer` is the one
+ * thing that can break it (#789). The round order is what makes the preference safe to
+ * apply: a candidate is only ever compared against others that already claimed the SAME
+ * key in the SAME round, which is the same rank, so the preference cannot promote a
+ * worse-ranked match over a better one. `preferredCandidate` is the shared rule, the one
+ * `resolveObjectAddress` breaks its own ties with, because a second spelling of it is how
+ * the object browser and this join came to disagree in the first place.
+ *
+ * Where the tie does NOT break - no preferred container, or none of the claimants in it -
+ * both are left UNJOINED. The columns would be one object's and the other's would be
+ * wrong, and this read costing a column list is the failure the module already accepts;
+ * handing a model another object's columns is not.
+ *
+ * Disclosed rather than claimed: the rule's third direction, refusing when the preferred
+ * container holds MORE THAN ONE tied candidate, cannot be reached from here and so cannot
+ * be mutated here. Two objects tying on one key at one rank share every segment from that
+ * rank on and differ somewhere before it, and every segment before the last is part of the
+ * container, so their containers always differ. It is pinned in the rule's own suite,
+ * where a caller that can reach it does.
  */
 function joinFlatEntries(
-  keys: readonly (readonly string[])[],
+  candidates: readonly { readonly keys: readonly string[]; readonly container: readonly string[] }[],
   unmatched: Map<string, AgentInventoryObject>,
+  preferredContainer: readonly string[] | undefined,
 ): Map<number, AgentInventoryObject> {
   const matched = new Map<number, AgentInventoryObject>();
-  const rounds = Math.max(0, ...keys.map((candidate) => candidate.length));
+  const rounds = Math.max(0, ...candidates.map((candidate) => candidate.keys.length));
 
   for (let round = 0; round < rounds; round += 1) {
     const claimants = new Map<string, number[]>();
-    for (const [index, candidate] of keys.entries()) {
+    for (const [index, candidate] of candidates.entries()) {
       if (matched.has(index)) continue;
-      const key = candidate[round];
+      const key = candidate.keys[round];
       if (key === undefined || !unmatched.has(key)) continue;
       const claimed = claimants.get(key);
       if (claimed === undefined) claimants.set(key, [index]);
       else claimed.push(index);
     }
     for (const [key, claimed] of claimants) {
-      const only = claimed.length === 1 ? claimed[0] : undefined;
+      const only =
+        claimed.length === 1
+          ? claimed[0]
+          : preferredCandidate(claimed, (index) => candidates[index].container, preferredContainer);
       const entry = only === undefined ? undefined : unmatched.get(key);
       if (only === undefined || entry === undefined) continue;
       matched.set(only, entry);

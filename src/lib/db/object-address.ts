@@ -138,13 +138,45 @@ export function resolveObjectAddress<T>(
 
   if (best.length === 1) return { kind: "resolved", object: best[0] };
   if (best.length === 0) return { kind: "absent" };
+
+  const chosen = preferredCandidate(
+    best,
+    (item) => {
+      const segments = segmentsOf(item);
+      return segments.slice(0, segments.length - 1);
+    },
+    preferredContainer,
+  );
   // The candidates are the whole TIED SET, never the subset a failed tie-break left: the
   // caller is reporting which objects answer to the spelling, and that is all of them.
-  if (preferredContainer === undefined) return { kind: "ambiguous", candidates: best };
+  return chosen === undefined ? { kind: "ambiguous", candidates: best } : { kind: "resolved", object: chosen };
+}
 
-  const preferred = best.filter((item) => {
-    const segments = segmentsOf(item);
-    return sameContainer(segments.slice(0, segments.length - 1), preferredContainer);
-  });
-  return preferred.length === 1 ? { kind: "resolved", object: preferred[0] } : { kind: "ambiguous", candidates: best };
+/**
+ * The tie-break itself, lifted out so the SECOND consumer that ties can share it (#789).
+ *
+ * `resolveObjectAddress` resolves one spelling at a time. `context-snapshot.ts` joins a
+ * whole flat reading to a whole object reading at once, round by round from the most
+ * qualified spelling down, consuming an entry as it is claimed - a different algorithm,
+ * because it has to keep two objects from taking one entry's columns - and it reaches the
+ * SAME question at the same moment: several candidates tie on one key, and which of them
+ * the shorter reading meant is not in the shorter reading. Writing the answer twice is how
+ * this epic took two Criticals one layer apart, so both callers ask this.
+ *
+ * The three directions it must not move in are the rule's own, and they are stated there.
+ * The one this function is: it resolves ONLY when the preferred container holds exactly
+ * one of the tied candidates, and answers `undefined` both when nothing is preferred and
+ * when more than one is. Taking the first would file a row under an object nobody named.
+ *
+ * A caller with no context passes `undefined` and keeps its refusal, which is why the
+ * absence is handled here rather than at each call site.
+ */
+export function preferredCandidate<T>(
+  candidates: readonly T[],
+  containerOf: (item: T) => readonly string[],
+  preferredContainer: readonly string[] | undefined,
+): T | undefined {
+  if (preferredContainer === undefined) return undefined;
+  const preferred = candidates.filter((item) => sameContainer(containerOf(item), preferredContainer));
+  return preferred.length === 1 ? preferred[0] : undefined;
 }

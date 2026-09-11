@@ -73,7 +73,25 @@ export async function enumerateContainers(
     level = next;
   }
 
-  const defaults = level.filter((container) => container.isSessionDefault === true);
   const containers = level.map((container) => container.path);
-  return defaults.length === 1 ? { containers, defaultContainer: defaults[0].path } : { containers };
+  const defaultContainer = sessionDefaultContainer(level);
+  return defaultContainer === undefined ? { containers } : { containers, defaultContainer };
+}
+
+/**
+ * Which of a DEEPEST LEVEL's containers is the session's, where exactly one says so.
+ *
+ * Exported because a second walk reads the same fact off the same answer: the agent's
+ * grounding inventory (`src/lib/agent/tools.ts`) enumerates containers from the
+ * capabilities its run context already holds rather than from `provider.getCapabilities()`,
+ * so it cannot call `enumerateContainers` itself, and the rule for reading a default off a
+ * level must not be written twice. Task 28's sweep is where the two walks become one.
+ *
+ * More than one flagged container is a provider defect and is answered as NO default
+ * rather than by picking one, the same as none: a tie-breaker that guesses is worse than
+ * one that declines, because the consumer's refusal is correct and its guess is not.
+ */
+export function sessionDefaultContainer(level: readonly Container[]): readonly string[] | undefined {
+  const defaults = level.filter((container) => container.isSessionDefault === true);
+  return defaults.length === 1 ? defaults[0].path : undefined;
 }

@@ -1970,6 +1970,82 @@ describe("captureContextSnapshot — the object surface that says what each entr
   });
 
   /**
+   * The tie-breaker, on the agent's own join (#789).
+   *
+   * The same two readings the object browser joins, tied the same way, and until this
+   * round the agent was the one consumer that resolved them by rank alone. The spelling
+   * is MySQL's: `getSchema()` reads ONE database and names its tables bare, while the
+   * object surface walks every database the server holds, so a bare `orders` ties across
+   * `app` and `app_test` on any server that holds both. Refusing there handed the model a
+   * kind-tagged row with no columns beside a kindless row carrying the real ones.
+   *
+   * What breaks it is the fact the walk already read and threw away: exactly one
+   * deepest-level container answers `isSessionDefault`, and it is the container the flat
+   * reading is a reading OF.
+   */
+  test("the session default the walk already read breaks a tie the flat reading cannot", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        containers: () => [
+          { path: ["app"], name: "app", level: 0, isSessionDefault: true },
+          { path: ["app_test"], name: "app_test", level: 0 },
+        ],
+        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+        objects: (container, kind) =>
+          kind === "table" ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
+        schema: [
+          {
+            name: "orders",
+            columns: [{ name: "id", type: "int", nullable: false, isPrimary: true }],
+            indexes: [],
+            foreignKeys: [],
+          },
+        ],
+      }),
+    );
+
+    expect(snapshot.objects.map((object) => [object.name, object.columns.length])).toEqual([
+      ["app.orders", 1],
+      ["app_test.orders", 0],
+    ]);
+    // The flat entry was CONSUMED, so the kindless duplicate that used to reach the
+    // prompt beside the kinded row is gone.
+    expect(snapshot.objects.every((object) => object.kind !== undefined)).toBe(true);
+  });
+
+  /**
+   * The direction the preference must never move in: it breaks a TIE and never promotes.
+   * `app` is the session default and `app_test.orders` is spelled in full, so the more
+   * qualified match wins outright and the default container decides nothing.
+   */
+  test("the session default never promotes a worse-ranked match over a fully spelled one", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        containers: () => [
+          { path: ["app"], name: "app", level: 0, isSessionDefault: true },
+          { path: ["app_test"], name: "app_test", level: 0 },
+        ],
+        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+        objects: (container, kind) =>
+          kind === "table" ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
+        schema: [
+          {
+            name: "app_test.orders",
+            columns: [{ name: "id", type: "int", nullable: false, isPrimary: true }],
+            indexes: [],
+            foreignKeys: [],
+          },
+        ],
+      }),
+    );
+
+    expect(snapshot.objects.map((object) => [object.name, object.columns.length])).toEqual([
+      ["app.orders", 0],
+      ["app_test.orders", 1],
+    ]);
+  });
+
+  /**
    * Standing ruling 3, measured on MySQL 26.7.0: a table and a procedure called `foo`
    * coexist in one database. The join key ignores role, so the procedure would have taken
    * the table's columns and reached the model as a routine with a column list.
