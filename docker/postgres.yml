@@ -5,17 +5,37 @@
 #   docker compose -f docker/postgres.yml down
 #   docker compose -f docker/postgres.yml down -v  # Remove volumes too
 #
+# Upgrading from #792's restart-looping state: a failed run may have left a
+# partially-initialized data directory in libredb_postgres_data, which the 18
+# image refuses to start on. Run `down -v` once to clear it; after that the
+# documented command is all you need.
+#
 # Connection:
 #   Host: localhost
-#   Port: 5432
+#   Port: 5432 (override the host side with LIBREDB_POSTGRES_HOST_PORT)
 #   Database: postgres (or libredb_dev)
 #   User: postgres
 #   Password: postgres
+#
+# Running alongside another PostgreSQL (your own, or this repo's
+# database-compose.yml, which publishes the same 5432)? Parameterise instead of
+# stopping it:
+#   LIBREDB_CONTAINER_PREFIX=dev LIBREDB_POSTGRES_HOST_PORT=55432 \
+#     docker compose -f docker/postgres.yml up -d
 
 services:
   postgres:
     image: postgres:18
-    container_name: libredb-postgres
+    # The prefix and the host port are parameters (#792). Both default to what the file
+    # used before, so `docker compose -f docker/postgres.yml up -d` alone is unchanged;
+    # a contributor already running PostgreSQL on 5432, or bringing this file up next to
+    # `database-compose.yml` (which used the same container name and port and so could
+    # never start alongside it), overrides them via the environment:
+    #   LIBREDB_CONTAINER_PREFIX=me LIBREDB_POSTGRES_HOST_PORT=55432 \
+    #     docker compose -f docker/postgres.yml up -d
+    # The prefix also scopes the named volume, so two prefixed fleets on one host cannot
+    # silently share one data directory.
+    container_name: ${LIBREDB_CONTAINER_PREFIX:-libredb}-postgres
     restart: unless-stopped
 
     # Enable pg_stat_statements and other monitoring extensions
@@ -40,11 +60,16 @@ services:
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
 
     ports:
-      - "5432:5432"
+      - "${LIBREDB_POSTGRES_HOST_PORT:-5432}:5432"
 
     volumes:
-      # Persistent data volume
-      - libredb_postgres_data:/var/lib/postgresql/data
+      # Persistent data volume. PostgreSQL 18's image wants the mount at
+      # /var/lib/postgresql (the data dir is a PGDATA subdirectory of it); mounting
+      # over the old /var/lib/postgresql/data path makes the 18 image refuse to start
+      # and restart-loop, because it sees a non-empty pgdata directory left over from
+      # a different major. The parent mount is what the image documents for 18+ and is
+      # forward-compatible. (#792)
+      - postgres_data:/var/lib/postgresql
       # Init scripts (executed in alphabetical order on first run)
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
 
@@ -63,6 +88,11 @@ services:
         reservations:
           memory: 256M
 
+# The `name:` is what scopes the volume: the key is a static internal reference
+# (Compose forbids interpolation in mapping keys), while the real volume name carries
+# the prefix, so two prefixed fleets on one host cannot silently share one data
+# directory. The old file pinned `libredb_postgres_data` with no prefix — exactly how
+# #792's `docker/postgres.yml` collided with `database-compose.yml`.
 volumes:
-  libredb_postgres_data:
-    name: libredb_postgres_data
+  postgres_data:
+    name: ${LIBREDB_CONTAINER_PREFIX:-libredb}_postgres_data

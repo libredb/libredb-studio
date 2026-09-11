@@ -40,15 +40,22 @@ services:
 
   libredb-postgres:
     image: postgres:18
-    container_name: libredb-postgres
+    # Same parameterisation as the dev fixtures (#792), same defaults: one
+    # LIBREDB_CONTAINER_PREFIX / LIBREDB_POSTGRES_HOST_PORT override moves all
+    # three files together, so the collision `docs/providers/README.md` records
+    # between this file and the fixture no longer needs a manual rename.
+    container_name: ${LIBREDB_CONTAINER_PREFIX:-libredb}-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: libredb_storage
     ports:
-      - "5432:5432"
+      - "${LIBREDB_POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # postgres:18 moved the expected data mount to /var/lib/postgresql (the data
+      # dir is a PGDATA subdirectory of it); the old path restart-loops the 18 image.
+      # Same defect and fix as #792's docker/postgres.yml.
+      - pgdata:/var/lib/postgresql
 
 volumes:
   storage-data:

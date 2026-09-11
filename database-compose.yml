@@ -37,14 +37,23 @@ x-druid-env: &druid-env
 services:
   postgres:
     image: postgres:18
-    container_name: libredb-postgres
+    # Container name and host port are parameters (#792): both default to what this
+    # file used before, and the same LIBREDB_CONTAINER_PREFIX /
+    # LIBREDB_POSTGRES_HOST_PORT overrides apply to docker/postgres.yml, which used to
+    # hardcode this exact name and port and so could never run alongside this fleet.
+    container_name: ${LIBREDB_CONTAINER_PREFIX:-libredb}-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
-      - "5432:5432"
+      - "${LIBREDB_POSTGRES_HOST_PORT:-5432}:5432"
+    # The repo's only engine seed script lives in docker/postgres-init/; without this
+    # mount a plain `docker compose up` of this file never applied it, so the two
+    # compose files disagreed about what a development PostgreSQL is. (#792)
+    volumes:
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
   mongodb:
     image: mongo:latest
     container_name: libredb-mongodb

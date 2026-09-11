@@ -452,4 +452,7 @@ each other by service name, so nothing depends on a published host port existing
 
 One collision to know about if you run both files: that root compose file and the fixture both name a
 container `libredb-postgres`, so the second one to start fails with *"container name is already in
-use"*. Rename one, or run only the fixture and point Studio's `STORAGE_*` variables at it.
+use"* unless you override. Set `LIBREDB_CONTAINER_PREFIX` (and `LIBREDB_POSTGRES_HOST_PORT` if the
+published 5432 is also taken) to move all three files' names, ports and data volume apart with one
+pair of values; without an override they still share `libredb-postgres` and `5432` by design, so run
+only one at a time. Alternatively, run only the fixture and point Studio's `STORAGE_*` variables at it.

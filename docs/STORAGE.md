@@ -252,7 +252,7 @@ services:
       - POSTGRES_USER=libredb
       - POSTGRES_PASSWORD=secret
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U libredb"]
       interval: 5s

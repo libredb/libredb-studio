@@ -522,7 +522,7 @@ docker compose -f database-compose.yml --profile druid down -v
 
 ### PostgreSQL Sample Data
 
-The `docker/postgres.yml` setup includes a pre-loaded e-commerce schema:
+The `docker/postgres.yml` setup includes a pre-loaded e-commerce schema (since #792, so does the `postgres` service in `database-compose.yml`, which mounts the same `docker/postgres-init/` scripts):
 
 | Feature | Description |
 |---------|-------------|
