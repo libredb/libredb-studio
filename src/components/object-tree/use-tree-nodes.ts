@@ -240,6 +240,30 @@ class ObjectReadError extends Error {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Whether a body can be rendered, checked at the seam rather than trusted into the render.
+ *
+ * What is checked is exactly what the walk DEREFERENCES: a list must be a list of objects carrying
+ * a `path` array, because `flatten.ts` slices and joins it, and a counts record's values must be
+ * objects, because `isCountUnavailable` asks `"unavailable" in count` and a bare number throws
+ * there. It is not a schema check, and it deliberately says nothing about `name` or `kind`: a
+ * missing label renders as a blank row, which is ugly and not a crash.
+ *
+ * `Array.isArray` alone is not the check (it passes `[null]`), and the cost of trusting the cast is
+ * not a degraded row: a wrong shape throws INSIDE the render, which unmounts the tree and takes
+ * every panel that could have reported it with it. Measured, on the first run of this task's own
+ * suite: one route answering `{}` where a list belonged broke React's root for every later test in
+ * the file. So a bad body is reported through the failure path the tree already has.
+ */
+function isRenderableShape(read: TreeRead, data: unknown): boolean {
+  if (read.slot.kind === "counts") return isRecord(data) && Object.values(data).every(isRecord);
+  return Array.isArray(data) && data.every((entry) => isRecord(entry) && Array.isArray(entry.path));
+}
+
 async function postRead(connectionId: string, read: TreeRead): Promise<unknown> {
   const response = await appFetch(`/api/db/objects/${read.route}`, {
     method: "POST",
@@ -254,6 +278,9 @@ async function postRead(connectionId: string, read: TreeRead): Promise<unknown> 
       body.error ?? `The object read failed with HTTP ${response.status}`,
       body.code === ApiErrorCode.OBJECT_SURFACE_UNIMPLEMENTED,
     );
+  }
+  if (!isRenderableShape(read, body)) {
+    throw new ObjectReadError(`/api/db/objects/${read.route} answered with a body this tree cannot render`, false);
   }
   return body;
 }

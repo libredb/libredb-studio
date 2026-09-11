@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ObjectTree } from "@/components/object-tree";
+import { treeWindow } from "@/components/object-tree/ObjectTree";
 import { useTreeNodes } from "@/components/object-tree/use-tree-nodes";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
@@ -311,11 +312,58 @@ describe("ObjectTree engine gaps", () => {
     expect(calls.filter((call) => call.route === "containers")).toHaveLength(2);
   });
 
+  test("a body of the wrong shape is reported, not rendered", async () => {
+    // The shape the render DEREFERENCES is checked: a wrong one used to throw inside `flattenTree`
+    // during the render and take the whole tree down instead of reaching this panel.
+    installFetch({ containers: () => ({}) });
+    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+
+    expect((await screen.findByTestId("tree-failure")).textContent).toContain("containers");
+  });
+
+  test("a container list holding a null entry is reported, not rendered", async () => {
+    installFetch({ containers: () => [null] });
+    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+
+    expect(await screen.findByTestId("tree-failure")).toBeTruthy();
+  });
+
+  test("counts answered as a list, or holding a bare number, is reported, not rendered", async () => {
+    installFetch({ containers: () => appSchema, counts: () => ({ table: 2 }) });
+    const { unmount } = render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    await userEvent.click(await screen.findByRole("treeitem", { name: /app/ }));
+    await waitFor(() => expect(within(row(/app/)).getByTestId("tree-row-failure")).toBeTruthy());
+    unmount();
+
+    installFetch({ counts: () => [] });
+    render(<ObjectTree connectionId="lite" capabilities={noContainers} />);
+    expect((await screen.findByTestId("tree-failure")).textContent).toContain("counts");
+  });
+
   test("a body with no error field still reports the status the route answered", async () => {
     installFetch({ containers: () => new Response("", { status: 502 }) });
     render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
 
     expect((await screen.findByTestId("tree-failure")).textContent).toContain("502");
+  });
+
+  test("a 501 on ONE read marks that row as unmigrated rather than as a failure", async () => {
+    // The state every provider task passes through: `listContainers` and `countObjects` are
+    // implemented and `listObjects` is not yet.
+    installFetch({
+      containers: () => appSchema,
+      counts: () => ({ table: { count: 2 }, view: { count: 0 } }),
+      list: () => unimplemented("listObjects"),
+    });
+    render(<ObjectTree connectionId="my" capabilities={oneLevel} />);
+    await expandApp();
+
+    await userEvent.click(row(/Tables/));
+    await waitFor(() => expect(within(row(/Tables/)).getByTestId("tree-row-unimplemented")).toBeTruthy());
+    expect(within(row(/Tables/)).getByTestId("tree-row-unimplemented").textContent).toContain(
+      "does not implement listObjects yet",
+    );
+    expect(within(row(/Tables/)).queryByTestId("tree-row-failure")).toBeNull();
   });
 
   test("a folder read that fails shows on the folder, and reopening it reads again", async () => {
@@ -610,6 +658,21 @@ describe("ObjectTree keyboard", () => {
     expect(focused()).toBe("app");
   });
 
+  test("focus landing on a row is not re-aimed at the active row", async () => {
+    // Anything that reveals a row will focus it directly: Task 7's "show me the table this
+    // statement is about", and Phase 2's reveal. The container's focus handler must not treat that
+    // as focus on itself and pull focus back to whatever was active.
+    await threeRows();
+    row(/Views/).focus();
+    // happy-dom's programmatic `focus()` does not emit the bubbling `focusin` a browser emits, and
+    // that is the event the container's handler sees, so the test emits it: without the
+    // target-is-me guard, this is what would pull focus off `Views` and back onto `app`.
+    fireEvent.focusIn(row(/Views/));
+
+    expect(focused()).toBe("app/view");
+    expect(row(/app/).getAttribute("aria-selected")).toBe("true");
+  });
+
   test("a key the pattern does not use is left to the browser", async () => {
     await threeRows();
     row(/app/).focus();
@@ -661,6 +724,43 @@ describe("ObjectTree windowing", () => {
     expect(screen.getAllByRole("treeitem").length).toBeLessThan(20);
   });
 
+  test("the tree is still reachable by keyboard once the active row has scrolled out of the window", async () => {
+    const tree = await bigTree();
+    Object.defineProperty(tree, "clientHeight", { configurable: true, value: 112 });
+    fireEvent.scroll(tree, { target: { scrollTop: 28 * 100 } });
+    await waitFor(() => expect(screen.getByText("t_098")).toBeTruthy());
+
+    // `app/table` is the active row and it is no longer mounted, so nothing inside the subtree can
+    // hold the tab stop. The container has to take it, or the tree cannot be entered without a mouse.
+    expect(screen.queryByRole("treeitem", { name: /Tables/ })).toBeNull();
+    expect(tree.getAttribute("tabindex")).toBe("0");
+
+    tree.focus();
+    await waitFor(() => expect(document.activeElement?.getAttribute("data-row-id")).toBe("app/table"));
+    expect(tree.getAttribute("tabindex")).toBe("-1");
+
+    // And the arrow keys work from there, which is the point of getting focus back in.
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement?.getAttribute("data-row-id")).toBe("app/t_000/table");
+  });
+
+  test("the container takes the tab stop when the active row sits BELOW the window as well", async () => {
+    const tree = await bigTree();
+    Object.defineProperty(tree, "clientHeight", { configurable: true, value: 112 });
+    fireEvent.scroll(tree, { target: { scrollTop: 0 } });
+    row(/app/).focus();
+
+    await userEvent.keyboard("{End}");
+    await waitFor(() => expect(document.activeElement?.getAttribute("data-row-id")).toBe("app/view"));
+
+    // Back to the top, so the active row is now past the END of the window rather than before its
+    // start. One bound answers both, and only this direction can tell the two apart.
+    fireEvent.scroll(tree, { target: { scrollTop: 0 } });
+    await waitFor(() => expect(screen.getByText("t_000")).toBeTruthy());
+    expect(screen.queryByRole("treeitem", { name: /Views/ })).toBeNull();
+    expect(tree.getAttribute("tabindex")).toBe("0");
+  });
+
   test("End mounts and focuses the last row even though it was outside the window", async () => {
     const tree = await bigTree();
     Object.defineProperty(tree, "clientHeight", { configurable: true, value: 112 });
@@ -674,6 +774,37 @@ describe("ObjectTree windowing", () => {
     await waitFor(() => expect(document.activeElement?.getAttribute("data-row-id")).toBe("app/view"));
     expect(screen.getByText("t_299")).toBeTruthy();
     expect(row(/t_299/).getAttribute("aria-posinset")).toBe("300");
+  });
+});
+
+describe("treeWindow", () => {
+  // 28px rows, 4 of overscan each side. Exported and tested here rather than only through the
+  // component, because the clamp is arithmetic with three edges and the component can only reach
+  // two of them.
+  test("an unscrolled tree starts at the top and mounts a viewport plus the overscan", () => {
+    expect(treeWindow(1000, 0, 280, -1)).toEqual([0, 18]);
+  });
+
+  test("a scroll moves the window by whole rows, keeping the overscan above", () => {
+    expect(treeWindow(1000, 28 * 50, 280, -1)).toEqual([46, 64]);
+  });
+
+  test("a tree shorter than the viewport mounts all of it and never starts below zero", () => {
+    expect(treeWindow(5, 0, 280, -1)).toEqual([0, 5]);
+    expect(treeWindow(5, 28 * 4, 280, -1)).toEqual([0, 5]);
+  });
+
+  test("the window never runs past the end", () => {
+    expect(treeWindow(20, 28 * 100, 280, -1)).toEqual([2, 20]);
+  });
+
+  test("a focused row above the window pulls the window up to it, and one below pulls it down", () => {
+    expect(treeWindow(1000, 28 * 50, 280, 10)).toEqual([10, 28]);
+    expect(treeWindow(1000, 28 * 50, 280, 900)).toEqual([883, 901]);
+  });
+
+  test("a focused row already inside the window leaves it where the scroll put it", () => {
+    expect(treeWindow(1000, 28 * 50, 280, 50)).toEqual([46, 64]);
   });
 });
 

@@ -176,6 +176,19 @@ export function ObjectTree({ connectionId, capabilities, onObjectClick }: Object
     [activate, rows],
   );
 
+  /**
+   * Focus landed on the tree itself rather than on a row, which is what Tab does once the active
+   * row has scrolled out of the window. Re-pinning brings that row back into the window, and the
+   * focus effect then moves focus onto it.
+   */
+  const onContainerFocus = useCallback(
+    (event: React.FocusEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget || activeRowId === undefined) return;
+      focusRow(activeRowId);
+    },
+    [activeRowId, focusRow],
+  );
+
   const onScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(event.currentTarget.scrollTop);
     setViewportHeight(event.currentTarget.clientHeight);
@@ -231,13 +244,18 @@ export function ObjectTree({ connectionId, capabilities, onObjectClick }: Object
     );
   }
 
-  const focusIndex = pinned ? rows.findIndex((row) => row.id === activeRowId) : -1;
+  const activeIndex = rows.findIndex((row) => row.id === activeRowId);
   const [start, end] = treeWindow(
     rows.length,
     scrollTop,
     viewportHeight > 0 ? viewportHeight : UNMEASURED_VIEWPORT,
-    focusIndex,
+    pinned ? activeIndex : -1,
   );
+  // A window can leave the row holding the tab stop unmounted, and then NOTHING inside the tree is
+  // tabbable: the arrow handler would sit on an element that cannot take focus, and a keyboard user
+  // could not get in without reaching for the mouse. So the container holds the tab stop exactly
+  // while the active row is out of the DOM, and hands it back on focus.
+  const activeMounted = activeIndex >= start && activeIndex < end;
 
   return (
     <div
@@ -245,7 +263,8 @@ export function ObjectTree({ connectionId, capabilities, onObjectClick }: Object
       role="tree"
       aria-label="Database objects"
       data-testid="object-tree"
-      tabIndex={-1}
+      tabIndex={activeMounted ? -1 : 0}
+      onFocus={onContainerFocus}
       onKeyDown={onKeyDown}
       onClick={onClick}
       onScroll={onScroll}
