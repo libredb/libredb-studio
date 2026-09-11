@@ -19,11 +19,15 @@ let mockCursorOffset = 0;
 let mockGetModelReturn: (() => unknown) | null = null;
 let mockDeltaDecorations = mock((..._a: unknown[]) => ["deco-1"]);
 let mockUpdateOptions = mock((..._a: unknown[]) => {});
+// Records the props the mock <Editor> was last rendered with, so a test can assert the
+// component passes `defaultValue` (uncontrolled) rather than `value` (controlled).
+let capturedEditorProps: { value?: string; defaultValue?: string } | null = null;
 
 // ── Mock Monaco Editor with React.createElement (not plain objects) ─────────
 mock.module("@monaco-editor/react", () => ({
   default: function MockEditor(props: {
     value?: string;
+    defaultValue?: string;
     onChange?: (value: string | undefined) => void;
     language?: string;
     height?: string;
@@ -33,14 +37,27 @@ mock.module("@monaco-editor/react", () => ({
     beforeMount?: (...args: unknown[]) => void;
     options?: Record<string, unknown>;
   }) {
-    const { value, onChange, language, onMount, beforeMount } = props;
-    const valueRef = React.useRef(value ?? "");
-    const [textValue, setTextValue] = React.useState(value ?? "");
+    const { value, defaultValue, onChange, language, onMount, beforeMount } = props;
+    capturedEditorProps = { value, defaultValue };
+    // Mirror @monaco-editor/react@4.7.0: the buffer is seeded from `value ?? defaultValue`
+    // at mount, and thereafter the `value` prop only drives the buffer when it is DEFINED
+    // (controlled mode). QueryEditor now passes `defaultValue`, leaving `value` undefined,
+    // so the library's controlled-value effect is a no-op and the component's own
+    // useEffect([value]) is the single sync path — the shape this mock has to honour or the
+    // fix cannot be tested. See src/components/QueryEditor.tsx and issue: cursor-jump.
+    const valueRef = React.useRef(value ?? defaultValue ?? "");
+    const [textValue, setTextValue] = React.useState(value ?? defaultValue ?? "");
     const mountedRef = React.useRef(false);
 
     React.useEffect(() => {
-      // Only update display state, not valueRef — simulates real Monaco requiring explicit setValue()
-      setTextValue(value ?? "");
+      // Real 4.7.0 controlled-value effect: `t === void 0` early-return, else overwrite the
+      // buffer when it differs. An uncontrolled editor (value === undefined) never runs it,
+      // which is exactly why passing `defaultValue` stops the keystroke-clobber.
+      if (value === undefined) return;
+      if (value !== valueRef.current) {
+        valueRef.current = value;
+        setTextValue(value);
+      }
     }, [value]);
 
     React.useEffect(() => {
@@ -264,6 +281,7 @@ describe("QueryEditor", () => {
     mockGetModelReturn = null;
     mockDeltaDecorations = mock((..._a: unknown[]) => ["deco-1"]);
     mockUpdateOptions = mock((..._a: unknown[]) => {});
+    capturedEditorProps = null;
     mockClipboardWriteText = mock((data: string) => {
       void data;
       return Promise.resolve();
@@ -804,6 +822,47 @@ describe("QueryEditor", () => {
     window.removeEventListener("execute-query", handler);
   });
 
+  test("getEffectiveQuery highlights the resolved statement's range, not the whole buffer", () => {
+    // The no-selection SQL path builds a monaco.Range spanning only the statement the
+    // caret is in and hands it to flashHighlight, so the executed statement (not the whole
+    // buffer) is what flashes. Putting the caret in the SECOND statement exercises the
+    // range construction with non-zero start/end offsets: getPositionAt maps each offset
+    // to (line, column), so a range that ended at the buffer's start would prove the
+    // wrong statement was resolved. Asserting deltaDecorations fired with a range whose
+    // end is past its start pins that the per-statement range object actually reaches the
+    // highlighter rather than being dropped for a null.
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
+      },
+    };
+    // Caret offset inside "SELECT 2" (buffer is "SELECT 1; SELECT 2", so >= 10 lands in
+    // the second statement). getPositionAt in the mock maps offset -> column offset+1.
+    mockCursorOffset = 12;
+
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1; SELECT 2" })));
+    act(() => {
+      capturedCommands[0].handler();
+    });
+
+    // flashHighlight received a real range (not null), so it created decorations.
+    expect(mockDeltaDecorations).toHaveBeenCalled();
+    // On the first execute there is nothing to clear, so the sole call is the
+    // decoration-creating one: deltaDecorations([], [{ range, options }]). Its second
+    // argument is the non-empty descriptor array carrying the per-statement range.
+    const createCall = mockDeltaDecorations.mock.calls.find(
+      (c) => Array.isArray(c[1]) && (c[1] as unknown[]).length > 0,
+    );
+    expect(createCall).toBeDefined();
+    const descriptor = (createCall![1] as Array<{ range: unknown }>)[0];
+    expect(descriptor.range).toBeDefined();
+  });
+
   test("getEffectiveQuery reads the statement boundary under the connection's dialect", () => {
     /*
       The third reader of "where does a statement end", and the one whose answer is what
@@ -1030,6 +1089,69 @@ describe("QueryEditor", () => {
     // Rerender with new value — the component's sync effect should call setValue
     rerender(React.createElement(QueryEditor, { ...props, value: "SECOND" }));
     expect(editor.value).toBe("SECOND");
+  });
+
+  // -----------------------------------------------------------------------
+  // Regression: keystrokes must not be overwritten by a stale value prop
+  //
+  // The editor is fed `value` from `onContentChange` on every keystroke (Studio writes
+  // each keystroke into currentTab.query, which flows back down). If a keystroke lands
+  // between that state update and the re-render, the `value` prop arrives one keystroke
+  // STALE. Before the fix, that stale prop drove @monaco-editor/react's controlled-value
+  // effect, which ran a full-range executeEdits and rewrote the buffer (scrambling text
+  // and snapping the caret to line 1). The fix passes `defaultValue` instead of `value`,
+  // so the buffer is uncontrolled and a stale prop is a no-op. These tests pin that.
+  // -----------------------------------------------------------------------
+
+  test("a stale value prop does not overwrite newer typed content", () => {
+    // Parent starts holding "SELECT ", the pre-typing text.
+    const props = createDefaultProps({ value: "SELECT " });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(editor.value).toBe("SELECT ");
+
+    // User types several characters: the buffer advances well ahead of the parent state.
+    act(() => {
+      fireEvent.change(editor, { target: { value: "SELECT * FROM t" } });
+    });
+    expect(editor.value).toBe("SELECT * FROM t");
+
+    // A re-render arrives carrying a value that CHANGED from the mounted one but is still
+    // behind the buffer — the parent's onContentChange has only caught an earlier
+    // keystroke. This is the race: `value` differs from the last render (so the sync
+    // effect runs) yet is stale relative to what the user has typed. It must NOT rewrite
+    // the buffer back to the stale text.
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT *" }));
+    });
+    expect(editor.value).toBe("SELECT * FROM t");
+  });
+
+  test("the editor is uncontrolled: <Editor> receives defaultValue, not value", () => {
+    // The mechanism the fix relies on. If `value` were passed, @monaco-editor/react's
+    // controlled effect would fire on every keystroke echo and could clobber typing;
+    // `defaultValue` leaves that effect at its `t === void 0` early-return.
+    capturedEditorProps = null;
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1" })));
+    expect(capturedEditorProps).not.toBeNull();
+    expect(capturedEditorProps!.value).toBeUndefined();
+    expect(capturedEditorProps!.defaultValue).toBe("SELECT 1");
+  });
+
+  test("a genuine external value change (tab switch) still updates the buffer", () => {
+    // The other side of the fix: switching tabs changes `value` to the other tab's text,
+    // which differs from both the buffer and the last synced value, so the component's
+    // own useEffect([value]) must apply it. This must keep working.
+    const props = createDefaultProps({ value: "SELECT tab_one" });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(editor.value).toBe("SELECT tab_one");
+
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT tab_two" }));
+    });
+    expect(editor.value).toBe("SELECT tab_two");
   });
 
   // -----------------------------------------------------------------------
