@@ -27,7 +27,14 @@ import {
   type TableStats,
   type IndexStats,
   type StorageStats,
+  type Container,
+  type ContainerLevelSpec,
+  type DatabaseObject,
+  type KindCount,
+  type ObjectDetail,
+  type ObjectKindSpec,
 } from "../../types";
+import { containerDepth, declaredKinds, findKind, isCountUnavailable } from "@/lib/db/object-kinds";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
@@ -143,6 +150,289 @@ const SUPPORTED_MAINTENANCE_TYPES: ReadonlySet<MaintenanceType> = new Set([
 ]);
 
 // ============================================================================
+// Object surface (#789)
+//
+// MongoDB is the first NON-SQL engine in this epic to get one, so the four methods and
+// the model are the shared ones and the catalog is not a query: `listDatabases` and
+// `listCollections` are COMMANDS, and everything below was measured against a live
+// MongoDB 8.3.9 holding `docker/mongodb-init/01-object-fixture.js`. That fixture is
+// committed and the recipe that applies it is in `docs/providers/mongodb.md`, so every
+// claim here can be re-measured rather than trusted.
+//
+// WHERE THE 5f SEAM IS ON A COMMAND CATALOG. The rule is that the LISTING must contain
+// exactly what the COUNT counted, and on a SQL engine the two drift apart in a second
+// WHERE clause. There is no WHERE clause here, so the seam moves to the CLASSIFIER: the
+// count tallies `listCollections` rows by kind and the listing filters the same rows by
+// kind, and if those two decisions were written twice they would be free to disagree.
+// `mongoObjectKind()` is the one place that decision is made, and it is the only reader
+// of both the `type` field and the internal-namespace rule. `countObjects`,
+// `listObjects` and `describeObject` all route through it, over rows from the same
+// `collectionInfos()` command. There is nothing left for the two answers to differ in.
+//
+// Five measurements shape this section, and each one produces a wrong tree if forgotten:
+//
+// 1. `listCollections` ANSWERS A THIRD `type`. Beside "collection" and "view" there is
+//    "timeseries", which a time series collection reports. A classifier written
+//    `type === "collection"` loses such a collection from the COUNT and the LISTING at
+//    once, so ruling 5f would still hold while an object a person created was invisible
+//    in the tree - the absence that passes every gate standing ruling 5a exists for. The
+//    classifier is therefore "view versus everything else", and the fixture creates a
+//    time series collection so the other spelling is refuted rather than unattractive.
+// 2. A TIME SERIES COLLECTION IS NOT A KIND OF ITS OWN, and that is a decision. It holds
+//    documents, `find` reads them, `listIndexes` answers real indexes and `collStats`
+//    answers a size (all measured), so everything the tree does with a collection it
+//    does with this one. MongoDB's own `show collections` lists it beside the others.
+//    Splitting the folder would divide a person's collections by a storage detail.
+// 3. AN INDEX NAME IS UNIQUE PER COLLECTION, NOT PER DATABASE. Measured: creating
+//    `by_thing` on `app.customers` and again on `app.orders` both succeed, and creating
+//    it twice on ONE collection is refused with "An existing index has the same name as
+//    the requested index". So the catalog does not model an index as a first-class
+//    container-level object, which is the test standing ruling 4 sets, and no `index`
+//    kind is declared: an index appears in `describeObject`'s output, where it is.
+// 4. THE RESERVED NAMESPACE PREFIX IS "system." WITH THE DOT. Measured: `createCollection
+//    ("system.mine")` is refused with "not authorized on app to execute command", while
+//    `systemetrics` is created without complaint. The fixture holds `systemetrics`, so a
+//    rule written on the letters "system" without the dot hides a real collection and a
+//    test says so by name. `system.views` and `system.buckets.<name>` are the two the
+//    server creates by itself, both measured in the fixture's own listing.
+// 5. THE THREE RESERVED DATABASES ARE EXCLUDED BY EXACT NAME. `admin`, `config` and
+//    `local` are the server's own. Measured: databases named `configstore`, `localx` and
+//    `adminx` are all created without complaint, so a prefix rule would hide a database a
+//    person made. The fixture creates `configstore` for exactly that reason.
+//
+// Two absences are declarations rather than gaps. There is NO routine kind of any shape:
+// `$function`, `$accumulator`, `$where` and `system.js` are all deprecated as of
+// MongoDB 8.0, `mapReduce` since 5.0, `db.eval` was removed in 4.2, and Atlas Triggers
+// and Atlas Functions are an Atlas CONTROL PLANE feature that the wire protocol this
+// provider speaks cannot reach at all. And there is no kind for an on-demand
+// materialized view: `$merge` and `$out` write an ordinary collection carrying no
+// server-side marker of its provenance, so there is nothing to list.
+
+/**
+ * One level, and there is no second one to add: MongoDB has no container above a
+ * database and none between a database and a collection. The structural `id` is `schema`
+ * because that is what `ContainerLevelSpec` calls the innermost level on every engine;
+ * the LABEL is the engine's own word, which is Database.
+ */
+const MONGODB_CONTAINER_LEVELS: readonly ContainerLevelSpec[] = Object.freeze([
+  { id: "schema", label: "Database", labelPlural: "Databases" },
+] as const);
+
+const MONGODB_KIND_COLLECTION = "collection";
+const MONGODB_KIND_VIEW = "view";
+
+const MONGODB_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
+  {
+    id: MONGODB_KIND_COLLECTION,
+    role: "relation",
+    label: "Collection",
+    labelPlural: "Collections",
+    // A collection takes a document write, which is the per-KIND half and is
+    // deliberately not conjoined with the engine-wide `supportsInlineRowEdit: false`
+    // this provider also declares. That flag is about the results grid's
+    // `UPDATE ... SET`, which has no MongoDB spelling; an import into a collection is
+    // an ordinary `insertMany`. See `kindAcceptsRowWrites()` in object-kinds.ts.
+    acceptsRowWrites: true,
+  },
+  {
+    id: MONGODB_KIND_VIEW,
+    role: "relation",
+    label: "View",
+    labelPlural: "Views",
+    // No `acceptsRowWrites`. A view is read-only and the server says so on the same
+    // call that classifies it: `info.readOnly` is true on every one, measured.
+  },
+] as const);
+
+/**
+ * The `type` a view reports, and the ONLY thing that distinguishes one. There is no
+ * separate catalog: `listCollections` returns collections and views together and this
+ * field is the whole difference, along with `options.viewOn` and `options.pipeline`,
+ * which arrive on the same call and are what Phase 2 will read.
+ */
+const MONGODB_VIEW_TYPE = "view";
+
+/**
+ * The prefix the server reserves for its own namespaces, dot included.
+ *
+ * Not "system": `systemetrics` is a collection a person can create and does in the
+ * fixture, while `system.mine` is refused outright. Both measured on 8.3.9.
+ */
+const MONGODB_INTERNAL_PREFIX = "system.";
+
+/**
+ * The databases the server owns, by exact NAME.
+ *
+ * `admin`, `config` and `local` are MongoDB's own three. An exact list rather than a
+ * prefix, and that is refuted rather than preferred: `configstore`, `localx` and
+ * `adminx` are all creatable, measured, and the fixture holds the first.
+ */
+const MONGODB_RESERVED_DATABASES: readonly string[] = Object.freeze(["admin", "config", "local"]);
+
+/**
+ * The `listDatabases` command, as one frozen document so the count and the listing of
+ * containers cannot be asked two different questions.
+ *
+ * `authorizedDatabases: true` is load-bearing rather than tidy. The server's default for
+ * it depends on whether the connecting role holds the cluster-wide `listDatabases`
+ * action, so a role granted only `read` on one database is at the mercy of a default
+ * this provider did not state. Measured both ways on 8.3.9: with the flag, a root role
+ * still sees every database and a read-on-one role sees exactly its own.
+ */
+const MONGODB_LIST_DATABASES_COMMAND: Document = Object.freeze({
+  listDatabases: 1,
+  nameOnly: true,
+  authorizedDatabases: true,
+});
+
+/** How many documents one object is sampled for, the same bound `getSchema()` uses. */
+const OBJECT_SAMPLE_SIZE = 100;
+
+/** A string the server sent, or "" when it sent nothing usable. */
+function readText(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+/**
+ * The container levels this provider declares, sliced to the depth `containerDepth()`
+ * reports.
+ *
+ * One reader for the whole file, so the depth and the level list can never be taken by
+ * two different rules. `containerDepth()` decides, never `containerLevels.length`:
+ * absent and empty are the same fact.
+ */
+function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerLevelSpec[] {
+  return (capabilities.containerLevels ?? []).slice(0, containerDepth(capabilities));
+}
+
+/**
+ * The segment of `path` belonging to the declared container level `id`.
+ *
+ * NEVER `path[0]`, which is standing ruling 5g's general form: a container level's
+ * POSITION is a property of the declaration and not a constant. MongoDB declares one
+ * level, so the database IS the first segment here and every literal-index spelling
+ * would be behaviour-identical on this engine - which is exactly why three of them
+ * shipped across earlier providers and each was found a review later than the last. The
+ * suite pins this with a two-level declaration swapped in through `getCapabilities` and
+ * driven to the database name the driver was BOUND with.
+ *
+ * Both failure modes raise through one guard: a declaration carrying no level of this
+ * `id`, and a path too short to hold it. Neither may fall through to `undefined`, which
+ * would reach `MongoClient.db()` as the string "undefined" and quietly open a database
+ * of that name - the driver accepts any string, so nothing downstream would complain.
+ */
+function containerSegment(
+  capabilities: ProviderCapabilities,
+  path: readonly string[],
+  id: ContainerLevelSpec["id"],
+): string {
+  const levels = declaredLevels(capabilities);
+  const index = levels.findIndex((level) => level.id === id);
+  const segment = index < 0 ? undefined : path.slice(0, levels.length)[index];
+  if (segment === undefined) {
+    throw new QueryError(
+      `A MongoDB path needs a "${id}" container level and a segment for it; the declaration is ` +
+        `[${levels.map((level) => level.id).join(", ")}] and the path is ${JSON.stringify(path)}`,
+      "mongodb",
+    );
+  }
+  return segment;
+}
+
+/**
+ * The one database a container path names.
+ *
+ * The expected depth is read through `containerDepth()` and the segment NAMES come from
+ * the declared level labels, so the check and its message are the same array and nothing
+ * here can inherit a hardcoded 1. A path of another length is a caller that built it
+ * from another engine's model, and it raises rather than reading a segment and carrying
+ * on: an empty folder looks exactly like a database holding nothing, which is the worst
+ * way to report a caller mistake.
+ */
+function containerDatabase(capabilities: ProviderCapabilities, container: readonly string[]): string {
+  const levels = declaredLevels(capabilities);
+  if (container.length !== levels.length) {
+    throw new QueryError(
+      `A MongoDB container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
+        `received ${JSON.stringify(container)}`,
+      "mongodb",
+    );
+  }
+  return containerSegment(capabilities, container, "schema");
+}
+
+/**
+ * Every declared kind seeded at zero, before any row is read.
+ *
+ * Seeding is what makes "this server has this kind and this database holds none" render
+ * as a 0 badge. Building the record from the catalog rows alone would leave the kind out
+ * entirely, and an absent kind already means something else and stronger: the server has
+ * no such concept, so the tree draws no folder at all.
+ */
+function seedZeroCounts(kinds: readonly ObjectKindSpec[]): Record<string, KindCount> {
+  return Object.fromEntries(kinds.map((kind) => [kind.id, { count: 0 } as KindCount]));
+}
+
+/**
+ * The server's own sentence, verbatim, for a catalog read that was refused.
+ *
+ * Deliberately NOT through this provider's error mapping: that gives a THROWN error a
+ * type and this product's prefix, and nothing here throws. The sentence is rendered to a
+ * person as the reason a folder has no number, so prefixing it would put our words in
+ * front of MongoDB's. A refused read is never 0 - measured, a role holding `read` on one
+ * database answers `listCollections` on any other with "not authorized on <db> to
+ * execute command { listCollections: 1 ... }", and reporting that as an empty database
+ * would say nothing is there when nobody has looked.
+ */
+function refusalReason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Two paths compared SEGMENT BY SEGMENT, so a sort is over the address and never over
+ * one joined string.
+ *
+ * `JSON.stringify(path)` is the obvious spelling and it is wrong twice. At MIXED DEPTH
+ * the deeper path sorts first, because the separator `,` (0x2C) is below the terminator
+ * `]` (0x5D). And JSON ESCAPES, so a name holding a quote or a backslash sorts by its
+ * escape sequence rather than by its own code points - and a MongoDB collection name may
+ * hold both, since the only characters it forbids are the null byte and `$`.
+ *
+ * This is the seventh copy of this function in the repo. Standing ruling 5h: Task 28
+ * hoists it beside `containerDepth` in `src/lib/db/object-kinds.ts` once, rather than
+ * each provider task hoisting it and colliding with the others.
+ */
+function comparePaths(left: readonly string[], right: readonly string[]): number {
+  const shared = Math.min(left.length, right.length);
+  for (let index = 0; index < shared; index += 1) {
+    if (left[index] < right[index]) return -1;
+    if (left[index] > right[index]) return 1;
+  }
+  return left.length - right.length;
+}
+
+/**
+ * WHICH KIND one `listCollections` row is, or `undefined` for a namespace the server
+ * owns.
+ *
+ * THIS IS THE WHOLE 5f SEAM, in one function, because the catalog here is a command and
+ * not a query. `countObjects` tallies its answers and `listObjects` filters on them, so
+ * the count and the listing cannot be looking at different sets: there is no second
+ * predicate for them to drift apart in, the way Oracle, MySQL, ClickHouse and Trino each
+ * drifted in a WHERE clause on a first pass.
+ *
+ * "View versus everything else" and not "collection versus view". `type` has a third
+ * measured value, "timeseries", and a `=== "collection"` test would drop such an object
+ * from both answers at once - which keeps ruling 5f true while hiding an object a person
+ * created. The fixture holds one so that spelling stays refuted.
+ */
+function mongoObjectKind(info: Document): string | undefined {
+  const name = readText(info.name);
+  if (name.startsWith(MONGODB_INTERNAL_PREFIX)) return undefined;
+  return readText(info.type) === MONGODB_VIEW_TYPE ? MONGODB_KIND_VIEW : MONGODB_KIND_COLLECTION;
+}
+
+// ============================================================================
 // MongoDB Provider
 // ============================================================================
 
@@ -188,6 +478,8 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       },
       supportsConnectionString: true,
       defaultPort: 27017,
+      containerLevels: MONGODB_CONTAINER_LEVELS,
+      objectKinds: MONGODB_OBJECT_KINDS,
       schemaRefreshPattern: '"operation"\\s*:\\s*"(insert|delete|update)',
     };
   }
@@ -1261,6 +1553,208 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     if (days > 0) return `${days}d ${hours}h`;
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
+  }
+
+  // ============================================================================
+  // Object surface (#789)
+  // ============================================================================
+
+  /**
+   * One database's catalog: every collection and view in it, internal namespaces already
+   * dropped.
+   *
+   * The ONE read all three of `countObjects`, `listObjects` and `describeObject` go
+   * through, against the database the CONTAINER names rather than the one the session
+   * opened. `this.db` is bound to the connection's own database and is deliberately not
+   * used here: `MongoClient.db(name)` is what ends the single-database confinement
+   * section 3 of the provider doc records.
+   */
+  private async collectionInfos(database: string): Promise<Document[]> {
+    return await this.client!.db(database).listCollections().toArray();
+  }
+
+  /**
+   * The databases this connection can see, minus the server's own three.
+   *
+   * One level, so `parent` can only ever name a database, and nothing nests under one
+   * here - that answers `[]` rather than raising, because "this level has no children"
+   * is a true statement about MongoDB and not a caller mistake. It also answers without
+   * a round trip, which is the difference between a tree that opens a database and one
+   * that asks the server what is under it first.
+   *
+   * `isSessionDefault` compares against the database this connection was opened with,
+   * which `getDatabaseName()` already resolves from the config or from a pasted
+   * connection string. That is the same value `connect()` handed `MongoClient.db()`, so
+   * the flag names the database every other read of this provider is bound to.
+   *
+   * This is the one place a path is CONSTRUCTED rather than read, which is the single
+   * exception standing ruling 5g allows to the no-positional-index rule.
+   */
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
+    this.ensureConnected();
+    if (parent !== undefined && parent.length > 0) return [];
+
+    const result = await this.db!.admin().command(MONGODB_LIST_DATABASES_COMMAND);
+    const sessionDatabase = this.getDatabaseName();
+    const entries: Document[] = Array.isArray(result.databases) ? result.databases : [];
+
+    const containers: Container[] = [];
+    for (const entry of entries) {
+      const name = readText(entry.name);
+      if (MONGODB_RESERVED_DATABASES.includes(name)) continue;
+      containers.push({ path: [name], name, level: 0, isSessionDefault: name === sessionDatabase });
+    }
+    return containers.sort((left, right) => comparePaths(left.path, right.path));
+  }
+
+  /**
+   * How many objects of each declared kind one database holds, in ONE command.
+   *
+   * `listCollections` answers for both kinds at once, and the tally is over
+   * `mongoObjectKind()` - the same function `listObjects` filters on. That is where
+   * standing ruling 5f is held on a command catalog: there is no second predicate for a
+   * count and a listing to disagree in.
+   *
+   * Three outcomes, and the type keeps all three apart. A kind the catalog answered for
+   * carries its number. A kind it did not carries `{ count: 0 }`, because every declared
+   * kind is seeded before the rows are read. A refused read carries the server's own
+   * sentence, for every kind, which is right here and not a shortcut: the two kinds come
+   * from ONE command, so a refusal is one fact about the whole database rather than a
+   * per-kind privilege the way it is on Cassandra's seven catalog tables.
+   *
+   * The container path is checked BEFORE the read and raises, because a path of the
+   * wrong shape is a caller mistake and not something the engine refused.
+   */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const database = containerDatabase(capabilities, container);
+    const declared = declaredKinds(capabilities);
+    const counts = seedZeroCounts(declared);
+
+    let infos: Document[];
+    try {
+      infos = await this.collectionInfos(database);
+    } catch (error) {
+      const reason = refusalReason(error);
+      return Object.fromEntries(declared.map((kind) => [kind.id, { unavailable: reason } as KindCount]));
+    }
+
+    for (const info of infos) {
+      const kind = mongoObjectKind(info);
+      // `Object.hasOwn` and not a bare index or an `in`: `in` walks the prototype chain,
+      // so a classifier answering "toString" would find a function where a count belongs.
+      // The record is seeded from the DECLARATION, so this guard is exactly "is this kind
+      // declared" - and answering for an undeclared kind is what conformance invariant 2
+      // fails a provider for.
+      if (kind === undefined || !Object.hasOwn(counts, kind)) continue;
+      const current = counts[kind];
+      counts[kind] = { count: (isCountUnavailable(current) ? 0 : current.count) + 1 };
+    }
+    return counts;
+  }
+
+  /**
+   * The objects of one kind in one database, names only.
+   *
+   * Two questions, asked in order, and only the DECLARATION answers the first. Deciding
+   * "is this kind declared" from whether the classifier can produce it would make the two
+   * methods disagree, and would report "declares no object kind" about a kind
+   * `MONGODB_OBJECT_KINDS` does declare.
+   *
+   * No `rowCount` and no `sizeBytes` on any object, and that is a bound rather than a
+   * gap: both would need `collStats` or `estimatedDocumentCount` PER COLLECTION, one
+   * round trip each, and the folder this fills is the one a person opens to see what is
+   * there. `describeObject` is where a single object's detail is paid for. It is also
+   * the reason there is one command behind this method and behind the count.
+   *
+   * Ordering is done here rather than relying on the server: `listCollections` returns
+   * rows in no documented order (the fixture's own listing comes back unsorted,
+   * measured), and the tree addresses by PATH, so a code-point sort over the segments is
+   * one rule shared with every other provider in #789.
+   */
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`MongoDB declares no object kind "${kind}"`, "mongodb");
+    }
+    const database = containerDatabase(capabilities, container);
+
+    const objects: DatabaseObject[] = [];
+    for (const info of await this.collectionInfos(database)) {
+      if (mongoObjectKind(info) !== kind) continue;
+      const name = readText(info.name);
+      objects.push({ path: [...container, name], name, kind });
+    }
+    return objects.sort((left, right) => comparePaths(left.path, right.path));
+  }
+
+  /**
+   * One object's fields and indexes.
+   *
+   * The KIND decides, and nothing here reads the name to work out what it is holding: the
+   * lookup requires the catalog row to classify as the kind that was asked for, so asking
+   * for a view by the name of a collection is a miss rather than a collection described
+   * as a view.
+   *
+   * Fields are INFERRED from a document sample, the same way `getSchema()` infers them
+   * and with the same bound, because MongoDB stores no schema to read: a collection has
+   * whatever fields its documents happen to carry. That works on a view exactly as it
+   * works on a collection, which is why a view is worth listing at all.
+   *
+   * A VIEW is given no indexes, and that is measured rather than defensive: `listIndexes`
+   * on one is refused with `CommandNotSupportedOnView` (code 166), and the indexes its
+   * pipeline actually uses belong to the collection underneath it, so claiming them here
+   * would misattribute them. `foreignKeys` is ALWAYS empty, because MongoDB has no
+   * foreign key constraint at all - the same measurement behind `declaresForeignKeys:
+   * false`.
+   */
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`MongoDB declares no object kind "${kind}"`, "mongodb");
+    }
+
+    // Derived, not counted. One segment per declared container level plus the name. No
+    // kind here declares `attachedTo`, so there is one shape, and it comes from the
+    // declaration rather than from a literal written out here.
+    const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
+    const shape = [...levels, "name"];
+    if (path.length !== shape.length) {
+      throw new QueryError(
+        `A MongoDB "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`,
+        "mongodb",
+      );
+    }
+
+    // Neither read is positional. The database comes from the segment the DECLARATION
+    // assigns to the `schema` level, and the object's own name is the LAST segment.
+    const database = containerSegment(capabilities, path, "schema");
+    const name = path[path.length - 1];
+
+    const infos = await this.collectionInfos(database);
+    const info = infos.find((candidate) => readText(candidate.name) === name && mongoObjectKind(candidate) === kind);
+    if (info === undefined) {
+      throw new QueryError(`No MongoDB ${kind} named ${name} in ${database}`, "mongodb");
+    }
+
+    const collection = this.client!.db(database).collection(name);
+    const sample = await collection.find({}).limit(OBJECT_SAMPLE_SIZE).toArray();
+    const columns = this.inferSchemaFromDocuments(sample);
+
+    const indexes =
+      kind === MONGODB_KIND_VIEW
+        ? []
+        : (await collection.indexes()).map((index) => ({
+            name: index.name || "unknown",
+            columns: Object.keys(index.key || {}),
+            unique: index.unique || false,
+          }));
+
+    return { path: [...path], columns, indexes, foreignKeys: [] };
   }
 
   private formatDurationString(ms: number): string {

@@ -4,7 +4,7 @@
  * Uses mock.module() from bun:test to mock the 'mongodb' driver
  * before importing the MongoDBProvider class.
  */
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import type { DatabaseConnection } from "@/lib/types";
 
 // ============================================================================
@@ -18,6 +18,35 @@ let mockCollections: { name: string; type: string }[] = [
   { name: "orders", type: "collection" },
 ];
 let mockCurrentOps: Record<string, unknown>[] = [];
+
+// ----------------------------------------------------------------------------
+// Object-surface state (#789)
+//
+// The object surface reads across DATABASES, so the fake has to honour the name
+// `MongoClient.db(name)` is given instead of answering one fixed database. That is
+// deliberate and it is what makes a wrong container bind visible: a provider reading
+// the connected database instead of the one the container names gets a different
+// collection list here rather than the same one.
+// ----------------------------------------------------------------------------
+
+interface MockCollectionInfo {
+  name: string;
+  type: string;
+  options?: Record<string, unknown>;
+}
+
+/** What `listDatabases` answers. Mirrors `docker/mongodb-init/01-object-fixture.js`. */
+let mockDatabaseList: { name: string }[] = [];
+/** One collection list per database name; absent falls back to `mockCollections`. */
+let mockCollectionsByDb: Record<string, MockCollectionInfo[]> = {};
+/** A database whose `listCollections` is refused, by name, with the server's own error. */
+let mockListCollectionsError: Record<string, Error> = {};
+/** Sampled documents per `<database>.<collection>`; absent falls back to `mockCollectionData`. */
+let mockDocumentsByNs: Record<string, Record<string, unknown>[]> = {};
+/** Every database name `MongoClient.db()` was opened with, in order. */
+let mongoOpenedDatabases: string[] = [];
+/** The `listDatabases` command document the driver received, verbatim. */
+let lastListDatabasesCommand: Record<string, unknown> = {};
 // The URI `buildConnectionString()` composed, as the driver received it. The only
 // place the query string is observable: `MongoClient` is where it goes.
 let lastMongoUri = "";
@@ -50,10 +79,14 @@ const commandNotSupportedOnView = (command: string, name: string): Error => {
   return error;
 };
 
-const isMockView = (name: string): boolean => mockCollections.some((c) => c.name === name && c.type === "view");
+const mockCollectionInfos = (dbName: string): { name: string; type: string }[] =>
+  mockCollectionsByDb[dbName] ?? mockCollections;
 
-const createMockCollection = (name = "users") => ({
-  find: () => createMockCursor(mockCollectionData),
+const isMockView = (name: string, dbName: string): boolean =>
+  mockCollectionInfos(dbName).some((c) => c.name === name && c.type === "view");
+
+const createMockCollection = (name = "users", dbName = "testdb") => ({
+  find: () => createMockCursor(mockDocumentsByNs[`${dbName}.${name}`] ?? mockCollectionData),
   findOne: async () => mockCollectionData[0] || null,
   aggregate: () => ({
     toArray: async () => mockCollectionData,
@@ -79,11 +112,11 @@ const createMockCollection = (name = "users") => ({
   deleteOne: async () => ({ deletedCount: 1 }),
   deleteMany: async () => ({ deletedCount: 3 }),
   estimatedDocumentCount: async () => {
-    if (isMockView(name)) throw commandNotSupportedOnView("count", name);
+    if (isMockView(name, dbName)) throw commandNotSupportedOnView("count", name);
     return 42;
   },
   indexes: async () => {
-    if (isMockView(name)) throw commandNotSupportedOnView("listIndexes", name);
+    if (isMockView(name, dbName)) throw commandNotSupportedOnView("listIndexes", name);
     return [
       { name: "_id_", key: { _id: 1 }, unique: true },
       { name: "email_1", key: { email: 1 }, unique: false },
@@ -132,11 +165,12 @@ const defaultDbStats = () => ({
 
 let mockDbStats: () => Record<string, unknown> = defaultDbStats;
 
-const createMockDb = () => ({
+const createMockDb = (dbName = "testdb") => ({
   command: async (cmd: Record<string, unknown>) => {
     if (cmd.ping) return { ok: 1 };
     if (cmd.collStats) {
-      if (isMockView(String(cmd.collStats))) throw commandNotSupportedOnView("collStats", String(cmd.collStats));
+      if (isMockView(String(cmd.collStats), dbName))
+        throw commandNotSupportedOnView("collStats", String(cmd.collStats));
       return { size: 1024, totalIndexSize: 512, count: 42 };
     }
     if (cmd.validate) return { ok: 1, valid: true };
@@ -144,15 +178,23 @@ const createMockDb = () => ({
     return mockCommandResults;
   },
   listCollections: () => ({
-    toArray: async () => mockCollections,
+    toArray: async () => {
+      const refusal = mockListCollectionsError[dbName];
+      if (refusal !== undefined) throw refusal;
+      return mockCollectionInfos(dbName);
+    },
   }),
-  collection: (name?: string) => createMockCollection(name),
+  collection: (name?: string) => createMockCollection(name, dbName),
   stats: async () => mockDbStats(),
   admin: () => ({
     serverStatus: async () => mockServerStatus(),
     command: async (cmd: Record<string, unknown>) => {
       if (cmd.currentOp) return { inprog: mockCurrentOps };
       if (cmd.buildInfo) return { version: "7.0.0" };
+      if (cmd.listDatabases) {
+        lastListDatabasesCommand = cmd;
+        return { databases: mockDatabaseList, ok: 1 };
+      }
       return {};
     },
   }),
@@ -208,8 +250,9 @@ mock.module("mongodb", () => ({
       // noop — connection closed
     }
 
-    db() {
-      return createMockDb();
+    db(name?: string) {
+      mongoOpenedDatabases.push(name ?? "");
+      return createMockDb(name);
     }
   },
   ObjectId: MockObjectId,
@@ -223,6 +266,7 @@ mock.module("mongodb", () => ({
 
 const { MongoDBProvider } = await import("@/lib/db/providers/document/mongodb");
 const { DatabaseConfigError } = await import("@/lib/db/errors");
+const { assertObjectSurface } = await import("../../helpers/object-surface-conformance");
 
 // ============================================================================
 // Test Config
@@ -237,6 +281,92 @@ const baseConfig: DatabaseConnection = {
   database: "testdb",
   createdAt: new Date(),
 };
+
+// ============================================================================
+// The object-surface fixture (#789)
+//
+// Every row below is VERBATIM what `docker/mongodb-init/01-object-fixture.js` produced on
+// a live MongoDB 8.3.9 on 2026-09-11, in the order the server returned it - which is not
+// sorted, so the provider's own ordering is exercised rather than inherited. Measured
+// twice against two fresh containers holding the same fixture, and `app` came back in two
+// DIFFERENT orders, so "no documented order" is a measurement here and not a reading of
+// the manual.
+// ============================================================================
+
+/** `listDatabases` on the fixture container. `admin`, `config` and `local` are the server's own. */
+const OBJECT_FIXTURE_DATABASES: { name: string }[] = [
+  { name: "admin" },
+  { name: "app" },
+  { name: "config" },
+  // Starts with "config" and is a database a person created. A prefix rule would hide it.
+  { name: "configstore" },
+  { name: "local" },
+  { name: "oddnames" },
+];
+
+/** `listCollections` on `app`, verbatim. */
+const OBJECT_FIXTURE_APP: MockCollectionInfo[] = [
+  { name: "orders", type: "collection" },
+  // Created by the server the moment the view was created, and never by a person.
+  { name: "system.views", type: "collection" },
+  // Starts with the letters "system" and NOT with "system.", so it is a person's
+  // collection. A provider excluding on "system" without the dot would hide it.
+  { name: "systemetrics", type: "collection" },
+  { name: "customers", type: "collection" },
+  // The third value of `type`, beside "collection" and "view". A classifier written
+  // `type === "collection"` loses this object from the count AND the listing at once.
+  { name: "readings", type: "timeseries" },
+  // The bucket collection a time series collection creates. Internal, and excluded.
+  { name: "system.buckets.readings", type: "collection" },
+  {
+    name: "active_customers",
+    type: "view",
+    options: { viewOn: "customers", pipeline: [{ $match: { city: "Istanbul" } }] },
+  },
+];
+
+/**
+ * `listCollections` on `oddnames`, verbatim, and the order the server gave is the whole
+ * point: the three names differ only in a character JSON ESCAPES. A quote and a backslash
+ * are both legal in a MongoDB collection name - measured, only the null byte and `$` are
+ * refused - so by CODE POINT they sort `x"a` (0x22), `x-a` (0x2D), `x\a` (0x5C), while by
+ * `JSON.stringify` they sort `x-a`, `x"a`, `x\a`, because escaping rewrites the first two
+ * to start with a backslash. The server's own order here is the JSON one, so a provider
+ * sorting by `JSON.stringify` would pass by inheriting it.
+ */
+const OBJECT_FIXTURE_ODDNAMES: MockCollectionInfo[] = [
+  { name: "x-a", type: "collection" },
+  { name: 'x"a', type: "collection" },
+  { name: "x\\a", type: "collection" },
+];
+
+/** `listCollections` on `configstore`, verbatim. */
+const OBJECT_FIXTURE_CONFIGSTORE: MockCollectionInfo[] = [{ name: "settings", type: "collection" }];
+
+function resetObjectSurfaceMocks(): void {
+  mockDatabaseList = [];
+  mockCollectionsByDb = {};
+  mockListCollectionsError = {};
+  mockDocumentsByNs = {};
+  mongoOpenedDatabases = [];
+  lastListDatabasesCommand = {};
+}
+
+function useObjectFixture(): void {
+  mockDatabaseList = OBJECT_FIXTURE_DATABASES;
+  mockCollectionsByDb = {
+    app: OBJECT_FIXTURE_APP,
+    configstore: OBJECT_FIXTURE_CONFIGSTORE,
+    oddnames: OBJECT_FIXTURE_ODDNAMES,
+  };
+  mockDocumentsByNs = {
+    "app.customers": [
+      { _id: new MockObjectId("c1"), name: "Ada", city: "Istanbul" },
+      { _id: new MockObjectId("c2"), name: "Grace", city: "Ankara" },
+    ],
+    "app.active_customers": [{ _id: new MockObjectId("c1"), name: "Ada", city: "Istanbul" }],
+  };
+}
 
 // ============================================================================
 // Tests
@@ -257,6 +387,7 @@ describe("MongoDBProvider", () => {
     mockCurrentOps = [];
     mockServerStatus = defaultServerStatus;
     mockDbStats = defaultDbStats;
+    resetObjectSurfaceMocks();
     provider = new MongoDBProvider({ ...baseConfig });
   });
 
@@ -1385,5 +1516,345 @@ describe("MongoDBProvider", () => {
       expect(data.slowQueries).toBeArray();
       expect(data.activeSessions).toBeArray();
     });
+  });
+});
+
+// ============================================================================
+// The object surface (#789)
+//
+// MongoDB is the first NON-SQL engine to get one: the catalog is a command rather than a
+// query, so standing ruling 5f's seam - the count and the listing drifting apart - is not
+// in a WHERE clause here. Both reads are ONE `listCollections` command classified by ONE
+// function, and the tests below drive both sides of that function.
+// ============================================================================
+
+describe("object surface", () => {
+  let objectProvider: InstanceType<typeof MongoDBProvider>;
+
+  /** Connected, with the connect-time `db()` call dropped so a bind assertion sees only the read. */
+  const connectedProvider = async (
+    overrides: Partial<DatabaseConnection> = {},
+  ): Promise<InstanceType<typeof MongoDBProvider>> => {
+    const created = new MongoDBProvider({ ...baseConfig, database: "app", ...overrides });
+    await created.connect();
+    mongoOpenedDatabases = [];
+    return created;
+  };
+
+  beforeEach(async () => {
+    resetObjectSurfaceMocks();
+    useObjectFixture();
+    objectProvider = await connectedProvider();
+  });
+
+  afterEach(async () => {
+    try {
+      await objectProvider.disconnect();
+    } catch {
+      // ignore
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // The declaration
+  // --------------------------------------------------------------------------
+
+  test("declares one container level and the two kinds MongoDB has", () => {
+    const capabilities = objectProvider.getCapabilities();
+
+    expect(capabilities.containerLevels).toEqual([{ id: "schema", label: "Database", labelPlural: "Databases" }]);
+
+    const kinds = capabilities.objectKinds ?? [];
+    expect(kinds.map((k) => k.id)).toEqual(["collection", "view"]);
+    expect(kinds.find((k) => k.id === "collection")?.role).toBe("relation");
+    expect(kinds.find((k) => k.id === "view")?.role).toBe("relation");
+    // A collection takes a document write, and that is a per-KIND fact deliberately not
+    // conjoined with the engine-wide `supportsInlineRowEdit: false` this provider also
+    // declares: the latter gates the results grid's `UPDATE ... SET`, which has no MongoDB
+    // spelling, and conjoining them would drop this engine out of the import target list.
+    expect(kinds.find((k) => k.id === "collection")?.acceptsRowWrites).toBe(true);
+    // A view is read-only: `info.readOnly` is true on every one, measured.
+    expect(kinds.find((k) => k.id === "view")?.acceptsRowWrites).toBeUndefined();
+    expect(objectProvider.getCapabilities().supportsInlineRowEdit).toBe(false);
+  });
+
+  test("declares no kind for anything MongoDB does not have at container level", () => {
+    const ids = (objectProvider.getCapabilities().objectKinds ?? []).map((k) => k.id);
+    // An index name is unique per COLLECTION and not per database: creating `by_thing` on
+    // `customers` AND on `orders` in one database both succeed, measured on 8.3.9, and the
+    // fixture does exactly that. So an index is an attribute of the collection it is on and
+    // belongs in describeObject's output, not in a folder of its own.
+    expect(ids).not.toContain("index");
+    // No stored routine of any shape. `$function`, `$accumulator`, `$where` and `system.js`
+    // are all deprecated as of 8.0, `mapReduce` since 5.0, `db.eval` was removed in 4.2, and
+    // Atlas Triggers and Functions are an Atlas control-plane feature this provider's wire
+    // protocol cannot reach at all.
+    expect(ids).not.toContain("function");
+    expect(ids).not.toContain("procedure");
+    expect(ids).not.toContain("trigger");
+    // `$merge` and `$out` write an ordinary collection with no server-side marker of where
+    // it came from, so there is nothing to list and no kind to declare.
+    expect(ids).not.toContain("materialized_view");
+  });
+
+  // --------------------------------------------------------------------------
+  // Conformance
+  // --------------------------------------------------------------------------
+
+  test("satisfies the object-surface contract on the committed fixture", async () => {
+    await assertObjectSurface(objectProvider, {
+      containers: [["app"], ["configstore"], ["oddnames"]],
+      kinds: { collection: 4, view: 1 },
+      sampleObject: { path: ["app", "customers"], kind: "collection" },
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // listContainers
+  // --------------------------------------------------------------------------
+
+  test("lists every database except the three the server owns, by exact name", async () => {
+    const containers = await objectProvider.listContainers();
+
+    expect(containers.map((c) => c.path)).toEqual([["app"], ["configstore"], ["oddnames"]]);
+    expect(containers.map((c) => c.name)).toEqual(["app", "configstore", "oddnames"]);
+    expect(containers.every((c) => c.level === 0)).toBe(true);
+    // `configstore` starts with "config" and survives, which is what makes the exclusion an
+    // exact-name list rather than a prefix rule. A prefix rule would hide a database a
+    // person created, and `configstore` exists in the fixture to refute it.
+    expect(containers.map((c) => c.name)).toContain("configstore");
+  });
+
+  test("orders containers itself rather than relying on the server having sorted them", async () => {
+    // `listDatabases` came back alphabetical in both live measurements, so the committed
+    // fixture cannot tell a provider that sorts from one that inherits the server's order.
+    // MongoDB does not document that ordering, and the tree addresses by path, so the
+    // guarantee is the provider's own and is pinned with a list the server did not sort.
+    mockDatabaseList = [{ name: "oddnames" }, { name: "app" }, { name: "local" }, { name: "configstore" }];
+    const containers = await objectProvider.listContainers();
+    expect(containers.map((c) => c.name)).toEqual(["app", "configstore", "oddnames"]);
+  });
+
+  test("marks the connected database as the session default and no other", async () => {
+    const containers = await objectProvider.listContainers();
+    expect(containers.find((c) => c.name === "app")?.isSessionDefault).toBe(true);
+    expect(containers.find((c) => c.name === "configstore")?.isSessionDefault).toBe(false);
+  });
+
+  test("asks the server for authorized databases by name only", async () => {
+    await objectProvider.listContainers();
+    // Pinned as statement text because the fake answers the same list either way. Without
+    // `authorizedDatabases`, a role holding no cluster-wide `listDatabases` action gets a
+    // refusal instead of the databases it CAN read: measured with a role granted only
+    // `read` on one database, the flag turns a refusal into that one database.
+    expect(lastListDatabasesCommand).toEqual({ listDatabases: 1, nameOnly: true, authorizedDatabases: true });
+  });
+
+  test("answers nothing under a container, because nothing nests under a database", async () => {
+    expect(await objectProvider.listContainers(["app"])).toEqual([]);
+  });
+
+  // --------------------------------------------------------------------------
+  // countObjects and listObjects, which must not be able to disagree
+  // --------------------------------------------------------------------------
+
+  test("counts what the listing contains, kind by kind", async () => {
+    const counts = await objectProvider.countObjects(["app"]);
+    expect(counts).toEqual({ collection: { count: 4 }, view: { count: 1 } });
+
+    for (const [kind, count] of Object.entries(counts)) {
+      const listed = await objectProvider.listObjects(["app"], kind);
+      expect(listed).toHaveLength((count as { count: number }).count);
+    }
+  });
+
+  test("classifies a time series collection as a collection rather than losing it", async () => {
+    // The 5a case, and the reason the fixture creates one. `listCollections` answers
+    // `type: "timeseries"` for `readings`, so the classifier is "view versus everything
+    // else". Written `type === "collection"` instead, this object would be absent from the
+    // count AND from the listing at once - the two would still agree, so ruling 5f would
+    // still hold while an object a person created was invisible in the tree.
+    const listed = await objectProvider.listObjects(["app"], "collection");
+    expect(listed.map((o) => o.name)).toContain("readings");
+  });
+
+  test("excludes internal namespaces from the count and the listing alike", async () => {
+    const listed = await objectProvider.listObjects(["app"], "collection");
+    const names = listed.map((o) => o.name);
+    expect(names).not.toContain("system.views");
+    expect(names).not.toContain("system.buckets.readings");
+    // The reserved prefix is "system." with the dot: `system.mine` is refused with "not
+    // authorized" and `systemetrics` is created without complaint, both measured. So a
+    // collection whose name merely begins with the letters "system" is a person's.
+    expect(names).toContain("systemetrics");
+    expect(names).toEqual(["customers", "orders", "readings", "systemetrics"]);
+  });
+
+  test("orders objects by their path segments, not by a JSON rendering of the path", async () => {
+    // `JSON.stringify(path)` is the obvious spelling and it is wrong: it sorts by the
+    // ESCAPE SEQUENCE rather than by the name. These three collection names are legal
+    // MongoDB ones (only the null byte and `$` are refused, measured) and differ only in a
+    // character JSON escapes, so the two spellings produce different orders - and the
+    // server's own order is the JSON one, which is what a sort-by-stringify provider would
+    // pass by inheriting.
+    const listed = await objectProvider.listObjects(["oddnames"], "collection");
+    expect(listed.map((o) => o.name)).toEqual(['x"a', "x-a", "x\\a"]);
+  });
+
+  test("addresses an object under its container and labels it with its own name", async () => {
+    const listed = await objectProvider.listObjects(["app"], "view");
+    expect(listed).toEqual([{ path: ["app", "active_customers"], name: "active_customers", kind: "view" }]);
+  });
+
+  test("reads the database the CONTAINER names, not the one the session is in", async () => {
+    const counts = await objectProvider.countObjects(["configstore"]);
+    expect(counts).toEqual({ collection: { count: 1 }, view: { count: 0 } });
+    expect(mongoOpenedDatabases).toEqual(["configstore"]);
+
+    mongoOpenedDatabases = [];
+    const listed = await objectProvider.listObjects(["configstore"], "collection");
+    expect(listed.map((o) => o.path)).toEqual([["configstore", "settings"]]);
+    expect(mongoOpenedDatabases).toEqual(["configstore"]);
+  });
+
+  test("carries the server's own sentence when a database's catalog is refused", async () => {
+    // Measured: a role with `read` on one database only answers `listCollections` on any
+    // other with "not authorized on adminx to execute command { listCollections: 1 ... }".
+    // That is a refusal and not an empty database, and reporting it as 0 would say the
+    // database is empty when nobody has looked.
+    mockListCollectionsError.configstore = new Error("not authorized on configstore to execute command");
+
+    const counts = await objectProvider.countObjects(["configstore"]);
+    expect(counts).toEqual({
+      collection: { unavailable: "not authorized on configstore to execute command" },
+      view: { unavailable: "not authorized on configstore to execute command" },
+    });
+  });
+
+  test("counts a declared kind the catalog holds none of as zero rather than omitting it", async () => {
+    mockCollectionsByDb.app = [{ name: "customers", type: "collection" }];
+    const counts = await objectProvider.countObjects(["app"]);
+    // A declared-and-empty kind keeps its folder and its 0 badge; leaving it out of the
+    // record makes the folder disappear.
+    expect(counts).toEqual({ collection: { count: 1 }, view: { count: 0 } });
+  });
+
+  test("never counts a kind the declaration does not carry", async () => {
+    // The declaration is the only thing that decides which kinds appear, and the classifier
+    // is not allowed to add one: conformance invariant 2 fails a provider that answers for
+    // an undeclared kind. Driven by narrowing the declaration to `view` alone while the
+    // fixture still holds four collections.
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...objectProvider.getCapabilities(),
+      objectKinds: [{ id: "view", role: "relation", label: "View", labelPlural: "Views" }],
+    });
+    expect(await objectProvider.countObjects(["app"])).toEqual({ view: { count: 1 } });
+  });
+
+  test("refuses a container path of the wrong shape rather than answering an empty database", async () => {
+    await expect(objectProvider.countObjects([])).rejects.toThrow(/container path is \[database\]/);
+    await expect(objectProvider.countObjects(["app", "extra"])).rejects.toThrow(/container path is \[database\]/);
+  });
+
+  test("refuses a kind this engine does not declare", async () => {
+    await expect(objectProvider.listObjects(["app"], "index")).rejects.toThrow(/declares no object kind "index"/);
+    await expect(objectProvider.describeObject(["app", "customers"], "index")).rejects.toThrow(
+      /declares no object kind "index"/,
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // describeObject
+  // --------------------------------------------------------------------------
+
+  test("describes a collection with its inferred fields and its own indexes", async () => {
+    const detail = await objectProvider.describeObject(["app", "customers"], "collection");
+    expect(detail.path).toEqual(["app", "customers"]);
+    expect(detail.columns.map((c) => c.name)).toEqual(["_id", "city", "name"]);
+    expect(detail.columns.find((c) => c.name === "_id")?.isPrimary).toBe(true);
+    expect(detail.indexes).toEqual([
+      { name: "_id_", columns: ["_id"], unique: true },
+      { name: "email_1", columns: ["email"], unique: false },
+    ]);
+    // MongoDB has no foreign key constraint at all, which is why the provider declares
+    // `declaresForeignKeys: false`.
+    expect(detail.foreignKeys).toEqual([]);
+  });
+
+  test("describes a view with its fields and claims no indexes for it", async () => {
+    const detail = await objectProvider.describeObject(["app", "active_customers"], "view");
+    expect(detail.path).toEqual(["app", "active_customers"]);
+    expect(detail.columns.map((c) => c.name)).toEqual(["_id", "city", "name"]);
+    // `listIndexes` on a view is refused with code 166, and the indexes its pipeline uses
+    // belong to the collection underneath it: claiming them here would misattribute them.
+    expect(detail.indexes).toEqual([]);
+  });
+
+  test("refuses a name the catalog does not hold under that kind", async () => {
+    await expect(objectProvider.describeObject(["app", "nope"], "collection")).rejects.toThrow(
+      /No MongoDB collection named nope in app/,
+    );
+    // The name IS in the catalog, as a view. The kind decides, so this is still a miss
+    // rather than a view described as a collection.
+    await expect(objectProvider.describeObject(["app", "active_customers"], "collection")).rejects.toThrow(
+      /No MongoDB collection named active_customers in app/,
+    );
+  });
+
+  test("refuses an object path of the wrong length", async () => {
+    await expect(objectProvider.describeObject(["customers"], "collection")).rejects.toThrow(
+      /"collection" path is \[database, name\]/,
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // Standing ruling 5g: no positional index, driven to a BOUND VALUE
+  // --------------------------------------------------------------------------
+
+  test("takes the database from the declared level, not from a position, at depth two", async () => {
+    // MongoDB declares ONE container level, so `path[0]` and `container.length !== 1` are
+    // behaviour-identical here and no fixture on this engine can tell the two spellings
+    // apart. Three providers shipped that defect for exactly that reason. Swapping a
+    // two-level declaration in through `getCapabilities` and driving it to the value the
+    // driver was BOUND with is what kills both mutations on a one-level engine.
+    const capabilities = objectProvider.getCapabilities();
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      containerLevels: [
+        { id: "catalog", label: "Cluster", labelPlural: "Clusters" },
+        { id: "schema", label: "Database", labelPlural: "Databases" },
+      ],
+    });
+
+    const counts = await objectProvider.countObjects(["cluster0", "app"]);
+    expect(counts).toEqual({ collection: { count: 4 }, view: { count: 1 } });
+    // The BOUND VALUE. `path[0]` would have opened `cluster0`, which holds nothing here.
+    expect(mongoOpenedDatabases).toEqual(["app"]);
+
+    mongoOpenedDatabases = [];
+    const listed = await objectProvider.listObjects(["cluster0", "app"], "view");
+    expect(listed.map((o) => o.path)).toEqual([["cluster0", "app", "active_customers"]]);
+    expect(mongoOpenedDatabases).toEqual(["app"]);
+
+    mongoOpenedDatabases = [];
+    const detail = await objectProvider.describeObject(["cluster0", "app", "customers"], "collection");
+    expect(detail.path).toEqual(["cluster0", "app", "customers"]);
+    expect(detail.columns.map((c) => c.name)).toEqual(["_id", "city", "name"]);
+    expect(mongoOpenedDatabases).toEqual(["app", "app"]);
+
+    // And the hardcoded depth: a one-segment container is now the wrong shape, and a
+    // three-segment object path is the right one.
+    await expect(objectProvider.countObjects(["app"])).rejects.toThrow(/container path is \[cluster, database\]/);
+  });
+
+  test("refuses a declaration that carries no database level rather than reading one named undefined", async () => {
+    const capabilities = objectProvider.getCapabilities();
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      containerLevels: [{ id: "catalog", label: "Cluster", labelPlural: "Clusters" }],
+    });
+    await expect(objectProvider.countObjects(["cluster0"])).rejects.toThrow(
+      /needs a "schema" container level and a segment for it/,
+    );
   });
 });

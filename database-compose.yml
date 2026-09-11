@@ -62,6 +62,13 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: admin
     ports:
       - "27017:27017"
+    volumes:
+      # The object-browser fixture (#789). The image runs every .js in this directory
+      # through mongosh once, on a FRESH data directory only, so an already-initialized
+      # container has to be recreated before an edit to that file takes effect. Connect
+      # against the `app` database it creates; `configstore` is there so the reserved
+      # database names stay excluded by exact name rather than by prefix.
+      - ./docker/mongodb-init:/docker-entrypoint-initdb.d:ro
   mysql:
     image: mysql:latest
     container_name: libredb-mysql
