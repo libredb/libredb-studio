@@ -27,7 +27,17 @@ import {
   type StorageStats,
   type PreparedQuery,
   type QueryPrepareOptions,
+  type Container,
+  type DatabaseObject,
+  type KindCount,
+  type ObjectDetail,
+  type ObjectKindSpec,
+  type ColumnSchema,
+  type IndexSchema,
+  type ForeignKeySchema,
+  type ContainerLevelSpec,
 } from "../../types";
+import { containerDepth, declaredKinds, findKind } from "../../object-kinds";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
@@ -380,6 +390,660 @@ const STORAGE_STATS_SQL = `
       `;
 
 // ============================================================================
+// Object surface SQL (#789)
+// ----------------------------------------------------------------------------
+// These are FUNCTIONS rather than the consts above, and the reason is the engine: SQL
+// Server reaches another database only through a three-part name, and a database name
+// cannot be bound as a parameter. So the catalog segment is interpolated - escaped
+// through `escapeIdentifier`, the same `]` doubling `runMaintenance` uses - while the
+// schema and the object name, which can be bound, always are.
+//
+// The `@schema` filter is absent from a statement rather than bound as NULL. Binding one
+// would mean `request.input("schema", null)`, which leaves `mssql` inferring a type for a
+// value that has none, and it would hide an unfiltered read behind a parameter nobody can
+// see in the statement text.
+// ============================================================================
+
+/**
+ * `SERVERPROPERTY('EngineEdition')` for Azure SQL Database.
+ *
+ * 5 is Azure SQL Database, 3 is Enterprise (and Developer, which is what the container
+ * fixture reports), 8 is Azure SQL Managed Instance. Only 5 cannot run a cross-database
+ * query, and Managed Instance can, so this is one edition and not "anything Azure".
+ */
+const AZURE_SQL_DATABASE_EDITION = 5;
+
+/**
+ * The `sys.objects.type` spellings behind each declared kind.
+ *
+ * One entry per kind, and both the counting statement's CASE and every listing's IN list
+ * are built from it, so a kind added to `objectKinds` without an entry here fails loudly
+ * instead of drawing a folder nothing can fill.
+ *
+ * **Derived from the ENGINE's documented type set, not from a fixture** (standing ruling
+ * 5a, #789). A `SELECT DISTINCT type FROM sys.objects` over this repo's fixture server
+ * answers eighteen spellings and none of the CLR ones, because no assembly is registered
+ * there: taking the vocabulary from what happened to be present would have dropped a CLR
+ * stored procedure out of the count AND the listing, invisible in the tree while ruling 5f
+ * still held. Every documented spelling is decided below, and the ones this table does not
+ * carry are listed with the reason.
+ *
+ * | Spelling | Decision |
+ * |---|---|
+ * | `U` | `table`. Covers a graph node or edge table, a memory-optimized table, an external table and both halves of a system-versioned temporal pair: all of those are `U` with a flag beside it, so none can fall out. |
+ * | `V` | `view`. An indexed view is a `V` with a clustered index, so it is here and its index is in the detail row. |
+ * | `P`, `PC`, `X` | `procedure`. SQL, CLR (assembly) and extended: all three are things a person EXECs. |
+ * | `FN`, `IF`, `TF`, `FS`, `FT`, `AF` | `function`. SQL scalar, inline table-valued, multi-statement table-valued, then the CLR scalar, CLR table-valued and CLR aggregate. A person wrote a function in every case. |
+ * | `SN` | `synonym`. |
+ * | `SO` | `sequence`. |
+ * | `TR`, `TA` | NOT here: a trigger is counted and listed from `sys.triggers`, which holds the CLR ones too. See below. |
+ * | `C`, `D`, `F`, `PK`, `UQ`, `EC` | not an object kind: a constraint belongs to the table it constrains and reaches the tree through `describeObject`. |
+ * | `S`, `IT`, `SQ` | Microsoft's own: a system base table, an internal table and a Service Broker queue. All carry `is_ms_shipped = 1`, so the predicate already drops them. |
+ * | `TT` | a table TYPE, not a table. Measured: `CREATE TYPE ... AS TABLE` writes a `sys.objects` row named `TT_<type>_<hex>` with `is_ms_shipped = 1`, so the predicate already drops it, and the object a person wrote lives in `sys.types`. A Types folder is out of Phase 1's scope and is recorded in `docs/providers/mssql.md` as a known gap. |
+ * | `R`, `PG`, `RF` | a rule, a plan guide and a replication filter procedure. Each is a real user object with no declared kind, and each is recorded as a known gap rather than folded into a kind it is not. |
+ *
+ * `trigger` is deliberately ABSENT from this table, and that absence is the whole reason it
+ * exists rather than a `CASE` written inline. Measured on SQL Server 2022 CU26 against
+ * `docker/mssql-init/01-object-fixture.sql`: `sys.objects` holds 2 triggers there and
+ * `sys.triggers` holds 4, because a DATABASE-scoped DDL trigger is absent from
+ * `sys.objects` entirely. A trigger count taken from `sys.objects` is short by exactly the
+ * DDL triggers, and no assertion on `sys.objects` can see it.
+ */
+const MSSQL_OBJECT_TYPES: Record<string, readonly string[]> = {
+  table: ["U"],
+  view: ["V"],
+  procedure: ["P", "PC", "X"],
+  function: ["FN", "IF", "TF", "FS", "FT", "AF"],
+  synonym: ["SN"],
+  sequence: ["SO"],
+};
+
+/** The one kind `sys.objects` cannot answer for. */
+const TRIGGER_KIND = "trigger";
+
+/** `'U','V'` and so on: one kind's spellings as a SQL literal list. */
+function typeList(types: readonly string[]): string {
+  return types.map((type) => `'${type}'`).join(",");
+}
+
+/** Every counted spelling, derived from the table so it cannot drift from the CASE. */
+const COUNTED_TYPE_LIST = typeList(Object.values(MSSQL_OBJECT_TYPES).flat());
+
+/**
+ * The CASE that names each counted spelling's kind, derived from the same table.
+ *
+ * Nothing can answer a kind the CASE has no arm for, because the `WHERE` restricts the read
+ * to the spellings the table lists - and both come from the table. A spelling counted but
+ * unnamed would answer NULL and land in the result under no kind at all.
+ */
+const KIND_CASE = Object.entries(MSSQL_OBJECT_TYPES)
+  .flatMap(([kind, types]) => types.map((type) => `WHEN '${type}' THEN '${kind}'`))
+  .join(" ");
+
+/**
+ * The databases this login can open, which on SQL Server is the outer container level.
+ *
+ * `HAS_DBACCESS(d.name) = 1` is the engine's own answer to "can this login use this
+ * database", and it covers more than permissions: measured on SQL Server 2022 CU26, a
+ * database taken OFFLINE keeps its `sys.databases` row and answers 0 here. Listing it
+ * would draw a container whose schemas can never be read.
+ *
+ * The Azure arm is in the STATEMENT rather than in TypeScript, so one read serves both
+ * editions and neither can be forgotten. Azure SQL Database cannot run a cross-database
+ * query at all, so every catalog other than the connected one would draw a container that
+ * opens onto an error - and answering an empty list there would be a lie about the
+ * database the caller is connected to, which is why the level lists exactly one row
+ * instead. UNVERIFIED against a live Azure SQL Database: `docs/providers/mssql.md` records
+ * that, and records that the arm was probed here by inverting the edition it tests.
+ *
+ * `DB_ID()` rather than the configured database name: it is the server's own answer for
+ * which database this session is in, so it stays right for a connection string that named
+ * none and for a name whose case differs from the catalog's.
+ */
+const CONTAINERS_SQL = `
+        SELECT d.name AS name,
+               CASE WHEN d.database_id = DB_ID() THEN 1 ELSE 0 END AS is_session_default
+        FROM sys.databases d
+        WHERE HAS_DBACCESS(d.name) = 1
+          AND (SERVERPROPERTY('EngineEdition') <> ${AZURE_SQL_DATABASE_EDITION} OR d.database_id = DB_ID())
+        ORDER BY d.name
+      `;
+
+/**
+ * One database's schemas, which is the inner container level.
+ *
+ * Two exclusions, and both are measured rather than tidied. `sys` and `INFORMATION_SCHEMA`
+ * can hold NOTHING a person wrote: `CREATE TABLE sys.probe` and
+ * `CREATE TABLE INFORMATION_SCHEMA.probe` both answer Msg 2760 on SQL Server 2022 CU26,
+ * and across every accessible database on the fixture server not one object in either
+ * schema has `is_ms_shipped = 0`. The nine fixed-role schemas (`db_owner`,
+ * `db_datareader`, ...) exist to own permissions, and `is_fixed_role` on the owning
+ * principal is the engine's own answer for which those are - no name list and no
+ * `schema_id >= 16384` magic number.
+ *
+ * The `EXISTS` arm is what keeps that second exclusion from hiding anything: a fixed-role
+ * schema CAN hold a user object (`CREATE TABLE db_owner.t` succeeds, measured), and one
+ * that does is listed. So the count for a whole database always equals the sum over the
+ * schemas this statement lists, because a schema it drops holds nothing to count.
+ *
+ * No `isSessionDefault` at this level, deliberately. SQL Server publishes the session's
+ * default schema as `SCHEMA_NAME()`, but only for the database the session is IN, so
+ * marking a row here would be wrong for every catalog except the connected one.
+ */
+function schemasSql(database: string): string {
+  return `
+        SELECT s.name AS name
+        FROM ${database}.sys.schemas s
+        JOIN ${database}.sys.database_principals p ON p.principal_id = s.principal_id
+        WHERE s.name NOT IN ('sys', 'INFORMATION_SCHEMA')
+          AND (p.is_fixed_role = 0
+               OR EXISTS (SELECT 1 FROM ${database}.sys.objects o
+                          WHERE o.schema_id = s.schema_id AND o.is_ms_shipped = 0))
+        ORDER BY s.name
+      `;
+}
+
+/**
+ * How many objects of each kind one container holds, in one statement and one round trip.
+ *
+ * `is_ms_shipped = 0` is load-bearing and not hygiene. Measured on SQL Server 2022 CU26,
+ * `msdb` holds 476 stored procedures, 145 tables, 78 views, 38 triggers, 58 functions and
+ * 10 synonyms, every one of them shipped by Microsoft: without the predicate, a database
+ * nobody has written a line in reports hundreds of objects, and a fresh user database
+ * reports 72 system tables and 36 internal ones as tables.
+ *
+ * The trigger arm reads `sys.triggers` because `sys.objects` has no DDL trigger at all,
+ * and it joins the base object's schema so the same arm can be filtered by schema: a DML
+ * trigger belongs to its base object's schema, and a DATABASE-scoped DDL trigger belongs
+ * to no schema, so a schema-filtered count drops it. That is the honest answer at that
+ * depth, and the database-level count is where it appears.
+ */
+function countsSql(database: string, bySchema: boolean): string {
+  return `
+        SELECT kind, COUNT(*) AS n FROM (
+          SELECT CASE o.type ${KIND_CASE} END AS kind
+          FROM ${database}.sys.objects o
+          JOIN ${database}.sys.schemas s ON s.schema_id = o.schema_id
+          WHERE o.is_ms_shipped = 0 AND o.type IN (${COUNTED_TYPE_LIST})${bySchema ? " AND s.name = @schema" : ""}
+          UNION ALL
+          SELECT '${TRIGGER_KIND}'
+          FROM ${database}.sys.triggers t
+          LEFT JOIN ${database}.sys.objects po ON po.object_id = t.parent_id
+          LEFT JOIN ${database}.sys.schemas ps ON ps.schema_id = po.schema_id
+          WHERE t.is_ms_shipped = 0${bySchema ? " AND ps.name = @schema" : ""}
+        ) counted
+        GROUP BY kind
+      `;
+}
+
+/**
+ * One kind's objects, names only, with the row count SQL Server maintains for a table.
+ *
+ * `sys.partitions` with `index_id IN (0, 1)` is the heap or the clustered index, which is
+ * the same expression `SCHEMA_TABLES_SQL` uses for the flat schema tree - so a table's
+ * count reads the same in both surfaces while both are live. It is an approximation the
+ * engine maintains rather than a `COUNT(*)`, which is what `DatabaseObject.rowCount`
+ * promises and all this tree needs.
+ *
+ * `withRowCount` is false for every other kind rather than answering 0, because a view, a
+ * routine, a synonym and a sequence have no rows of their own: the column is not selected,
+ * so the object carries no `rowCount` key at all.
+ */
+function listObjectsSql(database: string, types: readonly string[], bySchema: boolean, withRowCount: boolean): string {
+  const schemaFilter = bySchema ? " AND s.name = @schema" : "";
+  if (!withRowCount) {
+    return `
+        SELECT s.name AS schema_name, o.name AS name
+        FROM ${database}.sys.objects o
+        JOIN ${database}.sys.schemas s ON s.schema_id = o.schema_id
+        WHERE o.is_ms_shipped = 0 AND o.type IN (${typeList(types)})${schemaFilter}
+      `;
+  }
+  return `
+        SELECT s.name AS schema_name, o.name AS name, SUM(p.rows) AS row_count
+        FROM ${database}.sys.objects o
+        JOIN ${database}.sys.schemas s ON s.schema_id = o.schema_id
+        LEFT JOIN ${database}.sys.partitions p ON p.object_id = o.object_id AND p.index_id IN (0, 1)
+        WHERE o.is_ms_shipped = 0 AND o.type IN (${typeList(types)})${schemaFilter}
+        GROUP BY s.name, o.name
+      `;
+}
+
+/**
+ * One container's triggers, each with the object it fires on.
+ *
+ * `sys.triggers` is the spine and `sys.objects` is OUTER joined, which is the shape of this
+ * statement rather than a style choice. `countObjects` counts triggers from `sys.triggers`,
+ * and standing ruling 5f (#789) requires this listing to hold exactly what that count
+ * counted: a DATABASE-scoped DDL trigger has `parent_id = 0` and no row to join, so an
+ * inner join would drop the two the badge already counted.
+ *
+ * Both parent columns arrive NULL together for that reason, and the object then hangs off
+ * the database itself, which ruling 5f allows. `is_disabled` is the one state SQL Server
+ * publishes about an object of any declared kind - there is no VALID / INVALID here, so
+ * there is no second vocabulary for this field to collide with, which is why Oracle keeps
+ * ENABLED / DISABLED out of the same field and this provider carries it.
+ *
+ * The join cannot multiply rows: a trigger is one `sys.triggers` row and `object_id` is
+ * unique in `sys.objects`.
+ */
+function listTriggersSql(database: string, bySchema: boolean): string {
+  return `
+        SELECT t.name AS name, ps.name AS parent_schema, po.name AS parent_name, t.is_disabled
+        FROM ${database}.sys.triggers t
+        LEFT JOIN ${database}.sys.objects po ON po.object_id = t.parent_id
+        LEFT JOIN ${database}.sys.schemas ps ON ps.schema_id = po.schema_id
+        WHERE t.is_ms_shipped = 0${bySchema ? " AND ps.name = @schema" : ""}
+      `;
+}
+
+// ----------------------------------------------------------------------------
+// One object's detail. Four narrow reads, each bound to ONE schema and ONE object.
+//
+// Four statements rather than one wide one, on Oracle's precedent in this epic: each
+// failure names its own statement through `mapDatabaseError`, and a single connection
+// serialises them anyway. Every one of them keys the object explicitly rather than through
+// `OBJECT_NAME()` or `COL_NAME()`, which the flat schema query above uses: those resolve
+// in the CURRENT database and would answer for the connected one while this read is
+// three-part named at another.
+// ----------------------------------------------------------------------------
+
+/**
+ * Columns, from `sys.columns` rather than `INFORMATION_SCHEMA.COLUMNS`.
+ *
+ * `sys.types.name` is the same spelling `INFORMATION_SCHEMA.COLUMNS.DATA_TYPE` gives, so
+ * this surface and the flat schema tree name a column's type identically while both are
+ * live: verified column by column on the fixture's `app.orders` - int, int, decimal,
+ * nvarchar from both. `sys.default_constraints.definition` likewise matches
+ * `COLUMN_DEFAULT`, parentheses included (`((0))`).
+ */
+function objectColumnsSql(database: string): string {
+  return `
+        SELECT c.name AS name, ty.name AS data_type, c.is_nullable, dc.definition AS default_definition
+        FROM ${database}.sys.columns c
+        JOIN ${database}.sys.objects o ON o.object_id = c.object_id
+        JOIN ${database}.sys.schemas s ON s.schema_id = o.schema_id
+        JOIN ${database}.sys.types ty ON ty.user_type_id = c.user_type_id
+        LEFT JOIN ${database}.sys.default_constraints dc ON dc.object_id = c.default_object_id
+        WHERE s.name = @schema AND o.name = @name
+        ORDER BY c.column_id
+      `;
+}
+
+function objectPrimaryKeySql(database: string): string {
+  return `
+        SELECT c.name AS name
+        FROM ${database}.sys.indexes i
+        JOIN ${database}.sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+        JOIN ${database}.sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+        JOIN ${database}.sys.objects o ON o.object_id = i.object_id
+        JOIN ${database}.sys.schemas s ON s.schema_id = o.schema_id
+        WHERE i.is_primary_key = 1 AND s.name = @schema AND o.name = @name
+      `;
+}
+
+/**
+ * Foreign keys, paired column by column.
+ *
+ * `sys.foreign_key_columns` already carries both sides of each pair in one row, so there
+ * is no position join to get wrong here. The referenced schema comes back as its own
+ * column because a foreign key may cross schemas, and `referencedTable` below qualifies
+ * the name when it does.
+ */
+function objectForeignKeysSql(database: string): string {
+  return `
+        SELECT pc.name AS column_name, rs.name AS ref_schema, ro.name AS ref_table, rc.name AS ref_column
+        FROM ${database}.sys.foreign_keys fk
+        JOIN ${database}.sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+        JOIN ${database}.sys.objects po ON po.object_id = fk.parent_object_id
+        JOIN ${database}.sys.schemas ps ON ps.schema_id = po.schema_id
+        JOIN ${database}.sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+        JOIN ${database}.sys.objects ro ON ro.object_id = fk.referenced_object_id
+        JOIN ${database}.sys.schemas rs ON rs.schema_id = ro.schema_id
+        JOIN ${database}.sys.columns rc ON rc.object_id = fkc.referenced_object_id
+               AND rc.column_id = fkc.referenced_column_id
+        WHERE ps.name = @schema AND po.name = @name
+        ORDER BY fk.name, fkc.constraint_column_id
+      `;
+}
+
+/**
+ * Indexes, filtered the same way `SCHEMA_INDEXES_SQL` filters them.
+ *
+ * `i.name IS NOT NULL` drops the heap, and `is_primary_key = 0` drops the index behind the
+ * primary key, which the columns' own `isPrimary` already carries. Keeping the two
+ * surfaces' rule identical is what stops one screen showing an index the other hides.
+ */
+function objectIndexesSql(database: string): string {
+  return `
+        SELECT i.name AS index_name, i.is_unique, c.name AS column_name
+        FROM ${database}.sys.indexes i
+        JOIN ${database}.sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+        JOIN ${database}.sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+        JOIN ${database}.sys.objects o ON o.object_id = i.object_id
+        JOIN ${database}.sys.schemas s ON s.schema_id = o.schema_id
+        WHERE s.name = @schema AND o.name = @name AND i.name IS NOT NULL AND i.is_primary_key = 0
+        ORDER BY i.name, ic.key_ordinal
+      `;
+}
+
+// ============================================================================
+// Object surface shapes and derivations (#789)
+// ============================================================================
+
+/** One row of `CONTAINERS_SQL`. */
+interface ContainerRow {
+  name: string;
+  is_session_default: number;
+}
+
+/** One row of `schemasSql`. */
+interface SchemaNameRow {
+  name: string;
+}
+
+/** One row of `countsSql`: a kind id and how many of it the container holds. */
+interface KindCountRow {
+  kind: string;
+  n: number;
+}
+
+/**
+ * One row of a `sys.objects` listing: the object's own schema, and a row count where the
+ * statement selected one.
+ */
+interface SchemaObjectRow {
+  name: string;
+  schema_name: string;
+  row_count?: number | string | null;
+}
+
+/**
+ * One row of the trigger listing: its BASE OBJECT rather than its own schema, both columns
+ * NULL for a DATABASE-scoped DDL trigger, and the state SQL Server publishes for it.
+ */
+interface TriggerRow {
+  name: string;
+  parent_schema: string | null;
+  parent_name: string | null;
+  is_disabled: boolean;
+}
+
+interface ColumnRow {
+  name: string;
+  data_type: string;
+  is_nullable: boolean;
+  default_definition: string | null;
+}
+
+interface ForeignKeyRow {
+  column_name: string;
+  ref_schema: string;
+  ref_table: string;
+  ref_column: string;
+}
+
+interface IndexRow {
+  index_name: string;
+  is_unique: boolean;
+  column_name: string;
+}
+
+/**
+ * The container levels this engine declares, cut to the depth `containerDepth()` answers.
+ *
+ * Every derivation below starts here rather than from a length or an index. Standing
+ * ruling 5g (#789) is about the three spellings of one defect, and all three are wrong on
+ * this engine specifically: a hardcoded `container.length !== 1`, a positional
+ * `path[1]` for the object name, and a positional `path[0]` for the schema. SQL Server is
+ * the first engine in the epic where the schema is not at index 0 and the name is not at
+ * index 1, so the derivations are written once here and every caller reads them.
+ */
+function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerLevelSpec[] {
+  return (capabilities.containerLevels ?? []).slice(0, containerDepth(capabilities));
+}
+
+/**
+ * The container segments of a path, keyed by the LEVEL each one belongs to.
+ *
+ * This is what replaces `container[0]` and `path[1]`: the caller asks for `catalog` or
+ * `schema` by name, so a level added, removed or reordered moves every read with it and a
+ * one-level engine copying this file gets `schema: undefined` rather than a segment that
+ * happens to sit at the index it expected.
+ *
+ * `Object.fromEntries` loses the key union, so the result is asserted back to it. The
+ * assertion is sound by construction: the entries are exactly the declared level ids, and
+ * `Partial` is what carries "a database-level container names no schema".
+ */
+function containerSegments(
+  capabilities: ProviderCapabilities,
+  path: readonly string[],
+): Partial<Record<ContainerLevelSpec["id"], string>> {
+  const levels = declaredLevels(capabilities);
+  return Object.fromEntries(
+    path.slice(0, levels.length).map((segment, index) => [levels[index].id, segment]),
+  ) as Partial<Record<ContainerLevelSpec["id"], string>>;
+}
+
+/**
+ * The segment one declared level carries, or a refusal naming the level.
+ *
+ * Every caller that interpolates a segment into a three-part name goes through this rather
+ * than through a non-null assertion, because `undefined` reaching the statement builds
+ * `[undefined].sys.objects` and asks the server a question about a database nobody has.
+ * The case is reachable without a bug in this file: a provider that copied it and declared
+ * only a `schema` level would pass the length check below and then have no catalog
+ * segment at all.
+ */
+function requiredSegment(
+  segments: Partial<Record<ContainerLevelSpec["id"], string>>,
+  level: ContainerLevelSpec["id"],
+): string {
+  const segment = segments[level];
+  if (segment === undefined) {
+    throw new QueryError(`SQL Server declares no ${level} level to read this path's segment from`, "mssql");
+  }
+  return segment;
+}
+
+/**
+ * The container paths this engine accepts, outermost first, as segment NAMES.
+ *
+ * Every prefix of the declared levels, which on a two-level engine means a database alone
+ * or a database and a schema. Both are real containers here: the tree only ever draws
+ * folders at the deepest level (`src/components/object-tree/flatten.ts`), but
+ * `assertContainerDepth` in `src/lib/api/object-route.ts` admits any path down to the
+ * declared depth and `assertObjectSurface` reads counts at the OUTER one, so a database
+ * holding twelve tables across three schemas is a question with a true answer rather than
+ * a caller mistake.
+ *
+ * The names in the message are the declared LABELS, which is the engine's own word for a
+ * person reading a refusal; the code addresses the same segments by `ContainerLevelSpec.id`
+ * through `containerSegments()`. The depth behind both is `containerDepth()`, so the check
+ * and the sentence it raises cannot disagree.
+ */
+function containerShapes(capabilities: ProviderCapabilities): readonly string[][] {
+  const names = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
+  return names.map((_, index) => names.slice(0, index + 1));
+}
+
+/** The shapes above, spelled for a message: `[database] or [database, schema]`. */
+function shapeList(shapes: readonly string[][]): string {
+  return shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ");
+}
+
+/**
+ * The segments a container path addresses, keyed by level, or a refusal naming the shapes.
+ *
+ * It raises rather than reading a segment and carrying on, because `undefined`
+ * interpolated into a three-part name would either fail with a syntax error nobody can
+ * read or, worse, answer an empty folder that looks exactly like a schema holding nothing.
+ */
+function containerTarget(
+  capabilities: ProviderCapabilities,
+  container: readonly string[],
+): Partial<Record<ContainerLevelSpec["id"], string>> {
+  const shapes = containerShapes(capabilities);
+  if (!shapes.some((shape) => shape.length === container.length)) {
+    throw new QueryError(
+      `A SQL Server container path is ${shapeList(shapes)}, received ${JSON.stringify(container)}`,
+      "mssql",
+    );
+  }
+  return containerSegments(capabilities, container);
+}
+
+/**
+ * The path shapes one KIND's objects are addressed by, derived from the declaration.
+ *
+ * A kind with no `attachedTo` sits in a schema: every object in `sys.objects` does, and
+ * `CREATE TABLE` with no schema resolves to the login's default one rather than to no
+ * schema. A kind that declares `attachedTo` takes the extra segment for its base object,
+ * and it also takes the catalog-scoped shape, because a DDL trigger has no schema at all -
+ * measured: `parent_class = 0` and `parent_id = 0`, so `[database, name]` is its whole
+ * address.
+ *
+ * That second shape is the levels FILTERED TO `catalog`, not the first level by position:
+ * it states where a DDL trigger lives, and naming the level is what keeps it true on an
+ * engine whose levels are declared in another order.
+ */
+function objectShapes(capabilities: ProviderCapabilities, spec: ObjectKindSpec): readonly string[][] {
+  const levels = declaredLevels(capabilities);
+  const names = (specs: readonly ContainerLevelSpec[]) => specs.map((level) => level.label.toLowerCase());
+  if (spec.attachedTo === undefined) return [[...names(levels), "name"]];
+  return [
+    [...names(levels), spec.attachedTo, "name"],
+    [...names(levels.filter((level) => level.id === "catalog")), "name"],
+  ];
+}
+
+/**
+ * Every declared kind seeded at zero, before any row is read.
+ *
+ * Seeding is what makes "this engine has this kind and this container holds none" render
+ * as a 0 badge. Building the record from the GROUP BY rows alone would leave the kind out
+ * entirely, and an absent kind already means something else and stronger: the engine has
+ * no such concept, so the tree draws no folder at all.
+ */
+function seedZeroCounts(kinds: readonly ObjectKindSpec[]): Record<string, KindCount> {
+  return Object.fromEntries(kinds.map((kind) => [kind.id, { count: 0 } as KindCount]));
+}
+
+/**
+ * The server's own sentence, verbatim, against every kind the failed read covered.
+ *
+ * Deliberately NOT through `mapDatabaseError`. That mapper gives a THROWN error a type and
+ * this product's prefix, and nothing here throws: the sentence is rendered to a person as
+ * the reason a folder has no number, so prefixing it would put our words in front of SQL
+ * Server's. A refused read is never 0 - "The SELECT permission was denied" and "this
+ * schema holds no tables" are different facts, and `KindCount` is the type that keeps them
+ * apart.
+ */
+function unavailableCounts(ids: readonly string[], error: unknown): Record<string, KindCount> {
+  const reason = error instanceof Error ? error.message : String(error);
+  return Object.fromEntries(ids.map((id) => [id, { unavailable: reason } as KindCount]));
+}
+
+/** Overwrites the seeded zeros with what the GROUP BY actually answered. */
+function applyKindCounts(counts: Record<string, KindCount>, rows: readonly KindCountRow[]): void {
+  for (const row of rows) {
+    counts[row.kind] = { count: Number(row.n) };
+  }
+}
+
+/**
+ * Which statement answers for one kind, the row shape it returns, or nothing when no
+ * statement here lists it.
+ *
+ * The type spellings are interpolated from `MSSQL_OBJECT_TYPES` and never from anything a
+ * caller supplied. The lookup is `Object.hasOwn` and not a bare index: a kind id is an OPEN
+ * string, and `MSSQL_OBJECT_TYPES["toString"]` answers a function off the prototype chain
+ * rather than `undefined`, which would reach `typeList()` as a kind this engine has.
+ *
+ * `rows` travels with the statement because the two are one fact: the trigger listing
+ * selects its BASE OBJECT and every other listing selects the object's own schema. Sniffing
+ * a property off the row instead would have to widen a union that `Object.hasOwn` does not
+ * narrow (measured against this repo's TypeScript), and a cast there is exactly the kind of
+ * unchecked claim the shape is meant to remove.
+ */
+function objectListingStatement(
+  catalog: string,
+  kind: string,
+  bySchema: boolean,
+): { sql: string; rows: "schema" | "trigger" } | undefined {
+  if (kind === TRIGGER_KIND) return { sql: listTriggersSql(catalog, bySchema), rows: "trigger" };
+  if (!Object.hasOwn(MSSQL_OBJECT_TYPES, kind)) return undefined;
+  const types = MSSQL_OBJECT_TYPES[kind];
+  // Only a table has rows of its own. A view's rows belong to the tables under its query.
+  const withRowCount = kind === "table";
+  return { sql: listObjectsSql(catalog, types, bySchema, withRowCount), rows: "schema" };
+}
+
+/** `SUM(p.rows)` as a number, or nothing when the statement did not select it. */
+function measuredRowCount(raw: number | string | null | undefined): number | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  const parsed = Number(raw);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+/**
+ * One `sys.objects` row as the object it addresses.
+ *
+ * The schema comes from the ROW rather than from the container, and that is load-bearing at
+ * the database level, where one listing spans every schema. Each object carries exactly the
+ * keys its statement selected: a table's row count is present because it was read, and a
+ * view's is absent rather than 0.
+ *
+ * `name` is the last path segment for every kind on this engine, which is measured rather
+ * than assumed: SQL Server has no routine overloading at all (`CREATE FUNCTION` with a
+ * second signature answers Msg 2714), so no kind needs the disambiguated segment a
+ * PostgreSQL routine needs.
+ */
+function listedSchemaObject(catalog: string, kind: string, row: SchemaObjectRow): DatabaseObject {
+  const rowCount = measuredRowCount(row.row_count);
+  return {
+    path: [catalog, row.schema_name, row.name],
+    name: row.name,
+    kind,
+    ...(rowCount === undefined ? {} : { rowCount }),
+  };
+}
+
+/**
+ * One `sys.triggers` row as the object it addresses, at whichever of the two depths it has.
+ *
+ * Both parent columns arrive NULL together for a DATABASE-scoped DDL trigger, which has no
+ * schema and no base object, so it hangs off the catalog itself. Standing ruling 5f (#789)
+ * is what makes that right rather than a filter: the count counted it, so the listing shows
+ * it, and the path shape gives way instead of the badge.
+ */
+function listedTrigger(catalog: string, kind: string, row: TriggerRow): DatabaseObject {
+  const path =
+    row.parent_schema === null || row.parent_name === null
+      ? [catalog, row.name]
+      : [catalog, row.parent_schema, row.parent_name, row.name];
+  return { path, name: row.name, kind, status: row.is_disabled ? "DISABLED" : "ENABLED" };
+}
+
+/**
+ * Two paths ordered SEGMENT BY SEGMENT, shorter first where one is a prefix of the other.
+ *
+ * Never `JSON.stringify`, which standing ruling 5g (#789) rules out as a path key for two
+ * reasons this engine actually meets: at mixed depth the serialised deeper path can sort
+ * before its own prefix, and JSON escaping reorders exotic names by rewriting the very
+ * characters being compared. A trigger folder here holds `[db, name]` and
+ * `[db, schema, table, name]` rows together, so mixed depth is the normal case and not a
+ * corner.
+ */
+function comparePaths(left: readonly string[], right: readonly string[]): number {
+  const shared = Math.min(left.length, right.length);
+  for (let index = 0; index < shared; index++) {
+    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
+  }
+  return left.length - right.length;
+}
+
+// ============================================================================
 // MSSQL Provider
 // ============================================================================
 
@@ -425,6 +1089,44 @@ export class MSSQLProvider extends SQLBaseProvider {
         optimize: { label: "Rebuild Indexes", perEntity: true, global: true },
         kill: { label: "Kill Session", perEntity: false, global: false },
       },
+      // TWO levels, which no engine in #789 before this one declared. A SQL Server
+      // instance holds databases, each holding schemas, and both are addressable from one
+      // connection: a three-part name reaches another database's catalog views, so the
+      // outer level is a real container here rather than a second connection. Azure SQL
+      // Database is the exception and it is answered in `CONTAINERS_SQL` rather than here,
+      // because the level still exists there - it just holds exactly one row.
+      containerLevels: [
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+      // Seven kinds. Six are `sys.objects.type` spellings (`MSSQL_OBJECT_TYPES`) and the
+      // seventh, the trigger, is read from `sys.triggers` because `sys.objects` holds no
+      // DDL trigger at all (#789).
+      //
+      // No `index` kind, deliberately. SQL Server models an index as an attribute of the
+      // object it is on - `sys.indexes` is keyed by `object_id` and an index cannot exist
+      // without one - so it belongs in `describeObject`'s output, where it is, rather than
+      // in a folder of its own.
+      //
+      // No `materialized view` either: SQL Server has no such object. An indexed view is a
+      // VIEW with a clustered index on it, so it is already in the `view` folder with its
+      // index in the detail row, and declaring a kind for it would draw a folder for a
+      // concept the engine does not have.
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+        // No `acceptsRowWrites` on a view. SQL Server takes an UPDATE against a view over
+        // exactly one base table and refuses one over a join without an INSTEAD OF trigger,
+        // which is a per-OBJECT fact this per-kind declaration cannot state.
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+        { id: "procedure", role: "routine", label: "Stored Procedure", labelPlural: "Stored Procedures" },
+        // One kind for three spellings: a scalar function, an inline table-valued function
+        // and a multi-statement table-valued one are all things a person wrote as a
+        // function.
+        { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+        { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table" },
+        { id: "synonym", role: "config", label: "Synonym", labelPlural: "Synonyms" },
+        { id: "sequence", role: "config", label: "Sequence", labelPlural: "Sequences" },
+      ],
     };
   }
 
@@ -888,6 +1590,255 @@ export class MSSQLProvider extends SQLBaseProvider {
     } catch (error) {
       throw mapDatabaseError(error, "mssql");
     }
+  }
+
+  // ============================================================================
+  // Object surface (#789)
+  // ============================================================================
+
+  /** The catalog segment of a three-part name, escaped the way `runMaintenance` escapes one. */
+  private objectCatalog(database: string): string {
+    return this.escapeIdentifier(database);
+  }
+
+  /** One request with the schema and name parameters this read binds, and nothing else. */
+  private objectRequest(params: Record<string, unknown>): mssql.Request {
+    const request = this.pool!.request();
+    for (const [name, value] of Object.entries(params)) {
+      request.input(name, value);
+    }
+    return request;
+  }
+
+  /** One catalog read, with SQL Server's refusal mapped and quoting the statement it sent. */
+  private async runObjectRows<T>(sql: string, params: Record<string, unknown> = {}): Promise<T[]> {
+    try {
+      const result = await this.objectRequest(params).query(sql);
+      return (result.recordset || []) as T[];
+    } catch (error) {
+      throw mapDatabaseError(error, "mssql", sql);
+    }
+  }
+
+  /**
+   * The containers at `parent`: the databases this login can open, or one database's
+   * schemas.
+   *
+   * This is the first two-level engine in #789, so it is the first `listContainers` that
+   * does anything with `parent` at all. The nested read is three-part named at the
+   * CALLER's database rather than at the connected one, which is not a detail: a database
+   * name cannot be bound, so a provider that dropped the segment would answer the
+   * connected database's schemas under every catalog in the tree and look healthy doing it.
+   *
+   * Below the last declared level the answer is `[]` rather than a refusal, because
+   * "nothing nests under a schema" is a true statement about SQL Server and not a caller
+   * mistake. The depth is read through `containerDepth()` for the reason standing ruling
+   * 5g gives.
+   */
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const parentPath = parent ?? [];
+    // `Container.level` is the index into `containerLevels`, so a container listed under a
+    // parent of depth d sits at level d. Derived from the parent rather than written twice
+    // as a literal 0 and 1.
+    const level = parentPath.length;
+
+    if (level === 0) {
+      const rows = await this.runObjectRows<ContainerRow>(CONTAINERS_SQL);
+      return rows.map((row) => ({
+        path: [row.name],
+        name: row.name,
+        level,
+        isSessionDefault: Number(row.is_session_default) === 1,
+      }));
+    }
+    if (level >= containerDepth(capabilities)) return [];
+
+    // The catalog is named by its LEVEL, never taken from an index: `containerSegments`
+    // is the one place a path becomes named segments (standing ruling 5g, #789).
+    const catalog = requiredSegment(containerSegments(capabilities, parentPath), "catalog");
+    const rows = await this.runObjectRows<SchemaNameRow>(schemasSql(this.objectCatalog(catalog)));
+    return rows.map((row) => ({ path: [...parentPath, row.name], name: row.name, level }));
+  }
+
+  /**
+   * How many objects of each declared kind one container holds, in one round trip.
+   *
+   * Three outcomes, and the type keeps all three apart. A kind the GROUP BY answered for
+   * carries its count. A kind it did not carries `{ count: 0 }`, because it was seeded
+   * before the read. A kind whose read was refused carries SQL Server's own sentence, so
+   * the object browser can say why a folder has no number instead of showing a zero nobody
+   * measured. One statement answers for every kind, so there is no partial outcome to
+   * report and no retry that could produce one.
+   *
+   * A database-level count is the whole database and a schema-level one is that schema.
+   * For every kind except `trigger` the first is the sum of the second over the schemas
+   * `listContainers` lists; a DATABASE-scoped DDL trigger belongs to no schema, so it is
+   * counted at the database level only, which is the depth its address has.
+   */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const target = containerTarget(capabilities, container);
+    const catalog = requiredSegment(target, "catalog");
+    const schema = target.schema;
+    const declared = declaredKinds(capabilities);
+    const counts = seedZeroCounts(declared);
+    const sql = countsSql(this.objectCatalog(catalog), schema !== undefined);
+
+    try {
+      const result = await this.objectRequest(schema === undefined ? {} : { schema }).query(sql);
+      applyKindCounts(counts, (result.recordset || []) as KindCountRow[]);
+      return counts;
+    } catch (error) {
+      return unavailableCounts(
+        declared.map((kind) => kind.id),
+        error,
+      );
+    }
+  }
+
+  /**
+   * The objects of one kind in one container, names only.
+   *
+   * Ordering is done here rather than with an `ORDER BY`, and that is deliberate. Three
+   * statements answer these listings and one of them addresses its rows at two different
+   * depths, so three `ORDER BY` clauses would be three chances to disagree; and a SQL sort
+   * runs under the database's own collation, which is case-insensitive by default on SQL
+   * Server and case-sensitive on plenty of real servers, so the same schema would come
+   * back in two different orders on two of them. A code-point sort here is one rule and
+   * the same rule everywhere.
+   *
+   * By PATH and not by name, because it is the address that has to be stable: sorting by
+   * the address groups a table's triggers together, and a database-scoped DDL trigger
+   * sorts among the schemas rather than inside one.
+   */
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const target = containerTarget(capabilities, container);
+    const catalog = requiredSegment(target, "catalog");
+    const schema = target.schema;
+    // Two questions, asked in order, and only the DECLARATION answers the first. Deciding
+    // "is this kind declared" from whether a listing statement exists would make the two
+    // methods disagree, and would report "declares no object kind" about a kind
+    // `objectKinds` does declare.
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`SQL Server declares no object kind "${kind}"`, "mssql");
+    }
+    const statement = objectListingStatement(this.objectCatalog(catalog), kind, schema !== undefined);
+    if (statement === undefined) {
+      throw new QueryError(`SQL Server declares the kind "${kind}" but has no statement that lists it`, "mssql");
+    }
+
+    const binds = schema === undefined ? {} : { schema };
+    const objects =
+      statement.rows === "trigger"
+        ? (await this.runObjectRows<TriggerRow>(statement.sql, binds)).map((row) => listedTrigger(catalog, kind, row))
+        : (await this.runObjectRows<SchemaObjectRow>(statement.sql, binds)).map((row) =>
+            listedSchemaObject(catalog, kind, row),
+          );
+    return objects.sort((left, right) => comparePaths(left.path, right.path));
+  }
+
+  /**
+   * Columns, indexes and foreign keys for one object of one KIND.
+   *
+   * The kind decides everything and nothing here reads the name to work out what it is
+   * holding. Only the two kinds SQL Server resolves as relations have any of the three, so
+   * a routine, a synonym, a sequence and a trigger answer three empty arrays without a
+   * round trip. That is a true fact about those kinds rather than a failed read,
+   * `tests/helpers/object-surface-conformance.ts` states the same rule from the caller's
+   * side, and a routine's parameters are Phase 2's job.
+   *
+   * Without the kind the same answer would come out by accident here, and on this engine
+   * that accident is reachable: measured on SQL Server 2022 CU26,
+   * `CREATE TRIGGER orders ON DATABASE` succeeds while the table `app.orders` exists,
+   * because a DDL trigger is not in the schema namespace - while
+   * `CREATE PROCEDURE app.orders` answers Msg 2714. A read keyed on the name alone would
+   * hand that trigger the table's four columns as if they were its own.
+   */
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`SQL Server declares no object kind "${kind}"`, "mssql");
+    }
+
+    const shapes = objectShapes(capabilities, spec);
+    if (!shapes.some((shape) => shape.length === path.length)) {
+      throw new QueryError(
+        `A SQL Server "${kind}" path is ${shapeList(shapes)}, received ${JSON.stringify(path)}`,
+        "mssql",
+      );
+    }
+
+    if (spec.role !== "relation") {
+      return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
+    }
+
+    // Three derivations, and all three are the ones standing ruling 5g (#789) asks this
+    // task to pin for the fleet, because SQL Server is the first engine where each is
+    // visibly wrong when written positionally:
+    //
+    //   - the object's own name is the LAST segment. On a one-level engine `path[1]` IS
+    //     the name, so neither reference provider's suite can tell the two apart; here
+    //     `path[1]` is the SCHEMA, and binding it as the name reads a table called `app`
+    //     and reports an object that exists as missing.
+    //   - the CONTAINER segments are `path` cut to `containerDepth()` and named by their
+    //     declared level, never `path[0]` and `path[1]`. A relation path is
+    //     `[...levels, name]` by construction - the shape check above is what makes that
+    //     true - so the cut is exactly this object's container.
+    //   - the catalog is `catalog`, the schema is `schema`, and neither is an index.
+    const segments = containerSegments(capabilities, path);
+    const quotedCatalog = this.objectCatalog(requiredSegment(segments, "catalog"));
+    const binds = { schema: requiredSegment(segments, "schema"), name: path[path.length - 1] };
+
+    const columnRows = await this.runObjectRows<ColumnRow>(objectColumnsSql(quotedCatalog), binds);
+    if (columnRows.length === 0) {
+      // A table and a view each hold at least one column on SQL Server - `CREATE TABLE t ()`
+      // is a syntax error - so zero rows means the object is not there. Answering
+      // `{ columns: [] }` would render a table that was dropped as a table with no columns.
+      throw new QueryError(`No column row for ${path.join(".")}`, "mssql", objectColumnsSql(quotedCatalog));
+    }
+    const pkRows = await this.runObjectRows<SchemaNameRow>(objectPrimaryKeySql(quotedCatalog), binds);
+    const fkRows = await this.runObjectRows<ForeignKeyRow>(objectForeignKeysSql(quotedCatalog), binds);
+    const indexRows = await this.runObjectRows<IndexRow>(objectIndexesSql(quotedCatalog), binds);
+
+    const primaryKey = new Set(pkRows.map((row) => row.name));
+    const columns: ColumnSchema[] = columnRows.map((row) => ({
+      name: row.name,
+      type: row.data_type,
+      nullable: row.is_nullable,
+      isPrimary: primaryKey.has(row.name),
+      defaultValue: row.default_definition ?? undefined,
+    }));
+
+    // One entry per index, its columns in key_ordinal order, which is the order the
+    // statement returns them in.
+    const byIndex = new Map<string, IndexSchema>();
+    for (const row of indexRows) {
+      const index = byIndex.get(row.index_name) ?? { name: row.index_name, columns: [], unique: row.is_unique };
+      index.columns.push(row.column_name);
+      byIndex.set(row.index_name, index);
+    }
+
+    // `referencedTable` is spelled the way `getSchema()` spells it within the object's own
+    // schema - a bare name - and QUALIFIED outside it, because `ForeignKeySchema` carries
+    // one string and both surfaces are live through Phase 1. The phase that removes
+    // `getSchema` is where that string becomes a path. Qualifying the cross-schema case is
+    // not cosmetic: a bare name there addresses a table in the wrong schema, which is what
+    // the flat query's `OBJECT_NAME()` answers. SQL Server has no cross-DATABASE foreign
+    // key, so the catalog never needs naming.
+    const foreignKeys: ForeignKeySchema[] = fkRows.map((row) => ({
+      columnName: row.column_name,
+      referencedTable: row.ref_schema === binds.schema ? row.ref_table : `${row.ref_schema}.${row.ref_table}`,
+      referencedColumn: row.ref_column,
+    }));
+
+    return { path: [...path], columns, indexes: [...byIndex.values()], foreignKeys };
   }
 
   // ============================================================================
