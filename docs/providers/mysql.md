@@ -834,6 +834,98 @@ special-cases only `NULL` therefore leaves every string default wrong by two cha
 two disagree about one column. Measured both ways and filed as **#795**, whose comment carries the
 full measurement table and what "done" looks like.
 
+#### `describeObjects()` describes a whole folder in four statements (#789)
+
+`describeObjects(container, kind, limit?)` answers columns, indexes and foreign keys for EVERY object of
+one kind in one database, in FOUR round trips whatever the folder holds.
+The single read is three statements per object, so a folder of 200 tables cost 600.
+Measured on MySQL 26.7.0 against a 200-table database built by the commands below: **13 ms for one
+`describeObjects()` against 118 ms for 200 `describeObject()` calls**, the same 600 columns and 400 indexes.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.**
+The same three `information_schema` views `describeObject()` reads, and that is a real answer rather than an
+assumption carried over: PostgreSQL had to leave `information_schema.columns` because it holds no row at all
+for a materialized view or a sequence, and on this family it holds a row for every kind that has columns,
+a MariaDB `SEQUENCE` included.
+What the bulk read does NOT take from that view is the MEMBERSHIP of its answer.
+The target set is read from `information_schema.TABLES`, the same view `listObjects` reads, because a view
+whose base table has been dropped keeps its `TABLES` row and has NO `COLUMNS` row at all.
+Measured on both servers: `CREATE VIEW broken AS SELECT id FROM base; DROP TABLE base;` leaves one `TABLES`
+row and zero `COLUMNS` rows.
+A target derived from the column read would therefore drop an object the folder lists, which is the class of
+absence standing ruling 5a is about.
+It is also what lets an object the three detail reads answered nothing for come back with three empty lists
+rather than missing.
+
+**Which kinds have no columns.**
+The kinds read from `information_schema.ROUTINES`, plus `trigger` and `event`: a procedure, a function, a
+MariaDB package, a trigger and an event answer `{ details: [] }` with no round trip at all.
+A MariaDB `sequence` is NOT one of them, for the reason the single read gives above, and the rule is the one
+function `hasColumns()` so the two reads cannot disagree about it.
+
+**What bounds the read on the wire.**
+`LIMIT ?` inside the target subquery, the placeholder BOUND rather than interpolated: measured on MySQL
+26.7.0 and MariaDB 12.3.2 through the binary prepared protocol, a placeholder in a derived table's `LIMIT`
+is accepted.
+The provider binds `limit + 1`, so a saturated read is told from an exact one with no second count, drops the
+extra object, and reports the CALLER's limit in `truncated`.
+An unbounded call runs a statement with no `LIMIT` clause and can never report truncation.
+Neither the columns nor the indexes are capped: `getSchema()`'s `LIMIT 100` is an unreported bound and is the
+defect `truncated` exists to prevent.
+
+**What orders the cut, and under whose collation.**
+`ORDER BY TABLE_NAME` in the target statement, which runs under the SERVER's collation, and **the two servers
+in this family do not use the same one.**
+Measured: `information_schema.TABLES.TABLE_NAME` collates `utf8mb3_bin` on MySQL 26.7.0 and
+`utf8mb3_general_ci` on MariaDB 12.3.2, and the fixture makes the difference visible rather than theoretical.
+The four `table` rows of `app` come back as `customers, order_archive, order_audit, orders` on MySQL and as
+`customers, orders, order_archive, order_audit` on MariaDB, because `general_ci` folds `s` to the weight of
+`S` (0x53), which sorts below `_` (0x5F).
+So `describeObjects(["app"], "table", 2)` keeps `customers, order_archive` on one server and
+`customers, orders` on the other.
+That order decides WHICH objects a bound keeps and nothing else: the answer is re-sorted by path in code,
+which is one rule on every server, and a caller joins the two answers on path rather than on position.
+A bounded read's membership is therefore the server's, and it is not promised to be the same on two servers
+of this family.
+
+**Mixed path depth (ruling 5f).**
+Not in this engine's relation set.
+The kinds that have columns are all addressed `[database, name]`; `trigger` is the one kind here with a
+second possible depth, and it has no columns, so the target set is one shape.
+
+The three detail reads repeat the target subquery rather than joining a temporary of it, and that is safe for
+one measured reason: a table name is unique within a database, so `ORDER BY TABLE_NAME` is a TOTAL order and
+all four statements cut the same set.
+Rows for the extra `limit + 1` object are dropped in code, since the target list is what says which objects
+the answer is about.
+One statement for all four is not reachable here: mysql2 sends one statement per call, and `JSON_ARRAYAGG`
+has no ordering guarantee at all, so the column order a person reads would become the order the optimizer
+happened to produce.
+
+An empty container costs ONE round trip rather than four.
+
+Rebuilding the 200-table database the timing above was measured on, so the number is re-runnable rather than
+asserted:
+
+```sql
+DROP DATABASE IF EXISTS bulk26a1; CREATE DATABASE bulk26a1;
+DELIMITER //
+CREATE PROCEDURE bulk26a1.seed()
+BEGIN
+  DECLARE i INT DEFAULT 0;
+  WHILE i < 200 DO
+    SET @s = CONCAT('CREATE TABLE bulk26a1.t', LPAD(i,3,'0'),
+                    ' (id INT PRIMARY KEY, a VARCHAR(20), b DECIMAL(10,2), KEY ix_a (a))');
+    PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+    SET i = i + 1;
+  END WHILE;
+END //
+DELIMITER ;
+CALL bulk26a1.seed();
+```
+
 #### The fixture, and running it
 
 [`docker/mysql-init/01-object-fixture.sql`](../../docker/mysql-init/01-object-fixture.sql) and

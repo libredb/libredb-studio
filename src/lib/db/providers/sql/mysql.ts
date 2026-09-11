@@ -16,6 +16,7 @@ import {
   type IndexSchema,
   type KindCount,
   type ObjectDetail,
+  type ObjectDetailBatch,
   type ObjectKindSpec,
   type TableSchema,
   type QueryResult,
@@ -949,6 +950,139 @@ const OBJECT_INDEXES_SQL = `
         ORDER BY INDEX_NAME, SEQ_IN_INDEX`;
 
 // ----------------------------------------------------------------------------
+// Every object of one kind, described together (#789)
+// ----------------------------------------------------------------------------
+
+/**
+ * The objects one bulk read describes, ordered, and bounded when the caller bounded it.
+ *
+ * This is the MEMBERSHIP of the answer and it comes from `information_schema.TABLES`, which
+ * is the same view `listObjects` reads and is deliberately NOT the column read. Measured on
+ * MySQL 26.7.0: a view whose base table has been dropped keeps its `TABLES` row and has no
+ * `COLUMNS` row at all, so a target derived from the column read would silently drop an
+ * object the folder lists - the same class of absence standing ruling 5a is about. It is
+ * also what lets an object with no columns come back with three empty lists rather than
+ * missing.
+ *
+ * `ORDER BY TABLE_NAME` is what makes a BOUNDED read deterministic, and it is the one sort
+ * here that runs under the server's own collation. Measured on MySQL 26.7.0,
+ * `information_schema.TABLES.TABLE_NAME` collates `utf8mb3_bin`, so that order is by code
+ * point on this server; a fork that collates it case-insensitively would cut a different
+ * set, which is why the doc records the order as the SERVER's rather than as ours. It
+ * decides WHICH objects a bound keeps and nothing else: the answer is re-sorted by path
+ * below, and a caller joins on path rather than on position.
+ *
+ * `LIMIT ?` is bound and not interpolated. Measured on MySQL 26.7.0 through the binary
+ * prepared protocol, a placeholder in a derived table's LIMIT is accepted.
+ */
+function bulkTargetSql(spellings: number, bounded: boolean): string {
+  const placeholders = Array.from({ length: spellings }, () => "?").join(", ");
+  return `
+          SELECT TABLE_NAME AS name
+          FROM information_schema.TABLES
+          WHERE TABLE_SCHEMA = ? AND TABLE_TYPE IN (${placeholders})
+          ORDER BY TABLE_NAME${bounded ? "\n          LIMIT ?" : ""}`;
+}
+
+/** The four statements one bulk read issues, all four sharing one target set. */
+interface BulkDetailStatements {
+  readonly target: string;
+  readonly columns: string;
+  readonly foreignKeys: string;
+  readonly indexes: string;
+}
+
+/**
+ * The three detail reads, each re-pointed from ONE object to the whole target set.
+ *
+ * They are the `OBJECT_*_SQL` bodies above with `TABLE_NAME = ?` replaced by a join to
+ * `bulkTargetSql()`, so every measured decision those statements carry still applies here:
+ * `COLUMN_KEY = 'PRI'` is the same primary-key rule `getSchema()` uses, the index read is
+ * one row per column rather than a `GROUP_CONCAT` that truncates at 1024 bytes, and the
+ * foreign-key read carries `REFERENCED_TABLE_SCHEMA` so a reference that leaves the
+ * database can be qualified. Neither the columns nor the indexes are capped: getSchema()'s
+ * `LIMIT 100` is an unreported bound and is the defect `ObjectDetailBatch.truncated` exists
+ * to prevent. What is bounded here is the number of OBJECTS, by the caller, and it is
+ * reported.
+ *
+ * FOUR round trips for a whole folder rather than THREE PER OBJECT, which is the entire
+ * reason this method exists. One statement is not reachable on this engine: mysql2 sends
+ * one statement per call, and `JSON_ARRAYAGG` has no ordering guarantee at all, so the
+ * column order a person reads would become the order the optimizer happened to produce.
+ *
+ * The three reads repeat the target subquery rather than joining a temporary of it, and
+ * that is safe for one measured reason: a table name is unique within a database, so
+ * `ORDER BY TABLE_NAME` is a TOTAL order and all four statements cut the same set. Rows
+ * for an object the target's extra `limit + 1` row named are dropped by the caller below
+ * rather than by a fourth bound.
+ */
+function bulkDetailSql(spellings: number, bounded: boolean): BulkDetailStatements {
+  const target = bulkTargetSql(spellings, bounded);
+  return {
+    target,
+    columns: `
+        SELECT
+          d.name AS object_name,
+          c.COLUMN_NAME AS column_name,
+          c.DATA_TYPE AS data_type,
+          c.IS_NULLABLE AS is_nullable,
+          c.COLUMN_DEFAULT AS column_default,
+          c.COLUMN_KEY AS column_key
+        FROM (${target}) d
+        JOIN information_schema.COLUMNS c ON c.TABLE_SCHEMA = ? AND c.TABLE_NAME = d.name
+        ORDER BY d.name, c.ORDINAL_POSITION`,
+    foreignKeys: `
+        SELECT
+          d.name AS object_name,
+          k.COLUMN_NAME AS column_name,
+          k.REFERENCED_TABLE_SCHEMA AS referenced_schema,
+          k.REFERENCED_TABLE_NAME AS referenced_table,
+          k.REFERENCED_COLUMN_NAME AS referenced_column
+        FROM (${target}) d
+        JOIN information_schema.KEY_COLUMN_USAGE k ON k.TABLE_SCHEMA = ? AND k.TABLE_NAME = d.name
+        WHERE k.REFERENCED_TABLE_NAME IS NOT NULL
+        ORDER BY d.name, k.CONSTRAINT_NAME, k.ORDINAL_POSITION`,
+    indexes: `
+        SELECT
+          d.name AS object_name,
+          s.INDEX_NAME AS index_name,
+          s.COLUMN_NAME AS column_name,
+          s.NON_UNIQUE AS non_unique
+        FROM (${target}) d
+        JOIN information_schema.STATISTICS s ON s.TABLE_SCHEMA = ? AND s.TABLE_NAME = d.name
+        ORDER BY d.name, s.INDEX_NAME, s.SEQ_IN_INDEX`,
+  };
+}
+
+/**
+ * One entry per kind that HAS columns, which on this engine is the kinds
+ * `information_schema.TABLES` resolves.
+ *
+ * Rendered at module scope for the coverage reason the listing statements are: bun reports
+ * the interior lines of a template literal inside a function body as zero-hit in a process
+ * that imports this module without calling it.
+ */
+const BULK_DETAIL_SQL: Record<string, BulkDetailStatements> = Object.fromEntries(
+  Object.entries(MYSQL_OBJECT_TYPES)
+    .filter(([, spec]) => spec.catalog === "tables")
+    .map(([kind, spec]) => [kind, bulkDetailSql(spec.types.length, false)]),
+);
+
+/** The same four statements with the target bounded. */
+const BULK_DETAIL_SQL_BOUNDED: Record<string, BulkDetailStatements> = Object.fromEntries(
+  Object.entries(MYSQL_OBJECT_TYPES)
+    .filter(([, spec]) => spec.catalog === "tables")
+    .map(([kind, spec]) => [kind, bulkDetailSql(spec.types.length, true)]),
+);
+
+/**
+ * The provider's own sentence for what stopped a bulk read, phrased for a person reading a
+ * partial answer. It is the CALLER's limit that bit and never a bound this file invented:
+ * an unbounded call has no limit to report and never carries this.
+ */
+const BULK_TRUNCATION_REASON = "column read limit reached";
+
+// ----------------------------------------------------------------------------
 // The declaration, which is a function of the SERVER and not of the type id
 // ----------------------------------------------------------------------------
 
@@ -1248,6 +1382,112 @@ function comparePaths(left: readonly string[], right: readonly string[]): number
     if (left[index] > right[index]) return 1;
   }
   return left.length - right.length;
+}
+
+/** One row of the column read, single or bulk. `object_name` is present only in the bulk one. */
+interface DetailColumnRow extends RowDataPacket {
+  column_name: string;
+  data_type: string;
+  is_nullable: string;
+  column_default: string | null;
+  column_key: string;
+}
+
+/** One referencing column of one foreign key, with the database the reference lands in. */
+interface DetailForeignKeyRow extends RowDataPacket {
+  column_name: string;
+  referenced_schema: string;
+  referenced_table: string;
+  referenced_column: string;
+}
+
+/** One COLUMN of one index. The index itself is grouped out of these rows. */
+interface DetailIndexRow extends RowDataPacket {
+  index_name: string;
+  column_name: string;
+  non_unique: number;
+}
+
+/** The three row sets one object's detail is built from, whichever read produced them. */
+interface DetailRows {
+  readonly columns: readonly DetailColumnRow[];
+  readonly foreignKeys: readonly DetailForeignKeyRow[];
+  readonly indexes: readonly DetailIndexRow[];
+}
+
+/**
+ * Three catalog row sets turned into one `ObjectDetail`, shared by the single and the bulk
+ * read.
+ *
+ * ONE function because the two reads select the same columns from the same three views and
+ * a caller joins their results together: two copies of this mapping would be two chances
+ * for the bulk read to spell a foreign key differently from the single read of the SAME
+ * table, and nothing downstream could tell which one was right.
+ *
+ * `NON_UNIQUE` is 0 for a unique index, so the flag is its negation and not its value, and
+ * the columns of one index arrive in `SEQ_IN_INDEX` order because both statements order by
+ * it.
+ *
+ * `referencedTable` is spelled the way `getSchema()` spells it - bare within the container,
+ * qualified outside it - because `ForeignKeySchema` carries one string and both surfaces
+ * are live through Phase 1. The phase that removes `getSchema` is where that string becomes
+ * a path. Qualifying the cross-database case is not cosmetic: a bare name there addresses a
+ * table in the wrong database, and InnoDB does accept a foreign key into another one.
+ */
+function objectDetailFromRows(path: readonly string[], schema: string, rows: DetailRows): ObjectDetail {
+  const columns: ColumnSchema[] = rows.columns.map((row) => ({
+    name: row.column_name,
+    type: row.data_type,
+    nullable: row.is_nullable === "YES",
+    isPrimary: row.column_key === "PRI",
+    defaultValue: row.column_default ?? undefined,
+  }));
+
+  const byIndex = new Map<string, IndexSchema>();
+  for (const row of rows.indexes) {
+    const name = String(row.index_name);
+    const index = byIndex.get(name) ?? { name, columns: [], unique: Number(row.non_unique) === 0 };
+    index.columns.push(String(row.column_name));
+    byIndex.set(name, index);
+  }
+
+  const foreignKeys: ForeignKeySchema[] = rows.foreignKeys.map((row) => ({
+    columnName: row.column_name,
+    referencedTable:
+      row.referenced_schema === schema
+        ? String(row.referenced_table)
+        : `${String(row.referenced_schema)}.${String(row.referenced_table)}`,
+    referencedColumn: row.referenced_column,
+  }));
+
+  return { path: [...path], columns, indexes: [...byIndex.values()], foreignKeys };
+}
+
+/**
+ * Whether this kind's objects can have columns, an index or a foreign key on this server.
+ *
+ * ONE rule for the single read and the bulk one, keyed on the CATALOG each kind is read
+ * from rather than on `role === "relation"`. That is what makes a MariaDB SEQUENCE come out
+ * right: it is `config`, since nobody selects rows from it, and it still has eight real
+ * columns because a sequence is a table underneath (measured on 12.3.2).
+ *
+ * `Object.hasOwn` and not a bare index: a kind id is an OPEN string, and
+ * `MYSQL_OBJECT_TYPES["constructor"]` answers an object off the prototype chain.
+ */
+function hasColumns(kind: string): boolean {
+  return Object.hasOwn(MYSQL_OBJECT_TYPES, kind) && MYSQL_OBJECT_TYPES[kind].catalog === "tables";
+}
+
+/** The rows of one bulk read grouped by the object each belongs to. */
+function byObjectName<T extends RowDataPacket>(rows: readonly T[]): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const row of rows) {
+    const name = String(row.object_name);
+    const held = grouped.get(name);
+    if (held === undefined) grouped.set(name, [row]);
+    else held.push(row);
+  }
+  return grouped;
 }
 
 // ============================================================================
@@ -1919,7 +2159,7 @@ export class MySQLProvider extends SQLBaseProvider {
       );
     }
 
-    if (MYSQL_OBJECT_TYPES[kind]?.catalog !== "tables") {
+    if (!hasColumns(kind)) {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
     }
 
@@ -1935,44 +2175,103 @@ export class MySQLProvider extends SQLBaseProvider {
     const binds = [schema, path[path.length - 1]];
     const conn = await this.pool!.getConnection();
     try {
-      const columnRows = await this.runObjectQuery(conn, OBJECT_COLUMNS_SQL, binds);
-      const fkRows = await this.runObjectQuery(conn, OBJECT_FOREIGN_KEYS_SQL, binds);
-      const indexRows = await this.runObjectQuery(conn, OBJECT_INDEXES_SQL, binds);
+      const columns = await this.runObjectQuery<DetailColumnRow[]>(conn, OBJECT_COLUMNS_SQL, binds);
+      const foreignKeys = await this.runObjectQuery<DetailForeignKeyRow[]>(conn, OBJECT_FOREIGN_KEYS_SQL, binds);
+      const indexes = await this.runObjectQuery<DetailIndexRow[]>(conn, OBJECT_INDEXES_SQL, binds);
+      return objectDetailFromRows(path, schema, { columns, foreignKeys, indexes });
+    } finally {
+      conn.release();
+    }
+  }
 
-      const columns: ColumnSchema[] = columnRows.map((row) => ({
-        name: row.column_name,
-        type: row.data_type,
-        nullable: row.is_nullable === "YES",
-        isPrimary: row.column_key === "PRI",
-        defaultValue: row.column_default ?? undefined,
-      }));
+  /**
+   * Columns, indexes and foreign keys for EVERY object of one kind in one database (#789).
+   *
+   * FOUR round trips for the whole folder, which is the entire reason this method exists:
+   * the inventory route built the same answer as one `describeObject` per object - three
+   * statements each, up to 5000 objects - and removed it as an N+1. The four are the target
+   * read plus the three `bulkDetailSql()` reads, and the count does not grow with the
+   * folder.
+   *
+   * Only the kinds `information_schema.TABLES` resolves can have any of the three, so a
+   * routine, a trigger, an event and a MariaDB package answer an empty batch with NO round
+   * trip at all, exactly as `describeObject` answers three empty arrays for one of them.
+   * That is a true fact about those kinds and not a refused read, so it is `{ details: [] }`
+   * rather than a throw or a truncation. `hasColumns()` is the one rule both methods ask.
+   *
+   * An empty container costs ONE round trip rather than four: there is nothing for the
+   * three detail reads to be about, and an empty answer to each of them is not worth asking
+   * for.
+   *
+   * The bound is the CALLER's and is never invented here. `limit + 1` is bound to the target
+   * statement, so a saturated read is distinguishable from an exact one without a second
+   * count, the extra object is dropped, and `truncated` carries the caller's own limit. An
+   * unbounded call runs a statement with no LIMIT clause at all and can never report
+   * truncation - if this file ever caps a read of its own, it says so in the same field.
+   *
+   * The paths are built by `objectPath()`, the same rule `listObjects` builds its paths
+   * with, and sorted by the same `comparePaths`, because every caller joins the two answers
+   * on path. The three detail reads may carry rows for the extra `limit + 1` object; they
+   * are dropped here rather than by a fourth bound, since the target list is what says which
+   * objects the answer is about.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    // Two questions, asked in order, and only the DECLARATION answers the first, for the
+    // reason `listObjects` gives: `MYSQL_OBJECT_TYPES` carries MariaDB's two entries whatever
+    // server is connected, so a kind resolved from the statement table would answer for a
+    // `sequence` on a server that has none.
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`MySQL declares no object kind "${kind}"`, "mysql");
+    }
+    const schema = containerSchema(capabilities, container);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      // Not clamped and not ignored. A 0 would answer nothing while reporting a truncation
+      // the caller never asked for, and a fraction reaches mysql2 as a bind the server
+      // cannot use; both are caller mistakes and neither has a right answer to guess at.
+      throw new QueryError(
+        `A MySQL bulk column read limit must be a positive whole number, received ${limit}`,
+        "mysql",
+      );
+    }
+    if (!hasColumns(kind)) return { details: [] };
 
-      // One entry per index, its columns in SEQ_IN_INDEX order, which is the order the
-      // statement returns them in. `NON_UNIQUE` is 0 for a unique index, so the flag is its
-      // negation and not its value.
-      const byIndex = new Map<string, IndexSchema>();
-      for (const row of indexRows) {
-        const name = String(row.index_name);
-        const index = byIndex.get(name) ?? { name, columns: [], unique: Number(row.non_unique) === 0 };
-        index.columns.push(String(row.column_name));
-        byIndex.set(name, index);
-      }
+    const bounded = limit !== undefined;
+    const statements = bounded ? BULK_DETAIL_SQL_BOUNDED[kind] : BULK_DETAIL_SQL[kind];
+    const types = MYSQL_OBJECT_TYPES[kind].types;
+    // One row more than the bound, so the read itself says whether it stopped short.
+    const targetParams = bounded ? [schema, ...types, limit + 1] : [schema, ...types];
+    // The three detail reads carry the target's own binds and then the schema again, for
+    // the join. A prepared statement takes positional parameters, so the repeat is a second
+    // bind of one value rather than a second question.
+    const detailParams = [...targetParams, schema];
 
-      // `referencedTable` is spelled the way `getSchema()` spells it - bare within the
-      // container, qualified outside it - because `ForeignKeySchema` carries one string and
-      // both surfaces are live through Phase 1. The phase that removes `getSchema` is where
-      // that string becomes a path. Qualifying the cross-database case is not cosmetic: a
-      // bare name there addresses a table in the wrong database.
-      const foreignKeys: ForeignKeySchema[] = fkRows.map((row) => ({
-        columnName: row.column_name,
-        referencedTable:
-          row.referenced_schema === schema
-            ? String(row.referenced_table)
-            : `${String(row.referenced_schema)}.${String(row.referenced_table)}`,
-        referencedColumn: row.referenced_column,
-      }));
+    const conn = await this.pool!.getConnection();
+    try {
+      const targetRows = await this.runObjectQuery<ObjectRow[]>(conn, statements.target, targetParams);
+      const truncated = bounded && targetRows.length > limit;
+      const described = truncated ? targetRows.slice(0, limit) : targetRows;
+      if (described.length === 0) return { details: [] };
 
-      return { path: [...path], columns, indexes: [...byIndex.values()], foreignKeys };
+      const columns = byObjectName(
+        await this.runObjectQuery<DetailColumnRow[]>(conn, statements.columns, detailParams),
+      );
+      const foreignKeys = byObjectName(
+        await this.runObjectQuery<DetailForeignKeyRow[]>(conn, statements.foreignKeys, detailParams),
+      );
+      const indexes = byObjectName(await this.runObjectQuery<DetailIndexRow[]>(conn, statements.indexes, detailParams));
+
+      const details = described
+        .map((row) =>
+          objectDetailFromRows(objectPath(schema, row), schema, {
+            columns: columns.get(row.name) ?? [],
+            foreignKeys: foreignKeys.get(row.name) ?? [],
+            indexes: indexes.get(row.name) ?? [],
+          }),
+        )
+        .sort((left, right) => comparePaths(left.path, right.path));
+      return truncated ? { details, truncated: { limit, reason: BULK_TRUNCATION_REASON } } : { details };
     } finally {
       conn.release();
     }
