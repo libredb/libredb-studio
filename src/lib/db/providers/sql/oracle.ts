@@ -30,7 +30,9 @@ import {
   type Container,
   type DatabaseObject,
   type KindCount,
+  type ContainerLevelSpec,
   type ObjectDetail,
+  type ObjectDetailBatch,
   type ObjectKindSpec,
   type ColumnSchema,
   type IndexSchema,
@@ -465,6 +467,129 @@ const OBJECT_INDEXES_SQL = `SELECT ai.INDEX_NAME, ai.UNIQUENESS, aic.COLUMN_NAME
          WHERE ai.TABLE_OWNER = :1 AND ai.TABLE_NAME = :2
          ORDER BY ai.INDEX_NAME, aic.COLUMN_POSITION`;
 
+// ----------------------------------------------------------------------------
+// Every object of one kind, described together (#789)
+//
+// FIVE statements for a whole folder rather than four per object. They share one
+// `described` CTE, which is the target set, and each detail read joins it by NAME - the
+// only key Oracle's ALL_TAB_* views carry, since none of them publishes an OBJECT_ID. That
+// join is safe here for a measured reason: tables, views, materialized views, synonyms,
+// sequences, packages, procedures and functions share ONE namespace inside an owner (a
+// second CREATE answers ORA-00955), so a name identifies at most one of them.
+// ----------------------------------------------------------------------------
+
+/**
+ * The objects one bulk read describes, ordered and cut only when the caller bounded it.
+ *
+ * The predicate is the LISTING's, per kind, which is what keeps the two answers over the
+ * same objects: `table` carries the materialized-view container rule `LIST_TABLES_SQL`
+ * carries, because `CREATE MATERIALIZED VIEW` writes a TABLE row of the same name for its
+ * container and describing that row as a table would describe an object no folder shows.
+ *
+ * `FETCH FIRST :3 ROWS ONLY` is the bound, and `ROWNUM` is deliberately NOT used: ROWNUM is
+ * assigned BEFORE the sort, so `WHERE ROWNUM <= n ORDER BY OBJECT_NAME` keeps an arbitrary
+ * set and then orders it, while `ORDER BY ... FETCH FIRST` cuts the ordered set. The order
+ * runs under the database's own `NLS_SORT`, so it is the SERVER's and not ours; it decides
+ * WHICH objects a bound keeps and nothing else, because the answer is re-sorted by path
+ * below and callers join on path rather than on position.
+ *
+ * The bind is positional, so `:1` is the owner, `:2` the dictionary spelling and, when the
+ * read is bounded, `:3` the bound.
+ *
+ * A repeated `:1` would NOT work, and that is measured rather than reasoned: oracledb maps a
+ * bind ARRAY by the order the placeholders appear, not by the number they carry, so the
+ * detail reads below - which name the owner a second time for their own join - answer
+ * `NJS-098: 3 bind placeholders were used in the SQL statement but 2 bind values were
+ * provided` if that second reference reuses `:1`. Each detail statement therefore closes with
+ * the next free number and its bind array repeats the owner. The unit suite could not see
+ * this: its fake dispatches on statement text and never counted the binds (standing ruling
+ * 5b), so it was found against a live 21c XE and is pinned by an argument assertion now.
+ */
+function describedSql(kind: string, bounded: boolean): string {
+  const containerRule =
+    kind === "table"
+      ? `
+             AND NOT EXISTS (
+               SELECT 1 FROM ALL_OBJECTS m
+               WHERE m.OWNER = o.OWNER AND m.OBJECT_NAME = o.OBJECT_NAME
+                 AND m.OBJECT_TYPE = '${MATERIALIZED_VIEW_TYPE}'
+             )`
+      : "";
+  return `WITH described AS (
+           SELECT o.OBJECT_NAME AS NAME
+           FROM ALL_OBJECTS o
+           WHERE o.OWNER = :1 AND o.OBJECT_TYPE = :2${containerRule}
+           ORDER BY o.OBJECT_NAME${bounded ? "\n           FETCH FIRST :3 ROWS ONLY" : ""}
+         )`;
+}
+
+/** The target set itself, which is what says WHICH objects the answer is about. */
+function bulkTargetSql(kind: string, bounded: boolean): string {
+  return `${describedSql(kind, bounded)}
+         SELECT d.NAME FROM described d`;
+}
+
+/**
+ * The four detail reads, each re-pointed from ONE object to the whole target set.
+ *
+ * They are the `OBJECT_*_SQL` bodies above with `TABLE_NAME = :2` replaced by a join to
+ * `described`, so every measured decision those statements carry still applies:
+ * `rcc.POSITION = acc.POSITION` keeps a two-column foreign key from reporting four pairs for
+ * two, and the index read keys `ai.TABLE_OWNER` rather than the index's own owner, because
+ * an index another user owns on this table belongs to the table when a person is looking at
+ * the table.
+ *
+ * Nothing here caps a column list. An unreported bound is the defect
+ * `ObjectDetailBatch.truncated` exists to prevent; what is bounded here is the number of
+ * OBJECTS, by the caller, and it is reported.
+ */
+function bulkDetailSql(
+  kind: string,
+  bounded: boolean,
+): { columns: string; primaryKey: string; foreignKeys: string; indexes: string } {
+  const described = describedSql(kind, bounded);
+  // The next free placeholder after the target's own, which is what the owner's second
+  // appearance has to use: see the note on `describedSql()` above.
+  const owner = bounded ? ":4" : ":3";
+  return {
+    columns: `${described}
+         SELECT d.NAME AS OBJECT_NAME, c.COLUMN_NAME, c.DATA_TYPE, c.NULLABLE, c.DATA_DEFAULT
+         FROM described d
+         JOIN ALL_TAB_COLUMNS c ON c.OWNER = ${owner} AND c.TABLE_NAME = d.NAME
+         ORDER BY d.NAME, c.COLUMN_ID`,
+    primaryKey: `${described}
+         SELECT d.NAME AS OBJECT_NAME, acc.COLUMN_NAME
+         FROM described d
+         JOIN ALL_CONSTRAINTS ac ON ac.OWNER = ${owner} AND ac.TABLE_NAME = d.NAME AND ac.CONSTRAINT_TYPE = 'P'
+         JOIN ALL_CONS_COLUMNS acc ON ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME AND ac.OWNER = acc.OWNER`,
+    foreignKeys: `${described}
+         SELECT d.NAME AS OBJECT_NAME,
+                acc.COLUMN_NAME,
+                rc.OWNER AS REF_OWNER,
+                rc.TABLE_NAME AS REF_TABLE,
+                rcc.COLUMN_NAME AS REF_COLUMN
+         FROM described d
+         JOIN ALL_CONSTRAINTS ac ON ac.OWNER = ${owner} AND ac.TABLE_NAME = d.NAME AND ac.CONSTRAINT_TYPE = 'R'
+         JOIN ALL_CONS_COLUMNS acc ON ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME AND ac.OWNER = acc.OWNER
+         JOIN ALL_CONSTRAINTS rc ON ac.R_CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND ac.R_OWNER = rc.OWNER
+         JOIN ALL_CONS_COLUMNS rcc ON rc.CONSTRAINT_NAME = rcc.CONSTRAINT_NAME AND rc.OWNER = rcc.OWNER
+                AND rcc.POSITION = acc.POSITION
+         ORDER BY d.NAME, ac.CONSTRAINT_NAME, acc.POSITION`,
+    indexes: `${described}
+         SELECT d.NAME AS OBJECT_NAME, ai.INDEX_NAME, ai.UNIQUENESS, aic.COLUMN_NAME
+         FROM described d
+         JOIN ALL_INDEXES ai ON ai.TABLE_OWNER = ${owner} AND ai.TABLE_NAME = d.NAME
+         JOIN ALL_IND_COLUMNS aic ON ai.INDEX_NAME = aic.INDEX_NAME AND ai.OWNER = aic.INDEX_OWNER
+         ORDER BY d.NAME, ai.INDEX_NAME, aic.COLUMN_POSITION`,
+  };
+}
+
+/**
+ * The provider's own sentence for what stopped a bulk read, phrased for a person reading a
+ * partial answer. It is the CALLER's limit that bit and never a bound this file invented.
+ */
+const BULK_TRUNCATION_REASON = "column read limit reached";
+
 // ============================================================================
 // Object surface shapes and derivations (#789)
 // ============================================================================
@@ -511,16 +636,54 @@ interface ObjectRow {
  * `CREATE USER "app"` is legal, so upper-casing here would make that owner unreachable.
  */
 function containerOwner(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = (capabilities.containerLevels ?? [])
-    .slice(0, containerDepth(capabilities))
-    .map((level) => level.label.toLowerCase());
+  const levels = declaredLevels(capabilities);
   if (container.length !== levels.length) {
     throw new QueryError(
-      `An Oracle container path is [${levels.join(", ")}], received ${JSON.stringify(container)}`,
+      `An Oracle container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
+        `received ${JSON.stringify(container)}`,
       "oracle",
     );
   }
-  return container[0];
+  return ownerSegment(capabilities, container);
+}
+
+/**
+ * The container levels this engine declares, cut to the depth `containerDepth()` answers.
+ *
+ * One reader for the whole file, so the depth and the level list can never be taken by two
+ * different rules. `containerDepth()` is what decides, never `containerLevels.length`.
+ */
+function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerLevelSpec[] {
+  return (capabilities.containerLevels ?? []).slice(0, containerDepth(capabilities));
+}
+
+/**
+ * The segment of `path` belonging to the declared `schema` level, which on Oracle is the
+ * OWNER.
+ *
+ * NEVER `path[0]`, which standing ruling 5g (#789) names as the third and most persistent
+ * spelling of one defect: a container level's POSITION is a property of the declaration, not
+ * a constant. Oracle declares `[schema]`, so the owner is the first segment here, and on a
+ * two-level engine copying this file `path[0]` is the CATALOG - binding it as the owner
+ * narrows every read to a schema that does not exist. Both spellings are behaviour-identical
+ * at depth 1, which is exactly why the positional one survived this file's first review.
+ *
+ * A declaration with no `schema` level, or a path too short to carry it, raises rather than
+ * falling through to `undefined`: bound to `:1` that would answer an owner holding nothing,
+ * which looks exactly like a real empty owner.
+ */
+function ownerSegment(capabilities: ProviderCapabilities, path: readonly string[]): string {
+  const levels = declaredLevels(capabilities);
+  const index = levels.findIndex((level) => level.id === "schema");
+  const segment = index < 0 ? undefined : path.slice(0, levels.length)[index];
+  if (segment === undefined) {
+    throw new QueryError(
+      `An Oracle path needs a "schema" container level and a segment for it; the declaration is ` +
+        `[${levels.map((level) => level.id).join(", ")}] and the path is ${JSON.stringify(path)}`,
+      "oracle",
+    );
+  }
+  return segment;
 }
 
 /**
@@ -622,6 +785,99 @@ function objectPath(owner: string, row: ObjectRow): string[] {
 /** One comparable spelling of a path, so a sort compares addresses and never labels. */
 function pathKey(path: readonly string[]): string {
   return JSON.stringify(path);
+}
+
+/**
+ * Two paths ordered SEGMENT BY SEGMENT, shorter first where one is a prefix of the other.
+ *
+ * Never `JSON.stringify`, which standing ruling 5g (#789) rules out as a path key for two
+ * reasons: at mixed depth the serialised deeper path sorts before its own prefix, because
+ * `,` (0x2C) is below `]` (0x5D), and JSON escaping reorders exotic names by rewriting the
+ * characters being compared. `pathKey()` above is the older spelling and `listObjects` still
+ * sorts with it; that line is standing ruling 5g's named sweep item and is left for the
+ * sweep rather than changed under a task that is meant to be additive. New code writes the
+ * settled form, which is what this is.
+ *
+ * This is the SIXTH copy of this function in `src/lib/db/providers` and it is not hoisted
+ * here on purpose: standing ruling 5h gives that move to the epic's final sweep, so six
+ * copies become one definition beside `containerDepth()` rather than three implementers
+ * colliding over it mid-wave.
+ */
+function comparePaths(left: readonly string[], right: readonly string[]): number {
+  const shared = Math.min(left.length, right.length);
+  for (let index = 0; index < shared; index++) {
+    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
+  }
+  return left.length - right.length;
+}
+
+/** One row of a bulk read, with the object it is about. The single read's rows carry no name. */
+interface BulkRow {
+  OBJECT_NAME?: string;
+}
+
+/** The four row sets one object's detail is built from, whichever read produced them. */
+interface DetailRows {
+  readonly columns: readonly Record<string, unknown>[];
+  readonly primaryKey: readonly Record<string, unknown>[];
+  readonly foreignKeys: readonly Record<string, unknown>[];
+  readonly indexes: readonly Record<string, unknown>[];
+}
+
+/**
+ * Four dictionary row sets turned into one `ObjectDetail`, shared by the single and the bulk
+ * read.
+ *
+ * ONE function because the two reads select the same columns from the same four views and a
+ * caller joins their results together: two copies of this mapping would be two chances for
+ * the bulk read to spell a foreign key, a trimmed default or a composite index differently
+ * from the single read of the SAME table.
+ *
+ * `owner` is the object's own, which is the container on this engine, and it decides only
+ * how a reference is spelled: `referencedTable` is bare within the owner and QUALIFIED
+ * outside it, because `ForeignKeySchema` carries one string and both surfaces are live
+ * through Phase 1. A bare name for the crossing case addresses a table in the wrong schema.
+ */
+function objectDetailFromRows(path: readonly string[], owner: string, rows: DetailRows): ObjectDetail {
+  const primaryKey = new Set(rows.primaryKey.map((row) => String(row.COLUMN_NAME)));
+  const columns: ColumnSchema[] = rows.columns.map((row) => ({
+    name: String(row.COLUMN_NAME),
+    type: String(row.DATA_TYPE),
+    nullable: String(row.NULLABLE) === "Y",
+    isPrimary: primaryKey.has(String(row.COLUMN_NAME)),
+    defaultValue: measuredDefault(row.DATA_DEFAULT),
+  }));
+
+  // One entry per index, its columns in COLUMN_POSITION order, which is the order both
+  // statements return them in.
+  const byIndex = new Map<string, IndexSchema>();
+  for (const row of rows.indexes) {
+    const name = String(row.INDEX_NAME);
+    const index = byIndex.get(name) ?? { name, columns: [], unique: String(row.UNIQUENESS) === "UNIQUE" };
+    index.columns.push(String(row.COLUMN_NAME));
+    byIndex.set(name, index);
+  }
+
+  const foreignKeys: ForeignKeySchema[] = rows.foreignKeys.map((row) => ({
+    columnName: String(row.COLUMN_NAME),
+    referencedTable:
+      String(row.REF_OWNER) === owner ? String(row.REF_TABLE) : `${String(row.REF_OWNER)}.${String(row.REF_TABLE)}`,
+    referencedColumn: String(row.REF_COLUMN),
+  }));
+
+  return { path: [...path], columns, indexes: [...byIndex.values()], foreignKeys };
+}
+
+/** The rows of one bulk read grouped by the object each belongs to. */
+function byObjectName<T extends BulkRow>(rows: readonly T[]): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const row of rows) {
+    const name = String(row.OBJECT_NAME);
+    const held = grouped.get(name);
+    if (held === undefined) grouped.set(name, [row]);
+    else held.push(row);
+  }
+  return grouped;
 }
 
 /**
@@ -1543,51 +1799,123 @@ export class OracleProvider extends SQLBaseProvider {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
     }
 
-    // The object's own name is the LAST segment, never `path[1]`. They are the same string
-    // on a one-level engine and different on the five two-level ones that copy this file,
-    // where `path[1]` is a container segment and the read would narrow to nothing.
-    const binds = [path[0], path[path.length - 1]];
+    // Neither bind is positional. The owner is the segment the DECLARATION assigns to the
+    // `schema` level, and the object's own name is the LAST segment. On Oracle those are
+    // `path[0]` and `path[1]`; on a two-level engine copying this file `path[0]` is the
+    // catalog and `path[1]` is a container segment, so both literals would narrow these four
+    // reads to an object that does not exist.
+    const owner = ownerSegment(capabilities, path);
+    const binds = [owner, path[path.length - 1]];
     const conn = await this.pool!.getConnection();
     try {
-      const columnRows = (await this.runObjectQuery(conn, OBJECT_COLUMNS_SQL, binds)).rows ?? [];
-      const pkRows = (await this.runObjectQuery(conn, OBJECT_PRIMARY_KEY_SQL, binds)).rows ?? [];
-      const fkRows = (await this.runObjectQuery(conn, OBJECT_FOREIGN_KEYS_SQL, binds)).rows ?? [];
-      const indexRows = (await this.runObjectQuery(conn, OBJECT_INDEXES_SQL, binds)).rows ?? [];
+      const columns = ((await this.runObjectQuery(conn, OBJECT_COLUMNS_SQL, binds)).rows ?? []) as Record<
+        string,
+        unknown
+      >[];
+      const primaryKey = ((await this.runObjectQuery(conn, OBJECT_PRIMARY_KEY_SQL, binds)).rows ?? []) as Record<
+        string,
+        unknown
+      >[];
+      const foreignKeys = ((await this.runObjectQuery(conn, OBJECT_FOREIGN_KEYS_SQL, binds)).rows ?? []) as Record<
+        string,
+        unknown
+      >[];
+      const indexes = ((await this.runObjectQuery(conn, OBJECT_INDEXES_SQL, binds)).rows ?? []) as Record<
+        string,
+        unknown
+      >[];
 
-      const primaryKey = new Set((pkRows as Record<string, unknown>[]).map((row) => String(row.COLUMN_NAME)));
-      const columns: ColumnSchema[] = (columnRows as Record<string, unknown>[]).map((row) => ({
-        name: String(row.COLUMN_NAME),
-        type: String(row.DATA_TYPE),
-        nullable: String(row.NULLABLE) === "Y",
-        isPrimary: primaryKey.has(String(row.COLUMN_NAME)),
-        defaultValue: measuredDefault(row.DATA_DEFAULT),
-      }));
+      return objectDetailFromRows(path, owner, { columns, primaryKey, foreignKeys, indexes });
+    } finally {
+      await conn.close();
+    }
+  }
 
-      // One entry per index, its columns in COLUMN_POSITION order, which is the order the
-      // statement returns them in.
-      const byIndex = new Map<string, IndexSchema>();
-      for (const row of indexRows as Record<string, unknown>[]) {
-        const name = String(row.INDEX_NAME);
-        const index = byIndex.get(name) ?? { name, columns: [], unique: String(row.UNIQUENESS) === "UNIQUE" };
-        index.columns.push(String(row.COLUMN_NAME));
-        byIndex.set(name, index);
-      }
+  /**
+   * Columns, indexes and foreign keys for EVERY object of one kind in one owner (#789).
+   *
+   * FIVE round trips for the whole folder, which is the entire reason this method exists:
+   * the inventory route built the same answer as one `describeObject` per object - four
+   * statements each, up to 5000 objects - and removed it as an N+1. On this engine that is
+   * also the other half of #765: the same four dictionary views scoped to an owner alone
+   * answered 910,000 column rows on the reporter's instance, and these five are scoped to
+   * one owner, one kind and the caller's own bound.
+   *
+   * Only the three kinds Oracle resolves as relations have any of the three, so a package, a
+   * routine, a synonym, a sequence and a trigger answer an empty batch with NO round trip at
+   * all, exactly as `describeObject` answers three empty arrays for one of them. That is a
+   * true fact about those kinds and not a refused read. A MATERIALIZED VIEW is one of the
+   * three and does describe: measured on 21c XE, `ALL_TAB_COLUMNS` answers for it, because it
+   * has a container table underneath - which is also why the `table` target has to drop that
+   * container.
+   *
+   * An empty owner costs ONE round trip rather than five.
+   *
+   * The bound is the CALLER's and is never invented here. `FETCH FIRST :3 ROWS ONLY` is bound
+   * at `limit + 1`, so a saturated read is distinguishable from an exact one without a second
+   * count, the extra object is dropped, and `truncated` carries the caller's own limit. An
+   * unbounded call runs a statement with no row bound and can never report truncation.
+   *
+   * The paths are built by `objectPath()`, the same rule `listObjects` builds its paths with,
+   * and sorted by `comparePaths`, because every caller joins the two answers on path.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`Oracle declares no object kind "${kind}"`, "oracle");
+    }
+    const owner = containerOwner(capabilities, container);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      // Not clamped and not ignored. A 0 would answer nothing while reporting a truncation
+      // the caller never asked for, and a fraction reaches oracledb as a bind the server
+      // cannot use; both are caller mistakes and neither has a right answer to guess at.
+      throw new QueryError(
+        `An Oracle bulk column read limit must be a positive whole number, received ${limit}`,
+        "oracle",
+      );
+    }
+    if (spec.role !== "relation") return { details: [] };
 
-      // `referencedTable` is spelled the way `getSchema()` spells it - bare within the
-      // owner, qualified outside it - because `ForeignKeySchema` carries one string and
-      // both surfaces are live through Phase 1. The phase that removes `getSchema` is
-      // where that string becomes a path. Qualifying the cross-owner case is not cosmetic:
-      // a bare name there addresses a table in the wrong schema.
-      const foreignKeys: ForeignKeySchema[] = (fkRows as Record<string, unknown>[]).map((row) => ({
-        columnName: String(row.COLUMN_NAME),
-        referencedTable:
-          String(row.REF_OWNER) === path[0]
-            ? String(row.REF_TABLE)
-            : `${String(row.REF_OWNER)}.${String(row.REF_TABLE)}`,
-        referencedColumn: String(row.REF_COLUMN),
-      }));
+    const bounded = limit !== undefined;
+    const type = ORACLE_OBJECT_TYPES[kind].dictionary;
+    // One row more than the bound, so the read itself says whether it stopped short. The
+    // binds are positional and the same array serves all five statements.
+    const binds = bounded ? [owner, type, limit + 1] : [owner, type];
 
-      return { path: [...path], columns, indexes: [...byIndex.values()], foreignKeys };
+    const conn = await this.pool!.getConnection();
+    try {
+      const targetRows = ((await this.runObjectQuery(conn, bulkTargetSql(kind, bounded), binds)).rows ??
+        []) as ObjectRow[];
+      const truncated = bounded && targetRows.length > limit;
+      const described = truncated ? targetRows.slice(0, limit) : targetRows;
+      if (described.length === 0) return { details: [] };
+
+      const statements = bulkDetailSql(kind, bounded);
+      // The owner again, as the LAST value: oracledb binds an array by the order the
+      // placeholders appear, so the second reference to the owner needs its own value.
+      const detailBinds = [...binds, owner];
+      const read = async (sql: string) =>
+        byObjectName(
+          ((await this.runObjectQuery(conn, sql, detailBinds)).rows ?? []) as (BulkRow & Record<string, unknown>)[],
+        );
+      const columns = await read(statements.columns);
+      const primaryKey = await read(statements.primaryKey);
+      const foreignKeys = await read(statements.foreignKeys);
+      const indexes = await read(statements.indexes);
+
+      const details = described
+        .map((row) =>
+          objectDetailFromRows(objectPath(owner, row), owner, {
+            columns: columns.get(row.NAME) ?? [],
+            primaryKey: primaryKey.get(row.NAME) ?? [],
+            foreignKeys: foreignKeys.get(row.NAME) ?? [],
+            indexes: indexes.get(row.NAME) ?? [],
+          }),
+        )
+        .sort((left, right) => comparePaths(left.path, right.path));
+      return truncated ? { details, truncated: { limit, reason: BULK_TRUNCATION_REASON } } : { details };
     } finally {
       await conn.close();
     }

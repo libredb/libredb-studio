@@ -2745,6 +2745,27 @@ describe("object surface", () => {
       if (sql.includes("ALL_TRIGGERS")) {
         return { rows: [{ NAME: "APP_ORDERS_TRG", PARENT: "APP_ORDERS", STATUS: "VALID" }] };
       }
+      // The bulk column read's five statements (#789), each carrying the `described` CTE.
+      // Before the per-type arms below, which bind the same two parameters.
+      if (sql.includes("WITH described AS")) {
+        const type = (params ?? [])[1];
+        const names = type === "TABLE" ? ["APP_ORDERS", "APP_CUSTOMERS"] : type === "VIEW" ? ["APP_ORDER_SUMMARY"] : [];
+        const bound = sql.includes("FETCH FIRST") ? Number((params ?? [])[2]) : undefined;
+        const described = bound === undefined ? names : names.slice(0, bound);
+        if (sql.includes("SELECT d.NAME FROM described d")) return { rows: described.map((NAME) => ({ NAME })) };
+        if (sql.includes("ALL_TAB_COLUMNS")) {
+          return {
+            rows: described.map((NAME) => ({
+              OBJECT_NAME: NAME,
+              COLUMN_NAME: "ID",
+              DATA_TYPE: "NUMBER",
+              NULLABLE: "N",
+              DATA_DEFAULT: null,
+            })),
+          };
+        }
+        return { rows: [] };
+      }
       // One row set per bound dictionary type, and they must be DISTINCT: the shared
       // helper lists every counted kind and requires paths unique within each of them.
       const type = (params ?? [])[1];
@@ -3246,6 +3267,435 @@ describe("Oracle object listing and detail", () => {
     await expect(provider.describeObject(["A"], "trigger")).rejects.toThrow(
       /"trigger" path is \[schema, table, name\] or \[schema, name\]/,
     );
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The fifth provider method (#789): every object of one kind in one owner described in FIVE
+ * round trips rather than four per object.
+ *
+ * This mock dispatches on the statement the provider built, which standing ruling 5b names
+ * as a blind spot: a rewrite it cannot see stays green here. So the decisions a rewrite
+ * would silently undo are pinned by statement TEXT below - the target set carries the
+ * materialized-view container rule the listing carries, the cut is
+ * `ORDER BY ... FETCH FIRST :3 ROWS ONLY` and not `ROWNUM`, and the index read keys
+ * `TABLE_OWNER` rather than the index's own owner - and all of them are measured live in
+ * the task report.
+ */
+describe("Oracle bulk column read", () => {
+  beforeEach(() => {
+    mockExecuteFn = async (sql: string) => defaultExecute(sql);
+    mockConnCloseFn = async () => {};
+    mockBreakFn = async () => {};
+    mockPoolCloseFn = async () => {};
+    mockCreatePoolFn = async () => createMockPool();
+  });
+
+  function makeProvider(overrides: Partial<DatabaseConnection> = {}) {
+    return new OracleProvider({ ...baseConfig, ...overrides });
+  }
+
+  /** The five reads one bulk call issues, in order, with the parameters each bound. */
+  function bulkFixture(issued: Array<{ sql: string; params: unknown[] }>) {
+    return async (sql: string, params?: unknown[]) => {
+      if (!sql.includes("WITH described AS")) return { rows: [] };
+      issued.push({ sql, params: params ?? [] });
+      const bound = sql.includes("FETCH FIRST") ? Number((params ?? [])[2]) : undefined;
+      const names = ["APP_CUSTOMERS", "APP_ORDERS"].slice(0, bound);
+      if (sql.includes("SELECT d.NAME FROM described d")) return { rows: names.map((NAME) => ({ NAME })) };
+      if (sql.includes("ALL_TAB_COLUMNS")) {
+        return {
+          rows: [
+            {
+              OBJECT_NAME: "APP_ORDERS",
+              COLUMN_NAME: "ID",
+              DATA_TYPE: "NUMBER",
+              NULLABLE: "N",
+              DATA_DEFAULT: null,
+            },
+            {
+              OBJECT_NAME: "APP_ORDERS",
+              COLUMN_NAME: "TOTAL",
+              DATA_TYPE: "NUMBER",
+              NULLABLE: "Y",
+              DATA_DEFAULT: "0 ",
+            },
+          ],
+        };
+      }
+      if (sql.includes("CONSTRAINT_TYPE = 'P'")) {
+        return { rows: [{ OBJECT_NAME: "APP_ORDERS", COLUMN_NAME: "ID" }] };
+      }
+      if (sql.includes("CONSTRAINT_TYPE = 'R'")) {
+        return {
+          rows: [
+            {
+              OBJECT_NAME: "APP_ORDERS",
+              COLUMN_NAME: "CUSTOMER_ID",
+              REF_OWNER: "APP",
+              REF_TABLE: "APP_CUSTOMERS",
+              REF_COLUMN: "ID",
+            },
+            {
+              OBJECT_NAME: "APP_ORDERS",
+              COLUMN_NAME: "REGION_ID",
+              REF_OWNER: "REPORTING",
+              REF_TABLE: "REPORT_REGIONS",
+              REF_COLUMN: "ID",
+            },
+          ],
+        };
+      }
+      return {
+        rows: [
+          {
+            OBJECT_NAME: "APP_ORDERS",
+            INDEX_NAME: "APP_ORDERS_TOTAL_IX",
+            UNIQUENESS: "NONUNIQUE",
+            COLUMN_NAME: "TOTAL",
+          },
+          {
+            OBJECT_NAME: "APP_ORDERS",
+            INDEX_NAME: "APP_ORDERS_TOTAL_IX",
+            UNIQUENESS: "NONUNIQUE",
+            COLUMN_NAME: "NOTE",
+          },
+        ],
+      };
+    };
+  }
+
+  test("describes every table of one owner in five round trips, keyed by path", async () => {
+    const issued: Array<{ sql: string; params: unknown[] }> = [];
+    mockExecuteFn = bulkFixture(issued);
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["APP"], "table");
+
+    // FIVE statements for the whole folder, whatever the folder holds. The single read is
+    // four per object, which is the N+1 the inventory route refused once - and on Oracle it
+    // is the same four dictionary views that answered 910,000 rows in #765.
+    expect(issued).toHaveLength(5);
+    expect(issued[0].sql).toContain("ALL_OBJECTS");
+    expect(issued[0].params).toEqual(["APP", "TABLE"]);
+    // The target carries the materialized-view container rule the LISTING carries, so the
+    // two answers hold the same objects: a MATERIALIZED VIEW writes a TABLE row of the same
+    // name for its container, and describing it as a table would describe an object no
+    // folder shows.
+    expect(issued[0].sql).toContain("NOT EXISTS");
+    expect(issued[0].sql).toContain("m.OBJECT_TYPE = 'MATERIALIZED VIEW'");
+    // Unbounded: no row bound reaches the server and nothing claims truncation.
+    for (const call of issued) expect(call.sql).not.toContain("FETCH FIRST");
+    expect(batch.truncated).toBeUndefined();
+    // The index read keys the TABLE's owner, not the index's: an index another user owns on
+    // this table belongs to the table when a person is looking at the table.
+    expect(issued[4].sql).toContain("ai.TABLE_OWNER = :3");
+    // The owner a SECOND time, as the last value, and that arity is the thing to pin: a
+    // repeated `:1` looks right and is not. Measured against a live 21c XE, oracledb maps a
+    // bind ARRAY by the order the placeholders appear rather than by the number they carry,
+    // so a detail statement naming `:1` twice answers `NJS-098: 3 bind placeholders were
+    // used in the SQL statement but 2 bind values were provided`. A mock that dispatches on
+    // statement text cannot see that (standing ruling 5b), so the arity is asserted here.
+    for (const call of issued.slice(1)) expect(call.params).toEqual(["APP", "TABLE", "APP"]);
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["APP", "APP_CUSTOMERS"],
+      ["APP", "APP_ORDERS"],
+    ]);
+    const orders = batch.details[1];
+    expect(orders.columns).toEqual([
+      { name: "ID", type: "NUMBER", nullable: false, isPrimary: true, defaultValue: undefined },
+      // DATA_DEFAULT is a LONG holding source text, trailing spaces included, and it is
+      // trimmed by the one mapper both reads share.
+      { name: "TOTAL", type: "NUMBER", nullable: true, isPrimary: false, defaultValue: "0" },
+    ]);
+    expect(orders.indexes).toEqual([{ name: "APP_ORDERS_TOTAL_IX", columns: ["TOTAL", "NOTE"], unique: false }]);
+    // Bare within the owner, qualified outside it, exactly as the single read spells it.
+    expect(orders.foreignKeys).toEqual([
+      { columnName: "CUSTOMER_ID", referencedTable: "APP_CUSTOMERS", referencedColumn: "ID" },
+      { columnName: "REGION_ID", referencedTable: "REPORTING.REPORT_REGIONS", referencedColumn: "ID" },
+    ]);
+    // An object the four detail reads answered nothing for is still IN the answer.
+    expect(batch.details[0]).toEqual({
+      path: ["APP", "APP_CUSTOMERS"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    await provider.disconnect();
+  });
+
+  test("the bulk read and the single read spell one object identically", async () => {
+    // ONE mapper serves both, so the two answers for one table cannot disagree about a
+    // foreign key, a composite index, a trimmed default or which column is the key.
+    const issued: Array<{ sql: string; params: unknown[] }> = [];
+    const bulk = bulkFixture(issued);
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      if (sql.includes("WITH described AS")) return bulk(sql, params);
+      // The single read's four statements, answering the same rows for the same object.
+      if (sql.includes("ALL_TAB_COLUMNS")) {
+        return {
+          rows: [
+            { COLUMN_NAME: "ID", DATA_TYPE: "NUMBER", NULLABLE: "N", DATA_DEFAULT: null },
+            { COLUMN_NAME: "TOTAL", DATA_TYPE: "NUMBER", NULLABLE: "Y", DATA_DEFAULT: "0 " },
+          ],
+        };
+      }
+      if (sql.includes("CONSTRAINT_TYPE = 'P'")) return { rows: [{ COLUMN_NAME: "ID" }] };
+      if (sql.includes("CONSTRAINT_TYPE = 'R'")) {
+        return {
+          rows: [
+            { COLUMN_NAME: "CUSTOMER_ID", REF_OWNER: "APP", REF_TABLE: "APP_CUSTOMERS", REF_COLUMN: "ID" },
+            { COLUMN_NAME: "REGION_ID", REF_OWNER: "REPORTING", REF_TABLE: "REPORT_REGIONS", REF_COLUMN: "ID" },
+          ],
+        };
+      }
+      if (sql.includes("ALL_IND_COLUMNS")) {
+        return {
+          rows: [
+            { INDEX_NAME: "APP_ORDERS_TOTAL_IX", UNIQUENESS: "NONUNIQUE", COLUMN_NAME: "TOTAL" },
+            { INDEX_NAME: "APP_ORDERS_TOTAL_IX", UNIQUENESS: "NONUNIQUE", COLUMN_NAME: "NOTE" },
+          ],
+        };
+      }
+      return { rows: [] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const fromBulk = (await provider.describeObjects(["APP"], "table")).details.find(
+      (detail) => detail.path[1] === "APP_ORDERS",
+    );
+    const single = await provider.describeObject(["APP", "APP_ORDERS"], "table");
+
+    expect(fromBulk).toEqual(single);
+    await provider.disconnect();
+  });
+
+  test("a bounded read binds one row more than the bound and reports its own truncation", async () => {
+    const issued: Array<{ sql: string; params: unknown[] }> = [];
+    mockExecuteFn = bulkFixture(issued);
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["APP"], "table", 1);
+
+    // FETCH FIRST and not ROWNUM, which is the difference that matters on this engine:
+    // ROWNUM is assigned BEFORE the sort, so `WHERE ROWNUM <= n ORDER BY OBJECT_NAME` keeps
+    // an arbitrary set and then sorts it, while FETCH FIRST cuts the ordered set.
+    expect(issued[0].sql).toContain("ORDER BY o.OBJECT_NAME");
+    expect(issued[0].sql).toContain("FETCH FIRST :3 ROWS ONLY");
+    expect(issued[0].sql).not.toContain("ROWNUM");
+    expect(issued[0].params).toEqual(["APP", "TABLE", 2]);
+    // The bound takes `:3`, so the owner's second appearance takes `:4` and its value is
+    // appended after the bound. See the arity note in the test above.
+    expect(issued[1].sql).toContain(":4");
+    expect(issued[1].params).toEqual(["APP", "TABLE", 2, "APP"]);
+    expect(batch.details.map((detail) => detail.path)).toEqual([["APP", "APP_CUSTOMERS"]]);
+    expect(batch.truncated).toEqual({ limit: 1, reason: "column read limit reached" });
+    await provider.disconnect();
+  });
+
+  test("a bounded read that fits reports nothing", async () => {
+    const issued: Array<{ sql: string; params: unknown[] }> = [];
+    mockExecuteFn = bulkFixture(issued);
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["APP"], "table", 2);
+
+    expect(batch.details).toHaveLength(2);
+    expect(batch.truncated).toBeUndefined();
+    await provider.disconnect();
+  });
+
+  test("a kind Oracle holds no columns for answers empty without asking the server", async () => {
+    let asked = 0;
+    mockExecuteFn = async () => {
+      asked += 1;
+      return { rows: [] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+    asked = 0;
+
+    for (const kind of ["synonym", "sequence", "package", "procedure", "function", "trigger"]) {
+      expect(await provider.describeObjects(["APP"], kind)).toEqual({ details: [] });
+    }
+    expect(asked).toBe(0);
+    await provider.disconnect();
+  });
+
+  test("a materialized view describes, because the dictionary answers columns for it", async () => {
+    const issued: Array<{ sql: string; params: unknown[] }> = [];
+    mockExecuteFn = bulkFixture(issued);
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    await provider.describeObjects(["APP"], "materialized_view");
+
+    // Measured on Oracle Database 21c XE: ALL_TAB_COLUMNS answers for a materialized view,
+    // because it has a container table underneath - which is also why the `table` listing
+    // has to drop that container.
+    expect(issued[0].params).toEqual(["APP", "MATERIALIZED VIEW"]);
+    await provider.disconnect();
+  });
+
+  test("an empty owner costs one round trip and not five", async () => {
+    const issued: Array<{ sql: string; params: unknown[] }> = [];
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      if (sql.includes("WITH described AS")) issued.push({ sql, params: params ?? [] });
+      return { rows: [] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    expect(await provider.describeObjects(["APP"], "table")).toEqual({ details: [] });
+    expect(issued).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("a kind this engine does not declare is refused, not answered empty", async () => {
+    mockExecuteFn = async () => ({ rows: [] });
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    await expect(provider.describeObjects(["APP"], "dictionary")).rejects.toThrow(
+      /declares no object kind "dictionary"/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a container path that is not one owner is refused, rather than read as empty", async () => {
+    mockExecuteFn = async () => ({ rows: [] });
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    await expect(provider.describeObjects([], "table")).rejects.toThrow(/container path is \[schema\]/);
+    await expect(provider.describeObjects(["CATALOG", "APP"], "table")).rejects.toThrow(/container path is \[schema\]/);
+    await provider.disconnect();
+  });
+
+  test("a limit that cannot bound anything is refused, rather than silently ignored", async () => {
+    mockExecuteFn = async () => ({ rows: [] });
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    await expect(provider.describeObjects(["APP"], "table", 0)).rejects.toThrow(
+      /limit must be a positive whole number, received 0/,
+    );
+    await expect(provider.describeObjects(["APP"], "table", 1.5)).rejects.toThrow(
+      /limit must be a positive whole number, received 1.5/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a refusal is raised naming the statement that earned it", async () => {
+    mockExecuteFn = async (sql: string) => {
+      if (sql.includes("ALL_TAB_COLUMNS")) throw new Error("ORA-01031: insufficient privileges");
+      if (sql.includes("WITH described AS")) return { rows: [{ NAME: "APP_ORDERS" }] };
+      return { rows: [] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const failure = await provider.describeObjects(["APP"], "table").catch((error: unknown) => error);
+    expect((failure as Error).message).toContain("ORA-01031");
+    expect((failure as { query?: string }).query).toContain("ALL_TAB_COLUMNS");
+    await provider.disconnect();
+  });
+
+  test("the owner it reads is the container it was asked for, not the connecting user", async () => {
+    // #765's regression, in the fifth method. Every container below is deliberately NOT the
+    // connecting user, so a read that ignored its argument cannot look correct by accident.
+    const issued: Array<{ sql: string; params: unknown[] }> = [];
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      if (sql.includes("WITH described AS")) issued.push({ sql, params: params ?? [] });
+      return { rows: [{ NAME: "REPORT_DAILY" }] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    await provider.describeObjects(["REPORTING"], "table");
+
+    expect(issued).toHaveLength(5);
+    for (const call of issued) expect(call.params[0]).toBe("REPORTING");
+    await provider.disconnect();
+  });
+
+  test("a two-level declaration binds the SCHEMA segment, not the first one", async () => {
+    // Standing ruling 5g (#789), driven to a BOUND VALUE rather than to a refusal. Oracle
+    // declares one container level, so `container[0]` and the schema segment are the same
+    // string here and no fixture of this engine can tell them apart; handing this provider a
+    // two-level declaration is what makes the derivation mutatable on a one-level engine.
+    const issued: Array<{ sql: string; params: unknown[] }> = [];
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      if (sql.includes("WITH described AS")) issued.push({ sql, params: params ?? [] });
+      return { rows: [] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...provider.getCapabilities(),
+      containerLevels: [
+        { id: "catalog", label: "Container", labelPlural: "Containers" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+
+    await provider.describeObjects(["XEPDB1", "APP"], "table");
+
+    expect(issued[0].params[0]).toBe("APP");
+    await provider.disconnect();
+  });
+
+  test("the answer is sorted by path, whatever order the dictionary cut it in", async () => {
+    mockExecuteFn = async (sql: string) => {
+      if (!sql.includes("WITH described AS")) return { rows: [] };
+      if (sql.includes("SELECT d.NAME FROM described d")) {
+        return { rows: [{ NAME: "APP_ORDERS" }, { NAME: "APP_CUSTOMERS" }] };
+      }
+      return { rows: [] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["APP"], "table");
+
+    // The dictionary's order runs under the database's NLS_SORT and decides which objects a
+    // bound keeps; the order a caller reads is ours, one rule on every server, because
+    // callers join the two answers on path.
+    expect(batch.details.map((detail) => detail.path[1])).toEqual(["APP_CUSTOMERS", "APP_ORDERS"]);
+    await provider.disconnect();
+  });
+
+  test("the paths it answers are the paths listObjects answers", async () => {
+    mockExecuteFn = async (sql: string) => {
+      if (sql.includes("WITH described AS")) {
+        if (sql.includes("SELECT d.NAME FROM described d")) {
+          return { rows: [{ NAME: "APP_ORDERS" }, { NAME: "APP_CUSTOMERS" }] };
+        }
+        return { rows: [] };
+      }
+      if (sql.includes("ALL_OBJECTS")) {
+        return {
+          rows: [
+            { NAME: "APP_ORDERS", STATUS: "VALID" },
+            { NAME: "APP_CUSTOMERS", STATUS: "VALID" },
+          ],
+        };
+      }
+      return { rows: [] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const listed = await provider.listObjects(["APP"], "table");
+    const batch = await provider.describeObjects(["APP"], "table");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
     await provider.disconnect();
   });
 });
