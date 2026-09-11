@@ -3754,51 +3754,96 @@ describe("profileTableTool — the model names a table, the server decides the r
     expect(outcome.reasonCode).toBe("TABLE_QUALIFIER_UNKNOWN");
   });
 
-  test("two containers answering one two-part spelling are refused rather than guessed between", () => {
-    const ambiguous = {
+  /*
+    An ambiguous spelling is its OWN answer, and it used to be answered as an absence.
+
+    `inventoriedTable` dropped the resolver's third outcome, so a spelling two inventoried
+    objects answer to came back as `TABLE_NOT_INVENTORIED` - "that table is not in the
+    schema inventory this run captured" - about a run that had just read both of them.
+    That is #414's defect in a new place: a run that read both objects tells the model it
+    read neither.
+
+    The fixture below carries eight other relations ahead of the two candidates on purpose.
+    The offer list attached to `TABLE_NOT_INVENTORIED` is the first six profilable names,
+    so with only two objects in the inventory it accidentally contained the candidates and
+    the answer looked adequate. With eight, the offer list holds none of them and what the
+    model is actually shown becomes visible: names it did not ask about, and no word about
+    the two it did.
+  */
+  const relation = (name: string, path: readonly string[]) => ({
+    name,
+    path,
+    kind: "table",
+    columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+    indexes: [],
+  });
+
+  const ambiguousRun = (objects: readonly unknown[]) =>
+    ({
       runId: "run-1",
       events: [
         {
           kind: "context-captured",
           atMs: 1,
           fingerprint: "ctx_1",
-          tableCount: 2,
+          tableCount: objects.length,
           snapshot: {
             connectionId: "conn-1",
             fingerprint: "ctx_1",
             capturedAtMs: 1,
-            objects: [
-              {
-                name: "shop.sales.orders",
-                path: ["shop", "sales", "orders"],
-                kind: "table",
-                columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
-                indexes: [],
-              },
-              {
-                name: "archive.sales.orders",
-                path: ["archive", "sales", "orders"],
-                kind: "table",
-                columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
-                indexes: [],
-              },
-            ],
+            objects,
             kinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
           },
         },
       ],
-    } as Pick<AgentRunRecord, "runId" | "events">;
+    }) as Pick<AgentRunRecord, "runId" | "events">;
+
+  const CROWD = ["actor", "address", "category", "city", "country", "customer", "film", "inventory"].map((name) =>
+    relation(`public.${name}`, ["public", name]),
+  );
+
+  test("two containers answering one two-part spelling are refused rather than guessed between", () => {
+    const ambiguous = ambiguousRun([
+      ...CROWD,
+      relation("shop.sales.orders", ["shop", "sales", "orders"]),
+      relation("archive.sales.orders", ["archive", "sales", "orders"]),
+    ]);
 
     const outcome = planTableProfile(harness().context, ambiguous, { schema: "sales", table: "orders" });
 
-    // A PIN on the refusal rather than a change to it, and the code is the right one of the
-    // two: nothing about this spelling's QUALIFIER is unknown, there are simply two objects
-    // wearing it, so the answer that helps is the one that offers the inventory's own
-    // addresses back and lets the model pick the catalog it meant.
+    // The refusal is unchanged and the SENTENCE is the thing that moved: nothing about this
+    // spelling's qualifier is unknown and the table is not missing, there are simply two
+    // objects wearing the spelling, so the answer names them and lets the model pick the
+    // catalog it meant.
     if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
-    expect(outcome.reasonCode).toBe("TABLE_NOT_INVENTORIED");
+    expect(outcome.reasonCode).toBe("TABLE_SPELLING_AMBIGUOUS");
     expect(outcome.modelText).toContain("shop.sales.orders");
     expect(outcome.modelText).toContain("archive.sales.orders");
+  });
+
+  test("and it is not told the table is missing, nor offered names it did not ask about", () => {
+    // What the model was actually shown, measured: the first six profilable names, NEITHER
+    // of which is a candidate, under a sentence saying the table is not in the inventory.
+    const ambiguous = ambiguousRun([
+      ...CROWD,
+      relation("shop.sales.orders", ["shop", "sales", "orders"]),
+      relation("archive.sales.orders", ["archive", "sales", "orders"]),
+    ]);
+
+    const outcome = planTableProfile(harness().context, ambiguous, { schema: "sales", table: "orders" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.modelText).not.toContain("not in the schema inventory");
+    expect(outcome.modelText).not.toContain("public.actor");
+  });
+
+  test("a spelling only ONE object answers is still profiled, so the ambiguity arm is not a net", () => {
+    const single = ambiguousRun([...CROWD, relation("shop.sales.orders", ["shop", "sales", "orders"])]);
+
+    const outcome = planTableProfile(harness().context, single, { schema: "sales", table: "orders" });
+
+    if (outcome.kind !== "planned") throw new Error(`expected a plan, got ${outcome.kind}`);
+    expect(outcome.plan.target.segments).toEqual(["shop", "sales", "orders"]);
   });
 
   test("the composed statement targets what was RESOLVED, not what was asked for", () => {

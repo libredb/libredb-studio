@@ -273,6 +273,19 @@ export type AgentToolUnavailableCode =
   /** The named table is not in the inventory this run captured. */
   | "TABLE_NOT_INVENTORIED"
   /**
+   * More than one inventoried object answers to the spelling, so there is nothing to profile
+   * YET and nothing missing either.
+   *
+   * Split from `TABLE_NOT_INVENTORIED` for the reason the other two were split from it, and
+   * this is the sharpest case of it: the run read BOTH objects and answered that it had read
+   * neither. Measured against an inventory of ten relations holding `public.orders` and
+   * `sales.orders`, a call naming `orders` was told the table was not in the inventory at
+   * all and then offered the first six profilable names, neither of which was a candidate.
+   * A model can repair an ambiguity by qualifying its spelling and can do nothing at all
+   * about an absence, so the candidates travel as the detail (#789).
+   */
+  | "TABLE_SPELLING_AMBIGUOUS"
+  /**
    * The named object IS inventoried, and its declared kind is not one with rows to count.
    *
    * Split from `TABLE_NOT_INVENTORIED` for the reason `TABLE_QUALIFIER_UNKNOWN` was split
@@ -950,6 +963,12 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
   */
   TABLE_NOT_INVENTORIED:
     "That table is not in the schema inventory this run captured, so nothing was profiled. Profile one the inventory lists, spelled the way it spells it.",
+  // Names no tool, for the reason the two refusals around it name none: a held run has been
+  // narrowed out of `inspect_schema`, and this one does not need it anyway, since the objects
+  // are already inventoried. What it needs is the spellings, and they arrive as the `detail`
+  // because they are this inventory's own addresses and this sentence may not invent them.
+  TABLE_SPELLING_AMBIGUOUS:
+    "More than one object in this run's inventory is spelled that way, so nothing was profiled: this run cannot say which one you meant. Call profile_table again with one of the addresses below, spelled in full.",
   // Says what to change, which is the whole of it: the call this replaces was repeated
   // verbatim three times because the sentence it got named nothing that could be edited.
   // It also may not send the model to `inspect_schema` — a held run has been narrowed out
@@ -3219,13 +3238,28 @@ interface ResolvedProfileTarget {
  * answer to at the same length is still refused rather than guessed between, which is the
  * case where a guess profiles the table the caller did not name.
  */
-function inventoriedTable(
+type ProfileTargetResolution =
+  | { readonly kind: "resolved"; readonly target: ResolvedProfileTarget }
+  | { readonly kind: "absent" }
+  | { readonly kind: "ambiguous"; readonly candidates: readonly AgentInventoryObject[] };
+
+/**
+ * The table the run inventoried, or WHICH of the two failures the spelling met.
+ *
+ * The third outcome used to be dropped here, and dropping it is what made a run that read
+ * two objects tell the model it had read neither: `resolveInventoryAddress` answers
+ * `ambiguous` with its candidates, `inventoriedTable` below folded that into `null`, and
+ * `null` was answered as `TABLE_NOT_INVENTORIED`. The two failures are different facts and
+ * only one of them is repairable by the model, so they travel separately from here (#789).
+ */
+function resolveProfileTarget(
   objects: readonly AgentInventoryObject[],
   schema: string | undefined,
   table: string,
-): ResolvedProfileTarget | null {
+): ProfileTargetResolution {
   const resolution = resolveInventoryAddress(objects, schema === undefined ? table : `${schema}.${table}`);
-  if (resolution.kind !== "resolved") return null;
+  if (resolution.kind === "absent") return { kind: "absent" };
+  if (resolution.kind === "ambiguous") return { kind: "ambiguous", candidates: resolution.candidates };
   const entry = resolution.object;
   // The entry's OWN address, never the spelling that reached it: an unqualified `orders`
   // that resolved to `sales.orders` composed `FROM "orders"` and let the search path decide
@@ -3233,11 +3267,31 @@ function inventoriedTable(
   const segments = entry.path ?? entry.name.split(".");
   const leading = segments.slice(0, -1);
   return {
-    entry,
-    segments,
-    ...(leading.length === 0 ? {} : { schema: leading.join(".") }),
-    table: segments[segments.length - 1],
+    kind: "resolved",
+    target: {
+      entry,
+      segments,
+      ...(leading.length === 0 ? {} : { schema: leading.join(".") }),
+      table: segments[segments.length - 1],
+    },
   };
+}
+
+/**
+ * The same resolution as a table or nothing, for the two probes that ask only WHETHER a
+ * spelling would resolve.
+ *
+ * Both of them are asking a yes-or-no question about a spelling the caller did not send, so
+ * a third outcome would have nothing to say: "would this have resolved without the
+ * qualifier?" is answered no by an ambiguity just as it is by an absence.
+ */
+function inventoriedTable(
+  objects: readonly AgentInventoryObject[],
+  schema: string | undefined,
+  table: string,
+): ResolvedProfileTarget | null {
+  const resolution = resolveProfileTarget(objects, schema, table);
+  return resolution.kind === "resolved" ? resolution.target : null;
 }
 
 /**
@@ -3308,7 +3362,17 @@ export function planTableProfile(
   // also refuses a kind whose rows are groupings this server derived, which is the refusal
   // the old flat row menu carried on `tablesAreDerivedGroupings`.
   const profilable = snapshot === null ? [] : addressableObjects(snapshot);
-  const target = snapshot === null ? null : inventoriedTable(profilable, parsed.value.schema, parsed.value.table);
+  const resolution: ProfileTargetResolution =
+    snapshot === null ? { kind: "absent" } : resolveProfileTarget(profilable, parsed.value.schema, parsed.value.table);
+  // Asked BEFORE the three questions below, because none of them is about this failure: the
+  // qualifier is not unknown, the object is not un-profilable and the table is not missing.
+  // The run read every candidate and cannot say which the caller meant, and the candidates
+  // are the only thing that repairs it, so they are what is said. They are this inventory's
+  // own addresses, so a model can copy one back verbatim.
+  if (resolution.kind === "ambiguous") {
+    return unavailable("TABLE_SPELLING_AMBIGUOUS", resolution.candidates.map((entry) => entry.name).join(", "));
+  }
+  const target = resolution.kind === "resolved" ? resolution.target : null;
   if (target === null) {
     /*
       Two different failures used to share one sentence, and the wire recording of a

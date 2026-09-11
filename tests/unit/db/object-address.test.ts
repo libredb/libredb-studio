@@ -246,3 +246,41 @@ describe("resolveObjectAddress takes the container its caller is resolving from"
     expect(resolution.object.id).toBe("only");
   });
 });
+
+describe("an ambiguous outcome names the candidates", () => {
+  test("every item that answered the spelling at the winning rank, by reference", () => {
+    // The consumer that answers a model has to say WHICH objects are spelled that way: an
+    // ambiguity is repairable by qualifying the spelling and an absence is not, so the two
+    // candidates are the whole of the help. By reference, so the caller can read the kind
+    // and the address off each.
+    const hive = item("hive", "hive", "sales", "orders");
+    const iceberg = item("iceberg", "iceberg", "sales", "orders");
+    const resolution = resolveObjectAddress(
+      [hive, iceberg, item("other", "sales", "customers")],
+      segmentsOf,
+      "sales.orders",
+    );
+    if (resolution.kind !== "ambiguous") throw new Error(`expected ambiguous, got ${resolution.kind}`);
+    expect(resolution.candidates).toEqual([hive, iceberg]);
+  });
+
+  test("a worse-ranked match is NOT a candidate, because it never contested", () => {
+    const hive = item("hive", "hive", "sales", "orders");
+    const iceberg = item("iceberg", "iceberg", "sales", "orders");
+    const resolution = resolveObjectAddress(
+      [hive, iceberg, item("deeper", "a", "b", "sales", "orders")],
+      segmentsOf,
+      "sales.orders",
+    );
+    if (resolution.kind !== "ambiguous") throw new Error(`expected ambiguous, got ${resolution.kind}`);
+    expect(resolution.candidates.map((candidate) => candidate.id)).toEqual(["hive", "iceberg"]);
+  });
+
+  test("a tie the preferred container failed to break still names the whole tied set", () => {
+    const hive = item("hive", "hive", "sales", "orders");
+    const iceberg = item("iceberg", "iceberg", "sales", "orders");
+    const resolution = resolveObjectAddress([hive, iceberg], segmentsOf, "sales.orders", ["warehouse", "sales"]);
+    if (resolution.kind !== "ambiguous") throw new Error(`expected ambiguous, got ${resolution.kind}`);
+    expect(resolution.candidates).toEqual([hive, iceberg]);
+  });
+});

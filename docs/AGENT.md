@@ -1008,7 +1008,13 @@ may name `orders` against a `sales.orders` inventory, and on an engine whose con
 it may name `sales.orders` against a `shop.sales.orders` one, which is the form that engine's own
 documentation writes. Two entries answering one spelling at the same length are refused rather than
 guessed between, because two schemas holding the same table name is precisely when a guess would
-profile the wrong one, and a named qualifier is never matched against a bare entry. **The composed
+profile the wrong one, and a named qualifier is never matched against a bare entry.
+That refusal is `TABLE_SPELLING_AMBIGUOUS`, and it NAMES THE ENTRIES: it used to be answered as
+`TABLE_NOT_INVENTORIED`, which told a model that had just been shown both objects that the table was
+not in the inventory at all, and then offered it the first six profilable names, neither of which was
+a candidate.
+An ambiguity is repairable by qualifying the spelling and an absence is not, so the addresses the run
+holds are the whole of the help and they travel as the refusal's detail. **The composed
 statement targets what was RESOLVED**, not the model's spelling, and it quotes the resolved address
 one segment at a time: composing from the spelling left PostgreSQL's `search_path` to decide which
 relation was read while the ledger said a qualified one had been profiled, and joining the address

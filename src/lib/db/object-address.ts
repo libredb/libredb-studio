@@ -66,11 +66,16 @@ export function addressKeys(segments: readonly string[]): readonly string[] {
  * that way" is the edge of what was read; "two objects answer to that spelling" is a reading
  * that holds BOTH and cannot tell which the other reading meant. Reporting the second as the
  * first would tell a model that a table it was shown a moment ago is missing.
+ *
+ * The ambiguous outcome CARRIES ITS CANDIDATES, because the one consumer that answers a
+ * person or a model has to name them: a spelling two objects answer to is repairable by
+ * qualifying it, and an absence is not, so "which two" is the whole of the help. A consumer
+ * that only needs to know there is no single answer reads `kind` and ignores them.
  */
 export type ObjectAddressResolution<T> =
   | { readonly kind: "resolved"; readonly object: T }
   | { readonly kind: "absent" }
-  | { readonly kind: "ambiguous" };
+  | { readonly kind: "ambiguous"; readonly candidates: readonly T[] };
 
 /** Whether two container paths are the same container, segment by segment. */
 function sameContainer(left: readonly string[], right: readonly string[]): boolean {
@@ -133,11 +138,13 @@ export function resolveObjectAddress<T>(
 
   if (best.length === 1) return { kind: "resolved", object: best[0] };
   if (best.length === 0) return { kind: "absent" };
-  if (preferredContainer === undefined) return { kind: "ambiguous" };
+  // The candidates are the whole TIED SET, never the subset a failed tie-break left: the
+  // caller is reporting which objects answer to the spelling, and that is all of them.
+  if (preferredContainer === undefined) return { kind: "ambiguous", candidates: best };
 
   const preferred = best.filter((item) => {
     const segments = segmentsOf(item);
     return sameContainer(segments.slice(0, segments.length - 1), preferredContainer);
   });
-  return preferred.length === 1 ? { kind: "resolved", object: preferred[0] } : { kind: "ambiguous" };
+  return preferred.length === 1 ? { kind: "resolved", object: preferred[0] } : { kind: "ambiguous", candidates: best };
 }
