@@ -605,6 +605,198 @@ Measured against `tpch`: 72 tables, `column_default` projected and null for ever
 (kept because a connector with server-side defaults would report it there, and an absent value costs
 nothing).
 
+### The object surface (#789)
+
+The flat list above is what `getSchema()` answers. Alongside it the provider implements the lazy,
+container-aware object surface: `listContainers()`, `countObjects()`, `listObjects()` and
+`describeObject(path, kind)`, in
+[`objects.ts`](../../src/lib/db/providers/sql/trino/objects.ts) and
+[`index.ts`](../../src/lib/db/providers/sql/trino/index.ts). Both surfaces are live through Phase 1
+and they answer different questions: `getSchema()` is scoped to the one catalog the connection pins
+([§3.2](#32-the-connections-database-field-pins-one-catalog)), while the object surface reaches
+**every catalog the coordinator can see**, including the ones this connection did not name.
+
+Everything below was measured against a live Trino 476 on 2026-09-11, running the `memory` and `tpch`
+catalogs `database-compose.yml` configures plus an `iceberg` catalog on an Apache Hive 4.0.1
+standalone metastore.
+
+#### Two container levels, and a catalog is not a database
+
+```ts
+containerLevels: [
+  { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+  { id: "schema",  label: "Schema",  labelPlural: "Schemas" },
+]
+```
+
+Trino is the third two-level engine in #789, after SQL Server and DuckDB, and the outer level is the
+one worth explaining: **a Trino catalog IS a named connector configuration**, not a database. Dropping
+`iceberg.properties` into `/etc/trino/catalog` creates the catalog `iceberg`, and the same session
+then addresses an Iceberg lake, a PostgreSQL server and a generated `tpch` dataset side by side. Two
+consequences a reader has to carry:
+
+* **`information_schema` is PER CATALOG.** `iceberg.information_schema.tables` says nothing about
+  `memory`. Every statement below therefore names its catalog, and the catalog is quoted rather than
+  bound: the client protocol sends no parameters ([§5.1](#51-execution)).
+* **What a catalog can do is the connector's answer, not the engine's.** Two of the four kinds below
+  exist only on some connectors, which is a fact about the deployment rather than about the model.
+
+`system` and `jmx` are **listed like any other catalog** rather than filtered out. Trino publishes no
+flag that separates a plumbing catalog from a data one, both are genuinely queryable, and a name
+denylist is a boundary this repo has already found unmaintainable. `information_schema` IS excluded
+from the schema list, which is the same exclusion `getSchema()` already makes: every catalog carries
+one, and it holds only the tree's own plumbing. Measured with the exclusion removed, `memory` answers
+`["app", "default", "information_schema"]`.
+
+Both levels mark `isSessionDefault`, and both halves of the schema predicate are load-bearing: the
+connection's schema names a schema in the connection's catalog, and several Trino connectors create a
+schema called `default`, so comparing the schema name alone marks a row in every catalog on the
+cluster.
+
+#### Four kinds, and where each one's rows come from
+
+| Kind | Role | Source | Note |
+|---|---|---|---|
+| `table` | relation | `<catalog>.information_schema.tables`, `table_type = 'BASE TABLE'` | `acceptsRowWrites: true` |
+| `view` | relation | the same relation, `table_type = 'VIEW'` | No row writes: `INSERT INTO <view>` answers `Inserting into views is not supported` |
+| `materialized_view` | relation | `system.metadata.materialized_views`, filtered to the catalog | Some connectors only. No row writes: `Inserting into materialized views is not supported` |
+| `function` | routine | `SHOW FUNCTIONS FROM <catalog>.<schema>` | Per SCHEMA only, see below |
+
+**No trigger, no stored procedure and no index**, because Trino has none of the three anywhere in its
+model: `information_schema` holds eight views and neither `table_constraints` nor `key_column_usage`
+is among them, and there is no index catalog at all
+([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)). A declared kind draws a
+folder, and a folder for something the engine cannot have is a lie its zero badge makes look like a
+fact.
+
+`describeObject` therefore answers `indexes: []` and `foreignKeys: []` for every kind, and every
+column carries `isPrimary: false`. Those are the engine's answers and not defaults this provider
+chose. `is_nullable` is the ANSI varchar `'YES'`/`'NO'` here rather than a boolean.
+
+#### A materialized view is a BASE TABLE, so the table read has to subtract it
+
+This is the one trap in the whole surface. Measured: with `iceberg.warehouse.order_totals` a
+materialized view over `orders`, `iceberg.information_schema.tables` reports it as
+
+| table_schema | table_name | table_type |
+|---|---|---|
+| `warehouse` | `order_totals` | `BASE TABLE` |
+| `warehouse` | `orders` | `BASE TABLE` |
+
+So a table count taken from `table_type` alone counts the materialized view twice over, once under
+each kind, and the tree draws the same object in both folders. The relation reads carry a
+`NOT EXISTS` anti-join against `system.metadata.materialized_views`, and the materialized views come
+from that catalog rather than from `information_schema`, so neither source can lose a row the other
+holds. Measured with the anti-join removed, the `iceberg` catalog answers three tables and one
+materialized view for two objects, and `order_totals` appears in both listings.
+
+The materialized-view read is filtered `WHERE catalog_name = <catalog>`, and that is **isolation
+rather than an optimisation**. Two measurements, both against a live cluster:
+
+* With the filter removed, the `memory` catalog lists `["memory", "warehouse", "order_totals"]` — a
+  materialized view that lives in `iceberg`, handed a path in `memory` that resolves to nothing.
+* An **unfiltered** read fails outright when any catalog on the cluster cannot list its own
+  materialized views: with one deliberately broken Iceberg catalog present,
+  `SELECT * FROM system.metadata.materialized_views` answers
+  `Error listing materialized views for catalog brokenice: Failed to connect: …` while the filtered
+  read still answers its row. Without the filter, one misconfigured catalog anywhere empties the
+  Materialized Views folder of every catalog on the cluster.
+
+Materialized views are supported by **some connectors only**, Iceberg among them, and neither the
+Iceberg JDBC catalog nor the REST catalog will create one on 476 (`createMaterializedView is not
+supported for Iceberg JDBC catalogs`). The kind is declared anyway: it exists in the engine's model
+and `system.metadata.materialized_views` is an engine-level catalog, so a catalog holding none answers
+an honest `{ count: 0 }`. "This engine has no such concept" and "this container holds none" are
+different facts and #789's `KindCount` keeps them apart.
+
+#### The `table_type` vocabulary is the ENGINE's, and an unmodelled spelling is made loud
+
+`information_schema` is generated by the coordinator rather than by a connector, and it emits
+`BASE TABLE` and `VIEW` and nothing else — measured across `tpch` (72 rows), `memory` and `iceberg`.
+The count statement maps the two through a `CASE` whose **ELSE arm labels anything else
+`unknown:<type>`**, which is a kind id no declaration holds, so the reader raises naming the spelling:
+
+```
+Trino counted objects under "unknown:LOCAL TEMPORARY", which this provider does not declare as an
+object kind (#789)
+```
+
+The silent alternative — a `WHERE table_type IN (…)` that simply drops the row — would take the object
+out of the count and out of the listing together, leaving the count and the listing in agreement while
+the object is invisible in the tree. That is the shape of defect #789's standing rulings call the
+worst this epic has, and it is why the guard exists rather than a comment.
+
+#### Functions are real here, and they are readable one schema at a time
+
+Catalog-stored SQL functions exist from Trino 431, on the Hive and Memory connectors only. The kind is
+declared because it was **confirmed on the build this repo runs**: measured on 476,
+
+```sql
+CREATE FUNCTION memory.app.plus_one(x bigint) RETURNS bigint RETURN x + 1;
+SHOW FUNCTIONS FROM memory.app;
+```
+
+succeeds and lists it, and `database-compose.yml` configures the `memory` catalog. Leaving the kind
+undeclared would make a function somebody wrote invisible in the tree, which is a worse absence than an
+empty folder.
+
+`SHOW FUNCTIONS FROM <catalog>.<schema>` is the **whole surface**, and it has three properties that
+shape the implementation. It takes a schema and has no catalog form
+(`SHOW FUNCTIONS FROM memory` answers `Catalog must be specified when session catalog is not set`); its
+columns are named `Function`, `Return Type`, `Argument Types`, `Function Type`, `Deterministic` and
+`Description`, with spaces, and no alias can rename them; and it cannot be wrapped in a subquery —
+`SELECT * FROM (SHOW FUNCTIONS FROM memory.app)` is a syntax error. There is no relation to read
+instead: `information_schema` has no routine catalog on this engine, and `system.jdbc.procedures`
+answers zero rows for a schema holding three functions.
+
+So a **catalog-level** function count is `{ unavailable }` carrying that reason, and a catalog-level
+listing is refused with the same sentence, rather than fanning `SHOW FUNCTIONS` out over every schema
+in the catalog — one full HTTP exchange each, unbounded on a Hive or Iceberg catalog. Open a schema to
+see its functions. The two reads behind `countObjects` are caught **separately** for the same reason
+they are two reads: `system.metadata` failing must not erase an honest function count, and a connector
+without stored functions must not blank the table count.
+
+A function's path segment carries its **argument types**, `plus_one(bigint)`, while its `name` stays
+the bare `plus_one` a person reads. Measured: `plus_one(bigint)` and `plus_one(double)` coexist in one
+schema, so a bare name gives two objects one address. The types and never the parameter names, which
+is the rule #789 settled on PostgreSQL: overload resolution never depends on a name, so carrying one
+would make an object's identity change when somebody renames an argument. On this engine the honest
+form is also the only available one, because `SHOW FUNCTIONS` publishes no parameter names at all.
+
+#### Hive-native views, and what Phase 1 does with them
+
+A Hive-native view is **readable** through the Hive connector but not writable, and Trino guarantees no
+round trip for one it did not create. Such a view appears in this listing exactly like any other, under
+the `view` kind, because `information_schema.tables` reports it as `VIEW` and the surface reads what
+the catalog reports. Phase 1 only ever lists and describes it, and neither `acceptsRowWrites` nor an
+inline editor is offered on a view of any kind, so nothing here can attempt a write. A Phase 2 Source
+tab is where the distinction starts to matter.
+
+#### Container shapes and the derivations behind them
+
+Both depths are accepted by all four methods: a catalog alone answers "how many tables does this whole
+catalog hold", and a schema answers the folder the tree actually draws. That matches SQL Server and
+DuckDB, and `src/lib/api/object-route.ts` admits any path down to the declared depth.
+
+Nothing reads a path by position. The container segments come from the declared `ContainerLevelSpec`
+ids, the object name is `path[path.length - 1]`, and the depth is `containerDepth()` — never
+`containerLevels.length` and never a hardcoded comparison. `trino-provider.test.ts` pins that by
+handing the provider a declaration listing `schema` BEFORE `catalog` and driving it to a bound value:
+with that declaration, `["beta", "alpha", "pin"]` addresses schema `beta` in catalog `alpha`, and a
+provider binding `path[0]` as the catalog reads a different real relation rather than failing.
+
+#### Measured fixture
+
+| Container | table | view | materialized_view | function |
+|---|---|---|---|---|
+| `iceberg` | 2 | 0 | 1 | unavailable |
+| `iceberg.warehouse` | 1 | 0 | 1 | 0 |
+| `memory.app` | 2 | 1 | 0 | 3 |
+| `tpch.tiny` | 8 | 0 | 0 | 0 |
+
+`iceberg`'s two tables are `warehouse.orders` and `system.iceberg_tables`, the latter published by the
+connector itself — which is why the schema list carries no denylist beyond `information_schema`.
+
 ---
 
 ## 7. Monitoring & health

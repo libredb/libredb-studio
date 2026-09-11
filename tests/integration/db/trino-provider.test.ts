@@ -28,7 +28,7 @@
  * 5. `DELETE /v1/query/{id}` ANSWERS 204 for an id that never existed, so a
  *    cancellation is idempotent and its success proves nothing about the target.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   AuthenticationError,
   ConnectionError,
@@ -49,8 +49,19 @@ import {
   trinoTableListSql,
   trinoTableStatsSql,
 } from "@/lib/db/providers/sql/trino/introspect";
+import {
+  comparePaths,
+  trinoFunctionListSql,
+  trinoMaterializedViewListSql,
+  trinoObjectColumnsSql,
+  trinoObjectCountsSql,
+  trinoRelationListSql,
+  trinoSchemaListSql,
+} from "@/lib/db/providers/sql/trino/objects";
 import { TrinoProvider } from "@/lib/db/providers/sql/trino/index";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 const CATALOG = "tpch";
 const ORIGIN = "http://trino.test:8080";
@@ -422,6 +433,20 @@ function defaultReply(sql: string): (id: string) => Reply {
  */
 function overrideSurface(fragment: string, answer: (id: string) => Reply): void {
   replyFor = (sql) => (sql.includes(fragment) ? answer : defaultReply(sql));
+}
+
+/**
+ * Serve ONE exact statement differently and leave every other read on whatever was routing
+ * before, so two overrides compose instead of the second erasing the first.
+ *
+ * Exact and not a substring, unlike `overrideSurface`: the object surface (#789) sends
+ * several statements that differ only in a `WHERE` clause inserted mid-statement, so a
+ * fragment match would hand a schema-level read the catalog-level answer and the test would
+ * still pass.
+ */
+function serveInstead(statement: string, answer: (id: string) => Reply): void {
+  const previous = replyFor;
+  replyFor = (sql) => (sql === statement ? answer : previous(sql));
 }
 
 /** Every read fails the way a locked-down cluster's ordinary user sees it. */
@@ -1308,5 +1333,719 @@ describe("TrinoProvider maintenance", () => {
     await expect(provider.runMaintenance("vacuum")).rejects.toThrow("owns no storage");
     await expect(provider.runMaintenance("analyze")).rejects.toThrow("computes no statistics of its own");
     expect(sentSql).toEqual(["SELECT 1"]);
+  });
+});
+
+// ============================================================================
+// The object surface (#789)
+// ----------------------------------------------------------------------------
+// Every payload below was captured on 2026-09-11 from a live Trino 476 carrying the
+// `memory` and `tpch` catalogs `database-compose.yml` configures plus an `iceberg` catalog
+// on an Apache Hive 4.0.1 standalone metastore, which is the only catalog type this release
+// creates a materialized view on: the Iceberg JDBC and REST catalogs both answer
+// `createMaterializedView is not supported`.
+//
+// The fixture behind them, in full:
+//   iceberg.warehouse  table `orders`, materialized view `order_totals` over it
+//   iceberg.system     table `iceberg_tables`, published by the connector itself
+//   memory.app         tables `customers` and `orders`, view `customer_names`,
+//                      functions plus_one(bigint), plus_one(double), label(bigint, varchar)
+//   memory.default     empty
+// ============================================================================
+
+const OBJECT_CATALOG_ROWS: unknown[][] = [
+  ["iceberg", "iceberg"],
+  ["jmx", "jmx"],
+  ["memory", "memory"],
+  ["system", "system"],
+  ["tpcds", "tpcds"],
+  ["tpch", "tpch"],
+];
+
+/** Every catalog `listContainers()` answers with, in the order the cluster listed them. */
+const FIXTURE_CATALOGS = [["iceberg"], ["jmx"], ["memory"], ["system"], ["tpcds"], ["tpch"]];
+
+const SCHEMA_LIST_COLUMNS: Column[] = [{ name: "schemaName", type: "varchar" }];
+const KIND_COUNT_COLUMNS: Column[] = [
+  { name: "kind", type: "varchar" },
+  { name: "n", type: "bigint" },
+];
+const OBJECT_NAME_COLUMNS: Column[] = [
+  { name: "schemaName", type: "varchar" },
+  { name: "objectName", type: "varchar" },
+];
+const OBJECT_COLUMN_COLUMNS: Column[] = [
+  { name: "columnName", type: "varchar" },
+  { name: "dataType", type: "varchar" },
+  { name: "isNullable", type: "varchar" },
+];
+
+/** `SHOW FUNCTIONS` output, verbatim: six columns, two of whose names carry a space. */
+const FUNCTION_COLUMNS: Column[] = [
+  { name: "Function", type: "varchar" },
+  { name: "Return Type", type: "varchar" },
+  { name: "Argument Types", type: "varchar" },
+  { name: "Function Type", type: "varchar" },
+  { name: "Deterministic", type: "boolean" },
+  { name: "Description", type: "varchar" },
+];
+
+/** Two overloads of one name, which is why a function's path segment carries its types. */
+const MEMORY_APP_FUNCTION_ROWS: unknown[][] = [
+  ["label", "varchar", "bigint, varchar", "scalar", true, ""],
+  ["plus_one", "bigint", "bigint", "scalar", true, ""],
+  ["plus_one", "double", "double", "scalar", true, ""],
+];
+
+const ICEBERG = { catalog: "iceberg" } as const;
+const ICEBERG_WAREHOUSE = { catalog: "iceberg", schema: "warehouse" } as const;
+const MEMORY_APP = { catalog: "memory", schema: "app" } as const;
+
+/**
+ * The object-surface answers, keyed on the exported statement each read actually sends.
+ *
+ * Registered per test rather than in `SURFACE_ANSWERS` because the catalog list has to be
+ * replaced as well, and the five-catalog capture the monitoring tests pin is asserted by
+ * name in `getStorageStats`.
+ */
+function serveObjectSurface(): void {
+  serveInstead(TRINO_CATALOG_LIST_SQL, rows(CATALOG_LIST_COLUMNS, OBJECT_CATALOG_ROWS));
+  serveInstead(trinoSchemaListSql("iceberg"), rows(SCHEMA_LIST_COLUMNS, [["default"], ["system"], ["warehouse"]]));
+  serveInstead(trinoSchemaListSql("memory"), rows(SCHEMA_LIST_COLUMNS, [["app"], ["default"]]));
+  // The catalog holding a materialized view: `order_totals` is counted ONCE, as a
+  // materialized view, even though `information_schema.tables` calls it a BASE TABLE.
+  serveInstead(
+    trinoObjectCountsSql(ICEBERG, true),
+    rows(KIND_COUNT_COLUMNS, [
+      ["table", 2],
+      ["materialized_view", 1],
+    ]),
+  );
+  serveInstead(
+    trinoObjectCountsSql(ICEBERG_WAREHOUSE, true),
+    rows(KIND_COUNT_COLUMNS, [
+      ["table", 1],
+      ["materialized_view", 1],
+    ]),
+  );
+  serveInstead(
+    trinoObjectCountsSql(MEMORY_APP, true),
+    rows(KIND_COUNT_COLUMNS, [
+      ["view", 1],
+      ["table", 2],
+    ]),
+  );
+  serveInstead(
+    trinoRelationListSql(ICEBERG, "table"),
+    rows(OBJECT_NAME_COLUMNS, [
+      ["system", "iceberg_tables"],
+      ["warehouse", "orders"],
+    ]),
+  );
+  serveInstead(trinoRelationListSql(ICEBERG, "view"), rows(OBJECT_NAME_COLUMNS, []));
+  serveInstead(trinoRelationListSql(ICEBERG_WAREHOUSE, "table"), rows(OBJECT_NAME_COLUMNS, [["warehouse", "orders"]]));
+  serveInstead(
+    trinoRelationListSql(MEMORY_APP, "table"),
+    rows(OBJECT_NAME_COLUMNS, [
+      ["app", "orders"],
+      ["app", "customers"],
+    ]),
+  );
+  serveInstead(trinoRelationListSql(MEMORY_APP, "view"), rows(OBJECT_NAME_COLUMNS, [["app", "customer_names"]]));
+  serveInstead(trinoMaterializedViewListSql(ICEBERG), rows(OBJECT_NAME_COLUMNS, [["warehouse", "order_totals"]]));
+  serveInstead(
+    trinoMaterializedViewListSql(ICEBERG_WAREHOUSE),
+    rows(OBJECT_NAME_COLUMNS, [["warehouse", "order_totals"]]),
+  );
+  serveInstead(trinoMaterializedViewListSql(MEMORY_APP), rows(OBJECT_NAME_COLUMNS, []));
+  serveInstead(trinoFunctionListSql("iceberg", "warehouse"), rows(FUNCTION_COLUMNS, []));
+  serveInstead(trinoFunctionListSql("memory", "app"), rows(FUNCTION_COLUMNS, MEMORY_APP_FUNCTION_ROWS));
+  serveInstead(
+    trinoObjectColumnsSql("iceberg", "warehouse", "orders"),
+    rows(OBJECT_COLUMN_COLUMNS, [
+      ["id", "bigint", "YES"],
+      ["total", "double", "YES"],
+    ]),
+  );
+  serveInstead(
+    trinoObjectColumnsSql("iceberg", "warehouse", "order_totals"),
+    rows(OBJECT_COLUMN_COLUMNS, [
+      ["id", "bigint", "YES"],
+      ["total", "double", "YES"],
+    ]),
+  );
+  serveInstead(
+    trinoObjectColumnsSql("memory", "app", "customer_names"),
+    rows(OBJECT_COLUMN_COLUMNS, [["name", "varchar", "YES"]]),
+  );
+  serveInstead(trinoObjectColumnsSql("memory", "app", "gone"), rows(OBJECT_COLUMN_COLUMNS, []));
+}
+
+/** A provider pinned at the catalog AND the schema the fixture's objects live in. */
+async function objectProvider(overrides: Partial<DatabaseConnection> = {}): Promise<TrinoProvider> {
+  const provider = await connectProvider({ database: "iceberg", schema: "warehouse", ...overrides });
+  serveObjectSurface();
+  return provider;
+}
+
+describe("object surface", () => {
+  test("declares the kinds Trino has, at two container levels", () => {
+    const capabilities = new TrinoProvider(makeConnection()).getCapabilities();
+    const kinds = capabilities.objectKinds ?? [];
+
+    expect(kinds.map((kind) => kind.id).sort()).toEqual(["function", "materialized_view", "table", "view"]);
+    // Measured on 476: a table takes an INSERT on a connector that supports one, a view
+    // answers "Inserting into views is not supported" and a materialized view answers
+    // "Inserting into materialized views is not supported".
+    expect(kinds.find((kind) => kind.id === "table")?.acceptsRowWrites).toBe(true);
+    expect(kinds.find((kind) => kind.id === "view")?.acceptsRowWrites).toBeUndefined();
+    expect(kinds.find((kind) => kind.id === "materialized_view")?.acceptsRowWrites).toBeUndefined();
+    expect(kinds.find((kind) => kind.id === "function")?.role).toBe("routine");
+    // Trino has no trigger, no stored procedure and no user-facing index anywhere in its
+    // model - `information_schema` holds eight views and none of them is a constraint, key
+    // or index catalog - so none of the three is declared. A folder for a concept the
+    // engine does not have is a lie its zero badge makes look like a fact.
+    for (const absent of ["trigger", "procedure", "index", "sequence"]) {
+      expect(kinds.find((kind) => kind.id === absent)).toBeUndefined();
+    }
+
+    expect(capabilities.containerLevels).toEqual([
+      { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+      { id: "schema", label: "Schema", labelPlural: "Schemas" },
+    ]);
+  });
+
+  test("satisfies the shared object surface contract", async () => {
+    const provider = await objectProvider();
+
+    await assertObjectSurface(provider, {
+      containers: FIXTURE_CATALOGS,
+      // `view` at 0 is not padding: it is the declared-and-empty case, which only renders
+      // as a 0 badge because every declared kind is seeded before the rows overwrite it.
+      kinds: { table: 2, materialized_view: 1, view: 0 },
+      sampleObject: { path: ["iceberg", "warehouse", "orders"], kind: "table" },
+    });
+  });
+});
+
+/**
+ * The rest of the object surface. Kept out of the block above so `-t "object surface"` still
+ * runs the shared contract on its own.
+ */
+describe("Trino object containers, listings and detail", () => {
+  test("the top level is every catalog the cluster has, with the connection's own marked", async () => {
+    const provider = await objectProvider();
+    const catalogs = await provider.listContainers!();
+
+    expect(catalogs.map((container) => container.path)).toEqual(FIXTURE_CATALOGS);
+    expect(catalogs.every((container) => container.level === 0)).toBe(true);
+    // `system` and `jmx` are listed rather than filtered out. Both are real catalogs a user
+    // can query, Trino publishes no "internal" flag to tell them apart from a data catalog,
+    // and a name denylist is a boundary this repo has already found unmaintainable (#424).
+    expect(catalogs.map((container) => container.name)).toContain("system");
+    expect(catalogs.filter((container) => container.isSessionDefault).map((c) => c.name)).toEqual(["iceberg"]);
+  });
+
+  test("a nested list is the catalog's schemas, and the session's own schema is marked too", async () => {
+    const provider = await objectProvider();
+    const schemas = await provider.listContainers!(["iceberg"]);
+
+    expect(schemas.map((container) => container.path)).toEqual([
+      ["iceberg", "default"],
+      ["iceberg", "system"],
+      ["iceberg", "warehouse"],
+    ]);
+    expect(schemas.every((container) => container.level === 1)).toBe(true);
+    // Standing ruling 5a2 (#789): first paint walks the container chain to the session
+    // default at the DEEPEST declared level, so a two-level engine that marked only its
+    // catalogs would open a catalog and stop, having read no counts at all.
+    expect(schemas.filter((container) => container.isSessionDefault).map((c) => c.name)).toEqual(["warehouse"]);
+    // `information_schema` is excluded, the same exclusion getSchema() already makes: every
+    // catalog carries one and it holds only the tree's own plumbing.
+    expect(schemas.map((container) => container.name)).not.toContain("information_schema");
+  });
+
+  test("a schema in a catalog the connection is not pinned to is never the session default", async () => {
+    // Pinned at `iceberg`.`default`, and `memory` has a schema called `default` too. That
+    // collision is measured rather than contrived: several Trino connectors create a
+    // `default` schema, so BOTH halves of the predicate are load-bearing and a provider
+    // comparing the schema name alone marks a row in every catalog on the cluster.
+    const provider = await objectProvider({ schema: "default" });
+
+    expect((await provider.listContainers!(["iceberg"])).filter((c) => c.isSessionDefault).map((c) => c.name)).toEqual([
+      "default",
+    ]);
+    const elsewhere = await provider.listContainers!(["memory"]);
+    expect(elsewhere.map((container) => container.name)).toEqual(["app", "default"]);
+    expect(elsewhere.some((container) => container.isSessionDefault)).toBe(false);
+  });
+
+  test("nothing nests under a schema, which is a fact about Trino rather than a refusal", async () => {
+    const provider = await objectProvider();
+
+    expect(await provider.listContainers!(["iceberg", "warehouse"])).toEqual([]);
+  });
+
+  /**
+   * Four properties of the statements themselves, asserted as TEXT rather than through a
+   * behaviour, and the reason is a real limit of this harness rather than a preference.
+   *
+   * Every other assertion in this file routes a canned answer by the exact statement the
+   * provider sends, and the test builds that statement with the SAME exported builder the
+   * provider uses. So a change to a statement's meaning moves both sides together and no
+   * behavioural assertion here can see it: measured, deleting the materialized-view
+   * anti-join leaves all 103 tests green. So properties 1, 3 and 4 were each mutated
+   * against a LIVE Trino 476 instead, and each one produced a wrong answer there - recorded
+   * per property below. Property 2 is the one that cannot be live-verified, because no
+   * `table_type` outside the two spellings exists on 476 to produce; it is pinned here as
+   * the guard for the release that adds one.
+   */
+  test("the statements carry the four properties a replayed page cannot show", () => {
+    const counts = trinoObjectCountsSql(ICEBERG_WAREHOUSE, true);
+
+    // 1. The anti-join. Live with it removed, the `iceberg` catalog counts three tables and
+    // one materialized view for two objects, and `order_totals` is listed under BOTH
+    // folders - `information_schema.tables` calls a materialized view a BASE TABLE.
+    expect(counts).toContain(
+      "AND NOT EXISTS (SELECT 1 FROM system.metadata.materialized_views mv WHERE mv.catalog_name = 'iceberg' AND mv.schema_name = t.table_schema AND mv.name = t.table_name)",
+    );
+    // 2. The ELSE arm that makes an unmodelled `table_type` loud. Dropping it maps the
+    // unknown spelling onto a declared kind, which is the silent miscount ruling 5a is
+    // about.
+    expect(counts).toContain(
+      "CASE t.table_type WHEN 'BASE TABLE' THEN 'table' WHEN 'VIEW' THEN 'view' ELSE 'unknown:' || t.table_type END",
+    );
+    // 3. The materialized-view read is filtered to ONE catalog, and that is isolation
+    // rather than an optimisation. Live with the filter removed, the `memory` catalog lists
+    // `["memory", "warehouse", "order_totals"]` - a materialized view that lives in
+    // `iceberg`, handed a path in `memory` that resolves to nothing. And against a
+    // deliberately broken Iceberg catalog on the same cluster, the unfiltered read answers
+    // `Error listing materialized views for catalog brokenice: Failed to connect: ...`
+    // while this one still answers its row.
+    expect(trinoMaterializedViewListSql(ICEBERG)).toContain("WHERE catalog_name = 'iceberg'");
+    // 4. `information_schema` is excluded from the schema list. Live with the exclusion
+    // removed, `memory` answers `["app", "default", "information_schema"]`: it is a schema
+    // of EVERY catalog, so every catalog on the cluster would open onto a folder holding
+    // the tree's own plumbing.
+    expect(trinoSchemaListSql("memory")).toContain("WHERE schema_name <> 'information_schema'");
+  });
+
+  test("a materialized view is counted ONCE, even though information_schema calls it a table", async () => {
+    const provider = await objectProvider();
+
+    // Measured: `iceberg.information_schema.tables` reports `order_totals` as
+    // `table_type = 'BASE TABLE'`, exactly like `orders`. Without the anti-join the schema
+    // would count two tables and one materialized view for two objects, and the tree would
+    // draw `order_totals` in both folders.
+    expect(await provider.countObjects!(["iceberg", "warehouse"])).toEqual({
+      table: { count: 1 },
+      view: { count: 0 },
+      materialized_view: { count: 1 },
+      function: { count: 0 },
+    });
+  });
+
+  test("a catalog-level count covers every schema, and says why it cannot count functions", async () => {
+    const provider = await objectProvider();
+    const counts = await provider.countObjects!(["iceberg"]);
+
+    expect(counts).toMatchObject({ table: { count: 2 }, view: { count: 0 }, materialized_view: { count: 1 } });
+    // Three facts, not two (#789). A function count for a whole catalog would need one
+    // `SHOW FUNCTIONS` per schema, and `SHOW` is not composable - measured,
+    // `SELECT * FROM (SHOW FUNCTIONS FROM memory.app)` is a syntax error - so the honest
+    // answer is the engine's own limitation rather than a zero nobody measured.
+    expect(counts.function).toEqual({ unavailable: expect.stringContaining("SHOW FUNCTIONS") });
+    expect(sentAnything("SHOW FUNCTIONS")).toBe(false);
+  });
+
+  test("a schema-level count asks SHOW FUNCTIONS and counts the overloads separately", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+
+    expect(await provider.countObjects!(["memory", "app"])).toEqual({
+      table: { count: 2 },
+      view: { count: 1 },
+      materialized_view: { count: 0 },
+      function: { count: 3 },
+    });
+  });
+
+  test("a table_type this provider has no kind for is reported by name, never dropped", async () => {
+    const provider = await objectProvider();
+    // Standing ruling 5a (#789). The `CASE`'s ELSE arm labels an unmodelled spelling
+    // `unknown:<type>`, so a future `table_type` reaches the reader as a kind nothing
+    // declares instead of falling out of the count AND the listing together, which is the
+    // shape of defect that leaves ruling 5f satisfied while the object is invisible.
+    serveInstead(
+      trinoObjectCountsSql(ICEBERG_WAREHOUSE, true),
+      rows(KIND_COUNT_COLUMNS, [
+        ["table", 1],
+        ["unknown:LOCAL TEMPORARY", 4],
+      ]),
+    );
+
+    const counts = await provider.countObjects!(["iceberg", "warehouse"]);
+    expect(counts.table).toEqual({ unavailable: expect.stringContaining("unknown:LOCAL TEMPORARY") });
+  });
+
+  test("lists tables and materialized views from their own sources, each path inside its container", async () => {
+    const provider = await objectProvider();
+
+    expect(await provider.listObjects!(["iceberg"], "table")).toEqual([
+      { path: ["iceberg", "system", "iceberg_tables"], name: "iceberg_tables", kind: "table" },
+      { path: ["iceberg", "warehouse", "orders"], name: "orders", kind: "table" },
+    ]);
+    expect(await provider.listObjects!(["iceberg"], "materialized_view")).toEqual([
+      { path: ["iceberg", "warehouse", "order_totals"], name: "order_totals", kind: "materialized_view" },
+    ]);
+    // Sorted here rather than with an ORDER BY, so one rule covers four kinds read from two
+    // different catalogs: the server returned `orders` before `customers`.
+    expect((await provider.listObjects!(["memory", "app"], "table")).map((object) => object.name)).toEqual([
+      "customers",
+      "orders",
+    ]);
+  });
+
+  test("a function's path segment carries its argument types, and its label does not", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+
+    // Standing ruling 2 (#789): `path` addresses and `name` labels, and here they must
+    // differ. Measured on 476, `plus_one(bigint)` and `plus_one(double)` coexist in one
+    // schema, so a bare `plus_one` would give two objects one address.
+    expect(await provider.listObjects!(["memory", "app"], "function")).toEqual([
+      { path: ["memory", "app", "label(bigint, varchar)"], name: "label", kind: "function" },
+      { path: ["memory", "app", "plus_one(bigint)"], name: "plus_one", kind: "function" },
+      { path: ["memory", "app", "plus_one(double)"], name: "plus_one", kind: "function" },
+    ]);
+  });
+
+  test("a catalog-level function listing refuses with the reason rather than fanning out", async () => {
+    const provider = await objectProvider();
+
+    await expect(provider.listObjects!(["iceberg"], "function")).rejects.toThrow("SHOW FUNCTIONS");
+    expect(sentAnything("SHOW FUNCTIONS")).toBe(false);
+  });
+
+  test("refuses a kind it does not declare, from both methods", async () => {
+    const provider = await objectProvider();
+
+    await expect(provider.listObjects!(["iceberg"], "trigger")).rejects.toThrow(
+      'Trino declares no object kind "trigger"',
+    );
+    await expect(provider.describeObject!(["iceberg", "warehouse", "t"], "trigger")).rejects.toThrow(
+      'Trino declares no object kind "trigger"',
+    );
+  });
+
+  test("describes a table and a materialized view, and declares neither index nor foreign key", async () => {
+    const provider = await objectProvider();
+
+    expect(await provider.describeObject!(["iceberg", "warehouse", "orders"], "table")).toEqual({
+      path: ["iceberg", "warehouse", "orders"],
+      columns: [
+        { name: "id", type: "bigint", nullable: true, isPrimary: false },
+        { name: "total", type: "double", nullable: true, isPrimary: false },
+      ],
+      // Not an empty schema but an empty MODEL: Trino's `information_schema` holds no
+      // `table_constraints` and no `key_column_usage`, so there is nothing to read in any
+      // catalog of any connector (#414).
+      indexes: [],
+      foreignKeys: [],
+    });
+    const detail = await provider.describeObject!(["iceberg", "warehouse", "order_totals"], "materialized_view");
+    expect(detail.columns.map((column) => column.name)).toEqual(["id", "total"]);
+  });
+
+  test("a view's columns come from the same read, because information_schema carries them", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    const detail = await provider.describeObject!(["memory", "app", "customer_names"], "view");
+
+    expect(detail.columns.map((column) => column.name)).toEqual(["name"]);
+  });
+
+  test("a function answers three empty arrays without asking the cluster anything", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    sentSql = [];
+
+    // A routine legitimately has no columns, no indexes and no foreign keys, so the answer
+    // is a fact about the kind rather than a failed read. The kind decides it: nothing here
+    // reads the name to work out what it is holding.
+    expect(await provider.describeObject!(["memory", "app", "plus_one(bigint)"], "function")).toEqual({
+      path: ["memory", "app", "plus_one(bigint)"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    expect(sentSql).toEqual([]);
+  });
+
+  test("a relation with no column row is a relation that is not there", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+
+    // `CREATE TABLE t ()` is a syntax error on this engine, so a relation with zero columns
+    // cannot exist. Answering `{ columns: [] }` would render a dropped table as a table
+    // with no columns.
+    await expect(provider.describeObject!(["memory", "app", "gone"], "table")).rejects.toThrow(
+      "No column row for memory.app.gone",
+    );
+  });
+
+  test("a kind spelled like a prototype member is refused, not read off the prototype chain", async () => {
+    const provider = await objectProvider();
+    // Standing ruling 5g (#789): a kind id is an OPEN string, so `"toString" in counts` is
+    // true for every object in JavaScript and a catalog row spelled that way would be
+    // accepted as a declared kind. `Object.hasOwn` is the same length and asks the question
+    // that was meant.
+    serveInstead(trinoObjectCountsSql(ICEBERG_WAREHOUSE, true), rows(KIND_COUNT_COLUMNS, [["toString", 5]]));
+
+    const counts = await provider.countObjects!(["iceberg", "warehouse"]);
+    expect(counts.table).toEqual({ unavailable: expect.stringContaining('counted objects under "toString"') });
+  });
+
+  test("a count nobody could read stays at the seeded zero rather than becoming NaN", async () => {
+    const provider = await objectProvider();
+    serveInstead(
+      trinoObjectCountsSql(ICEBERG_WAREHOUSE, true),
+      rows(KIND_COUNT_COLUMNS, [
+        ["table", null],
+        ["materialized_view", 1],
+      ]),
+    );
+
+    // `Number(null)` is 0 and `Number(undefined)` is NaN, and a NaN renders as a blank
+    // badge that looks like a read nobody took. Leaving the kind at its seeded value is the
+    // one answer that stays a number without inventing one.
+    const counts = await provider.countObjects!(["iceberg", "warehouse"]);
+    expect(counts).toMatchObject({ table: { count: 0 }, materialized_view: { count: 1 } });
+  });
+
+  test("a row whose kind is not a string is skipped rather than counted under it", async () => {
+    const provider = await objectProvider();
+    serveInstead(
+      trinoObjectCountsSql(ICEBERG_WAREHOUSE, true),
+      rows(KIND_COUNT_COLUMNS, [
+        [null, 9],
+        ["table", 1],
+      ]),
+    );
+
+    expect(await provider.countObjects!(["iceberg", "warehouse"])).toMatchObject({ table: { count: 1 } });
+  });
+
+  test("a relation kind with no information_schema table_type behind it is refused by name", async () => {
+    const provider = await objectProvider();
+    const real = new TrinoProvider(makeConnection()).getCapabilities();
+    // A DECLARATION defect rather than an engine one: `table_type` answers `BASE TABLE` and
+    // `VIEW` and nothing else, so a relation kind outside that vocabulary would draw a
+    // folder no statement can fill. Saying so names what is missing.
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [{ id: "sequence", role: "relation", label: "Sequence", labelPlural: "Sequences" }],
+    });
+
+    await expect(provider.listObjects!(["iceberg", "warehouse"], "sequence")).rejects.toThrow(
+      'Trino declares the kind "sequence" but no information_schema table_type answers for it',
+    );
+  });
+
+  test("a refused read carries the engine's own sentence rather than a zero nobody measured", async () => {
+    const provider = await objectProvider();
+    serveInstead(trinoObjectCountsSql(ICEBERG_WAREHOUSE, true), refusal(CATALOG_NOT_FOUND));
+
+    const counts = await provider.countObjects!(["iceberg", "warehouse"]);
+    expect(counts.table).toEqual({ unavailable: expect.stringContaining("Catalog 'nosuchcat' not found") });
+    // The function count came from its OWN read and survives, because the two reads have
+    // independent failure modes: one is `system.metadata`, the other is a connector feature.
+    expect(counts.function).toEqual({ count: 0 });
+  });
+});
+
+/**
+ * Standing ruling 5g (#789): every derivation over the declaration, pinned by handing the
+ * provider a declaration its engine does not have.
+ *
+ * Driven to a BOUND VALUE and never to a refusal. A test that stops at the refusal path is
+ * how the third spelling of this defect survived two providers and a review round, so the
+ * crossed fixture below holds two DIFFERENT relations at the two spellings -
+ * `alpha.beta.pin` and `beta.alpha.pin`, with different columns - and the assertions read
+ * the column names back.
+ */
+describe("Trino object paths are derived from the declaration, never from a position", () => {
+  const CROSSED = [
+    ["alpha", "beta", "from_alpha_beta"],
+    ["beta", "alpha", "from_beta_alpha"],
+  ] as const;
+
+  function serveCrossed(): void {
+    for (const [catalog, schema, column] of CROSSED) {
+      serveInstead(
+        trinoObjectColumnsSql(catalog, schema, "pin"),
+        rows(OBJECT_COLUMN_COLUMNS, [[column, "bigint", "YES"]]),
+      );
+      serveInstead(trinoObjectCountsSql({ catalog, schema }, true), rows(KIND_COUNT_COLUMNS, [["table", 1]]));
+      serveInstead(trinoRelationListSql({ catalog, schema }, "table"), rows(OBJECT_NAME_COLUMNS, [[schema, "pin"]]));
+      serveInstead(trinoFunctionListSql(catalog, schema), rows(FUNCTION_COLUMNS, []));
+      serveInstead(trinoObjectCountsSql({ catalog }, true), rows(KIND_COUNT_COLUMNS, [["table", 2]]));
+      // Two DIFFERENT names, because a catalog-level listing on a ONE-level declaration
+      // drops the schema out of the path: two rows called `pin` would then answer one
+      // address and the assertion below could not tell a derived path from a truncated one.
+      serveInstead(
+        trinoRelationListSql({ catalog }, "table"),
+        rows(OBJECT_NAME_COLUMNS, [
+          [schema, "pin"],
+          ["extra", "other"],
+        ]),
+      );
+    }
+  }
+
+  /** The real declaration, with `containerLevels` replaced and nothing else. */
+  function withLevels(provider: TrinoProvider, containerLevels: ProviderCapabilities["containerLevels"]): void {
+    const real = new TrinoProvider(makeConnection()).getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({ ...real, containerLevels });
+  }
+
+  test("the crossed fixture really does hold two different relations at the two spellings", async () => {
+    const provider = await connectProvider();
+    serveCrossed();
+
+    // The control for everything below. Without it a positional read and a derived one
+    // could agree by accident, and the pin would certify nothing.
+    expect((await provider.describeObject!(["alpha", "beta", "pin"], "table")).columns.map((c) => c.name)).toEqual([
+      "from_alpha_beta",
+    ]);
+    expect((await provider.describeObject!(["beta", "alpha", "pin"], "table")).columns.map((c) => c.name)).toEqual([
+      "from_beta_alpha",
+    ]);
+  });
+
+  test("a declaration listing schema BEFORE catalog moves every read with it", async () => {
+    const provider = await connectProvider();
+    serveCrossed();
+    withLevels(provider, [
+      { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+    ]);
+
+    // `["beta", "alpha", "pin"]` now means schema `beta` in catalog `alpha`, so the object
+    // it addresses is `alpha.beta.pin` and its column is `from_alpha_beta`. A provider
+    // binding `path[0]` as the catalog answers `from_beta_alpha` here, which is a different
+    // real relation rather than an error - exactly the silent case this ruling exists for.
+    const detail = await provider.describeObject!(["beta", "alpha", "pin"], "table");
+    expect(detail.columns.map((column) => column.name)).toEqual(["from_alpha_beta"]);
+
+    // The container reads move with it too, and the path a listing CONSTRUCTS is written in
+    // the declared order, so `describeObject` reads it back as the same object. That round
+    // trip is what the conformance helper does.
+    expect(await provider.countObjects!(["beta", "alpha"])).toMatchObject({ table: { count: 1 } });
+    const listed = await provider.listObjects!(["beta", "alpha"], "table");
+    expect(listed.map((object) => object.path)).toEqual([["beta", "alpha", "pin"]]);
+    expect((await provider.describeObject!(listed[0].path, "table")).columns.map((c) => c.name)).toEqual([
+      "from_alpha_beta",
+    ]);
+
+    // And the refusal names the declared LABELS in the declared order, so a person reading
+    // it is told the shape this declaration actually accepts.
+    await expect(provider.describeObject!(["alpha", "pin"], "table")).rejects.toThrow(
+      'A Trino "table" path is [schema, catalog, name], received ["alpha","pin"]',
+    );
+  });
+
+  test("container depth is derived, so a ONE-level declaration binds one segment and refuses two", async () => {
+    const provider = await connectProvider();
+    serveCrossed();
+    withLevels(provider, [{ id: "catalog", label: "Catalog", labelPlural: "Catalogs" }]);
+
+    // Driven to a BOUND VALUE: at one level the whole catalog is the container, so the
+    // statement carries no schema filter and the listing carries two-segment paths. A
+    // provider that cut the path at a literal 2 would ask about a schema called `undefined`.
+    expect(await provider.countObjects!(["alpha"])).toMatchObject({ table: { count: 2 } });
+    expect((await provider.listObjects!(["alpha"], "table")).map((object) => object.path)).toEqual([
+      ["alpha", "other"],
+      ["alpha", "pin"],
+    ]);
+
+    expect(await provider.listContainers!(["alpha"])).toEqual([]);
+    await expect(provider.countObjects!(["alpha", "beta"])).rejects.toThrow(
+      'A Trino container path is [catalog], received ["alpha","beta"]',
+    );
+    // And a detail read has no schema segment to bind at all, so it raises NAMING the level
+    // rather than asking the cluster about a schema called `undefined`.
+    await expect(provider.describeObject!(["alpha", "pin"], "table")).rejects.toThrow(
+      "Trino declares no schema level to read this path's segment from",
+    );
+  });
+
+  test("a declaration carrying MORE levels than the model has is cut to the declared depth", async () => {
+    const provider = await connectProvider();
+    serveCrossed();
+    // `containerDepth()` answers at most 2 and is the ONLY reader of how deep a declaration
+    // goes (standing ruling 1, #789): `containerLevels.length` is not. A third entry must
+    // widen nothing - not the accepted container shapes, not the segment lookup, not the
+    // object path.
+    withLevels(provider, [
+      { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+      { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      { id: "schema", label: "Sub-schema", labelPlural: "Sub-schemas" },
+    ]);
+
+    await expect(provider.countObjects!(["alpha", "beta", "extra"])).rejects.toThrow(
+      'A Trino container path is [catalog] or [catalog, schema], received ["alpha","beta","extra"]',
+    );
+    expect(await provider.countObjects!(["alpha", "beta"])).toMatchObject({ table: { count: 1 } });
+    expect((await provider.listObjects!(["alpha", "beta"], "table")).map((object) => object.path)).toEqual([
+      ["alpha", "beta", "pin"],
+    ]);
+    expect(await provider.listContainers!(["alpha", "beta"])).toEqual([]);
+  });
+
+  test("a declaration with NO container level refuses every container path", async () => {
+    const provider = await connectProvider();
+    withLevels(provider, []);
+
+    // `containerDepth()` reads absent and empty as the same zero, so there is no shape at
+    // all and the message says so rather than accepting `[]` as "the root".
+    await expect(provider.countObjects!([])).rejects.toThrow(
+      "A Trino container path is nothing: this declaration carries no container level, received []",
+    );
+    expect(await provider.listContainers!(["alpha"])).toEqual([]);
+  });
+
+  test("a kind declaring attachedTo is refused, because Trino holds no attached object", async () => {
+    const provider = await connectProvider();
+    const real = new TrinoProvider(makeConnection()).getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [
+        { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table" },
+      ],
+    });
+
+    await expect(provider.describeObject!(["alpha", "beta", "pin", "stamp"], "trigger")).rejects.toThrow(
+      'Trino holds no object attached to another, so the kind "trigger" cannot declare attachedTo "table"',
+    );
+  });
+});
+
+/**
+ * `comparePaths` at the one depth a Trino listing cannot produce.
+ *
+ * Every kind here sits at exactly `[catalog, schema, name]`, so a listing never hands the
+ * comparator two paths where one is a prefix of the other and the sort always returns from
+ * inside the loop. The prefix case is still real for the comparator: standing ruling 5f
+ * (#789) has kinds at mixed depth on other engines, and this is the fifth copy of the
+ * function, about to be hoisted into `src/lib/db/object-kinds.ts` by Task 28's sweep. So it
+ * is pinned directly rather than left as an arm no payload reaches - an unfolded arm is
+ * reported as covered while dead (ruling 5b).
+ */
+describe("Trino path ordering", () => {
+  test("orders segment by segment, shorter first where one path is a prefix of the other", () => {
+    expect(comparePaths(["a", "b"], ["a", "c"])).toBeLessThan(0);
+    expect(comparePaths(["a", "c"], ["a", "b"])).toBeGreaterThan(0);
+    expect(comparePaths(["a"], ["a", "b"])).toBeLessThan(0);
+    expect(comparePaths(["a", "b"], ["a"])).toBeGreaterThan(0);
+    expect(comparePaths(["a", "b"], ["a", "b"])).toBe(0);
+    // Never `JSON.stringify`: serialised, the deeper path sorts FIRST because `,` is below
+    // `]`, which is the defect standing ruling 5g rules out as a path key.
+    expect(JSON.stringify(["a", "b"]) < JSON.stringify(["a"])).toBe(true);
   });
 });
