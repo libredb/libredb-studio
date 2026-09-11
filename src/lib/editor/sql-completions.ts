@@ -7,7 +7,7 @@
 
 import type * as Monaco from "monaco-editor";
 import { extractAliases, resolveAlias } from "@/lib/sql";
-import { quoteIdentifier } from "@/lib/sql/identifier";
+import { formatPostgresIdentifier } from "./postgres-identifiers";
 import type { DatabaseType } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -242,15 +242,10 @@ export function registerSQLCompletionProvider(
         .map((table) => ({
           label: table.label,
           kind: monaco.languages.CompletionItemKind.Class,
-          // PostgreSQL folds unquoted identifiers to lowercase. Schema labels
-          // preserve catalog spelling, so quote each component before insertion.
+          // Preserve ordinary identifiers; quote catalog names only when needed
+          // to preserve case, escape special characters, or avoid keywords.
           insertText:
-            databaseType === "postgres"
-              ? table.label
-                  .split(".")
-                  .map((part) => quoteIdentifier(part, databaseType))
-                  .join(".")
-              : table.label,
+            databaseType === "postgres" ? table.label.split(".").map(formatPostgresIdentifier).join(".") : table.label,
           range: tableRange,
           detail: `Table (${table.rowCount} rows)`,
           documentation: table.columnNames,

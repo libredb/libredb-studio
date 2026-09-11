@@ -556,7 +556,7 @@ describe("PostgreSQL table completion quoting", () => {
     ["SELECT * FROM public.My_T", "My_Table_With_Caps", 'SELECT * FROM public."My_Table_With_Caps"'],
     ["SELECT * FROM ", 'Odd"Schema.Order Details', 'SELECT * FROM "Odd""Schema"."Order Details"'],
     ["SELECT * FROM ", "select", 'SELECT * FROM "select"'],
-    ["SELECT * FROM sample.dem", "sample.demo", 'SELECT * FROM "sample"."demo"'],
+    ["SELECT * FROM sample.dem", "sample.demo", "SELECT * FROM sample.demo"],
   ])("quotes the applied PostgreSQL edit for %s / %s", (line, label, expected) => {
     const monaco = createMockMonaco();
     registerSQLCompletionProvider(
@@ -585,6 +585,74 @@ describe("PostgreSQL table completion quoting", () => {
       ._getProvider()!
       .provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1));
     expect(result.suggestions.find((item) => item.label === "users")!.insertText).toBe("users");
+  });
+});
+
+describe("PostgreSQL selective identifier quoting", () => {
+  test.each([
+    ["user_authority", "user_authority"],
+    ["authschema.users", "authschema.users"],
+    ["public.orders", "public.orders"],
+    ["authschema.UserAuthority", 'authschema."UserAuthority"'],
+    ["AuthSchema.users", '"AuthSchema".users'],
+    ["USER_AUTHORITY", '"USER_AUTHORITY"'],
+    ["UserAuthority", '"UserAuthority"'],
+    ["abort", "abort"],
+    ["name$1", '"name$1"'],
+    ["_items_2", "_items_2"],
+    ["user", '"user"'],
+    ["authorization", '"authorization"'],
+    ["between", '"between"'],
+    ["select", '"select"'],
+    ["current_user", '"current_user"'],
+    ["1st_table", '"1st_table"'],
+    ["order details", '"order details"'],
+    ['odd"name', '"odd""name"'],
+    ["café", '"café"'],
+  ])("formats %s following PostgreSQL quote_ident", (label, expected) => {
+    const monaco = createMockMonaco();
+    registerSQLCompletionProvider(
+      monaco,
+      createSchemaCache({
+        tableItems: [{ label, labelLower: label.toLowerCase(), rowCount: 1, columnNames: "id" }],
+      }),
+      "postgres",
+    );
+    const line = "SELECT * FROM ";
+    const result = monaco
+      ._getProvider()!
+      .provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1));
+    const suggestion = result.suggestions.find((item) => item.label === label)!;
+    expect(suggestion.label).toBe(label);
+    const range = suggestion.range as Monaco.IRange;
+    expect(line.slice(0, range.startColumn - 1) + suggestion.insertText).toBe("SELECT * FROM " + expected);
+  });
+
+  test("an uppercase typed prefix still matches an ordinary lowercase catalog name", () => {
+    const monaco = createMockMonaco();
+    registerSQLCompletionProvider(
+      monaco,
+      createSchemaCache({
+        tableItems: [
+          {
+            label: "authschema.user_authority",
+            labelLower: "authschema.user_authority",
+            rowCount: 1,
+            columnNames: "id",
+          },
+        ],
+      }),
+      "postgres",
+    );
+    const line = "SELECT * FROM AUTHSCHEMA.USER_A";
+    const result = monaco
+      ._getProvider()!
+      .provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1));
+    const suggestion = result.suggestions.find((item) => item.label === "authschema.user_authority")!;
+    const range = suggestion.range as Monaco.IRange;
+    expect(line.slice(0, range.startColumn - 1) + suggestion.insertText).toBe(
+      "SELECT * FROM authschema.user_authority",
+    );
   });
 });
 
