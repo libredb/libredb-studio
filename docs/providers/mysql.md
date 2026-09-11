@@ -604,7 +604,7 @@ The type id could not answer this question even if `src/lib/db` were allowed to 
 
 | Kind | `role` | Catalog | Type column value | Note |
 |---|---|---|---|---|
-| `table` | `relation` | `information_schema.TABLES` | `BASE TABLE` | `acceptsRowWrites: true` |
+| `table` | `relation` | `information_schema.TABLES` | `BASE TABLE`, `SYSTEM VERSIONED` | `acceptsRowWrites: true`; two spellings, see below |
 | `view` | `relation` | `information_schema.TABLES` | `VIEW` | not a row-write target |
 | `procedure` | `routine` | `information_schema.ROUTINES` | `PROCEDURE` | |
 | `function` | `routine` | `information_schema.ROUTINES` | `FUNCTION` | |
@@ -632,6 +632,47 @@ folder.
 **A MariaDB package's members are declared but not browsable yet.** `childKinds` is a true statement
 about the engine and Phase 2 renders it, but Phase 1's provider surface is container-scoped end to
 end, so a Procedures folder under a package would render, never badge, and expand to nothing.
+
+#### The `TABLE_TYPE` vocabulary enumerates the ENGINE, not the fixture
+
+Worth stating explicitly, because the first version of this provider got it wrong and the defect was
+invisible. The vocabulary came from `SELECT DISTINCT TABLE_TYPE` run against the seeded fixture,
+which enumerates the fixture; a type neither the `CASE` arms nor the listing bind names falls out of
+BOTH the count and the listing, so the two still agree and the object is simply absent from the tree
+with every gate passing.
+
+Enumerated by building a table for each case rather than by reading a fixture. Measured 2026-09-11
+on MySQL 26.7.0 and MariaDB 12.3.2:
+
+| `TABLE_TYPE` | MySQL | MariaDB | Mapped to |
+|---|---|---|---|
+| `BASE TABLE` | yes | yes | `table` |
+| `VIEW` | yes | yes | `view` |
+| `SYSTEM VIEW` | yes | yes | nothing, deliberately |
+| `SEQUENCE` | no | yes | `sequence` |
+| `SYSTEM VERSIONED` | no | yes | `table` |
+| `TEMPORARY` | no | yes | nothing, deliberately |
+
+A PARTITIONED table is `BASE TABLE` on both, so partitioning adds no spelling. `ROUTINE_TYPE` is
+`PROCEDURE` and `FUNCTION` on MySQL plus `PACKAGE` and `PACKAGE BODY` on MariaDB, and MariaDB's
+grammar has no other routine form.
+
+`SYSTEM VERSIONED` is a **`table`** and not a kind of its own. MariaDB's system versioning is a
+property of a table you still `SELECT` from, `INSERT` into and address by name, so giving it a folder
+would split one concept across two. Because `table` therefore has two spellings, the listing binds
+`TABLE_TYPE IN (?, ?)` with the placeholder count sized from the same vocabulary table the `CASE`
+arms are built from, so the two cannot disagree about how many spellings a kind has.
+
+The two exclusions are each wrong in a different way if reversed:
+
+- **`SYSTEM VIEW`** is what `information_schema`'s own tables are, and that schema is not a container
+  here.
+- **`TEMPORARY`** is SESSION-SCOPED, which a pooled provider cannot address at all. Measured on
+  MariaDB 12.3.2: a `CREATE TEMPORARY TABLE` is listed in `information_schema.TABLES` by the session
+  that created it and by no other (session A saw `tmp_cross`, session B saw none). This provider
+  hands out a different pooled connection per method call, so a Temporary folder would badge whatever
+  the connection that answered `countObjects` happened to hold, list whatever a different connection
+  held, and hand out addresses that resolve on one connection and not the next.
 
 #### A table and a stored routine can share a name, and this is measured
 
@@ -748,9 +789,10 @@ PostgreSQL's `reltuples`.
 
 **One known defect this surface inherits rather than repairs:** MariaDB reports
 `COLUMN_DEFAULT` as an EXPRESSION where MySQL reports a VALUE, so a nullable MariaDB column with no
-default is reported as having the default `NULL`. `getSchema()` has it too, over the same view, and
-repairing one surface alone would make the two disagree about one column. Measured both ways and
-filed as **D52** in [`docs/BACKLOG.md`](../BACKLOG.md).
+default is reported as having the default `NULL`, and the string `NULL` means opposite things on the
+two servers. `getSchema()` has it too, over the same view, and repairing one surface alone would
+make the two disagree about one column. Measured both ways and filed as **#795**, which carries the
+measurement table and what "done" looks like.
 
 #### The fixture, and running it
 

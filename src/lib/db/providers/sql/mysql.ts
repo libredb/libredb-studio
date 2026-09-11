@@ -672,35 +672,69 @@ const CONTAINERS_SQL = `
         ORDER BY SCHEMA_NAME ASC`;
 
 /**
- * The catalog and the spelling each declared kind is addressed by, written once.
+ * The catalog and EVERY spelling each declared kind is addressed by, written once.
  *
- * Two `information_schema` views answer for six of the eight kinds, and the value in each
- * entry is the literal that view's own type column holds. The counting statement's CASE
- * arms and every listing's BOUND type are both built from this table, so a kind added to
+ * Two `information_schema` views answer for six of the eight kinds, and the values in each
+ * entry are the literals that view's own type column holds. The counting statement's CASE
+ * arms and every listing's BOUND types are both built from this table, so a kind added to
  * `objectKinds` without an entry here fails loudly instead of drawing a folder nothing can
  * fill. Triggers and events have a view each and need no type at all, so they are not here.
  *
- * Measured 2026-09-11: `SELECT DISTINCT TABLE_TYPE` answers `BASE TABLE`, `VIEW` and
- * `SYSTEM VIEW` on MySQL 26.7.0 and adds `SEQUENCE` on MariaDB 12.3.2;
- * `SELECT DISTINCT ROUTINE_TYPE` answers `PROCEDURE` and `FUNCTION` on MySQL and adds
- * `PACKAGE` and `PACKAGE BODY` on MariaDB. `SYSTEM VIEW` is absent from this table on
- * purpose: it is what `information_schema`'s own tables are, and that schema is not a
- * container here.
+ * THE ENGINE IS ENUMERATED HERE, NOT THE FIXTURE, and the difference was a real defect. The
+ * first version of this table came from `SELECT DISTINCT TABLE_TYPE` over the seeded
+ * fixture, which answers only what the fixture happens to hold; a type neither the CASE nor
+ * the listing names falls out of BOTH, so the object is invisible in the tree while the
+ * count and the listing still agree and every gate still passes. Measured 2026-09-11 over
+ * tables built to produce each case:
+ *
+ * | `TABLE_TYPE` | MySQL 26.7.0 | MariaDB 12.3.2 | here |
+ * |---|---|---|---|
+ * | `BASE TABLE` | yes | yes | `table` |
+ * | `VIEW` | yes | yes | `view` |
+ * | `SYSTEM VIEW` | yes | yes | absent, see below |
+ * | `SEQUENCE` | no | yes | `sequence` |
+ * | `SYSTEM VERSIONED` | no | yes | `table` |
+ * | `TEMPORARY` | no | yes | absent, see below |
+ *
+ * A PARTITIONED table is `BASE TABLE` on both, measured, so partitioning adds no spelling.
+ * `ROUTINE_TYPE` is `PROCEDURE` and `FUNCTION` on MySQL, plus `PACKAGE` and `PACKAGE BODY`
+ * on MariaDB, and MariaDB's grammar has no other routine form.
+ *
+ * `SYSTEM VERSIONED` is a `table` and not a kind of its own: MariaDB's system versioning is
+ * a property of a table you still SELECT from, INSERT into and address by name, and giving it
+ * a folder would split one concept across two.
+ *
+ * Two spellings are deliberately ABSENT, and each would be wrong in a different way.
+ * `SYSTEM VIEW` is what `information_schema`'s own tables are, and that schema is not a
+ * container here. `TEMPORARY` is SESSION-SCOPED, which a pooled provider cannot address at
+ * all: measured on MariaDB 12.3.2, a `CREATE TEMPORARY TABLE` in one session is listed by
+ * that session and by no other, and this provider hands out a different pooled connection
+ * per method call. A Temporary folder would therefore badge whatever the connection that
+ * answered `countObjects` happened to hold, list whatever a different connection held, and
+ * hand out addresses that resolve on one connection and not the next.
  */
-const MYSQL_OBJECT_TYPES: Record<string, { readonly catalog: "tables" | "routines"; readonly type: string }> = {
-  table: { catalog: "tables", type: "BASE TABLE" },
-  view: { catalog: "tables", type: "VIEW" },
-  sequence: { catalog: "tables", type: "SEQUENCE" },
-  procedure: { catalog: "routines", type: "PROCEDURE" },
-  function: { catalog: "routines", type: "FUNCTION" },
-  package: { catalog: "routines", type: "PACKAGE" },
+const MYSQL_OBJECT_TYPES: Record<
+  string,
+  { readonly catalog: "tables" | "routines"; readonly types: readonly string[] }
+> = {
+  table: { catalog: "tables", types: ["BASE TABLE", "SYSTEM VERSIONED"] },
+  view: { catalog: "tables", types: ["VIEW"] },
+  sequence: { catalog: "tables", types: ["SEQUENCE"] },
+  procedure: { catalog: "routines", types: ["PROCEDURE"] },
+  function: { catalog: "routines", types: ["FUNCTION"] },
+  package: { catalog: "routines", types: ["PACKAGE"] },
 };
 
-/** One CASE mapping one catalog's type column onto the kind ids it answers for. */
+/**
+ * One CASE mapping one catalog's type column onto the kind ids it answers for.
+ *
+ * `flatMap`, because a kind may have SEVERAL spellings: `table` covers `BASE TABLE` and
+ * MariaDB's `SYSTEM VERSIONED`, so a per-kind `map` would silently count only the first.
+ */
 function kindCase(catalog: "tables" | "routines", column: string): string {
   const arms = Object.entries(MYSQL_OBJECT_TYPES)
     .filter(([, spec]) => spec.catalog === catalog)
-    .map(([kind, spec]) => `WHEN '${spec.type}' THEN '${kind}'`)
+    .flatMap(([kind, spec]) => spec.types.map((type) => `WHEN '${type}' THEN '${kind}'`))
     .join(" ");
   return `CASE ${column} ${arms} END`;
 }
@@ -714,10 +748,16 @@ function kindCase(catalog: "tables" | "routines", column: string): string {
  * decides, which is one fewer place the two branches can disagree.
  *
  * `kind IS NULL` drops what the CASE has no name for rather than counting it under a folder
- * that does not exist: `SYSTEM VIEW` on both servers, and `PACKAGE BODY` on MariaDB. The
- * body is not a second package - measured, `CREATE PACKAGE BODY` with no specification
- * answers ER_SP_DOES_NOT_EXIST - so counting it would double the Packages badge exactly as
- * it would on Oracle.
+ * that does not exist: `SYSTEM VIEW` on both servers, plus `PACKAGE BODY` and `TEMPORARY` on
+ * MariaDB. All three are deliberate and `MYSQL_OBJECT_TYPES` says why each one is. The
+ * package body is not a second package - measured, `CREATE PACKAGE BODY` with no
+ * specification answers ER_SP_DOES_NOT_EXIST - so counting it would double the Packages
+ * badge exactly as it would on Oracle.
+ *
+ * Anything NOT on that list reaching `kind IS NULL` is a defect and not a design: an object
+ * dropped here is dropped from the listing too, so the count and the listing agree while the
+ * object is invisible in the tree. That is why `MYSQL_OBJECT_TYPES` enumerates the engine
+ * rather than a fixture.
  *
  * The schema is bound four times rather than once because a prepared statement takes
  * positional parameters and each arm needs its own.
@@ -738,30 +778,49 @@ const COUNTS_SQL = `
         GROUP BY kind`;
 
 /**
- * The relation-shaped kinds, addressed by the `TABLE_TYPE` the caller's kind maps to.
+ * One kind's listing, with an `IN` list sized to however many spellings that kind has.
  *
- * `TABLE_ROWS` is an ESTIMATE for InnoDB, the same nature as PostgreSQL's `reltuples`, and
- * it is NULL for a VIEW along with both length columns - measured, so `measuredNumber` reads
- * absence there rather than reporting a view as an empty relation. A MariaDB SEQUENCE
- * answers `TABLE_ROWS` 1 and a real `DATA_LENGTH`, because a sequence IS a table underneath.
+ * `IN (?, ?)` and not `= ?`, because `table` has two: `BASE TABLE` and MariaDB's
+ * `SYSTEM VERSIONED`. The placeholder count comes from `MYSQL_OBJECT_TYPES`, so the listing
+ * and the counting statement's CASE arms cannot disagree about how many spellings a kind
+ * has; nothing a caller supplied ever reaches the statement text, and the values are BOUND.
+ *
+ * On the relation side, `TABLE_ROWS` is an ESTIMATE for InnoDB, the same nature as
+ * PostgreSQL's `reltuples`, and it is NULL for a VIEW along with both length columns -
+ * measured, so `measuredNumber` reads absence there rather than reporting a view as an empty
+ * relation. A MariaDB SEQUENCE answers `TABLE_ROWS` 1 and a real `DATA_LENGTH`, because a
+ * sequence IS a table underneath.
+ *
+ * On the routine side, the bare `ROUTINE_NAME` is the whole path segment, and unlike
+ * PostgreSQL it needs no argument list to be unique: MySQL does not overload routines.
+ * Measured on 26.7.0, a second `CREATE PROCEDURE app.foo(a INT)` over an existing
+ * `app.foo()` answers `ER_SP_ALREADY_EXISTS`, so a name identifies a routine within its
+ * database and its type.
  */
-const LIST_TABLES_SQL = `
+function listingSql(catalog: "tables" | "routines", spellings: number): string {
+  const placeholders = Array.from({ length: spellings }, () => "?").join(", ");
+  if (catalog === "tables") {
+    return `
         SELECT TABLE_NAME AS name, TABLE_ROWS AS row_count, DATA_LENGTH + INDEX_LENGTH AS size_bytes
         FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = ?`;
-
-/**
- * The routine-shaped kinds, addressed by the `ROUTINE_TYPE` the caller's kind maps to.
- *
- * The bare `ROUTINE_NAME` is the whole path segment, and unlike PostgreSQL it needs no
- * argument list to be unique: MySQL does not overload routines. Measured on 26.7.0, a
- * second `CREATE PROCEDURE app.foo(a INT)` over an existing `app.foo()` answers
- * `ER_SP_ALREADY_EXISTS`, so a name identifies a routine within its database and its type.
- */
-const LIST_ROUTINES_SQL = `
+        WHERE TABLE_SCHEMA = ? AND TABLE_TYPE IN (${placeholders})`;
+  }
+  return `
         SELECT ROUTINE_NAME AS name
         FROM information_schema.ROUTINES
-        WHERE ROUTINE_SCHEMA = ? AND ROUTINE_TYPE = ?`;
+        WHERE ROUTINE_SCHEMA = ? AND ROUTINE_TYPE IN (${placeholders})`;
+}
+
+/**
+ * One rendered listing statement per kind, built at module scope.
+ *
+ * Rendered once rather than per call for the coverage reason the schema SQL above is hoisted
+ * for: bun reports the interior lines of a template literal inside a function body as
+ * zero-hit in any test process that imports this module without calling it.
+ */
+const LIST_OBJECT_SQL: Record<string, string> = Object.fromEntries(
+  Object.entries(MYSQL_OBJECT_TYPES).map(([kind, spec]) => [kind, listingSql(spec.catalog, spec.types.length)]),
+);
 
 /**
  * The database's triggers, each with the table it fires on.
@@ -972,15 +1031,28 @@ interface ObjectRow extends RowDataPacket {
 /**
  * The one database a container path names on this engine.
  *
- * MySQL declares exactly one container level, so a path of any other length is a caller that
- * built it from another engine's shape. It raises rather than reading `path[0]` and carrying
- * on, because `undefined` bound to `?` would answer an empty folder that looks exactly like
- * a database holding nothing - and mysql2 rejects `undefined` outright, which would surface
- * as a driver error naming neither the path nor the method.
+ * The expected depth is read through `containerDepth()` and the segment NAMES come from the
+ * declared level labels, so the check and its message are the same array and a provider
+ * copying this file cannot inherit a hardcoded `1`. That matters even though MySQL declares
+ * exactly one level: `container.length !== 1` is behaviour-identical here and silently wrong
+ * on the five two-level engines that copy this file, so no suite on a one-level engine can
+ * tell the two spellings apart.
+ *
+ * A path of any other length is a caller that built it from another engine's shape, and it
+ * raises rather than reading `path[0]` and carrying on, because `undefined` bound to `?`
+ * would answer an empty folder that looks exactly like a database holding nothing - and
+ * mysql2 rejects `undefined` outright, which would surface as a driver error naming neither
+ * the path nor the method.
  */
-function containerSchema(container: readonly string[]): string {
-  if (container.length !== 1) {
-    throw new QueryError(`A MySQL container path is one database name, received ${JSON.stringify(container)}`, "mysql");
+function containerSchema(capabilities: ProviderCapabilities, container: readonly string[]): string {
+  const levels = (capabilities.containerLevels ?? [])
+    .slice(0, containerDepth(capabilities))
+    .map((level) => level.label.toLowerCase());
+  if (container.length !== levels.length) {
+    throw new QueryError(
+      `A MySQL container path is [${levels.join(", ")}], received ${JSON.stringify(container)}`,
+      "mysql",
+    );
   }
   return container[0];
 }
@@ -1007,10 +1079,14 @@ function seedZeroCounts(kinds: readonly ObjectKindSpec[]): Record<string, KindCo
  * and a catalog row cannot add one, which is also what keeps
  * `tests/helpers/object-surface-conformance.ts`'s "never answers for an undeclared kind"
  * true from the provider's side.
+ *
+ * `Object.hasOwn` and not `in`, which is what makes that guarantee absolute rather than
+ * nearly so: `in` walks the prototype chain, so a catalog row whose kind read `toString` or
+ * `constructor` would pass the test and write a folder the provider never declared.
  */
 function applyKindCounts(counts: Record<string, KindCount>, rows: readonly KindCountRow[]): void {
   for (const row of rows) {
-    if (row.kind in counts) counts[row.kind] = { count: Number(row.n) };
+    if (Object.hasOwn(counts, row.kind)) counts[row.kind] = { count: Number(row.n) };
   }
 }
 
@@ -1041,8 +1117,7 @@ function objectListingStatement(schema: string, kind: string): { sql: string; pa
   if (kind === "event") return { sql: LIST_EVENTS_SQL, params: [schema] };
   const spec = MYSQL_OBJECT_TYPES[kind];
   if (spec === undefined) return undefined;
-  const sql = spec.catalog === "tables" ? LIST_TABLES_SQL : LIST_ROUTINES_SQL;
-  return { sql, params: [schema, spec.type] };
+  return { sql: LIST_OBJECT_SQL[kind], params: [schema, ...spec.types] };
 }
 
 /**
@@ -1064,9 +1139,27 @@ function objectPath(schema: string, row: ObjectRow): string[] {
   return [schema, parent, row.name];
 }
 
-/** One comparable spelling of a path, so a sort compares addresses and never labels. */
-function pathKey(path: readonly string[]): string {
-  return JSON.stringify(path);
+/**
+ * Two paths compared SEGMENT BY SEGMENT, so a sort is over the address and never over one
+ * joined string.
+ *
+ * `JSON.stringify(path)` is the obvious spelling and it is wrong twice. At MIXED DEPTH the
+ * deeper path sorts first, because the separator `,` (0x2C) is below the terminator `]`
+ * (0x5D): `["app","orders","orders_stamp"]` would sort above `["app","orders"]`, putting a
+ * trigger above the row it hangs off. And JSON ESCAPES, so a name holding a quote, a
+ * backslash or a control character sorts by its escape sequence rather than by its own code
+ * points, which a docblock claiming a code-point sort of the segments would be lying about.
+ *
+ * A shorter path that is a prefix of a longer one sorts first, which is the ordering the
+ * tree wants: a container-level row above the rows nested under its name.
+ */
+function comparePaths(left: readonly string[], right: readonly string[]): number {
+  const shared = Math.min(left.length, right.length);
+  for (let index = 0; index < shared; index += 1) {
+    if (left[index] < right[index]) return -1;
+    if (left[index] > right[index]) return 1;
+  }
+  return left.length - right.length;
 }
 
 // ============================================================================
@@ -1595,8 +1688,9 @@ export class MySQLProvider extends SQLBaseProvider {
    */
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
     this.ensureConnected();
-    const schema = containerSchema(container);
-    const declared = declaredKinds(this.getCapabilities());
+    const capabilities = this.getCapabilities();
+    const schema = containerSchema(capabilities, container);
+    const declared = declaredKinds(capabilities);
     const counts = seedZeroCounts(declared);
 
     const conn = await this.pool!.getConnection();
@@ -1648,13 +1742,14 @@ export class MySQLProvider extends SQLBaseProvider {
    */
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     this.ensureConnected();
-    const schema = containerSchema(container);
+    const capabilities = this.getCapabilities();
+    const schema = containerSchema(capabilities, container);
     // Two questions, asked in order, and only the DECLARATION answers the first. Deciding
     // "is this kind declared" from whether a listing statement exists would make the two
     // methods disagree, and would report "declares no object kind" about a kind
     // `objectKinds` does declare - which on THIS provider is a live case, because
     // `MYSQL_OBJECT_TYPES` carries MariaDB's two entries whatever server is connected.
-    if (findKind(this.getCapabilities(), kind) === undefined) {
+    if (findKind(capabilities, kind) === undefined) {
       throw new QueryError(`MySQL declares no object kind "${kind}"`, "mysql");
     }
     const statement = objectListingStatement(schema, kind);
@@ -1676,11 +1771,7 @@ export class MySQLProvider extends SQLBaseProvider {
           rowCount: measuredNumber(row.row_count),
           sizeBytes: measuredNumber(row.size_bytes),
         }))
-        .sort((left, right) => {
-          const leftKey = pathKey(left.path);
-          const rightKey = pathKey(right.path);
-          return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-        });
+        .sort((left, right) => comparePaths(left.path, right.path));
     } finally {
       conn.release();
     }
@@ -1748,7 +1839,11 @@ export class MySQLProvider extends SQLBaseProvider {
 
     // Three narrow reads, each bound to ONE database and ONE object, which is what the four
     // `SCHEMA_*_SQL` statements are not: those are the N+1 `getSchema()` issues per table.
-    const binds = [path[0], path[1]];
+    //
+    // The object's own name is the LAST segment, never `path[1]`. They are the same string on
+    // a one-level engine and different on the five two-level ones that copy this file, where
+    // `path[1]` is a container segment and the read would narrow to nothing.
+    const binds = [path[0], path[path.length - 1]];
     const conn = await this.pool!.getConnection();
     try {
       const columnRows = await this.runObjectQuery(conn, OBJECT_COLUMNS_SQL, binds);

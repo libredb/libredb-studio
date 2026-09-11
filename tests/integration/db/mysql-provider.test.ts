@@ -3281,8 +3281,14 @@ describe("MySQL object listing and detail", () => {
 
     // Not [] and not a zero count: mysql2 rejects an `undefined` bind outright, so the
     // alternative is a driver error naming neither the path nor the method.
-    await expect(provider.countObjects([])).rejects.toThrow(/one database name/);
-    await expect(provider.listObjects(["catalog", "app"], "table")).rejects.toThrow(/one database name/);
+    //
+    // The expected depth and the segment names in the message are both derived from the
+    // declaration through `containerDepth()`, never from a hardcoded 1, so the message names
+    // the level MySQL declares and a two-level engine copying this file gets its own.
+    await expect(provider.countObjects([])).rejects.toThrow(/container path is \[database\], received \[\]/);
+    await expect(provider.listObjects(["catalog", "app"], "table")).rejects.toThrow(
+      /container path is \[database\], received \["catalog","app"\]/,
+    );
     await provider.disconnect();
   });
 
@@ -3339,8 +3345,13 @@ describe("MySQL object listing and detail", () => {
       await provider.listObjects(["app"], kind);
     }
 
-    expect(bound.get("table")?.params).toEqual(["app", "BASE TABLE"]);
+    // `table` binds TWO spellings, because MariaDB reports a system-versioned table under a
+    // TABLE_TYPE of its own and it is still a table. The placeholder count is sized from the
+    // same vocabulary table, so the statement and the binds cannot disagree.
+    expect(bound.get("table")?.params).toEqual(["app", "BASE TABLE", "SYSTEM VERSIONED"]);
+    expect(bound.get("table")?.sql).toContain("TABLE_TYPE IN (?, ?)");
     expect(bound.get("view")?.params).toEqual(["app", "VIEW"]);
+    expect(bound.get("view")?.sql).toContain("TABLE_TYPE IN (?)");
     expect(bound.get("sequence")?.params).toEqual(["app", "SEQUENCE"]);
     expect(bound.get("procedure")?.params).toEqual(["app", "PROCEDURE"]);
     expect(bound.get("function")?.params).toEqual(["app", "FUNCTION"]);
@@ -3410,10 +3421,71 @@ describe("MySQL object listing and detail", () => {
       expect(counted).toContain(view);
     }
     // Derived, never pinned to a magnitude: the arms are built from the same vocabulary
-    // table the listings bind from, so this counts them rather than asserting "six".
-    const spellings = ["BASE TABLE", "VIEW", "SEQUENCE", "PROCEDURE", "FUNCTION", "PACKAGE"];
+    // table the listings bind from, so this counts them rather than asserting a number.
+    const spellings = [
+      "BASE TABLE",
+      // MariaDB's own, and it maps to `table` rather than to a kind of its own.
+      "SYSTEM VERSIONED",
+      "VIEW",
+      "SEQUENCE",
+      "PROCEDURE",
+      "FUNCTION",
+      "PACKAGE",
+    ];
     for (const spelling of spellings) expect(counted).toContain(`WHEN '${spelling}' THEN`);
     expect(counted.match(/WHEN '[A-Z ]+' THEN/g) ?? []).toHaveLength(spellings.length);
+    // TEMPORARY is the third deliberate exclusion and the one with a reason the other two do
+    // not have: measured on MariaDB 12.3.2, a temporary table is listed by the session that
+    // created it and by no other, and this provider hands out a different pooled connection
+    // per call. SYSTEM VERSIONED above is the control that makes this negative mean
+    // something: both are MariaDB-only TABLE_TYPEs and only one of them is excluded.
+    expect(counted).not.toContain("TEMPORARY");
+    await provider.disconnect();
+  });
+
+  test("a MariaDB system-versioned table is a table, in the count and in the listing", async () => {
+    // The defect this closes was an ABSENCE that passed every gate. The vocabulary was first
+    // derived from `SELECT DISTINCT TABLE_TYPE` over the fixture, which enumerates the
+    // fixture; `SYSTEM VERSIONED` was therefore in no CASE arm and in no bind, so such a
+    // table fell out of BOTH the count and the listing. The two still agreed, so ruling 5f
+    // held, and the table was simply invisible in the tree.
+    //
+    // Measured 2026-09-11 on MariaDB 12.3.2, `CREATE TABLE t (..., PERIOD FOR
+    // SYSTEM_TIME(s, e)) WITH SYSTEM VERSIONING` answers TABLE_TYPE 'SYSTEM VERSIONED'.
+    // MySQL 26.7.0 has no such type, and a PARTITIONED table is 'BASE TABLE' on both.
+    let counted = "";
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      if (sql.toLowerCase().includes("version()")) return [[{ version: MARIADB_VERSION_STRING }], []];
+      if (sql.includes("GROUP BY kind")) {
+        counted = sql;
+        // What the one counting statement answers when the CASE has an arm for the type.
+        return [[{ kind: "table", n: 2 }], []];
+      }
+      // The listing binds every spelling the kind has, so a server holding one of each
+      // answers both rows through one read.
+      if ((params ?? []).includes("SYSTEM VERSIONED")) {
+        return [
+          [
+            { name: "orders", row_count: 0, size_bytes: 16384 },
+            { name: "orders_history", row_count: 0, size_bytes: 16384 },
+          ],
+          [],
+        ];
+      }
+      return [[], []];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
+    await provider.connect();
+
+    expect((await provider.countObjects(["app"])).table).toEqual({ count: 2 });
+    expect(counted).toContain("WHEN 'SYSTEM VERSIONED' THEN 'table'");
+    expect((await provider.listObjects(["app"], "table")).map((o) => o.path)).toEqual([
+      ["app", "orders"],
+      ["app", "orders_history"],
+    ]);
+    // Not a kind of its own: system versioning is a property of a table you still select
+    // from, and a folder for it would split one concept across two.
+    expect((provider.getCapabilities().objectKinds ?? []).map((k) => k.id)).not.toContain("system_versioned");
     await provider.disconnect();
   });
 
@@ -3478,6 +3550,13 @@ describe("MySQL object listing and detail", () => {
           // is a COMPLETE address here because a trigger name is unique per database
           // (measured, ER_TRG_ALREADY_EXISTS on a second CREATE against another table).
           { name: "orphan_stamp", parent: null },
+          // The MIXED-DEPTH pair, and the reason the sort compares segments rather than
+          // `JSON.stringify(path)`. This row's address is ["app","orders"], two segments, and
+          // `orders_stamp`'s is ["app","orders","orders_stamp"], three. A stringified sort
+          // puts the DEEPER one first, because the separator `,` is below the terminator `]`,
+          // which would render a trigger above the row it hangs off. A trigger really can
+          // share its table's name: measured, CREATE TRIGGER app.foo ON app.foo is accepted.
+          { name: "orders", parent: null },
         ],
         [],
       ];
@@ -3485,9 +3564,11 @@ describe("MySQL object listing and detail", () => {
     const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
     await provider.connect();
 
-    // Sorted by PATH, so a table's triggers group under that table rather than by name.
+    // Sorted by PATH, so a table's triggers group under that table rather than by name, and
+    // a shorter path that is a prefix of a longer one comes FIRST.
     expect((await provider.listObjects(["app"], "trigger")).map((o) => o.path)).toEqual([
       ["app", "customers", "customers_stamp"],
+      ["app", "orders"],
       ["app", "orders", "orders_stamp"],
       ["app", "orphan_stamp"],
     ]);
@@ -3693,6 +3774,78 @@ describe("MySQL object listing and detail", () => {
     await expect(provider.listObjects(["app"], "tablespace")).rejects.toThrow(
       /declares the kind "tablespace" but has no statement that lists it/,
     );
+    await provider.disconnect();
+  });
+
+  test("a catalog row whose kind names a prototype member draws no folder either", async () => {
+    // `Object.hasOwn` and not `in`, which is what makes the declared-kind guard ABSOLUTE
+    // rather than nearly so. `"toString" in counts` is true on any object literal, so the
+    // `in` spelling would write a folder for a kind the provider never declared, out of a
+    // catalog row nobody can see. The row below is hostile rather than realistic, and that is
+    // the point: the guard's docblock claims the declaration decides, with no exceptions.
+    mockExecuteFn = async (sql: string) => {
+      if (sql.toLowerCase().includes("version()")) return [[{ version: MYSQL_VERSION_STRING }], []];
+      if (sql.toLowerCase().startsWith("explain")) return [[], []];
+      return [
+        [
+          { kind: "table", n: 3 },
+          { kind: "toString", n: 9 },
+          { kind: "constructor", n: 9 },
+          { kind: "__proto__", n: 9 },
+        ],
+        [],
+      ];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
+    await provider.connect();
+
+    const counts = await provider.countObjects(["app"]);
+
+    // The control, so this is not a test of an empty read: the declared kind DID take its
+    // count from the same rows.
+    expect(counts.table).toEqual({ count: 3 });
+    expect(Object.keys(counts).sort()).toEqual(["event", "function", "procedure", "table", "trigger", "view"]);
+    await provider.disconnect();
+  });
+
+  test("the container depth and the name bind are DERIVED, which a two-level declaration shows", async () => {
+    // Standing ruling 5g: `container.length !== 1` and `binds = [path[0], path[1]]` are
+    // behaviour-identical to the derived forms on a one-level engine, which is exactly why
+    // both shipped. Rather than defer the whole pair to the first two-level provider, this
+    // test hands THIS provider a two-level declaration and asks the same two questions. The
+    // declaration is synthetic for MySQL; the derivation under test is the shared one that
+    // thirteen providers copy.
+    const provider = await connectedTo(false);
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Database", labelPlural: "Databases" },
+      ],
+    });
+
+    // The depth comes from `containerDepth()`, so a one-segment path is now WRONG and the
+    // message names both declared levels. A hardcoded `!== 1` would accept it.
+    await expect(provider.countObjects(["app"])).rejects.toThrow(
+      /container path is \[catalog, database\], received \["app"\]/,
+    );
+    await expect(provider.listObjects(["app", "x", "y"], "table")).rejects.toThrow(
+      /container path is \[catalog, database\], received \["app","x","y"\]/,
+    );
+
+    // And the object's own name is the LAST segment. At this depth `path[1]` is a CONTAINER
+    // segment, so the positional bind would narrow the detail reads to the database name and
+    // answer for no object at all.
+    const bound: unknown[][] = [];
+    mockExecuteFn = async (_sql: string, params?: unknown[]) => {
+      bound.push(params ?? []);
+      return [[], []];
+    };
+    await provider.describeObject(["cat", "app", "orders"], "table");
+
+    expect(bound).toHaveLength(3);
+    for (const params of bound) expect(params).toEqual(["cat", "orders"]);
     await provider.disconnect();
   });
 

@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D52, U17 · 13
+- [Drivers and connections](#drivers-and-connections) — D1–D51, U17 · 12
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X12, U2–U21 · 6
@@ -532,47 +532,6 @@ FIELD inside a successful response is a different question and needs its own mea
 **Done when:** a refused monitoring read is distinguishable from an empty one in all four providers, the
 optional fields are absent rather than 0 on the refusal, each provider's doc and test move with it, and
 `maxConnections` keeps its 0 - for that field the type says 0 and absence are one fact.
-
-### D52. MariaDB reports a column default as an EXPRESSION and MySQL as a VALUE, and the two collide
-
-Found 2026-09-11 by the #789 live probe for the MySQL object surface, which ran the same provider
-against `mysql:latest` and `mariadb:latest` side by side. Both servers answer
-`information_schema.COLUMNS.COLUMN_DEFAULT`, and they answer different KINDS of thing. Measured on
-MySQL 26.7.0 and MariaDB 12.3.2 over one probe table
-(`a INT, b INT DEFAULT 7, c VARCHAR(20) DEFAULT 'NULL', d VARCHAR(20) DEFAULT 'abc', e VARCHAR(20) DEFAULT NULL, f INT NOT NULL`):
-
-| column | DDL | MySQL 26.7.0 | MariaDB 12.3.2 |
-|---|---|---|---|
-| `a` | nullable, no default | SQL NULL | the four-character string `NULL` |
-| `b` | `DEFAULT 7` | `7` | `7` |
-| `c` | `DEFAULT 'NULL'` | the four-character string `NULL` | `'NULL'`, quotes included |
-| `d` | `DEFAULT 'abc'` | `abc` | `'abc'`, quotes included |
-| `e` | `DEFAULT NULL` | SQL NULL | the four-character string `NULL` |
-| `f` | NOT NULL, no default | SQL NULL | SQL NULL |
-
-Two consequences, and the second is why this is not a one-line fix. Every nullable MariaDB column
-with no default is reported as having the default `NULL`, which nobody wrote. And the string `NULL`
-means OPPOSITE things on the two servers: on MariaDB it is the absence of a default, on MySQL it is
-the string default `'NULL'`. Row `d` is the same asymmetry without the collision: the same DDL
-renders `'abc'` on one server and `abc` on the other.
-
-`row.column_default ?? undefined` is the read on both live surfaces, so both carry it: `getSchema()`
-in `src/lib/db/providers/sql/mysql.ts` (the flat tree, and through it the row detail sheet and the
-SQL export) and `describeObject()` in the same file (the object browser's detail panel, #789). The
-object surface was left matching `getSchema()` deliberately rather than repaired on its own: two
-surfaces reading one view must not answer differently about one column, and the correct
-normalisation is one shared decision.
-
-The distinguishing fact IS available and needs no type-id branch: MariaDB quotes a string default
-and writes the bare token `NULL` for an absent one, and the provider already measures which server
-it is talking to (`measuredServerVersion`, the same fact `objectKinds` is resolved from). A function
-default is the case to measure before writing the rule - MariaDB writes `current_timestamp()` and
-MySQL `CURRENT_TIMESTAMP` - along with MariaDB's `DEFAULT ''`, which is not covered above.
-
-**Done when:** one shared helper maps `COLUMN_DEFAULT` to a default a user would recognise on both
-servers, `getSchema()` and `describeObject()` both use it so they cannot disagree, a nullable
-MariaDB column with no default reports no default at all, `DEFAULT 'NULL'` survives as the string on
-both, and `docs/providers/mysql.md` carries the measurement table above.
 
 ## Value interpolation
 
