@@ -39,7 +39,7 @@
  *    trusts it most.
  */
 
-import { resolveInventoryAddress } from "./inventory-address";
+import { addressContainer, resolveInventoryAddress } from "./inventory-address";
 import { type AgentInventoryNoun, TABLE_INVENTORY_NOUN } from "./inventory-noun";
 import type { AgentContextSnapshot, AgentRunWorkflowType } from "./types";
 import { quoteIdentifierForPrompt } from "./untrusted-content";
@@ -166,7 +166,12 @@ function relationsOf(snapshot: AgentContextSnapshot): readonly Relation[] {
 
   for (const table of snapshot.objects) {
     for (const key of table.foreignKeys ?? []) {
-      const resolution = resolveInventoryAddress(snapshot.objects, key.referencedTable);
+      // Resolved FROM the referencing object's own container, which is how the engine
+      // itself reads an unqualified target. Without it the ordinary case refused: a bare
+      // key on MySQL `app.orders` pointing at `app.customers` tied with `app_test.customers`
+      // at the same rank, and every same-database foreign key on a server holding a second
+      // database with the same table in it was annotated as unsayable (#789).
+      const resolution = resolveInventoryAddress(snapshot.objects, key.referencedTable, addressContainer(table));
       const to = resolution.kind === "resolved" ? resolution.object.name : key.referencedTable;
       // Deduplicated on the whole edge: PostgreSQL's catalog read returns a
       // composite key as the cross product of its sides (#463), so

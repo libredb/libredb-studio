@@ -219,13 +219,37 @@ describe("a foreign key target is resolved against the address, not compared to 
     expect(rendered).toContain('"shop.dbo.orders" -> "shop.sales.customers"');
   });
 
-  test("two objects answering one spelling are not guessed between, and are not called missing either", () => {
-    // The refusal that matters as much as the match: picking one of these would assert a
-    // relation the database may not have. Saying "not in this inventory" would be false
-    // about an inventory holding both.
+  test("a same-container key is resolved IN that container, the way the engine resolves it", () => {
+    // Measured on MySQL holding `app` and `app_test`: `app.orders` declares a key spelled
+    // bare, both databases hold a `customers`, and the rank alone tied them. The engine
+    // itself reads an unqualified target in the referencing object's own database, and the
+    // referencing object is right here, so the diagram reads it the same way. Before the
+    // tie-breaker this line carried "this run cannot say which" for every same-database
+    // foreign key on any server holding a second database with the same table in it.
     const rendered = renderErDiagram(
       snapshot([
         entry("app.orders", ["app", "orders"], {
+          foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
+        }),
+        entry("app.customers", ["app", "customers"]),
+        entry("app_test.customers", ["app_test", "customers"]),
+      ]),
+      "minimal",
+    );
+
+    expect(rendered).toContain('"app.orders" -> "app.customers"');
+    expect(rendered).not.toContain("more than one object in this inventory is spelled that way");
+  });
+
+  test("two objects answering one spelling are not guessed between, and are not called missing either", () => {
+    // The refusal that matters as much as the match: picking one of these would assert a
+    // relation the database may not have. Saying "not in this inventory" would be false
+    // about an inventory holding both. The referencing object's container breaks a tie it
+    // is a party to and nothing else: `warehouse` holds neither candidate, so this stays a
+    // refusal, and that is the direction the tie-breaker must not move in.
+    const rendered = renderErDiagram(
+      snapshot([
+        entry("warehouse.orders", ["warehouse", "orders"], {
           foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
         }),
         entry("app.customers", ["app", "customers"]),
@@ -237,7 +261,7 @@ describe("a foreign key target is resolved against the address, not compared to 
     expect(rendered).toContain("more than one object in this inventory is spelled that way");
     expect(rendered).not.toContain("target not in this inventory");
     // The provider's own spelling is kept, since this run cannot say which address it meant.
-    expect(rendered).toContain('"app.orders" -> "customers"');
+    expect(rendered).toContain('"warehouse.orders" -> "customers"');
   });
 
   test("the most qualified match wins outright rather than being made ambiguous", () => {

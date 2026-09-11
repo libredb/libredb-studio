@@ -33,6 +33,13 @@
  * table, or draw a relation the database does not have; refusing costs a row its kind or a
  * diagram a note, and every consumer here keeps what it cannot classify.
  *
+ * **A tie is not always an ambiguity, and the CALLER is what tells them apart.** Every
+ * consumer of this rule resolves a spelling FROM somewhere: a foreign key from the
+ * container its referencing object sits in, the object browser's flat join from the
+ * session default container. The rule read none of that at first, so it refused the
+ * ordinary case rather than an exotic one, a same-container name on a server that also
+ * holds a second database with the same table in it. `preferredContainer` is that context.
+ *
  * It is generic over the ITEM and takes the segments it should use, because the two readings
  * that resolve a spelling carry them differently: a `DatabaseObject` always has `path`, and
  * an agent inventory entry has it only where the object surface answered. Each caller says
@@ -65,33 +72,72 @@ export type ObjectAddressResolution<T> =
   | { readonly kind: "absent" }
   | { readonly kind: "ambiguous" };
 
+/** Whether two container paths are the same container, segment by segment. */
+function sameContainer(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((segment, index) => segment === right[index]);
+}
+
 /**
  * The one item a spelling addresses, or why there is not exactly one.
  *
  * An item with NO segments answers nothing: there is no address to end with the spelling,
  * and an empty joined name would otherwise collect every one of them under `""`.
+ *
+ * `preferredContainer` is the container the caller is RESOLVING FROM, and it breaks a tie
+ * and does nothing else. Every consumer holds it and the first version of this rule threw
+ * it away, which is what made the tie the ordinary case rather than the exotic one: the
+ * object side of every join walks EVERY container the engine publishes, while the side
+ * being resolved is pinned to ONE, so two objects of one name in two databases tie at the
+ * same rank on any server holding `app` beside `app_test`. For a foreign key the preferred
+ * container is the REFERENCING object's own, which is how the engine itself resolves an
+ * unqualified target; for the flat join it is the session default container, which is what
+ * the flat reading is a reading OF.
+ *
+ * Three properties, and each is a direction this must not move in:
+ *
+ *  - it never PROMOTES. The preference is applied only among candidates that already share
+ *    the best rank, so a more qualified match still wins outright over a less qualified one
+ *    sitting in the preferred container.
+ *  - it breaks a TIE and never a genuine ambiguity. Two candidates in different containers
+ *    where NEITHER is the preferred one still refuse, because nothing said which was meant.
+ *  - it resolves only when the preferred container holds EXACTLY ONE tied candidate. Taking
+ *    the first would file a row under an object nobody named.
+ *
+ * A caller with no such context passes nothing and keeps the refusal. An empty array is a
+ * real container path, the one a zero-level engine's objects sit in, and is accepted as
+ * one; it can never in fact break a tie, because a tie needs a rank above zero and only a
+ * one-segment address has an empty container.
  */
 export function resolveObjectAddress<T>(
   items: readonly T[],
   segmentsOf: (item: T) => readonly string[],
   spelling: string,
+  preferredContainer?: readonly string[],
 ): ObjectAddressResolution<T> {
-  let best: T | undefined;
+  // The tied set rather than a flag, because the tie-breaker has to look at the candidates
+  // themselves: an `ambiguous` boolean records THAT there was a tie and throws away WHO
+  // tied, which is exactly the information the preferred container is compared against.
+  let best: T[] = [];
   let bestRank = Number.POSITIVE_INFINITY;
-  let ambiguous = false;
 
   for (const item of items) {
     const rank = addressKeys(segmentsOf(item)).indexOf(spelling);
     if (rank === -1) continue;
     if (rank < bestRank) {
-      best = item;
+      best = [item];
       bestRank = rank;
-      ambiguous = false;
     } else if (rank === bestRank) {
-      ambiguous = true;
+      best.push(item);
     }
   }
 
-  if (ambiguous) return { kind: "ambiguous" };
-  return best === undefined ? { kind: "absent" } : { kind: "resolved", object: best };
+  if (best.length === 1) return { kind: "resolved", object: best[0] };
+  if (best.length === 0) return { kind: "absent" };
+  if (preferredContainer === undefined) return { kind: "ambiguous" };
+
+  const preferred = best.filter((item) => {
+    const segments = segmentsOf(item);
+    return sameContainer(segments.slice(0, segments.length - 1), preferredContainer);
+  });
+  return preferred.length === 1 ? { kind: "resolved", object: preferred[0] } : { kind: "ambiguous" };
 }

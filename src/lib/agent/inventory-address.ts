@@ -49,13 +49,34 @@ export function addressKeys(object: AgentInventoryObject): readonly string[] {
   return keysOfSegments(addressSegments(object));
 }
 
+/**
+ * The container an entry SITS IN, which is what an unqualified spelling written by that
+ * entry is resolved from.
+ *
+ * A foreign key is declared BY an object, and the engine resolves an unqualified target in
+ * the declaring object's own container; nothing else in the inventory says which of two
+ * same-named tables the key means. So the declaring entry's container travels to the rule
+ * as its tie-breaker, and this is how it is derived, off the same segments the address is.
+ */
+export function addressContainer(object: AgentInventoryObject): readonly string[] {
+  const segments = addressSegments(object);
+  return segments.slice(0, segments.length - 1);
+}
+
 /** What a spelling addressed inside this run's inventory. */
 export type InventoryAddressResolution = ObjectAddressResolution<AgentInventoryObject>;
 
-/** The one entry a spelling addresses, or why there is not exactly one. */
+/**
+ * The one entry a spelling addresses, or why there is not exactly one.
+ *
+ * `preferredContainer` is passed straight through and is documented on the rule itself: it
+ * breaks a TIE between entries that already rank equally, and it never promotes a
+ * worse-ranked match. A caller with no such context passes nothing and keeps the refusal.
+ */
 export function resolveInventoryAddress(
   objects: readonly AgentInventoryObject[],
   spelling: string,
+  preferredContainer?: readonly string[],
 ): InventoryAddressResolution {
-  return resolveObjectAddress(objects, addressSegments, spelling);
+  return resolveObjectAddress(objects, addressSegments, spelling, preferredContainer);
 }
