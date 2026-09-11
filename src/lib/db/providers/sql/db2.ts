@@ -49,9 +49,11 @@ import {
 import { type IndexSchema, type ForeignKeySchema } from "@/lib/types";
 import { DatabaseConfigError, ConnectionError, mapDatabaseError } from "../../errors";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
+import { formatBytes, formatDuration } from "../../utils/pool-manager";
+import { logger } from "@/lib/logger";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
-import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
+import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 
 // ============================================================================
 // Driver surface (ibm_db)
@@ -121,6 +123,121 @@ const SCHEMA_INDEXES_SQL = `SELECT ic.INDNAME, ic.TABNAME, ic.UNIQUERULE, icu.CO
          ORDER BY ic.TABNAME, ic.INDNAME, icu.COLSEQ`;
 
 const VERSION_SQL = `SELECT SERVICE_LEVEL FROM TABLE(SYSPROC.ENV_GET_INST_INFO()) AS T`;
+
+// Per-table stats for the admin Operations/Monitoring "Tables" panel. Read from the
+// catalog, not fabricated: CARD is the row count and STATS_TIME is when RUNSTATS last
+// wrote them. Both are only as current as that RUNSTATS — a table that has never had it
+// reports CARD = -1 and STATS_TIME = NULL, which the mapper turns into "no stats" (row
+// count 0, no lastAnalyze) rather than surfacing -1. Sizes are deliberately NOT read
+// here: the only per-table size Db2 publishes is SYSPROC.ADMIN_GET_TAB_INFO, a table
+// function called one table at a time, and running it across a whole schema (measured too
+// slow on a large real catalog) is too heavy for a panel read. Size is a follow-up.
+const TABLE_STATS_SQL = `SELECT TABSCHEMA, TABNAME, CARD, STATS_TIME
+         FROM SYSCAT.TABLES
+         WHERE TABSCHEMA = CURRENT SCHEMA AND TYPE = 'T'
+         ORDER BY TABNAME`;
+
+// Live monitoring reads. Every one of these is a MON_GET_* table function or a
+// SYSIBMADM.* administrative view, and every one is permission-gated (they need SYSMON
+// authority or an explicit grant). The provider runs each in its own try/catch and
+// returns an empty result on failure rather than throwing: a locked-down account that
+// cannot read them sees an empty panel, exactly as the DatabaseProvider contract requires
+// for a permission-gated source, while a monitoring-authorized account sees real data.
+// Measured readable on Db2 v11.5.9.0. Documented in docs/providers/db2.md §6.
+
+// Active connections, the Sessions panel. -2 = every member; NULL handle = all.
+const SESSIONS_SQL = `SELECT APPLICATION_HANDLE, APPLICATION_NAME, CLIENT_IPADDR,
+           SYSTEM_AUTH_ID, TOTAL_APP_COMMITS
+         FROM TABLE(MON_GET_CONNECTION(NULL, -2)) AS T
+         ORDER BY APPLICATION_HANDLE
+         FETCH FIRST 200 ROWS ONLY`;
+
+// Statement cache with timings, the slow-query panel. Db2 only accumulates per-statement
+// execution TIMES when the database's `mon_req_metrics`/`mon_act_metrics` config is on;
+// with it off (the default on many installs), `NUM_EXEC_WITH_METRICS` is 0 and every time
+// column reads 0. Filtering on `NUM_EXEC_WITH_METRICS > 0` keeps the panel honest: it shows
+// real timings when the server collects them and an empty state (not a list of 0.00 ms
+// rows) when it does not. TOTAL_ACT_TIME is milliseconds of activity across the metrics-
+// bearing executions; the average is derived per row.
+const SLOW_QUERIES_SQL = `SELECT STMT_TEXT, NUM_EXECUTIONS, NUM_EXEC_WITH_METRICS, TOTAL_ACT_TIME, ROWS_READ
+         FROM TABLE(MON_GET_PKG_CACHE_STMT(NULL, NULL, NULL, -2)) AS T
+         WHERE STMT_TEXT IS NOT NULL AND NUM_EXEC_WITH_METRICS > 0
+         ORDER BY TOTAL_ACT_TIME DESC
+         FETCH FIRST 50 ROWS ONLY`;
+
+// Buffer-pool hit ratio source. NOTE: MON_GET_BUFFERPOOL only accumulates read counters
+// when the database's mon_obj_metrics config is on (measured NONE on a real server, so
+// every counter read 0). SYSIBMADM.BP_HITRATIO is the older snapshot-monitor view and
+// reports real logical/physical reads regardless of that config, so it is the reliable
+// source for a hit ratio. Summed across pools: (logical - physical) / logical.
+const BUFFERPOOL_SQL = `SELECT SUM(TOTAL_LOGICAL_READS) AS LOGICAL_READS,
+           SUM(TOTAL_PHYSICAL_READS) AS PHYSICAL_READS
+         FROM SYSIBMADM.BP_HITRATIO`;
+
+// Tablespace sizing, the Storage panel. Bytes = used pages * page size.
+const STORAGE_SQL = `SELECT TBSP_NAME, TBSP_TYPE, TBSP_TOTAL_PAGES, TBSP_USED_PAGES, TBSP_PAGE_SIZE
+         FROM TABLE(MON_GET_TABLESPACE(NULL, -2)) AS T
+         ORDER BY TBSP_USED_PAGES DESC`;
+
+// Count of live connections, for the overview/health `activeConnections`. Same gated
+// source as SESSIONS_SQL; a refused read leaves the count absent (never a fabricated 0).
+const ACTIVE_CONNECTIONS_SQL = `SELECT COUNT(*) AS N FROM TABLE(MON_GET_CONNECTION(NULL, -2)) AS T`;
+
+// Configured connection ceiling for the overview. `maxappls` is Db2's per-database limit
+// on concurrent applications — the meaningful cap (the DBM-level `max_connections` is
+// often -1 = automatic). SYSIBMADM.DBCFG is permission-gated, so a refusal leaves the
+// overview's `maxConnections` at 0.
+const MAX_CONNECTIONS_SQL = `SELECT VALUE FROM SYSIBMADM.DBCFG WHERE NAME = 'maxappls' FETCH FIRST 1 ROW ONLY`;
+
+// Database-wide overview counts and the activation time. TABLE/INDEX counts come from the
+// catalog (whole database, TYPE='T' for base tables); DB_CONN_TIME is when the database was
+// activated, from which uptime is derived. Catalog counts are always readable; DB_CONN_TIME
+// needs MON authority and is read separately so a refusal only costs the uptime figure.
+const CATALOG_COUNTS_SQL = `SELECT
+           (SELECT COUNT(*) FROM SYSCAT.TABLES WHERE TYPE = 'T') AS TABLE_COUNT,
+           (SELECT COUNT(*) FROM SYSCAT.INDEXES) AS INDEX_COUNT
+         FROM SYSIBM.SYSDUMMY1`;
+// Uptime as elapsed SECONDS, computed by the database rather than in JS. DB_CONN_TIME is
+// the database activation time in the server's own timezone; parsing that string in Node
+// and subtracting from Date.now() goes wrong whenever the app and the server are in
+// different timezones (measured: a UTC server read as local EDT produced a NEGATIVE
+// uptime). Doing the arithmetic in Db2 against its own CURRENT_TIMESTAMP keeps both sides
+// in the server's clock. DAYS + MIDNIGHT_SECONDS is exact (TIMESTAMPDIFF is an estimate).
+const DB_UPTIME_SECONDS_SQL = `SELECT
+           (DAYS(CURRENT_TIMESTAMP) - DAYS(DB_CONN_TIME)) * 86400
+             + (MIDNIGHT_SECONDS(CURRENT_TIMESTAMP) - MIDNIGHT_SECONDS(DB_CONN_TIME)) AS UPTIME_SECONDS
+         FROM TABLE(MON_GET_DATABASE(-2)) AS T`;
+
+// Database-level counters for the Performance panel. DEADLOCKS is a real cumulative count
+// since activation; a positive value is a genuine signal, a 0 is a measured 0 (not a
+// fabricated absence). Permission-gated, so a refusal omits the field.
+const DEADLOCKS_SQL = `SELECT DEADLOCKS FROM TABLE(MON_GET_DATABASE(-2)) AS T`;
+
+// Per-index stats for the monitoring Indexes panel, scoped to CURRENT SCHEMA like the
+// Tables panel. Structural columns (name, table, uniquerule, type, leaf pages, key columns)
+// come from SYSCAT.INDEXES + SYSCAT.INDEXCOLUSE — always readable. Scan counts are LEFT
+// JOINed from MON_GET_INDEX (real where an index has been used since activation, 0
+// elsewhere); that table function is permission-gated, so the whole read goes through
+// tryRun and an index simply reports 0 scans when the join finds nothing. Index size is not
+// derived: NLEAF is leaf PAGES whose byte size depends on the index's tablespace page size,
+// a per-object lookup too heavy for a panel read and meaningless until RUNSTATS has run
+// (NLEAF = -1 before then), so the required `indexSize` carries the "N/A" placeholder and
+// `indexSizeBytes` is omitted — the same honest-absence contract getTableStats uses.
+const INDEX_STATS_SQL = `WITH SCANS AS (
+           SELECT RTRIM(TABSCHEMA) AS TS, RTRIM(TABNAME) AS TN, IID, SUM(INDEX_SCANS) AS SCANS
+           FROM TABLE(MON_GET_INDEX(NULL, NULL, -2)) AS M
+           GROUP BY RTRIM(TABSCHEMA), RTRIM(TABNAME), IID
+         )
+         SELECT i.INDSCHEMA, i.INDNAME, i.TABNAME, i.UNIQUERULE, i.INDEXTYPE,
+                (SELECT LISTAGG(RTRIM(ic.COLNAME), ',') WITHIN GROUP (ORDER BY ic.COLSEQ)
+                 FROM SYSCAT.INDEXCOLUSE ic
+                 WHERE ic.INDSCHEMA = i.INDSCHEMA AND ic.INDNAME = i.INDNAME) AS COLS,
+                COALESCE(s.SCANS, 0) AS SCANS
+         FROM SYSCAT.INDEXES i
+         LEFT JOIN SCANS s
+           ON s.TS = RTRIM(i.TABSCHEMA) AND s.TN = RTRIM(i.TABNAME) AND s.IID = i.IID
+         WHERE i.TABSCHEMA = CURRENT SCHEMA
+         ORDER BY i.TABNAME, i.INDNAME`;
 
 // ============================================================================
 // Row shapes
@@ -198,9 +315,16 @@ export class Db2Provider extends SQLBaseProvider {
       // (RUNSTATS/REORG are per-table on Db2), so the Operations tab renders no global card
       // for them and those label triads would never be read. The generic inherited strings
       // stay unused rather than stating a whole-database operation that does not exist.
-      // `slowQueriesEmptyState` is intentionally omitted too — the monitoring Queries tab is
-      // empty for a different reason on Db2 (MON_GET_* is not wired yet, §6), and pointing it
-      // at a specific view would overclaim; the generic empty state is the honest one for now.
+      //
+      // Db2's slow-query timings come from MON_GET_PKG_CACHE_STMT, but only once the database
+      // config `mon_req_metrics`/`mon_act_metrics` is enabled (getSlowQueries filters out the
+      // metric-less rows, §6). So the Queries panel's empty state is NOT "install
+      // pg_stat_statements" — that Postgres wording is actively false here — it is "turn on
+      // Db2's monitoring metrics". This label replaces it.
+      slowQueriesEmptyState:
+        "Db2 records per-statement timings only when the database's monitoring metrics are enabled. " +
+        "To see slow queries here, a DBA can run: UPDATE DB CFG FOR <database> USING mon_req_metrics BASE " +
+        "(or mon_act_metrics BASE). The slowest cached statements then appear on the next refresh.",
     };
   }
 
@@ -217,6 +341,28 @@ export class Db2Provider extends SQLBaseProvider {
       }
       if (!this.config.database) {
         throw new DatabaseConfigError("Database name is required for Db2", "db2");
+      }
+
+      // The DRDA connection string is a `KEY=VALUE;` attribute list with NO escaping for
+      // its delimiter. A field value containing `;` would split into extra attributes:
+      // a password `pa;ss` misparses (auth fails on `pa`), and a crafted value could
+      // INJECT an attribute (`PWD=x;SECURITY=NONE` was shown to connect). There is no
+      // brace/quote form the CLI driver honours (measured: `{value}` is taken literally),
+      // so the only safe answer for the field-built path is to refuse the delimiter and
+      // point the user at the connection-string field, which they own end to end.
+      for (const [name, value] of [
+        ["Host", this.config.host],
+        ["Database name", this.config.database],
+        ["Username", this.config.user],
+        ["Password", this.config.password],
+      ] as const) {
+        if (typeof value === "string" && value.includes(";")) {
+          throw new DatabaseConfigError(
+            `${name} contains a ';', which Db2's connection-string format cannot carry safely. ` +
+              "Use the connection-string field to pass it as a quoted DRDA attribute instead.",
+            "db2",
+          );
+        }
       }
     }
   }
@@ -323,6 +469,28 @@ export class Db2Provider extends SQLBaseProvider {
         this.conn!.query(sql, cb);
       }
     });
+  }
+
+  /**
+   * Run a monitoring read that may be refused, returning `[]` instead of throwing.
+   *
+   * The MON_GET_* table functions and SYSIBMADM.* views are permission-gated (SYSMON
+   * authority or an
+   * explicit grant). The DatabaseProvider contract for a gated source is to return empty
+   * rather than fail the panel, so a locked-down account degrades to a blank panel while a
+   * monitoring-authorized account gets real data. The engine's own message is logged, not
+   * surfaced, because the panel's own emptiness is the user-visible signal.
+   */
+  private async tryRun(sql: string): Promise<Record<string, unknown>[]> {
+    try {
+      return await this.run(sql);
+    } catch (error) {
+      logger.warn("[db2] monitoring read refused; returning empty", {
+        route: "db2/monitoring",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
   }
 
   public async query(sql: string, params?: unknown[]): Promise<QueryResult> {
@@ -492,14 +660,31 @@ export class Db2Provider extends SQLBaseProvider {
   // Health & Monitoring
   // ============================================================================
 
+  /**
+   * A private reader for the active-connection count, absent (not 0) on a refused read.
+   * Shared by `getHealth` and `getOverview` so the absence travels through both the way
+   * the `DatabaseOverview.activeConnections`/`HealthInfo.activeConnections` docblocks
+   * require: a denied MON_GET_CONNECTION must not reach the agent as a measured zero.
+   */
+  private async readActiveConnections(): Promise<number | undefined> {
+    const rows = await this.tryRun(ACTIVE_CONNECTIONS_SQL);
+    if (rows.length === 0) return undefined;
+    const n = Number(rows[0].N);
+    return Number.isFinite(n) ? n : undefined;
+  }
+
   public async getHealth(): Promise<HealthInfo> {
     this.ensureConnected();
 
+    const cacheRatio = await this.readCacheHitRatio();
+    const activeConnections = await this.readActiveConnections();
+
     return {
       databaseSize: "N/A",
-      cacheHitRatio: CACHE_HIT_RATIO_UNAVAILABLE,
+      cacheHitRatio: cacheRatio === undefined ? CACHE_HIT_RATIO_UNAVAILABLE : formatCacheHitRatio(cacheRatio),
       slowQueries: [],
       activeSessions: [],
+      ...(activeConnections === undefined ? {} : { activeConnections }),
     };
   }
 
@@ -517,53 +702,239 @@ export class Db2Provider extends SQLBaseProvider {
       // rather than failing the whole overview.
     }
 
+    const activeConnections = await this.readActiveConnections();
+
+    // Catalog counts are always readable; the activation time and tablespace sizing are
+    // permission-gated, so each is read through tryRun and simply omitted (left "N/A"/0)
+    // on refusal rather than failing the overview.
+    let tableCount = 0;
+    let indexCount = 0;
+    const countRows = await this.tryRun(CATALOG_COUNTS_SQL);
+    if (countRows.length > 0) {
+      tableCount = Number(countRows[0].TABLE_COUNT) || 0;
+      indexCount = Number(countRows[0].INDEX_COUNT) || 0;
+    }
+
+    // Configured connection ceiling (maxappls). Left 0 when the config read is refused —
+    // 0 is the DatabaseOverview convention for "not known" on this required field.
+    let maxConnections = 0;
+    const maxConnRows = await this.tryRun(MAX_CONNECTIONS_SQL);
+    if (maxConnRows.length > 0) {
+      const parsed = Number(maxConnRows[0].VALUE);
+      if (Number.isFinite(parsed) && parsed > 0) maxConnections = parsed;
+    }
+
+    // Uptime from the database activation time, computed in the DB (see DB_UPTIME_SECONDS_SQL:
+    // doing it here would misfire across timezones). Negative or nonsensical values are
+    // rejected rather than shown.
+    let uptime = "N/A";
+    const uptimeRows = await this.tryRun(DB_UPTIME_SECONDS_SQL);
+    if (uptimeRows.length > 0) {
+      const seconds = Number(uptimeRows[0].UPTIME_SECONDS);
+      if (Number.isFinite(seconds) && seconds >= 0) {
+        uptime = formatDuration(seconds * 1000);
+      }
+    }
+
+    // Database size as the sum of used tablespace bytes — the same STORAGE_SQL the Storage
+    // panel reads, so no extra source. Both the formatted string and the numeric byte
+    // figure are set: fleet-health and the Overview total consume `databaseSizeBytes`
+    // (absence, not 0, means "unpublished"), while the overview card shows the string.
+    // Omitted ("N/A", bytes absent) when the read is refused.
+    let databaseSize = "N/A";
+    let databaseSizeBytes: number | undefined;
+    const tbspRows = await this.tryRun(STORAGE_SQL);
+    if (tbspRows.length > 0) {
+      const totalBytes = tbspRows.reduce((sum, r) => {
+        const usedPages = Number(r.TBSP_USED_PAGES) || 0;
+        const pageSize = Number(r.TBSP_PAGE_SIZE) || 0;
+        return sum + usedPages * pageSize;
+      }, 0);
+      if (totalBytes > 0) {
+        databaseSize = formatBytes(totalBytes);
+        databaseSizeBytes = totalBytes;
+      }
+    }
+
     return {
       version,
-      uptime: "N/A",
-      maxConnections: 0,
-      databaseSize: "N/A",
-      tableCount: 0,
-      indexCount: 0,
+      uptime,
+      maxConnections,
+      databaseSize,
+      ...(databaseSizeBytes === undefined ? {} : { databaseSizeBytes }),
+      tableCount,
+      indexCount,
+      ...(activeConnections === undefined ? {} : { activeConnections }),
     };
   }
 
   /**
-   * Db2's rich performance data lives in the MON_GET_* table functions and SYSIBMADM.*
-   * administrative views, both permission-gated. Rather than claim figures unverified
-   * against a live server, this returns a neutral object; the panels the data would
-   * fill read absence as healthy (the `cacheHitRatio` omission is load-bearing —
-   * DEFAULT_THRESHOLDS scores it `direction: "below"`, so a fabricated 0 would paint a
-   * critical cache fault on every healthy database). Widening this is a verified
-   * follow-up. See docs/providers/db2.md.
+   * Buffer-pool cache hit ratio as a percentage, or `undefined` when it cannot be read.
+   *
+   * `(logical - physical) / logical` over every buffer pool: the fraction of page reads
+   * served from memory rather than disk. `undefined` (not 0) on a refused read or a pool
+   * with no reads yet, because `DEFAULT_THRESHOLDS` scores this `direction: "below"` and a
+   * fabricated 0 would paint a critical cache fault on a healthy, idle database.
+   */
+  private async readCacheHitRatio(): Promise<number | undefined> {
+    const rows = await this.tryRun(BUFFERPOOL_SQL);
+    if (rows.length === 0) return undefined;
+    const logical = Number(rows[0].LOGICAL_READS);
+    const physical = Number(rows[0].PHYSICAL_READS);
+    if (!Number.isFinite(logical) || logical <= 0) return undefined;
+    const ratio = ((logical - physical) / logical) * 100;
+    if (!Number.isFinite(ratio)) return undefined;
+    // Clamp: a pool can report physical > logical transiently, which would push this past
+    // 100 or below 0 — neither is a real hit ratio.
+    return Math.max(0, Math.min(100, Math.round(ratio * 10) / 10));
+  }
+
+  /**
+   * Real performance metrics from the buffer pools and database counters, not a neutral
+   * empty. The cache hit ratio is omitted (never zeroed) when the read is refused or the
+   * pools are idle. Deadlocks is a measured cumulative count since activation — a real 0
+   * is kept (it is a fact), and only a refused read omits it.
    */
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
     this.ensureConnected();
-    return {};
+    const cacheHitRatio = await this.readCacheHitRatio();
+    const deadlockRows = await this.tryRun(DEADLOCKS_SQL);
+    const deadlocks = deadlockRows.length > 0 ? Number(deadlockRows[0].DEADLOCKS) : undefined;
+    return {
+      ...(cacheHitRatio === undefined ? {} : { cacheHitRatio }),
+      ...(deadlocks !== undefined && Number.isFinite(deadlocks) ? { deadlocks } : {}),
+    };
   }
 
+  /**
+   * The costliest statements in the package cache, by activity time. Db2 only records
+   * per-statement execution times when the database's `mon_req_metrics`/`mon_act_metrics`
+   * config is enabled; with metrics off, `NUM_EXEC_WITH_METRICS` is 0 and the query filters
+   * those rows out, so the panel shows real timings when the server collects them and its
+   * empty state — not a list of misleading 0.00 ms rows — when it does not. `TOTAL_ACT_TIME`
+   * is milliseconds across the metrics-bearing executions; the average is derived per row.
+   * Refused reads return `[]` (see `tryRun`).
+   */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     this.ensureConnected();
-    return [];
+    const rows = await this.tryRun(SLOW_QUERIES_SQL);
+    return rows.map((r) => {
+      const calls = Number(r.NUM_EXECUTIONS) || 0;
+      const totalTime = Number(r.TOTAL_ACT_TIME) || 0;
+      return {
+        query: String(r.STMT_TEXT ?? "").trim(),
+        calls,
+        totalTime,
+        avgTime: calls > 0 ? Math.round((totalTime / calls) * 10) / 10 : 0,
+        rows: Number(r.ROWS_READ) || 0,
+      };
+    });
   }
 
+  /**
+   * Live connections from `MON_GET_CONNECTION`. Db2 has no single "current statement" or
+   * per-connection state column on this surface the way PostgreSQL's `pg_stat_activity`
+   * does, so `state` is reported as `"active"` (the row exists because the connection is
+   * live) and `query` is left empty rather than invented. Refused reads return `[]`.
+   */
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
     this.ensureConnected();
-    return [];
+    const rows = await this.tryRun(SESSIONS_SQL);
+    return rows.map((r) => ({
+      pid: String(r.APPLICATION_HANDLE ?? ""),
+      user: String(r.SYSTEM_AUTH_ID ?? "").trim(),
+      database: this.config.database ?? "",
+      applicationName: r.APPLICATION_NAME ? String(r.APPLICATION_NAME).trim() : undefined,
+      clientAddr: r.CLIENT_IPADDR ? String(r.CLIENT_IPADDR).trim() : undefined,
+      state: "active",
+      query: "",
+      duration: "N/A",
+      durationMs: 0,
+    }));
   }
 
+  /**
+   * Real per-table stats from the catalog, not neutral empties like the other monitoring
+   * surfaces: SYSCAT.TABLES publishes a row count (CARD) and the timestamp of the RUNSTATS
+   * that produced it (STATS_TIME), so this returns them rather than hiding data the engine
+   * has. The currency caveat is real and preserved rather than smoothed over: CARD is only
+   * as fresh as the last RUNSTATS, which can be years old, and a table that never had
+   * RUNSTATS reports CARD = -1 with STATS_TIME = NULL. Such a table is mapped to rowCount 0
+   * with NO `lastAnalyze`, so a reader sees "no stats" instead of a fabricated -1; a table
+   * with stats carries `lastAnalyze` so the age of the number is visible. Size fields are
+   * omitted (the required `totalSize`/`totalSizeBytes` carry the "N/A"/0 placeholder the
+   * SQLite provider established) because Db2's only per-table size is a one-table-at-a-time
+   * table function — see TABLE_STATS_SQL. Documented in docs/providers/db2.md.
+   */
   public async getTableStats(): Promise<TableStats[]> {
     this.ensureConnected();
-    return [];
+    const rows = await this.run(TABLE_STATS_SQL);
+    return rows.map((r) => {
+      const card = Number(r.CARD);
+      const rowCount = Number.isFinite(card) && card >= 0 ? card : 0;
+      const statsTime = r.STATS_TIME;
+      const lastAnalyze = statsTime ? new Date(String(statsTime)) : undefined;
+      return {
+        schemaName: String(r.TABSCHEMA).trimEnd(),
+        tableName: String(r.TABNAME).trimEnd(),
+        rowCount,
+        totalSize: "N/A",
+        totalSizeBytes: 0,
+        ...(lastAnalyze && !Number.isNaN(lastAnalyze.getTime()) ? { lastAnalyze } : {}),
+      };
+    });
   }
 
+  /**
+   * Per-index stats for the Indexes panel, scoped to CURRENT SCHEMA. Structural fields are
+   * real (SYSCAT), scan counts are real where MON_GET_INDEX has them (0 otherwise), and size
+   * is left as the honest "N/A" placeholder — see INDEX_STATS_SQL. Refused reads return `[]`.
+   */
   public async getIndexStats(): Promise<IndexStats[]> {
     this.ensureConnected();
-    return [];
+    const rows = await this.tryRun(INDEX_STATS_SQL);
+    return rows.map((r) => {
+      const uniqueRule = String(r.UNIQUERULE ?? "").trim();
+      const cols = String(r.COLS ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const indexType = String(r.INDEXTYPE ?? "").trim();
+      return {
+        schemaName: String(r.INDSCHEMA ?? "").trim() || "",
+        tableName: String(r.TABNAME ?? "").trim(),
+        indexName: String(r.INDNAME ?? "").trim(),
+        ...(indexType ? { indexType } : {}),
+        columns: cols,
+        // Db2 UNIQUERULE: 'P' primary key, 'U' unique, 'D' duplicates allowed.
+        isUnique: uniqueRule === "P" || uniqueRule === "U",
+        isPrimary: uniqueRule === "P",
+        indexSize: "N/A",
+        scans: Number(r.SCANS) || 0,
+      };
+    });
   }
 
+  /**
+   * Tablespace sizing from `MON_GET_TABLESPACE`: used pages × page size is the bytes on
+   * disk, and used/total is the fill percentage. This is Db2's real storage breakdown
+   * (SYSCATSPACE, USERSPACE1, temp spaces, …). Refused reads return `[]` (see `tryRun`).
+   */
   public async getStorageStats(): Promise<StorageStats[]> {
     this.ensureConnected();
-    return [];
+    const rows = await this.tryRun(STORAGE_SQL);
+    return rows.map((r) => {
+      const usedPages = Number(r.TBSP_USED_PAGES) || 0;
+      const totalPages = Number(r.TBSP_TOTAL_PAGES) || 0;
+      const pageSize = Number(r.TBSP_PAGE_SIZE) || 0;
+      const sizeBytes = usedPages * pageSize;
+      return {
+        name: String(r.TBSP_NAME ?? "").trim(),
+        size: formatBytes(sizeBytes),
+        sizeBytes,
+        ...(totalPages > 0 ? { usagePercent: Math.round((usedPages / totalPages) * 1000) / 10 } : {}),
+      };
+    });
   }
 
   // ============================================================================

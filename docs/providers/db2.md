@@ -287,6 +287,13 @@ since Db2's own canonical form is the attribute list rather than a URI.
 
 `validate()` requires a `host` and a `database` unless a connection string is supplied.
 
+**Delimiter guard.** The attribute list has no escaping for its `;` separator, and the CLI driver
+honours no brace/quote form (measured: `UID={value}` is taken literally). A field value containing `;`
+would therefore split into extra attributes — a password `pa;ss` misparses so auth fails on `pa`, and a
+crafted value can INJECT an attribute (`PWD=x;SECURITY=NONE` was shown to connect). So `validate()`
+refuses a `;` in any field it interpolates (`host`, `database`, `user`, `password`) and points the user
+at the connection-string field, which they own end to end and which is passed through unchanged.
+
 ### 4.2 TLS
 
 When the SSL mode is not `disable`, `SECURITY=SSL` is added to the attribute list — Db2's own switch
@@ -317,23 +324,80 @@ bug where `query()` ignored its params argument and every bound statement failed
 
 ## 6. Schema and monitoring
 
-`getSchema()` is real (§3.3). The monitoring set is **honestly minimal for v1**: Db2's rich
-performance data lives in the `MON_GET_*` table functions and `SYSIBMADM.*` administrative views, both
-permission-gated. Rather than claim figures unverified against a live server, the provider returns
-neutral values:
+`getSchema()` is real (§3.3), and so is most of the monitoring set. Db2's live data lives in the
+`MON_GET_*` table functions and `SYSIBMADM.*` administrative views. These are **permission-gated**
+(they need SYSMON authority or an explicit grant), so every read is wrapped to return empty on refusal
+rather than throw — a locked-down account degrades to blank panels while a monitoring-authorized
+account (measured on Db2 v11.5.9.0) gets real figures:
 
-- `getOverview()` reads the Db2 service level from `SYSPROC.ENV_GET_INST_INFO()` for the version, and
-  returns zeroed/`"N/A"` fields otherwise (a denied read leaves the neutral default rather than
-  failing the overview).
-- `getHealth()` returns the `CACHE_HIT_RATIO_UNAVAILABLE` sentinel and empty lists.
-- `getPerformanceMetrics()` returns `{}`. This is load-bearing: `DEFAULT_THRESHOLDS` scores
-  `cacheHitRatio` with `direction: "below"`, so an absent ratio reads as healthy while a fabricated
-  `0` would paint a critical cache fault on every healthy database.
-- `getSlowQueries()`, `getActiveSessions()`, `getTableStats()`, `getIndexStats()`,
-  `getStorageStats()` return `[]`.
+- `getOverview()` reads the service level from `SYSPROC.ENV_GET_INST_INFO()` for the version, the live
+  connection count from `MON_GET_CONNECTION`, the database-wide table/index counts from `SYSCAT.TABLES`
+  and `SYSCAT.INDEXES`, uptime from the database activation time (`MON_GET_DATABASE.DB_CONN_TIME`), and
+  the database size as the sum of used tablespace bytes (`MON_GET_TABLESPACE`, the same read the Storage
+  panel uses). Each gated read is independent: a denied one leaves its own field neutral (`"Unknown"`
+  version, `"N/A"` uptime/size, absent `activeConnections`) rather than failing the whole overview.
+  `maxConnections` is the configured `maxappls` ceiling from `SYSIBMADM.DBCFG` (Db2's per-database
+  concurrent-application limit; the DBM-level `max_connections` is often `-1`/automatic), left `0` when
+  that config read is refused.
+- `getPerformanceMetrics()` / `getHealth()` report a **cache hit ratio** and **deadlocks**. The hit
+  ratio comes from `SYSIBMADM.BP_HITRATIO` (summed `(logical − physical) / logical` across buffer
+  pools). That snapshot view is used rather than `MON_GET_BUFFERPOOL` on purpose: the `MON_GET_*` read
+  counters only accumulate when the database's `mon_obj_metrics` config is on (measured `NONE` on a live
+  catalog, where every counter read 0), whereas `BP_HITRATIO` reports real reads regardless. The ratio
+  is still omitted (never zeroed) on a refused read or a database with no reads at all. Deadlocks come
+  from `MON_GET_DATABASE.DEADLOCKS` and keep a measured `0` (a real fact), omitted only on refusal.
+- Uptime (in `getOverview`) is computed **inside the database** as elapsed seconds from
+  `MON_GET_DATABASE.DB_CONN_TIME` against `CURRENT_TIMESTAMP`, not by parsing the activation timestamp
+  in Node: `DB_CONN_TIME` carries no timezone, so subtracting it from a JS `Date.now()` produced a
+  negative uptime whenever the server and app clocks differed (a UTC server read as local time). A
+  negative or unreadable value falls back to `"N/A"`.
+- `getActiveSessions()` lists live connections from `MON_GET_CONNECTION` (handle, auth id, application
+  name, client address). Db2 exposes no per-connection "current statement" or state column on this
+  surface the way PostgreSQL's `pg_stat_activity` does, so `state` is reported as `"active"` (the row
+  exists because the connection is live) and `query` is left empty rather than invented.
+- `getSlowQueries()` returns the costliest statements from the package cache
+  (`MON_GET_PKG_CACHE_STMT`): statement text, execution count, total activity time, and a per-row
+  average. It is a cache snapshot, not an exhaustive history — a statement evicted from the cache is
+  not listed. **Timings depend on the database's `mon_req_metrics`/`mon_act_metrics` config.** With
+  metrics off (the default on many installs), Db2 records execution *counts* but not *times*, so every
+  statement reports `NUM_EXEC_WITH_METRICS = 0` and a `0` time; the query filters those rows out, so the
+  panel shows real slow queries when the server collects timings and its empty state — rather than a
+  list of misleading `0.00 ms` rows — when it does not. Enabling metrics (`UPDATE DB CFG … USING
+  mon_req_metrics BASE`) is a DBA action the app does not take.
+- `getStorageStats()` returns per-tablespace sizing from `MON_GET_TABLESPACE` (used pages × page size
+  for bytes, used/total for fill percentage). This is the real, cheap storage view and populates the
+  Storage tab's tablespace list. The tab's separate "Storage Breakdown" (a Table-Data vs Indexes split)
+  stays "N/A": Db2 tablespaces are typed `LARGE`/`ANY`/`*TEMP`, not data-vs-index, so the split cannot
+  come from tablespaces, and the only per-object source, `SYSPROC.ADMIN_GET_TAB_INFO`, is a full scan
+  (measured at tens of seconds on a large schema) — far too slow for a panel read. Per-object byte
+  sizes are a documented limitation, not a quick win.
+- `getTableStats()` returns per-table rows from `SYSCAT.TABLES`: a row count (`CARD`) and the timestamp
+  of the RUNSTATS that produced it (`STATS_TIME`), so the admin Operations/Monitoring "Tables" panel
+  lists every table with its count. Two caveats are carried rather than smoothed over:
+  - **The count is only as current as the last RUNSTATS.** `CARD` is not live; it is whatever RUNSTATS
+    last wrote, which can be very old. Measured on a real catalog, table counts in a single schema
+    ranged over several years apart. `STATS_TIME` is surfaced as `TableStats.lastAnalyze` precisely so the age
+    of the number is visible rather than implied to be current.
+  - **A table that never had RUNSTATS reports `CARD = -1` and `STATS_TIME = NULL`** (a large fraction of
+    tables in a real catalog had never been RUNSTATS'd). The provider maps that to `rowCount: 0` with
+    **no** `lastAnalyze`, so it reads as "no stats yet" rather than surfacing a literal `-1`.
+  - **Size is not read per table.** Db2's only per-table size is `SYSPROC.ADMIN_GET_TAB_INFO`, a table
+    function called one table at a time; running it across a whole schema is too heavy for
+    a panel read, so the required `totalSize`/`totalSizeBytes` carry the `"N/A"`/`0` placeholder and the
+    byte fields are omitted (the same honest-absence contract the SQLite provider uses). Bulk per-table
+    size is a follow-up.
 
-Filling these from `MON_GET_*`/`SYSIBMADM.*` is verified follow-up work; a permission-gated source
-must return empty, never throw, when the connected user cannot read it.
+- `getIndexStats()` returns per-index rows for the current schema from `SYSCAT.INDEXES` +
+  `SYSCAT.INDEXCOLUSE` (name, table, key columns, unique/primary from `UNIQUERULE`, index type), with
+  scan counts LEFT JOINed from `MON_GET_INDEX` — real where an index has been scanned since activation,
+  `0` otherwise. Index size is not derived (`indexSize` carries the `"N/A"` placeholder, byte field
+  omitted): `NLEAF` is leaf *pages* whose byte size depends on the index's tablespace page size, a
+  per-object lookup too heavy for a panel read and meaningless before RUNSTATS.
+
+Still neutral: `getHealth().databaseSize` stays `"N/A"` (the Overview card shows the real size from
+`getOverview`; a single figure on `getHealth` would need `SYSPROC.GET_DBSIZE_INFO`, which returns
+through OUT parameters rather than a result set — a follow-up). Every gated read that a restricted
+account cannot run returns empty, never throws.
 
 ---
 

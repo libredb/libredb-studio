@@ -98,6 +98,35 @@ describe("Db2Provider validation", () => {
       () => new Db2Provider({ ...baseConfig, host: undefined, database: undefined, connectionString: "db2://h/db" }),
     ).not.toThrow();
   });
+
+  // The DRDA attribute list has no escaping for its `;` delimiter, so a field value that
+  // contains one would misparse (password `pa;ss` → auth on `pa`) or inject an attribute
+  // (`PWD=x;SECURITY=NONE` connects). The field-built path must refuse the delimiter.
+  test("rejects a ';' in the password (connection-string injection guard)", () => {
+    expect(() => new Db2Provider({ ...baseConfig, password: "pa;ss" })).toThrow(DatabaseConfigError);
+  });
+
+  test("rejects a ';' in the username", () => {
+    expect(() => new Db2Provider({ ...baseConfig, user: "u;SECURITY=NONE" })).toThrow(DatabaseConfigError);
+  });
+
+  test("rejects a ';' in the database name", () => {
+    expect(() => new Db2Provider({ ...baseConfig, database: "db;PORT=1" })).toThrow(DatabaseConfigError);
+  });
+
+  test("a pasted connection string is the user's own responsibility and is not delimiter-checked", () => {
+    // The user typed the whole attribute list, so a ';' there is theirs to get right —
+    // the guard is only for values WE interpolate into the list.
+    expect(
+      () =>
+        new Db2Provider({
+          ...baseConfig,
+          host: undefined,
+          database: undefined,
+          connectionString: "DATABASE=x;HOSTNAME=h;PORT=50000;UID=u;PWD=p;",
+        }),
+    ).not.toThrow();
+  });
 });
 
 describe("Db2Provider capabilities", () => {
@@ -131,6 +160,14 @@ describe("Db2Provider labels", () => {
     // Db2 has no VACUUM; the vacuum slot points at REORG (`optimize`).
     expect(labels.vacuumAction).toBe("Reorganize Table");
     expect(labels.vacuumActionOperation).toBe("optimize");
+  });
+
+  test("the slow-query empty state names Db2's monitoring metrics, not pg_stat_statements", () => {
+    // The Queries panel falls back to a Postgres "install pg_stat_statements" message when a
+    // provider declares none; that is false for Db2, whose timings come from mon_req_metrics.
+    expect(labels.slowQueriesEmptyState).toBeDefined();
+    expect(labels.slowQueriesEmptyState).toMatch(/mon_req_metrics|monitoring metrics/i);
+    expect(labels.slowQueriesEmptyState).not.toMatch(/pg_stat_statements/i);
   });
 });
 
@@ -189,6 +226,29 @@ describe("Db2Provider prepareQuery (FETCH FIRST)", () => {
   test("does not limit a non-SELECT", () => {
     const prepared = provider.prepareQuery("UPDATE users SET active = 1", { limit: 50 });
     expect(prepared.wasLimited).toBe(false);
+  });
+
+  test("splices the clause before a trailing semicolon rather than after it", () => {
+    // The clause must land between the statement and its trailing trivia; appended after a
+    // ';' it would be a syntax error, and Db2 (like Oracle) rejects a trailing ';' on a
+    // plain statement. Pins the #280 shape for Db2.
+    const prepared = provider.prepareQuery("SELECT * FROM users;", { limit: 10 });
+    expect(prepared.wasLimited).toBe(true);
+    expect(prepared.query).toContain("FETCH FIRST 10 ROWS ONLY");
+    // The FETCH clause is before the ';', not after it.
+    expect(prepared.query.indexOf("FETCH FIRST")).toBeLessThan(prepared.query.lastIndexOf(";"));
+  });
+
+  test("does not append a clause inside a trailing line comment", () => {
+    // A `-- comment` after the statement must not swallow the appended clause.
+    const prepared = provider.prepareQuery("SELECT * FROM users -- trailing", { limit: 10 });
+    if (prepared.wasLimited) {
+      // If it rewrote, the clause is NOT inside the comment (it precedes it).
+      expect(prepared.query.indexOf("FETCH FIRST")).toBeLessThan(prepared.query.indexOf("-- trailing"));
+    } else {
+      // Or it declined to rewrite, which is the safe alternative the guard allows.
+      expect(prepared.query).toBe("SELECT * FROM users -- trailing");
+    }
   });
 });
 
@@ -345,17 +405,48 @@ describe("Db2Provider getSchema", () => {
 });
 
 describe("Db2Provider getHealth and monitoring", () => {
-  test("health reports the unavailable cache-ratio sentinel, never a fabricated 0", async () => {
+  test("health reports the unavailable cache-ratio sentinel when the read is refused", async () => {
+    queryShouldThrowFor = (sql) => sql.includes("BP_HITRATIO") || sql.includes("MON_GET_CONNECTION");
     const provider = new Db2Provider(baseConfig);
     await provider.connect();
     const health = await provider.getHealth();
     expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
     expect(health.slowQueries).toEqual([]);
     expect(health.activeSessions).toEqual([]);
+    // A refused connection-count read leaves the field ABSENT, never a fabricated 0.
+    expect(health.activeConnections).toBeUndefined();
     await provider.disconnect();
   });
 
-  test("performance metrics are an empty object so an absent cache ratio reads as healthy", async () => {
+  test("health reports a measured cache hit ratio and connection count when readable", async () => {
+    mockRowsFor = (sql) => {
+      if (sql.includes("BP_HITRATIO")) return [{ LOGICAL_READS: "1000", PHYSICAL_READS: "50" }];
+      if (sql.includes("MON_GET_CONNECTION") && sql.includes("COUNT")) return [{ N: "7" }];
+      return [];
+    };
+    const provider = new Db2Provider(baseConfig);
+    await provider.connect();
+    const health = await provider.getHealth();
+    // (1000 - 50) / 1000 = 95.0%
+    expect(health.cacheHitRatio).toBe("95.0");
+    expect(health.activeConnections).toBe(7);
+    await provider.disconnect();
+  });
+
+  test("performance metrics carry the cache ratio and deadlocks when readable", async () => {
+    mockRowsFor = (sql) => {
+      if (sql.includes("BP_HITRATIO")) return [{ LOGICAL_READS: "200", PHYSICAL_READS: "0" }];
+      if (sql.includes("DEADLOCKS")) return [{ DEADLOCKS: "3" }];
+      return [];
+    };
+    const provider = new Db2Provider(baseConfig);
+    await provider.connect();
+    expect(await provider.getPerformanceMetrics()).toEqual({ cacheHitRatio: 100, deadlocks: 3 });
+    await provider.disconnect();
+  });
+
+  test("a buffer pool with no reads yet yields no ratio rather than a fabricated 0", async () => {
+    mockRowsFor = (sql) => (sql.includes("BP_HITRATIO") ? [{ LOGICAL_READS: "0", PHYSICAL_READS: "0" }] : []);
     const provider = new Db2Provider(baseConfig);
     await provider.connect();
     expect(await provider.getPerformanceMetrics()).toEqual({});
@@ -368,8 +459,71 @@ describe("Db2Provider getHealth and monitoring", () => {
     await provider.connect();
     const overview = await provider.getOverview();
     expect(overview.version).toBe("DB2 v12.1.0.0");
+    // With no catalog/activation/tablespace rows, the derived fields stay neutral.
     expect(overview.databaseSize).toBe("N/A");
+    expect(overview.uptime).toBe("N/A");
     expect(overview.maxConnections).toBe(0);
+    await provider.disconnect();
+  });
+
+  test("getOverview fills counts, uptime and database size when their reads succeed", async () => {
+    mockRowsFor = (sql) => {
+      if (sql.includes("ENV_GET_INST_INFO")) return [{ SERVICE_LEVEL: "DB2 v11.5.9.0" }];
+      if (sql.includes("SYSCAT.TABLES") && sql.includes("SYSCAT.INDEXES"))
+        return [{ TABLE_COUNT: "1135", INDEX_COUNT: "3300" }];
+      if (sql.includes("UPTIME_SECONDS")) return [{ UPTIME_SECONDS: "3600" }];
+      if (sql.includes("maxappls")) return [{ VALUE: "397" }];
+      if (sql.includes("BP_HITRATIO")) return [];
+      if (sql.includes("MON_GET_TABLESPACE"))
+        return [
+          { TBSP_NAME: "USERSPACE1", TBSP_USED_PAGES: "1000", TBSP_PAGE_SIZE: "4096" },
+          { TBSP_NAME: "SYSCATSPACE", TBSP_USED_PAGES: "500", TBSP_PAGE_SIZE: "4096" },
+        ];
+      return [];
+    };
+    const provider = new Db2Provider(baseConfig);
+    await provider.connect();
+    const overview = await provider.getOverview();
+    await provider.disconnect();
+
+    expect(overview.tableCount).toBe(1135);
+    expect(overview.indexCount).toBe(3300);
+    expect(overview.maxConnections).toBe(397);
+    // (1000 + 500) pages * 4096 = 6,144,000 bytes → formatted, non-"N/A", with the numeric
+    // byte figure set so fleet-health and the Overview total can sum it.
+    expect(overview.databaseSize).not.toBe("N/A");
+    expect(overview.databaseSizeBytes).toBe(6144000);
+    // Uptime is derived from DB_CONN_TIME, so it is a real duration string, not the sentinel.
+    expect(overview.uptime).not.toBe("N/A");
+    await provider.disconnect();
+  });
+
+  // Regression: uptime is computed in the database (elapsed seconds), not by parsing the
+  // activation timestamp in JS — a UTC server read as local time produced a NEGATIVE uptime.
+  // A negative/nonsensical value must fall back to "N/A", never render as "-3600000ms".
+  test("getOverview rejects a negative uptime rather than rendering it", async () => {
+    mockRowsFor = (sql) => {
+      if (sql.includes("ENV_GET_INST_INFO")) return [{ SERVICE_LEVEL: "DB2 v11.5.9.0" }];
+      if (sql.includes("UPTIME_SECONDS")) return [{ UPTIME_SECONDS: "-5" }];
+      return [];
+    };
+    const provider = new Db2Provider(baseConfig);
+    await provider.connect();
+    const overview = await provider.getOverview();
+    await provider.disconnect();
+    expect(overview.uptime).toBe("N/A");
+  });
+
+  test("getOverview surfaces the active-connection count when readable", async () => {
+    mockRowsFor = (sql) => {
+      if (sql.includes("ENV_GET_INST_INFO")) return [{ SERVICE_LEVEL: "DB2 v11.5.9.0" }];
+      if (sql.includes("MON_GET_CONNECTION") && sql.includes("COUNT")) return [{ N: "12" }];
+      return [];
+    };
+    const provider = new Db2Provider(baseConfig);
+    await provider.connect();
+    const overview = await provider.getOverview();
+    expect(overview.activeConnections).toBe(12);
     await provider.disconnect();
   });
 
@@ -380,18 +534,192 @@ describe("Db2Provider getHealth and monitoring", () => {
     const overview = await provider.getOverview();
     // The denied read is swallowed rather than failing the whole overview.
     expect(overview.version).toBe("Unknown");
+    // A denied connection-count read leaves the field absent, never a fabricated 0.
+    expect(overview.activeConnections).toBeUndefined();
     await provider.disconnect();
   });
 
-  test("the remaining monitoring panels return neutral empties rather than throwing", async () => {
+  test("getIndexStats maps SYSCAT.INDEXES structural fields plus MON_GET_INDEX scans", async () => {
+    mockRowsFor = (sql) =>
+      sql.includes("SYSCAT.INDEXES")
+        ? [
+            {
+              INDSCHEMA: "APPDATA",
+              INDNAME: "PK_ORDERS",
+              TABNAME: "ORDERS",
+              UNIQUERULE: "P",
+              INDEXTYPE: "REG",
+              COLS: "ORDER_ID",
+              SCANS: "42",
+            },
+            {
+              INDSCHEMA: "APPDATA",
+              INDNAME: "NU_ORDERS_CUST",
+              TABNAME: "ORDERS",
+              UNIQUERULE: "D",
+              INDEXTYPE: "REG",
+              COLS: "CUSTOMER_ID,CREATED_AT",
+              SCANS: "0",
+            },
+          ]
+        : [];
+    const provider = new Db2Provider(baseConfig);
+    await provider.connect();
+    const indexes = await provider.getIndexStats();
+    await provider.disconnect();
+
+    expect(indexes).toHaveLength(2);
+    // 'P' → primary AND unique, single column, real scan count.
+    expect(indexes[0]).toMatchObject({
+      schemaName: "APPDATA",
+      tableName: "ORDERS",
+      indexName: "PK_ORDERS",
+      indexType: "REG",
+      columns: ["ORDER_ID"],
+      isUnique: true,
+      isPrimary: true,
+      indexSize: "N/A",
+      scans: 42,
+    });
+    expect(indexes[0].indexSizeBytes).toBeUndefined();
+    // 'D' → neither primary nor unique; multi-column split from the LISTAGG string.
+    expect(indexes[1]).toMatchObject({
+      indexName: "NU_ORDERS_CUST",
+      columns: ["CUSTOMER_ID", "CREATED_AT"],
+      isUnique: false,
+      isPrimary: false,
+      scans: 0,
+    });
+  });
+
+  // The permission-gated monitoring reads must return empty, never throw, when the
+  // connecting account cannot read the MON_GET_* functions (tryRun swallows the refusal).
+  test("slow queries / sessions / storage return empty when the monitoring reads are refused", async () => {
+    queryShouldThrowFor = (sql) => sql.includes("MON_GET_");
     const provider = new Db2Provider(baseConfig);
     await provider.connect();
     expect(await provider.getSlowQueries()).toEqual([]);
     expect(await provider.getActiveSessions()).toEqual([]);
-    expect(await provider.getTableStats()).toEqual([]);
-    expect(await provider.getIndexStats()).toEqual([]);
     expect(await provider.getStorageStats()).toEqual([]);
     await provider.disconnect();
+  });
+
+  test("getSlowQueries maps the package-cache statement rows with a derived average", async () => {
+    mockRowsFor = (sql) =>
+      sql.includes("MON_GET_PKG_CACHE_STMT")
+        ? [
+            {
+              STMT_TEXT: "SELECT * FROM ORDERS",
+              NUM_EXECUTIONS: "4",
+              NUM_EXEC_WITH_METRICS: "4",
+              TOTAL_ACT_TIME: "800",
+              ROWS_READ: "40",
+            },
+          ]
+        : [];
+    const provider = new Db2Provider(baseConfig);
+    await provider.connect();
+    const slow = await provider.getSlowQueries();
+    await provider.disconnect();
+    expect(slow).toHaveLength(1);
+    expect(slow[0]).toMatchObject({
+      query: "SELECT * FROM ORDERS",
+      calls: 4,
+      totalTime: 800,
+      avgTime: 200, // 800 / 4
+      rows: 40,
+    });
+  });
+
+  test("getActiveSessions maps MON_GET_CONNECTION rows, reporting no invented state/query", async () => {
+    mockRowsFor = (sql) =>
+      sql.includes("MON_GET_CONNECTION") && !sql.includes("COUNT")
+        ? [
+            {
+              APPLICATION_HANDLE: "4059",
+              APPLICATION_NAME: "sample_app",
+              CLIENT_IPADDR: "192.0.2.10",
+              SYSTEM_AUTH_ID: "APPDATA",
+              TOTAL_APP_COMMITS: "3",
+            },
+          ]
+        : [];
+    const provider = new Db2Provider(baseConfig);
+    await provider.connect();
+    const sessions = await provider.getActiveSessions();
+    await provider.disconnect();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      pid: "4059",
+      user: "APPDATA",
+      applicationName: "sample_app",
+      clientAddr: "192.0.2.10",
+      state: "active",
+      query: "",
+    });
+  });
+
+  test("getStorageStats maps tablespace pages to bytes and fill percentage", async () => {
+    mockRowsFor = (sql) =>
+      sql.includes("MON_GET_TABLESPACE")
+        ? [{ TBSP_NAME: "USERSPACE1", TBSP_TOTAL_PAGES: "1000", TBSP_USED_PAGES: "250", TBSP_PAGE_SIZE: "4096" }]
+        : [];
+    const provider = new Db2Provider(baseConfig);
+    await provider.connect();
+    const storage = await provider.getStorageStats();
+    await provider.disconnect();
+    expect(storage).toHaveLength(1);
+    expect(storage[0]).toMatchObject({
+      name: "USERSPACE1",
+      sizeBytes: 250 * 4096, // used pages * page size
+      usagePercent: 25, // 250 / 1000
+    });
+  });
+
+  // getTableStats is NOT a neutral empty: SYSCAT.TABLES publishes a real row count (CARD)
+  // and the RUNSTATS timestamp (STATS_TIME), so the provider surfaces them for the admin
+  // Tables panel. The currency caveat is the whole point of these assertions.
+  test("getTableStats maps CARD to rowCount and STATS_TIME to lastAnalyze", async () => {
+    mockRowsFor = (sql) => {
+      if (!sql.includes("SYSCAT.TABLES")) return [];
+      return [{ TABSCHEMA: "APPDATA", TABNAME: "ORDERS", CARD: "1000000", STATS_TIME: "2020-01-15 12:00:00.000000" }];
+    };
+    const provider = new Db2Provider(baseConfig);
+    await provider.connect();
+    const stats = await provider.getTableStats();
+    await provider.disconnect();
+
+    expect(stats).toHaveLength(1);
+    expect(stats[0]).toMatchObject({
+      schemaName: "APPDATA",
+      tableName: "ORDERS",
+      rowCount: 1000000,
+      // Size is not read per table (too heavy across a whole schema), so the required
+      // fields carry the honest placeholder and the byte fields are absent.
+      totalSize: "N/A",
+      totalSizeBytes: 0,
+    });
+    expect(stats[0].tableSizeBytes).toBeUndefined();
+    // STATS_TIME becomes lastAnalyze, so a reader can see how stale the count is.
+    expect(stats[0].lastAnalyze).toBeInstanceOf(Date);
+    expect(stats[0].lastAnalyze?.getFullYear()).toBe(2020);
+  });
+
+  // A table that never had RUNSTATS reports CARD = -1 and STATS_TIME = NULL. That must read
+  // as "no stats" (rowCount 0, no lastAnalyze), never as a literal -1 row count.
+  test("getTableStats treats CARD = -1 / NULL STATS_TIME as no-stats, not a -1 count", async () => {
+    mockRowsFor = (sql) => {
+      if (!sql.includes("SYSCAT.TABLES")) return [];
+      return [{ TABSCHEMA: "APPDATA", TABNAME: "FRESHLY_CREATED", CARD: "-1", STATS_TIME: null }];
+    };
+    const provider = new Db2Provider(baseConfig);
+    await provider.connect();
+    const stats = await provider.getTableStats();
+    await provider.disconnect();
+
+    expect(stats).toHaveLength(1);
+    expect(stats[0].rowCount).toBe(0);
+    expect(stats[0].lastAnalyze).toBeUndefined();
   });
 });
 
