@@ -121,11 +121,7 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
 
       const headers = [
         rowField,
-        ...pivotData.colKeys.map((ck) =>
-          ck === "__all__"
-            ? `${AGG_LABELS[aggFunction]}(${valueField || "*"})`
-            : ck,
-        ),
+        ...pivotData.colKeys.map((ck) => (ck === "__all__" ? `${AGG_LABELS[aggFunction]}(${valueField || "*"})` : ck)),
       ];
 
       const rows = pivotData.pivotRows.map((row) => [
@@ -141,7 +137,6 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
     },
     [pivotData, rowField, valueField, aggFunction],
   );
-
 
   // Generate SQL
   const generateSQL = useCallback(() => {
@@ -283,12 +278,8 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
             </DropdownMenuTrigger>
 
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => exportPivot("csv")}>
-                Export as CSV
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => exportPivot("json")}>
-                Export as JSON
-              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => exportPivot("csv")}>Export as CSV</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => exportPivot("json")}>Export as JSON</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}

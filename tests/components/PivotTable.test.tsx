@@ -6,34 +6,16 @@ import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, fireEvent } from "@testing-library/react";
 
-const mockDownloadText = mock(
-  (_content: string, _mimeType: string, _fileName: string) => { },
-);
+const mockDownloadText = mock((_content: string, _mimeType: string, _fileName: string) => {});
 mock.module("@/lib/export/download", () => ({
   downloadText: mockDownloadText,
 }));
 
 mock.module("@/components/ui/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
-  ),
-  DropdownMenuTrigger: ({
-    children,
-  }: {
-    children: React.ReactNode;
-  }) => <div>{children}</div>,
-  DropdownMenuContent: ({
-    children,
-  }: {
-    children: React.ReactNode;
-  }) => <div>{children}</div>,
-  DropdownMenuItem: ({
-    children,
-    onClick,
-  }: {
-    children: React.ReactNode;
-    onClick?: () => void;
-  }) => (
+  DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuItem: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
     <button type="button" onClick={onClick}>
       {children}
     </button>
@@ -198,7 +180,7 @@ describe("PivotTable", () => {
   });
 
   test("Generate SQL button appears when onLoadQuery provided and row selected", () => {
-    const onLoadQuery = mock(() => { });
+    const onLoadQuery = mock(() => {});
     const { queryByText } = render(<PivotTable result={result} onLoadQuery={onLoadQuery} />);
     expect(queryByText("Generate SQL")).not.toBeNull();
   });
