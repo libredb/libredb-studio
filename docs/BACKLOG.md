@@ -708,49 +708,6 @@ file's ratio is not the tree's.
 **Done when:** the scope is widened with the benign sites made explicit, or the decision not to is
 recorded here with the number that justified it.
 
-### U22. Six per-table actions lost their only entry point when the object tree replaced the explorer
-
-The sidebar renders `ObjectTree` as of #789 Task 7, and the tree has no row menu in Phase 1. Generate
-SELECT, Profile table, Generate code, Generate test data, per-table Maintenance and Create table were
-reachable only from `src/components/schema-explorer/TableItem.tsx`, so on the desktop sidebar they are
-now reachable from nowhere, in both shells.
-
-What each shell still has, counted per shell rather than once:
-
-- **Standalone**: all six survive on the mobile schema tab, which still renders the old explorer
-  (`src/components/Studio.tsx`). The desktop sidebar has none of them.
-- **Embedded**: FOUR are lost, not three. `DataProfiler`, `CodeGenerator` and `TestDataGenerator` stay
-  mounted in `StudioWorkspace.tsx` with nothing able to set `profilerTable`, `codeGenTable` or
-  `testDataTable`, so `features.codeGenerator` and `features.testDataGenerator` now gate modals no user
-  can open; and Generate SELECT goes with them, because `tabMgr.handleGenerateSelect` had its only
-  reference in the sidebar call and now has none in that file at all. Per-table Maintenance and Create
-  table are NOT losses there: that shell passed `onOpenMaintenance={noop}` and
-  `onCreateTableClick={undefined}` before any of this.
-
-The spec's consumer table says `components/sidebar/*` and `components/schema-explorer/*` are "rewritten
-as the tree", so a row action surface is implied by the design and is absent from the task
-decomposition. Closing it is a row context menu or an object detail panel, and both are a design
-question rather than a wiring one.
-
-**Done when:** every action above has a home on an object row, or is deliberately dropped with the
-modal and its feature flag removed in the same change.
-
-### U23. Two container names can be given the same tree row id
-
-`src/components/object-tree/flatten.ts` builds a container row id as `path.join("/")` and a kind
-folder's as `[...parentPath, kind].join("/")`. A schema literally named `a/b` therefore takes the same
-row id as the `b` folder of schema `a`. Both are legal identifiers on PostgreSQL, MySQL and Oracle when
-quoted. The row id is the expansion key and React's list key, so a collision makes one row's twisty
-open the other and React warns about duplicate keys.
-
-Found by mutating the id rule during #789 Task 7. Not introduced there: the rule predates it, and Task
-7 only extracted it into `containerRowId` so that one function is the single source. A fix has to be one
-change to both id rules at once (a separator that cannot appear in an identifier, or a JSON array key),
-which is why it is filed rather than slipped into a task that reads the rule.
-
-**Done when:** a container named `a/b` and a folder `b` under `a` render as two rows with two ids, with
-a test that fails under the current rule.
-
 ### U21. Two global maintenance cards exist for operations that have no card copy
 
 MSSQL and MongoDB declare `check` as globally runnable and MySQL declares `optimize` the same way, but

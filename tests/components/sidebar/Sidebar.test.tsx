@@ -42,6 +42,10 @@ mock.module("@/components/object-tree", () => ({
         "data-levels": String(capabilities?.containerLevels?.length ?? "none"),
         "data-deferred": String(props.deferred ?? false),
         "data-has-load": String(props.onLoad !== undefined),
+        "data-actions": Object.keys((props.actions as Record<string, unknown>) ?? {})
+          .sort()
+          .join(","),
+        "data-has-labels": String(props.labels !== undefined),
       },
       "ObjectTree Mock",
     );
@@ -221,6 +225,31 @@ describe("Sidebar", () => {
 
     expect(getByTestId("object-tree").getAttribute("data-deferred")).toBe("true");
     expect(getByTestId("object-tree").getAttribute("data-has-load")).toBe("true");
+  });
+
+  /**
+   * U22. The shell decides what it CAN do and the tree decides what the declaration
+   * ALLOWS; the sidebar joins neither question and hands both straight through. The
+   * engine's own wording goes with them, because the menu's maintenance items read it.
+   */
+  test("the shell's row actions and the engine's wording reach the tree unchanged", () => {
+    const props = createDefaultProps({
+      objectActions: { onProfileObject: mock(() => {}), onCreateObject: mock(() => {}) },
+      // The wording travels with the declaration rather than beside it: both halves of
+      // `metadata` reach the tree, since the menu's maintenance items need the second.
+      metadata: { capabilities: oneLevel, labels: { vacuumActionOperation: "optimize" } } as ProviderMetadata,
+    });
+    const { getByTestId } = render(<Sidebar {...props} />);
+
+    expect(getByTestId("object-tree").getAttribute("data-actions")).toBe("onCreateObject,onProfileObject");
+    expect(getByTestId("object-tree").getAttribute("data-has-labels")).toBe("true");
+  });
+
+  test("control: a shell that offers no row actions hands the tree none", () => {
+    const props = createDefaultProps();
+    const { getByTestId } = render(<Sidebar {...props} />);
+
+    expect(getByTestId("object-tree").getAttribute("data-actions")).toBe("");
   });
 
   test("control: a connection that is not deferred hands the tree no deferral", () => {

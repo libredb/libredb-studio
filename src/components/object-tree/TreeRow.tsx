@@ -36,11 +36,17 @@ export interface TreeRowProps {
   readonly busy: boolean;
   /** This row's own read failed, as opposed to the engine refusing to count it. */
   readonly failure?: TreeReadFailure;
+  /**
+   * A row menu is offered here, which `aria-haspopup` announces. Computed from the
+   * provider's declaration by `ObjectTree`, so a row with nothing to offer says nothing
+   * rather than promising a menu that opens empty.
+   */
+  readonly hasActions?: boolean;
   /** Absolute offset inside the scroll spacer, in pixels. */
   readonly top: number;
 }
 
-export function TreeRow({ row, object, active, selected, busy, failure, top }: TreeRowProps) {
+export function TreeRow({ row, object, active, selected, busy, failure, hasActions, top }: TreeRowProps) {
   const Icon = ROW_ICONS[row.kind];
   return (
     <div
@@ -52,6 +58,7 @@ export function TreeRow({ row, object, active, selected, busy, failure, top }: T
       aria-expanded={row.expanded}
       aria-selected={selected}
       aria-busy={busy ? true : undefined}
+      aria-haspopup={hasActions === true ? "menu" : undefined}
       tabIndex={active ? 0 : -1}
       style={{ top, height: TREE_ROW_HEIGHT, paddingLeft: 8 + row.depth * 12 }}
       className={`absolute inset-x-0 flex items-center gap-1.5 pr-2 text-xs cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-brand ${

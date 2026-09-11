@@ -15,9 +15,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CircleAlert, Database, LoaderCircle, PlugZap } from "lucide-react";
-import type { DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
+import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import type { TreeRowModel } from "./flatten";
+import { RowMenu } from "./RowMenu";
+import { rowActions, type TreeRowAction, type TreeRowActionHandlers } from "./row-actions";
 import { TREE_ROW_HEIGHT, TreeRow } from "./TreeRow";
 import { useTreeNodes } from "./use-tree-nodes";
 
@@ -50,6 +52,21 @@ export interface ObjectTreeProps {
   /** What the load action calls. Absent means no action is offered. */
   readonly onLoad?: () => void;
   readonly onObjectClick?: (object: DatabaseObject) => void;
+  /**
+   * What the row menu may offer (U22, #789). Absent, or absent field by field, means the
+   * shell cannot do that thing and the item is not drawn: the embedded workspace mounts no
+   * maintenance page and no create-table modal, and passes neither handler.
+   */
+  readonly actions?: TreeRowActionHandlers;
+  /** The engine's own wording. Only the menu's maintenance items read it. */
+  readonly labels?: ProviderLabels;
+}
+
+/** An open menu: which row it belongs to, and where the reader asked for it. */
+interface OpenMenu {
+  readonly rowId: string;
+  readonly x: number;
+  readonly y: number;
 }
 
 function clamp(value: number, low: number, high: number): number {
@@ -88,9 +105,18 @@ function parentIndex(rows: readonly TreeRowModel[], index: number): number {
   return -1;
 }
 
-export function ObjectTree({ connection, capabilities, deferred, onLoad, onObjectClick }: ObjectTreeProps) {
+export function ObjectTree({
+  connection,
+  capabilities,
+  deferred,
+  onLoad,
+  onObjectClick,
+  actions,
+  labels,
+}: ObjectTreeProps) {
   const tree = useTreeNodes(connection, capabilities, deferred);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [pinned, setPinned] = useState(false);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
@@ -116,13 +142,72 @@ export function ObjectTree({ connection, capabilities, deferred, onLoad, onObjec
     element?.scrollIntoView({ block: "nearest" });
   }, [focusRequest]);
 
-  const focusRow = useCallback((id: string) => {
+  /**
+   * This row is the reader's, so it holds the tab stop and the window is pinned to it. It
+   * does NOT take focus: the menu opens on a selected row and takes focus itself, and a
+   * focus request here would pull focus back out of the menu the moment it mounted. Child
+   * effects run before parent effects, so that race is not hypothetical - it closed the
+   * menu on the frame it opened.
+   */
+  const selectRow = useCallback((id: string) => {
     setActiveId(id);
     setPinned(true);
-    setFocusRequest({ id });
   }, []);
 
+  const focusRow = useCallback(
+    (id: string) => {
+      selectRow(id);
+      setFocusRequest({ id });
+    },
+    [selectRow],
+  );
+
   const moveTo = useCallback((index: number) => focusRow(rows[clamp(index, 0, rows.length - 1)].id), [focusRow, rows]);
+
+  /**
+   * What this row may be asked to do, from the DECLARATION. Built per row rather than
+   * cached, because the answer depends on the cached object and on which handlers the
+   * shell passed, and a stale menu is worse than a rebuilt array of four items.
+   */
+  const actionsFor = useCallback(
+    (row: TreeRowModel): readonly TreeRowAction[] =>
+      actions === undefined
+        ? []
+        : rowActions({ row, object: tree.objectFor(row), capabilities, labels, handlers: actions }),
+    [actions, capabilities, labels, tree],
+  );
+
+  const closeMenu = useCallback(
+    (restoreFocus: boolean) => {
+      // Read from the closure rather than from a `setMenu` updater: an updater must stay
+      // pure, and this one would be writing the focus request from inside it.
+      if (menu !== null && restoreFocus) setFocusRequest({ id: menu.rowId });
+      setMenu(null);
+    },
+    [menu],
+  );
+
+  /** A row with nothing to offer opens nothing, so the gesture is left to the browser. */
+  const openMenu = useCallback(
+    (row: TreeRowModel, x: number, y: number): boolean => {
+      if (actionsFor(row).length === 0) return false;
+      selectRow(row.id);
+      setMenu({ rowId: row.id, x, y });
+      return true;
+    },
+    [actionsFor, selectRow],
+  );
+
+  /** The keyboard has no pointer, so the menu opens against the row's own box. */
+  const openMenuOnRow = useCallback(
+    (row: TreeRowModel): void => {
+      const mounted = Array.from(treeRef.current?.querySelectorAll<HTMLElement>("[data-row-id]") ?? []);
+      const element = mounted.find((candidate) => candidate.dataset.rowId === row.id);
+      const box = element?.getBoundingClientRect();
+      openMenu(row, box?.left ?? 0, box?.bottom ?? 0);
+    },
+    [openMenu],
+  );
 
   const activate = useCallback(
     (row: TreeRowModel) => {
@@ -172,22 +257,52 @@ export function ObjectTree({ connection, capabilities, deferred, onLoad, onObjec
         case " ":
           activate(row);
           break;
+        // The two ways a keyboard asks for a context menu. Neither is part of the W3C tree
+        // pattern, which says nothing about row actions; both are what the platform already
+        // means by "the menu for the thing that has focus", and a menu that only a pointer
+        // can open is the defect Task 6's review caught on the tree itself.
+        case "ContextMenu":
+          openMenuOnRow(row);
+          break;
+        case "F10":
+          // Plain F10 is the browser's own (the menu bar on Windows); only Shift+F10 is this.
+          if (!event.shiftKey) return;
+          openMenuOnRow(row);
+          break;
         default:
           // Anything the pattern does not claim stays the browser's, type-ahead included.
           return;
       }
       event.preventDefault();
     },
-    [activate, activeRowId, moveTo, rows],
+    [activate, activeRowId, moveTo, openMenuOnRow, rows],
+  );
+
+  /** The row a pointer event landed in, by the dataset rather than by a CSS selector. */
+  const rowOf = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>): TreeRowModel | undefined => {
+      const element = (event.target as HTMLElement).closest<HTMLElement>("[data-row-id]");
+      return rows.find((candidate) => candidate.id === element?.dataset.rowId);
+    },
+    [rows],
   );
 
   const onClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
-      const element = (event.target as HTMLElement).closest<HTMLElement>("[data-row-id]");
-      const row = rows.find((candidate) => candidate.id === element?.dataset.rowId);
+      const row = rowOf(event);
       if (row !== undefined) activate(row);
     },
-    [activate, rows],
+    [activate, rowOf],
+  );
+
+  const onContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const row = rowOf(event);
+      // The browser's own menu stands where this one has nothing to offer, rather than the
+      // page swallowing the gesture and showing nothing.
+      if (row !== undefined && openMenu(row, event.clientX, event.clientY)) event.preventDefault();
+    },
+    [openMenu, rowOf],
   );
 
   /**
@@ -298,36 +413,54 @@ export function ObjectTree({ connection, capabilities, deferred, onLoad, onObjec
   // could not get in without reaching for the mouse. So the container holds the tab stop exactly
   // while the active row is out of the DOM, and hands it back on focus.
   const activeMounted = activeIndex >= start && activeIndex < end;
+  // A menu whose row is gone - collapsed away, or dropped by a re-read - is closed by
+  // DERIVING it from the rows rather than by an effect watching them.
+  const menuRow = menu === null ? undefined : rows.find((row) => row.id === menu.rowId);
 
   return (
-    <div
-      ref={attach}
-      role="tree"
-      aria-label="Database objects"
-      data-testid="object-tree"
-      tabIndex={activeMounted ? -1 : 0}
-      onFocus={onContainerFocus}
-      onKeyDown={onKeyDown}
-      onClick={onClick}
-      onScroll={onScroll}
-      className="relative h-full overflow-auto outline-none"
-    >
-      {/* Presentational, so the rows below stay owned by the tree in the accessibility tree. */}
-      <div role="presentation" className="relative" style={{ height: rows.length * TREE_ROW_HEIGHT }}>
-        {rows.slice(start, end).map((row, offset) => (
-          <TreeRow
-            key={row.id}
-            row={row}
-            object={tree.objectFor(row)}
-            active={row.id === activeRowId}
-            selected={row.id === activeId}
-            busy={tree.isBusy(row)}
-            failure={tree.failureFor(row)}
-            top={(start + offset) * TREE_ROW_HEIGHT}
-          />
-        ))}
+    <>
+      <div
+        ref={attach}
+        role="tree"
+        aria-label="Database objects"
+        data-testid="object-tree"
+        tabIndex={activeMounted ? -1 : 0}
+        onFocus={onContainerFocus}
+        onKeyDown={onKeyDown}
+        onClick={onClick}
+        onContextMenu={onContextMenu}
+        onScroll={onScroll}
+        className="relative h-full overflow-auto outline-none"
+      >
+        {/* Presentational, so the rows below stay owned by the tree in the accessibility tree. */}
+        <div role="presentation" className="relative" style={{ height: rows.length * TREE_ROW_HEIGHT }}>
+          {rows.slice(start, end).map((row, offset) => (
+            <TreeRow
+              key={row.id}
+              row={row}
+              object={tree.objectFor(row)}
+              active={row.id === activeRowId}
+              selected={row.id === activeId}
+              busy={tree.isBusy(row)}
+              failure={tree.failureFor(row)}
+              hasActions={actionsFor(row).length > 0}
+              top={(start + offset) * TREE_ROW_HEIGHT}
+            />
+          ))}
+        </div>
       </div>
-    </div>
+      {/* Outside the tree element: a menu is not a valid child of one, and a sibling's keys
+          never bubble to the tree's own handler. */}
+      {menu !== null && menuRow !== undefined && (
+        <RowMenu
+          actions={actionsFor(menuRow)}
+          x={menu.x}
+          y={menu.y}
+          label={`Actions for ${menuRow.label}`}
+          onClose={closeMenu}
+        />
+      )}
+    </>
   );
 }
 

@@ -6,7 +6,7 @@ import type { DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { Plus, Zap, Layers, LoaderCircle } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ObjectTree } from "@/components/object-tree";
+import { ObjectTree, type TreeRowActionHandlers } from "@/components/object-tree";
 import { GitHubRepoLink } from "@/components/github-repo-link";
 import { getAppVersion } from "@/lib/app-version";
 import { cn } from "@/lib/utils";
@@ -33,6 +33,14 @@ interface SidebarProps {
   objectScanDeferred?: boolean;
   /** Perform the read the active connection deferred. */
   onLoadObjects?: () => void;
+  /**
+   * What the tree's row menu may offer (U22, #789), handed straight through.
+   *
+   * The shell decides what it CAN do and the tree decides what the declaration ALLOWS, and
+   * the sidebar joins neither question: the standalone app passes all six, the embedded
+   * workspace passes the four it mounts a modal for.
+   */
+  objectActions?: TreeRowActionHandlers;
 }
 
 export function Sidebar({
@@ -48,6 +56,7 @@ export function Sidebar({
   metadata,
   objectScanDeferred = false,
   onLoadObjects,
+  objectActions,
 }: SidebarProps) {
   const appVersion = getAppVersion();
 
@@ -116,9 +125,11 @@ export function Sidebar({
             <ObjectTree
               connection={activeConnection}
               capabilities={metadata.capabilities}
+              labels={metadata.labels}
               deferred={objectScanDeferred}
               onLoad={onLoadObjects}
               onObjectClick={onObjectClick}
+              actions={objectActions}
             />
           ) : (
             <div

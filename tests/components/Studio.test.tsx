@@ -471,6 +471,7 @@ mock.module("@/components/ui/resizable", () => {
 const { default: Studio } = await import("@/components/Studio");
 import type { DatabaseConnection } from "@/lib/types";
 import type { DatabaseObject } from "@/lib/db/types";
+import type { TreeRowActionHandlers } from "@/components/object-tree/row-actions";
 
 // =============================================================================
 // Test data
@@ -708,9 +709,9 @@ describe("Studio", () => {
 
   // --- openMaintenance ---
   //
-  // Reached through the mobile schema tab since the sidebar became the object tree
-  // (#789): the tree has no row menu in Phase 1, so the explorer's row items are the
-  // surviving caller of every handler below.
+  // Reached here through the mobile schema tab, which still renders the flat explorer
+  // (#789). The desktop sidebar reaches the same handler through the object tree's row
+  // menu, which is asserted further down under `objectActions` (U22).
   function openSchemaTab(): void {
     act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
   }
@@ -866,6 +867,69 @@ describe("Studio", () => {
     const fn = capturedSidebarProps.onObjectClick as (object: DatabaseObject) => void;
     act(() => fn({ path: ["app", "order_total(integer)"], name: "order_total", kind: "function" }));
     expect(mockHandleTableClick).not.toHaveBeenCalled();
+  });
+
+  // --- objectActions: the row menu's six, restored (U22, #789) ---
+  //
+  // WHICH of them a row is offered is the provider's declaration and is asserted against
+  // the real tree in `tests/components/object-tree/row-menu.test.tsx`. What is asserted
+  // here is the other half: that this shell can actually perform each one, since that is
+  // what was lost when the sidebar stopped rendering the explorer.
+  const usersObject: DatabaseObject = { path: ["app", "users"], name: "users", kind: "table" };
+
+  function sidebarActions(): TreeRowActionHandlers {
+    return capturedSidebarProps.objectActions as TreeRowActionHandlers;
+  }
+
+  test("every row-menu action reaches this shell's own destination", () => {
+    connMgrOverride = { activeConnection: pgConn };
+    const { queryByTestId } = render(<Studio />);
+    const actions = sidebarActions();
+
+    act(() => actions.onGenerateSelect?.(usersObject));
+    expect(mockHandleGenerateSelect).toHaveBeenCalledWith("users");
+
+    act(() => actions.onProfileObject?.(usersObject));
+    expect(queryByTestId("dataprofiler")).not.toBeNull();
+
+    act(() => actions.onGenerateCode?.(usersObject));
+    expect(queryByTestId("codegenerator")).not.toBeNull();
+
+    act(() => actions.onGenerateTestData?.(usersObject));
+    expect(queryByTestId("testdatagenerator")).not.toBeNull();
+
+    act(() => actions.onOpenMaintenance?.(usersObject));
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?table=users");
+
+    act(() => actions.onCreateObject?.());
+    expect(queryByTestId("createtablemodal")).not.toBeNull();
+  });
+
+  test("a non-admin is handed no maintenance action, because the page it opens is the admin one", () => {
+    authOverride = { isAdmin: false };
+    connMgrOverride = { activeConnection: pgConn };
+    render(<Studio />);
+    expect(sidebarActions().onOpenMaintenance).toBeUndefined();
+    // The control: the other five are still handed over, so this is the role gate and not
+    // an empty object.
+    expect(sidebarActions().onProfileObject).toBeDefined();
+  });
+
+  test("the old consumers are handed the object's NAME and not its path segment", () => {
+    // The two differ wherever an engine disambiguates its addresses: a PostgreSQL routine
+    // is addressed `order_total(integer)` and labelled `order_total` (standing ruling 2).
+    // Every consumer behind these handlers looks its target up in the flat schema list by
+    // name, so the name is the half that can still be used, and this pins which one crosses.
+    connMgrOverride = { activeConnection: pgConn };
+    render(<Studio />);
+    act(() =>
+      sidebarActions().onGenerateSelect?.({
+        path: ["app", "order_total(integer)"],
+        name: "order_total",
+        kind: "table",
+      }),
+    );
+    expect(mockHandleGenerateSelect).toHaveBeenCalledWith("order_total");
   });
 
   // #765: the connection owns the answer, so both halves reach the tree from the hook

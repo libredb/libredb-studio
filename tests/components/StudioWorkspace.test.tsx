@@ -764,6 +764,57 @@ describe("StudioWorkspace", () => {
     expect(mockHandleTableClick).not.toHaveBeenCalled();
   });
 
+  // --- objectActions: the four this shell lost, restored (U22, #789) ---
+  //
+  // Four, not six. `DataProfiler`, `CodeGenerator` and `TestDataGenerator` stayed mounted
+  // here with nothing able to set their table once the tree replaced the flat explorer,
+  // and `handleGenerateSelect` was left with no caller in this file at all. Per-table
+  // maintenance and creating a table were NOT lost here: this shell mounts neither
+  // destination and passed `onOpenMaintenance={noop}` and `onCreateTableClick={undefined}`
+  // to the explorer before any of it, so adding them now would be a new surface rather
+  // than a repair.
+  const usersObject: DatabaseObject = { path: ["app", "users"], name: "users", kind: "table" };
+
+  function sidebarActions(): Record<string, ((object: DatabaseObject) => void) | undefined> {
+    return capturedSidebarProps.objectActions as Record<string, ((object: DatabaseObject) => void) | undefined>;
+  }
+
+  test("the four actions this shell mounts a destination for reach it", () => {
+    const { queryByTestId } = renderWorkspace();
+
+    act(() => sidebarActions().onGenerateSelect?.(usersObject));
+    expect(mockHandleGenerateSelect).toHaveBeenCalledWith("users");
+
+    act(() => sidebarActions().onProfileObject?.(usersObject));
+    expect(queryByTestId("dataprofiler")).not.toBeNull();
+
+    act(() => sidebarActions().onGenerateCode?.(usersObject));
+    expect(queryByTestId("codegenerator")).not.toBeNull();
+
+    act(() => sidebarActions().onGenerateTestData?.(usersObject));
+    expect(queryByTestId("testdatagenerator")).not.toBeNull();
+  });
+
+  test("the two this shell has no destination for are not handed over", () => {
+    renderWorkspace();
+    expect(sidebarActions().onOpenMaintenance).toBeUndefined();
+    expect(sidebarActions().onCreateObject).toBeUndefined();
+    // The control: the four above ARE handed over, so this is the shell's own boundary and
+    // not an empty object.
+    expect(sidebarActions().onProfileObject).toBeDefined();
+  });
+
+  test("a host that turned a feature off is offered no menu item for the modal it removed", () => {
+    // Each handler follows the SAME flag as the modal it opens, so the menu cannot offer a
+    // way into a modal this render does not mount.
+    renderWorkspace({ features: ALL_FEATURES_OFF });
+    expect(sidebarActions().onGenerateCode).toBeUndefined();
+    expect(sidebarActions().onProfileObject).toBeUndefined();
+    expect(sidebarActions().onGenerateTestData).toBeUndefined();
+    // Generating a statement needs no modal, so it survives every flag.
+    expect(sidebarActions().onGenerateSelect).toBeDefined();
+  });
+
   // #765, embedded. The two shells render different chrome, so the wiring is asserted here
   // as well as in `tests/components/Studio.test.tsx`: a host connection that defers its
   // scan must reach the tree as deferred and be offered the adapter's own load action.

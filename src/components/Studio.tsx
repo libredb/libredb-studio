@@ -5,6 +5,7 @@ import type { CsvDelimiter } from "@/lib/export/csv";
 import { appFetch } from "@/lib/config/base-path";
 import React, { useState, useEffect, useRef } from "react";
 import { Sidebar, ConnectionsList } from "@/components/sidebar";
+import { flatTargetName, type TreeRowActionHandlers } from "@/components/object-tree";
 import { MobileNav } from "@/components/MobileNav";
 import { SchemaExplorer } from "@/components/schema-explorer";
 import { ConnectionModal } from "@/components/ConnectionModal";
@@ -437,6 +438,29 @@ export default function Studio() {
     onTableClick(object.name);
   };
 
+  /**
+   * The row menu's actions, all six of them (U22, #789).
+   *
+   * This shell is the one that has every destination: the modals below, the create-table
+   * modal, and the admin Operations page the maintenance items deep-link to. WHICH of them
+   * a given row is offered is not decided here - `rowActions` reads the provider's
+   * declaration for that row's kind - so this object is only the list of what the shell can
+   * do at all.
+   *
+   * `flatTargetName` is the narrowing to the old flat model, called here rather than inside
+   * the tree so that the tree stays in object-model terms and Task 25 has one name to grep.
+   * Maintenance is withheld from a non-admin because the page it opens is the admin one; the
+   * other five are the same for every role, exactly as the flat explorer had them.
+   */
+  const objectActions: TreeRowActionHandlers = {
+    onGenerateSelect: (object) => tabMgr.handleGenerateSelect(flatTargetName(object)),
+    onProfileObject: (object) => setProfilerTable(flatTargetName(object)),
+    onGenerateCode: (object) => setCodeGenTable(flatTargetName(object)),
+    onGenerateTestData: (object) => setTestDataTable(flatTargetName(object)),
+    onOpenMaintenance: isAdmin ? (object) => openMaintenance("tables", flatTargetName(object)) : undefined,
+    onCreateObject: () => setIsCreateTableModalOpen(true),
+  };
+
   const requestDeleteConnection = (id: string) => {
     setPendingDeleteConnectionId(id);
   };
@@ -532,6 +556,7 @@ export default function Studio() {
                 onDuplicateConnection={handleDuplicateConnection}
                 onAddConnection={() => setIsConnectionModalOpen(true)}
                 onObjectClick={onObjectClick}
+                objectActions={objectActions}
                 onShowDiagram={() => setShowDiagram(true)}
                 metadata={metadata}
                 objectScanDeferred={conn.objectScanDeferred}

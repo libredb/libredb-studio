@@ -30,7 +30,7 @@ FAIL=0
 # green summary line reported a group count no run had.
 # Drifted again before this line was touched: it read 30 while 32 `run_group` calls
 # existed, so every green run reported a group count no run had. 33 is the grep below.
-TOTAL_GROUPS=37
+TOTAL_GROUPS=38
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -333,6 +333,14 @@ run_group "Group 23: Object tree" \
 # else's reads. It renders the real tree against a fetch double rather than a mocked module.
 run_group "Group 24: Object tree first paint" \
   tests/components/object-tree/first-paint.test.tsx
+
+# Group 25: The object tree's row menu (U22, #789). Its own group for Group 23's reason -
+# it replaces globalThis.fetch for every test and restores it afterwards - and separate from
+# 23 and 24 because it renders the REAL menu against the real tree: a file sharing its
+# process that replaced a menu primitive with mock.module would make every assertion in it a
+# statement about the stub.
+run_group "Group 25: Object tree row menu" \
+  tests/components/object-tree/row-menu.test.tsx
 
 # Group 21: ui/scroll-area. Its own group for the same reason ui/resizable has one:
 # it is the only suite that renders the REAL @radix-ui/react-scroll-area, while

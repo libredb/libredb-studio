@@ -4,6 +4,7 @@ import type { CsvDelimiter } from "@/lib/export/csv";
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Sidebar } from "@/components/sidebar";
+import { flatTargetName, type TreeRowActionHandlers } from "@/components/object-tree";
 // MobileNav and mobile tab panels excluded in embedded mode — platform provides its own navigation
 import { QueryEditor, QueryEditorRef } from "@/components/QueryEditor";
 import { DataImportModal } from "@/components/DataImportModal";
@@ -303,6 +304,30 @@ export function StudioWorkspace({
     [conn.metadata, onTableClick],
   );
 
+  /**
+   * The row menu's actions in THIS shell, which is four of the six (U22, #789).
+   *
+   * The three modals below are mounted here and had nothing able to set their table once
+   * the tree replaced the flat explorer, and `handleGenerateSelect` had no caller left in
+   * this file at all. Each one follows the SAME feature flag as the modal it opens, so a
+   * host that turned a feature off is not offered a menu item that opens nothing - and the
+   * profiler follows `codeGenerator` because that is the flag its own mount is gated on.
+   *
+   * Per-table maintenance and creating a table are deliberately absent: this shell mounts
+   * neither destination, and passed `onOpenMaintenance={noop}` and
+   * `onCreateTableClick={undefined}` to the flat explorer before any of this. An absent
+   * handler is an item the tree does not draw.
+   */
+  const objectActions = useMemo<TreeRowActionHandlers>(
+    () => ({
+      onGenerateSelect: (object) => tabMgr.handleGenerateSelect(flatTargetName(object)),
+      onProfileObject: features.codeGenerator ? (object) => setProfilerTable(flatTargetName(object)) : undefined,
+      onGenerateCode: features.codeGenerator ? (object) => setCodeGenTable(flatTargetName(object)) : undefined,
+      onGenerateTestData: features.testDataGenerator ? (object) => setTestDataTable(flatTargetName(object)) : undefined,
+    }),
+    [features.codeGenerator, features.testDataGenerator, tabMgr],
+  );
+
   // === No-op callbacks for disabled features ===
   /** What the panel group may hold: below the breakpoint, only the body panel. */
   const isMobile = useIsMobile();
@@ -339,6 +364,7 @@ export function StudioWorkspace({
                 onEditConnection={noop}
                 onAddConnection={noop}
                 onObjectClick={onObjectClick}
+                objectActions={objectActions}
                 onShowDiagram={features.schemaDiagram ? () => setShowDiagram(true) : undefined}
                 metadata={conn.metadata}
                 objectScanDeferred={conn.objectScanDeferred}
