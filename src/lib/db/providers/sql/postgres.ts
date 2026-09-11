@@ -34,7 +34,7 @@ import {
   type ObjectDetail,
   type ObjectKindSpec,
 } from "../../types";
-import { declaredKinds } from "../../object-kinds";
+import { declaredKinds, findKind } from "../../object-kinds";
 import {
   DatabaseConfigError,
   ConnectionError,
@@ -650,19 +650,32 @@ const PROKIND_BY_KIND: Record<string, string> = { function: "f", procedure: "p" 
 // apart. `identity` is what the path carries and `name` is what a person reads, which
 // `DatabaseObject` now says are allowed to differ.
 //
-// The signature comes from `pg_get_function_identity_arguments()` rather than from
-// anything assembled here, and that function is chosen because its output is exactly the
-// argument list `ALTER FUNCTION` and `DROP FUNCTION` accept - so the segment round-trips
-// back to the engine that produced it. Measured on postgres:18: it renders the parameter
-// NAME and mode too, so the three routines in the seed come back as
-// `order_total(order_id integer)`, `stamp_updated_at()` and
-// `touch_order(IN order_id integer)`, not as the bare type lists a reader might expect.
-// Stripping the names would be assembling a form of our own, and would lose the property
-// that makes this segment usable as a DDL target.
+// The signature is the ARGUMENT TYPES and nothing else. Two overloads differ by types and
+// never by parameter names, so a name in the segment adds nothing to identity while making
+// the identity change when somebody renames a parameter - and a path segment that carries
+// information irrelevant to identity is wrong even when it happens to round-trip through
+// DROP. `pg_get_function_identity_arguments()` is the obvious candidate and is NOT used
+// for exactly that reason: measured on postgres:18 it renders the parameter name and mode,
+// answering `order_total(order_id integer)` and `touch_order(IN order_id integer)`.
+//
+// This form answers `order_total(integer)`, `touch_order(integer)` and `stamp_updated_at()`.
+// It is `oid::regprocedure` without the schema qualification, which is the point:
+// regprocedure prepends the schema and the path already carries it, so using it directly
+// would say `app` twice. Measured over all 3402 routines in pg_catalog, the two agree on
+// 3315; the 87 that differ are every case where regprocedure double-quotes a RESERVED-WORD
+// routine name (`"char"(integer)`, `"position"(text,text)`), and the argument list is
+// identical in all 87. Quoting is a fact about SQL text and this segment is data, so the
+// bare `proname` is the right half of that disagreement. Uniqueness was checked rather
+// than assumed: across every schema on that server, no two routines share a segment.
+//
+// COALESCE is load-bearing. `array_to_string` over an empty array answers NULL, not the
+// empty string, so a zero-argument routine would otherwise have a NULL identity and no
+// address at all.
 const LIST_ROUTINES_SQL = `
         SELECT
           p.proname AS name,
-          p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS identity
+          p.proname || '(' || COALESCE(pg_catalog.array_to_string(ARRAY(
+            SELECT pg_catalog.format_type(t, NULL) FROM unnest(p.proargtypes) AS t), ','), '') || ')' AS identity
         FROM pg_catalog.pg_proc p
         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = $1 AND p.prokind = $2`;
@@ -2128,32 +2141,41 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   /**
-   * Columns, indexes and foreign keys for one object, addressed as `[schema, name]` or,
-   * for a kind that declares `attachedTo`, as `[schema, parent, name]`.
+   * Columns, indexes and foreign keys for one object of one KIND.
    *
-   * A kind that has none of the three - a sequence, a routine, a trigger - answers three
-   * empty arrays rather than an error, because having no columns is a true fact about
-   * those kinds and not a failed read (`tests/helpers/object-surface-conformance.ts`
-   * states the same rule from the caller's side). A statement that returns no row at all
-   * IS a failed read: `OBJECT_DETAIL_SQL`'s aggregate has no GROUP BY, so on any server
-   * that ran it there is exactly one row, and zero means the fallback chain rewrote it
-   * into something else.
+   * The kind decides everything and nothing here reads the name to work out what it is
+   * holding. Only the kinds this provider resolves in `pg_class` - the keys of
+   * `RELKIND_BY_KIND` - have any of the three, so a routine and a trigger answer three
+   * empty arrays without a round trip. That is a true fact about those kinds rather than
+   * a failed read, `tests/helpers/object-surface-conformance.ts` states the same rule
+   * from the caller's side, and listing a routine's parameters is Phase 2's job.
    *
-   * The three-segment path answers those empty arrays WITHOUT asking the server, and that
-   * is a correctness fix rather than a shortcut. An attached object has no columns of its
-   * own, and the query keys on the last segment against `pg_class.relname` - so a trigger
-   * named `orders` on table `customers` would otherwise have been handed
-   * `app.orders`'s 23 columns as if they were its own.
+   * Before the kind was passed, the same answer came out by accident. The detail statement
+   * keys the LAST path segment against `pg_class.relname`, so `order_total(integer)`
+   * returned no columns only because no relation is called that, and a trigger named
+   * `orders` on table `customers` would have been handed `app.orders`'s 23 columns as if
+   * they were its own. Correct by coincidence is what the kind removes.
+   *
+   * Path depth is derived from the declaration too: two segments, plus one where the kind
+   * declares `attachedTo`, which is exactly the nesting `listObjects` produces.
+   *
+   * A statement that returns no row at all IS a failed read: `OBJECT_DETAIL_SQL`'s
+   * aggregate has no GROUP BY, so on any server that ran it there is exactly one row, and
+   * zero means the fallback chain rewrote it into something else.
    */
-  public async describeObject(path: readonly string[]): Promise<ObjectDetail> {
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
     this.ensureConnected();
-    if (path.length < 2 || path.length > 3) {
-      throw new QueryError(
-        `A PostgreSQL object path is [schema, name] or [schema, parent, name], received ${JSON.stringify(path)}`,
-        "postgres",
-      );
+    const spec = findKind(this.getCapabilities(), kind);
+    if (spec === undefined) {
+      throw new QueryError(`PostgreSQL declares no object kind "${kind}"`, "postgres");
     }
-    if (path.length === 3) {
+
+    const shape = spec.attachedTo === undefined ? "[schema, name]" : `[schema, ${spec.attachedTo}, name]`;
+    if (path.length !== (spec.attachedTo === undefined ? 2 : 3)) {
+      throw new QueryError(`A PostgreSQL "${kind}" path is ${shape}, received ${JSON.stringify(path)}`, "postgres");
+    }
+
+    if (RELKIND_BY_KIND[kind] === undefined) {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
     }
 

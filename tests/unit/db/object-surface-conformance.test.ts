@@ -148,10 +148,12 @@ describe("assertObjectSurface", () => {
       { path: ["app", "daily_sales"], name: "daily_sales", kind: "view" },
     ];
     const asked: (readonly string[])[] = [];
+    const askedKinds: string[] = [];
     const provider = fakeProvider({
       listObjects: async () => listed,
-      describeObject: async (path: readonly string[]) => {
+      describeObject: async (path: readonly string[], kind: string) => {
         asked.push(path);
+        askedKinds.push(kind);
         return { path, columns: [], indexes: [], foreignKeys: [] };
       },
     });
@@ -164,6 +166,9 @@ describe("assertObjectSurface", () => {
     expect(asked).toHaveLength(1);
     expect(asked[0]).toBe(listed[0].path);
     expect(asked[0]).not.toBe(typed);
+    // The kind travels with the path, so a provider never has to infer what it holds
+    // from what the name happens to match.
+    expect(askedKinds).toEqual(["view"]);
   });
 
   // A tree addresses by path, so two objects sharing one is two rows it cannot tell

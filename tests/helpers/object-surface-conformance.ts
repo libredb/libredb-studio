@@ -6,7 +6,7 @@
  *   2. countObjects never answers for a kind the provider did not declare;
  *   3. every object's path starts with its container's path, so the tree can address it;
  *   4. no two objects in one listing share a path, so the tree can tell them apart;
- *   5. describeObject accepts a path listObjects ACTUALLY PRODUCED.
+ *   5. describeObject accepts a path listObjects ACTUALLY PRODUCED, with its kind.
  *
  * Invariant 5 is exactly that and nothing more: a routine, a trigger and a sequence
  * legitimately have no columns, so an assertion that `columns` is non-empty would fail
@@ -114,6 +114,9 @@ export async function assertObjectSurface(
     );
   }
 
-  const detail = await provider.describeObject!(sample.path);
+  // The kind travels with the path. A caller always has it, because an object is only
+  // ever reached through its kind's folder, and without it a provider has to infer what
+  // it is holding from what the name happens to match.
+  const detail = await provider.describeObject!(sample.path, sample.kind);
   expect(detail.path).toEqual([...sample.path]);
 }

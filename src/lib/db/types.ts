@@ -653,8 +653,17 @@ export interface DatabaseProvider {
   countObjects?(container: readonly string[]): Promise<Record<string, KindCount>>;
   /** Objects of one kind in one container. Names only: columns come from describeObject. */
   listObjects?(container: readonly string[], kind: string): Promise<DatabaseObject[]>;
-  /** Columns, indexes and foreign keys for one object. */
-  describeObject?(path: readonly string[]): Promise<ObjectDetail>;
+  /**
+   * Columns, indexes and foreign keys for one object.
+   *
+   * `kind` is required, not a convenience. Without it a provider has to work out what it
+   * is holding from what the path's last segment happens to match in a catalog, and
+   * "answers nothing because no relation is called that" is not the same as "this is a
+   * routine and routines have no columns" - the first is correct by accident and stops
+   * being correct the moment a name collides. The caller always has the kind, because an
+   * object is only ever reached through its kind's folder.
+   */
+  describeObject?(path: readonly string[], kind: string): Promise<ObjectDetail>;
 
   /**
    * Get list of table names

@@ -4123,6 +4123,7 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.connect();
 
     await expect(provider.listObjects(["app"], "package")).rejects.toThrow(/declares no object kind "package"/);
+    await expect(provider.describeObject(["app", "x"], "package")).rejects.toThrow(/declares no object kind "package"/);
     await provider.disconnect();
   });
 
@@ -4130,7 +4131,13 @@ describe("PostgreSQL object listing and detail", () => {
     mockQueryFn = async (sql, params) => {
       if (sql.includes("prokind")) {
         expect(params).toEqual(["app", "p"]);
-        return { rows: [{ name: "touch_order", identity: "touch_order(IN order_id integer)" }] };
+        // Overloads differ by argument TYPES and never by parameter names, so a name in
+        // the segment adds nothing to identity and would change it when somebody renames
+        // a parameter. `pg_get_function_identity_arguments()` carries those names, which
+        // is why it is not used.
+        expect(sql).not.toContain("pg_get_function_identity_arguments");
+        expect(sql).toContain("proargtypes");
+        return { rows: [{ name: "touch_order", identity: "touch_order(integer)" }] };
       }
       if (sql.includes("tgisinternal")) {
         return { rows: [{ name: "orders_stamp_updated_at", parent: "orders" }] };
@@ -4153,7 +4160,7 @@ describe("PostgreSQL object listing and detail", () => {
     // The path carries the engine's own identity form; the label stays readable.
     expect(await provider.listObjects(["app"], "procedure")).toEqual([
       {
-        path: ["app", "touch_order(IN order_id integer)"],
+        path: ["app", "touch_order(integer)"],
         name: "touch_order",
         kind: "procedure",
         rowCount: undefined,
@@ -4250,7 +4257,7 @@ describe("PostgreSQL object listing and detail", () => {
     const provider = makeProvider();
     await provider.connect();
 
-    const detail = await provider.describeObject(["app", "orders"]);
+    const detail = await provider.describeObject(["app", "orders"], "table");
     expect(detail.path).toEqual(["app", "orders"]);
     expect(detail.columns).toEqual([
       {
@@ -4284,7 +4291,7 @@ describe("PostgreSQL object listing and detail", () => {
 
     // A sequence, a routine and a trigger all land here. Having no columns is a true fact
     // about those kinds, so it is an answer rather than an error.
-    const detail = await provider.describeObject(["app", "invoice_number_seq"]);
+    const detail = await provider.describeObject(["app", "invoice_number_seq"], "sequence");
     expect(detail).toEqual({
       path: ["app", "invoice_number_seq"],
       columns: [],
@@ -4294,10 +4301,11 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.disconnect();
   });
 
-  test("an attached object describes as empty without asking the server", async () => {
-    // Not an optimisation. The detail statement keys the LAST segment against
-    // pg_class.relname, so a trigger named `orders` on table `customers` would have been
-    // handed app.orders's columns as if they were its own.
+  test("a kind with no relation behind it describes as empty without asking the server", async () => {
+    // Not an optimisation, and not a name test. The detail statement keys the LAST segment
+    // against pg_class.relname, so a trigger named `orders` on table `customers` would
+    // have been handed app.orders's columns as if they were its own. The KIND says there
+    // is no relation to read; the name only ever happened not to match one.
     let asked = 0;
     mockQueryFn = async (sql) => {
       if (sql.includes("object_columns")) asked += 1;
@@ -4306,8 +4314,16 @@ describe("PostgreSQL object listing and detail", () => {
     const provider = makeProvider();
     await provider.connect();
 
-    expect(await provider.describeObject(["app", "customers", "orders"])).toEqual({
+    expect(await provider.describeObject(["app", "customers", "orders"], "trigger")).toEqual({
       path: ["app", "customers", "orders"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    // A routine is the case the KIND settles and a name cannot: `order_total(integer)`
+    // answered no columns before this only because no relation is called that.
+    expect(await provider.describeObject(["app", "order_total(integer)"], "function")).toEqual({
+      path: ["app", "order_total(integer)"],
       columns: [],
       indexes: [],
       foreignKeys: [],
@@ -4323,7 +4339,7 @@ describe("PostgreSQL object listing and detail", () => {
     const provider = makeProvider();
     await provider.connect();
 
-    await expect(provider.describeObject(["app", "orders"])).rejects.toThrow(/No detail row for app\.orders/);
+    await expect(provider.describeObject(["app", "orders"], "table")).rejects.toThrow(/No detail row for app\.orders/);
     await provider.disconnect();
   });
 
@@ -4332,8 +4348,11 @@ describe("PostgreSQL object listing and detail", () => {
     const provider = makeProvider();
     await provider.connect();
 
-    await expect(provider.describeObject(["app"])).rejects.toThrow(/\[schema, name\]/);
-    await expect(provider.describeObject(["a", "b", "c", "d"])).rejects.toThrow(/\[schema, parent, name\]/);
+    await expect(provider.describeObject(["app"], "table")).rejects.toThrow(/"table" path is \[schema, name\]/);
+    await expect(provider.describeObject(["a", "b", "c"], "table")).rejects.toThrow(/"table" path is \[schema, name\]/);
+    await expect(provider.describeObject(["app", "t"], "trigger")).rejects.toThrow(
+      /"trigger" path is \[schema, table, name\]/,
+    );
     await provider.disconnect();
   });
 

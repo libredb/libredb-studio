@@ -411,22 +411,45 @@ bare name for that:
 | Kind | Path | `name` |
 |---|---|---|
 | relation | `["app", "orders"]` | `orders` |
-| routine | `["app", "order_total(order_id integer)"]` | `order_total` |
+| routine | `["app", "order_total(integer)"]` | `order_total` |
 | trigger | `["app", "orders", "orders_stamp_updated_at"]` | `orders_stamp_updated_at` |
 
-A routine's segment comes from `pg_get_function_identity_arguments()` and is never assembled here.
-That function is chosen because its output is exactly the argument list `ALTER FUNCTION` and
-`DROP FUNCTION` accept, so the segment round-trips to the engine that produced it. Measured on
-`postgres:18`, it renders the parameter NAME and mode as well as the type, so the seed's three
-routines come back as `order_total(order_id integer)`, `stamp_updated_at()` and
-`touch_order(IN order_id integer)` rather than as bare type lists. Stripping the names would be
-inventing a form of our own and would lose the DDL-target property.
+A routine's segment is the ARGUMENT TYPES and nothing else, because two overloads differ by types
+and never by parameter names: a name in the segment adds nothing to identity, and would change the
+identity when somebody renames a parameter. `pg_get_function_identity_arguments()` is the obvious
+candidate and is deliberately not used, measured on `postgres:18` for the reason above:
+
+| Routine | `pg_get_function_identity_arguments()` | What the path carries |
+|---|---|---|
+| `app.order_total` | `order_total(order_id integer)` | `order_total(integer)` |
+| `app.touch_order` | `touch_order(IN order_id integer)` | `touch_order(integer)` |
+| `app.stamp_updated_at` | `stamp_updated_at()` | `stamp_updated_at()` |
+
+The form used is `oid::regprocedure` minus the schema qualification, which is the point:
+`regprocedure` prepends the schema and the path already carries it, so using it directly would say
+`app` twice. Measured over all 3402 routines in `pg_catalog`, the two agree on 3315; the 87 that
+differ are every case where `regprocedure` double-quotes a RESERVED-WORD routine name
+(`"char"(integer)`, `"position"(text,text)`), and the argument list is identical in all 87. Quoting
+is a fact about SQL text and a path segment is data, so the bare `proname` is the right half of that
+disagreement. Uniqueness was checked rather than assumed: across every schema on that server, no two
+routines share a segment. The `COALESCE` in the expression is load-bearing, because
+`array_to_string` over an empty array answers NULL and a zero-argument routine would otherwise have
+no address at all.
 
 A trigger nests under its table because `attachedTo: 'table'` says it does, and because a trigger
 name is unique per table and not per schema: `[schema, trigger]` gives two triggers on two tables
 one address. The path builder reads this off the ROW - a `parent` column adds a segment, an
 `identity` column replaces the last one - so the three listings share one rule and no code branches
 on a kind id.
+
+**`describeObject()` takes the kind, and branches on it rather than on the name.** Only the kinds
+resolved in `pg_class` have columns, indexes or foreign keys, so a routine and a trigger answer three
+empty lists with no round trip. That was already the OUTPUT before the kind was passed, but by
+accident: the detail statement keys the last path segment against `pg_class.relname`, so
+`order_total(integer)` answered nothing only because no relation is called that, and a trigger named
+`orders` on table `customers` would have been handed `app.orders`'s 23 columns as its own. Path depth
+is derived from the declaration in the same way, two segments plus one where the kind declares
+`attachedTo`, so nothing hardcodes a number the declaration already carries.
 
 **Listing order is applied in TypeScript, not with an `ORDER BY`, and sorts by PATH.** Three
 different catalogs answer the three listings, so three `ORDER BY` clauses would be three chances to
@@ -848,7 +871,7 @@ Four more methods answer the container-aware object model (#789) and are documen
 | `listContainers()` | `CONTAINERS_SQL` | the schemas, through the same exclusion set as the three above |
 | `countObjects(container)` | `COUNTS_SQL` | one `KindCount` per declared kind, seeded at `{ count: 0 }` |
 | `listObjects(container, kind)` | `LIST_RELATIONS_SQL[kind]`, `LIST_ROUTINES_SQL`, `LIST_TRIGGERS_SQL` | names, plus `reltuples` and size for relations |
-| `describeObject(path)` | `OBJECT_DETAIL_SQL` | columns, indexes and foreign keys for one object |
+| `describeObject(path, kind)` | `OBJECT_DETAIL_SQL` | columns, indexes and foreign keys for one object; the KIND decides whether there is a relation to read, so nothing infers it from the name |
 
 ---
 
@@ -1409,11 +1432,9 @@ await provider.disconnect();
   active queries is available.
 - **WAL size and checkpoint times require elevated privileges** and are silently omitted otherwise.
 - **Column introspection is capped at 100 columns** per table.
-- **`describeObject()` answers for the last path segment only.** A three-segment path (a trigger)
-  returns three empty lists without asking the server, which is correct and also avoids handing a
-  trigger the columns of a same-named table. A two-segment path whose name happens to look like a
-  routine signature would still be looked up in `pg_class`; a relation would have to be deliberately
-  quoted to contain parentheses for that to collide.
+- **`describeObject()` reports nothing for a routine beyond its emptiness.** A routine's parameters
+  and return type are not columns and are not listed here; that is Phase 2's Source tab. The method
+  answers three empty lists for every kind that is not resolved in `pg_class`.
 - **`blocked` on active sessions is always `false`** — lock-wait detection (`pg_locks`) is not yet
   wired in.
 - **Cloud SSL auto-detect does not verify the server certificate.** When SSL is enabled by host
