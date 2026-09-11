@@ -1865,6 +1865,84 @@ describe("the object surface declaration", () => {
   });
 });
 
+/**
+ * The statement text itself, pinned by LITERAL.
+ *
+ * `objectReplies()` above keys every reply by calling `cassandraObjectListCql`, the same
+ * builder the provider calls, so the fake dispatches on a statement the test itself
+ * built. That is standing ruling 5b's blind spot: a mutation to a catalog table name, to
+ * a projection or to the `WHERE keyspace_name =` clause moves BOTH sides together and no
+ * behavioural assertion in this file can see it. Task 16 found the identical shape in its
+ * own suite.
+ *
+ * These assertions bound it. The literals below are the statements measured against
+ * Apache Cassandra 5.0.9 and they are written out by hand, so the builder has one reader
+ * that does not move with it. The second test then drives the real provider and asserts
+ * the statements it ISSUED against the same literals, which pins the dispatch too: a
+ * builder that answered something else would still be matched by the fake, and would no
+ * longer be matched here.
+ */
+describe("the object-surface statement text, pinned by literal", () => {
+  const LISTING_CQL: Readonly<Record<string, string>> = {
+    table: "SELECT table_name FROM system_schema.tables WHERE keyspace_name = 'probe'",
+    materialized_view: "SELECT view_name FROM system_schema.views WHERE keyspace_name = 'probe'",
+    index: "SELECT index_name, table_name, options FROM system_schema.indexes WHERE keyspace_name = 'probe'",
+    type: "SELECT type_name FROM system_schema.types WHERE keyspace_name = 'probe'",
+    function: "SELECT function_name, argument_types FROM system_schema.functions WHERE keyspace_name = 'probe'",
+    aggregate: "SELECT aggregate_name, argument_types FROM system_schema.aggregates WHERE keyspace_name = 'probe'",
+    trigger: "SELECT trigger_name, table_name FROM system_schema.triggers WHERE keyspace_name = 'probe'",
+  };
+
+  test("every kind's listing statement is the catalog, the projection and the keyspace predicate", () => {
+    for (const [kind, cql] of Object.entries(LISTING_CQL)) {
+      expect(cassandraObjectListCql(KEYSPACE, kind)).toBe(cql);
+    }
+  });
+
+  test("the three statements outside the listing builder are pinned the same way", () => {
+    expect(CASSANDRA_KEYSPACE_LIST_CQL).toBe("SELECT keyspace_name FROM system_schema.keyspaces");
+    expect(cassandraObjectColumnsCql(KEYSPACE, "customers")).toBe(
+      "SELECT column_name, type, kind, position, clustering_order FROM system_schema.columns " +
+        "WHERE keyspace_name = 'probe' AND table_name = 'customers'",
+    );
+    expect(cassandraTypeFieldsCql(KEYSPACE, "address")).toBe(
+      "SELECT field_names, field_types FROM system_schema.types WHERE keyspace_name = 'probe' AND type_name = 'address'",
+    );
+  });
+
+  test("a keyspace holding a quote is escaped into the predicate rather than closing it", () => {
+    expect(cassandraObjectListCql("o'brien", "table")).toBe(
+      "SELECT table_name FROM system_schema.tables WHERE keyspace_name = 'o''brien'",
+    );
+  });
+
+  test("countObjects ISSUES those seven statements, so the fake's dispatch is pinned too", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    await provider.countObjects!([KEYSPACE]);
+
+    expect([...session.asked].sort()).toEqual(Object.values(LISTING_CQL).sort());
+  });
+
+  test("listObjects and describeObject issue them too, by literal", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    await provider.listObjects!([KEYSPACE], "function");
+    await provider.describeObject!([KEYSPACE, "customers"], "table");
+    await provider.describeObject!([KEYSPACE, "address"], "type");
+
+    expect(session.asked).toEqual([
+      LISTING_CQL.function!,
+      "SELECT column_name, type, kind, position, clustering_order FROM system_schema.columns " +
+        "WHERE keyspace_name = 'probe' AND table_name = 'customers'",
+      LISTING_CQL.index!,
+      "SELECT field_names, field_types FROM system_schema.types WHERE keyspace_name = 'probe' AND type_name = 'address'",
+    ]);
+  });
+});
+
 describe("the object surface, against the committed fixture", () => {
   test("satisfies the shared conformance contract", async () => {
     const { provider } = await connectedProvider(objectReplies());
@@ -1893,6 +1971,23 @@ describe("the object surface, against the committed fixture", () => {
       { path: [KEYSPACE], name: KEYSPACE, level: 0, isSessionDefault: true },
       { path: ["system_reports"], name: "system_reports", level: 0, isSessionDefault: false },
     ]);
+  });
+
+  test("a connection pinning NO keyspace still opens the tree, with no container marked default", async () => {
+    const { provider } = await connectedProvider(objectReplies(), { database: undefined });
+
+    const containers = await provider.listContainers!();
+
+    expect(containers).toEqual([
+      { path: [KEYSPACE], name: KEYSPACE, level: 0, isSessionDefault: false },
+      { path: ["system_reports"], name: "system_reports", level: 0, isSessionDefault: false },
+    ]);
+  });
+
+  test('an EMPTY keyspace string is the same fact as none, and matches no keyspace named ""', async () => {
+    const { provider } = await connectedProvider(objectReplies(), { database: "" });
+
+    expect((await provider.listContainers!()).every((container) => container.isSessionDefault === false)).toBe(true);
   });
 
   test("nothing nests under a keyspace, so a parent answers an empty list", async () => {
@@ -2009,7 +2104,7 @@ describe("the object surface, against the committed fixture", () => {
     expect(counting).toContain(session.asked[0]);
   });
 
-  test("a refused catalog read reports the server's own sentence against every kind", async () => {
+  test("a refused catalog read reports the server's own sentence, and ONLY against the kind it refused", async () => {
     const refusal = responseError(8448, "User probe has no SELECT permission on <table system_schema.tables>");
     const { provider } = await connectedProvider(
       objectReplies({ [cassandraObjectListCql(KEYSPACE, "table")!]: refusal }),
@@ -2017,10 +2112,36 @@ describe("the object surface, against the committed fixture", () => {
 
     const counts = await provider.countObjects!([KEYSPACE]);
 
-    expect(Object.values(counts).every((count) => "unavailable" in count)).toBe(true);
     expect(counts.table).toEqual({
       unavailable: "User probe has no SELECT permission on <table system_schema.tables>",
     });
+    // The six reads that SUCCEEDED keep the numbers they measured. One refusal used to
+    // take all seven down with it, which threw away six measured facts and told the tree
+    // six folders were unreadable when they had just been read.
+    expect(counts).toEqual({
+      table: { unavailable: "User probe has no SELECT permission on <table system_schema.tables>" },
+      materialized_view: { count: 1 },
+      index: { count: 3 },
+      type: { count: 1 },
+      function: { count: 4 },
+      aggregate: { count: 1 },
+      trigger: { count: 1 },
+    });
+  });
+
+  test("two kinds refused for DIFFERENT reasons each carry their own sentence", async () => {
+    const { provider } = await connectedProvider(
+      objectReplies({
+        [cassandraObjectListCql(KEYSPACE, "table")!]: responseError(8448, "no SELECT permission on tables"),
+        [cassandraObjectListCql(KEYSPACE, "trigger")!]: responseError(8448, "no SELECT permission on triggers"),
+      }),
+    );
+
+    const counts = await provider.countObjects!([KEYSPACE]);
+
+    expect(counts.table).toEqual({ unavailable: "no SELECT permission on tables" });
+    expect(counts.trigger).toEqual({ unavailable: "no SELECT permission on triggers" });
+    expect(counts.index).toEqual({ count: 3 });
   });
 
   test("an undeclared kind is refused by name rather than answered empty", async () => {

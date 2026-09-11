@@ -346,7 +346,7 @@ function containerKeyspace(capabilities: ProviderCapabilities, container: readon
 }
 
 /**
- * The server's own sentence, verbatim, against every kind the failed read covered.
+ * The server's own sentence, verbatim, for ONE kind whose read was refused.
  *
  * Deliberately NOT through the provider's error mapping: that gives a THROWN error a
  * type and this product's prefix, and nothing here throws. The sentence is rendered to
@@ -355,9 +355,8 @@ function containerKeyspace(capabilities: ProviderCapabilities, container: readon
  * role, `system_schema` is readable for every table in every keyspace, so a denial here
  * is abnormal and reporting it as an empty keyspace would hide it.
  */
-function unavailableCounts(ids: readonly string[], error: unknown): Record<string, KindCount> {
-  const reason = error instanceof Error ? error.message : String(error);
-  return Object.fromEntries(ids.map((id) => [id, { unavailable: reason } as KindCount]));
+function refusalReason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -465,6 +464,12 @@ function toIndexSchema(row: CassandraRow): IndexSchema {
  * `system.local` carries no session state, so there is no server-side answer to prefer
  * over the one the driver was handed.
  *
+ * A connection pinning NO keyspace passes `""` here and every container is then answered
+ * with `isSessionDefault: false`, which needs no guard of its own because no keyspace can
+ * be named `""`. That connection is legal (`validate()` requires a host and a data centre,
+ * not a keyspace) and it is the one a container tree exists to serve: the tree is how
+ * somebody picks a keyspace when the connection names none.
+ *
  * This is the one place a path is CONSTRUCTED rather than read, which is the single
  * exception standing ruling 5g allows to the no-positional-index rule.
  */
@@ -500,6 +505,14 @@ export async function listContainers(
  * carries their number, a kind whose read answered none carries `{ count: 0 }`, and a
  * refused read carries the server's own sentence.
  *
+ * `Promise.allSettled` and not `Promise.all`, because those three states are PER KIND.
+ * One `catch` around `Promise.all` reported the first refusal against all seven kinds,
+ * which threw away six counts that had already been measured and told the tree six
+ * folders were unreadable moments after reading them. Cassandra makes this reachable
+ * rather than theoretical: `GRANT SELECT` is per table on `system_schema`, so a role can
+ * hold `system_schema.tables` and not `system_schema.triggers`, and each refused kind
+ * then carries the sentence the server wrote about THAT table.
+ *
  * There is no seeding pass, and that is stronger than one rather than a shortcut past
  * it. The requirement seeding exists for is that a declared-and-empty kind keeps its 0
  * badge instead of vanishing, and it vanishes when the record is built from the ROWS a
@@ -521,24 +534,29 @@ export async function countObjects(
   const declared = declaredKinds(capabilities);
   const counts: Record<string, KindCount> = {};
 
-  try {
-    await Promise.all(
-      declared.map(async (kind) => {
-        const cql = cassandraObjectListCql(keyspace, kind.id);
-        if (cql === undefined) {
-          counts[kind.id] = { unavailable: `Cassandra has no statement that lists the kind "${kind.id}"` };
-          return;
-        }
-        counts[kind.id] = { count: (await transport.execute(cql)).rows.length };
-      }),
-    );
-    return counts;
-  } catch (error) {
-    return unavailableCounts(
-      declared.map((kind) => kind.id),
-      error,
-    );
-  }
+  const settled = await Promise.allSettled(
+    declared.map(async (kind) => {
+      const cql = cassandraObjectListCql(keyspace, kind.id);
+      if (cql === undefined) return undefined;
+      return (await transport.execute(cql)).rows.length;
+    }),
+  );
+
+  declared.forEach((kind, index) => {
+    // `Promise.allSettled` answers one entry per input, in order, so the index a
+    // `forEach` over the same array hands back always lands on this kind's outcome.
+    const outcome = settled[index]!;
+    if (outcome.status === "rejected") {
+      counts[kind.id] = { unavailable: refusalReason(outcome.reason) };
+      return;
+    }
+    counts[kind.id] =
+      outcome.value === undefined
+        ? { unavailable: `Cassandra has no statement that lists the kind "${kind.id}"` }
+        : { count: outcome.value };
+  });
+
+  return counts;
 }
 
 /**

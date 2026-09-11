@@ -3,12 +3,12 @@
 -- The cassandra:5.0.9 image has NO init-script directory: its entrypoint runs
 -- `cassandra -f` and never scans a mounted folder, and the node is not accepting CQL
 -- at the moment the entrypoint starts anyway. So this file is mounted read-only at
--- /docker-entrypoint-initdb.d/01-object-fixture.cql purely so it is INSIDE the
--- container, and it is applied by hand once the node reports UN:
+-- /fixtures/01-object-fixture.cql purely so it is INSIDE the container, and it is
+-- applied by hand once the node reports UN:
 --
 --   docker compose -f database-compose.yml up -d cassandra
 --   until docker exec libredb-cassandra nodetool status | grep -q '^UN'; do sleep 5; done
---   docker exec libredb-cassandra cqlsh -f /docker-entrypoint-initdb.d/01-object-fixture.cql
+--   docker exec libredb-cassandra cqlsh -f /fixtures/01-object-fixture.cql
 --
 -- The same recipe is in docs/providers/cassandra.md, which is where a reader looks.
 --

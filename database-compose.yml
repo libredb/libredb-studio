@@ -656,11 +656,15 @@ services:
       # it can be applied by hand once `nodetool status` reports UN:
       #
       #   docker exec libredb-cassandra cqlsh -f \
-      #     /docker-entrypoint-initdb.d/01-object-fixture.cql
+      #     /fixtures/01-object-fixture.cql
+      #
+      # The target is /fixtures and NOT the /docker-entrypoint-initdb.d every other
+      # service here uses, because that name is a promise this image does not keep: it
+      # would tell a reader the file runs itself at start, and nothing runs it.
       #
       # The full recipe, including the optional trigger step, is in
       # docs/providers/cassandra.md.
-      - ./docker/cassandra-init:/docker-entrypoint-initdb.d:ro
+      - ./docker/cassandra-init:/fixtures:ro
     # No seed sidecar, because there is nothing for one to hook into: see the volume
     # above. The object fixture (issue #789) builds keyspace `probe` with three tables, a
     # materialized view, three indexes of two different catalog kinds, a user-defined

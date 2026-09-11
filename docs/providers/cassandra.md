@@ -770,6 +770,16 @@ succeeds). None of that makes a trigger a thing the engine does not have; it mak
 operator installs. Withholding the folder would hide an object somebody created. Phase 1 shows names
 rather than bodies anyway, so no kind here declares `hasSource`.
 
+**So a clean apply of the fixture leaves `trigger: 0`, and that is the correct reading, not a
+defect.** The block above is the only step in this fixture that needs a JDK on the machine applying
+it, and `cqlsh -f /fixtures/01-object-fixture.cql` does not run it: the fixture creates every other
+declared kind and stops short of `CREATE TRIGGER`, because the statement fails on a node that has
+never loaded the class. An acceptance run that applies the fixture and nothing else will therefore
+see six folders with counts and a Triggers folder badged 0, which is the engine honestly reporting an
+empty `system_schema.triggers`. Run the four commands above and the badge becomes 1. If it stays 0
+after them, check `nodetool reloadtriggers` ran against the same container, because that is the step
+whose omission produces the identical badge.
+
 #### An index is addressed by keyspace; a trigger is not
 
 The two kinds look alike in the catalog and are addressed differently, because the **engine** treats
@@ -817,6 +827,14 @@ a catalog read.
 `system.local` carries no session state, so there is no server-side answer to prefer over the one the
 driver was handed.
 
+A connection that pins **no** keyspace still opens the tree, and gets the full keyspace list with
+nothing marked as the session default. `validate()` ([§4](#4-connection)) requires a host and a
+local data centre and deliberately not a keyspace, so such a connection is legal and connectable, and
+it is precisely the connection a container tree exists to serve: the tree is how somebody picks a
+keyspace when the connection names none. `getSchema()` beside it still refuses one, and that refusal
+is right for a flat table list, which has no keyspace to read. The comparison needs no guard of its
+own: it is an equality against `""`, and no keyspace can be named `""`.
+
 #### Nothing branches on `system_schema.indexes.kind`
 
 The fixture holds `COMPOSITES` (a plain secondary index, and one over a map's keys) and `CUSTOM` (a
@@ -842,6 +860,12 @@ and a declared-and-empty kind keeps its `{ count: 0 }` badge instead of vanishin
 carries the server's own sentence verbatim under `unavailable`, never a zero — measured with a
 least-privilege role, `system_schema` is readable for every table in every keyspace, so a denial there
 is abnormal and an empty keyspace would hide it.
+
+The seven reads are settled **independently**, so a refusal is reported against the kind it refused
+and against no other. Cassandra makes that distinction real rather than theoretical: `GRANT SELECT` is
+per table on `system_schema`, so a role can hold `system_schema.tables` and not
+`system_schema.triggers`, and the two folders then carry two different sentences. Reporting one
+refusal against all seven would throw away six counts that had already been measured.
 
 #### `describeObject()` takes the KIND, and the kind decides everything
 
@@ -1089,14 +1113,19 @@ until docker exec libredb-cassandra nodetool status | grep -q '^UN'; do sleep 5;
 # THE IMAGE HAS NO INIT-SCRIPT DIRECTORY: its entrypoint runs `cassandra -f` and never scans a
 # mounted folder, and the node is not accepting CQL when the entrypoint starts. The compose
 # service mounts the fixture read-only so this one command can apply it.
-docker exec libredb-cassandra cqlsh -f /docker-entrypoint-initdb.d/01-object-fixture.cql
+docker exec libredb-cassandra cqlsh -f /fixtures/01-object-fixture.cql
 ```
 
 That builds keyspace `probe` with three tables, a materialized view, three indexes of two different
 catalog kinds, a user-defined type, four functions including an overloaded pair, an aggregate — and a
 keyspace called `system_reports`, which exists so the "exact name, never a prefix" measurement in
-[§6.4](#64-the-object-surface-789) stays refutable. The **trigger** needs the extra operator step in
-that section, because its class has to be loadable on the node first.
+[§6.4](#64-the-object-surface-789) stays refutable.
+
+**It does NOT build the trigger, so the Triggers folder reads 0 after this command.** That is the one
+kind whose class has to be loadable on the node before `CREATE TRIGGER` is accepted, which needs a JDK
+and a jar copy. The four commands are in [§6.4](#64-the-object-surface-789) under "Why `trigger` IS
+declared"; run them and the badge becomes 1. A 0 there after a clean apply is the engine reporting an
+empty `system_schema.triggers`, not a defect in this provider.
 
 The compose service also rewrites two settings into `cassandra.yaml` before the node starts, and
 without them this recipe measures a configuration rather than an engine: `materialized_views_enabled`

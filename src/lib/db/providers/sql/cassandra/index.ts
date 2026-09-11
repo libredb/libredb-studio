@@ -654,11 +654,19 @@ export class CassandraProvider extends SQLBaseProvider {
    * `getCapabilities()` is called rather than read from a field, so a test that swaps a
    * two-level declaration in reaches the same derivation the real one does - which is
    * how standing ruling 5g's positional-index class is pinned on a one-level engine.
+   *
+   * `listContainers` deliberately does NOT call `requireKeyspace()`, unlike `getSchema()`
+   * beside it. `validate()` requires a host and a data centre and not a keyspace, so a
+   * keyspace-less connection is legal and connectable, and it is exactly the connection a
+   * container tree exists to serve: the tree is what lets somebody pick a keyspace when
+   * the connection pins none. The session default is then simply absent, and the
+   * comparison in `objects.ts` answers false for every keyspace because no keyspace can
+   * be named "". The old guard is a `getSchema()`-era rule, where it was right: a flat
+   * table list has no keyspace to read without one.
    */
   public async listContainers(parent?: readonly string[]): Promise<Container[]> {
     const transport = this.requireTransport();
-    const keyspace = this.requireKeyspace();
-    return this.guarded(() => readContainers(transport, keyspace, parent));
+    return this.guarded(() => readContainers(transport, this.config.database ?? "", parent));
   }
 
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
