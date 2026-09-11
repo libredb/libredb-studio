@@ -535,3 +535,66 @@ describe("Empty schema cache", () => {
     expect(labels).toContain("SELECT");
   });
 });
+
+describe("PostgreSQL table completion quoting", () => {
+  test.each([
+    [
+      "SELECT * FROM ",
+      "My_Schema_With_Caps.My_Table_With_Caps",
+      'SELECT * FROM "My_Schema_With_Caps"."My_Table_With_Caps"',
+    ],
+    [
+      "SELECT * FROM My_Schema_With_Caps.My_T",
+      "My_Schema_With_Caps.My_Table_With_Caps",
+      'SELECT * FROM "My_Schema_With_Caps"."My_Table_With_Caps"',
+    ],
+    [
+      "SELECT * FROM My_Schema_With_Caps.",
+      "My_Schema_With_Caps.My_Table_With_Caps",
+      'SELECT * FROM "My_Schema_With_Caps"."My_Table_With_Caps"',
+    ],
+    ["SELECT * FROM public.My_T", "My_Table_With_Caps", 'SELECT * FROM public."My_Table_With_Caps"'],
+    ["SELECT * FROM ", 'Odd"Schema.Order Details', 'SELECT * FROM "Odd""Schema"."Order Details"'],
+    ["SELECT * FROM ", "select", 'SELECT * FROM "select"'],
+    ["SELECT * FROM sample.dem", "sample.demo", 'SELECT * FROM "sample"."demo"'],
+  ])("quotes the applied PostgreSQL edit for %s / %s", (line, label, expected) => {
+    const monaco = createMockMonaco();
+    registerSQLCompletionProvider(
+      monaco,
+      createSchemaCache({
+        tableItems: [{ label, labelLower: label.toLowerCase(), rowCount: 1, columnNames: "id" }],
+      }),
+      "postgres",
+    );
+    const result = monaco
+      ._getProvider()!
+      .provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1));
+    const suggestion = result.suggestions.find((item) => item.label === label)!;
+    expect(suggestion).toBeDefined();
+    const range = suggestion.range as Monaco.IRange;
+    expect(line.slice(0, range.startColumn - 1) + suggestion.insertText + line.slice(range.endColumn - 1)).toBe(
+      expected,
+    );
+  });
+
+  test("leaves other dialects unchanged", () => {
+    const monaco = createMockMonaco();
+    registerSQLCompletionProvider(monaco, createSchemaCache(), "mysql");
+    const line = "SELECT * FROM us";
+    const result = monaco
+      ._getProvider()!
+      .provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1));
+    expect(result.suggestions.find((item) => item.label === "users")!.insertText).toBe("users");
+  });
+});
+
+describe("Quoted PostgreSQL table column lookup", () => {
+  test.each(['SELECT "users".', 'SELECT "public"."users".'])("retains column suggestions after %s", (line) => {
+    const monaco = createMockMonaco();
+    registerSQLCompletionProvider(monaco, createSchemaCache(), "postgres");
+    const result = monaco
+      ._getProvider()!
+      .provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1));
+    expect(result.suggestions.map((item) => item.label)).toEqual(["id", "name", "email"]);
+  });
+});

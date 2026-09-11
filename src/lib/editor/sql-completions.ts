@@ -7,6 +7,8 @@
 
 import type * as Monaco from "monaco-editor";
 import { extractAliases, resolveAlias } from "@/lib/sql";
+import { quoteIdentifier } from "@/lib/sql/identifier";
+import type { DatabaseType } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Static constants
@@ -207,6 +209,7 @@ export interface SchemaCompletionCache {
 export function registerSQLCompletionProvider(
   monaco: typeof Monaco,
   schemaCompletionCache: SchemaCompletionCache,
+  databaseType?: DatabaseType,
 ): Monaco.IDisposable {
   return monaco.languages.registerCompletionItemProvider("sql", {
     triggerCharacters: [".", " "],
@@ -239,7 +242,15 @@ export function registerSQLCompletionProvider(
         .map((table) => ({
           label: table.label,
           kind: monaco.languages.CompletionItemKind.Class,
-          insertText: table.label,
+          // PostgreSQL folds unquoted identifiers to lowercase. Schema labels
+          // preserve catalog spelling, so quote each component before insertion.
+          insertText:
+            databaseType === "postgres"
+              ? table.label
+                  .split(".")
+                  .map((part) => quoteIdentifier(part, databaseType))
+                  .join(".")
+              : table.label,
           range: tableRange,
           detail: `Table (${table.rowCount} rows)`,
           documentation: table.columnNames,
@@ -248,9 +259,9 @@ export function registerSQLCompletionProvider(
 
       // Dot-triggered: Show columns for specific table or alias
       if (lastChar === ".") {
-        const matches = line.substring(0, position.column - 1).match(/(\w+)\.$/);
+        const matches = line.substring(0, position.column - 1).match(/(?:"((?:[^"]|"")+)"|(\w+))\.$/);
         if (matches) {
-          const identifier = matches[1].toLowerCase();
+          const identifier = (matches[1]?.replace(/""/g, '"') ?? matches[2]).toLowerCase();
 
           // Helper to find columns by table name (handles schema.table format)
           const findColumns = (tableName: string) => {
