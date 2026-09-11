@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
 import {
-  enumerateContainers,
   handleObjectRequest,
   optionalStringArray,
   requireMethod,
   requireString,
   resolveKinds,
 } from "@/lib/api/object-route";
+import { enumerateContainers } from "@/lib/db/container-walk";
 import type { DatabaseObject } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     const term = requireString(body, "term").toLowerCase();
     const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
 
-    const { containers } = await enumerateContainers(provider);
+    const { containers } = await enumerateContainers(provider, () => requireMethod(provider, "listContainers"));
     const listObjects = requireMethod(provider, "listObjects");
 
     // Sequential on purpose, and the `no-await-in-loop` warning is accepted here. Every listing
