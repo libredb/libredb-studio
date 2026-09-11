@@ -445,6 +445,27 @@ describe("ObjectTree container shapes", () => {
       'counts:["prod","app"]',
     ]);
   });
+
+  /**
+   * U23, end to end. The row id, the expansion-set member and the counts cache key are three
+   * readers of one rule, and a container named `a/b` is where they can disagree. Nothing is
+   * clicked here on purpose: the engine names this container as the session's own, so the
+   * cache opens it by an id it builds from the path before any row exists, and the walk then
+   * has to produce that same id. A second spelling of the rule in the cache leaves the
+   * container closed; a second spelling in the counts key leaves the folder unbadged.
+   */
+  test("a container whose name holds the id separator still opens and badges its folders", async () => {
+    installFetch({
+      containers: () => [{ path: ["a/b"], name: "a/b", level: 0, isSessionDefault: true }],
+      counts: (body) =>
+        JSON.stringify(body.container) === '["a/b"]' ? { table: { count: 5 }, view: { count: 0 } } : {},
+    });
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
+
+    const tables = await screen.findByRole("treeitem", { name: /Tables/ });
+    expect(within(tables).getByTestId("tree-row-badge").textContent).toBe("5");
+    expect(screen.getByRole("treeitem", { name: /a\/b/ }).getAttribute("aria-expanded")).toBe("true");
+  });
 });
 
 describe("ObjectTree object rows", () => {

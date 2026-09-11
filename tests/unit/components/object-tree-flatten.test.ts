@@ -99,7 +99,7 @@ describe("flattenTree", () => {
 });
 
 describe("flattenTree row identity", () => {
-  test("a row id is its path joined with a slash, plus the kind id on folders and objects", () => {
+  test("a row id is its path segments escaped and joined with a slash, plus the kind id on folders and objects", () => {
     const rows = flattenTree({
       kinds,
       containerDepth: 1,
@@ -133,6 +133,70 @@ describe("flattenTree row identity", () => {
     const objectIds = rows.filter((r) => r.kind === "object").map((r) => r.id);
     expect(objectIds).toEqual(["app/audit/table", "app/audit/procedure"]);
     expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);
+  });
+
+  test("a container whose name holds the separator does not take the id of a folder under its prefix", () => {
+    // U23. `a/b` is a legal quoted identifier on PostgreSQL, MySQL and Oracle. Joining the
+    // segments raw gave the container `["a/b"]` and the `b` folder of container `["a"]` the
+    // same string, and that string is React's list key, the expansion-set member and the
+    // objects cache key, so one row's twisty opened the other.
+    const rows = flattenTree({
+      kinds,
+      containerDepth: 1,
+      containers: [
+        { path: ["a"], name: "a", level: 0 },
+        { path: ["a/table"], name: "a/table", level: 0 },
+      ],
+      expanded: new Set(["a"]),
+      counts: {},
+      objects: {},
+    });
+    const ids = rows.map((r) => r.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    // The folder keeps the readable spelling; the exotic name is the one that is escaped.
+    expect(rows.find((r) => r.kind === "folder" && r.kindId === "table")?.id).toBe("a/table");
+    expect(rows.filter((r) => r.kind === "container").map((r) => r.id)).toEqual(["a", "a%2Ftable"]);
+  });
+
+  test("the escape character is itself escaped, so two exotic names cannot converge", () => {
+    // Without escaping the escape, a container literally named `a%2Fb` and one named `a/b`
+    // both encode to `a%2Fb`. The pair is what makes the encoding injective rather than
+    // merely different in the one case U23 reported.
+    const rows = flattenTree({
+      kinds,
+      containerDepth: 1,
+      containers: [
+        { path: ["a/b"], name: "a/b", level: 0 },
+        { path: ["a%2Fb"], name: "a%2Fb", level: 0 },
+      ],
+      expanded: new Set<string>(),
+      counts: {},
+      objects: {},
+    });
+    expect(rows.map((r) => r.id)).toEqual(["a%2Fb", "a%252Fb"]);
+  });
+
+  test("a folder and an object whose segments hold the separator keep their own ids", () => {
+    // The same rule reaches the other two id shapes: a folder id is the container path plus
+    // the kind, an object id is the object path plus the kind, and both are built from the
+    // same encoder rather than from a second copy of the rule.
+    const rows = flattenTree({
+      kinds,
+      containerDepth: 1,
+      containers: [{ path: ["a/b"], name: "a/b", level: 0 }],
+      expanded: new Set(["a%2Fb", "a%2Fb/table"]),
+      counts: { "a%2Fb": { table: { count: 1 } } },
+      objects: { "a%2Fb/table": [{ path: ["a/b", "c/d"], name: "c/d", kind: "table" }] },
+    });
+    expect(rows.filter((r) => r.kind !== "container").map((r) => r.id)).toEqual([
+      "a%2Fb/table",
+      "a%2Fb/c%2Fd/table",
+      "a%2Fb/view",
+      "a%2Fb/procedure",
+    ]);
+    // The badge proves the counts key is built by that same encoder: a lookup under the raw
+    // join would miss this container and leave the folder unbadged.
+    expect(rows.find((r) => r.kind === "folder" && r.kindId === "table")?.badge).toBe("1");
   });
 
   test("a container row carries no kind id", () => {

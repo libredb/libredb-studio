@@ -15,12 +15,12 @@ import type { Container, DatabaseObject, KindCount, ObjectKindSpec } from "@/lib
 /**
  * One visible row.
  *
- * `id` is the path segments joined with `/`, plus the kind id on a folder and on an
- * object. Path alone is not an identity: paths are unique within a kind and deliberately
- * not across kinds, because at least one engine lets a table and a routine share a name
- * in one schema. Appending the kind is what keeps those two rows apart, and it is also
- * why a folder id can never collide with an object id under it: an object's path is
- * always strictly longer than the container path its folder hangs under.
+ * `id` is the path segments ESCAPED and joined with `/` (see `pathKey`), plus the kind id
+ * on a folder and on an object. Path alone is not an identity: paths are unique within a
+ * kind and deliberately not across kinds, because at least one engine lets a table and a
+ * routine share a name in one schema. Appending the kind is what keeps those two rows
+ * apart, and it is also why a folder id can never collide with an object id under it: an
+ * object's path is always strictly longer than the container path its folder hangs under.
  */
 export interface TreeRowModel {
   readonly id: string;
@@ -61,7 +61,7 @@ export interface FlattenTreeState {
   readonly containers: readonly Container[];
   /** Row ids the user has opened. */
   readonly expanded: ReadonlySet<string>;
-  /** `countObjects` answers, keyed by the container path joined with `/`, so the root is `""`. */
+  /** `countObjects` answers, keyed by `pathKey` of the container path, so the root is `""`. */
   readonly counts: Readonly<Record<string, Record<string, KindCount>>>;
   /**
    * `listObjects` answers, keyed by folder row id.
@@ -156,6 +156,35 @@ function isChildPath(parentPath: readonly string[], path: readonly string[]): bo
 }
 
 /**
+ * A sequence of segments as ONE string, injectively: distinct sequences give distinct
+ * keys, whatever the engine allows inside an identifier.
+ *
+ * This is the single encoder behind every id and every cache key in the tree, and it has
+ * to be injective because a plain join is not. `a/b` is a legal quoted identifier on
+ * PostgreSQL, MySQL and Oracle, and joining raw gave the container `["a/b"]` and the
+ * `b` folder of container `["a"]` one string, so one row's twisty opened the other and
+ * React warned about duplicate keys (#789). The same collision reached the counts cache,
+ * where a two-level engine addresses `["a/b", "c"]` and `["a", "b/c"]` identically.
+ *
+ * The escape is percent-style and the ESCAPE CHARACTER IS ESCAPED FIRST, which is what
+ * makes it injective rather than merely different in the reported case: without the first
+ * replacement a container named `a%2Fb` would encode onto `a/b`'s key. Doubling the
+ * separator instead would not work either, since `["a/", "b"]` and `["a", "/b"]` both
+ * give `a///b`.
+ *
+ * Not `encodeURIComponent`, which throws `URIError` on a lone surrogate: a name arriving
+ * from a driver is not guaranteed to be well-formed UTF-16, and a throw inside the walk
+ * unmounts the whole tree rather than degrading one row. Not `JSON.stringify` either:
+ * standing ruling 5g refuses it for path keys, and it would rewrite every ordinary id.
+ *
+ * An ordinary identifier holds neither character, so the common id is unchanged and still
+ * readable: `app`, `app/table`, `app/orders/table`.
+ */
+export function pathKey(path: readonly string[]): string {
+  return path.map((segment) => segment.replaceAll("%", "%25").replaceAll("/", "%2F")).join("/");
+}
+
+/**
  * A container row's id, which is the one thing a caller may need to name a row it has
  * not seen rendered yet.
  *
@@ -164,9 +193,11 @@ function isChildPath(parentPath: readonly string[], path: readonly string[]): bo
  * engine and the active container is expanded on first paint (#789). The rule lives
  * here, beside the walk that emits the row, so the cache cannot hold a second copy of
  * it that drifts.
+ *
+ * A container row addresses exactly its path, so its id IS that path's key.
  */
 export function containerRowId(path: readonly string[]): string {
-  return path.join("/");
+  return pathKey(path);
 }
 
 function appendContainer(
@@ -215,8 +246,8 @@ function appendFolder(
   setSize: number,
   posInSet: number,
 ): void {
-  const id = [...parentPath, spec.id].join("/");
-  const { badge, unavailable } = formatCount(state.counts[parentPath.join("/")]?.[spec.id]);
+  const id = pathKey([...parentPath, spec.id]);
+  const { badge, unavailable } = formatCount(state.counts[pathKey(parentPath)]?.[spec.id]);
   const expanded = unavailable === undefined ? state.expanded.has(id) : undefined;
   rows.push({
     id,
@@ -268,7 +299,7 @@ function appendObject(
   posInSet: number,
 ): void {
   rows.push({
-    id: [...object.path, object.kind].join("/"),
+    id: pathKey([...object.path, object.kind]),
     kind: "object",
     label: object.name,
     depth,

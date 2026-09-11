@@ -27,7 +27,7 @@ import { appFetch } from "@/lib/config/base-path";
 import { containerDepth, declaredKinds } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, KindCount, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
-import { containerRowId, flattenTree, type TreeRowModel } from "./flatten";
+import { containerRowId, flattenTree, pathKey, type TreeRowModel } from "./flatten";
 
 /** How a read addresses its connection: a seed by id, anything else in full. */
 type ConnectionPayload = ReturnType<typeof buildConnectionPayload>;
@@ -96,11 +96,6 @@ export interface TreeNodes {
   invalidateContainer(path: readonly string[]): void;
   /** Read the top of the tree again, keeping whatever the reader has opened. */
   loadContainers(): void;
-}
-
-/** The counts key `flattenTree` documents: the container path joined with `/`, so the root is "". */
-function pathKey(path: readonly string[]): string {
-  return path.join("/");
 }
 
 function slotKey(slot: ReadSlot): string {
