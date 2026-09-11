@@ -136,10 +136,39 @@ export function streamFromAsyncIterable<T>(
         }
         controller.close();
       } catch (error) {
+        // A consumer that cancelled mid-stream makes the next enqueue (or the
+        // close above) throw TypeError — the consumer is gone, not broken.
+        // Surfacing that as a stream error turned every client-side abort of
+        // a Gemini completion into a spurious error; treating cancellation as
+        // a normal exit also stops the loop from pulling the rest of the SDK
+        // iterable (a full completion generated — and billed — for nobody).
+        if (isStreamCancelled(controller, error)) {
+          return;
+        }
         controller.error(error);
       }
     },
   });
+}
+
+/**
+ * Distinguish "the consumer cancelled/errored this stream" from a real
+ * pipeline failure. A cancel mid-stream makes the next enqueue/close throw a
+ * TypeError whose message names the stream's unusable state (wording varies
+ * across runtimes: "canceled", "closed", "invalid state"). An errored stream
+ * also reports desiredSize === null per the WHATWG spec — the only state
+ * where that is true. Both signals are checked.
+ *
+ * Exported for direct unit testing: the cancel race it guards (a cancel
+ * landing between two enqueues) is timing-dependent and cannot be made
+ * deterministic from the stream's public surface alone.
+ */
+export function isStreamCancelled(controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): boolean {
+  if (controller.desiredSize === null) {
+    // The stream was errored: no reader will ever come.
+    return true;
+  }
+  return error instanceof TypeError && /cancel|closed|invalid state/i.test(error.message);
 }
 
 /**
