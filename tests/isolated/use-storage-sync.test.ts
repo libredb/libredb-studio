@@ -632,6 +632,71 @@ describe("useStorageSync", () => {
       expect(attempts).toBe(1);
     });
 
+    /**
+     * An edit inside the debounce window when the user navigates away used to
+     * be dropped silently: the cleanup cleared the timer without flushing, and
+     * the next mount's pull overwrote localStorage with server data — the
+     * write was gone forever. The cleanup must send whatever is pending.
+     */
+    test("a pending debounced write is flushed on unmount, not discarded", async () => {
+      localStorage.setItem("libredb_server_migrated", "true");
+      let connectionsAttempts = 0;
+      const fetchMock = mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
+        "/api/storage/connections": () => {
+          connectionsAttempts += 1;
+          return { ok: true, status: 200, json: { ok: true } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result, unmount } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isServerMode).toBe(true);
+      });
+
+      // Edit lands inside the 500ms debounce window; unmount before it fires.
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "connections" } }));
+      });
+      unmount();
+
+      // The cleanup's flush is async: give it time to land before asserting.
+      await waitFor(
+        () => {
+          expect(connectionsAttempts).toBeGreaterThanOrEqual(1);
+        },
+        { timeout: 2000 },
+      );
+      expect(calledPaths(fetchMock)).toContain("/api/storage/connections");
+    });
+
+    /**
+     * Nothing queued means the cleanup must not fire a pointless PUT — the
+     * flush is conditional on a non-empty pending set.
+     */
+    test("unmount with nothing pending does not push", async () => {
+      localStorage.setItem("libredb_server_migrated", "true");
+      const fetchMock = mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
+        "/api/storage/connections": { ok: true, status: 200, json: { ok: true } },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result, unmount } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isServerMode).toBe(true);
+      });
+
+      unmount();
+
+      // Long enough that a spurious flush (or its 500ms debounce) would land.
+      await new Promise((r) => setTimeout(r, 1200));
+      expect(calledPaths(fetchMock)).not.toContain("/api/storage/connections");
+    });
+
     test("sets syncError on push failure", async () => {
       localStorage.setItem("libredb_server_migrated", "true");
 
