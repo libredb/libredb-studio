@@ -12,7 +12,15 @@
 
 import { SQLBaseProvider } from "./sql-base";
 import {
+  type Container,
+  type ContainerLevelSpec,
+  type DatabaseObject,
   type DatabaseConnection,
+  type ForeignKeySchema,
+  type IndexSchema,
+  type KindCount,
+  type ObjectDetail,
+  type ObjectKindSpec,
   type TableSchema,
   type QueryResult,
   type HealthInfo,
@@ -41,6 +49,7 @@ import {
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 import { loadSQLiteDriver, type SQLiteDatabase } from "./sqlite-driver";
+import { containerDepth, declaredKinds, findKind } from "../../object-kinds";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
 import * as path from "path";
@@ -147,6 +156,369 @@ const STATS_INDEXES_SQL = `
       WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
       ORDER BY tbl_name, name
     `;
+
+// ============================================================================
+// Object surface (#789)
+// ============================================================================
+
+/**
+ * The one schema this provider's object surface reads, and the reason it is a constant
+ * rather than a path segment.
+ *
+ * SQLite declares ZERO container levels, so no container path carries a schema and
+ * nothing here derives one. `main` is SQLite's own name for the database file the
+ * connection opened; `temp` and any `ATTACH`ed database are SESSION state on this handle,
+ * which a declaration read off an UNCONNECTED provider (`POST /api/db/provider-meta`,
+ * #457) cannot describe. Out of scope for Phase 1 and recorded as such in
+ * `docs/providers/sqlite.md`.
+ *
+ * It is not cosmetic, and it is not a filter that could be dropped. Measured on SQLite
+ * 3.53.2: with `CREATE TEMP TABLE main_only(ttt)` live, the one-argument
+ * `pragma_table_info('main_only')` answers the TEMP table's columns and the two-argument
+ * `pragma_table_info('main_only', 'main')` answers the file's. A read that leaves the
+ * schema out describes a different object under the same name. The same measurement on
+ * the listing side: `PRAGMA table_list` spans every attached schema AND `temp`, so
+ * without `t.schema = ?` a temp table shadowing a real one gives two objects ONE path,
+ * which is the uniqueness the tree addresses rows by.
+ */
+const MAIN_SCHEMA = "main";
+
+// ----------------------------------------------------------------------------
+// `name NOT LIKE 'sqlite\_%' ESCAPE '\'`, in all six statements below
+//
+// Names SQLite reserves for itself, excluded from every count and every listing. This
+// can never hide a user's object, and that is measured rather than assumed: the engine
+// refuses the name outright, `CREATE TABLE sqlite_foo` answering "object name reserved
+// for internal use: sqlite_foo". What it does remove is real and appears without being
+// asked for - `sqlite_schema` and `sqlite_temp_schema` are rows in `PRAGMA table_list`,
+// `sqlite_sequence` appears the moment a table declares AUTOINCREMENT, `sqlite_stat1`
+// the moment ANALYZE runs, and `sqlite_autoindex_<table>_<n>` the moment a column
+// declares UNIQUE or a PRIMARY KEY needs an index.
+//
+// `ESCAPE` is load-bearing: `_` is LIKE's single-character wildcard, so the unescaped
+// `'sqlite_%'` also matches `sqliteXanything`, which is a name a user CAN create.
+//
+// The same predicate is applied to all four populations, in the counts and in the
+// listings, so the badge and its folder can never disagree about what an object is
+// (standing ruling 5f).
+// ----------------------------------------------------------------------------
+
+/**
+ * How many objects of each kind the file holds, in one statement.
+ *
+ * Two arms because two catalogs answer: `PRAGMA table_list` separates a real table from
+ * the shadow tables an FTS5 or R-Tree module owns, and `sqlite_schema` is the only place
+ * an index or a trigger appears at all. The `CASE` maps the three relation-shaped
+ * `table_list` types onto the two declared kinds, and the `IN` list is the vocabulary:
+ * `PRAGMA table_list.type` is documented to carry exactly `table`, `view`, `shadow` and
+ * `virtual`, so the arm that is dropped is `shadow` and nothing else. That is SQLite's
+ * documentation rather than a `SELECT DISTINCT` over a fixture (standing ruling 5a), and
+ * the fixture in `tests/integration/db/sqlite-provider.test.ts` holds all four values so
+ * the claim is exercised rather than asserted.
+ */
+const COUNTS_SQL = `
+      SELECT kind, COUNT(*) AS n
+        FROM (
+               SELECT CASE t.type WHEN 'view' THEN 'view' ELSE 'table' END AS kind
+                 FROM pragma_table_list AS t
+                WHERE t.schema = ?
+                  AND t.type IN ('table', 'view', 'virtual')
+                  AND t.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+               UNION ALL
+               SELECT s.type AS kind
+                 FROM sqlite_schema AS s
+                WHERE s.type IN ('index', 'trigger')
+                  AND s.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+             )
+       GROUP BY kind
+    `;
+
+// `virtual` belongs with `table` and `shadow` does not, which is the whole reason
+// `PRAGMA table_list` is read here instead of `sqlite_schema`. An FTS5 table is one
+// `virtual` row plus five `shadow` rows and an R-Tree is one plus three, and
+// `sqlite_schema` types every one of them `table`: measured on the fixture in
+// `tests/integration/db/sqlite-provider.test.ts`, which holds six tables and one FTS5
+// table, a naive scan answers 12. A user SELECTs from the `virtual` row and never from a
+// `shadow` one, so the shadow tables are not objects this tree has any business drawing.
+const LIST_TABLES_SQL = `
+      SELECT t.name AS name
+        FROM pragma_table_list AS t
+       WHERE t.schema = ?
+         AND t.type IN ('table', 'virtual')
+         AND t.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+    `;
+
+const LIST_VIEWS_SQL = `
+      SELECT t.name AS name
+        FROM pragma_table_list AS t
+       WHERE t.schema = ?
+         AND t.type = 'view'
+         AND t.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+    `;
+
+// Indexes and triggers are not in `PRAGMA table_list` at all, so these two read
+// `sqlite_schema`, which needs no schema bind: measured with a database ATTACHed, the
+// unqualified name always resolves to `main.sqlite_schema`, and `temp` objects live in
+// the separate `sqlite_temp_schema`. So these two are already scoped to the same one
+// schema the two statements above bind.
+const LIST_INDEXES_SQL = `
+      SELECT s.name AS name
+        FROM sqlite_schema AS s
+       WHERE s.type = 'index'
+         AND s.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+    `;
+
+// `tbl_name` is the object the trigger fires on, which is the `attachedTo` nesting.
+const LIST_TRIGGERS_SQL = `
+      SELECT s.name AS name, s.tbl_name AS parent
+        FROM sqlite_schema AS s
+       WHERE s.type = 'trigger'
+         AND s.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+    `;
+
+// `table_xinfo` and not `table_info`, which is the same read minus the hidden column.
+// Measured: `table_info` DROPS a generated column in both spellings, VIRTUAL (hidden 2)
+// and STORED (hidden 3), so a table declaring one reports a column list the engine does
+// not have. `hidden = 1` is the other direction - a virtual table module's own interface
+// columns, its own name and `rank` on an FTS5 table - and those are not columns the table
+// declares, so only that value is excluded. `getSchema()` still reads `table_info` and
+// still loses generated columns; that is the flat surface's defect, recorded in
+// docs/BACKLOG.md.
+const OBJECT_COLUMNS_SQL = `
+      SELECT name, type, "notnull", dflt_value, pk
+        FROM pragma_table_xinfo(?, ?)
+       WHERE hidden <> 1
+       ORDER BY cid
+    `;
+
+const OBJECT_INDEXES_SQL = `
+      SELECT name, "unique"
+        FROM pragma_index_list(?, ?)
+       WHERE name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+    `;
+
+const OBJECT_INDEX_COLUMNS_SQL = `
+      SELECT name
+        FROM pragma_index_info(?, ?)
+       ORDER BY seqno
+    `;
+
+const OBJECT_FOREIGN_KEYS_SQL = `
+      SELECT id, seq, "table", "from", "to"
+        FROM pragma_foreign_key_list(?, ?)
+       ORDER BY id, seq
+    `;
+
+// The parent's PRIMARY KEY, in declaration order, for a foreign key that names no
+// column. Measured: `REFERENCES customers` (no column list) answers `to = NULL`, which
+// means the parent's primary key, and `ForeignKeySchema.referencedColumn` is a string -
+// so the alternative to resolving it is putting a null in a typed string field.
+const PARENT_KEY_COLUMNS_SQL = `
+      SELECT name
+        FROM pragma_table_info(?, ?)
+       WHERE pk > 0
+       ORDER BY pk
+    `;
+
+/**
+ * Every object kind SQLite has, and nothing else.
+ *
+ * `sqlite_schema.type` carries exactly four values - `table`, `index`, `view` and
+ * `trigger` - and this is the whole inventory. There is no stored procedure and no stored
+ * function to declare: an application-defined SQLite function is registered against a
+ * connection by the HOST PROCESS through `sqlite3_create_function()` and is never written
+ * to the database file, so nothing survives the connection to be listed and a `routine`
+ * folder would be a claim about this product rather than about the file.
+ *
+ * `index` IS declared here, unlike on postgres, mysql, mssql and oracle. The test is
+ * whether the engine's own catalog models an index as a first-class named object at
+ * container level, and SQLite's does: an index is a row in `sqlite_schema` beside the
+ * tables, addressed by a bare name that shares one namespace with tables and views
+ * (measured: `CREATE INDEX t ON u(id)` against an existing table `t` answers
+ * "there is already a table named t").
+ *
+ * Module scope rather than a literal inside `getCapabilities()`, so the array is one
+ * object rather than a fresh one per call: `getCapabilities()` is called several times
+ * per request by the object routes and the tree.
+ */
+const SQLITE_OBJECT_KINDS: readonly ObjectKindSpec[] = [
+  { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+  // No `acceptsRowWrites`. SQLite refuses a write to a view outright unless an INSTEAD OF
+  // trigger carries it, which is a per-OBJECT fact a per-kind declaration cannot state.
+  { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+  { id: "index", role: "config", label: "Index", labelPlural: "Indexes" },
+  { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table" },
+];
+
+/** One row of `COUNTS_SQL`: a declared kind id and how many the file holds. */
+interface KindCountRow {
+  kind: string;
+  n: number;
+}
+
+/**
+ * One listed object, from whichever of the four listing statements answered.
+ *
+ * `parent` is selected by the trigger listing alone, which is what lets one mapper serve
+ * all four.
+ */
+interface ObjectRow {
+  name: string;
+  parent?: string | null;
+}
+
+/** One column of an object, as `pragma_table_xinfo` publishes it. */
+interface ObjectColumnRow {
+  name: string;
+  type: string | null;
+  notnull: number;
+  dflt_value: string | null;
+  pk: number;
+}
+
+/** One foreign key constraint column, as `pragma_foreign_key_list` publishes it. */
+interface ObjectForeignKeyRow {
+  id: number;
+  seq: number;
+  table: string;
+  from: string;
+  to: string | null;
+}
+
+/**
+ * The container levels this provider declares, sliced to the depth `containerDepth()`
+ * reports.
+ *
+ * One reader for the whole file, so the depth and the level list can never be taken by
+ * two different rules. `containerDepth()` is what decides, never `containerLevels.length`:
+ * absent and empty are the same fact and two callers reading the field by different rules
+ * is how the tree and the API route came to disagree about one engine.
+ *
+ * On SQLite this answers the empty array, which is the point of the task and not a
+ * degenerate case.
+ */
+function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerLevelSpec[] {
+  return (capabilities.containerLevels ?? []).slice(0, containerDepth(capabilities));
+}
+
+/**
+ * Refuses a container path that is not the shape the DECLARATION describes.
+ *
+ * On SQLite the only valid container path is the empty one, and `container.length !== 0`
+ * is NOT how that is written. The depth comes from `containerDepth()` and the segment
+ * names from the declared level labels, so the check and its message are the same array:
+ * a provider copying this file onto a one- or two-level engine inherits a derivation
+ * rather than a literal that would refuse every valid path there (standing ruling 5g).
+ *
+ * This raises rather than answering an empty folder, because a path of another shape is a
+ * caller that built it from another engine's model, and an empty folder that looks exactly
+ * like a database holding nothing is the worst way to report that.
+ */
+function assertContainerPath(capabilities: ProviderCapabilities, container: readonly string[]): void {
+  const levels = declaredLevels(capabilities);
+  if (container.length === levels.length) return;
+  const shape = levels.length === 0 ? "empty" : `[${levels.map((level) => level.label.toLowerCase()).join(", ")}]`;
+  throw new QueryError(`A SQLite container path is ${shape}, received ${JSON.stringify(container)}`, "sqlite");
+}
+
+/**
+ * Every declared kind seeded at zero, before any row is read.
+ *
+ * Seeding is what makes "SQLite has this kind and this file holds none" render as a 0
+ * badge. Building the record from the GROUP BY rows alone would leave the kind out
+ * entirely, and an absent kind already means something else and stronger: the engine has
+ * no such concept, so the tree draws no folder at all.
+ */
+function seedZeroCounts(kinds: readonly ObjectKindSpec[]): Record<string, KindCount> {
+  return Object.fromEntries(kinds.map((kind) => [kind.id, { count: 0 } as KindCount]));
+}
+
+/**
+ * Overwrites the seeded zeros with what the GROUP BY actually answered.
+ *
+ * A kind that was never seeded is SKIPPED, so the DECLARATION decides which folders exist
+ * and a catalog row cannot add one - which is what keeps
+ * `tests/helpers/object-surface-conformance.ts`'s "never answers for an undeclared kind"
+ * true from this side.
+ *
+ * `Object.hasOwn` and not `in`, which is what makes that guarantee absolute rather than
+ * nearly so: `in` walks the prototype chain, so a row whose kind read `toString` or
+ * `constructor` would pass the test and write a folder the provider never declared.
+ */
+function applyKindCounts(counts: Record<string, KindCount>, rows: readonly KindCountRow[]): void {
+  for (const row of rows) {
+    if (Object.hasOwn(counts, row.kind)) counts[row.kind] = { count: Number(row.n) };
+  }
+}
+
+/**
+ * The engine's own sentence, verbatim, against every kind the failed read covered.
+ *
+ * Deliberately NOT through `mapDatabaseError`: that mapper gives a THROWN error a type and
+ * this product's prefix, and nothing here throws. The sentence is rendered to a person as
+ * the reason a folder has no number, so prefixing it would put our words in front of
+ * SQLite's. A refused read is never 0 - on a build older than 3.37 the sentence is
+ * "no such table: pragma_table_list", which is a different fact from "this file holds no
+ * tables", and `KindCount` is the type that keeps them apart.
+ */
+function unavailableCounts(ids: readonly string[], error: unknown): Record<string, KindCount> {
+  const reason = error instanceof Error ? error.message : String(error);
+  return Object.fromEntries(ids.map((id) => [id, { unavailable: reason } as KindCount]));
+}
+
+/** Which statement lists one kind, and what it binds. */
+const OBJECT_LISTINGS: Readonly<Record<string, { readonly sql: string; readonly params: readonly unknown[] }>> = {
+  table: { sql: LIST_TABLES_SQL, params: [MAIN_SCHEMA] },
+  view: { sql: LIST_VIEWS_SQL, params: [MAIN_SCHEMA] },
+  index: { sql: LIST_INDEXES_SQL, params: [] },
+  trigger: { sql: LIST_TRIGGERS_SQL, params: [] },
+};
+
+/**
+ * Where one listed object is addressed.
+ *
+ * Built from the CONTAINER and the ROW rather than from the kind id, so the four listing
+ * statements share one rule: a `parent` column adds a nesting segment and nothing else
+ * does, which is what the `attachedTo: "table"` declaration states. The container path is
+ * prefixed rather than assumed empty, so every path starts with its container even though
+ * SQLite's container path is always `[]` - the conformance helper asserts exactly that,
+ * and writing `[row.name]` here would be a second place that knows this engine's depth.
+ *
+ * A trigger's parent is `sqlite_schema.tbl_name`, which is never null for a trigger, so
+ * there is no parentless shape to collapse. It is not always a TABLE: SQLite allows an
+ * INSTEAD OF trigger on a VIEW and `tbl_name` then names the view. `attachedTo` names the
+ * kind a trigger usually hangs off, and the count and the listing both carry the view case
+ * rather than one of them dropping it (standing ruling 5f).
+ */
+function objectPath(container: readonly string[], row: ObjectRow): string[] {
+  const parent = row.parent;
+  if (parent === undefined || parent === null) return [...container, row.name];
+  return [...container, parent, row.name];
+}
+
+/**
+ * Two paths compared SEGMENT BY SEGMENT, so a sort is over the address and never over one
+ * joined string.
+ *
+ * Exported for the same reason `readDbstatSizes` is: the two cases that separate this
+ * from `JSON.stringify` cannot arise inside ONE kind on this engine, where every path of a
+ * kind is the same length, so a test driven through `listObjects` could not tell the two
+ * spellings apart. The rule is shared with every other provider in #789.
+ *
+ * `JSON.stringify(path)` is the obvious spelling and it is wrong twice. At MIXED DEPTH the
+ * deeper path sorts first, because the separator `,` (0x2C) is below the terminator `]`
+ * (0x5D), which would put a trigger above the object it hangs off. And JSON ESCAPES, so a
+ * name holding a quote, a backslash or a control character sorts by its escape sequence
+ * rather than by its own code points.
+ */
+export function comparePaths(left: readonly string[], right: readonly string[]): number {
+  const shared = Math.min(left.length, right.length);
+  for (let index = 0; index < shared; index += 1) {
+    if (left[index] < right[index]) return -1;
+    if (left[index] > right[index]) return 1;
+  }
+  return left.length - right.length;
+}
 
 // ============================================================================
 // Agent read-only execution profile (#328)
@@ -320,6 +692,8 @@ export class SQLiteProvider extends SQLBaseProvider {
         reindex: { label: "Reindex Table", perEntity: true, global: true },
         check: { label: "Integrity Check", perEntity: false, global: true },
       },
+      containerLevels: [],
+      objectKinds: SQLITE_OBJECT_KINDS,
     };
   }
 
@@ -675,6 +1049,242 @@ export class SQLiteProvider extends SQLBaseProvider {
     }
 
     return schemas;
+  }
+
+  // ============================================================================
+  // Object surface (#789)
+  // ============================================================================
+
+  /**
+   * No containers, because SQLite has no container level.
+   *
+   * `[]` is the ENGINE answering, not a refusal and not a gap: a SQLite connection opens
+   * one database file and every object in it is addressed by a bare name. The tree reads
+   * `containerDepth()` off the same declaration, sees 0, and draws the kind folders at the
+   * root under the empty container path; `enumerateContainers()` in
+   * `src/lib/api/object-route.ts` answers `[[]]` for the same engines. Inventing a
+   * synthetic `main` container to make the shape match the other sixteen engines would put
+   * a row in the tree that names nothing a user can act on.
+   *
+   * Takes no `parent`, which the optional interface parameter allows: there is no level
+   * for one to name, so accepting and ignoring it would be the same answer written twice.
+   */
+  public async listContainers(): Promise<Container[]> {
+    this.ensureConnected();
+    return [];
+  }
+
+  /**
+   * How many objects of each declared kind the file holds, in one statement.
+   *
+   * Three outcomes, and the type keeps all three apart. A kind the GROUP BY answered for
+   * carries its count. A kind it did not carries `{ count: 0 }`, because it was seeded
+   * before the read. A kind whose read was refused carries SQLite's own sentence, so the
+   * object browser can say why a folder has no number instead of showing a zero nobody
+   * measured. The refusal is a real case rather than a defensive arm: `PRAGMA table_list`
+   * arrived in SQLite 3.37, and a build below it answers "no such table:
+   * pragma_table_list" for every kind at once, which is why one failure covers all four.
+   *
+   * The container path is checked BEFORE the read and raises, because a path of the wrong
+   * shape is a caller mistake and not something the engine refused.
+   */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    assertContainerPath(capabilities, container);
+    const declared = declaredKinds(capabilities);
+    const counts = seedZeroCounts(declared);
+
+    try {
+      applyKindCounts(counts, this.db!.prepare(COUNTS_SQL).all(MAIN_SCHEMA) as KindCountRow[]);
+      return counts;
+    } catch (error) {
+      return unavailableCounts(
+        declared.map((kind) => kind.id),
+        error,
+      );
+    }
+  }
+
+  /** One object-surface read, mapped against THE STATEMENT SQLITE RECEIVED. */
+  private runObjectQuery<T>(sql: string, params: readonly unknown[]): T[] {
+    try {
+      return this.db!.prepare(sql).all(...params) as T[];
+    } catch (error) {
+      throw mapDatabaseError(error, "sqlite", sql);
+    }
+  }
+
+  /**
+   * The objects of one kind, names only.
+   *
+   * Ordering is done here rather than with an `ORDER BY`, and that is deliberate. Four
+   * statements answer these listings, so four `ORDER BY` clauses would be four chances to
+   * disagree; and a SQL sort runs under the column's own collation, which is `BINARY` on
+   * `sqlite_schema.name` but is whatever a `COLLATE` clause said on a user's own catalog
+   * view. A code-point sort here is one rule and the same rule everywhere.
+   *
+   * By PATH and not by name, because it is the address that has to be stable: sorting by
+   * the address groups an object's triggers under it.
+   */
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    assertContainerPath(capabilities, container);
+    // Two questions, asked in order, and only the DECLARATION answers the first. Deciding
+    // "is this kind declared" from whether a listing statement exists would make the two
+    // methods disagree, and would report "declares no object kind" about a kind
+    // `objectKinds` does declare but nothing here can list.
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`SQLite declares no object kind "${kind}"`, "sqlite");
+    }
+    const statement = OBJECT_LISTINGS[kind];
+    if (statement === undefined) {
+      throw new QueryError(`SQLite declares the kind "${kind}" but has no statement that lists it`, "sqlite");
+    }
+
+    return this.runObjectQuery<ObjectRow>(statement.sql, statement.params)
+      .map((row) => ({ path: objectPath(container, row), name: row.name, kind }))
+      .sort((left, right) => comparePaths(left.path, right.path));
+    // No `rowCount` and no `sizeBytes`, and both absences are facts about SQLite rather
+    // than unfinished work. There is no catalog row estimate at all here: `sqlite_stat1`
+    // exists only after someone ran ANALYZE, so a `COUNT(*)` per object would be a full
+    // table scan per row of this listing. Per-object bytes come only from `dbstat`, which
+    // scans the whole database file (see DBSTAT_SIZES_SQL) and is not on a build without
+    // SQLITE_ENABLE_DBSTAT_VTAB. A fabricated 0 in either field would read as an empty
+    // object, which is the estimate #469 removed from the Storage tab.
+  }
+
+  /**
+   * Columns, indexes and foreign keys for one object of one KIND.
+   *
+   * The kind decides everything and nothing here reads the name to work out what it is
+   * holding. Only the two `relation` kinds have any of the three: measured,
+   * `pragma_table_xinfo` answers zero rows for an index name and for a trigger name, so an
+   * index and a trigger answer three empty arrays without a round trip. That is a true
+   * fact about those kinds rather than a failed read, and
+   * `tests/helpers/object-surface-conformance.ts` states the same rule from the caller's
+   * side. An index's own key list is NOT published here and that is deliberate:
+   * `IndexSchema.columns` is a list of column names and an index on an expression has
+   * none, measured as `index_info.name = NULL, cid = -2`, so half the indexes on an engine
+   * would describe themselves and the other half would silently describe themselves
+   * wrongly. A trigger's body is source text, which is Phase 2's Source tab.
+   *
+   * Keying on `role === "relation"` is safe HERE and is not the general rule: MySQL keys
+   * the same decision on the catalog, because a MariaDB sequence is declared `config` and
+   * still has real columns. On SQLite the two coincide exactly.
+   *
+   * Path depth is derived from the declaration: one segment per declared container level,
+   * plus the attached parent where the kind declares one, plus the name. Every SQLite
+   * trigger has a parent - `sqlite_schema.tbl_name` is never null for one - so there is a
+   * single shape rather than the two MySQL accepts.
+   *
+   * Zero columns IS a failed read and raises: SQLite refuses `CREATE TABLE t()`, so every
+   * table and every view has at least one column, and an empty answer means the object is
+   * not there under that name in `main`.
+   */
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`SQLite declares no object kind "${kind}"`, "sqlite");
+    }
+
+    const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
+    const shape = spec.attachedTo === undefined ? [...levels, "name"] : [...levels, spec.attachedTo, "name"];
+    if (path.length !== shape.length) {
+      throw new QueryError(
+        `A SQLite "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`,
+        "sqlite",
+      );
+    }
+
+    if (spec.role !== "relation") {
+      return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
+    }
+
+    // Neither bind is positional. The object's own name is the LAST segment, which is
+    // right at every depth, where `path[0]` is right only at depth 1 and would name a
+    // container segment on the five two-level engines that copy this shape. The schema is
+    // the constant `main` rather than a segment, because this engine declares no container
+    // level to take one from - see MAIN_SCHEMA for what leaving it out actually does.
+    const binds = [path[path.length - 1], MAIN_SCHEMA];
+
+    const columnRows = this.runObjectQuery<ObjectColumnRow>(OBJECT_COLUMNS_SQL, binds);
+    if (columnRows.length === 0) {
+      throw new QueryError(`No SQLite ${kind} named ${binds[0]} in ${MAIN_SCHEMA}`, "sqlite", OBJECT_COLUMNS_SQL);
+    }
+
+    return {
+      path: [...path],
+      columns: columnRows.map((row) => ({
+        name: row.name,
+        // `type` is the empty string on a virtual table's columns and on a column declared
+        // with no type at all, which SQLite allows. `getSchema()` spells that absence
+        // "TEXT", which is a guess about affinity; the empty string is what the engine said.
+        type: row.type ?? "",
+        nullable: row.notnull === 0,
+        // `pk` is a 1-BASED RANK and not a flag: a composite primary key answers 1 and 2,
+        // so `=== 1` reports the second key column as ordinary. Measured on
+        // `PRIMARY KEY (region, year)`.
+        isPrimary: row.pk > 0,
+        defaultValue: row.dflt_value ?? undefined,
+      })),
+      indexes: this.readObjectIndexes(binds),
+      foreignKeys: this.readObjectForeignKeys(binds),
+    };
+  }
+
+  /**
+   * One entry per index on this object, its columns in `seqno` order.
+   *
+   * The `sqlite_` exclusion is the same predicate the Indexes folder lists by, so the two
+   * surfaces cannot disagree about what an index is: an implicit `sqlite_autoindex_*`
+   * serves a UNIQUE or PRIMARY KEY constraint, cannot be dropped, and is not an object a
+   * user declared.
+   */
+  private readObjectIndexes(binds: readonly unknown[]): IndexSchema[] {
+    const [, schema] = binds;
+    return this.runObjectQuery<{ name: string; unique: number }>(OBJECT_INDEXES_SQL, binds).map((index) => ({
+      name: index.name,
+      columns: this.runObjectQuery<{ name: string | null }>(OBJECT_INDEX_COLUMNS_SQL, [index.name, schema])
+        // An index on an EXPRESSION publishes a null column name (`cid = -2`), and so does
+        // one that keys the rowid. Those are not columns of this object, so they are left
+        // out rather than rendered as a fabricated label.
+        .filter((column): column is { name: string } => column.name !== null)
+        .map((column) => column.name),
+      unique: index.unique === 1,
+    }));
+  }
+
+  /**
+   * This object's foreign keys, one entry per constrained column.
+   *
+   * `to` is NULL when the reference names no column - `REFERENCES customers` rather than
+   * `REFERENCES customers(id)` - and SQLite reads that as the parent's PRIMARY KEY.
+   * `ForeignKeySchema.referencedColumn` is a string, so the choice is to resolve it or to
+   * put a null in a typed string field. The parent's key columns are read at most once per
+   * parent and only when some constraint needs them.
+   */
+  private readObjectForeignKeys(binds: readonly unknown[]): ForeignKeySchema[] {
+    const [, schema] = binds;
+    const parentKeys = new Map<string, readonly string[]>();
+    const keyColumn = (parent: string, position: number): string => {
+      const cached = parentKeys.get(parent);
+      const columns =
+        cached ?? this.runObjectQuery<{ name: string }>(PARENT_KEY_COLUMNS_SQL, [parent, schema]).map((r) => r.name);
+      if (cached === undefined) parentKeys.set(parent, columns);
+      return columns[position] ?? "";
+    };
+
+    return this.runObjectQuery<ObjectForeignKeyRow>(OBJECT_FOREIGN_KEYS_SQL, binds).map((row) => ({
+      columnName: row.from,
+      // A bare name, never qualified: SQLite resolves a foreign key's parent inside the
+      // same database, so there is no cross-schema case to spell.
+      referencedTable: row.table,
+      referencedColumn: row.to ?? keyColumn(row.table, row.seq),
+    }));
   }
 
   // ============================================================================

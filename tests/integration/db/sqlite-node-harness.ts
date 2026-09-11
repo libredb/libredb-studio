@@ -112,12 +112,51 @@ async function main(): Promise<void> {
     report.queryErrorMessage = error instanceof Error ? error.message : String(error);
   }
 
+  await runObjectSurface(provider, report);
+
   await provider.disconnect();
   report.disconnected = !provider.isConnected();
 
   await runAgentReadOnlyProfile(dbPath, report);
 
   console.log(JSON.stringify(report));
+}
+
+/**
+ * The object surface (#789) on the node:sqlite adapter.
+ *
+ * The four methods are read here as well as in-process under bun for the same reason the
+ * agent profile is: the two drivers are different SQLite builds behind a shared adapter,
+ * and this surface leans on catalogs that arrived at different versions -
+ * `PRAGMA table_list` in 3.37 and `pragma_table_xinfo`'s bound schema argument, neither
+ * of which the bun run can prove for node. bun:sqlite here is 3.53.2 and node:sqlite is
+ * 3.51.2.
+ */
+async function runObjectSurface(provider: SQLiteProvider, report: Record<string, unknown>): Promise<void> {
+  await provider.query("CREATE VIEW user_names AS SELECT id, name FROM users");
+  await provider.query("CREATE TRIGGER users_stamp AFTER INSERT ON users BEGIN SELECT 1; END");
+  await provider.query("CREATE TEMP TABLE users (id INTEGER)");
+
+  report.objectContainers = await provider.listContainers!();
+  report.objectCounts = await provider.countObjects!([]);
+  for (const kind of ["table", "view", "index", "trigger"]) {
+    report[`objectList_${kind}`] = (await provider.listObjects!([], kind)).map((object) => ({
+      path: object.path,
+      name: object.name,
+      kind: object.kind,
+    }));
+  }
+  const detail = await provider.describeObject!(["users"], "table");
+  report.objectDetail = {
+    path: detail.path,
+    columns: detail.columns.map((column) => ({ name: column.name, isPrimary: column.isPrimary })),
+    indexes: detail.indexes.map((index) => ({ name: index.name, columns: index.columns })),
+  };
+  report.objectDetailTrigger = await provider.describeObject!(["users", "users_stamp"], "trigger");
+  report.objectMissingRefused = await rejects(() => provider.describeObject!(["not_here"], "table"));
+  report.objectBadContainerRefused = await rejects(() => provider.countObjects!(["main"]));
+
+  await provider.query("DROP TABLE temp.users");
 }
 
 /**

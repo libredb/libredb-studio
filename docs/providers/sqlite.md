@@ -324,6 +324,184 @@ pinned by tests rather than left to be discovered.
 
 There is one schema (`main`); no schema prefixing, no two-phase split.
 
+Two defects in that table are real and filed as `D52` in [`docs/BACKLOG.md`](../BACKLOG.md): `PRAGMA
+table_info` drops generated columns, and `pk = 1` demotes the second column of a composite primary
+key. The object surface below reads neither of those ways. Both surfaces are live through Phase 1 of
+#789.
+
+### 6.1 The object surface (#789)
+
+`getSchema()` above is the flat model: one list of tables, no views, no indexes as objects, no
+triggers at all. The object surface replaces it with four container-aware methods
+(`listContainers`, `countObjects`, `listObjects`, `describeObject`) declared in
+[`types.ts`](../../src/lib/db/types.ts) and implemented in
+[`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts). The phase that removes `getSchema()` is
+#789's last task.
+
+#### SQLite is the ZERO-CONTAINER engine, and `[]` is an answer
+
+`containerLevels` is `[]`, `containerDepth()` answers 0, and `listContainers()` answers `[]`. That
+is the engine speaking, not a refusal and not a gap: a SQLite connection opens one database file and
+every object in it is addressed by a bare name, so `DatabaseObject.path` for a table is `['orders']`
+and for a trigger `['orders', 'orders_stamp']`. The tree reads the same declaration, sees depth 0 and
+draws the kind folders at the ROOT under the empty container path; `enumerateContainers()` in
+[`object-route.ts`](../../src/lib/api/object-route.ts) answers `[[]]` for the same engines.
+
+No synthetic `main` container is invented to make the shape match the other sixteen engines. A
+container row that names nothing a user can act on is a row in the way.
+
+#### `main`, `temp` and ATTACH: what is in scope, and why
+
+**Only `main`.** Every count and every listing is restricted to the schema SQLite calls `main`,
+which is the database file the connection was configured for. `temp` and any `ATTACH`ed database are
+out of scope for Phase 1, deliberately and for three reasons:
+
+1. They are SESSION state on one handle. `containerLevels` is a STATIC declaration, read by
+   `POST /api/db/provider-meta` off a provider it never connects (#457), so it cannot describe a
+   schema that exists only after somebody ran `ATTACH` in the editor.
+2. An `ATTACH`ed file is a different database than the connection names. The connection dialog
+   configures one path; a second one reached through a statement has no credentials, no name and no
+   row in the sidebar.
+3. Measured, it is not merely untidy. `PRAGMA table_list` spans every attached schema AND `temp`, so
+   with `CREATE TEMP TABLE orders(id)` live beside `main.orders` an unrestricted listing answers two
+   objects with ONE path, and the tree addresses a row by path plus kind.
+
+The same restriction is applied to the counts and to the listings, so a badge can never disagree with
+the folder it sits on. If a later phase wants attached databases, the shape is a `schema` container
+level and `listContainers()` reading `pragma_database_list`; nothing here blocks that.
+
+The restriction is expressed differently in the two catalogs, and both are measured:
+
+| Catalog | How `main` is named | Measurement |
+| --- | --- | --- |
+| `PRAGMA table_list` | `WHERE t.schema = ?`, bound | The pragma's table-valued form takes max 1 argument, so it has no schema parameter; it publishes a `schema` column instead |
+| `sqlite_schema` | nothing, it is already `main` | Unqualified `sqlite_schema` resolves to `main.sqlite_schema` even with a database ATTACHed; `temp` objects live in the separate `sqlite_temp_schema` |
+| `pragma_table_xinfo`, `index_list`, `index_info`, `foreign_key_list` | bound SECOND argument | Load-bearing, not decoration: with `CREATE TEMP TABLE main_only(ttt)` live, `pragma_table_info('main_only')` answers the TEMP table's columns and `pragma_table_info('main_only','main')` answers the file's |
+
+#### The four kinds
+
+| Kind | `role` | Catalog | Selector | Note |
+|---|---|---|---|---|
+| `table` | `relation` | `PRAGMA table_list` | `type IN ('table','virtual')` | `acceptsRowWrites: true` |
+| `view` | `relation` | `PRAGMA table_list` | `type = 'view'` | not a row-write target |
+| `index` | `config` | `sqlite_schema` | `type = 'index'` | first-class here, unlike on four other engines |
+| `trigger` | `attached` | `sqlite_schema` | `type = 'trigger'` | `attachedTo: 'table'`, path `[parent, name]` |
+
+**No `procedure` and no `function`, in any spelling.** An application-defined SQLite function is
+registered against a connection by the HOST PROCESS through `sqlite3_create_function()` and is never
+written to the database file, so nothing survives the connection to be listed. A kind an engine does
+not have is ABSENT from the declaration rather than declared and counted zero, because a folder
+badged 0 is a claim that the file holds none of something it could hold.
+
+**`index` IS declared**, unlike on [postgres](./postgres.md), [mysql](./mysql.md), mssql and
+[oracle](./oracle.md). The test is whether the engine's own catalog models an index as a first-class
+named object at container level, and SQLite's does: an index is a row in `sqlite_schema` beside the
+tables, addressed by a bare name that shares ONE namespace with tables and views. Measured:
+`CREATE INDEX t ON u(id)` against an existing table `t` answers *"there is already a table named t"*.
+
+A trigger's parent is not always a table. SQLite allows an `INSTEAD OF` trigger on a VIEW, and
+`sqlite_schema.tbl_name` then names the view; the count and the listing both carry it rather than one
+of them dropping it. `attachedTo` names the kind a trigger usually hangs off.
+
+A trigger name is unique per DATABASE, measured (`trigger trg_t already exists` when the second one
+is on another table), so `[parent, name]` is more address than SQLite strictly needs. It is the shape
+the declaration states and the shape that groups a table's triggers under it in the tree.
+
+#### `PRAGMA table_list`, and why a naive `sqlite_schema` scan inflates every count
+
+`sqlite_schema.type` carries exactly `table`, `index`, `view` and `trigger`, and for the first of
+those it is too coarse to count with. An FTS5 table is ONE object a user selects from plus five
+SHADOW tables the module owns (`<name>_data`, `_idx`, `_content`, `_docsize`, `_config`); an R-Tree
+is one plus three. `sqlite_schema` types every one of them `table`. Measured on a fixture holding
+three real tables, one FTS5 table and one R-Tree, a naive scan answers **12**.
+
+`PRAGMA table_list` (SQLite 3.37+, 2021) separates them. Its `type` column carries exactly four
+documented values and every one has a rule here:
+
+| `table_list.type` | Kind | Why |
+| --- | --- | --- |
+| `table` | `table` | an ordinary table, `WITHOUT ROWID` and `STRICT` included |
+| `virtual` | `table` | the FTS5 or R-Tree table itself: a user selects from it and writes rows to it |
+| `view` | `view` | |
+| `shadow` | none | storage a virtual-table module owns; nothing selects from it directly |
+
+That vocabulary is taken from SQLite's own documentation and NOT from a `SELECT DISTINCT type` over
+a fixture, which would only ever enumerate the fixture. The fixture in
+[`sqlite-provider.test.ts`](../../tests/integration/db/sqlite-provider.test.ts) is built to contain
+all four values, and a guard test asserts the engine answers exactly those four, so the day SQLite
+adds a fifth the rule fails by name instead of the new type falling silently out of both the count
+and the listing.
+
+#### Names SQLite reserves for itself
+
+Every population excludes `name NOT LIKE 'sqlite\_%' ESCAPE '\'`. This can never hide a user's
+object: the engine refuses the name outright, `CREATE TABLE sqlite_foo` answering *"object name
+reserved for internal use: sqlite_foo"*. What it removes appears without being asked for -
+`sqlite_schema` and `sqlite_temp_schema` are rows in `PRAGMA table_list`, `sqlite_sequence` appears
+the moment a table declares `AUTOINCREMENT`, `sqlite_stat1` the moment `ANALYZE` runs, and
+`sqlite_autoindex_<table>_<n>` the moment a column declares `UNIQUE`.
+
+`ESCAPE` is load-bearing rather than decoration: `_` is LIKE's single-character wildcard, so the
+unescaped `'sqlite_%'` also excludes `sqliteXledger`, which is a name a user CAN create.
+
+#### `describeObject()` reads for the two relation kinds only
+
+An `index` and a `trigger` answer three empty arrays without a round trip, which is a true fact about
+those kinds rather than a failed read: measured, `pragma_table_xinfo` answers zero rows for both an
+index name and a trigger name. An index's own key list is deliberately NOT published there either,
+because `IndexSchema.columns` is a list of column NAMES and an index on an expression has none -
+measured, `index_info` answers `name = NULL, cid = -2` - so half an engine's indexes would describe
+themselves and the other half would silently describe themselves wrongly. A trigger's body is source
+text, which is Phase 2's Source tab.
+
+For a `table` and a `view`:
+
+| Data | Source | Note |
+| --- | --- | --- |
+| Columns | `pragma_table_xinfo(?, ?)` where `hidden <> 1` | `table_xinfo` and not `table_info`, which DROPS a generated column in both spellings (`VIRTUAL` is `hidden = 2`, `STORED` is `hidden = 3`). `hidden = 1` is the other direction: a virtual table module's own interface columns, which on an FTS5 table are the table's own name and `rank`, and which the table does not declare |
+| `isPrimary` | `pk > 0` | `pk` is a 1-BASED RANK and not a flag, so `= 1` reports the second column of a composite primary key as ordinary |
+| `type` | as answered | The empty string where a column declares no type and on a virtual table's columns. `getSchema()` writes `"TEXT"` there, which is a guess about affinity |
+| Indexes | `pragma_index_list(?, ?)` + `pragma_index_info(?, ?)` | Same `sqlite_` exclusion as the Indexes folder, so the two surfaces agree about what an index is. An expression key publishes a null column name and is left out rather than labelled |
+| Foreign keys | `pragma_foreign_key_list(?, ?)` | `referencedTable` is a bare name: SQLite resolves a foreign key's parent inside the same database, so there is no cross-schema case |
+
+`REFERENCES customers` with no column list answers `to = NULL`, which SQLite reads as the parent's
+PRIMARY KEY. `ForeignKeySchema.referencedColumn` is a string, so the parent's key columns are read
+(at most once per parent, and only when some constraint needs them) rather than a null being put in
+a typed string field. A parent with no primary key at all is a schema SQLite accepts and rejects only
+on INSERT (*"foreign key mismatch"*); there is nothing to name, and the field is empty.
+
+Zero columns IS a failed read and raises: SQLite refuses `CREATE TABLE t()`, so every table and every
+view has at least one column and an empty answer means nothing of that name is in `main`.
+
+#### No `rowCount` and no `sizeBytes` on a listed object
+
+Both absences are facts about SQLite. There is no catalog row estimate at all: `sqlite_stat1` exists
+only after somebody ran `ANALYZE`, so a count per object would be a full table scan per row of a
+listing. Per-object bytes come only from `dbstat`, which scans the whole database file
+([§7.2](#72-per-table-size-depends-on-the-sqlite-build-behind-the-driver)) and is absent on a build
+without `SQLITE_ENABLE_DBSTAT_VTAB`. A fabricated 0 in either field reads as an empty object, which
+is the estimate #469 removed from the Storage tab.
+
+#### `PRAGMA table_list` needs SQLite 3.37, and a build below it refuses rather than guesses
+
+`countObjects()` answers `{ unavailable: "no such table: pragma_table_list" }` for all four kinds,
+which is SQLite's own sentence with no product prefix in front of it, and `listObjects()` raises. A
+refused read is never 0: the two are different facts and `KindCount` is the type that keeps them
+apart. Both drivers this provider selects between are far above that floor (`bun:sqlite` 3.53.2,
+`node:sqlite` 3.51.2, measured 2026-09-11), and the object surface is exercised under both.
+
+#### The fixture, and running it
+
+`tests/integration/db/sqlite-provider.test.ts` builds the fixture by DDL against a real `:memory:`
+database, so every assertion is measured against the engine rather than a mock. It holds one of every
+declared kind, all four `table_list.type` values, a generated column, a composite primary key, an
+`AUTOINCREMENT` table, an expression index, an `INSTEAD OF` trigger on a view, a `sqliteXledger`
+table, and `orders` in all three of `main`, `temp` and an ATTACHed database.
+
+```bash
+bun test tests/integration/db/sqlite-provider.test.ts
+```
+
 ---
 
 ## 7. Monitoring & health
@@ -514,6 +692,8 @@ answers with nothing both while it is in flight and when it failed.
 | `supportsConnectionString` | **`false`** |
 | `defaultPort` | `null` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
+| `containerLevels` | **`[]`** — SQLite has no container level at all, which `containerDepth()` reads as 0 ([§6.1](#61-the-object-surface-789)) |
+| `objectKinds` | `table`, `view`, `index`, `trigger` — no routine kind of any spelling ([§6.1](#61-the-object-surface-789)) |
 
 ### Labels
 
@@ -592,7 +772,11 @@ SQL execution, schema PRAGMAs, maintenance, and monitoring end-to-end.
 Validation, connect/disconnect, path handling (NUL rejection, `..` acceptance), query (read +
 write), capabilities, `getSchema` (columns/PKs/FKs/indexes), health, maintenance
 (vacuum/analyze/reindex/check), overview, performance, active sessions, slow queries,
-table/index/storage stats, `getMonitoringData`, `prepareQuery`, and labels. For the agent profile
+table/index/storage stats, `getMonitoringData`, `prepareQuery`, and labels. For the object surface
+([§6.1](#61-the-object-surface-789)): the declared kinds, the conformance contract, the tree's root
+rows, the `table_list` vocabulary guard, shadow and virtual tables, reserved names, `temp` and
+ATTACH exclusion, count-versus-listing agreement, trigger nesting, ordering, the detail reads, and
+the refusals. For the agent profile
 ([§12](#12-agent-read-only-execution-profile-328)): rejected write / schema change / file create,
 `query_only` read-back, the pragma-bypass case, row/byte/time budgets, multi-statement tail
 suppression, `:memory:` refusal, and the refusal to run `queryReadOnly` on a writable handle — each

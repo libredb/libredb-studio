@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D51, U17 · 12
+- [Drivers and connections](#drivers-and-connections) — D1–D52, U17 · 13
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X12, U2–U21 · 6
@@ -532,6 +532,35 @@ FIELD inside a successful response is a different question and needs its own mea
 **Done when:** a refused monitoring read is distinguishable from an empty one in all four providers, the
 optional fields are absent rather than 0 on the refusal, each provider's doc and test move with it, and
 `maxConnections` keeps its 0 - for that field the type says 0 and absence are one fact.
+
+### D52. `getSchema()` on SQLite loses generated columns and demotes a composite primary key
+
+Found 2026-09-11 while implementing the SQLite object surface (#789), and measured on SQLite 3.53.2
+(bun:sqlite) and 3.51.2 (node:sqlite). Two defects in one read, both in
+`src/lib/db/providers/sql/sqlite.ts`'s `getSchema()`:
+
+- It reads `PRAGMA table_info`, which DROPS a generated column in both spellings. Measured:
+  `CREATE TABLE g(a INTEGER, b INTEGER GENERATED ALWAYS AS (a*2) VIRTUAL, c INTEGER GENERATED ALWAYS
+  AS (a*3) STORED)` answers one column from `table_info` and three from `table_xinfo`, at
+  `hidden` 0, 2 and 3. So the schema panel, the ER diagram and every surface built on `TableSchema`
+  are told the table has columns it does not have.
+- It maps `isPrimary: col.pk === 1`. `table_info.pk` is a 1-BASED RANK and not a flag, so the second
+  column of a composite primary key is reported as ordinary. Measured on
+  `PRIMARY KEY (region, year)`, which answers `pk` 1 and 2.
+
+The object surface's `describeObject()` reads `pragma_table_xinfo(?, ?)` filtered to `hidden <> 1`
+and `row.pk > 0`, so both are already right on the new surface; this entry is only about the flat
+one, which is live through Phase 1 of #789.
+
+`hidden = 1` is the case the filter exists for and must stay excluded: those are a virtual table
+module's own interface columns, which on an FTS5 table are the table's own name and `rank`, not columns the table declares.
+
+**Done when:** `getSchema()` reads `table_xinfo` with the same `hidden <> 1` filter, `isPrimary` is
+`pk > 0`, and `tests/integration/db/sqlite-provider.test.ts` covers a generated column and a
+composite primary key on that surface too. Task 26 of #789 removes `getSchema()` entirely, so this
+closes either way; it is filed because that task is not scheduled and the wrong column list is
+visible today.
+
 
 ## Value interpolation
 
