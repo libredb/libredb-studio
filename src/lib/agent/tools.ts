@@ -79,7 +79,8 @@ import { asBytes, binaryText } from "@/lib/export/binary";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
 import { connectionIdentity, heldSnapshotForConnection } from "./context-snapshot";
 import { offersRefusalExamples } from "./models";
-import type { ColumnSchema, DatabaseConnection, QueryResult, TableSchema } from "@/lib/types";
+import type { ColumnSchema, DatabaseConnection, QueryResult } from "@/lib/types";
+import { addressableObjects } from "./inventory-objects";
 import type { AgentInventory, AgentInventoryObject } from "./types";
 import {
   type AgentCatalogKind,
@@ -270,6 +271,17 @@ export type AgentToolUnavailableCode =
   | "TABLE_QUALIFIER_UNKNOWN"
   /** The named table is not in the inventory this run captured. */
   | "TABLE_NOT_INVENTORIED"
+  /**
+   * The named object IS inventoried, and its declared kind is not one with rows to count.
+   *
+   * Split from `TABLE_NOT_INVENTORIED` for the reason `TABLE_QUALIFIER_UNKNOWN` was split
+   * from it: the inventory a run reads carries the schema's views, sequences and functions
+   * beside its tables (#789), and a model told "that table is not in the inventory" about a
+   * name it can SEE in the inventory has been told something it can check and disbelieve.
+   * Measured on the qualifier case, it then repeats the identical call rather than changing
+   * it. This one confirms the object and refuses the action.
+   */
+  | "OBJECT_NOT_PROFILABLE"
   /** A catalog read matched no object at all, so there is nothing to inspect or cite. */
   | "CATALOG_MATCHED_NOTHING"
   /**
@@ -941,6 +953,12 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
   // verbatim three times because the sentence it got named nothing that could be edited.
   // It also may not send the model to `inspect_schema` — a held run has been narrowed out
   // of holding it, and the fix does not need it, since the table is already inventoried.
+  // Confirms the object and refuses the profile, and names neither a tool nor a kind: the
+  // kind is the engine's own word and arrives as the refusal's `detail`, since a sentence
+  // that hardcoded "view or table" would be wrong on the engines whose relation kinds this
+  // repository has never heard of.
+  OBJECT_NOT_PROFILABLE:
+    "That name is in this run's inventory, and not as something with rows to count, so nothing was profiled. Profile one of the objects the inventory lists under a kind that holds rows.",
   TABLE_QUALIFIER_UNKNOWN:
     "The table is in this run's inventory, but not under the schema you named — this run's inventory has no such schema, so nothing was profiled. Call profile_table again with the same table and NO schema field at all: the inventory's own name for it is what this tool matches. The schema field takes a database schema name, never an artifact id or a snapshot fingerprint.",
   NO_COLUMNS_AT_OFFSET:
@@ -2170,7 +2188,7 @@ class AgentSchemaReadTimeout extends Error {
  * snapshot from the structure, and it has no use for a handle to a projection of it.
  */
 export type AgentProviderSchemaRead =
-  | { readonly kind: "completed"; readonly tables: readonly TableSchema[] }
+  | { readonly kind: "completed"; readonly tables: readonly AgentInventoryObject[] }
   | { readonly kind: "timed-out"; readonly grantedMs: number }
   | { readonly kind: "unavailable"; readonly modelText: string };
 
@@ -2197,7 +2215,7 @@ export type AgentProviderSchemaRead =
  * reason `runCuratedRead` takes it: no statement is sent that an engine has to plan,
  * so there is no statement for a read-only transaction to bound.
  *
- * **It returns the `TableSchema[]` itself.** The artifact carries a model-facing
+ * **It returns the provider's own list itself.** The artifact carries a model-facing
  * PROJECTION — one row per table: its name, how many columns, how many indexes — so
  * the call is citable and showable like any other reach, but the inventory does not
  * round-trip through it. The catalog path deliberately does the opposite, reading its
@@ -2208,7 +2226,7 @@ export type AgentProviderSchemaRead =
  * introduce a way to lose it.
  */
 export async function readProviderSchemaForGrounding(context: AgentToolContext): Promise<AgentProviderSchemaRead> {
-  let tables: readonly TableSchema[] = [];
+  let tables: readonly AgentInventoryObject[] = [];
 
   let outcome: AgentToolOutcome;
   try {
@@ -3154,13 +3172,13 @@ function describeFindings(findings: readonly AgentProfileFinding[]): string {
  * profiled. Found by review on #345; the profile now targets what it resolved.
  */
 interface ResolvedProfileTarget {
-  readonly entry: TableSchema;
+  readonly entry: AgentInventoryObject;
   readonly schema?: string;
   readonly table: string;
 }
 
 function inventoriedTable(
-  snapshot: AgentContextSnapshot,
+  objects: readonly AgentInventoryObject[],
   schema: string | undefined,
   table: string,
 ): ResolvedProfileTarget | null {
@@ -3169,11 +3187,11 @@ function inventoriedTable(
     // entry here would accept `{schema: "other", table: "orders"}` against SQLite's
     // unqualified `orders` and then target `other.orders` — a table the run never
     // inventoried. Found by review on #345.
-    const entry = snapshot.objects.find((candidate) => candidate.name === `${schema}.${table}`);
+    const entry = objects.find((candidate) => candidate.name === `${schema}.${table}`);
     return entry === undefined ? null : { entry, schema, table };
   }
 
-  const bare = snapshot.objects.find((candidate) => candidate.name === table);
+  const bare = objects.find((candidate) => candidate.name === table);
   if (bare !== undefined) return { entry: bare, table };
 
   // An unqualified name against a qualified inventory. PostgreSQL's capture names
@@ -3182,7 +3200,7 @@ function inventoriedTable(
   // exactly ONE table ends that way: two schemas holding the same table name is
   // precisely when a guess would profile the wrong one.
   const suffix = `.${table}`;
-  const matches = snapshot.objects.filter((candidate) => candidate.name.endsWith(suffix));
+  const matches = objects.filter((candidate) => candidate.name.endsWith(suffix));
   const only = matches.length === 1 ? matches[0] : undefined;
   if (only === undefined) return null;
   // Derived by removing the suffix rather than by splitting on a dot: exact, and it
@@ -3251,7 +3269,14 @@ export function planTableProfile(
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
 
   const snapshot = capturedSnapshot(run.events);
-  const target = snapshot === null ? null : inventoriedTable(snapshot, parsed.value.schema, parsed.value.table);
+  // What a profile may target is the declared ROLE and nothing else (#789). The statement
+  // this composes is `SELECT count(*) ...` over the resolved name, and the inventory a run
+  // reads carries the schema's views, sequences and functions beside its tables, so
+  // resolving over all of them would compose a count over a sequence. `addressableObjects`
+  // also refuses a kind whose rows are groupings this server derived, which is the refusal
+  // the old flat row menu carried on `tablesAreDerivedGroupings`.
+  const profilable = snapshot === null ? [] : addressableObjects(snapshot);
+  const target = snapshot === null ? null : inventoriedTable(profilable, parsed.value.schema, parsed.value.table);
   if (target === null) {
     /*
       Two different failures used to share one sentence, and the wire recording of a
@@ -3273,12 +3298,25 @@ export function planTableProfile(
       This only asks the second question once the first has failed — would this table have
       resolved unqualified? — and, when it would, says so and gives the name to use.
     */
-    const unqualified = snapshot !== null && inventoriedTable(snapshot, undefined, parsed.value.table) !== null;
+    const unqualified = snapshot !== null && inventoriedTable(profilable, undefined, parsed.value.table) !== null;
     if (unqualified) return unavailable("TABLE_QUALIFIER_UNKNOWN");
+    // The third question, and it is asked over the WHOLE inventory: a name that resolves
+    // there and not among the profilable ones is an object this run has been shown and may
+    // not profile, which is a different thing to tell a model than "no such table". The
+    // engine's own word for the kind travels as the detail, because the kinds are the
+    // provider's and this sentence may not enumerate them.
+    const listed =
+      snapshot === null ? null : inventoriedTable(snapshot.objects, parsed.value.schema, parsed.value.table);
+    if (listed !== null) {
+      const kind = (snapshot?.kinds ?? []).find((declared) => declared.id === listed.entry.kind);
+      return unavailable("OBJECT_NOT_PROFILABLE", kind === undefined ? undefined : `it is listed under ${kind.label}`);
+    }
     // The first few names, not all of them: the inventory can hold hundreds, and a refusal
     // that turns into a catalog dump is a wall of its own. Enough to show the spelling
-    // convention this database uses, which is what a misspelling needs.
-    const offer = (snapshot?.objects ?? []).slice(0, 6).map((entry) => entry.name);
+    // convention this database uses, which is what a misspelling needs. Only names this
+    // tool would ACCEPT: offering one it would then refuse is the two-dead-refusals
+    // sequence the qualifier split was written to end.
+    const offer = profilable.slice(0, 6).map((entry) => entry.name);
     return unavailable("TABLE_NOT_INVENTORIED", offer.length === 0 ? undefined : `it lists ${offer.join(", ")}`);
   }
 

@@ -30,8 +30,9 @@
  */
 
 import { quoteIdentifier } from "@/lib/sql/identifier";
-import type { ColumnSchema, DatabaseType, TableSchema } from "@/lib/types";
+import type { ColumnSchema, DatabaseType } from "@/lib/types";
 import { AgentComposedSqlError, MAX_CATALOG_SELECTOR_LENGTH } from "./composed-sql";
+import type { AgentInventoryObject } from "./types";
 
 /**
  * How deeply one profile reads. Each level is the one before it plus more, so a
@@ -448,7 +449,7 @@ function deriveFindings(
  * cannot be regrouped into the key they belong to, and a covering test over the
  * wrong grouping would be an answer about a key that does not exist.
  */
-export function findUnindexedForeignKeys(table: TableSchema): readonly AgentProfileFinding[] {
+export function findUnindexedForeignKeys(table: AgentInventoryObject): readonly AgentProfileFinding[] {
   const keys = table.foreignKeys ?? [];
   // More than one edge from a table is where a composite key becomes
   // indistinguishable from several single-column ones on PostgreSQL.

@@ -600,8 +600,15 @@ function guardSentence(
  * takes "everything it names exists" for "this will run".
  *
  * The objects are named in the engine's own word (#414) and not in this product's
- * storage shape: the check reads the same inventory the prompt was written from, and
- * on Druid that inventory's rows are datasources however `TableSchema` spells them.
+ * storage shape: the check reads the same inventory the prompt was written from, and on
+ * Druid that inventory's rows are datasources whatever the shape recording them is called.
+ *
+ * WHAT IT CHECKED NARROWED with the object model (#789), and the sentences below are worded
+ * the way they are because of it. The inventory a run reads carries the schema's views,
+ * sequences and functions beside its tables, and `validatePlanStatement` answers only for
+ * the kinds whose declared role says a statement can name one - so a name reported here may
+ * be an object the run WAS shown, under a kind nothing can be selected from. The claim the
+ * sentence makes is still exactly true: the statement may not run as written.
  *
  * `not-applicable` is the third branch and, like the guard's, it is about the CHECK
  * and not about the draft (#414). It is deliberately not worded as `no-inventory` is:

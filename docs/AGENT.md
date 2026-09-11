@@ -727,6 +727,13 @@ Two checks run before it is offered anywhere, and neither is more than it says:
   to a false alarm, so an empty unknown list means "nothing recognised was missing", never "the
   statement is sound". Nothing here checks **columns**. A run with no inventory records
   `no-inventory` rather than an empty list, because an empty list is a claim that every table exists.
+  Since the object model (#789) the comparison is against the entries whose declared kind has
+  `role: "relation"`, and never against every entry: a capture carries the schema's views, sequences
+  and macros too, and DuckDB lists a macro under its bare name, so a draft reading `FROM order_total`
+  would otherwise be told the object it named exists. A kind marked as derived groupings is refused
+  by the same line, because those rows are prefix groupings the server derived rather than objects
+  anybody named. An entry with no kind at all is KEPT: an inventory recorded before kinds existed
+  declares none, and reporting all of it as unknown would be a false alarm on every resumed run.
 - **Read-only classification**, through the existing statement guard (`inspectAgentStatement`). A
   statement that is not read-only is **not blocked** — the owner ruled on that — but it is marked, on
   the event and visibly in the rail, so that hand-off never quietly gives a user a `DELETE`.
@@ -960,7 +967,12 @@ though both are conventional in a profiler.
 
 The model names a **table**, never columns and never SQL. The columns come from the run's own
 captured inventory, so a profile cannot be aimed at something the run never established exists, and
-an unqualified name is resolved against a qualified inventory only when exactly one table matches —
+what it may resolve to is narrowed by the declared role the same way the identifier check is (#789):
+a sequence or a macro in the inventory is refused with `OBJECT_NOT_PROFILABLE`, which CONFIRMS the
+object and refuses the action rather than denying a name the model can see in the inventory, and
+carries the engine's own word for the kind as its detail. The names such a refusal offers back are
+only ones it would then accept. An unqualified name is resolved against a qualified inventory only
+when exactly one table matches —
 two schemas holding the same table name is precisely when a guess would profile the wrong one. **The
 composed statement targets what was RESOLVED**, not the model's spelling: composing from the
 spelling left PostgreSQL's `search_path` to decide which relation was read while the ledger said a

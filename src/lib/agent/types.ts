@@ -46,7 +46,7 @@ import type { LLMProviderType } from "@/lib/llm/types";
 
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
-import type { AgentChartSpec, DatabaseType, TableSchema } from "@/lib/types";
+import type { AgentChartSpec, ColumnSchema, DatabaseType, ForeignKeySchema, IndexSchema } from "@/lib/types";
 import type { ObjectRole } from "@/lib/db/types";
 import type { AgentContextCharge, AgentContextRowBudget, AgentContextUnavailableCode } from "./context-snapshot";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
@@ -477,11 +477,12 @@ export type { AgentChartSpec } from "@/lib/types";
 /**
  * One entry of the inventory a run reasons over (#789).
  *
- * It is a `TableSchema` plus the two facts the flat shape could not carry, and it stays
- * a superset so that `schema-stats.ts`, `table-profile.ts`, `plan-statement.ts` and
- * `er-diagram.ts` keep reading the four fields they already read. Those consumers move
- * in Task 25 and the flat surface is removed in Task 26; widening the element rather
- * than replacing it is what lets those three land one at a time.
+ * It was declared for a while as the old flat schema element widened with the facts that
+ * shape could not carry, which is what let the agent consumers move one at a time; they
+ * have all moved, so it declares its own fields and nothing in this tree names the flat
+ * type any more. The fields are the same ones, spelled `readonly`: an inventory is a
+ * READING, and a consumer that sorted or spliced an entry's columns in place was rewriting
+ * what the model had already been shown.
  *
  * `kind` is the whole point of the widening. An entry with no kind was handed to a model
  * under whatever noun the engine's labels supplied, so a view arrived under the word
@@ -495,7 +496,17 @@ export type { AgentChartSpec } from "@/lib/types";
  * surface has a qualified NAME and no segments, and no reader may split that name to
  * invent them. A table literally called `a.b` in `public` is why.
  */
-export interface AgentInventoryObject extends TableSchema {
+export interface AgentInventoryObject {
+  /** The ADDRESS a statement can be written against, qualified wherever segments were read. */
+  readonly name: string;
+  readonly columns: readonly ColumnSchema[];
+  readonly indexes: readonly IndexSchema[];
+  /** Absent where the reading carries no relations at all, which is not the same as none. */
+  readonly foreignKeys?: readonly ForeignKeySchema[];
+  /** Only where the engine counts, and never a number this server derived. */
+  readonly rowCount?: number;
+  /** The engine's own rendering of the object's size, where it publishes one. */
+  readonly size?: string;
   /** The object's segments, when the object surface supplied it. Never split from `name`. */
   readonly path?: readonly string[];
   /** The declared kind id this object was listed under, when one is known. */

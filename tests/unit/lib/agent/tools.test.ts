@@ -3517,6 +3517,35 @@ describe("profileTableTool — the model names a table, the server decides the r
   const events: readonly AgentRunEvent[] = [
     { kind: "context-captured", atMs: 1, fingerprint: "ctx_1", tableCount: 1, snapshot },
   ];
+
+  /**
+   * The same capture with the kinds a PostgreSQL inventory really carries (#789): a table,
+   * a view, and a function whose last path segment carries the overload form of ruling 2.
+   */
+  const kindedSnapshot = {
+    ...snapshot,
+    objects: [
+      { ...snapshot.objects[0], kind: "table" },
+      {
+        name: "public.order_summary",
+        kind: "view",
+        columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+        indexes: [],
+      },
+      { name: "public.order_total(integer)", kind: "function", label: "order_total", columns: [], indexes: [] },
+      { name: "public.orders_id_seq", kind: "sequence", columns: [], indexes: [] },
+    ],
+    kinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+      { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+      { id: "sequence", role: "config", label: "Sequence", labelPlural: "Sequences" },
+    ],
+  };
+  const kindedRun = {
+    runId: "run-1",
+    events: [{ kind: "context-captured", atMs: 1, fingerprint: "ctx_1", tableCount: 4, snapshot: kindedSnapshot }],
+  } as Pick<AgentRunRecord, "runId" | "events">;
   const run = { runId: "run-1", events } as Pick<AgentRunRecord, "runId" | "events">;
 
   const plan = (h: Harness, input: unknown) => planTableProfile(h.context, run, input);
@@ -3567,6 +3596,48 @@ describe("profileTableTool — the model names a table, the server decides the r
     expect(outcome.modelText).not.toContain("inspect_schema");
     // The fixture's inventory, offered back so there is something to act on.
     expect(outcome.modelText).toContain("orders");
+  });
+
+  /*
+    The inventory stopped being a list of tables when the object surface landed (#789): a
+    PostgreSQL capture carries the schema's views, sequences and functions beside them.
+    A profile composes and RUNS `SELECT count(*) ...` against what it resolves, so what it
+    may resolve is the declared ROLE and nothing else. The refusal says which of the two
+    things happened, for the reason the qualifier refusal was split out: a model told "that
+    table is not in the inventory" about a name it can SEE in the inventory repeats the call
+    rather than changing it.
+  */
+  test("a FUNCTION the inventory lists is refused, and the refusal does not deny the object", () => {
+    const outcome = planTableProfile(harness().context, kindedRun, { schema: "public", table: "order_total(integer)" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("OBJECT_NOT_PROFILABLE");
+    expect(outcome.modelText).toContain("Function");
+  });
+
+  test("a SEQUENCE is refused by the same one line, because the gate is the role and not a list of kinds", () => {
+    const outcome = planTableProfile(harness().context, kindedRun, { table: "orders_id_seq" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("OBJECT_NOT_PROFILABLE");
+  });
+
+  test("a VIEW is planned, because its declared role is relation and it has rows to count", () => {
+    const outcome = planTableProfile(harness().context, kindedRun, { table: "order_summary" });
+
+    if (outcome.kind !== "planned") throw new Error("expected planned");
+    expect(outcome.plan.target.entry.name).toBe("public.order_summary");
+  });
+
+  test("the names a refusal offers back are only the ones it would accept", () => {
+    const outcome = planTableProfile(harness().context, kindedRun, { table: "secrets" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_NOT_INVENTORIED");
+    expect(outcome.modelText).toContain("public.orders");
+    // Offering a name this tool would then refuse is the two-dead-refusals sequence again.
+    expect(outcome.modelText).not.toContain("order_total");
+    expect(outcome.modelText).not.toContain("orders_id_seq");
   });
 
   test("a qualifier the inventory has never heard of is refused by naming the entry that exists", () => {

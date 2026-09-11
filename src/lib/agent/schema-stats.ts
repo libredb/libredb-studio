@@ -42,8 +42,10 @@
 
 import { AgentComposedSqlError, type AgentCatalogSelector, composeStatisticsAvailabilityProbe } from "./composed-sql";
 import { type AgentToolContext, readCatalogForGrounding, readStatementForGrounding } from "./tools";
+import { addressableObjects } from "./inventory-objects";
 import { fenceUntrustedContent } from "./untrusted-content";
-import type { DatabaseType, TableSchema } from "@/lib/types";
+import type { AgentInventory } from "./types";
+import type { DatabaseType } from "@/lib/types";
 
 /** Why a run has no statistics. All four are states the run continues from. */
 export type AgentStatisticsUnavailableCode =
@@ -345,7 +347,7 @@ function renderTable(name: string, estimate: AgentTableEstimate | undefined, det
 /**
  * The statistics, against the inventory they describe, as text for a prompt.
  *
- * Driven from the INVENTORY's table list rather than from the reading's keys, which
+ * Driven from the INVENTORY's own entries rather than from the reading's keys, which
  * is what makes absence expressible at all: a table the engine holds nothing for gets
  * its own line saying so. A reading keyed on a table the inventory does not carry is
  * dropped — it is a table the model was never shown and cannot write about.
@@ -361,11 +363,16 @@ function renderTable(name: string, estimate: AgentTableEstimate | undefined, det
  * has to guess at (#350).
  */
 export function packSchemaStatistics(
-  tables: readonly TableSchema[],
+  inventory: AgentInventory,
   statistics: AgentSchemaStatistics,
   options: { readonly maxChars?: number; readonly detail?: AgentStatisticsDetail } = {},
 ): string {
   const detail = options.detail ?? "rows-and-columns";
+  // The inventory carries every kind the engine declared (#789), and every line below says
+  // "this table": a routine given one would be told it has an unknown size, which is a
+  // category error dressed as a fact. The gate is the declared role, so a relation kind
+  // this repository has never heard of is reported like any other.
+  const tables = addressableObjects(inventory);
   if (statistics.kind === "unavailable") {
     return [
       `No estimated table statistics are available to this run: ${UNAVAILABLE_REASON[statistics.reasonCode]}.`,

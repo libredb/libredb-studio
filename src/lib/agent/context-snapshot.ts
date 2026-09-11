@@ -92,14 +92,7 @@ import type {
 } from "./types";
 import { fenceUntrustedContent, quoteIdentifierForPrompt } from "./untrusted-content";
 import { DatabaseError, ExecutionProfileError } from "@/lib/db/errors";
-import type {
-  ColumnSchema,
-  DatabaseConnection,
-  DatabaseType,
-  ForeignKeySchema,
-  IndexSchema,
-  TableSchema,
-} from "@/lib/types";
+import type { ColumnSchema, DatabaseConnection, DatabaseType, ForeignKeySchema, IndexSchema } from "@/lib/types";
 
 /**
  * How much of a catalog a refused capture asked for, against how much it may have.
@@ -910,7 +903,7 @@ function environmentFailure(error: unknown, context: AgentToolContext): AgentCon
  * never set the field at all, and `finalize` has to produce the same shape on both
  * paths or two readings of one schema would fingerprint differently.
  */
-function providerTables(tables: readonly TableSchema[]): TableIndex {
+function providerTables(tables: readonly AgentInventoryObject[]): TableIndex {
   const index: TableIndex = new Map();
   for (const table of tables) {
     index.set(table.name, {
@@ -1156,7 +1149,7 @@ function taskTerms(objective: string): string[] {
  * broken by name so the packing is deterministic — two runs with the same objective
  * and the same schema produce the same prompt.
  */
-function relevance(table: TableSchema, terms: readonly string[]): number {
+function relevance(table: AgentInventoryObject, terms: readonly string[]): number {
   const name = table.name.toLowerCase();
   const columns = table.columns.map((column) => column.name.toLowerCase());
   let score = 0;
@@ -1167,7 +1160,7 @@ function relevance(table: TableSchema, terms: readonly string[]): number {
   return score;
 }
 
-function renderColumn(table: TableSchema, column: ColumnSchema): string {
+function renderColumn(table: AgentInventoryObject, column: ColumnSchema): string {
   const reference = (table.foreignKeys ?? []).find((key) => key.columnName === column.name);
   return [
     column.name,
