@@ -118,15 +118,20 @@ function identifier(value: string): string {
  * function is a COUNT or a byte total for a panel, where the reading is a display
  * figure - a row count above 2^53 is 9 quadrillion rows - while the values that
  * must not be rounded are result CELLS, which never pass through here.
+ *
+ * Exported for `objects.ts`, which reads the same decoded rows off the same transport and
+ * must read them by the same rule. Two spellings of "a statistic as a number" in one
+ * provider directory is how the two surfaces come to disagree about one value.
  */
-function readNumber(value: unknown): number | undefined {
+export function readNumber(value: unknown): number | undefined {
   if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
   if (typeof value !== "string" || value.trim() === "") return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function readText(value: unknown): string | undefined {
+/** A text as a string, or absent. The empty string is an absence here, not a value. */
+export function readText(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
