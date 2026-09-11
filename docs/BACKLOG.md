@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D52, U17 · 13
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X13, U2–U21 · 7
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 8
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -707,6 +707,31 @@ derived groupings, read beside the engine-wide flag the way `kindAcceptsRowWrite
 `supportsInlineRowEdit` - or the engine-wide gate is deliberately kept with that decision written at
 `libredb.ts`'s `tablesAreDerivedGroupings` site and in `docs/providers/libredb.md`. Either way
 LibreDB's `table` and `collection` stop being refused by a flag that was never about them.
+
+---
+
+### X14. `flatTargetName` hands over a bare identifier, so every object outside the default container misses
+
+`src/components/object-tree/row-actions.ts:137` is the seam between the object tree and the two
+consumers that still take a NAME: `onObjectClick` in both shells, which reach `handleTableClick`. It
+answers `object.name`, the display label, and the flat schema list the consumer then looks the name up
+in spells an object outside the default container as `sales.orders`. So a table in a non-default
+schema is clicked and nothing is found. Inside the default container it works, which is why it has
+survived: on a one-schema database every row hits.
+
+It cannot be closed at the seam by qualifying the name from `path`, and that was measured in Sweep 1
+rather than assumed. The flat spelling elides the DEFAULT container and nothing else, and which
+container that is, is a per-engine literal inside each engine's own flat reader: `postgres.ts:1881`
+compares against `public`, `mssql.ts:1604` against `dbo`, and `couchbase/keyspace.ts:36` against
+`_default`. No capability declares that name, so a rule written here would have to carry every
+engine's default, and joining `path` unconditionally would break the case that works today.
+
+The condition that closes it is the consumers moving onto `path`: once `handleTableClick` takes
+segments instead of a string, the seam and its per-engine problem both go, and so does the function.
+That is the same phase that deletes the flat reading (#789, Task 26).
+
+**Done when:** the two `onObjectClick` consumers address an object by its `path`, `flatTargetName` is
+gone, and a non-default-container row opens the object it names.
 
 ---
 

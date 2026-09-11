@@ -2194,6 +2194,40 @@ describe("captureContextSnapshot — the kind, composed on the catalog path", ()
     ]);
   });
 
+  /*
+    The refusal `tablesAreDerivedGroupings` carries, on the path that composes its inventory
+    rather than reading the object surface (#789, address fix round 1).
+
+    `walkObjectInventory` attaches `derivedGroupings` to the relation kinds and this path
+    omitted it. What made the omission safe was a precondition nothing pinned - that no
+    engine setting the flag has an entry in `COMPOSED_KIND_WORDS`, so no composed kind could
+    ever come from one - and a precondition nobody asserts is a precondition that expires
+    the day someone adds an engine. Carrying the declaration deletes it. The capabilities
+    below are PostgreSQL's with the flag set, which no real PostgreSQL sets: the flag is a
+    declaration, and the thing being pinned is that a declaration travels, not that this
+    engine makes it.
+  */
+  test("a derived-groupings declaration travels on the composed path too", async () => {
+    const capture = await captureContextSnapshot(
+      harness("postgres", answerKindedPostgres, {
+        ...withKinds(PG_KINDS),
+        tablesAreDerivedGroupings: true,
+      }).context,
+    );
+
+    if (capture.kind !== "captured") throw new Error(`expected a snapshot, got ${capture.kind}`);
+    expect(capture.snapshot.kinds).toEqual([
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables", derivedGroupings: true },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views", derivedGroupings: true },
+    ]);
+  });
+
+  test("and an engine that declares nothing of the sort still carries no such mark", async () => {
+    const snapshot = await snapshotOf("postgres", answerKindedPostgres, PG_KINDS);
+
+    expect(snapshot.kinds?.every((kind) => kind.derivedGroupings === undefined)).toBe(true);
+  });
+
   test("SQLite: sqlite_master's own word becomes the declared kind id", async () => {
     const snapshot = await snapshotOf("sqlite", answerKindedSqlite, SQLITE_KINDS);
 

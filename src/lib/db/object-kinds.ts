@@ -42,6 +42,23 @@ export function kindAcceptsRowWrites(capabilities: ProviderCapabilities, id: str
   return findKind(capabilities, id)?.acceptsRowWrites === true;
 }
 
+/**
+ * The ids of the kinds the provider declared `role: "relation"`.
+ *
+ * The ROLE and never a list of ids written here, for the reason every other derivation in
+ * this file exists: `role` is the provider's own word about its own engine, and a hardcoded
+ * set would be wrong for every engine this repository has not heard of.
+ *
+ * Two readers, and they want it for two different reasons. `use-connection-manager.ts` names
+ * these kinds when it asks the inventory route for objects, which is both a correctness fact
+ * and a cost one: the flat readings hold relations and nothing else, so every routine,
+ * trigger and event in a full answer is an object the join can never match and can only
+ * CONTEST - measured on MySQL 26.7.0, where a table, a procedure and an event called `foo`
+ * carry the identical address and the table therefore came back with no kind at all - and
+ * asking for three kinds instead of seven is three listings per container instead of seven.
+ * `tests/helpers/object-surface-conformance.ts` reads it to perform that same join, so the
+ * guard and the app narrow their population by one rule rather than two.
+ */
 export function relationKindIds(capabilities: ProviderCapabilities): readonly string[] {
   return declaredKinds(capabilities)
     .filter((kind) => kind.role === "relation")

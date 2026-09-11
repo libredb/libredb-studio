@@ -1,3 +1,21 @@
+/*
+  This module type-imports from `src/lib/db`, which is the opposite of the usual direction,
+  and it is deliberate (#789).
+
+  `SchemaSnapshot.schema` stores what the consumer actually held, and that shape is
+  `DetailedObject`. The alternative is a second declaration of the same shape here, which is
+  precisely the drift the field's own docblock records: the declaration said `TableSchema`
+  while the stored JSON carried two more fields, and a later reader trusted the type instead
+  of the data. One declaration, imported, cannot drift.
+
+  It is TYPE-ONLY in both directions and there is no runtime edge: `detailed-object.ts` imports
+  `ColumnSchema`, `ForeignKeySchema` and `IndexSchema` from this file, so the two are a type
+  cycle that TypeScript resolves and every bundler erases. Nothing is imported for a value, so
+  no module graph is created by it.
+
+  Task 26b rewrites both files, at which point the flat reading is gone, `kind` and `path` stop
+  being optional, and where this shape is declared can be settled once rather than twice.
+*/
 import type { DetailedObject } from "@/lib/db/detailed-object";
 
 export type DatabaseType =

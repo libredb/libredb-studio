@@ -326,15 +326,42 @@ function composedKindResolver(context: AgentToolContext): ComposedKindResolver {
  * absent, which is the one thing that must not be mistaken for "the database holds none":
  * `inventoryNotes` and `kindLabel` both speak only about what is in front of them, and
  * `docs/AGENT.md` states the loss.
+ *
+ * `derivedGroupings` IS carried, and it is carried for the opposite reason `sampledFrom` is
+ * not. `sampledFrom` is a measurement, and this path took none. `derivedGroupings` is a
+ * DECLARATION, `tablesAreDerivedGroupings` on the provider's own capabilities, and a
+ * declaration is as true on this path as on the other: it says the relation rows are
+ * prefix groupings the server derived rather than objects anybody named, which is the
+ * refusal the old flat row menu carried (standing ruling 4). It used to be omitted, and
+ * what made the omission safe was a precondition nothing pinned, that no engine setting
+ * the flag appears in `COMPOSED_KIND_WORDS`. Carrying it deletes the precondition instead
+ * of documenting it, and the two paths now say the same thing about the same declaration.
  */
 function composedKinds(
   objects: readonly AgentInventoryObject[],
   context: AgentToolContext,
 ): readonly AgentInventoryKind[] {
   const present = new Set(objects.map((object) => object.kind));
+  const derived = context.capabilities.tablesAreDerivedGroupings === true;
   return declaredKinds(context.capabilities)
     .filter((spec) => present.has(spec.id))
-    .map((spec) => ({ id: spec.id, role: spec.role, label: spec.label, labelPlural: spec.labelPlural }));
+    .map((spec) => ({
+      id: spec.id,
+      role: spec.role,
+      label: spec.label,
+      labelPlural: spec.labelPlural,
+      // The relation kinds only, which is where `walkObjectInventory` attaches it too: a
+      // Redis Function Library is a named object and a Redis key pattern is not.
+      //
+      // The role test cannot be mutated ON THIS PATH and that is said rather than hidden:
+      // no composed reading produces a non-relation kind today. PostgreSQL's statement
+      // reads `information_schema.columns`, which holds no sequence, and SQLite's index
+      // statement feeds each table's index list rather than the inventory, so `present`
+      // only ever holds relation ids and the condition is behaviour-identical here. It is
+      // written anyway, because it is the same declaration the other path reads and an
+      // engine whose catalog answers a config kind would otherwise be marked wrongly.
+      ...(derived && spec.role === "relation" ? { derivedGroupings: true } : {}),
+    }));
 }
 
 // ============================================================================
