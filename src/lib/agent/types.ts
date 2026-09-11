@@ -506,7 +506,7 @@ export interface AgentInventoryObject extends TableSchema {
  * A kind the engine declared, as the run's prose needs it.
  *
  * The `ObjectKindSpec` fields a renderer needs, plus the two facts that decide whether
- * what the model is told about this kind is TRUE — neither of which lives on the spec:
+ * what the model is told about this kind is TRUE, neither of which lives on the spec:
  *
  *  - `sampledFrom` is the provider's own sentence from `KindCount`'s fourth state, and its
  *    presence means every count and every listing of this kind is a FLOOR. Redis counts
@@ -548,7 +548,7 @@ export interface AgentInventory {
    *
    * Optional, and absent means the same thing an empty list does: nothing here is kinded,
    * so no renderer may name a kind. It is optional because a snapshot recorded in a run's
-   * ledger before this field existed still has to be READABLE — `reusableSnapshot` re-reads
+   * ledger before this field existed still has to be READABLE: `reusableSnapshot` re-reads
    * such an entry rather than trusting it, and it must be able to parse it to decide that.
    */
   readonly kinds?: readonly AgentInventoryKind[];

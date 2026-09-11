@@ -1858,7 +1858,7 @@ describe("an inventory that knows what its objects ARE", () => {
    * The fingerprint's own docblock says the same database fingerprints the same twice so
    * that a resumed run can tell whether it is looking at the schema its earlier claims
    * were made about. It hashed name, columns, indexes and keys, so a table REPLACED by a
-   * view of the same name and shape — a migration anybody might run — fingerprinted
+   * view of the same name and shape, a migration anybody might run, fingerprinted
    * identically, and the resumed run reused a snapshot describing an object that no
    * longer accepted a write.
    */

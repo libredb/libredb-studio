@@ -1117,7 +1117,7 @@ function renderColumn(table: TableSchema, column: ColumnSchema): string {
  *    groupings this server derived, not objects anybody named, so no command can be given
  *    such a name. It is the refusal the old row menu carried, said in the one place the
  *    model actually reads. Without it, a kinded inventory would hand a run "user:* (Key
- *    Pattern)" and read as a licence to address it — which is exactly the run #414
+ *    Pattern)" and read as a licence to address it, which is exactly the run #414
  *    measured drafting `KEYS user:*`.
  *
  * Inside the fence with the inventory rather than in the preface, the same as the omission

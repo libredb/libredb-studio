@@ -2421,8 +2421,8 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
  * The counts are taken first because they decide which pairs are worth listing at all.
  *
  * A kind whose COUNT was refused is still listed. A refusal to count is not a refusal to
- * list — on more than one engine the count is an aggregate over a catalog the listing does
- * not need — and skipping it would drop objects the engine would have named, which is the
+ * list, because on more than one engine the count is an aggregate over a catalog the listing
+ * does not need, and skipping it would drop objects the engine would have named, which is the
  * absence this epic exists to prevent. A kind the engine counted as zero is skipped,
  * because that IS the engine's answer and listing it would cost a round trip to be told
  * the same thing.
