@@ -191,8 +191,11 @@ It is pinned at connect time, which has two measured consequences worth knowing:
   'nosuchks' does not exist`. The provider surfaces that sentence rather than wrapping it in "failed
   to connect", because the one word the user has to change is in it.
 
-A connection with no keyspace still runs every fully qualified statement. What it cannot do is show a
-schema tree, and `getSchema()` says exactly that.
+A connection with no keyspace still runs every fully qualified statement. What it cannot do is show
+the flat table list: `getSchema()` refuses it and says which field to fill.
+The object browser is not refused. `listContainers()` lists every keyspace the role can see on a
+connection that pins none, with no container marked as the session default, because that connection
+is exactly the one a container tree exists to serve.
 
 `USE <keyspace>` works and really does change the session's keyspace (measured) — unlike the
 stateless HTTP providers in this repo, where a `USE` succeeds and then affects nothing.

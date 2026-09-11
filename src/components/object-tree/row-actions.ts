@@ -122,6 +122,15 @@ export interface TreeRowActionContext {
  * `sales.orders`, so that lookup finds nothing. Migrating those consumers onto `path` is the
  * task that removes the flat reading.
  *
+ * It cannot be closed here by qualifying the name from `path`, and that was measured rather
+ * than assumed. The flat spelling elides the DEFAULT container and nothing else, and which
+ * container that is, is a per-engine literal inside each engine's own flat reader:
+ * `postgres.ts:1881` compares against "public", `mssql.ts:1604` against "dbo", and Couchbase
+ * against its `_default` scope in `couchbase/keyspace.ts:36`. No capability declares that
+ * name, so a rule written at this seam would have to carry every engine's default, and
+ * joining `path` unconditionally would break the common case that works today. The fix
+ * belongs where the consumers move onto `path`.
+ *
  * Exported, and called at the SHELL rather than inside the tree, so that the tree stays in
  * object-model terms and every site Task 25 has to migrate is one grep for this name.
  */

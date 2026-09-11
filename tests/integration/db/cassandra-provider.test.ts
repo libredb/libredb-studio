@@ -1023,7 +1023,7 @@ describe("getSchema", () => {
     ]);
   });
 
-  test("a connection with no keyspace has no tree, and says which field to fill", async () => {
+  test("a connection with no keyspace has no FLAT table list, and says which field to fill", async () => {
     const { provider } = await connectedProvider(healthyReplies(), { database: undefined });
 
     await expect(provider.getSchema()).rejects.toThrow(DatabaseConfigError);

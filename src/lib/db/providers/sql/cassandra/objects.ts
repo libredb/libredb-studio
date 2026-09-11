@@ -501,9 +501,11 @@ export async function listContainers(
  * `COUNT(*)` is what closes it, and the catalogs are small enough that this costs
  * nothing worth the risk.
  *
- * Three outcomes, and the type keeps all three apart: a kind whose read answered rows
+ * Three outcomes here, and `KindCount` keeps them apart: a kind whose read answered rows
  * carries their number, a kind whose read answered none carries `{ count: 0 }`, and a
- * refused read carries the server's own sentence.
+ * refused read carries the server's own sentence. The type's fourth state, a bounded
+ * `{ count, sampledFrom }`, is never written by this provider: the listing is read whole,
+ * so every number here is a total rather than a floor.
  *
  * `Promise.allSettled` and not `Promise.all`, because those three states are PER KIND.
  * One `catch` around `Promise.all` reported the first refusal against all seven kinds,

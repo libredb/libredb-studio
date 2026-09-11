@@ -506,13 +506,18 @@ export class CassandraProvider extends SQLBaseProvider {
   }
 
   /**
-   * The keyspace every catalog read resolves against.
+   * The keyspace every FLAT catalog read resolves against.
    *
    * The connection's `database` field, exactly as a PostgreSQL connection pins one
-   * database and a Trino connection pins one catalog. A connection that names none
-   * has no tree to show: measured, an unqualified table name then answers "No
+   * database and a Trino connection pins one catalog. A connection that names none has
+   * no flat table list to show: measured, an unqualified table name then answers "No
    * keyspace has been specified. USE a keyspace, or explicitly specify
    * keyspace.tablename".
+   *
+   * That is a statement about `getSchema()` and the two other readers below, not about
+   * the connection. `listContainers` deliberately does not come through here (#789): a
+   * keyspace-less connection is legal and connectable, and the container tree is how
+   * somebody picks a keyspace when the connection pins none.
    */
   private requireKeyspace(): string {
     const keyspace = this.config.database;

@@ -237,11 +237,12 @@ function appendContainer(
 
 /**
  * A folder is drawn because the provider DECLARED the kind, never because a count
- * answered for it. The three states of `KindCount` are three different facts: an
- * undeclared kind has no folder at all, `{ count: 0 }` draws a zero badge, and a refused
- * read carries the engine's own sentence. A container whose counts have not arrived yet
- * therefore shows all of its folders with no badge, rather than growing them one at a
- * time as numbers land.
+ * answered for it. The four states of `KindCount` are four different facts: an undeclared
+ * kind has no folder at all, `{ count: 0 }` draws a zero badge, a refused read carries the
+ * engine's own sentence, and `{ count, sampledFrom }` draws a bounded number. All four are
+ * spelled out where they are rendered, in `formatCount` below. A container whose counts
+ * have not arrived yet therefore shows all of its folders with no badge, rather than
+ * growing them one at a time as numbers land.
  *
  * A refused folder is a LEAF. Its contents were not merely unread, the engine declined
  * to answer for them, so offering a twisty that opens on nothing would turn a refusal
