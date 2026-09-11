@@ -334,10 +334,12 @@ const OBJECT_LISTINGS: Readonly<Record<string, { readonly sql: string; readonly 
  * this engine's container path is always `[]` - writing `[name]` here would be a second
  * place that knows this engine's depth.
  *
- * A trigger's parent is `sqlite_schema.tbl_name`, which is never null for a trigger. It is
- * not always a TABLE: an INSTEAD OF trigger on a VIEW is legal and `tbl_name` then names
- * the view. `attachedTo` names the kind a trigger usually hangs off, and the count and the
- * listing both carry the view case rather than one of them dropping it.
+ * A trigger's parent is `sqlite_schema.tbl_name`, which SQLite always populates for a
+ * trigger, so a missing one is not an engine answer and the caller raises rather than
+ * silently promoting the trigger to the top level. It is not always a TABLE: an INSTEAD OF
+ * trigger on a VIEW is legal and `tbl_name` then names the view. `attachedTo` names the
+ * kind a trigger usually hangs off, and the count and the listing both carry the view case
+ * rather than one of them dropping it.
  */
 function objectPath(container: readonly string[], name: string, parent: string | undefined): string[] {
   return parent === undefined ? [...container, name] : [...container, parent, name];
@@ -464,7 +466,10 @@ export async function countLibSQLObjects(
  * statements answer these listings, so four `ORDER BY` clauses would be four chances to
  * disagree; and a SQL sort runs under the column's own collation. A code-point sort here is
  * one rule and the same rule everywhere. It is not cosmetic either: measured, `PRAGMA
- * table_list` answers in page order, `legacy_ref` before `legacy` before `orders`.
+ * table_list` answers in PAGE order rather than name order, and that order is not even
+ * stable across builds - the same DDL replayed into a fresh container produced a different
+ * sequence - so a listing that returned the catalog's order would reorder the tree between
+ * one connection and the next.
  *
  * By PATH and not by name, because it is the address that has to be stable: sorting by the
  * address groups an object's triggers under it.
@@ -486,7 +491,8 @@ export async function listLibSQLObjects(
   // "is this kind declared" from whether a listing statement exists would make the two
   // methods disagree, and would report "declares no object kind" about a kind
   // `objectKinds` does declare but nothing here can list.
-  if (findKind(reader.capabilities, kind) === undefined) {
+  const spec = findKind(reader.capabilities, kind);
+  if (spec === undefined) {
     throw new QueryError(`libSQL declares no object kind "${kind}"`, "libsql");
   }
   const statement = OBJECT_LISTINGS[kind];
@@ -504,9 +510,14 @@ export async function listLibSQLObjects(
   return rows
     .map((row) => {
       const name = requiredName(row.name, `${kind} row`, statement.sql);
-      // `parent` is selected by the trigger listing alone, so ABSENT is the normal answer
-      // for the other three and is what `objectPath` reads as "this kind does not nest".
-      return { path: objectPath(container, name, readText(row.parent)), name, kind };
+      // Whether a parent is REQUIRED is read off the declaration, not off whether the
+      // column happens to be there. A kind declaring `attachedTo` nests under the object
+      // it hangs off, so its parent is half of the address and a missing one would quietly
+      // promote the object to the top level; the other three kinds do not select the
+      // column at all, and absent is what `objectPath` reads as "this kind does not nest".
+      const parent =
+        spec.attachedTo === undefined ? undefined : requiredName(row.parent, `${kind} parent`, statement.sql);
+      return { path: objectPath(container, name, parent), name, kind };
     })
     .sort((left, right) => comparePaths(left.path, right.path));
 }

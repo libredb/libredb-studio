@@ -1116,7 +1116,7 @@ describe("LibSQLProvider object surface (#789)", () => {
     objects = await connectedWithObjects();
 
     // The control, measured live: `sqlite_schema` types an FTS5 table's five shadow
-    // tables `table`, so a naive scan answers 14 where the engine holds 8.
+    // tables `table`, so a naive scan answers 16 where the engine holds 10.
     const naive = SQLITE_SCHEMA_ROWS.filter((row) => row.type === "table");
     expect(naive).toHaveLength(16);
     expect(naive.map((row) => row.name)).toContain("notes_data");
@@ -1251,13 +1251,12 @@ describe("LibSQLProvider object surface (#789)", () => {
   test("a listing is sorted by path here, which the engine's own order is not", async () => {
     objects = await connectedWithObjects();
 
-    // Measured: `PRAGMA table_list` answers in page order, `legacy_ref` before `legacy`
-    // before `orders`. A provider that returned the catalog's order would answer this.
-    expect(
-      TABLE_LIST_ROWS.filter((row) => row.type === "table")
-        .map((row) => row.name)
-        .slice(0, 3),
-    ).toEqual(["legacy_ref", "legacy", "sqlite_schema"]);
+    // Measured: `PRAGMA table_list` answers in PAGE order rather than name order. The exact
+    // sequence is a property of one build - the same DDL replayed into a fresh container
+    // produced a different one - so what is pinned here is that the fixture's captured
+    // order is NOT sorted, which is what makes the assertion below non-vacuous.
+    const catalogOrder = TABLE_LIST_ROWS.filter((row) => row.type === "table").map((row) => row.name);
+    expect(catalogOrder).not.toEqual([...catalogOrder].sort());
 
     const tables = await objects.listObjects([], "table");
 
@@ -1426,6 +1425,29 @@ describe("LibSQLProvider object surface (#789)", () => {
     // Naming the statement, so whoever reads it knows which of the four listings produced
     // the row rather than being told only that something was nameless.
     expect((refusal as DatabaseError).query).toContain("s.type = 'index'");
+  });
+
+  test("a trigger row with no parent is refused rather than promoted to the top level", async () => {
+    // The parent is half of an attached kind's ADDRESS, so losing it is not a cosmetic
+    // gap: the trigger would come back as `["orders_stamp"]`, a top-level row sitting
+    // beside the tables. Which kinds require one is read off `attachedTo` rather than off
+    // whether the column is present, so the three unattached listings are unaffected.
+    objects = await connectedWithObjects();
+    server = () =>
+      result(
+        [
+          ["name", "TEXT"],
+          ["parent", "TEXT"],
+        ],
+        [[text("orders_stamp"), { type: "null" }]],
+      );
+
+    await expect(objects.listObjects([], "trigger")).rejects.toThrow(/libSQL answered a trigger parent with no name/);
+    // The control: the same null in the column the other three kinds do not select is not
+    // an error, because absent is what "this kind does not nest" looks like.
+    await expect(objects.listObjects([], "index")).resolves.toEqual([
+      { path: ["orders_stamp"], name: "orders_stamp", kind: "index" },
+    ]);
   });
 
   test("an object that is not there is a failed read and says so", async () => {
