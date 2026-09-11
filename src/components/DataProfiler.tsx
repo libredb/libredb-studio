@@ -2,30 +2,20 @@
 
 import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useMemo } from "react";
-import { LoaderCircle, ChartColumn, X, Hash, CircleAlert, Sparkles, Lock } from "lucide-react";
+import { LoaderCircle, ChartColumn, X, Hash, CircleAlert, Sparkles, Lock, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TableSchema, DatabaseConnection } from "@/lib/types";
 import { detectSensitiveColumns, maskValue } from "@/lib/data-masking";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
-
-interface ColumnProfile {
-  name: string;
-  type?: string;
-  totalRows: number;
-  nullCount: number;
-  nullPercent: number;
-  distinctCount: number;
-  minValue?: string;
-  maxValue?: string;
-  sampleValues?: string[];
-  error?: string;
-}
-
-interface ProfileData {
-  tableName: string;
-  totalRows: number;
-  columns: ColumnProfile[];
-}
+import { dataProfileText, type ColumnProfile, type ProfileData } from "@/lib/export/data-profile";
+import { downloadText } from "@/lib/export/download";
+import { Button } from "./ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface DataProfilerProps {
   isOpen: boolean;
@@ -63,6 +53,18 @@ export function DataProfiler({
     if (!tableSchema?.columns) return new Map();
     return detectSensitiveColumns(tableSchema.columns.map((c) => c.name));
   }, [tableSchema]);
+
+  const exportProfile = (format: "csv" | "json") => {
+    if (!profile) return;
+
+    const safeTableName = profile.tableName.replace(/[^a-zA-Z0-9_-]/g, "_") || "table";
+
+    downloadText(
+      dataProfileText(profile, sensitiveColumnNames, format),
+      format === "csv" ? "text/csv" : "application/json",
+      `data_profile_${safeTableName}_${Date.now()}.${format}`,
+    );
+  };
 
   const fetchAiSummary = async (data: ProfileData) => {
     setIsAiLoading(true);
@@ -216,13 +218,39 @@ export function DataProfiler({
             <span className="text-xs font-medium text-fg shrink-0">Data Profiler</span>
             <span className="text-xs text-fg-muted font-mono truncate">{tableName}</span>
           </div>
-          <button
-            onClick={onClose}
-            aria-label="Close data profiler"
-            className="shrink-0 p-1 rounded hover:bg-fill text-fg-muted"
-          >
-            <X strokeWidth={1.5} className="w-3.5 h-3.5" />
-          </button>
+
+          <div className="flex shrink-0 items-center gap-1">
+            {profile && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs font-medium text-fg-tertiary hover:text-fg-bright gap-1.5"
+                  >
+                    <Download strokeWidth={1.5} className="w-3 h-3" />
+                    Export
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="bg-raised border-hairline-strong text-fg-secondary">
+                  <DropdownMenuItem onClick={() => exportProfile("csv")} className="text-xs cursor-pointer">
+                    Export as CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => exportProfile("json")} className="text-xs cursor-pointer">
+                    Export as JSON
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+
+            <button
+              onClick={onClose}
+              aria-label="Close data profiler"
+              className="shrink-0 p-1 rounded hover:bg-fill text-fg-muted"
+            >
+              <X strokeWidth={1.5} className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         {/* Content */}

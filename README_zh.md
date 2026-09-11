@@ -12,7 +12,8 @@
   <a href="README.md">English</a> ·
   <b>简体中文</b> ·
   <a href="README_ja.md">日本語</a> ·
-  <a href="README_es.md">Español</a>
+  <a href="README_es.md">Español</a> ·
+  <a href="README_ur.md">اردو</a>
 </p>
 
 <p align="center">
@@ -26,9 +27,10 @@
 <p align="center">
   同时列入
   <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>、
-  <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>
+  <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>、
+  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>
   和
-  <a href="https://druid.apache.org/libraries">Apache Druid</a>
+  <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>
   官方文档
 </p>
 

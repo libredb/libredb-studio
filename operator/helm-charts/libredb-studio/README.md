@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.62 \
+  --version 0.1.63 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -146,6 +146,36 @@ You do **not** need this when TLS is terminated at an ingress or a load balancer
 browser still speaks `https`, so it accepts the cookie. `false` is only for the case where
 the browser's own connection is cleartext - and it means session cookies travel in
 cleartext, so keep it to a trusted network. `true` forces the flag on.
+
+## Two-Factor Authentication (TOTP)
+
+Optional, local-provider only, and opt-in per account. Set a base32 secret and that account must
+present a 6-digit authenticator code after its password:
+
+```bash
+# Generate it, enrol the printed value in your authenticator app, then install.
+ADMIN_TOTP_SECRET="$(openssl rand 20 | base32 | tr -d '=')"
+echo "$ADMIN_TOTP_SECRET"
+
+helm upgrade --install libredb libredb/libredb-studio \
+  --set secrets.adminPassword=MyAdmin123 \
+  --set secrets.adminTotpSecret="$ADMIN_TOTP_SECRET"
+```
+
+No example secret is printed here on purpose. One that looks real invites being copied and left in
+place, and a second factor whose secret is published is worse than none.
+
+The value travels in the chart's Secret and is referenced from the pod, so it never appears in the
+Deployment spec - which is why `extraEnv` is the wrong tool for it. Both `ADMIN_TOTP_SECRET` and
+`USER_TOTP_SECRET` refs are always optional, including in strict mode, so a second factor nobody
+asked for can never keep the pod from starting. `values.schema.json` applies the same test the app
+does, base32 and at least the 128 bits RFC 4226 requires, so a bad secret fails at install time
+rather than at the login screen.
+
+Under `authProvider=oidc` the login page shows no password form and MFA belongs to the identity
+provider - but `POST /api/auth/login` stays reachable whenever `secrets.adminPassword` is also set,
+and this guards that route in every mode. Full setup, enrolment and recovery:
+[`docs/MFA.md`](../../docs/MFA.md).
 
 ## OIDC SSO
 
@@ -542,7 +572,7 @@ helm install libredb libredb/libredb-studio \
 
 Your external secret is referenced with these keys (customizable via `secrets.existingSecretKeys`):
 - `jwt-secret`, `admin-password` — required in strict mode (the pod waits for them); in zero-config mode missing ones are generated at first start
-- Optional: `admin-email`, `user-email`, `user-password` (the non-admin account exists only when `user-password` is set), `llm-api-key`, `oidc-client-id`, `oidc-client-secret`, `storage-postgres-url`
+- Optional: `admin-email`, `user-email`, `user-password` (the non-admin account exists only when `user-password` is set), `admin-totp-secret`, `user-totp-secret`, `llm-api-key`, `oidc-client-id`, `oidc-client-secret`, `storage-postgres-url`
 
 ## Upgrading
 
@@ -586,6 +616,8 @@ helm uninstall libredb
 | `secrets.adminPassword` | Admin password | `""` |
 | `secrets.userEmail` | User email | `user@libredb.org` |
 | `secrets.userPassword` | User password (optional; enables the non-admin account) | `""` |
+| `secrets.adminTotpSecret` | Base32 TOTP secret for the admin account (optional second factor) | `""` |
+| `secrets.userTotpSecret` | Base32 TOTP secret for the user account (optional second factor) | `""` |
 | `secrets.existingSecret` | Use existing Secret | `""` |
 | `config.bindAddress` | Container bind address (`HOSTNAME`): empty lets the image resolve one, preferring a verified dual-stack `::`; `::` forces it; `0.0.0.0` pins IPv4 | `""` |
 | `config.storageProvider` | Storage: local, sqlite, postgres | `local` |

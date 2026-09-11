@@ -12,7 +12,8 @@
   <b>English</b> ·
   <a href="README_zh.md">简体中文</a> ·
   <a href="README_ja.md">日本語</a> ·
-  <a href="README_es.md">Español</a>
+  <a href="README_es.md">Español</a> ·
+  <a href="README_ur.md">اردو</a>
 </p>
 
 <p align="center">
@@ -31,7 +32,7 @@
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>
   <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>
   and
-  <a href="https://druid.apache.org/libraries">Apache Druid</a>
+  <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>
   docs
 </p>
 
@@ -130,6 +131,8 @@ And nothing is held back. Single sign-on, ER diagrams, the AI features and the N
 - **Smart Autocomplete**: Schema-aware suggestions for tables, columns, and SQL keywords.
 - **Command Palette**: Quick access to tables, connections, saved queries, and actions with `Cmd/Ctrl+K`.
 - **Multi-Tab Workspace**: Handle parallel tasks with independent execution states.
+- **Saved Query Backups**: Export the complete saved-query library as JSON. Import validates the file, preserves query metadata and merges new entries, reporting duplicate IDs while keeping existing queries intact.
+- **Duplicate Connections**: Open an independent `(copy)` of an editable saved connection in the connection editor, adjust its settings and save. Cancelling leaves the saved connections unchanged; administrator-managed connections cannot be duplicated.
 - **Visual EXPLAIN**: Graphical execution plans to identify performance bottlenecks.
 - **Interactive ER Diagrams**: Visual schema graph with real foreign key edges, cardinality labels, MiniMap navigation, table search/filter, compact mode, and PNG/SVG export. Automatic hierarchical layout powered by ELK.js.
 - **Schema Diff & Migration**: Compare schema snapshots or cross-connection schemas side-by-side. Color-coded diff view (added/removed/modified) with automatic migration SQL generation for PostgreSQL, MySQL, SQLite, Oracle, and SQL Server, plus ClickHouse column modifications.
@@ -193,7 +196,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 
 ### Model-backed helpers
 - **Universal LLM Support**: Defaults to Gemini and serves OpenAI, Ollama, and any OpenAI-compatible endpoint (LM Studio, LiteLLM, vLLM).
-- **Query Safety Analysis**: AI-powered pre-execution risk assessment for destructive queries (DELETE, DROP, TRUNCATE).
+- **Query Safety Analysis**: AI-powered pre-execution risk assessment for destructive queries (DELETE, DROP, TRUNCATE). With no provider configured, the confirmation remains available with a plain query warning. Setting `LLM_PROVIDER` without its credentials is an unfinished setup, so that error stays visible, as do other configuration and service errors.
 - **AI Query Explainer**: EXPLAIN plans translated into plain language with optimization suggestions.
 - **Schema Awareness**: the connected database's schema is sent as context, so an explanation names your own tables and columns.
 - **Data Profiler summary**: the profiler's per-column statistics written up in prose. That context carries each column's `min` and `max`, which are real values from your data; see [Agent Data Flow](docs/AGENT_DATA_FLOW.md).
@@ -203,7 +206,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 - **Inline Editing**: Double-click to update values directly in the grid, on engines whose SQL has a single-table row update (the control is hidden elsewhere).
 - **Column Filtering**: Per-column text filters on query results for instant data exploration.
 - **Interactive Pivot Table**: Client-side pivoting with 5 aggregation functions (COUNT, SUM, AVG, MIN, MAX) and SQL generation.
-- **Expert Exporter**: Instant CSV and JSON exports for reporting.
+- **Expert Exporter**: Instant CSV and JSON exports for reporting. CSV import and result export offer comma (default), semicolon and tab separators.
 
 ### Advanced Data Visualization
 - **8 Chart Types**: Bar, Line, Pie, Area, Scatter, Histogram, Stacked Bar, and Stacked Area charts powered by Recharts.
@@ -214,7 +217,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 ### Display Masking (Preview)
 - **Client-Side Display Layer**: Masks sensitive values in the browser UI — useful for screen sharing, demos, and reducing accidental on-screen exposure. **Not server-enforced**; query API responses still contain full values for authenticated users.
 - **Column-Name Pattern Matching**: 10 built-in patterns (email, phone, credit card, SSN, password, IP, date, financial, and more) match **result column headers** by regex. Works when the output name matches (e.g., `SELECT salary`). Aliases (`salary AS x`) and aggregates (`SUM(salary)`) are not masked today.
-- **Configurable Rules**: Admin panel to add, edit, enable/disable masking patterns. Custom patterns with regex support. Settings stored per-browser in localStorage.
+- **Configurable Rules**: Admin panel to add, edit, enable/disable masking patterns. Email, phone, credit card and SSN presets prefill the Add Pattern form so column patterns can be adapted before saving. Custom patterns support regex. Settings stored per-browser in localStorage.
 - **RBAC UI Controls**: User role cannot toggle or reveal masked cells in the UI. Admin role can toggle masking and temporarily reveal individual cells (10s auto-hide).
 - **Export & Clipboard**: CSV, JSON, and SQL INSERT exports use masked display values when masking is active in the UI. This does not prevent access to raw data via the API, browser DevTools, or admin reveal.
 - **UI Coverage**: Grid, mobile card/table views, row detail sheet, and clipboard copy respect the active display mask.
@@ -249,7 +252,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 - **Threshold Alerting**: Color-coded health indicators (healthy/warning/critical) for cache hit ratio, connection usage, deadlocks, and buffer pool utilization.
 - **Connection Pool Stats**: Live total/active/idle/waiting pool metrics with utilization progress bars.
 - **One-Click Maintenance**: Trigger `VACUUM`, `ANALYZE`, `REINDEX`, `UPDATE STATISTICS`, `DBCC CHECKDB`, and `ALTER INDEX REBUILD` per database engine.
-- **Audit Trail**: Full history of every query executed across the organization.
+- **Audit Trail**: Full history of every query executed across the organization. The admin Audit tab exports loaded operations and query history as CSV or JSON, respecting the current filters.
 
 ---
 
@@ -916,6 +919,7 @@ extraEnvFrom:
 | [Local models](docs/llms/README.md) | Which local model can actually drive an agent run, measured across three workflows, one page per model |
 | [Agent Runtime](docs/AGENT.md) | Agent behaviour, bounds, deployment and known limitations |
 | [OIDC SSO](docs/OIDC.md) | SSO setup (Auth0, Keycloak, Okta, Azure AD, Zitadel, Google) + subsystem internals & security model |
+| [Two-Factor Auth](docs/MFA.md) | TOTP on the local provider — generating a secret, enrolling an app, Docker/Helm wiring, and what it does not cover |
 | [Theming Guide](docs/ui/theming.md) | CSS theming, dark mode, and styling customization |
 | [Login Page](docs/ui/login-page.md) | Login page layout, OIDC/local modes, and design system |
 | [Editor Docs](docs/editor/) | SQL editor internals — completion, performance, query optimization |

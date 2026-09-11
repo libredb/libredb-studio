@@ -430,6 +430,26 @@ export const AGENT_REPORT_RESERVE_MS = 20_000;
 export const AGENT_TRANSPORT_TURN_RETRIES = 2;
 
 /**
+ * How many times a run may be told a tool call of its own could not be parsed.
+ *
+ * A COUNT rather than a flag, and that is a correction. This bound shipped as "once per run" on
+ * the argument that a model which hears the sentence and writes the same unparseable arguments
+ * again is not rescued by hearing it twice. Measured on `gpt-oss:20b`, the argument is wrong in
+ * the way that matters: of ten runs, four met the fault, and of those four TWO heard the sentence
+ * once and went on to answer — while the other two heard it, met the fault a second time later in
+ * the run, and were ended `model-unavailable` by this bound rather than by anything the model did.
+ *
+ * The sentence works when it is allowed to be said. What the flag actually encoded was the
+ * assumption that the mistake happens once, and a long run of a reasoning model makes it more than
+ * once — in different turns, over different arguments.
+ *
+ * Two, matching `AGENT_TRANSPORT_TURN_RETRIES`, and free on the same argument every recovery here
+ * rests on: the alternative is the throw, so the run is over either way and the turn cannot cost a
+ * pass. A model that cannot comply after two still fails fast.
+ */
+export const AGENT_UNREADABLE_TOOL_CALL_ANSWERS = 2;
+
+/**
  * How many statements that FAILED AT THE DATABASE a run may try to repair.
  *
  * Policy denials and approval requirements deliberately do not consume one — they

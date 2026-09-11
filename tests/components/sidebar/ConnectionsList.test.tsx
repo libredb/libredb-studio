@@ -70,6 +70,21 @@ import { mockPostgresConnection, mockMySQLConnection } from "../../fixtures/conn
 // =============================================================================
 
 describe("ConnectionsList", () => {
+  test("passes duplicate requests to the connection editor", () => {
+    const onDuplicateConnection = mock(() => {});
+    const view = render(
+      <ConnectionsList
+        connections={[mockPostgresConnection]}
+        activeConnection={null}
+        onSelectConnection={mock(() => {})}
+        onDeleteConnection={mock(() => {})}
+        onAddConnection={mock(() => {})}
+        onDuplicateConnection={onDuplicateConnection}
+      />,
+    );
+    fireEvent.click(view.getByRole("button", { name: "Duplicate connection" }));
+    expect(onDuplicateConnection).toHaveBeenCalledWith(mockPostgresConnection);
+  });
   const defaultOnSelect = mock(() => {});
   const defaultOnDelete = mock(() => {});
   const defaultOnEdit = mock(() => {});

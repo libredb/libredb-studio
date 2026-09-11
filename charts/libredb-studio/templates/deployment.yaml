@@ -181,6 +181,26 @@ spec:
                   key: {{ .Values.secrets.existingSecretKeys.userPassword }}
                   optional: true
             {{- end }}
+            {{- /* TOTP second factor. Always optional: MFA is opt-in per account, so a missing
+                   key must never keep the pod from starting, and the app treats an absent value
+                   as "no second factor". Keyed separately from the passwords rather than nested
+                   under them so an operator can rotate a secret without touching a credential. */}}
+            {{- if or .Values.secrets.adminTotpSecret .Values.secrets.existingSecret }}
+            - name: ADMIN_TOTP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "libredb-studio.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.adminTotpSecret }}
+                  optional: true
+            {{- end }}
+            {{- if or .Values.secrets.userTotpSecret .Values.secrets.existingSecret }}
+            - name: USER_TOTP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "libredb-studio.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.userTotpSecret }}
+                  optional: true
+            {{- end }}
             {{- if or .Values.secrets.llmApiKey .Values.secrets.existingSecret }}
             - name: LLM_API_KEY
               valueFrom:

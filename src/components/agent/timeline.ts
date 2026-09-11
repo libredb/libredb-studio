@@ -79,6 +79,7 @@ const GUIDANCE_HEADLINE: Record<Extract<AgentRunEvent, { kind: "guidance-issued"
   "turn-cut-off": "A turn ran long and was cut; asked again",
   "report-reserve": "Told this is its last turn",
   "unread-stop": "Asked to read the database itself",
+  "tool-call-unreadable": "Told its tool call could not be read",
   /*
     The three notices delivered INSTEAD of running a call. They reach a reader through the
     `call-held` entry that records the hold, which is where the rail shows them — one entry

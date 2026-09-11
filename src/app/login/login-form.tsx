@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { ExternalLink, Lock, Mail, ShieldCheck, Shield } from "lucide-react";
+import { ExternalLink, KeyRound, Lock, Mail, ShieldCheck, Shield } from "lucide-react";
 import { toast } from "sonner";
 import LibreDBLogo from "@/components/libredb-logo";
 import { CommunitySection } from "@/components/community-section";
@@ -26,10 +26,27 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
   const isOIDC = authProvider === "oidc";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [totp, setTotp] = useState("");
+  /**
+   * Set once the server has answered `mfaRequired` for these credentials. The form never guesses
+   * at it: whether an account carries a second factor is server-side configuration, and asking
+   * the client to know it up front would mean publishing which accounts are protected.
+   */
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const oidcError = searchParams.get("error");
+
+  /**
+   * Editing either credential drops the second-factor step. Without this, changing the email
+   * after being prompted would submit the new account with a code minted for the previous one -
+   * a guaranteed failure that also spends a slot in the per-account rate-limit bucket.
+   */
+  const resetMfa = () => {
+    setMfaRequired(false);
+    setTotp("");
+  };
 
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -39,12 +56,19 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
       return;
     }
 
+    if (mfaRequired && !totp) {
+      toast.error("Please enter your authentication code");
+      return;
+    }
+
     setIsLoading(true);
     try {
       const response = await appFetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        // `totp` is omitted entirely until the server asks for it, so a deployment without MFA
+        // sees exactly the request body it saw before.
+        body: JSON.stringify(mfaRequired ? { email, password, totp } : { email, password }),
       });
 
       const data = await response.json();
@@ -53,6 +77,13 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
         toast.success(`Welcome back, ${data.role}!`);
         router.push(data.role === "admin" ? "/admin" : "/");
         router.refresh();
+      } else if (data.mfaRequired) {
+        // The first prompt needs no toast - the code field appearing IS the message, and an error
+        // toast would frame a normal step of the flow as a failure. Being asked a second time
+        // does mean the code was rejected, and that is worth saying out loud.
+        if (mfaRequired) toast.error(data.message);
+        setMfaRequired(true);
+        setTotp("");
       } else {
         // data.message is the login route's own body ({ success: false, message }); data.error is
         // everything else that can refuse a login POST before or without reaching that body - the
@@ -274,7 +305,10 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                           placeholder="Enter your email"
                           className="pl-10 h-11 transition-all focus:ring-2 focus:ring-primary/20"
                           value={email}
-                          onChange={(e) => setEmail(e.target.value)}
+                          onChange={(e) => {
+                            setEmail(e.target.value);
+                            resetMfa();
+                          }}
                           required
                         />
                       </div>
@@ -289,17 +323,57 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                           placeholder="Enter your password"
                           className="pl-10 h-11 transition-all focus:ring-2 focus:ring-primary/20"
                           value={password}
-                          onChange={(e) => setPassword(e.target.value)}
+                          onChange={(e) => {
+                            setPassword(e.target.value);
+                            resetMfa();
+                          }}
                           required
                         />
                       </div>
                     </div>
+                    {mfaRequired && (
+                      <div className="space-y-2">
+                        <Label htmlFor="totp">Authentication code</Label>
+                        <div className="relative group">
+                          <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground transition-colors group-focus-within:text-primary" />
+                          <Input
+                            id="totp"
+                            name="totp"
+                            /*
+                             * `text` with an explicit numeric inputMode, not `number`: a number
+                             * input strips a leading zero, and one in six codes starts with one.
+                             * `one-time-code` is what lets iOS and macOS offer the code from the
+                             * paired authenticator without the user leaving the page.
+                             */
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="one-time-code"
+                            pattern="[0-9]*"
+                            maxLength={6}
+                            /*
+                             * The field appears mid-flow in response to the user's own submit, so
+                             * moving focus to it is what a sighted user expects and what tells a
+                             * screen-reader user the form grew a step.
+                             */
+                            autoFocus
+                            placeholder="123456"
+                            className="pl-10 h-11 tracking-[0.4em] font-mono transition-all focus:ring-2 focus:ring-primary/20"
+                            value={totp}
+                            onChange={(e) => setTotp(e.target.value)}
+                            required
+                          />
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Open your authenticator app and enter the current 6-digit code for this account.
+                        </p>
+                      </div>
+                    )}
                     <Button
                       className="w-full h-11 text-base font-medium shadow-lg shadow-primary/20 active:scale-[0.98] transition-all"
                       type="submit"
                       disabled={isLoading}
                     >
-                      {isLoading ? "Authenticating..." : "Sign In"}
+                      {isLoading ? "Authenticating..." : mfaRequired ? "Verify code" : "Sign In"}
                     </Button>
                   </form>
                 </>

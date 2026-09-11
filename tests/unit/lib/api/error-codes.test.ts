@@ -2,8 +2,8 @@ import { describe, test, expect } from "bun:test";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 
 describe("ApiErrorCode", () => {
-  test("contains all 17 error codes", () => {
-    expect(Object.keys(ApiErrorCode)).toHaveLength(17);
+  test("contains all 18 error codes", () => {
+    expect(Object.keys(ApiErrorCode)).toHaveLength(18);
   });
 
   test("values match keys", () => {
@@ -28,6 +28,7 @@ describe("ApiErrorCode", () => {
     expect(ApiErrorCode.LLM_AUTH).toBe("LLM_AUTH");
     expect(ApiErrorCode.LLM_RATE_LIMIT).toBe("LLM_RATE_LIMIT");
     expect(ApiErrorCode.LLM_CONFIG).toBe("LLM_CONFIG");
+    expect(ApiErrorCode.LLM_UNCONFIGURED).toBe("LLM_UNCONFIGURED");
     expect(ApiErrorCode.LLM_STREAM).toBe("LLM_STREAM");
     expect(ApiErrorCode.LLM_ERROR).toBe("LLM_ERROR");
   });

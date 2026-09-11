@@ -9,7 +9,7 @@
 *   **Custom DB Theme:** Specialized `db-dark` theme for high-contrast SQL syntax highlighting.
 *   **Power Snippets:** Integrated templates for CTEs, Joins, and complex CRUD operations.
 *   **Modern Editor Specs:** Font ligatures, smooth scrolling, bracket pair colorization, and parameter hints enabled.
-*   **Keyboard Shortcuts:** `Cmd/Ctrl + Enter` to execute, `Alt + Shift + F` to format.
+*   **Keyboard Shortcuts:** `Cmd/Ctrl + Enter` to execute, `Alt + Shift + F` to format, `Cmd/Ctrl + Shift + X` to open a new query tab.
 *   **Command Palette:** Quick access to tables, connections, saved queries, and actions with `Cmd/Ctrl+K`.
 
 > See [`docs/editor/`](editor/) for the editor internals — completion provider, alias resolution, and performance design.
@@ -88,7 +88,7 @@
 
 ### 10. AI Reliability & Error Management
 *   **Intelligent Error Handling:** Comprehensive English error messages for API quotas, rate limits, and service availability issues.
-*   **In-Place Error Alerts:** An AI feature that fails says so where it was invoked — the Query Safety dialog and the schema-documentation panel each render the failure inline instead of leaving a spinner or an empty result. (The in-editor AI panel that used to hold these alerts was removed; the alerts were not.)
+*   **In-Place Error Alerts:** The Query Safety dialog and schema-documentation panel render AI failures inline. Query Safety omits the credentials error only when no provider is configured at all, retaining the plain warning and explicit Cancel/Execute controls. Setting `LLM_PROVIDER` without its credentials is an unfinished setup, so that error stays visible, as do invalid provider settings, missing models or service URLs, authentication errors and service failures.
 *   **Graceful Degradation:** Robust backend logic to handle API timeouts and authentication failures without crashing the UI.
 
 ### 11. DevOps & Enterprise Deployment
@@ -116,6 +116,7 @@
 
 ### 15. Professional Data Export
 *   **Format Versatility:** Instantly export query result sets to CSV, JSON, SQL `INSERT` statements, or a generated `CREATE TABLE` DDL.
+*   **CSV Delimiters:** Choose comma (default), semicolon or tab in the import preview or result export menu. Changing the import delimiter reparses the preview and retains the header setting and column mappings. Export quoting, formula neutralization and UTF-8 encoding apply to every separator.
 *   **Developer-Ready:** Clean data output optimized for external analysis, reporting, or database migrations.
 *   **Formula-Safe CSV:** A cell whose value starts with `=`, `+`, `-`, `@`, a tab or a carriage return is written with a leading apostrophe, so a spreadsheet shows it as text instead of evaluating it when the file is opened; this is unconditional and has no setting, and a plain number such as `-12.5` is left exactly as it is.
 

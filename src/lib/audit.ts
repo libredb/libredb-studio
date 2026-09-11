@@ -30,6 +30,15 @@ export type AuditEventType =
  */
 export type AuditReason =
   | "bad_credentials"
+  /**
+   * A correct password on a TOTP-protected local account, with no code presented yet. Recorded
+   * even though it is a normal step of the two-request flow, because in the abnormal case it is
+   * the highest-value line in this log: it says someone holds a working password for that
+   * account and was stopped only by the second factor.
+   */
+  | "mfa_required"
+  /** A correct password, but the second factor did not verify — a wrong, expired or replayed code. */
+  | "bad_totp"
   | "malformed_body"
   | "no_session"
   | "insufficient_role"

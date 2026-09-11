@@ -116,6 +116,38 @@ describe("DataImportModal", () => {
 
   // ── CSV file upload → Preview step ─────────────────────────────────────────
 
+  test.each([";", "\t"])("delimiter picker reparses preview and keeps headerless import (%s)", (delimiter) => {
+    const onImport = mock((_sql: string) => {});
+    const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={onImport} tables={[]} />);
+    act(() => simulateFileUpload(baseElement, `Alice${delimiter}30\nBob${delimiter}25`, "data.csv"));
+    const body = within(baseElement);
+    fireEvent.change(body.getByRole("combobox", { name: "CSV delimiter" }), { target: { value: delimiter } });
+    expect(body.getByText("1 rows, 2 columns").textContent).toBe("1 rows, 2 columns");
+    fireEvent.click(body.getByRole("checkbox", { name: "First row is header" }));
+    expect(body.getByText("2 rows, 2 columns").textContent).toBe("2 rows, 2 columns");
+    expect(body.getByRole("cell", { name: "Alice" }).textContent).toBe("Alice");
+    fireEvent.click(body.getByText("Configure Import"));
+    fireEvent.click(body.getByText("New Table"));
+    fireEvent.click(body.getByText("Review SQL"));
+    fireEvent.click(body.getByText("Execute Import"));
+    expect(onImport.mock.calls[0][0]).toContain("('Alice', 30)");
+    expect(onImport.mock.calls[0][0]).toContain("('Bob', 25)");
+  });
+
+  test("reset restores the comma delimiter and JSON hides the picker", () => {
+    const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={[]} />);
+    const body = within(baseElement);
+    act(() => simulateFileUpload(baseElement, "name;age\nAlice;30", "data.csv"));
+    fireEvent.change(body.getByRole("combobox", { name: "CSV delimiter" }), { target: { value: ";" } });
+    fireEvent.click(body.getByText("Reset"));
+    act(() => simulateFileUpload(baseElement, "name,age\nBob,25", "next.csv"));
+    expect((body.getByRole("combobox", { name: "CSV delimiter" }) as HTMLSelectElement).value).toBe(",");
+    expect(body.getByRole("cell", { name: "Bob" }).textContent).toBe("Bob");
+    fireEvent.click(body.getByText("Reset"));
+    act(() => simulateFileUpload(baseElement, '[{"name":"Alice"}]', "data.json"));
+    expect(body.queryByRole("combobox", { name: "CSV delimiter" }) === null).toBe(true);
+  });
+
   test("advances to preview step after CSV file upload", () => {
     const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={sampleTables} />);
 

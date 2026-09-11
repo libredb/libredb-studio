@@ -12,6 +12,7 @@ mock.module("@/lib/data-masking", () => ({
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { render, fireEvent, within, waitFor, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import React from "react";
 import { mockGlobalFetch, restoreGlobalFetch, type MockFetchResponse } from "../helpers/mock-fetch";
 
@@ -812,5 +813,119 @@ describe("DataProfiler", () => {
     expect(body.connectionId).toBe("seed:mongo-local");
     expect(body.connection).toBeUndefined();
     expect(body.tableName).toBe("users");
+  });
+
+  // ── Data profile export ───────────────────────────────────────────────────
+  //
+  // What gets WRITTEN is asserted in tests/unit/lib/export/data-profile.test.ts.
+  // These two cover the wiring only: that the menu reaches the export with the
+  // format the item names, and that the masking map the screen uses is the one
+  // handed to it.
+  //
+  // The download itself is taken through the real `downloadText`, so the stubs
+  // below are `URL` and `document.createElement`. `mock.module` would be the
+  // shorter route and is the wrong one here: it is process-wide, and this file
+  // shares its process with QueryHistory's own download test.
+
+  interface CapturedDownload {
+    blob: Blob;
+    fileName: string;
+    restore: () => void;
+  }
+
+  function captureDownload(): CapturedDownload {
+    const captured = { blob: new Blob([]), fileName: "" };
+    const originalCreateElement = document.createElement.bind(document);
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+
+    URL.createObjectURL = mock((blob: Blob) => {
+      captured.blob = blob;
+      return "blob:data-profile";
+    });
+    URL.revokeObjectURL = mock(() => {});
+
+    document.createElement = mock((tagName: string) => {
+      const element = originalCreateElement(tagName);
+
+      if (tagName.toLowerCase() === "a") {
+        element.click = mock(() => {
+          captured.fileName = (element as HTMLAnchorElement).download;
+        });
+      }
+
+      return element;
+    }) as unknown as typeof document.createElement;
+
+    return {
+      get blob() {
+        return captured.blob;
+      },
+      get fileName() {
+        return captured.fileName;
+      },
+      restore() {
+        document.createElement = originalCreateElement;
+        URL.createObjectURL = originalCreateObjectURL;
+        URL.revokeObjectURL = originalRevokeObjectURL;
+      },
+    };
+  }
+
+  async function clickExport(item: string) {
+    const user = userEvent.setup();
+    const { container } = render(<DataProfiler {...createDefaultProps()} />);
+
+    await waitFor(() => {
+      expect(within(container).queryByText("Export")).not.toBeNull();
+    });
+
+    await user.click(within(container).getByText("Export"));
+    // Radix renders the menu content in a portal, so it is not inside `container`.
+    await user.click(within(document.body).getByText(item));
+  }
+
+  test("the CSV item writes the profile, masked, as a CSV named after the table", async () => {
+    const download = captureDownload();
+    (detectSensitiveColumns as ReturnType<typeof mock>).mockImplementation(
+      () => new Map([["email", { pattern: /email/i, label: "Email", mask: (v: string) => v }]]),
+    );
+
+    try {
+      await clickExport("Export as CSV");
+
+      expect(download.blob.type).toStartWith("text/csv");
+      expect(download.fileName).toMatch(/^data_profile_users_\d+\.csv$/);
+
+      const text = await download.blob.text();
+
+      // One header row and one row per profiled column.
+      expect(text.split("\n")).toHaveLength(4);
+      // The masked column reaches the file masked, and the addresses on screen do
+      // not reach it at all.
+      expect(text).toContain("email,varchar(255),100,0,0,100,****,****,**** | ****,");
+      expect(text).not.toContain("alice@example.com");
+    } finally {
+      download.restore();
+      (detectSensitiveColumns as ReturnType<typeof mock>).mockImplementation(() => new Map());
+    }
+  });
+
+  test("the JSON item writes the same profile as JSON", async () => {
+    const download = captureDownload();
+
+    try {
+      await clickExport("Export as JSON");
+
+      expect(download.blob.type).toStartWith("application/json");
+      expect(download.fileName).toMatch(/^data_profile_users_\d+\.json$/);
+
+      const written = JSON.parse(await download.blob.text());
+
+      expect(written).toMatchObject({ tableName: "users", totalRows: 100 });
+      expect(written.columns).toHaveLength(3);
+    } finally {
+      download.restore();
+    }
   });
 });

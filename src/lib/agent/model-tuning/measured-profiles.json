@@ -542,6 +542,30 @@
       }
     },
     {
+      "id": "qwen3.5:27b",
+      "measured": "6/6 locked, 30/30, AT THE COMPILED DEFAULTS - every cell on its first attempt, the whole model in 52 minutes, and not one setting spent. Investigate 78s, optimize 91s, assess 149s, operate 41s, analyze 66s, plan 48s (medians of the passing runs), a 78-second median. Its optimize cell is worth naming: three other models measured the same week could not open that surface at all, and this one took it 5/5 unaided. Chosen by the family rule rather than by a probe - qwen3.5 has 4b and 9b on this list at 30/30 - which is how every model that ever reached 30/30 got here: on the defaults, with nought to two settings.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": true,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      },
+      "rationale": {
+        "retryUnreadStop": [
+          "Recorded as what it was driven with rather than as a preference. It was measured on a build where `answersUnreadStop` sends the drive's own sentence to a model with no entry, so the runs behind these numbers had it; stating it keeps the entry true after the entry itself exists.",
+          "Nothing else here departs from the defaults, and the entry states them anyway - a shared value is what has twice cost this repository a cell it had already won."
+        ]
+      }
+    },
+    {
       "id": "qwen3.5:4b",
       "measured": "6/6 locked, 30/30. Five surfaces cleared at the shipped defaults and were never touched; plan was the whole of the work and took two separate fixes. At the defaults its plan turns ended model-timeout with a zero-event ledger - the turn spent thinking, and plan mode holds no tools, so thinking time is the only thing that can fail. suppressPlanReasoning turned every one of those into a finished turn and the cell moved 0/5 to 1/5. The remaining four losses were not settings at all: the run wrote a correct refusal, naming the two views whose columns the inventory cannot derive and asking the one question that would unblock it, and opened it `NO STATEMENT AT ALL:` - a phrase this product's own planning rule put in front of the marker it was teaching. With that wording corrected the cell read 5/5 on its first pass. LOCKED but MARGINAL on data-analysis, and a later sweep is why that is written here: the same cell re-read 3/5 on a second sitting, its two losses `answer-uncited` and `no-answer`. The passing runs answer in two or three tool calls and the losing ones wander to ten and eleven, so the cell turns on whether the run settles early rather than on any setting. Recorded rather than re-measured away, because a figure that reads steadier than the model is worse than one that says where it is thin.",
       "settings": {
@@ -626,6 +650,45 @@
           "A later Ollama - 0.33.0, against the 0.32.13 the figures above were taken on - took this model's optimize cell from 5/5 to 1/5, and the losses carry the thinking signature: one tool called, then the whole turn spent before the clock ends it, at 182 to 299 seconds.",
           "Measured on origin/main as well, where this model has no entry at all and runs on the compiled defaults: 1/5 there too. So the engine moved it and no setting here did.",
           "With the switch the cell reads 5/5 at 76 seconds against 311 - it is not merely recovered, it is four times faster than the runs that were passing before."
+        ]
+      }
+    },
+    {
+      "id": "qwen3.6:35b",
+      "measured": "6/6 locked, 30/30, with the set its 27b sibling already ships. Investigate 8s, optimize 19s, assess 18s, operate 7s, analyze 13s, plan 2s (medians of the passing runs) - a 13-second median, six times faster than the 27b's 82s despite being five gigabytes larger, because a model that is not thinking through its turns finishes them. Its optimize cell was the whole of the work: it read 4/5, 3/5, 4/5, 3/5, 4/5 and 2/5 across three sweeps and four separate levers, every loss a model-timeout at 200 to 350 seconds with two or three tools already called. Raising the turn ceiling alone did not close it. The set below did, on the first reading, and the five cells that had locked without it were then read AGAIN under it rather than inherited - suppressAgentReasoning reaches all five agent surfaces, so not one of them had been measured under what ships.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": true,
+        "suppressPlanReasoning": true,
+        "refusalExamples": false,
+        "turnTimeoutMs": 150000,
+        "suppressAgentReasoning": true
+      },
+      "rationale": {
+        "suppressAgentReasoning": [
+          "The measured difference, and it is not marginal: optimize went from 2-4/5 to 5/5 and its runs fell from 200-350 seconds to 13-29. Every loss before it was a model-timeout with tools already called - the model was working and the clock was cutting the turn it was working in.",
+          "Taken from the 27b sibling rather than invented. That model ships this exact set and is on this list at 30/30; the family rule is the only predictor on this board with evidence behind it, and this is the second model it has been right about.",
+          "The five agent cells were re-read under it. A cell measured without a setting the profile carries is not a measurement of what ships, which cost this repository a sweep on gemma4:31b."
+        ],
+        "suppressPlanReasoning": [
+          "Its sibling's plan setting, kept for the same reason the pair is taken whole: plan reads 2s under it, the fastest plan turn measured on any model here.",
+          "Reaches plan turns only - investigation.ts reads it where the mode is not agent - so it explains nothing about the five agent cells and is recorded separately from the switch that does."
+        ],
+        "turnTimeoutMs": [
+          "Kept from the sibling's set, and it alone was measured insufficient here: with the ceiling at 150000 and the model still thinking, optimize read 4/5 then 2/5. It is what the passing runs were taken under, so it is what ships.",
+          "The default stays 90000 for every model that does not ask for more, because it is a promise about how long a person waits."
+        ],
+        "retryUnreadStop": [
+          "Recorded as what it was driven with rather than as a preference. Every run behind these numbers was taken on a build where a model with no entry is sent the drive's own sentence for a stop that read nothing; once the model HAS an entry, the entry has to say so or the numbers stop describing the runs that produced them.",
+          "It changes nothing about this model's behaviour and is stated for the reason every default here is stated: a shared value is what has twice cost this repository a cell it had already won."
         ]
       }
     },

@@ -8,7 +8,8 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { MonitoringData } from "@/lib/db/types";
 import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
-import { evaluateThreshold, getThresholdColor, DEFAULT_THRESHOLDS } from "@/lib/monitoring-thresholds";
+import { evaluateThreshold, getThresholdColor, thresholdFor } from "@/lib/monitoring-thresholds";
+import { storage } from "@/lib/storage";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { MetricChart } from "./MetricChart";
 import { PanelUnavailable } from "../PanelUnavailable";
@@ -69,16 +70,18 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
       ? Math.round((activeConnections / connectionLimit) * 100)
       : null;
 
-  // Evaluate thresholds. No published limit cannot be near a limit, so it scores as
-  // healthy rather than as the 0 that a missing reading would once have implied.
-  const connThreshold = evaluateThreshold(
-    connectionPercent ?? 0,
-    DEFAULT_THRESHOLDS.find((t) => t.metric === "connectionPercent")!,
-  );
-  const cacheThreshold = evaluateThreshold(
-    cacheHitRatio ?? 100,
-    DEFAULT_THRESHOLDS.find((t) => t.metric === "cacheHitRatio")!,
-  );
+  // Read storage here: storage-facade imports the defaults, so the threshold helper
+  // must stay pure to avoid a circular dependency.
+  const thresholds = storage.getThresholdConfig();
+  // An unavailable measurement stays ungraded even if a saved threshold includes zero or 100.
+  const connThreshold =
+    connectionPercent === null
+      ? "healthy"
+      : evaluateThreshold(connectionPercent, thresholdFor(thresholds, "connectionPercent"));
+  const cacheThreshold =
+    cacheHitRatio === undefined
+      ? "healthy"
+      : evaluateThreshold(cacheHitRatio, thresholdFor(thresholds, "cacheHitRatio"));
 
   // Build chart data from history. A sample with no published count is dropped
   // rather than plotted as zero - the same rule PerformanceTab.tsx's `metricSeries`

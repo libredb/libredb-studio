@@ -7,7 +7,7 @@ import { guardRoute } from "@/lib/api/require-session";
 
 /**
  * Reads one objective and names the workflow a run would open as
- * (`docs/superpowers/specs/2026-08-16-agent-workflow-inference-design.md`).
+ * (see the design discussion in issue #790).
  *
  * **Why this is its own endpoint rather than a step inside `POST /api/agent/runs`.**
  * The rail has to know the workflow BEFORE a run exists, because one classification

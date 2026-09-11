@@ -20,6 +20,13 @@
 #USER_EMAIL=user@libredb.org
 #USER_PASSWORD=
 #
+# Two-factor authentication (TOTP), optional and per account. Base32, at least
+# 26 characters; generate one with: openssl rand 20 | base32
+# A value that is not base32, or too short, stops login with a 503 naming the
+# variable. Enrolment and recovery: docs/MFA.md
+#ADMIN_TOTP_SECRET=
+#USER_TOTP_SECRET=
+#
 # AI query assistance (optional).
 #LLM_PROVIDER=gemini
 #LLM_API_KEY=

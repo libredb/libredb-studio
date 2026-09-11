@@ -29,6 +29,17 @@ test("production deployment behind a path-preserving reverse proxy", async ({ pa
   expect(new URL(oidcError.headers().location, baseURL).href).toBe(`${baseURL}${prefix}/login?error=oidc_config`);
 
   await page.goto(`${prefix}/login`);
+  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute("href", `${prefix}/site.webmanifest`);
+  await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute("href", `${prefix}/apple-touch-icon.png`);
+  const manifestResponse = await request.get(`${prefix}/site.webmanifest`);
+  expect(manifestResponse.status()).toBe(200);
+  const manifest = (await manifestResponse.json()) as { start_url: string; icons: { src: string }[] };
+  expect(new URL(manifest.start_url, `${baseURL}${prefix}/site.webmanifest`).pathname).toBe(`${prefix}/`);
+  for (const icon of manifest.icons) {
+    expect((await request.get(new URL(icon.src, `${baseURL}${prefix}/site.webmanifest`).pathname)).status()).toBe(200);
+  }
+  expect((await request.get(`${prefix}/apple-touch-icon.png`)).status()).toBe(200);
+
   await page.locator('input[type="email"]:visible').fill("user@libredb.org");
   await page.locator('input[type="password"]:visible').fill("test-user");
   await page.getByRole("button", { name: /sign in/i }).click();

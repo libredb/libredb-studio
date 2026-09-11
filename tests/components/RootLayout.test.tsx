@@ -1,4 +1,5 @@
 import "../setup-dom";
+import { readFileSync } from "node:fs";
 import { mock } from "bun:test";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
@@ -38,6 +39,28 @@ describe("RootLayout", () => {
     expect(metadata.title).toBe("LibreDB Studio | Universal Database Editor");
   });
 
+  test("shares a branded static image with matching Open Graph and Twitter metadata", () => {
+    const screenshot = readFileSync(new URL("../../public/screenshots/hero-editor.png", import.meta.url));
+    const image = {
+      url: "https://app.libredb.org/screenshots/hero-editor.png",
+      alt: "LibreDB Studio SQL editor and query results",
+    };
+    expect(metadata.openGraph).toMatchObject({
+      type: "website",
+      url: "https://app.libredb.org",
+      title: metadata.title,
+      description: metadata.description,
+      siteName: "LibreDB Studio",
+      images: [{ ...image, width: screenshot.readUInt32BE(16), height: screenshot.readUInt32BE(20) }],
+    });
+    expect(metadata.twitter).toMatchObject({
+      card: "summary_large_image",
+      title: metadata.title,
+      description: metadata.description,
+      images: [image],
+    });
+  });
+
   test("describes the database scope in a search-result snippet", () => {
     const description = metadata.description ?? "";
     expect(description.length).toBeGreaterThanOrEqual(150);
@@ -46,6 +69,13 @@ describe("RootLayout", () => {
     expect(description).toContain("SQL and NoSQL");
     expect(description).toContain("and more");
     expect(description).not.toMatch(/\d/);
+  });
+
+  test("links the web app manifest and iOS home-screen icon", () => {
+    expect(metadata.manifest).toBe("/site.webmanifest");
+    expect(metadata.icons).toMatchObject({
+      apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+    });
   });
 
   test("renders children", () => {

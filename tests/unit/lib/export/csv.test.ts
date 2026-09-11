@@ -2,6 +2,14 @@ import { describe, test, expect } from "bun:test";
 import { csvRow, toCsv } from "@/lib/export/csv";
 
 describe("csvRow", () => {
+  test.each([";", "\t"] as const)("uses the chosen delimiter and quotes it inside a value (%s)", (delimiter) => {
+    expect(csvRow([`left${delimiter}right`, 'say "hi"', "line1\nline2", "=1+1", -12.5, null], delimiter)).toBe(
+      [`"left${delimiter}right"`, '"say ""hi"""', '"line1\nline2"', '"\'=1+1"', "-12.5", ""].join(delimiter),
+    );
+    expect(toCsv([{ amount: "1,5", name: "雪" }], ["name", "amount"], delimiter)).toBe(
+      `name${delimiter}amount\n雪${delimiter}1,5`,
+    );
+  });
   test("leaves a value that needs no quoting bare", () => {
     expect(csvRow(["id", "name", 42])).toBe("id,name,42");
   });

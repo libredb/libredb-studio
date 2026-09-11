@@ -588,6 +588,24 @@ describe("StudioWorkspace", () => {
     expect(text.split("\n")[1].endsWith(",")).toBe(true);
   });
 
+  test.each([";", "\t"])(
+    "CSV export forwards the chosen delimiter to the workspace download (%s)",
+    async (delimiter) => {
+      withExportResult();
+      renderWorkspace();
+      const exportFn = capturedBottomPanelProps.onExportResults as (
+        format: string,
+        artifact: null,
+        delimiter: string,
+      ) => void;
+      act(() => exportFn("csv", null, delimiter));
+      const blob = mockCreateObjectURL.mock.calls[0][0] as Blob;
+      expect((await blob.text()).split("\n")[0].replace(/^\uFEFF/, "")).toBe(
+        ["id", "name", "ratio", "active", "created", "deleted"].join(delimiter),
+      );
+    },
+  );
+
   // The blob URL outlives the task that started the download: revoking it in the
   // same task can pull the data out from under a read that has not begun.
   test("exportResults does not revoke the blob URL before the download is handed off", async () => {

@@ -4,6 +4,7 @@ import "../../helpers/mock-navigation";
 
 import { mock } from "bun:test";
 import { setupRechartssMock, setupFramerMotionMock } from "../../helpers/mock-monaco";
+import { DEFAULT_THRESHOLDS } from "@/lib/monitoring-thresholds";
 
 setupRechartssMock();
 setupFramerMotionMock();
@@ -53,6 +54,7 @@ mock.module("@/hooks/use-monitoring-data", () => ({
 
 mock.module("@/lib/storage", () => ({
   storage: {
+    getThresholdConfig: mock(() => DEFAULT_THRESHOLDS),
     getConnections: mock(() => [
       {
         id: "c1",

@@ -196,7 +196,9 @@ export function createErrorResponse(error: unknown, context?: { route?: string }
   // --- LLM: Config ---
   if (error instanceof LLMConfigError) {
     logger.warn("LLM config error", { route, provider: error.provider });
-    return NextResponse.json({ error: error.message, code: ApiErrorCode.LLM_CONFIG, statusCode: 503 }, { status: 503 });
+    // Missing credentials may be intentional; a malformed model, URL or provider is still a setup error.
+    const code = error.reason === "missing_credentials" ? ApiErrorCode.LLM_UNCONFIGURED : ApiErrorCode.LLM_CONFIG;
+    return NextResponse.json({ error: error.message, code, statusCode: 503 }, { status: 503 });
   }
 
   // --- LLM: Stream ---

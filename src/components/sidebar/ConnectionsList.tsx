@@ -9,6 +9,7 @@ interface ConnectionsListProps {
   onSelectConnection: (conn: DatabaseConnection) => void;
   onDeleteConnection: (id: string) => void;
   onEditConnection?: (conn: DatabaseConnection) => void;
+  onDuplicateConnection?: (conn: DatabaseConnection) => void;
   onAddConnection: () => void;
 }
 
@@ -18,6 +19,7 @@ export function ConnectionsList({
   onSelectConnection,
   onDeleteConnection,
   onEditConnection,
+  onDuplicateConnection,
   onAddConnection,
 }: ConnectionsListProps) {
   return (
@@ -46,6 +48,7 @@ export function ConnectionsList({
               onSelect={onSelectConnection}
               onDelete={onDeleteConnection}
               onEdit={onEditConnection}
+              onDuplicate={onDuplicateConnection}
             />
           ))
         )}

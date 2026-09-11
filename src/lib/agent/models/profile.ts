@@ -103,8 +103,9 @@ export interface AgentModelProfile {
    * it, and overruling a measurement is twice how this repository has handed back cells it had
    * won. What is NOT obeyed is an absent entry, which is not a measurement: the drive asks
    * `answersUnreadStop`, not `retriesUnreadStop`, and that resolver offers the turn to a model
-   * nobody has measured. All twenty-eight shipped entries state this field, so no shipped model's
-   * turn count moved when the two were split.
+   * nobody has measured. All twenty-eight shipped entries stated this field when the two were
+   * split, so no shipped model's turn count moved then; thirty state it now, three of them `true`
+   * — which is a record of what their runs were driven with, not a preference.
    *
    * It SUBSUMES `retryEmptyTurn`, and that is a property of the gate rather than of the name.
    * The condition is "called nothing", with no test on what was said, so an empty completion
@@ -255,6 +256,14 @@ export interface AgentNotices {
   readonly presentBeforeReport: string;
   /** A run that stopped without calling anything, having asked for what it could have read. */
   readonly unreadStop: string;
+  /**
+   * A tool call the ENDPOINT could not parse, handed back to the model that wrote it.
+   *
+   * The one failure here that is not the drive's judgement of a turn but the provider's: the
+   * arguments did not parse, so no call was made and no ledger entry exists. Re-sending the same
+   * request produces the same failure, which is why this is a sentence rather than a retry.
+   */
+  readonly unreadableToolCall: string;
 }
 
 /**

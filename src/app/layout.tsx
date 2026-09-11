@@ -12,17 +12,41 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 
+const title = "LibreDB Studio | Universal Database Editor";
+const description =
+  "A self-hosted, web-based SQL IDE for PostgreSQL, MySQL, MongoDB and more, with AI-assisted queries, schema exploration, and support for SQL and NoSQL engines.";
+// Project previews use the public demo documented in README, including on private deployments.
+const siteUrl = "https://libredb.org";
+const previewImage = {
+  url: `https://raw.githubusercontent.com/libredb/libredb-studio/main/public/screenshots/hero-editor.png`,
+  alt: "LibreDB Studio SQL editor and query results",
+};
+
 export const metadata: Metadata = {
   title: "LibreDB Studio | Universal Database Editor",
-  description:
-  "A self-hosted database management platform for SQL and NoSQL databases, with schema exploration, query tools, data import, and AI-assisted database development.",
+  description: "A self-hosted database management platform for SQL and NoSQL databases, with schema exploration, query tools, data import, and AI-assisted database development.",
+  openGraph: {
+    type: "website",
+    url: siteUrl,
+    title,
+    description,
+    siteName: "LibreDB Studio",
+    images: [{ ...previewImage, width: 1440, height: 900 }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title,
+    description,
+    images: [previewImage],
+  },
+  manifest: withBasePath("/site.webmanifest"),
   icons: {
     icon: [
       { url: withBasePath("/favicon.ico?v=2"), sizes: "any" },
       { url: withBasePath("/logo.svg?v=2"), type: "image/svg+xml" },
     ],
     shortcut: withBasePath("/favicon.ico?v=2"),
-    apple: withBasePath("/favicon-32x32.png?v=2"),
+    apple: [{ url: withBasePath("/apple-touch-icon.png"), sizes: "180x180", type: "image/png" }],
   },
 };
 

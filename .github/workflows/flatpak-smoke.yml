@@ -50,6 +50,7 @@ jobs:
   appimage:
     name: Build AppImage (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -150,6 +151,7 @@ jobs:
     name: Repack as Flatpak (${{ matrix.flatpak_arch }})
     needs: appimage
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     # The GNOME major of this image MUST match runtime-version in the manifest.
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50

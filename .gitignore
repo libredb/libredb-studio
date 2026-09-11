@@ -194,3 +194,6 @@ deploy/digitalocean/droplet/scripts/99-img-check.sh
 data-e2e-base-path/
 .reviews/
 reviews/
+
+# Superpowers brainstorming companion (local session artifacts)
+.superpowers/

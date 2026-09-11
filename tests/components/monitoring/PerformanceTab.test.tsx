@@ -6,6 +6,7 @@ import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { PerformanceTab } from "@/components/monitoring/tabs/PerformanceTab";
+import { storage } from "@/lib/storage";
 import type { MonitoringData } from "@/lib/db/types";
 import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
 
@@ -51,6 +52,40 @@ function makeHistory(): TimeSeriesPoint<MonitoringData>[] {
 describe("PerformanceTab", () => {
   afterEach(() => {
     cleanup();
+    localStorage.removeItem("libredb_threshold_config");
+  });
+
+  test("uses saved monitoring thresholds and falls back for missing metrics", () => {
+    const data = makeData({ deadlocks: 6 });
+    const { getAllByText, rerender } = render(<PerformanceTab data={data} loading={false} />);
+    const card = (title: string) => getAllByText(title)[0].closest('[data-slot="card"]')!;
+    expect(card("Cache Hit").className).toContain("border-hue-green");
+    expect(card("Buffer").className).toContain("border-hue-green");
+    expect(card("Deadlocks").className).toContain("border-hue-red");
+
+    storage.saveThresholdConfig([
+      { metric: "cacheHitRatio", warning: 100, critical: 99, direction: "below", label: "Cache" },
+      { metric: "bufferPoolUsage", warning: 60, critical: 64, direction: "above", label: "Buffer" },
+      { metric: "deadlocks", warning: 10, critical: 20, direction: "above", label: "Deadlocks" },
+    ]);
+    rerender(<PerformanceTab data={data} loading={false} />);
+    expect(card("Cache Hit").className).toContain("border-hue-red");
+    expect(card("Buffer").className).toContain("border-hue-red");
+    expect(card("Deadlocks").className).toContain("border-hue-green");
+
+    storage.saveThresholdConfig([]);
+    rerender(<PerformanceTab data={data} loading={false} />);
+    expect(card("Cache Hit").className).toContain("border-hue-green");
+    expect(card("Buffer").className).toContain("border-hue-green");
+    expect(card("Deadlocks").className).toContain("border-hue-red");
+  });
+
+  test("does not grade missing readings at saved boundaries", () => {
+    storage.saveThresholdConfig([
+      { metric: "cacheHitRatio", warning: 100, critical: 100, direction: "below", label: "Cache" },
+    ]);
+    const { getByText } = render(<PerformanceTab data={makeData({ cacheHitRatio: undefined })} loading={false} />);
+    expect(getByText("Cache Hit").closest('[data-slot="card"]')!.className).toContain("border-hue-green");
   });
 
   test("renders skeleton while loading without data", () => {
