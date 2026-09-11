@@ -1669,12 +1669,19 @@ describe("Trino object containers, listings and detail", () => {
     });
   });
 
-  test("a table_type this provider has no kind for is reported by name, never dropped", async () => {
+  test("a table_type this provider has no kind for RAISES out of countObjects, by name", async () => {
     const provider = await objectProvider();
     // Standing ruling 5a (#789). The `CASE`'s ELSE arm labels an unmodelled spelling
     // `unknown:<type>`, so a future `table_type` reaches the reader as a kind nothing
     // declares instead of falling out of the count AND the listing together, which is the
     // shape of defect that leaves ruling 5f satisfied while the object is invisible.
+    //
+    // It RAISES rather than being rewritten as `{ unavailable }`, which is the fix round's
+    // decision and the one the doc and the two source docblocks already claimed. The two
+    // states are different facts: `{ unavailable }` is the ENGINE refusing a read and the
+    // tree renders the engine's sentence in a folder, while this is THIS PROVIDER meeting a
+    // spelling its declaration has no kind for. Rendering the second as the first files a
+    // provider defect in a folder badge nobody reads.
     serveInstead(
       trinoObjectCountsSql(ICEBERG_WAREHOUSE, true),
       rows(KIND_COUNT_COLUMNS, [
@@ -1683,8 +1690,37 @@ describe("Trino object containers, listings and detail", () => {
       ]),
     );
 
-    const counts = await provider.countObjects!(["iceberg", "warehouse"]);
-    expect(counts.table).toEqual({ unavailable: expect.stringContaining("unknown:LOCAL TEMPORARY") });
+    await expect(provider.countObjects!(["iceberg", "warehouse"])).rejects.toThrow(
+      'Trino counted objects under "unknown:LOCAL TEMPORARY"',
+    );
+  });
+
+  test("one kind's unmodelled spelling does not erase a kind counted from another source", async () => {
+    const provider = await objectProvider();
+    // The narrowing half of the same fix. `materialized_view` is counted from
+    // `system.metadata.materialized_views` and `table` from `information_schema.tables`;
+    // they ride one `UNION ALL` but they are two sources, and the old blanket catch turned
+    // an information_schema surprise into `{ unavailable }` for the materialized-view count
+    // as well - a kind whose own source answered perfectly well.
+    //
+    // The catch now wraps the READ alone, so the only thing that blanks every relation kind
+    // is the statement itself failing, which genuinely does lose all of them.
+    serveInstead(
+      trinoObjectCountsSql(ICEBERG_WAREHOUSE, true),
+      rows(KIND_COUNT_COLUMNS, [
+        ["materialized_view", 1],
+        ["unknown:LOCAL TEMPORARY", 4],
+      ]),
+    );
+
+    const error = await provider.countObjects!(["iceberg", "warehouse"]).then(
+      (counts) => counts,
+      (raised: unknown) => raised,
+    );
+    // No `{ unavailable }` anywhere: the caller gets the defect, not a record with the
+    // materialized-view count quietly replaced by a sentence about a table_type.
+    expect(error).toBeInstanceOf(QueryError);
+    expect(JSON.stringify(error)).not.toContain("unavailable");
   });
 
   test("lists tables and materialized views from their own sources, each path inside its container", async () => {
@@ -1797,8 +1833,9 @@ describe("Trino object containers, listings and detail", () => {
     // that was meant.
     serveInstead(trinoObjectCountsSql(ICEBERG_WAREHOUSE, true), rows(KIND_COUNT_COLUMNS, [["toString", 5]]));
 
-    const counts = await provider.countObjects!(["iceberg", "warehouse"]);
-    expect(counts.table).toEqual({ unavailable: expect.stringContaining('counted objects under "toString"') });
+    await expect(provider.countObjects!(["iceberg", "warehouse"])).rejects.toThrow(
+      'Trino counted objects under "toString"',
+    );
   });
 
   test("a count nobody could read stays at the seeded zero rather than becoming NaN", async () => {
@@ -1943,11 +1980,36 @@ describe("Trino object paths are derived from the declaration, never from a posi
       "from_alpha_beta",
     ]);
 
-    // And the refusal names the declared LABELS in the declared order, so a person reading
-    // it is told the shape this declaration actually accepts.
+    // And the refusal names the declared level IDS in the declared order, so a person
+    // reading it is told the shape this declaration actually accepts.
     await expect(provider.describeObject!(["alpha", "pin"], "table")).rejects.toThrow(
       'A Trino "table" path is [schema, catalog, name], received ["alpha","pin"]',
     );
+  });
+
+  test("a refusal spells the level ID, the same field every read binds by", async () => {
+    const provider = await connectProvider();
+    serveCrossed();
+    // The two message builders used to spell the path shape from `level.label`, while every
+    // READ resolves its segment by `level.id`. On the real declaration the two are the same
+    // word, so the divergence is invisible; a declaration whose label is prose makes it
+    // visible, and then the refusal describes a shape no read accepts.
+    withLevels(provider, [
+      { id: "catalog", label: "Data source", labelPlural: "Data sources" },
+      { id: "schema", label: "Namespace", labelPlural: "Namespaces" },
+    ]);
+
+    await expect(provider.describeObject!(["alpha", "pin"], "table")).rejects.toThrow(
+      'A Trino "table" path is [catalog, schema, name], received ["alpha","pin"]',
+    );
+    await expect(provider.countObjects!(["alpha", "beta", "pin"])).rejects.toThrow(
+      'A Trino container path is [catalog] or [catalog, schema], received ["alpha","beta","pin"]',
+    );
+
+    // The control, and the reason the two assertions above are about a divergence rather
+    // than about a string: with this same declaration the reads still resolve, because they
+    // bind by `id`. So the message is the only thing that was ever spelled from `label`.
+    expect(await provider.countObjects!(["alpha", "beta"])).toMatchObject({ table: { count: 1 } });
   });
 
   test("container depth is derived, so a ONE-level declaration binds one segment and refuses two", async () => {

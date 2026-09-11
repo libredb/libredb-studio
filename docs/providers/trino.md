@@ -721,10 +721,19 @@ Trino counted objects under "unknown:LOCAL TEMPORARY", which this provider does 
 object kind (#789)
 ```
 
-The silent alternative — a `WHERE table_type IN (…)` that simply drops the row — would take the object
+The silent alternative, a `WHERE table_type IN (...)` that simply drops the row, would take the object
 out of the count and out of the listing together, leaving the count and the listing in agreement while
 the object is invisible in the tree. That is the shape of defect #789's standing rulings call the
 worst this epic has, and it is why the guard exists rather than a comment.
+
+**That raise reaches the caller as a raise.** `countObjects()` catches the READ and nothing else: a
+statement the engine refused becomes `{ unavailable }` carrying the engine's own sentence for every
+relation kind, because they all ride one `UNION ALL` and the statement failing genuinely loses all of
+them, while an unmodelled `table_type` propagates. The two are different facts and the earlier code
+spelled both as `{ unavailable }`, which had two costs: it filed a provider defect in a folder badge
+as though the engine had refused a read it had answered, and it blanked the `materialized_view` count
+as well, even though that count comes from `system.metadata.materialized_views` on the other arm of
+the union and was never in doubt.
 
 #### Functions are real here, and they are readable one schema at a time
 
@@ -785,17 +794,108 @@ handing the provider a declaration listing `schema` BEFORE `catalog` and driving
 with that declaration, `["beta", "alpha", "pin"]` addresses schema `beta` in catalog `alpha`, and a
 provider binding `path[0]` as the catalog reads a different real relation rather than failing.
 
-#### Measured fixture
+#### The fixture, and the half of it this repo cannot ship
+
+Standing ruling 5i (#789): a live measurement you cannot re-run is not evidence. The object-surface
+fixture is therefore `docker/trino-init/01-object-fixture.sql`, mounted into both the `trino` service
+and a one-shot `trino-init` sidecar in `database-compose.yml`, so
+
+```bash
+docker compose -f database-compose.yml up -d trino trino-init
+```
+
+brings the cluster up and seeds it. The image ships no init-script convention of its own, so the sidecar is what applies the file,
+running the CLI that ships in the same image against the coordinator. The mount is at `/fixtures` and
+not at the `/docker-entrypoint-initdb.d` most services in that file use, because that name would
+promise a start-up hook this image does not have.
+
+**Re-apply it after every restart of the coordinator.** The `memory` connector keeps its schemas,
+tables, views and functions in the coordinator's heap, so a restart loses all of them and the one-shot
+sidecar does not run again by itself. The file is written to be re-runnable, every statement
+`IF NOT EXISTS` or `OR REPLACE`:
+
+```bash
+docker exec libredb-trino trino --server localhost:8080 \
+  --file /fixtures/01-object-fixture.sql
+```
+
+What that fixture holds, and what the provider then answers against the compose cluster, measured
+through the provider itself on trinodb/trino:476:
+
+| Container | table | view | materialized_view | function |
+|---|---|---|---|---|
+| `memory` | 2 | 1 | 0 | unavailable |
+| `memory.app` | 2 | 1 | 0 | 3 |
+| `tpch.tiny` | 8 | 0 | 0 | 0 |
+
+`memory.app` holds `orders` and `customers`, the view `customer_names`, and the three functions
+`plus_one(bigint)`, `plus_one(double)` and `label(bigint, varchar)`. The overloaded pair is the
+fixture that makes the argument-type path segment observable rather than theoretical, and the server
+returns `orders` before `customers`, which is what makes the provider's own sort observable rather
+than incidental.
+
+##### `materialized_view` is 0 on this cluster, and that is the true answer
+
+**The compose cluster configures no Iceberg catalog**, so it can hold no materialized view at all: the
+kind is an engine-level concept but only some connectors implement it, and on 476 only a
+Hive-metastore-backed Iceberg catalog will CREATE one. The Iceberg JDBC and REST catalog types both
+answer `createMaterializedView is not supported for Iceberg JDBC catalogs`, so "configure Iceberg and
+you get materialized views" is wrong.
+
+An Iceberg catalog here would mean a metastore service, a warehouse volume and a second image in
+`database-compose.yml` for one object kind, which is a bigger change than the object surface owns. A
+live probe against this cluster will therefore see `materialized_view: 0` in every container. **That
+is the engine answering honestly, not a broken fixture**: the kind stays declared because the engine
+has the concept and `system.metadata.materialized_views` is an engine-level catalog, and #789's
+`KindCount` keeps "this engine has no such concept" and "this container holds none" apart.
+
+##### Reproducing the Iceberg measurements
+
+The materialized-view findings above were measured on a cluster built this way. It is written out in
+full so the numbers stay checkable without the compose file carrying a metastore.
+
+```bash
+docker network create trino-iceberg
+docker run -d --name trino-hms --network trino-iceberg \
+  -e SERVICE_NAME=metastore apache/hive:4.0.1
+mkdir -p /tmp/trino-iceberg/catalog
+cat > /tmp/trino-iceberg/catalog/iceberg.properties <<'PROPS'
+connector.name=iceberg
+iceberg.catalog.type=hive_metastore
+hive.metastore.uri=thrift://trino-hms:9083
+iceberg.file-format=PARQUET
+fs.hadoop.enabled=true
+PROPS
+docker run -d --name trino-iceberg-probe --network trino-iceberg -p 18099:8080 \
+  -v /tmp/trino-iceberg/catalog/iceberg.properties:/etc/trino/catalog/iceberg.properties:ro \
+  trinodb/trino:476
+```
+
+Then, once the coordinator is healthy:
+
+```sql
+CREATE SCHEMA iceberg.warehouse WITH (location = 'file:///tmp/warehouse');
+CREATE TABLE iceberg.warehouse.orders (id bigint, total double);
+INSERT INTO iceberg.warehouse.orders VALUES (1, 10.0), (2, 20.0);
+CREATE MATERIALIZED VIEW iceberg.warehouse.order_totals AS
+  SELECT id, total FROM iceberg.warehouse.orders;
+```
+
+Those statements produce the `iceberg` column of the original measurement:
 
 | Container | table | view | materialized_view | function |
 |---|---|---|---|---|
 | `iceberg` | 2 | 0 | 1 | unavailable |
 | `iceberg.warehouse` | 1 | 0 | 1 | 0 |
-| `memory.app` | 2 | 1 | 0 | 3 |
-| `tpch.tiny` | 8 | 0 | 0 | 0 |
 
 `iceberg`'s two tables are `warehouse.orders` and `system.iceberg_tables`, the latter published by the
-connector itself — which is why the schema list carries no denylist beyond `information_schema`.
+connector itself, which is why the schema list carries no denylist beyond `information_schema`. The
+materialized view is reported as `table_type = 'BASE TABLE'` by `information_schema.tables`, which is
+the measurement the anti-join above exists for: it is why `iceberg` answers two tables and not three.
+
+For the catalog-isolation finding, add a second catalog file pointing at a metastore that is not
+there, `hive.metastore.uri=thrift://nosuchhost:9083`, and read
+`SELECT * FROM system.metadata.materialized_views` unfiltered.
 
 ---
 

@@ -396,7 +396,12 @@ function requiredSegment(
  * caller mistake. SQL Server and DuckDB answered the same way for the same reason.
  */
 function containerShapes(capabilities: ProviderCapabilities): readonly string[][] {
-  const names = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
+  // `level.id` and NOT `level.label.toLowerCase()`: `id` is the field every read binds by
+  // (`containerSegments()` keys the record with it), so spelling the shape from `label`
+  // would describe a path shape no read accepts the moment a declaration's label is prose
+  // rather than its id capitalised. The two are the same word on Trino's own declaration,
+  // which is exactly why the divergence was invisible until a test varied the labels.
+  const names = declaredLevels(capabilities).map((level) => level.id);
   return names.map((_, index) => names.slice(0, index + 1));
 }
 
@@ -462,7 +467,8 @@ export function objectRead(
       TYPE_ID,
     );
   }
-  const shape = [...declaredLevels(capabilities).map((level) => level.label.toLowerCase()), "name"];
+  // `level.id`, the field the segments below are resolved by. See {@link containerShapes}.
+  const shape = [...declaredLevels(capabilities).map((level) => level.id), "name"];
   if (path.length !== shape.length) {
     throw new QueryError(
       `A Trino "${spec.id}" path is ${shapeList([shape])}, received ${JSON.stringify(path)}`,

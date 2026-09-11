@@ -784,6 +784,10 @@ export class TrinoProvider extends SQLBaseProvider {
    * is seeded before the read; a kind whose read was refused carries the engine's own
    * sentence, so the object browser can say why a folder has no number instead of showing a
    * zero nobody measured.
+   *
+   * A FOURTH outcome is not a `KindCount` at all: this method RAISES when a row names a kind
+   * the declaration does not hold. That is a defect in this provider rather than an answer
+   * about a container, and the three states above have no spelling for it.
    */
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
     const capabilities = this.getCapabilities();
@@ -794,12 +798,25 @@ export class TrinoProvider extends SQLBaseProvider {
     const relationKinds = declared.filter((kind) => kind.id !== TRINO_FUNCTION_KIND);
     if (relationKinds.length > 0) {
       const sql = trinoObjectCountsSql(read, findKind(capabilities, TRINO_MATERIALIZED_VIEW_KIND) !== undefined);
+      // The catch wraps the READ and nothing else. `applyKindCounts` is deliberately outside
+      // it, because its raise is the guard behind TRINO_TABLE_TYPE_KINDS and it must reach
+      // the caller as itself: a spelling this provider has no kind for is a DECLARATION
+      // defect, and rewriting it as `{ unavailable }` filed that defect in a folder badge
+      // and told the reader the engine had refused a read it answered perfectly.
+      //
+      // It also erased more than it touched. Every relation kind was blanked, so one
+      // unmodelled `table_type` from `information_schema` also wiped the materialized-view
+      // count, which comes from `system.metadata.materialized_views` on the other arm of the
+      // `UNION ALL`. Only the statement failing genuinely loses every relation kind, and
+      // that is the one case still caught here.
+      let rows: KindCountRow[] | undefined;
       try {
-        applyKindCounts(counts, (await this.runObjectRows(sql)) as unknown as KindCountRow[]);
+        rows = (await this.runObjectRows(sql)) as unknown as KindCountRow[];
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         for (const kind of relationKinds) counts[kind.id] = { unavailable: reason };
       }
+      if (rows !== undefined) applyKindCounts(counts, rows);
     }
 
     if (findKind(capabilities, TRINO_FUNCTION_KIND) !== undefined) {

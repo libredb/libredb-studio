@@ -572,6 +572,21 @@ services:
     image: trinodb/trino:476
     container_name: libredb-trino
     restart: unless-stopped
+    volumes:
+      # The object-surface fixture (#789). Mounted at /fixtures and NOT at the
+      # /docker-entrypoint-initdb.d most services here use, because that name is a promise
+      # this image does not keep: the Trino image has no init-script directory and runs no
+      # seed script of its own. The `trino-init` sidecar below is what applies the file, and
+      # mounting it on the coordinator too is what makes the re-apply after a restart a
+      # one-liner with no bind flags:
+      #
+      #   docker exec libredb-trino trino --server localhost:8080 \
+      #     --file /fixtures/01-object-fixture.sql
+      #
+      # That re-apply is not optional housekeeping. The `memory` connector holds its schemas,
+      # tables, views and functions in the COORDINATOR'S HEAP, so a restart loses all of them
+      # and the sidecar, being a one-shot, does not run again by itself.
+      - ./docker/trino-init:/fixtures:ro
     ports:
       # 8080 is the client protocol AND the web UI - one port, two surfaces, which is why
       # the provider's default port is a generic number and the dialect is declared rather
@@ -590,11 +605,43 @@ services:
       interval: 5s
       timeout: 5s
       retries: 40
-    # No seed sidecar, and no `depends_on`: the image ships the `tpch` catalog configured, so
-    # `tpch.tiny.nation` (25 rows) and `tpch.tiny.lineitem` (60175 rows) are queryable the
-    # moment the healthcheck passes - generated on read, never stored. `tpcds`, `memory`,
-    # `system` and `jmx` are configured too. Point a connection's Database field at `tpch`;
-    # `jmx` is what makes the overview's uptime readable, so leave that catalog in place.
+    # No `depends_on`: the image ships the `tpch` catalog configured, so `tpch.tiny.nation`
+    # (25 rows) and `tpch.tiny.lineitem` (60175 rows) are queryable the moment the
+    # healthcheck passes - generated on read, never stored. `tpcds`, `memory`, `system` and
+    # `jmx` are configured too. Point a connection's Database field at `tpch`; `jmx` is what
+    # makes the overview's uptime readable, so leave that catalog in place.
+    #
+    # THERE IS NO ICEBERG CATALOG HERE, and that is a deliberate limit rather than an
+    # oversight. A materialized view is the one object kind Trino cannot create without one,
+    # and on 476 only a HIVE-METASTORE-backed Iceberg catalog will create one at all: the
+    # JDBC and REST catalog types both answer `createMaterializedView is not supported`. So
+    # an Iceberg catalog here would mean a metastore service, a warehouse volume and a
+    # second image in this file for one object kind. The object surface therefore answers
+    # `materialized_view: 0` everywhere on this cluster, which is the TRUE answer for it, and
+    # docs/providers/trino.md carries the catalog properties and the exact statements that
+    # reproduce the materialized-view measurements on a cluster that does have one.
+
+  trino-init:
+    # One-shot sidecar, the same shape as couchbase-init above. The Trino image has no
+    # init-script convention of its own, so the seeding is a CLI run rather
+    # than a mount the server reads: the CLI ships in this image at /usr/bin/trino, which is
+    # why the sidecar reuses the coordinator's image instead of adding a second one.
+    image: trinodb/trino:476
+    container_name: libredb-trino-init
+    restart: "no"
+    depends_on:
+      trino:
+        condition: service_healthy
+    volumes:
+      - ./docker/trino-init:/fixtures:ro
+    # `--server trino:8080`, the compose service name, not localhost: this is a separate
+    # container. The image's own entrypoint launches a coordinator, so it is replaced here.
+    entrypoint: ["/usr/bin/trino"]
+    command:
+      - "--server"
+      - "trino:8080"
+      - "--file"
+      - "/fixtures/01-object-fixture.sql"
 
   cassandra:
     # Pinned to the exact build the provider was live-verified against, the same rule
