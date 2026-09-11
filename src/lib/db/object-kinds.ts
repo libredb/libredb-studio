@@ -59,3 +59,21 @@ export function relationKindIds(capabilities: ProviderCapabilities): readonly st
 export function isCountUnavailable(count: KindCount): count is { readonly unavailable: string } {
   return "unavailable" in count;
 }
+
+/**
+ * Whether a number is a FLOOR rather than a total, because the provider counted what a
+ * bounded read saw.
+ *
+ * The `readonly` is load-bearing for the reason `isCountUnavailable` records, and the
+ * predicate asks for the FIELD rather than for a flag: `sampledFrom` is the only thing
+ * that separates this member from the plain `{ count }` beside it in the union, and an
+ * implementer that omits it is saying the number is a population.
+ *
+ * Callers that only need the number do not need this at all, which is the point of the
+ * variant being additive: `count.count` narrows on both members. It is the RENDERER that
+ * needs it, because "1,204 tables" and "at least 1,204 key groupings" are different facts
+ * and the badge is the only place a person meets either (#789).
+ */
+export function isCountSampled(count: KindCount): count is { readonly count: number; readonly sampledFrom: string } {
+  return "sampledFrom" in count;
+}

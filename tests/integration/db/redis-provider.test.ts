@@ -144,6 +144,17 @@ let functionRefusal: string | null = null;
 let scanRefusal: string | null = null;
 
 /**
+ * When true, `SCAN` answers a NON-ZERO cursor and a page big enough to spend the provider's
+ * 1000-key budget in one call, which is a keyspace larger than the walk can reach. A stock
+ * mock answers cursor "0", so the two arms of the fourth `KindCount` state are both real
+ * runs here rather than one run and an argument.
+ */
+let scanOverflows = false;
+
+/** The oversized page: 1000 keys under one grouping, which is the budget exactly. */
+const OVERFLOW_KEYS: string[] = Array.from({ length: 1000 }, (_, index) => `bulk:${index}`);
+
+/**
  * Every options object the provider handed the `Redis` constructor. The TLS
  * selection is observable nowhere else: ioredis takes it at construction time and
  * never exposes it again.
@@ -195,6 +206,7 @@ mock.module("ioredis", () => {
 
     async scan(): Promise<[string, string[]]> {
       if (scanRefusal !== null) throw new Error(scanRefusal);
+      if (scanOverflows) return ["42", [...(MOCK_KEYS_BY_DB[this._db] ?? []), ...OVERFLOW_KEYS]];
       return ["0", MOCK_KEYS_BY_DB[this._db] ?? []];
     }
 
@@ -1212,6 +1224,7 @@ describe("RedisProvider", () => {
       functionListReply = MOCK_FUNCTION_LIST;
       functionRefusal = null;
       scanRefusal = null;
+      scanOverflows = false;
       capturedCalls.length = 0;
       capturedRedisOptions.length = 0;
       await provider.connect();
@@ -1293,6 +1306,32 @@ describe("RedisProvider", () => {
         keyspace: { count: 2 },
         function: { unavailable: "ERR unknown command `FUNCTION`, with args beginning with: `LIST`, " },
       });
+    });
+
+    test("a SCAN stopped by its key budget answers a FLOOR, while the function count beside it stays exact", async () => {
+      // The defect this closes: a bounded read rendered as a population. The walk stopped on
+      // its 1000-key budget, so the three groupings it saw are AT LEAST three, and the tree
+      // has to be able to say so. The `function` count in the same record comes from
+      // `FUNCTION LIST`, which enumerates the whole server, and must NOT pick up the mark:
+      // that is the per-kind half of the state (#789).
+      scanOverflows = true;
+      const counts = await provider.countObjects(["0"]);
+
+      expect(counts).toEqual({
+        keyspace: { count: 3, sampledFrom: "the first 1,000 keys of one SCAN walk" },
+        function: { count: 1 },
+      });
+    });
+
+    test("a SCAN that reached the end of the keyspace is NOT marked a sample", async () => {
+      // The control for the test above. Without it, marking every keyspace count a floor
+      // passes that assertion and is wrong on every small database: `2` and `2+` are
+      // different claims and this engine can tell them apart, because a cursor back at 0
+      // means the server walked everything it holds.
+      const counts = await provider.countObjects(["0"]);
+
+      expect(counts.keyspace).toEqual({ count: 2 });
+      expect("sampledFrom" in counts.keyspace).toBe(false);
     });
 
     test("a refused SCAN leaves the keyspace count unavailable and the function count intact", async () => {

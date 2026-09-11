@@ -696,6 +696,27 @@ seam is a **method**: `listIn` is the only thing in the provider that reads eith
 own enumerator returned — there is no second `SCAN` with a different `MATCH` for the two to drift
 apart in.
 
+#### The `keyspace` count is a FLOOR when the walk stopped on its key budget
+
+`KindCount` carries four facts, and this engine answers two of them in one record. `function` is
+counted from `FUNCTION LIST`, which enumerates the whole server, so it is a population. `keyspace` is
+counted from the bounded `SCAN` walk: the loop stops when the cursor comes back to `0`, which means
+the server walked everything it holds, **or** when 1000 keys have been seen, which means it did not.
+Only the second case is marked, with the fourth state:
+
+```
+countObjects(["0"]) -> {"keyspace":{"count":3,"sampledFrom":"the first 1,000 keys of one SCAN walk"},
+                        "function":{"count":1}}
+```
+
+The tree badges that folder **`3+`** and titles it *"At least 3: counted from the first 1,000 keys of
+one SCAN walk"*, while the exact count beside it stays `1` with no title
+([`flatten.ts`](../../src/components/object-tree/flatten.ts)). A completed walk is NOT marked: `2` and
+`2+` are different claims, and marking a number this provider measured exactly would teach a reader
+to discount every badge. The same bound already governs `getSchema()`, so the flat list and the tree
+are consistent about which walk they read; what is new is that the tree can now say what the number
+is.
+
 #### The derived-grouping refusal, and the declaration that carries it
 
 `tablesAreDerivedGroupings: true` ([§9](#9-capabilities--labels)) is a refusal about the `keyspace`
@@ -1062,7 +1083,9 @@ request/response contract.
   won't show as "tables". This is a deliberate bound, not a bug. The object surface shares the same
   walk and the same bound, so on a keyspace larger than it the `keyspace` folder's badge and its rows
   are the groupings of a SAMPLE. They are consistent with each other, because the count is the length
-  of that listing ([§6.1](#61-the-object-surface-789)), and neither is a total.
+  of that listing ([§6.1](#61-the-object-surface-789)), and neither is a total. The BADGE now says so
+  rather than leaving it here: a walk the budget cut short answers `{ count, sampledFrom }` and the
+  folder reads `3+`. The flat key-prefix list of §6 has no badge and still says nothing.
 - **An `EVAL` script is not an object here**, because Redis publishes no `SCRIPT LIST` — only
   `SCRIPT EXISTS <sha>`, which answers about a sha the caller already has ([§6.1](#61-the-object-surface-789)).
 - **No read-only guard.** The generic `call()` dispatch executes write/destructive commands

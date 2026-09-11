@@ -83,6 +83,53 @@ describe("flattenTree", () => {
     expect(rows.some((r) => r.kindId === "package")).toBe(false);
   });
 
+  test("a sampled count is a FLOOR and the badge says so, which a bare number cannot", () => {
+    // The four facts this tree has to keep apart: a kind the engine does not have draws no
+    // folder, `{ count: 0 }` is a zero badge, `{ unavailable }` is the engine's sentence, and a
+    // bounded read is a number that is only a lower bound. Redis walks 1000 keys and collapses
+    // them into groupings, so a badge reading 4 there means "at least 4" and a badge reading 4
+    // on the catalog-counted kind beside it means exactly 4. Rendering both as `4` states a
+    // fact the provider never measured (#789, backlog X13).
+    const rows = flattenTree({
+      kinds,
+      containerDepth: 1,
+      containers: [{ path: ["0"], name: "0", level: 0 }],
+      expanded: new Set(["0"]),
+      counts: {
+        0: {
+          table: { count: 1204, sampledFrom: "one 1,000-key SCAN walk" },
+          view: { count: 1204 },
+          procedure: { count: 0 },
+        },
+      },
+      objects: {},
+    });
+    const sampled = rows.find((r) => r.kindId === "table");
+    const exact = rows.find((r) => r.kindId === "view");
+    expect(sampled?.badge).toBe("1,204+");
+    expect(sampled?.badgeTitle).toBe("At least 1,204: counted from one 1,000-key SCAN walk");
+    // The same number counted from a catalog must not pick up either mark.
+    expect(exact?.badge).toBe("1,204");
+    expect(exact?.badgeTitle).toBeUndefined();
+    // And a sampled count is not a refusal: the folder still opens.
+    expect(sampled?.unavailable).toBeUndefined();
+    expect(sampled?.expanded).toBe(false);
+  });
+
+  test("a sampled count of zero still reads as a floor, not as an engine holding none", () => {
+    // A bounded walk that saw nothing has not proved the container is empty, so `0+` and `0`
+    // stay different rows. This is the arm a `count > 0` guard would collapse.
+    const rows = flattenTree({
+      kinds,
+      containerDepth: 1,
+      containers: [{ path: ["0"], name: "0", level: 0 }],
+      expanded: new Set(["0"]),
+      counts: { 0: { table: { count: 0, sampledFrom: "one 1,000-key SCAN walk" } } },
+      objects: {},
+    });
+    expect(rows.find((r) => r.kindId === "table")?.badge).toBe("0+");
+  });
+
   test("a folder badge never comes from the loaded object list", () => {
     // The list is capped by the route; the count is a real COUNT. Reading the length back
     // as a count is how a saturated list passes every gate while being wrong.

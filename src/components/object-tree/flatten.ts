@@ -9,7 +9,7 @@
  * are computed here, per sibling group, before any row of that group is emitted, and the
  * row component takes all four numbers verbatim.
  */
-import { containerDepth, isCountUnavailable } from "@/lib/db/object-kinds";
+import { containerDepth, isCountSampled, isCountUnavailable } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, KindCount, ObjectKindSpec } from "@/lib/db/types";
 
 /**
@@ -40,8 +40,20 @@ export interface TreeRowModel {
   readonly posInSet: number;
   /** Absent on a leaf, so `aria-expanded` is rendered only where it means something. */
   readonly expanded?: boolean;
-  /** A formatted count from `countObjects`, never a loaded list's length. */
+  /**
+   * A formatted count from `countObjects`, never a loaded list's length.
+   *
+   * A bounded count carries a trailing `+`, because it is a floor: see `formatCount`.
+   */
   readonly badge?: string;
+  /**
+   * Why the badge is a floor, in the provider's own words, and ABSENT on an exact count.
+   *
+   * Absent rather than a generic sentence on purpose: a title on every badge would make
+   * the two indistinguishable to the one reader who most needs them apart, somebody
+   * hovering to find out whether the number can be trusted.
+   */
+  readonly badgeTitle?: string;
   /** The engine's own sentence for a read it refused. */
   readonly unavailable?: string;
   /** The container path for a container and a folder, the object path for an object. */
@@ -247,7 +259,7 @@ function appendFolder(
   posInSet: number,
 ): void {
   const id = pathKey([...parentPath, spec.id]);
-  const { badge, unavailable } = formatCount(state.counts[pathKey(parentPath)]?.[spec.id]);
+  const { badge, badgeTitle, unavailable } = formatCount(state.counts[pathKey(parentPath)]?.[spec.id]);
   const expanded = unavailable === undefined ? state.expanded.has(id) : undefined;
   rows.push({
     id,
@@ -258,6 +270,7 @@ function appendFolder(
     posInSet,
     expanded,
     badge,
+    badgeTitle,
     unavailable,
     path: parentPath,
     kindId: spec.id,
@@ -265,11 +278,36 @@ function appendFolder(
   if (expanded === true) appendObjects(state, rows, id, depth);
 }
 
-/** `en-US` and not the viewer's locale, so a folder badge reads the same in every test and every screenshot. */
-function formatCount(count: KindCount | undefined): { readonly badge?: string; readonly unavailable?: string } {
+/**
+ * One `KindCount` as the two strings a row can show, and the fourth state is why this is not
+ * one line.
+ *
+ * `en-US` and not the viewer's locale, so a folder badge reads the same in every test and
+ * every screenshot.
+ *
+ * A BOUNDED count is badged with a trailing `+` and nothing else: `1,204+`. The mark is in
+ * the badge TEXT rather than in a colour, an icon or a title alone, because the badge text is
+ * the only part of this row a screen reader reads out and a person scanning a column of
+ * numbers sees. It reads as a floor in the same way a search result count does, which is the
+ * fact: the provider counted what a capped read saw, so the engine holds AT LEAST this many.
+ * `0+` is deliberate too, and it is not the same row as `0`: a bounded walk that saw nothing
+ * has not proved the container is empty, and `{ count: 0 }` is exactly the claim that it is.
+ *
+ * The explanation goes in `badgeTitle`, never in the badge, because a badge column has room
+ * for a number and the provider's sentence is a sentence. That leaves all four facts distinct
+ * at a glance: no folder at all, `0`, the engine's refusal sentence in place of a number, and
+ * a number with a `+`.
+ */
+function formatCount(count: KindCount | undefined): {
+  readonly badge?: string;
+  readonly badgeTitle?: string;
+  readonly unavailable?: string;
+} {
   if (count === undefined) return {};
   if (isCountUnavailable(count)) return { unavailable: count.unavailable };
-  return { badge: count.count.toLocaleString("en-US") };
+  const badge = count.count.toLocaleString("en-US");
+  if (!isCountSampled(count)) return { badge };
+  return { badge: `${badge}+`, badgeTitle: `At least ${badge}: counted from ${count.sampledFrom}` };
 }
 
 function appendObjects(state: FlattenTreeState, rows: TreeRowModel[], folderId: string, folderDepth: number): void {

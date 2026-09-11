@@ -122,9 +122,16 @@ export function TreeRow({ row, object, active, selected, busy, failure, hasActio
           {object.rowCount.toLocaleString("en-US")}
         </span>
       )}
+      {/*
+        The folder's count. A trailing `+` is `flatten.ts` saying the number is a FLOOR because
+        the provider counted what a bounded read saw, and `badgeTitle` is that provider's own
+        sentence for what bounded it. The title is absent on an exact count, so hovering one
+        number and not the other is itself the signal (#789).
+      */}
       {row.badge !== undefined && (
         <span
           data-testid="tree-row-badge"
+          title={row.badgeTitle}
           className="ml-auto shrink-0 pl-2 text-[10px] text-muted-foreground tabular-nums"
         >
           {row.badge}

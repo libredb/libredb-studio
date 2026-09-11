@@ -949,9 +949,10 @@ OpenSearch 3.8.0 node and a live Elasticsearch 9.1.4 node on 2026-09-11 with the
 and the output was identical kind for kind, path for path and column for column. What differs is what
 a **stock** cluster already holds: this product ships **no** ingest pipeline and **no** composable
 index template at all, so a fresh cluster's `GET /_ingest/pipeline` really does answer HTTP 404 - that
-is the ordinary first-run state here and the unreachable one upstream, where 21 managed pipelines
-ship. A transport that classified on the status would put the engine's own refusal sentence on the
-Ingest Pipelines folder of every fresh OpenSearch cluster, where the truth is zero. The index filter
+is the ordinary first-run state here, while upstream, where 21 managed pipelines ship, the same state
+has to be MADE by deleting them and lasts only the twenty seconds or so before Elasticsearch
+re-registers its own. A transport that classified on the status would put the engine's own refusal
+sentence on the Ingest Pipelines folder of every fresh OpenSearch cluster, where the truth is zero. The index filter
 also has more to do here for a second measured reason: a stock node ships `.plugins-ml-config`,
 `.opensearch-sap-log-types-config` and `top_queries-<date>-<n>`, and the last carries no dot at all.
 See [elasticsearch.md](elasticsearch.md) for the other half of that sentence.

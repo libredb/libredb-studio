@@ -200,6 +200,29 @@ function objectKindFor(entry: LibreCatalogEntry | undefined): string {
 }
 
 /**
+ * The one kind whose members are DERIVED from the bounded key walk rather than named by the
+ * catalog, taken from the function above rather than written out again, so the two cannot
+ * come apart if the derived arm ever changes.
+ *
+ * This engine holds BOTH shapes at once, which is why the fourth `KindCount` state is per
+ * KIND and not a per-provider flag: `table` and `collection` are enumerated from
+ * `catalog(db)`, read whole as an eager snapshot, so those counts are populations however
+ * far the key scan got; this one is a count of what the scan SAW (#789).
+ */
+const SCAN_DERIVED_KIND_ID = objectKindFor(undefined);
+
+/**
+ * What a `keyspace` count was counted FROM once the walk has stopped on its key budget,
+ * phrased to follow "counted from", which is how `flatten.ts` builds the badge's title.
+ *
+ * Only then: below the cap the walk reached every key in the file, so the grouping count is
+ * a population and marking it a floor would teach a reader to discount an exact number. That
+ * is the same line `getTableStats` draws with `LIBREDB_TABLE_STATS_TRUNCATED`, and both read
+ * the same `truncated` from the same pass.
+ */
+const KEY_SCAN_SAMPLE_SENTENCE = `the first ${LIBREDB_MAX_KEY_SCAN.toLocaleString("en-US")} keys of a bounded key scan`;
+
+/**
  * The container levels this provider declares, sliced to the depth `containerDepth()`
  * reports.
  *
@@ -791,17 +814,20 @@ export class LibreDBProvider extends BaseDatabaseProvider {
    * populations: `scanGroups` injects a cataloged namespace the scan never reached, which
    * is how the empty table `vacancies` is counted and listed at all. `keyspace` is
    * enumerated from a scan bounded at `LIBREDB_MAX_KEY_SCAN` keys, so on a file larger
-   * than that bound its count is a SAMPLE SIZE and not a population. `KindCount` has no
-   * state that can say so (three engines are affected and a separate task adds a fourth
-   * state), so the provider doc says it instead and this comment says it here.
+   * than that bound its count is a SAMPLE SIZE and not a population. `KindCount` now has a
+   * state that says so, and `countObjects` puts it on that kind alone once `truncated` is
+   * set: this provider answers a floor and two populations in one record.
    *
    * Every declared kind is seeded with an empty array BEFORE any group is placed, so a
    * kind holding nothing lands as an empty listing and a `{ count: 0 }` badge rather than
    * disappearing from the record.
    */
-  private enumerate(container: readonly string[]): Record<string, LibreDBEnumeratedObject[]> {
+  private enumerate(container: readonly string[]): {
+    byKind: Record<string, LibreDBEnumeratedObject[]>;
+    truncated: boolean;
+  } {
     const registry: LibreCatalogRegistry = libredbModule!.catalog(this.db!);
-    const { groups } = this.scanGroups(registry);
+    const { groups, truncated } = this.scanGroups(registry);
 
     const byKind: Record<string, LibreDBEnumeratedObject[]> = {};
     for (const kind of declaredKinds(this.getCapabilities())) byKind[kind.id] = [];
@@ -839,7 +865,9 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     for (const objects of Object.values(byKind)) {
       objects.sort((left, right) => comparePaths(left.object.path, right.object.path));
     }
-    return byKind;
+    // `truncated` travels out with the objects rather than being re-derived by a caller: the
+    // count, the rows and the claim about how complete they are then all come from one pass.
+    return { byKind, truncated };
   }
 
   /**
@@ -857,11 +885,18 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
     assertContainerPath(capabilities, container);
-    const enumerated = this.enumerate(container);
+    const { byKind, truncated } = this.enumerate(container);
     const counts: Record<string, KindCount> = {};
     // Over the DECLARATION, so every declared kind gets an entry whatever the file holds
     // and no group can add a folder the provider never declared.
-    for (const kind of declaredKinds(capabilities)) counts[kind.id] = { count: enumerated[kind.id].length };
+    for (const kind of declaredKinds(capabilities)) {
+      const count = byKind[kind.id].length;
+      // TWO SHAPES IN ONE RECORD, which is the whole reason the fourth state is per kind: the
+      // two cataloged kinds stay exact numbers in the same answer where the derived one
+      // becomes a floor, and only once the walk actually stopped short.
+      counts[kind.id] =
+        truncated && kind.id === SCAN_DERIVED_KIND_ID ? { count, sampledFrom: KEY_SCAN_SAMPLE_SENTENCE } : { count };
+    }
     return counts;
   }
 
@@ -873,7 +908,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     // kind `objectKinds` does declare.
     this.assertDeclaredKind(capabilities, kind);
     assertContainerPath(capabilities, container);
-    return this.enumerate(container)[kind].map((enumerated) => enumerated.object);
+    return this.enumerate(container).byKind[kind].map((enumerated) => enumerated.object);
   }
 
   /**
@@ -920,7 +955,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
 
     // The LAST segment and never `path[0]`: at depth 2 the first segment is a container.
     const name = path[path.length - 1];
-    const found = this.enumerate(path.slice(0, levels.length))[kind].find(
+    const found = this.enumerate(path.slice(0, levels.length)).byKind[kind].find(
       (enumerated) => enumerated.object.path[enumerated.object.path.length - 1] === name,
     );
     if (found === undefined) {

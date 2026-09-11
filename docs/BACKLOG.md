@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D52, U17 · 13
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X13, U2–U21 · 7
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X12, U2–U21 · 6
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -679,33 +679,6 @@ and calling that lossless would be a lie.
 **Done when:** a declared type the target cannot parse is either translated or refused with something a
 reader can act on, proven by replaying a `jsonb` and a `json` result into ClickHouse, Trino and
 Cassandra.
-
----
-
-### X13. `KindCount` cannot say that a folder badge is a SAMPLE rather than a population
-
-`KindCount` in `src/lib/db/types.ts` carries three states and they are three different facts: a kind
-that is not declared draws no folder, `{ count: n }` is a number, and `{ unavailable: string }` is the
-engine's own sentence for a read it refused. There is no fourth state for a number that is REAL but
-BOUNDED, so `src/components/object-tree/flatten.ts` renders it as a bare number like any other.
-
-Standing ruling 4 of #789 names three engines whose object surface answers from a bounded scan, so
-the type change has to cover all three:
-
-| Engine | What the number is | State today |
-|---|---|---|
-| `redis` | the key groupings one 1000-key `SCAN` walk saw, and each grouping's `rowCount` likewise (`src/lib/db/providers/keyvalue/redis.ts`) | shipped, and mis-rendered as exact |
-| `mongodb` | `src/lib/db/providers/document/mongodb.ts` tallies a complete `listCollections`, so its badge may prove exact, while `describeObject` infers fields from a 100-document sample. Which of the two the fourth state applies to is the thing to measure, not to assume | shipped, unmeasured against this question |
-| `libredb` | `src/lib/db/providers/embedded/libredb.ts`, the second engine setting `tablesAreDerivedGroupings`, has the same prefix-grouping shape Redis does | no `objectKinds` yet (#789 Task 23) |
-
-Each provider that samples says so in its own doc, which is the right place for a limitation a reader
-meets. The entry here is not that limitation: it is that the TYPE cannot carry the distinction, so a
-correct provider has no way to tell the tree, and every future bounded-scan engine inherits the same
-silent overstatement. A badge reading 4 on a database holding 900 key groupings is a wrong fact, not
-an imprecise one.
-
-**Done when:** `KindCount` has a fourth state for a bounded count, `flatten.ts` renders it distinctly
-from an exact one, and the three providers above emit it.
 
 ---
 

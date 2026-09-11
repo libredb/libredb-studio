@@ -1180,15 +1180,38 @@ export interface DatabaseObject {
 }
 
 /**
- * Three facts, not two.
+ * Four facts, not two.
  *
  * A kind that is not declared draws no folder at all: the engine has no such concept.
  * `{ count: 0 }` is the engine answering none. `{ unavailable }` is a read that was
  * refused, carrying the engine's own sentence. All three collapsed into an empty array
  * before this change, and `docs/providers/postgres.md` section 3.1.2 records what that
  * costs a reader on the monitoring side.
+ *
+ * The fourth is `{ count, sampledFrom }`: a number that is REAL but BOUNDED, because the
+ * provider counted what a capped read saw rather than what the engine holds. It is a
+ * FLOOR, so the tree badges it `1,204+` and never `1,204`. Two engines answer this way
+ * and neither does so for all of its kinds, which is why the state is per KIND and not a
+ * provider-wide flag: Redis counts its key groupings from a 1000-key `SCAN` while
+ * `FUNCTION LIST` is complete, and LibreDB counts `table` and `collection` from a
+ * persisted catalog while `keyspace` comes from the bounded key walk. MongoDB is NOT one
+ * of them: its `countObjects` tallies a complete `listCollections` (#789).
+ *
+ * `sampledFrom` is the provider's own sentence for what bounded the read, phrased to
+ * follow "counted from": `"one 1,000-key SCAN walk"`. It is the same discipline
+ * `unavailable` carries, which is that the thing a person reads comes from whoever knows
+ * the fact, not from the renderer.
+ *
+ * ADDITIVE ON PURPOSE. This type is published through `src/exports/types.ts`, so the two
+ * existing spellings stay valid unchanged: a required field on `{ count }` would break
+ * every external implementer of the provider surface. A consumer that has not heard of
+ * the fourth state still reads `.count` off it and gets a number that is true, only
+ * imprecise, rather than failing to narrow.
  */
-export type KindCount = { readonly count: number } | { readonly unavailable: string };
+export type KindCount =
+  | { readonly count: number }
+  | { readonly count: number; readonly sampledFrom: string }
+  | { readonly unavailable: string };
 
 export interface ObjectDetail {
   readonly path: readonly string[];

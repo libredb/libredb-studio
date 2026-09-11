@@ -268,6 +268,36 @@ describe("ObjectTree absence states", () => {
     expect(calls.filter((call) => call.route === "list")).toHaveLength(0);
   });
 
+  test("a bounded count draws a FLOOR the reader can see, and an exact one beside it does not", async () => {
+    // All four facts have to be distinguishable in the rendered row, and this test renders
+    // three of them at once against the fourth: `0` (holds none), the refusal sentence, an
+    // exact `1,204`, and `1,204+` for the same number counted from a bounded read. The mark
+    // is in the badge TEXT rather than in a colour or a title alone, because the text is
+    // what a screen reader announces and what a person scanning a column sees (#789).
+    installFetch(
+      routesFor(
+        {},
+        {
+          table: { count: 1204, sampledFrom: "the first 1,000 keys of one SCAN walk" },
+          view: { count: 1204 },
+        },
+      ),
+    );
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
+    await expandApp();
+
+    const sampled = within(row(/Tables/)).getByTestId("tree-row-badge");
+    const exact = within(row(/Views/)).getByTestId("tree-row-badge");
+    expect(sampled.textContent).toBe("1,204+");
+    expect(sampled.getAttribute("title")).toBe("At least 1,204: counted from the first 1,000 keys of one SCAN walk");
+    expect(exact.textContent).toBe("1,204");
+    // No title on the exact one: hovering is itself the difference, so a generic title here
+    // would take that signal away from the reader who went looking for it.
+    expect(exact.hasAttribute("title")).toBe(false);
+    // And a floor is not a refusal: the folder still opens.
+    expect(row(/Tables/).getAttribute("aria-expanded")).toBe("false");
+  });
+
   test("a badge is the engine's count and never the length of the loaded list", async () => {
     installFetch(
       routesFor(

@@ -761,6 +761,48 @@ describe("LibreDBProvider object surface (#789)", () => {
     });
   });
 
+  /**
+   * The fourth `KindCount` state, and this engine is the proof that it is PER KIND: one
+   * record answers two populations and one floor. `table` and `collection` come from
+   * `catalog(db)`, which is read whole however far the key walk got, so they stay exact
+   * while the derived `keyspace` count becomes a floor once the walk stops short (#789).
+   */
+  test("a key scan stopped at its cap makes the derived count a FLOOR while the cataloged counts stay exact", async () => {
+    await provider.disconnect();
+    // One kernel transaction, so seeding past the cap costs ~30ms instead of ~12s.
+    const writer = open({ path: fixtureFile });
+    const encoder = new TextEncoder();
+    writer.transact((tx) => {
+      for (let i = 0; i < LIBREDB_MAX_KEY_SCAN + 500; i++) {
+        tx.set(encoder.encode(`bulk:${i}`), encoder.encode("x"));
+      }
+    });
+    writer.close();
+    await provider.connect();
+
+    const counts = await provider.countObjects([]);
+    // ONE, on a file whose derived groupings are four: the walk spent its whole budget
+    // inside `bulk:` and never reached `cache:*`, `notes` or `standalone`, which sort after
+    // it. A bare `1` on this file is not an imprecise number, it is a wrong fact, and that
+    // is the whole reason the state exists.
+    expect(counts.keyspace).toEqual({
+      count: 1,
+      sampledFrom: "the first 10,000 keys of a bounded key scan",
+    });
+    // The two cataloged kinds are NOT marked, in the same answer, from the same pass.
+    expect(counts.table).toEqual({ count: 3 });
+    expect(counts.collection).toEqual({ count: 2 });
+  });
+
+  test("a key scan that reached the end of the file leaves every count exact", async () => {
+    // The control for the test above: without it, marking the derived count a floor
+    // unconditionally passes that assertion and is wrong on every ordinary file, where the
+    // walk reached every key there is and `3` is a measurement rather than a lower bound.
+    const counts = await provider.countObjects([]);
+    expect(counts.keyspace).toEqual({ count: 3 });
+    expect("sampledFrom" in counts.keyspace).toBe(false);
+  });
+
   test("listContainers answers no container, because the engine has none", async () => {
     expect(await provider.listContainers()).toEqual([]);
   });

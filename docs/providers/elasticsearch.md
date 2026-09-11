@@ -952,8 +952,10 @@ object surface's five kinds, their roles, their paths and their columns were dri
 Elasticsearch 9.1.4 node and a live OpenSearch 3.8.0 node on 2026-09-11 with the same fixture applied,
 and the output was identical kind for kind, path for path and column for column. What differs is what
 a **stock** cluster already holds: this product ships 21 ingest pipelines and 61 composable index
-templates of its own, so the filter above is doing real work here from the first run and the empty
--pipeline case (HTTP 404) is unreachable on this product. See
+templates of its own, so the filter above is doing real work here from the first run, and the
+empty-pipeline case (HTTP 404) is TRANSIENT here rather than unreachable: it is reached by deleting
+the built-ins, measured, and they come back about twenty seconds later (the object surface section
+above records that run). On OpenSearch it is the ordinary first-run state. See
 [opensearch.md](opensearch.md) for the other half of that sentence.
 
 ---

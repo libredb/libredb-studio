@@ -154,6 +154,20 @@ const REDIS_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
 const KEY_SCAN_LIMIT = 1000;
 
 /**
+ * What a `keyspace` count was counted FROM when the walk stopped on its key budget.
+ *
+ * The fourth `KindCount` state is per KIND and not per provider, and this engine is half of
+ * the proof: `keyspace` is derived from the bounded `SCAN` above, so a walk that stopped
+ * early counted the groupings it SAW and the badge is a floor; `function` comes from
+ * `FUNCTION LIST`, which enumerates the whole server, and stays an exact number in the same
+ * record. A walk whose cursor came back to 0 saw the whole keyspace and is exact too, so the
+ * mark is attached to the RUN rather than to the kind (#789).
+ *
+ * Phrased to follow "counted from", which is how `flatten.ts` builds the badge's title.
+ */
+const KEY_SCAN_SAMPLE_SENTENCE = `the first ${KEY_SCAN_LIMIT.toLocaleString("en-US")} keys of one SCAN walk`;
+
+/**
  * The container levels this provider declares, sliced to the depth `containerDepth()` reports.
  *
  * One reader for the whole file, so the depth and the level list can never be taken by two
@@ -823,7 +837,7 @@ export class RedisProvider extends BaseDatabaseProvider {
     this.ensureConnected();
 
     try {
-      const keyPatterns = await RedisProvider.scanKeyGroups(this.client!);
+      const { groups: keyPatterns } = await RedisProvider.scanKeyGroups(this.client!);
 
       // Convert patterns to TableSchema
       const schemas: TableSchema[] = [];
@@ -861,7 +875,9 @@ export class RedisProvider extends BaseDatabaseProvider {
    *
    * `SCAN` is never `KEYS *`, which blocks the server for the length of the walk.
    */
-  private static async scanKeyGroups(client: Redis): Promise<Map<string, { count: number; types: Set<string> }>> {
+  private static async scanKeyGroups(
+    client: Redis,
+  ): Promise<{ groups: Map<string, { count: number; types: Set<string> }>; truncated: boolean }> {
     const keyPatterns = new Map<string, { count: number; types: Set<string> }>();
     let cursor = "0";
     let totalScanned = 0;
@@ -890,7 +906,11 @@ export class RedisProvider extends BaseDatabaseProvider {
       }
     } while (cursor !== "0" && totalScanned < KEY_SCAN_LIMIT);
 
-    return keyPatterns;
+    // A cursor back at "0" means the server walked the whole keyspace and this is
+    // everything it holds; anything else means the key budget stopped the walk, so what
+    // came back is a SAMPLE and every grouping derived from it is a floor. The count is
+    // what decides the folder badge, so the caller is told rather than left to assume.
+    return { groups: keyPatterns, truncated: cursor !== "0" };
   }
 
   // ============================================================================
@@ -956,10 +976,12 @@ export class RedisProvider extends BaseDatabaseProvider {
    * command, and the seam is this: `listIn` is the only thing that reads either catalog, and
    * both methods call it.
    *
-   * Per KIND and not per read, which is what the three-state `KindCount` is for: a Redis-wire
-   * relative with no `FUNCTION` command still has a keyspace, so its function folder carries
-   * the server's own refusal while the keyspace folder carries a real number. Collapsing them
-   * would report a whole database as unavailable because one of two commands is missing.
+   * Per KIND and not per read, which is what `KindCount` is for: a Redis-wire relative with no
+   * `FUNCTION` command still has a keyspace, so its function folder carries the server's own
+   * refusal while the keyspace folder carries a real number. Collapsing them would report a
+   * whole database as unavailable because one of two commands is missing. The fourth state is
+   * per kind for the same reason and lands in the same record: a `keyspace` count from a walk
+   * the key budget cut short is a FLOOR, while the `function` count beside it is exact.
    */
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
     this.ensureConnected();
@@ -976,7 +998,13 @@ export class RedisProvider extends BaseDatabaseProvider {
       // listing was empty, and a declared-and-empty folder therefore keeps its 0 badge.
       for (const kind of declared) {
         try {
-          counts[kind.id] = { count: (await this.listIn(client, container, kind.id)).length };
+          // The ENUMERATOR reports whether its read was bounded, so the count and that fact
+          // come from one call and cannot drift: a folder badging `4+` and a listing of four
+          // rows are the same walk. A bounded read answers a FLOOR, and the fourth `KindCount`
+          // state is what says so instead of claiming the database holds exactly four.
+          const { objects, sampledFrom } = await this.listIn(client, container, kind.id);
+          counts[kind.id] =
+            sampledFrom === undefined ? { count: objects.length } : { count: objects.length, sampledFrom };
         } catch (error) {
           // The server's own sentence, verbatim and unprefixed: it is rendered to a person
           // as the reason a folder has no number, so our words must not go in front of it.
@@ -997,11 +1025,15 @@ export class RedisProvider extends BaseDatabaseProvider {
       throw new QueryError(`Redis declares no object kind "${kind}"`, "redis");
     }
     const db = containerDatabase(capabilities, container);
-    return this.withDatabase(db, (client) => this.listIn(client, container, kind));
+    return this.withDatabase(db, async (client) => (await this.listIn(client, container, kind)).objects);
   }
 
   /**
-   * The objects of one kind in one database. The ONE reader of either catalog.
+   * The objects of one kind in one database, and whether the read that produced them was
+   * BOUNDED. The ONE reader of either catalog.
+   *
+   * `sampledFrom` travels with the objects rather than being worked out by the caller, so the
+   * count, the rows and the claim about how complete they are all come from one walk.
    *
    * Sorted by PATH, segment by segment, rather than by the order the server answered in:
    * `SCAN` guarantees no order at all, and `FUNCTION LIST` answers in an internal order that
@@ -1019,10 +1051,14 @@ export class RedisProvider extends BaseDatabaseProvider {
    * Hiding the libraries under every database but one would invent a home the engine does not
    * have and would make fifteen of sixteen databases lie about what the server holds.
    */
-  private async listIn(client: Redis, container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+  private async listIn(
+    client: Redis,
+    container: readonly string[],
+    kind: string,
+  ): Promise<{ objects: DatabaseObject[]; sampledFrom?: string }> {
     if (kind === "keyspace") {
-      const groups = await RedisProvider.scanKeyGroups(client);
-      return [...groups.entries()]
+      const { groups, truncated } = await RedisProvider.scanKeyGroups(client);
+      const objects = [...groups.entries()]
         .map(([pattern, info]) => ({
           path: [...container, pattern],
           name: pattern,
@@ -1032,13 +1068,19 @@ export class RedisProvider extends BaseDatabaseProvider {
           rowCount: info.count,
         }))
         .sort((left, right) => comparePaths(left.path, right.path));
+      // Only when the walk actually stopped early. A completed cursor walked the whole
+      // keyspace, and marking that count a floor would teach a reader to discount a number
+      // that is exact.
+      return truncated ? { objects, sampledFrom: KEY_SCAN_SAMPLE_SENTENCE } : { objects };
     }
     if (kind === "function") {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const reply = await (client as any).call("FUNCTION", "LIST");
-      return parseFunctionLibraries(reply)
-        .map((name) => ({ path: [...container, name], name, kind }))
-        .sort((left, right) => comparePaths(left.path, right.path));
+      return {
+        objects: parseFunctionLibraries(reply)
+          .map((name) => ({ path: [...container, name], name, kind }))
+          .sort((left, right) => comparePaths(left.path, right.path)),
+      };
     }
     throw new QueryError(`Redis declares the kind "${kind}" but has no command that lists it`, "redis");
   }
@@ -1096,7 +1138,7 @@ export class RedisProvider extends BaseDatabaseProvider {
     // The LAST segment and never `path[1]`: at depth 2 the second segment is a container.
     const name = path[path.length - 1];
     return this.withDatabase(db, async (client) => {
-      const groups = await RedisProvider.scanKeyGroups(client);
+      const { groups } = await RedisProvider.scanKeyGroups(client);
       const info = groups.get(name);
       if (info === undefined) {
         throw new QueryError(

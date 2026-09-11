@@ -540,7 +540,7 @@ So there are **three kinds**: the two the catalog names, and the one this server
 |---|---|---|---|
 | `table` | `relation` | `catalog(db)` entries with `kind: "relational"` | a population |
 | `collection` | `relation` | `catalog(db)` entries with `kind: "document"` | a population |
-| `keyspace` | `relation` | the bounded key scan, collapsed per `:`-prefix, minus every cataloged namespace | a SAMPLE SIZE |
+| `keyspace` | `relation` | the bounded key scan, collapsed per `:`-prefix, minus every cataloged namespace | a population below the scan cap, a FLOOR above it |
 
 Three further facts were measured and each one shapes the declaration:
 
@@ -585,18 +585,32 @@ a different bound for the badge and the folder to disagree in. It reads through 
 the same pass `getSchema()` and `getTableStats()` make, so the flat model and the object model
 cannot report different inventories of one file while both surfaces are live.
 
-#### One count is a sample, and the type cannot say so
+#### One count is a sample, and the type says so
 
 `table` and `collection` are enumerated from `catalog(db)`, which the package reads whole as an
-eager snapshot, so those two counts are **populations**. `keyspace` is enumerated from the scan
-bounded at `LIBREDB_MAX_KEY_SCAN` (10 000 keys), so on a larger file its badge is a **sample
-size**, and so is every object's `rowCount` on all three kinds.
+eager snapshot, so those two counts are **populations** however far the key walk got. `keyspace` is
+enumerated from the scan bounded at `LIBREDB_MAX_KEY_SCAN` (10 000 keys), so once that scan stops
+early its count is a **floor**, and every object's `rowCount` on all three kinds is a sample in the
+same way.
 
-`KindCount` has three states, not four: not declared, `{ count }`, and `{ unavailable }`. None of
-them says "this number is a sample", so the tree renders a bare number. Redis, MongoDB and this
-engine are the three affected, a separate task adds the fourth state and teaches the tree to
-render it, and until then this paragraph is where the fact lives. Do not read the `keyspace`
-badge on a large file as a population.
+`KindCount` carries a fourth state for exactly this, `{ count, sampledFrom }`, and this engine is
+what makes it PER KIND rather than a per-provider flag: one answer holds two populations and one
+floor. Measured on the object fixture with 10 500 filler keys written under `bulk:`:
+
+```
+countObjects([]) -> {"table":{"count":3},
+                    "collection":{"count":2},
+                    "keyspace":{"count":1,"sampledFrom":"the first 10,000 keys of a bounded key scan"}}
+```
+
+The tree badges that folder **`1+`** and titles it *"At least 1: counted from the first 10,000 keys
+of a bounded key scan"*. One, on a file whose derived groupings are four: the walk spent its whole
+budget inside `bulk:` and never reached `cache:*`, `notes` or `standalone`, which sort after it. A
+bare `1` there is a wrong fact rather than an imprecise one, and that is the defect the state closes.
+
+Only a scan that actually stopped short is marked. Below the cap the walk reached every key in the
+file, so the count is a measurement and the badge stays a bare number. It is the same `truncated`
+flag `getTableStats()` reads for `LIBREDB_TABLE_STATS_TRUNCATED`, out of the same pass.
 
 There is no `{ unavailable }` state on this engine at all, and that is a measurement rather than
 an omission: every kind is counted from ONE read, made on a handle this process already holds.
