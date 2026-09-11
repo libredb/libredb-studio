@@ -1012,3 +1012,165 @@ describe("useConnectionManager", () => {
     }
   });
 });
+
+// =============================================================================
+// The no-scan escape hatch (#765, #789)
+// =============================================================================
+//
+// `skipObjectScan` on a connection means ZERO catalog reads when it opens. The
+// reporter of #765 asked for exactly this, in their own words: "not preloading
+// anything using command line option or at db connection level". A connection whose
+// owner holds tens of thousands of objects froze the whole editor behind one
+// `/api/db/schema/list`, and the tree's two cheap reads are worth deferring as well.
+//
+// Every assertion below COUNTS requests by path rather than checking that something
+// rendered, and every zero is paired with a control that makes the same counter see
+// the requests: an assertion that nothing was requested is vacuous while the reason
+// might be that the counter cannot see requests at all.
+describe("deferring the object scan", () => {
+  // A sibling describe inherits nothing from the one above it, so the fetch mock and
+  // the storage this block installs are restored here or they leak into the next file.
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  /** Catalog reads only. `/api/db/health` is the connection pulse and reads no catalog. */
+  const catalogPaths = (fetchMock: ReturnType<typeof mockGlobalFetch>): string[] =>
+    fetchMock.mock.calls
+      .map((call) => new URL(String(call[0]), "http://localhost:3000").pathname)
+      .filter((path) => path.startsWith("/api/db/schema") || path.startsWith("/api/db/objects"));
+
+  const installSchemaRoutes = () =>
+    mockGlobalFetch({
+      "/api/db/schema/list": { ok: true, json: makeSchema() },
+      "/api/db/schema/relations": { ok: true, json: [] },
+    });
+
+  test("a connection that defers its scan reads no catalog at all", async () => {
+    const fetchMock = installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ skipObjectScan: true }));
+    });
+
+    expect(catalogPaths(fetchMock)).toEqual([]);
+    expect(result.current.schema).toEqual([]);
+    // Nothing failed, so nothing may be reported as a failure: an empty panel that
+    // blames the engine for a read nobody issued is worse than an empty panel.
+    expect(result.current.schemaError).toBeNull();
+    expect(result.current.isLoadingSchema).toBe(false);
+  });
+
+  // The control for the assertion above. Same hook, same routes, same counter, and
+  // the ONLY difference is the flag.
+  test("control: the same read without the flag issues both schema requests", async () => {
+    const fetchMock = installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(catalogPaths(fetchMock)).toEqual(["/api/db/schema/list", "/api/db/schema/relations"]);
+    expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]);
+  });
+
+  test("objectScanDeferred answers for the ACTIVE connection, and is null-safe", async () => {
+    installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    expect(result.current.objectScanDeferred).toBe(false);
+
+    await act(async () => {
+      result.current.setActiveConnection(makeConnection({ skipObjectScan: true }));
+    });
+    expect(result.current.objectScanDeferred).toBe(true);
+
+    await act(async () => {
+      result.current.setActiveConnection(makeConnection({ id: "conn-2" }));
+    });
+    expect(result.current.objectScanDeferred).toBe(false);
+  });
+
+  test("loadObjects performs the read the connection deferred, and stops deferring", async () => {
+    const fetchMock = installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      result.current.setActiveConnection(makeConnection({ skipObjectScan: true }));
+    });
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ skipObjectScan: true }));
+    });
+    expect(catalogPaths(fetchMock)).toEqual([]);
+
+    await act(async () => {
+      result.current.loadObjects();
+    });
+
+    await waitFor(() => expect(result.current.objectScanDeferred).toBe(false));
+    await waitFor(() => expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]));
+    expect(catalogPaths(fetchMock)).toEqual(["/api/db/schema/list", "/api/db/schema/relations"]);
+  });
+
+  // The state is the connection the reader asked for BY ID, derived rather than reset
+  // in an effect. A boolean would leave the next deferred connection already loaded.
+  test("switching to another deferred connection defers again", async () => {
+    installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      result.current.setActiveConnection(makeConnection({ skipObjectScan: true }));
+    });
+    await act(async () => {
+      result.current.loadObjects();
+    });
+    await waitFor(() => expect(result.current.objectScanDeferred).toBe(false));
+
+    await act(async () => {
+      result.current.setActiveConnection(makeConnection({ id: "conn-9", skipObjectScan: true }));
+    });
+
+    expect(result.current.objectScanDeferred).toBe(true);
+  });
+
+  // A statement's own refresh goes through `fetchSchema` too (use-query-execution.ts),
+  // so the guard has to hold for it: a reader who deferred the scan did not ask for a
+  // full catalog read after every DDL statement either.
+  test("a deferred connection stays deferred across a later fetchSchema", async () => {
+    const fetchMock = installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    const conn = makeConnection({ skipObjectScan: true });
+    await act(async () => {
+      await result.current.fetchSchema(conn);
+      await result.current.fetchSchema(conn);
+    });
+
+    expect(catalogPaths(fetchMock)).toEqual([]);
+  });
+
+  test("loadObjects with no active connection reads nothing", async () => {
+    const fetchMock = installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      result.current.loadObjects();
+    });
+
+    expect(catalogPaths(fetchMock)).toEqual([]);
+    expect(result.current.objectScanDeferred).toBe(false);
+  });
+});

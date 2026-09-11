@@ -9,6 +9,7 @@ import { treeWindow } from "@/components/object-tree/ObjectTree";
 import { useTreeNodes } from "@/components/object-tree/use-tree-nodes";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
+import type { DatabaseConnection } from "@/lib/types";
 
 /**
  * The object tree, its hook and its row (#789).
@@ -27,6 +28,16 @@ type ObjectModel = Pick<ProviderCapabilities, "containerLevels" | "objectKinds">
 
 function capabilitiesOf(model: ObjectModel): ProviderCapabilities {
   return { queryLanguage: "sql", ...model } as ProviderCapabilities;
+}
+
+/**
+ * A connection the server has never heard of, which is what the tree posts in full.
+ * `useTreeNodes` keys its cache on `connection.id`, so the id is still the identity every
+ * assertion in this file uses; the object is rebuilt per render deliberately, because a
+ * caller re-deriving it from a list is what the sidebar actually does.
+ */
+function connectionOf(id: string): DatabaseConnection {
+  return { id, name: `conn ${id}`, type: "postgres", createdAt: new Date("2026-01-01") };
 }
 
 const oneLevel = capabilitiesOf({
@@ -129,13 +140,13 @@ describe("ObjectTree", () => {
   });
 
   test("renders one container row and no object rows before anything is expanded", async () => {
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     expect(await screen.findByRole("treeitem", { name: /app/ })).toBeTruthy();
     expect(screen.queryByText("order_summary")).toBeNull();
   });
 
   test("every row carries its aria position, which virtualisation would otherwise lose", async () => {
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     const container = await screen.findByRole("treeitem", { name: /app/ });
     expect(container.getAttribute("aria-level")).toBe("1");
     expect(container.getAttribute("aria-setsize")).toBe("1");
@@ -143,7 +154,7 @@ describe("ObjectTree", () => {
   });
 
   test("expanding a container draws one folder per declared kind, including the empty one", async () => {
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await expandApp();
     expect(row(/Views/)).toBeTruthy();
   });
@@ -155,7 +166,7 @@ describe("ObjectTree", () => {
         { table: { count: 2 }, view: { count: 4 } },
       ),
     );
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await expandApp();
     expect(calls.filter((call) => call.route === "list")).toHaveLength(0);
 
@@ -165,7 +176,7 @@ describe("ObjectTree", () => {
   });
 
   test("keyboard navigation follows the tree pattern", async () => {
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     const container = await screen.findByRole("treeitem", { name: /app/ });
     container.focus();
     await userEvent.keyboard("{ArrowRight}");
@@ -184,7 +195,7 @@ describe("ObjectTree aria positions", () => {
       ],
       counts: () => ({}),
     });
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     const app = await screen.findByRole("treeitem", { name: /app/ });
     const sales = row(/sales/);
 
@@ -194,7 +205,7 @@ describe("ObjectTree aria positions", () => {
 
   test("the tab stop is not a selection: nothing is selected until the reader picks a row", async () => {
     installFetch(routesFor({}, { table: { count: 0 }, view: { count: 0 } }));
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     const app = await screen.findByRole("treeitem", { name: /app/ });
 
     // Reachable by keyboard from the first paint, and announced as chosen by nobody.
@@ -210,7 +221,7 @@ describe("ObjectTree aria positions", () => {
 
   test("a folder reports its level and its position among the declared kinds", async () => {
     installFetch(routesFor({}, { table: { count: 1 }, view: { count: 0 } }));
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await expandApp();
 
     expect(row(/Tables/).getAttribute("aria-level")).toBe("2");
@@ -225,7 +236,7 @@ describe("ObjectTree aria positions", () => {
 describe("ObjectTree absence states", () => {
   test("a kind the engine never declared draws no folder", async () => {
     installFetch(routesFor({}, { table: { count: 1 }, view: { count: 0 }, sequence: { count: 9 } }));
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await expandApp();
 
     expect(screen.queryByRole("treeitem", { name: /Sequence/ })).toBeNull();
@@ -234,7 +245,7 @@ describe("ObjectTree absence states", () => {
 
   test("a declared kind holding nothing draws a folder with a zero badge", async () => {
     installFetch(routesFor({}, { table: { count: 1 }, view: { count: 0 } }));
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await expandApp();
 
     expect(within(row(/Views/)).getByTestId("tree-row-badge").textContent).toBe("0");
@@ -245,7 +256,7 @@ describe("ObjectTree absence states", () => {
     const calls = installFetch(
       routesFor({}, { table: { count: 1 }, view: { unavailable: "permission denied for schema app" } }),
     );
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await expandApp();
 
     const views = row(/Views/);
@@ -264,7 +275,7 @@ describe("ObjectTree absence states", () => {
         { table: { count: 43512 }, view: { count: 0 } },
       ),
     );
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await expandApp();
     await userEvent.click(row(/Tables/));
     await waitFor(() => expect(screen.getByText("orders")).toBeTruthy());
@@ -276,7 +287,7 @@ describe("ObjectTree absence states", () => {
 describe("ObjectTree engine gaps", () => {
   test("a 501 reads as an unmigrated engine, names the engine's sentence and offers no retry", async () => {
     const calls = installFetch({ containers: () => unimplemented("listContainers") });
-    render(<ObjectTree connectionId="my" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("my")} capabilities={oneLevel} />);
 
     const panel = await screen.findByTestId("tree-unimplemented");
     expect(panel.textContent).toContain("does not implement listContainers yet");
@@ -287,7 +298,7 @@ describe("ObjectTree engine gaps", () => {
 
   test("an engine that answers nothing reads as empty, which is not the same panel", async () => {
     installFetch({ containers: () => [] });
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
 
     expect(await screen.findByTestId("tree-empty")).toBeTruthy();
     expect(screen.queryByTestId("tree-unimplemented")).toBeNull();
@@ -302,7 +313,7 @@ describe("ObjectTree engine gaps", () => {
       },
       counts: () => ({}),
     });
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
 
     const failure = await screen.findByTestId("tree-failure");
     expect(failure.textContent).toContain("connection refused");
@@ -316,33 +327,33 @@ describe("ObjectTree engine gaps", () => {
     // The shape the render DEREFERENCES is checked: a wrong one used to throw inside `flattenTree`
     // during the render and take the whole tree down instead of reaching this panel.
     installFetch({ containers: () => ({}) });
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
 
     expect((await screen.findByTestId("tree-failure")).textContent).toContain("containers");
   });
 
   test("a container list holding a null entry is reported, not rendered", async () => {
     installFetch({ containers: () => [null] });
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
 
     expect(await screen.findByTestId("tree-failure")).toBeTruthy();
   });
 
   test("counts answered as a list, or holding a bare number, is reported, not rendered", async () => {
     installFetch({ containers: () => appSchema, counts: () => ({ table: 2 }) });
-    const { unmount } = render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    const { unmount } = render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await userEvent.click(await screen.findByRole("treeitem", { name: /app/ }));
     await waitFor(() => expect(within(row(/app/)).getByTestId("tree-row-failure")).toBeTruthy());
     unmount();
 
     installFetch({ counts: () => [] });
-    render(<ObjectTree connectionId="lite" capabilities={noContainers} />);
+    render(<ObjectTree connection={connectionOf("lite")} capabilities={noContainers} />);
     expect((await screen.findByTestId("tree-failure")).textContent).toContain("counts");
   });
 
   test("a body with no error field still reports the status the route answered", async () => {
     installFetch({ containers: () => new Response("", { status: 502 }) });
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
 
     expect((await screen.findByTestId("tree-failure")).textContent).toContain("502");
   });
@@ -355,7 +366,7 @@ describe("ObjectTree engine gaps", () => {
       counts: () => ({ table: { count: 2 }, view: { count: 0 } }),
       list: () => unimplemented("listObjects"),
     });
-    render(<ObjectTree connectionId="my" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("my")} capabilities={oneLevel} />);
     await expandApp();
 
     await userEvent.click(row(/Tables/));
@@ -378,7 +389,7 @@ describe("ObjectTree engine gaps", () => {
           : [{ path: ["app", "orders"], name: "orders", kind: "table" }];
       },
     });
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await expandApp();
 
     await userEvent.click(row(/Tables/));
@@ -398,7 +409,7 @@ describe("ObjectTree container shapes", () => {
       counts: () => ({ table: { count: 3 } }),
       list: () => [{ path: ["events"], name: "events", kind: "table" }],
     });
-    render(<ObjectTree connectionId="lite" capabilities={noContainers} />);
+    render(<ObjectTree connection={connectionOf("lite")} capabilities={noContainers} />);
 
     const tables = await screen.findByRole("treeitem", { name: /Tables/ });
     expect(tables.getAttribute("aria-level")).toBe("1");
@@ -415,7 +426,7 @@ describe("ObjectTree container shapes", () => {
           : [{ path: ["prod", "app"], name: "app", level: 1 }],
       counts: () => ({ table: { count: 7 } }),
     });
-    render(<ObjectTree connectionId="trino" capabilities={twoLevels} />);
+    render(<ObjectTree connection={connectionOf("trino")} capabilities={twoLevels} />);
 
     const prod = await screen.findByRole("treeitem", { name: /prod/ });
     await userEvent.click(prod);
@@ -451,7 +462,7 @@ describe("ObjectTree object rows", () => {
     );
 
   async function openTables(onObjectClick?: (object: DatabaseObject) => void): Promise<void> {
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} onObjectClick={onObjectClick} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} onObjectClick={onObjectClick} />);
     await expandApp();
     await userEvent.click(row(/Tables/));
     await waitFor(() => expect(screen.getByText("orders")).toBeTruthy());
@@ -518,7 +529,7 @@ describe("ObjectTree loading states", () => {
       counts: () => ({ table: { count: 0 }, view: { count: 0 } }),
       list: () => pending,
     });
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await expandApp();
 
     await userEvent.click(row(/Tables/));
@@ -542,7 +553,7 @@ describe("ObjectTree loading states", () => {
       counts: () => ({ table: { count: 1 }, view: { count: 1 } }),
       list: (body) => (String(body.kind) === "table" ? pending : [{ path: ["app", "v"], name: "v", kind: "view" }]),
     });
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await expandApp();
 
     await userEvent.click(row(/Tables/));
@@ -562,7 +573,7 @@ describe("ObjectTree loading states", () => {
 
   test("the first read shows a loading panel and no empty panel", async () => {
     installFetch({ containers: () => new Promise(() => {}) });
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
 
     expect(screen.getByTestId("tree-loading")).toBeTruthy();
     expect(screen.queryByTestId("tree-empty")).toBeNull();
@@ -572,7 +583,7 @@ describe("ObjectTree loading states", () => {
 describe("ObjectTree keyboard", () => {
   async function threeRows(): Promise<void> {
     installFetch(routesFor({}, { table: { count: 0 }, view: { count: 0 } }));
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await expandApp();
   }
 
@@ -691,7 +702,7 @@ describe("ObjectTree windowing", () => {
 
   async function bigTree(): Promise<HTMLElement> {
     installFetch(routesFor({ table: manyObjects }, { table: { count: 300 }, view: { count: 0 } }));
-    render(<ObjectTree connectionId="pg" capabilities={oneLevel} />);
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await expandApp();
     await userEvent.click(row(/Tables/));
     await waitFor(() => expect(screen.getByText("t_000")).toBeTruthy());
@@ -810,7 +821,7 @@ describe("treeWindow", () => {
 
 describe("useTreeNodes", () => {
   function renderTree(connectionId = "pg") {
-    return renderHook(({ id }: { id: string }) => useTreeNodes(id, oneLevel), {
+    return renderHook(({ id }: { id: string }) => useTreeNodes(connectionOf(id), oneLevel), {
       initialProps: { id: connectionId },
     });
   }
@@ -875,7 +886,7 @@ describe("useTreeNodes", () => {
   test("changing the connection throws the whole cache away rather than showing the last one's tree", async () => {
     installFetch({
       containers: (body) =>
-        (body as { connectionId?: string }).connectionId === "pg"
+        (body as { connection?: { id: string } }).connection?.id === "pg"
           ? appSchema
           : [{ path: ["other"], name: "other", level: 0 }],
       counts: () => ({}),
@@ -921,15 +932,18 @@ describe("useTreeNodes", () => {
     expect(calls.filter((call) => call.route === "containers")).toHaveLength(2);
   });
 
+  // The payload shape itself, both arms, is pinned in
+  // `tests/components/object-tree/first-paint.test.tsx`: this connection is one the
+  // server has never heard of, so it travels whole.
   test("every request carries the connection the tree was asked for", async () => {
     const calls = installFetch(routesFor({}, { table: { count: 0 }, view: { count: 0 } }));
-    const { result } = renderTree("seed:demo");
+    const { result } = renderTree("browser-only");
 
     await waitFor(() => expect(result.current.rows).toHaveLength(1));
     act(() => result.current.toggle("app"));
     await waitFor(() => expect(result.current.rows).toHaveLength(3));
 
-    expect(calls.every((call) => call.body.connectionId === "seed:demo")).toBe(true);
+    expect(calls.every((call) => (call.body.connection as { id: string }).id === "browser-only")).toBe(true);
     expect(calls).toHaveLength(2);
   });
 });

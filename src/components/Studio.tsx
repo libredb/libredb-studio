@@ -26,6 +26,8 @@ import {
 } from "@/components/studio/index";
 import { AgentRail } from "@/components/agent/AgentRail";
 import { DatabaseConnection, SavedQuery } from "@/lib/types";
+import type { DatabaseObject } from "@/lib/db/types";
+import { relationKindIds } from "@/lib/db/object-kinds";
 import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
 import { lazyRetry } from "@/lib/lazy";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
@@ -416,6 +418,25 @@ export default function Studio() {
     tabMgr.handleTableClick(tableName, queryExec.executeQuery);
   };
 
+  /**
+   * A row activated in the object tree (#789).
+   *
+   * Gated on the kind's declared ROLE, never on its id: `handleTableClick` generates a
+   * query and EXECUTES it, so handing it a routine or a trigger would run
+   * `SELECT * FROM order_total(integer) LIMIT 50` against the database. The old flat
+   * explorer could not reach that state because it only ever listed relations; the tree
+   * lists every declared kind, so the gate is what keeps a click on a function from
+   * being a failed statement in the reader's history.
+   *
+   * The NAME and not the path, which is what the flat query generator still takes. Task
+   * 25 migrates that; until then a schema-qualified object behaves exactly as it did
+   * under the explorer.
+   */
+  const onObjectClick = (object: DatabaseObject) => {
+    if (metadata === null || !relationKindIds(metadata.capabilities).includes(object.kind)) return;
+    onTableClick(object.name);
+  };
+
   const requestDeleteConnection = (id: string) => {
     setPendingDeleteConnectionId(id);
   };
@@ -502,9 +523,6 @@ export default function Studio() {
               <Sidebar
                 connections={conn.connections}
                 activeConnection={conn.activeConnection}
-                schema={conn.schema}
-                isLoadingSchema={conn.isLoadingSchema}
-                schemaError={conn.schemaError}
                 onSelectConnection={conn.setActiveConnection}
                 onDeleteConnection={requestDeleteConnection}
                 onEditConnection={(c) => {
@@ -513,17 +531,11 @@ export default function Studio() {
                 }}
                 onDuplicateConnection={handleDuplicateConnection}
                 onAddConnection={() => setIsConnectionModalOpen(true)}
-                onTableClick={onTableClick}
-                onGenerateSelect={tabMgr.handleGenerateSelect}
-                onCreateTableClick={() => setIsCreateTableModalOpen(true)}
+                onObjectClick={onObjectClick}
                 onShowDiagram={() => setShowDiagram(true)}
-                isAdmin={isAdmin}
-                onOpenMaintenance={openMaintenance}
-                databaseType={conn.activeConnection?.type}
                 metadata={metadata}
-                onProfileTable={(name) => setProfilerTable(name)}
-                onGenerateCode={(name) => setCodeGenTable(name)}
-                onGenerateTestData={(name) => setTestDataTable(name)}
+                objectScanDeferred={conn.objectScanDeferred}
+                onLoadObjects={conn.loadObjects}
               />
             </ResizablePanel>
             <ResizableHandle className="w-1 bg-transparent hover:bg-brand-tint/30 transition-colors" />

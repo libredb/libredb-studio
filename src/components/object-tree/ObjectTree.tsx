@@ -14,8 +14,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CircleAlert, LoaderCircle, PlugZap } from "lucide-react";
+import { CircleAlert, Database, LoaderCircle, PlugZap } from "lucide-react";
 import type { DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
+import type { DatabaseConnection } from "@/lib/types";
 import type { TreeRowModel } from "./flatten";
 import { TREE_ROW_HEIGHT, TreeRow } from "./TreeRow";
 import { useTreeNodes } from "./use-tree-nodes";
@@ -32,9 +33,22 @@ const OVERSCAN = 4;
 const UNMEASURED_VIEWPORT = 640;
 
 export interface ObjectTreeProps {
-  /** What the object routes resolve: a seed id today, per `resolveConnection`. */
-  readonly connectionId: string;
+  /**
+   * The connection to read, whole rather than by id: `buildConnectionPayload` sends a
+   * managed seed as `seed:<id>` and anything else in full, which is how every other db
+   * route is called and the only way a connection the server has never heard of can be
+   * read at all.
+   */
+  readonly connection: DatabaseConnection;
   readonly capabilities: ProviderCapabilities;
+  /**
+   * Read nothing until asked (#765). The flag itself lives on the connection
+   * (`skipObjectScan`) and the ANSWER is resolved by whoever owns that connection, so
+   * that one reader's press releases both this tree and the flat schema read.
+   */
+  readonly deferred?: boolean;
+  /** What the load action calls. Absent means no action is offered. */
+  readonly onLoad?: () => void;
   readonly onObjectClick?: (object: DatabaseObject) => void;
 }
 
@@ -74,8 +88,8 @@ function parentIndex(rows: readonly TreeRowModel[], index: number): number {
   return -1;
 }
 
-export function ObjectTree({ connectionId, capabilities, onObjectClick }: ObjectTreeProps) {
-  const tree = useTreeNodes(connectionId, capabilities);
+export function ObjectTree({ connection, capabilities, deferred, onLoad, onObjectClick }: ObjectTreeProps) {
+  const tree = useTreeNodes(connection, capabilities, deferred);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pinned, setPinned] = useState(false);
   const [scrollTop, setScrollTop] = useState(0);
@@ -200,6 +214,34 @@ export function ObjectTree({ connectionId, capabilities, onObjectClick }: Object
     treeRef.current = element;
     if (element !== null) setViewportHeight(element.clientHeight);
   }, []);
+
+  /*
+    The escape hatch (#765). Checked before every other state, because the states below
+    all describe a read: this one is the absence of one, and the reader is the only thing
+    that can end it. The editor and query execution are untouched, which is the point -
+    the reporter wanted to run a statement against an owner holding tens of thousands of
+    objects without waiting for any of them.
+  */
+  if (deferred === true) {
+    return (
+      <TreePanel testId="tree-deferred" icon={<Database strokeWidth={1.5} className="w-6 h-6 text-brand" />}>
+        <h3 className="text-foreground text-xs font-medium mb-1">{connection.name}</h3>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          This connection opens without reading its catalog. The editor is ready to use.
+        </p>
+        {onLoad !== undefined && (
+          <button
+            type="button"
+            data-testid="tree-load"
+            onClick={onLoad}
+            className="mt-3 rounded-md bg-brand-solid hover:bg-brand-solid-hover text-white px-3 py-1.5 text-xs font-medium transition-colors"
+          >
+            Load objects
+          </button>
+        )}
+      </TreePanel>
+    );
+  }
 
   if (tree.rootFailure !== undefined) {
     const failure = tree.rootFailure;

@@ -30,7 +30,7 @@ FAIL=0
 # green summary line reported a group count no run had.
 # Drifted again before this line was touched: it read 30 while 32 `run_group` calls
 # existed, so every green run reported a group count no run had. 33 is the grep below.
-TOTAL_GROUPS=36
+TOTAL_GROUPS=37
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -326,6 +326,13 @@ run_group "Group 20: WireCompatibilityHint" \
 # when the two share a process. It mocks no module, so nothing else needs isolating from it.
 run_group "Group 23: Object tree" \
   tests/components/object-tree.test.tsx
+
+# Group 24: First paint (#789, #765). Its own group for Group 23's reason, and separate from
+# it because it counts EVERY request by pathname: sharing a process with a file that answers
+# other routes from the same global would make "exactly two catalog reads" count somebody
+# else's reads. It renders the real tree against a fetch double rather than a mocked module.
+run_group "Group 24: Object tree first paint" \
+  tests/components/object-tree/first-paint.test.tsx
 
 # Group 21: ui/scroll-area. Its own group for the same reason ui/resizable has one:
 # it is the only suite that renders the REAL @radix-ui/react-scroll-area, while

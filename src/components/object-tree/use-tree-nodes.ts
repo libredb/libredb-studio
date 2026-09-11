@@ -22,10 +22,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiErrorCode } from "@/lib/api/error-codes";
+import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { appFetch } from "@/lib/config/base-path";
 import { containerDepth, declaredKinds } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, KindCount, ProviderCapabilities } from "@/lib/db/types";
-import { flattenTree, type TreeRowModel } from "./flatten";
+import type { DatabaseConnection } from "@/lib/types";
+import { containerRowId, flattenTree, type TreeRowModel } from "./flatten";
+
+/** How a read addresses its connection: a seed by id, anything else in full. */
+type ConnectionPayload = ReturnType<typeof buildConnectionPayload>;
 
 /** A read that did not answer. */
 export interface TreeReadFailure {
@@ -177,6 +182,30 @@ function mergeContainers(
   return [...existing.filter((container) => pathKey(container.path.slice(0, -1)) !== parentKey), ...listed];
 }
 
+/**
+ * The active container, OPENED, the moment the engine names it (#789).
+ *
+ * This is the second half of what a connection reads on first paint: the container list,
+ * then the kind counts of the one container the session is already in. The fact comes
+ * from the ENGINE through `Container.isSessionDefault`, so nothing here knows that Oracle
+ * means the connecting user and MySQL means `DATABASE()`, and an engine that publishes no
+ * such container simply opens nothing. PostgreSQL is that case deliberately: a
+ * `search_path` names several schemas and none of them owns the session, and guessing
+ * `public` would be a per-engine rule in a consumer.
+ *
+ * `expanded` is keyed by row id, so the id comes from `containerRowId` in `flatten.ts`
+ * rather than from a second copy of that rule here.
+ *
+ * A container listing arriving again re-opens it, which is what a reader pressing the
+ * root retry or the explicit load asks for: those are first paint happening again. A
+ * container the reader has since COLLAPSED stays collapsed, because nothing re-lists its
+ * parent in between.
+ */
+function withSessionDefault(expanded: ReadonlySet<string>, listed: readonly Container[]): ReadonlySet<string> {
+  const active = listed.find((container) => container.isSessionDefault === true);
+  return active === undefined ? expanded : new Set(expanded).add(containerRowId(active.path));
+}
+
 function store(cache: TreeCache, slot: ReadSlot, data: unknown): TreeCache {
   switch (slot.kind) {
     case "containers":
@@ -184,6 +213,7 @@ function store(cache: TreeCache, slot: ReadSlot, data: unknown): TreeCache {
         ...cache,
         containers: mergeContainers(cache.containers, slot.key, data as readonly Container[]),
         containersRead: new Set(cache.containersRead).add(slot.key),
+        expanded: withSessionDefault(cache.expanded, data as readonly Container[]),
       };
     case "counts":
       return { ...cache, counts: { ...cache.counts, [slot.key]: data as Record<string, KindCount> } };
@@ -264,11 +294,11 @@ function isRenderableShape(read: TreeRead, data: unknown): boolean {
   return Array.isArray(data) && data.every((entry) => isRecord(entry) && Array.isArray(entry.path));
 }
 
-async function postRead(connectionId: string, read: TreeRead): Promise<unknown> {
+async function postRead(payload: ConnectionPayload, read: TreeRead): Promise<unknown> {
   const response = await appFetch(`/api/db/objects/${read.route}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ connectionId, ...read.body }),
+    body: JSON.stringify({ ...payload, ...read.body }),
   });
   // A route that answered with no body at all still answered something worth showing, so the
   // status stands in for the sentence rather than the read being reported as a parse error.
@@ -290,10 +320,32 @@ function toFailure(error: unknown): TreeReadFailure {
   return { message: error instanceof Error ? error.message : String(error), unimplemented: false };
 }
 
-export function useTreeNodes(connectionId: string, capabilities: ProviderCapabilities): TreeNodes {
+/**
+ * The lazy object-tree cache for one connection.
+ *
+ * Takes the CONNECTION rather than its id, for two reasons that only look like one. The
+ * request needs `buildConnectionPayload`, which is how every other db route is called and
+ * the only way a connection the server has never heard of can be read at all: posting a
+ * bare id restricted this tree to managed seed connections. And `deferred` is a property
+ * of the connection (`skipObjectScan`), which the owner of that flag resolves.
+ *
+ * `deferred` suppresses EVERY read rather than just the first: a deferred tree renders no
+ * rows, so there is nothing else to ask for, and "nothing is read while deferred" is then
+ * one line that a mutation can be pointed at instead of a property of two derivations
+ * agreeing.
+ */
+export function useTreeNodes(
+  connection: DatabaseConnection,
+  capabilities: ProviderCapabilities,
+  deferred = false,
+): TreeNodes {
+  const connectionId = connection.id;
   const [stored, setStored] = useState<TreeCache>(() => emptyCache(connectionId));
   const connectionRef = useRef(connectionId);
   const inFlight = useRef(new Set<string>());
+  // Rebuilt whenever the connection object changes, so a read always carries the payload
+  // of the connection that asked for it rather than of whichever is current when it runs.
+  const payload = useMemo(() => buildConnectionPayload(connection), [connection]);
 
   const kinds = useMemo(() => declaredKinds(capabilities), [capabilities]);
   const depth = useMemo(() => containerDepth(capabilities), [capabilities]);
@@ -330,12 +382,12 @@ export function useTreeNodes(connectionId: string, capabilities: ProviderCapabil
   );
 
   const run = useCallback(
-    async (connId: string, read: TreeRead) => {
+    async (connId: string, connPayload: ConnectionPayload, read: TreeRead) => {
       const key = `${connId}|${slotKey(read.slot)}`;
       if (inFlight.current.has(key)) return;
       inFlight.current.add(key);
       try {
-        const data = await postRead(connId, read);
+        const data = await postRead(connPayload, read);
         applyFor(connId, (current) => store(current, read.slot, data));
       } catch (error) {
         applyFor(connId, (current) => withFailure(current, read.slot, toFailure(error)));
@@ -363,6 +415,9 @@ export function useTreeNodes(connectionId: string, capabilities: ProviderCapabil
 
   const pending = useMemo(() => {
     const reads: TreeRead[] = [];
+    // The escape hatch, and the whole of it: a deferred connection wants ZERO catalog
+    // reads, so the derivation that drives every fetch answers with nothing (#765).
+    if (deferred) return reads;
     if (!isSlotFilled(cache, root.slot) && cache.failures[slotKey(root.slot)] === undefined) reads.push(root);
     for (const row of rows) {
       if (row.expanded !== true) continue;
@@ -373,11 +428,11 @@ export function useTreeNodes(connectionId: string, capabilities: ProviderCapabil
       reads.push(read);
     }
     return reads;
-  }, [cache, depth, root, rows]);
+  }, [cache, deferred, depth, root, rows]);
 
   useEffect(() => {
-    for (const read of pending) void run(connectionId, read);
-  }, [connectionId, pending, run]);
+    for (const read of pending) void run(connectionId, payload, read);
+  }, [connectionId, payload, pending, run]);
 
   const pendingKeys = useMemo(() => new Set(pending.map((read) => slotKey(read.slot))), [pending]);
 
@@ -447,7 +502,9 @@ export function useTreeNodes(connectionId: string, capabilities: ProviderCapabil
 
   return {
     rows,
-    rootLoading: !isSlotFilled(cache, root.slot) && cache.failures[slotKey(root.slot)] === undefined,
+    // A deferred tree is not loading. Nothing was asked for, so a spinner would report a
+    // read that is never going to answer.
+    rootLoading: !deferred && !isSlotFilled(cache, root.slot) && cache.failures[slotKey(root.slot)] === undefined,
     rootFailure: cache.failures[slotKey(root.slot)],
     isBusy,
     failureFor,

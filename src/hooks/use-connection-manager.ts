@@ -44,14 +44,22 @@ export function useConnectionManager(storageReady = false) {
   const [schemaError, setSchemaError] = useState<string | null>(null);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
   const [pulseState, setConnectionPulse] = useState<"healthy" | "degraded" | "error" | null>(null);
+  /**
+   * The connection whose deferred catalog read the reader has explicitly asked for, by
+   * id. Null means nobody has asked for any, which is where a session starts.
+   */
+  const [scanRequested, setScanRequested] = useState<string | null>(null);
 
   const { toast } = useToast();
 
-  // Fetch schema for a connection — two phases so a slow/failing stats query
+  // Read schema for a connection — two phases so a slow/failing stats query
   // never blocks the table list:
   //   1. /api/db/schema/list      → tables + columns + PKs (fast)  → render tree
   //   2. /api/db/schema/relations → foreign keys + indexes (heavy) → async merge
-  const fetchSchema = useCallback(
+  //
+  // Unguarded on purpose: `fetchSchema` below is the guarded entry point every caller
+  // uses, and `loadObjects` is the one call that is allowed past the guard.
+  const readSchema = useCallback(
     async (conn: DatabaseConnection) => {
       setIsLoadingSchema(true);
 
@@ -107,6 +115,46 @@ export function useConnectionManager(storageReady = false) {
     },
     [toast],
   );
+
+  /**
+   * Whether THIS connection's catalog reads are deferred right now (#765).
+   *
+   * One rule with one reader, deliberately: the two shells and the statement-refresh
+   * path all reach the catalog through `fetchSchema`, and a guard written at each call
+   * site is three copies of a rule that only has to be wrong in one of them to make the
+   * escape hatch read the catalog anyway.
+   *
+   * The reader's request is held as the connection's ID rather than as a boolean, and
+   * the answer is DERIVED from it. A boolean would leave the NEXT deferred connection
+   * already loaded, and clearing it in an effect is both a frame late and an error under
+   * `react/set-state-in-effect`.
+   */
+  const scanDeferred = useCallback(
+    (conn: DatabaseConnection) => conn.skipObjectScan === true && scanRequested !== conn.id,
+    [scanRequested],
+  );
+
+  const fetchSchema = useCallback(
+    async (conn: DatabaseConnection) => {
+      if (scanDeferred(conn)) return;
+      await readSchema(conn);
+    },
+    [readSchema, scanDeferred],
+  );
+
+  /**
+   * Read what opening this connection would have read, because the reader asked.
+   *
+   * It records the request against the connection's id before reading, so the tree's own
+   * root read is released by the same press: the panel that offers this action is
+   * rendered from `objectScanDeferred`.
+   */
+  const loadObjects = useCallback(() => {
+    const conn = activeConnection;
+    if (conn === null) return;
+    setScanRequested(conn.id);
+    void readSchema(conn);
+  }, [activeConnection, readSchema]);
 
   // Memoized derived values
   const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
@@ -327,6 +375,12 @@ export function useConnectionManager(storageReady = false) {
     // there is nothing to report on, and the render already knows that.
     connectionPulse: activeConnection === null ? null : pulseState,
     fetchSchema,
+    /**
+     * Whether the active connection is holding its catalog reads back. False with no
+     * active connection: there is nothing to defer, not a deferral.
+     */
+    objectScanDeferred: activeConnection !== null && scanDeferred(activeConnection),
+    loadObjects,
     schemaContext,
   };
 }

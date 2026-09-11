@@ -39,6 +39,7 @@ const mockSetConnections = mock(() => {});
 const mockSetActiveConnection = mock(() => {});
 const mockSetSchema = mock(() => {});
 const mockFetchSchema = mock(() => {});
+const mockLoadObjects = mock(() => {});
 // Tab Manager
 const mockSetTabs = mock(() => {});
 const mockUpdateCurrentTab = mock(() => {});
@@ -108,6 +109,8 @@ mock.module("@/hooks/use-connection-manager", () => ({
     setActiveConnection: mockSetActiveConnection,
     setSchema: mockSetSchema,
     fetchSchema: mockFetchSchema,
+    objectScanDeferred: false,
+    loadObjects: mockLoadObjects,
     ...connMgrOverride,
   })),
 }));
@@ -467,6 +470,7 @@ mock.module("@/components/ui/resizable", () => {
 
 const { default: Studio } = await import("@/components/Studio");
 import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseObject } from "@/lib/db/types";
 
 // =============================================================================
 // Test data
@@ -703,9 +707,19 @@ describe("Studio", () => {
   // =========================================================================
 
   // --- openMaintenance ---
+  //
+  // Reached through the mobile schema tab since the sidebar became the object tree
+  // (#789): the tree has no row menu in Phase 1, so the explorer's row items are the
+  // surviving caller of every handler below.
+  function openSchemaTab(): void {
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
+  }
+
   test("openMaintenance navigates to admin operations when admin", () => {
+    connMgrOverride = { activeConnection: pgConn };
     render(<Studio />);
-    const fn = capturedSidebarProps.onOpenMaintenance as () => void;
+    openSchemaTab();
+    const fn = capturedSchemaExplorerProps.onOpenMaintenance as () => void;
     act(() => fn());
     expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations");
   });
@@ -713,16 +727,20 @@ describe("Studio", () => {
   // The Explorer's row items call this with the row's name; it rides the admin
   // route's query string so the Operations tab lands on that row (#459).
   test("openMaintenance carries the named row to the operations tab", () => {
+    connMgrOverride = { activeConnection: pgConn };
     render(<Studio />);
-    const fn = capturedSidebarProps.onOpenMaintenance as (tab?: string, table?: string) => void;
+    openSchemaTab();
+    const fn = capturedSchemaExplorerProps.onOpenMaintenance as (tab?: string, table?: string) => void;
     act(() => fn("tables", "order items"));
     expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?table=order%20items");
   });
 
   test("openMaintenance navigates to monitoring when not admin", () => {
     authOverride = { isAdmin: false };
+    connMgrOverride = { activeConnection: pgConn };
     render(<Studio />);
-    const fn = capturedSidebarProps.onOpenMaintenance as () => void;
+    openSchemaTab();
+    const fn = capturedSchemaExplorerProps.onOpenMaintenance as () => void;
     act(() => fn());
     expect(mockRouterPush).toHaveBeenCalledWith("/monitoring");
   });
@@ -802,12 +820,61 @@ describe("Studio", () => {
     expect(dialog.queryByText("Delete connection?")).toBeNull();
   });
 
-  // --- onTableClick ---
-  test("onTableClick delegates to handleTableClick with executeQuery", () => {
+  // --- onObjectClick ---
+  test("a relation activated in the object tree opens and runs its tab", () => {
+    capabilitiesOverride = {
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+      ],
+    };
     render(<Studio />);
-    const fn = capturedSidebarProps.onTableClick as (name: string) => void;
-    act(() => fn("users"));
+    const fn = capturedSidebarProps.onObjectClick as (object: DatabaseObject) => void;
+    act(() => fn({ path: ["app", "users"], name: "users", kind: "table" }));
     expect(mockHandleTableClick).toHaveBeenCalledWith("users", mockExecuteQuery);
+  });
+
+  /**
+   * The tree lists every declared kind, and the click EXECUTES what it generates, so a
+   * routine reaching `handleTableClick` would run `SELECT * FROM order_total(integer)`
+   * against the database. The gate reads the kind's declared ROLE, never its id.
+   */
+  // The gate reads `role`, not the kind id: a view is a relation on every engine that
+  // declares one, and `kind === "table"` would refuse it while passing the two tests
+  // either side of this one.
+  test("a view activated in the object tree opens and runs its tab", () => {
+    capabilitiesOverride = {
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+      ],
+    };
+    render(<Studio />);
+    const fn = capturedSidebarProps.onObjectClick as (object: DatabaseObject) => void;
+    act(() => fn({ path: ["app", "order_summary"], name: "order_summary", kind: "view" }));
+    expect(mockHandleTableClick).toHaveBeenCalledWith("order_summary", mockExecuteQuery);
+  });
+
+  test("a routine activated in the object tree runs nothing", () => {
+    capabilitiesOverride = {
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+      ],
+    };
+    render(<Studio />);
+    const fn = capturedSidebarProps.onObjectClick as (object: DatabaseObject) => void;
+    act(() => fn({ path: ["app", "order_total(integer)"], name: "order_total", kind: "function" }));
+    expect(mockHandleTableClick).not.toHaveBeenCalled();
+  });
+
+  // #765: the connection owns the answer, so both halves reach the tree from the hook
+  // that holds it rather than from anything the sidebar decides.
+  test("the deferred scan and its load action reach the object tree", () => {
+    connMgrOverride = { activeConnection: pgConn, objectScanDeferred: true, loadObjects: mockLoadObjects };
+    render(<Studio />);
+    expect(capturedSidebarProps.objectScanDeferred).toBe(true);
+    expect(capturedSidebarProps.onLoadObjects).toBe(mockLoadObjects);
   });
 
   // --- onEditConnection ---
@@ -1429,35 +1496,47 @@ describe("Studio", () => {
     expect(mockSetSchema).toHaveBeenCalledWith([]);
   });
 
-  // --- Sidebar profiler/codegen/testdata callbacks ---
-  test("Sidebar onProfileTable opens profiler", () => {
+  // --- profiler/codegen/testdata callbacks ---
+  //
+  // On the mobile schema tab since the sidebar became the object tree: these four are
+  // what `docs/superpowers/works/task-07-report.md` records as reachable from one surface
+  // only until something re-homes them.
+  test("onProfileTable opens profiler", () => {
+    connMgrOverride = { activeConnection: pgConn };
     const { queryByTestId } = render(<Studio />);
     expect(queryByTestId("dataprofiler")).toBeNull();
-    const fn = capturedSidebarProps.onProfileTable as (name: string) => void;
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
+    const fn = capturedSchemaExplorerProps.onProfileTable as (name: string) => void;
     act(() => fn("users"));
     expect(queryByTestId("dataprofiler")).not.toBeNull();
   });
 
-  test("Sidebar onGenerateCode opens code generator", () => {
+  test("onGenerateCode opens code generator", () => {
+    connMgrOverride = { activeConnection: pgConn };
     const { queryByTestId } = render(<Studio />);
     expect(queryByTestId("codegenerator")).toBeNull();
-    const fn = capturedSidebarProps.onGenerateCode as (name: string) => void;
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
+    const fn = capturedSchemaExplorerProps.onGenerateCode as (name: string) => void;
     act(() => fn("users"));
     expect(queryByTestId("codegenerator")).not.toBeNull();
   });
 
-  test("Sidebar onGenerateTestData opens test data generator", () => {
+  test("onGenerateTestData opens test data generator", () => {
+    connMgrOverride = { activeConnection: pgConn };
     const { queryByTestId } = render(<Studio />);
     expect(queryByTestId("testdatagenerator")).toBeNull();
-    const fn = capturedSidebarProps.onGenerateTestData as (name: string) => void;
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
+    const fn = capturedSchemaExplorerProps.onGenerateTestData as (name: string) => void;
     act(() => fn("users"));
     expect(queryByTestId("testdatagenerator")).not.toBeNull();
   });
 
-  test("Sidebar onCreateTableClick opens create table modal", () => {
+  test("onCreateTableClick opens create table modal", () => {
+    connMgrOverride = { activeConnection: pgConn };
     const { queryByTestId } = render(<Studio />);
     expect(queryByTestId("createtablemodal")).toBeNull();
-    const fn = capturedSidebarProps.onCreateTableClick as () => void;
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
+    const fn = capturedSchemaExplorerProps.onCreateTableClick as () => void;
     act(() => fn());
     expect(queryByTestId("createtablemodal")).not.toBeNull();
   });

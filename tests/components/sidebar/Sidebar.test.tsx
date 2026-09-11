@@ -25,19 +25,25 @@ mock.module("@/components/sidebar/ConnectionsList", () => ({
   },
 }));
 
-mock.module("@/components/schema-explorer", () => ({
-  SchemaExplorer: (props: Record<string, unknown>) => {
+// The tree is driven by its own fetch double in
+// `tests/components/object-tree/first-paint.test.tsx`; here it is a stand-in that
+// reports what the sidebar handed it, which is the sidebar's whole job.
+mock.module("@/components/object-tree", () => ({
+  ObjectTree: (props: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
-    const schema = props.schema as Array<unknown> | undefined;
+    const connection = props.connection as Record<string, unknown> | undefined;
+    const capabilities = props.capabilities as { containerLevels?: unknown[] } | undefined;
     return React.createElement(
       "div",
       {
-        "data-testid": "schema-explorer",
-        "data-schema-count": String(schema?.length ?? 0),
-        "data-schema-error": String(props.schemaError ?? ""),
+        "data-testid": "object-tree",
+        "data-connection": String(connection?.id ?? "none"),
+        "data-levels": String(capabilities?.containerLevels?.length ?? "none"),
+        "data-deferred": String(props.deferred ?? false),
+        "data-has-load": String(props.onLoad !== undefined),
       },
-      "SchemaExplorer Mock",
+      "ObjectTree Mock",
     );
   },
 }));
@@ -85,11 +91,11 @@ import { render, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
 
 import { mockPostgresConnection, mockMySQLConnection } from "../../fixtures/connections";
-import { mockSchema } from "../../fixtures/schemas";
+import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 
 // ---- Load the component under test AFTER all mock.module registrations ----
 // A static import would be hoisted and evaluate the real module tree
-// (ConnectionsList, ConnectionItem, schema-explorer, ...) before the mocks
+// (ConnectionsList, ConnectionItem, object-tree, ...) before the mocks
 // apply, poisoning coverage with zero-hit phantom lines for modules that
 // never execute. The dynamic import resolves against the mock registry instead.
 
@@ -99,18 +105,22 @@ const { Sidebar } = await import("@/components/sidebar/Sidebar");
 // Sidebar Tests
 // =============================================================================
 
+const oneLevel = {
+  queryLanguage: "sql",
+  containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+  objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+} as unknown as ProviderMetadata["capabilities"];
+
 function createDefaultProps(overrides: Record<string, unknown> = {}) {
   return {
     connections: [mockPostgresConnection, mockMySQLConnection],
     activeConnection: mockPostgresConnection,
-    schema: mockSchema,
-    isLoadingSchema: false,
+    metadata: { capabilities: oneLevel } as ProviderMetadata,
     onSelectConnection: mock(() => {}),
     onDeleteConnection: mock(() => {}),
     onEditConnection: mock(() => {}),
     onAddConnection: mock(() => {}),
-    onTableClick: mock(() => {}),
-    onGenerateSelect: mock(() => {}),
+    onObjectClick: mock(() => {}),
     onShowDiagram: mock(() => {}),
     ...overrides,
   };
@@ -148,26 +158,59 @@ describe("Sidebar", () => {
     expect(buttons.length).toBeGreaterThan(0);
   });
 
-  test("SchemaExplorer only renders when activeConnection exists", () => {
+  test("the object tree only renders when activeConnection exists", () => {
     // With active connection
     const propsWithConn = createDefaultProps({ activeConnection: mockPostgresConnection });
     const { unmount, queryByTestId } = render(<Sidebar {...propsWithConn} />);
-    expect(queryByTestId("schema-explorer")).not.toBeNull();
+    expect(queryByTestId("object-tree")).not.toBeNull();
     unmount();
 
     // Without active connection
     const propsNoConn = createDefaultProps({ activeConnection: null });
     const result2 = render(<Sidebar {...propsNoConn} />);
-    expect(result2.queryByTestId("schema-explorer")).toBeNull();
+    expect(result2.queryByTestId("object-tree")).toBeNull();
   });
 
-  // D31: the explorer's empty state says WHY it is empty, so the reason has to reach
-  // it — the sidebar is the only path between the hook that read it and the tree.
-  test("the schema read's error reaches the explorer", () => {
-    const props = createDefaultProps({ schema: [], schemaError: "'(' expected" });
+  // The tree reads the catalog itself, so what it needs from the sidebar is the
+  // connection to read and the declaration that says what to read for it.
+  test("the active connection and its capabilities reach the tree", () => {
+    const props = createDefaultProps();
     const { getByTestId } = render(<Sidebar {...props} />);
 
-    expect(getByTestId("schema-explorer").getAttribute("data-schema-error")).toBe("'(' expected");
+    expect(getByTestId("object-tree").getAttribute("data-connection")).toBe(mockPostgresConnection.id);
+    expect(getByTestId("object-tree").getAttribute("data-levels")).toBe("1");
+  });
+
+  /**
+   * The tree cannot be rendered without the declaration: `containerDepth` of an absent
+   * one is 0, which is a real answer for five engines, so handing the tree an empty
+   * capability object would make a one-level engine read the counts of a container that
+   * does not exist rather than list its schemas.
+   */
+  test("no tree is drawn until the provider has described the connection", () => {
+    const props = createDefaultProps({ metadata: null });
+    const { queryByTestId, getByTestId } = render(<Sidebar {...props} />);
+
+    expect(queryByTestId("object-tree")).toBeNull();
+    expect(getByTestId("sidebar-provider-pending")).not.toBeNull();
+  });
+
+  // #765: the connection's own answer decides, and the press is handed to the owner of
+  // that answer rather than performed here.
+  test("a deferred connection hands the tree the deferral and the load action", () => {
+    const onLoadObjects = mock(() => {});
+    const props = createDefaultProps({ objectScanDeferred: true, onLoadObjects });
+    const { getByTestId } = render(<Sidebar {...props} />);
+
+    expect(getByTestId("object-tree").getAttribute("data-deferred")).toBe("true");
+    expect(getByTestId("object-tree").getAttribute("data-has-load")).toBe("true");
+  });
+
+  test("control: a connection that is not deferred hands the tree no deferral", () => {
+    const props = createDefaultProps({ onLoadObjects: mock(() => {}) });
+    const { getByTestId } = render(<Sidebar {...props} />);
+
+    expect(getByTestId("object-tree").getAttribute("data-deferred")).toBe("false");
   });
 
   test("ERD button only appears when activeConnection exists", () => {

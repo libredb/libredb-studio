@@ -14,6 +14,8 @@ import { TestDataGenerator } from "@/components/TestDataGenerator";
 import { SaveQueryModal } from "@/components/SaveQueryModal";
 import { StudioTabBar, QueryToolbar, BottomPanel } from "@/components/studio/index";
 import type { MaskingConfig } from "@/lib/data-masking";
+import type { DatabaseObject } from "@/lib/db/types";
+import { relationKindIds } from "@/lib/db/object-kinds";
 import { useToast } from "@/hooks/use-toast";
 import { useTabManager } from "@/hooks/use-tab-manager";
 import { useConnectionAdapter } from "@/workspace/hooks/use-connection-adapter";
@@ -284,6 +286,23 @@ export function StudioWorkspace({
     [tabMgr, queryExec.executeQuery],
   );
 
+  /**
+   * A row activated in the object tree (#789), gated on the kind's declared ROLE for the
+   * reason `src/components/Studio.tsx` gives: the click generates a query and executes
+   * it, and a routine is not a thing to select from.
+   *
+   * The host declares the capabilities per connection here, so `metadata` is null
+   * whenever it declared none, and a tree is not rendered at all in that case.
+   */
+  const onObjectClick = useCallback(
+    (object: DatabaseObject) => {
+      const capabilities = conn.metadata?.capabilities;
+      if (capabilities === undefined || !relationKindIds(capabilities).includes(object.kind)) return;
+      onTableClick(object.name);
+    },
+    [conn.metadata, onTableClick],
+  );
+
   // === No-op callbacks for disabled features ===
   /** What the panel group may hold: below the breakpoint, only the body panel. */
   const isMobile = useIsMobile();
@@ -315,23 +334,13 @@ export function StudioWorkspace({
               <Sidebar
                 connections={conn.connections}
                 activeConnection={conn.activeConnection}
-                schema={conn.schema}
-                isLoadingSchema={conn.isLoadingSchema}
                 onSelectConnection={conn.setActiveConnection}
                 onDeleteConnection={noop}
                 onEditConnection={noop}
                 onAddConnection={noop}
-                onTableClick={onTableClick}
-                onGenerateSelect={tabMgr.handleGenerateSelect}
-                onCreateTableClick={undefined}
+                onObjectClick={onObjectClick}
                 onShowDiagram={features.schemaDiagram ? () => setShowDiagram(true) : undefined}
-                isAdmin={false}
-                onOpenMaintenance={noop}
-                databaseType={conn.activeConnection?.type}
                 metadata={conn.metadata}
-                onProfileTable={features.codeGenerator ? (name: string) => setProfilerTable(name) : undefined}
-                onGenerateCode={features.codeGenerator ? (name: string) => setCodeGenTable(name) : undefined}
-                onGenerateTestData={features.testDataGenerator ? (name: string) => setTestDataTable(name) : undefined}
               />
             </ResizablePanel>
             <ResizableHandle className="w-1 bg-transparent hover:bg-brand-tint/30 transition-colors" />

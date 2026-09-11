@@ -186,6 +186,21 @@ export interface DatabaseConnection {
    * is a field of its own rather than a reuse of `database`.
    */
   authSource?: string;
+  /**
+   * Read no catalog when this connection opens.
+   *
+   * For a connection whose owner holds tens of thousands of objects, even the two cheap
+   * reads first paint makes are worth deferring, and a user who only wants to run one
+   * statement should not wait for either (#765, asked for by the reporter as "not
+   * preloading anything ... at db connection level"). The editor and query execution
+   * are fully usable while this is set; the object panel shows a load action instead of
+   * a scan, and pressing it reads exactly what opening the connection would have.
+   *
+   * A per-connection answer rather than a global setting, because the connection is
+   * what knows: the same deployment holds a five-table SQLite sample and a 40,000-object
+   * Oracle owner, and the flag follows the one that hurts.
+   */
+  skipObjectScan?: boolean;
   managed?: boolean; // true = admin-controlled, read-only in UI
   seedId?: string; // stable reference to seed config ID
   agentUser?: string; // optional least-privilege role for the agent read-only execution profile (#328)

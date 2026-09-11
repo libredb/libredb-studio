@@ -1,12 +1,12 @@
 "use client";
 
 import React from "react";
-import { DatabaseConnection, TableSchema } from "@/lib/types";
+import { DatabaseConnection } from "@/lib/types";
+import type { DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
-import { Plus, Zap, Layers } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Plus, Zap, Layers, LoaderCircle } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SchemaExplorer } from "@/components/schema-explorer";
+import { ObjectTree } from "@/components/object-tree";
 import { GitHubRepoLink } from "@/components/github-repo-link";
 import { getAppVersion } from "@/lib/app-version";
 import { ConnectionsList } from "./ConnectionsList";
@@ -14,50 +14,39 @@ import { ConnectionsList } from "./ConnectionsList";
 interface SidebarProps {
   connections: DatabaseConnection[];
   activeConnection: DatabaseConnection | null;
-  schema: TableSchema[];
-  isLoadingSchema: boolean;
-  /** Why the schema read produced nothing, passed straight to the explorer (D31). */
-  schemaError?: string | null;
   onSelectConnection: (connection: DatabaseConnection) => void;
   onDeleteConnection: (id: string) => void;
   onEditConnection?: (conn: DatabaseConnection) => void;
   onDuplicateConnection?: (conn: DatabaseConnection) => void;
   onAddConnection: () => void;
-  onTableClick?: (tableName: string) => void;
-  onGenerateSelect?: (tableName: string) => void;
-  onCreateTableClick?: () => void;
+  /** A row the reader activated, handed over whole: path, kind and the fields the tree loaded. */
+  onObjectClick?: (object: DatabaseObject) => void;
   onShowDiagram?: () => void;
-  isAdmin?: boolean;
-  onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", table?: string) => void;
-  databaseType?: string;
+  /**
+   * What the provider declares about this connection. The object tree is DRIVEN by the
+   * declaration - the container levels decide what it reads first, and the kinds decide
+   * which folders exist - so there is nothing to draw until it arrives.
+   */
   metadata?: ProviderMetadata | null;
-  onProfileTable?: (tableName: string) => void;
-  onGenerateCode?: (tableName: string) => void;
-  onGenerateTestData?: (tableName: string) => void;
+  /** The active connection reads no catalog until asked (#765). */
+  objectScanDeferred?: boolean;
+  /** Perform the read the active connection deferred. */
+  onLoadObjects?: () => void;
 }
 
 export function Sidebar({
   connections,
   activeConnection,
-  schema,
-  isLoadingSchema,
-  schemaError,
   onSelectConnection,
   onDeleteConnection,
   onEditConnection,
   onDuplicateConnection,
   onAddConnection,
-  onTableClick,
-  onGenerateSelect,
-  onCreateTableClick,
+  onObjectClick,
   onShowDiagram,
-  isAdmin = false,
-  onOpenMaintenance,
-  databaseType,
   metadata,
-  onProfileTable,
-  onGenerateCode,
-  onGenerateTestData,
+  objectScanDeferred = false,
+  onLoadObjects,
 }: SidebarProps) {
   const appVersion = getAppVersion();
 
@@ -103,23 +92,36 @@ export function Sidebar({
             onAddConnection={onAddConnection}
           />
 
-          {activeConnection && (
-            <SchemaExplorer
-              schema={schema}
-              isLoadingSchema={isLoadingSchema}
-              schemaError={schemaError}
-              onTableClick={onTableClick}
-              onGenerateSelect={onGenerateSelect}
-              onCreateTableClick={onCreateTableClick}
-              isAdmin={isAdmin}
-              onOpenMaintenance={onOpenMaintenance}
-              databaseType={databaseType}
-              metadata={metadata}
-              onProfileTable={onProfileTable}
-              onGenerateCode={onGenerateCode}
-              onGenerateTestData={onGenerateTestData}
-            />
-          )}
+          {/*
+            The object tree replaces the flat table list (#789). It reads the catalog
+            itself, lazily, so the sidebar hands it the connection and the declaration and
+            keeps no copy of what it found.
+
+            Nothing is drawn while the declaration is missing, and that is not caution: an
+            absent `containerLevels` reads as depth 0, which is a REAL answer for five
+            engines, so a placeholder declaration would make a one-level engine read the
+            counts of a container that does not exist instead of listing its schemas.
+          */}
+          {activeConnection &&
+            (metadata ? (
+              <div className="h-[60vh]">
+                <ObjectTree
+                  connection={activeConnection}
+                  capabilities={metadata.capabilities}
+                  deferred={objectScanDeferred}
+                  onLoad={onLoadObjects}
+                  onObjectClick={onObjectClick}
+                />
+              </div>
+            ) : (
+              <div
+                data-testid="sidebar-provider-pending"
+                className="flex flex-col items-center justify-center py-12 text-muted-foreground"
+              >
+                <LoaderCircle strokeWidth={1.5} className="w-6 h-6 animate-spin text-brand/40" />
+                <span className="mt-3 text-xs font-medium">Reading the connection...</span>
+              </div>
+            ))}
         </div>
       </ScrollArea>
 

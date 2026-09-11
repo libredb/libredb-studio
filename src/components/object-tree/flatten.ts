@@ -155,6 +155,20 @@ function isChildPath(parentPath: readonly string[], path: readonly string[]): bo
   return path.length === parentPath.length + 1 && parentPath.every((segment, index) => segment === path[index]);
 }
 
+/**
+ * A container row's id, which is the one thing a caller may need to name a row it has
+ * not seen rendered yet.
+ *
+ * Exported because the tree's cache has to be able to OPEN a container the moment its
+ * listing lands, before any row exists: `Container.isSessionDefault` is answered by the
+ * engine and the active container is expanded on first paint (#789). The rule lives
+ * here, beside the walk that emits the row, so the cache cannot hold a second copy of
+ * it that drifts.
+ */
+export function containerRowId(path: readonly string[]): string {
+  return path.join("/");
+}
+
 function appendContainer(
   state: FlattenTreeState,
   rows: TreeRowModel[],
@@ -163,7 +177,7 @@ function appendContainer(
   setSize: number,
   posInSet: number,
 ): void {
-  const id = container.path.join("/");
+  const id = containerRowId(container.path);
   const expanded = state.expanded.has(id);
   rows.push({
     id,

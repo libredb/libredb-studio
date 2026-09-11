@@ -286,6 +286,7 @@ import { render, cleanup, act } from "@testing-library/react";
 import React from "react";
 import type { SavedQueryInput, StudioWorkspaceProps } from "@/workspace/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import type { DatabaseObject } from "@/lib/db/types";
 import { generateTableQuery } from "@/lib/query-generators";
 
 const { StudioWorkspace } = await import("@/workspace/StudioWorkspace");
@@ -702,22 +703,71 @@ describe("StudioWorkspace", () => {
   // Sidebar callbacks
   // =========================================================================
 
-  test("onTableClick delegates to handleTableClick with executeQuery", () => {
+  /** The host declares the kinds here, so the gate reads ITS declaration. */
+  const declaredKinds = {
+    metadata: {
+      capabilities: {
+        queryLanguage: "sql",
+        objectKinds: [
+          { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+          { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+        ],
+      },
+    },
+  };
+
+  test("a relation activated in the object tree opens and runs its tab", () => {
+    connAdapterOverride = declaredKinds;
     renderWorkspace();
-    act(() => (capturedSidebarProps.onTableClick as (n: string) => void)("users"));
+    act(() =>
+      (capturedSidebarProps.onObjectClick as (o: DatabaseObject) => void)({
+        path: ["app", "users"],
+        name: "users",
+        kind: "table",
+      }),
+    );
     expect(mockHandleTableClick).toHaveBeenCalledWith("users", mockExecuteQuery);
+  });
+
+  /**
+   * The host declares the kinds, so the role gate is the host's declaration and not a
+   * constant here. A routine reaching `handleTableClick` would generate and EXECUTE
+   * `SELECT * FROM order_total(integer)` against the tenant's database.
+   */
+  test("a routine activated in the object tree runs nothing", () => {
+    connAdapterOverride = declaredKinds;
+    renderWorkspace();
+    act(() =>
+      (capturedSidebarProps.onObjectClick as (o: DatabaseObject) => void)({
+        path: ["app", "order_total(integer)"],
+        name: "order_total",
+        kind: "function",
+      }),
+    );
+    expect(mockHandleTableClick).not.toHaveBeenCalled();
+  });
+
+  // A host that declares no kinds has declared no relations either, so a click cannot be
+  // resolved and nothing is executed on a guess. `metadata` is null by default here.
+  test("an object activated while the host has declared nothing runs nothing", () => {
+    renderWorkspace();
+    act(() =>
+      (capturedSidebarProps.onObjectClick as (o: DatabaseObject) => void)({
+        path: ["app", "users"],
+        name: "users",
+        kind: "table",
+      }),
+    );
+    expect(mockHandleTableClick).not.toHaveBeenCalled();
   });
 
   test("sidebar noop callbacks and references are wired", () => {
     renderWorkspace();
     expect(capturedSidebarProps.onSelectConnection).toBe(mockSetActiveConnection);
-    expect(capturedSidebarProps.onGenerateSelect).toBe(mockHandleGenerateSelect);
-    expect(capturedSidebarProps.isAdmin).toBe(false);
     // noop callbacks do not throw
     act(() => (capturedSidebarProps.onDeleteConnection as () => void)());
     act(() => (capturedSidebarProps.onEditConnection as () => void)());
     act(() => (capturedSidebarProps.onAddConnection as () => void)());
-    act(() => (capturedSidebarProps.onOpenMaintenance as () => void)());
   });
 
   // Awaited because the diagram is code-split: opening it resolves a dynamic import
@@ -731,33 +781,15 @@ describe("StudioWorkspace", () => {
     expect(queryByTestId("schemadiagram")).toBeNull();
   });
 
-  test("onProfileTable opens the data profiler with the matching schema", () => {
-    const { queryByTestId } = renderWorkspace();
-    act(() => (capturedSidebarProps.onProfileTable as (n: string) => void)("users"));
-    expect(queryByTestId("dataprofiler")).not.toBeNull();
-    expect(capturedDataProfilerProps.tableName).toBe("users");
-    expect(capturedDataProfilerProps.tableSchema).toEqual(usersTable);
-    act(() => (capturedDataProfilerProps.onClose as () => void)());
-    expect(queryByTestId("dataprofiler")).toBeNull();
-  });
-
-  test("onGenerateCode opens the code generator", () => {
-    const { queryByTestId } = renderWorkspace();
-    act(() => (capturedSidebarProps.onGenerateCode as (n: string) => void)("users"));
-    expect(queryByTestId("codegenerator")).not.toBeNull();
-    act(() => (capturedCodeGeneratorProps.onClose as () => void)());
-    expect(queryByTestId("codegenerator")).toBeNull();
-  });
-
-  test("onGenerateTestData opens the test data generator which can execute queries", () => {
-    const { queryByTestId } = renderWorkspace();
-    act(() => (capturedSidebarProps.onGenerateTestData as (n: string) => void)("users"));
-    expect(queryByTestId("testdatagenerator")).not.toBeNull();
-    act(() => (capturedTestDataGeneratorProps.onExecuteQuery as (q: string) => void)("INSERT INTO users VALUES (1)"));
-    expect(mockExecuteQuery).toHaveBeenCalledWith("INSERT INTO users VALUES (1)");
-    act(() => (capturedTestDataGeneratorProps.onClose as () => void)());
-    expect(queryByTestId("testdatagenerator")).toBeNull();
-  });
+  /*
+    The data profiler, the code generator and the test data generator had their only
+    entry point in the sidebar's flat explorer, which the object tree replaced here
+    (#789). The tree has no row menu in Phase 1, so in THIS shell nothing opens them: the
+    three tests that drove them through `capturedSidebarProps` are gone rather than
+    rewritten, because a test that asserts a surface nobody can reach pins a defect.
+    The modals and their state stay mounted in `StudioWorkspace.tsx` for the consumer
+    task that re-homes them (Task 25); recorded in `docs/superpowers/works/task-07-report.md`.
+  */
 
   // =========================================================================
   // Feature flags
@@ -766,9 +798,6 @@ describe("StudioWorkspace", () => {
   test("disabled features remove optional callbacks and modals", () => {
     const { queryByTestId } = renderWorkspace({ features: ALL_FEATURES_OFF, onSaveQuery: undefined });
     expect(capturedSidebarProps.onShowDiagram).toBeUndefined();
-    expect(capturedSidebarProps.onProfileTable).toBeUndefined();
-    expect(capturedSidebarProps.onGenerateCode).toBeUndefined();
-    expect(capturedSidebarProps.onGenerateTestData).toBeUndefined();
     // Import and save are withheld entirely, so the toolbar renders neither the
     // IMPORT (#427) nor the Save (U7) button.
     expect(capturedQueryToolbarProps.onImport).toBeUndefined();
