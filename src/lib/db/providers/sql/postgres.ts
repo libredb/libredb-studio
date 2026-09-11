@@ -2088,7 +2088,14 @@ export class PostgresProvider extends SQLBaseProvider {
       if (statement.withoutSize === undefined || !isMissingTotalRelationSizeError(error)) {
         throw mapDatabaseError(error, "postgres", statement.sql);
       }
-      return await client.query(statement.withoutSize, statement.params);
+      try {
+        return await client.query(statement.withoutSize, statement.params);
+      } catch (retryError) {
+        // The retry is the last thing tried, so its failure is this method's failure and
+        // leaves by the same door as the first one. It quotes the statement the server
+        // actually received, which is the rewritten one.
+        throw mapDatabaseError(retryError, "postgres", statement.withoutSize);
+      }
     }
   }
 
@@ -2111,9 +2118,16 @@ export class PostgresProvider extends SQLBaseProvider {
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     this.ensureConnected();
     const schema = containerSchema(container);
+    // Two questions, asked in order, and only the DECLARATION answers the first one.
+    // Deciding "is this kind declared" from whether a listing statement exists made the two
+    // methods disagree, and would have reported "declares no object kind" about a kind
+    // `objectKinds` does declare but nothing here can list.
+    if (findKind(this.getCapabilities(), kind) === undefined) {
+      throw new QueryError(`PostgreSQL declares no object kind "${kind}"`, "postgres");
+    }
     const statement = objectListingStatement(schema, kind);
     if (statement === undefined) {
-      throw new QueryError(`PostgreSQL declares no object kind "${kind}"`, "postgres");
+      throw new QueryError(`PostgreSQL declares the kind "${kind}" but has no statement that lists it`, "postgres");
     }
 
     const client = await this.pool!.connect();
@@ -2170,9 +2184,19 @@ export class PostgresProvider extends SQLBaseProvider {
       throw new QueryError(`PostgreSQL declares no object kind "${kind}"`, "postgres");
     }
 
-    const shape = spec.attachedTo === undefined ? "[schema, name]" : `[schema, ${spec.attachedTo}, name]`;
-    if (path.length !== (spec.attachedTo === undefined ? 2 : 3)) {
-      throw new QueryError(`A PostgreSQL "${kind}" path is ${shape}, received ${JSON.stringify(path)}`, "postgres");
+    // Derived, not counted. `2` and `3` are right for a one-level engine and wrong for the
+    // five two-level ones in this epic, and a provider copying this file must not inherit a
+    // literal that refuses every valid path on a catalog-plus-schema engine. The segment
+    // names come from the declared level labels, so the message and the depth cannot
+    // disagree: they are the same array.
+    const segments = (this.getCapabilities().containerLevels ?? []).map((level) => level.label.toLowerCase());
+    if (spec.attachedTo !== undefined) segments.push(spec.attachedTo);
+    segments.push("name");
+    if (path.length !== segments.length) {
+      throw new QueryError(
+        `A PostgreSQL "${kind}" path is [${segments.join(", ")}], received ${JSON.stringify(path)}`,
+        "postgres",
+      );
     }
 
     if (RELKIND_BY_KIND[kind] === undefined) {

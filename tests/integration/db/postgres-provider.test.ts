@@ -7,7 +7,13 @@ import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:
 import { EventEmitter } from "node:events";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
-import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import {
+  ConnectionError,
+  DatabaseConfigError,
+  DatabaseError,
+  ExecutionProfileError,
+  QueryError,
+} from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
@@ -4039,7 +4045,14 @@ describe("object surface", () => {
           ],
         };
       }
-      if (sql.includes("relkind")) return { rows: [{ name: "order_summary", row_count: null, size_bytes: null }] };
+      if (sql.includes("relkind")) {
+        // One row per relkind, and they must be DISTINCT rows. The shared helper lists
+        // every counted kind and requires paths unique across all of them, so one row
+        // reused for three kinds is three objects at one address.
+        if (sql.includes("'v'")) return { rows: [{ name: "order_summary", row_count: null, size_bytes: null }] };
+        if (sql.includes("'m'")) return { rows: [{ name: "revenue_by_month", row_count: null, size_bytes: null }] };
+        return { rows: [{ name: "orders", row_count: null, size_bytes: null }] };
+      }
       return { rows: [] };
     };
     const provider = makeProvider();
@@ -4208,6 +4221,47 @@ describe("PostgreSQL object listing and detail", () => {
     ]);
     expect(asked).toHaveLength(2);
     expect(asked[1]).not.toContain("pg_total_relation_size");
+    await provider.disconnect();
+  });
+
+  test("the size retry's own failure leaves by the same door, quoting what the server received", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("relkind")) return { rows: [] };
+      if (sql.includes("pg_total_relation_size")) throw new Error("unknown function: pg_total_relation_size()");
+      throw new Error('relation "pg_class" does not exist');
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const failure = await provider.listObjects(["app"], "table").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(DatabaseError);
+    expect((failure as DatabaseError).message).toContain('relation "pg_class" does not exist');
+    // The retry is what the server actually ran, so it is what the error quotes. Quoting
+    // the original would point a reader at text that never left this process.
+    expect((failure as DatabaseError).query).not.toContain("pg_total_relation_size");
+    expect((failure as DatabaseError).query).toContain("relkind");
+    await provider.disconnect();
+  });
+
+  test("a kind that is declared but has no listing statement says so, not that it is undeclared", async () => {
+    // Two questions, and only the declaration answers the first. Deciding "declared" from
+    // whether a statement exists would report "declares no object kind" about a kind
+    // `objectKinds` does declare.
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [
+        ...(real.objectKinds ?? []),
+        { id: "package", role: "routine", label: "Package", labelPlural: "Packages" },
+      ],
+    });
+
+    await expect(provider.listObjects(["app"], "package")).rejects.toThrow(
+      /declares the kind "package" but has no statement that lists it/,
+    );
     await provider.disconnect();
   });
 

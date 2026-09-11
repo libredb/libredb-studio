@@ -1,23 +1,26 @@
 /**
  * The assertions every provider's object surface must satisfy, in one place.
  *
- * Five invariants, each of which a provider has a real way to get wrong:
+ * Six invariants, each of which a provider has a real way to get wrong:
  *   1. every declared kind appears in countObjects, so a folder never silently vanishes;
  *   2. countObjects never answers for a kind the provider did not declare;
- *   3. every object's path starts with its container's path, so the tree can address it;
- *   4. no two objects in one listing share a path, so the tree can tell them apart;
- *   5. describeObject accepts a path listObjects ACTUALLY PRODUCED, with its kind.
+ *   3. every kind counted non-empty LISTS something, so no folder opens onto nothing;
+ *   4. every object's path starts with its container's path, so the tree can address it;
+ *   5. no two objects share a path, ACROSS kinds and not merely within one;
+ *   6. describeObject accepts a path listObjects ACTUALLY PRODUCED, with its kind.
  *
- * Invariant 5 is exactly that and nothing more: a routine, a trigger and a sequence
+ * Invariant 6 is exactly that and nothing more: a routine, a trigger and a sequence
  * legitimately have no columns, so an assertion that `columns` is non-empty would fail
  * correct providers for every kind that is not a relation.
  *
- * **Three vacuity guards, because the first version of this helper certified a provider
- * that answered nothing.** Measured: a provider declaring `view`, reporting
+ * **Four vacuity guards, because this helper twice certified a provider that answered
+ * nothing.** Measured the first time: a provider declaring `view`, reporting
  * `{view: {count: 4}}` and returning `[]` from `listObjects` passed every check, because
  * the path loop iterated zero times and `describeObject` was handed
  * `expected.sampleObject.path` - a path the TEST AUTHOR typed, which no provider had to
- * produce. Fifteen provider tasks would have been certified by a check a provider listing
+ * produce. Measured the second time, one kind narrower: `listObjects` was called once, for
+ * the sample's kind, so a provider declaring seven kinds, counting seven and returning `[]`
+ * from six was still certified. Every counted kind is listed now. Fifteen provider tasks would have been certified by a check a provider listing
  * nothing passes. So the sample object is now looked up in the returned array and the
  * FOUND object's path is what `describeObject` is given; a listing that does not contain
  * it fails by name. The same hole one level up is closed by requiring the provider to
@@ -40,7 +43,7 @@
  * which names neither the kind nor the expectation.
  */
 import { expect } from "bun:test";
-import type { DatabaseProvider, KindCount } from "@/lib/db/types";
+import type { DatabaseObject, DatabaseProvider, KindCount } from "@/lib/db/types";
 import { declaredKinds, isCountUnavailable } from "@/lib/db/object-kinds";
 
 export interface ObjectSurfaceExpectation {
@@ -91,19 +94,47 @@ export async function assertObjectSurface(
     expect(got.count).toBe(want);
   }
 
-  const objects = await provider.listObjects!(container, expected.sampleObject.kind);
-  const seen = new Set<string>();
-  for (const object of objects) {
-    if (!startsWith(object.path, container)) {
-      throw new Error(`path ${JSON.stringify(object.path)} is not inside container ${JSON.stringify(container)}`);
+  // EVERY kind the expectation says is non-empty is listed, not just the sample's. Listing
+  // one kind left the other six unchecked, which is how a provider that counted seven and
+  // listed one was certified.
+  //
+  // A kind expected to hold zero is skipped, because listing nothing is the correct answer
+  // there. And `objects.length === want` is deliberately NOT asserted: a count and a
+  // listing are two reads at two instants and a live engine may legitimately disagree
+  // between them, so pinning the magnitude would make this helper flaky rather than
+  // strict. Non-emptiness is the part that cannot be a timing artefact.
+  const owners = new Map<string, string>();
+  let sampleListing: DatabaseObject[] | undefined;
+
+  for (const [id, want] of Object.entries(expected.kinds)) {
+    if (want === 0) continue;
+    const listed = await provider.listObjects!(container, id);
+    if (listed.length === 0) {
+      throw new Error(`countObjects reported ${want} of kind "${id}" and listObjects returned none`);
     }
-    const key = pathKey(object.path);
-    if (seen.has(key)) {
-      throw new Error(`two objects of kind "${object.kind}" share the path ${key}, so neither can be addressed`);
+    for (const object of listed) {
+      if (object.kind !== id) {
+        throw new Error(`listObjects("${id}") returned an object of kind "${object.kind}": ${pathKey(object.path)}`);
+      }
+      if (!startsWith(object.path, container)) {
+        throw new Error(`path ${JSON.stringify(object.path)} is not inside container ${JSON.stringify(container)}`);
+      }
+      // Uniqueness spans every kind, not one listing: a tree keys its nodes by path, so
+      // two objects answering one path are two nodes it cannot tell apart.
+      const key = pathKey(object.path);
+      const owner = owners.get(key);
+      if (owner !== undefined) {
+        const both = owner === id ? `two objects of kind "${id}"` : `kinds "${owner}" and "${id}"`;
+        throw new Error(`${both} both answer the path ${key}, so neither can be addressed`);
+      }
+      owners.set(key, id);
     }
-    seen.add(key);
-    expect(object.kind).toBe(expected.sampleObject.kind);
+    if (id === expected.sampleObject.kind) sampleListing = listed;
   }
+
+  // The sample's kind need not be one the expectation counts, so list it on its own when
+  // the loop above did not already reach it.
+  const objects = sampleListing ?? (await provider.listObjects!(container, expected.sampleObject.kind));
 
   // The sample must be a path the PROVIDER produced, not one the expectation typed.
   const sample = objects.find((object) => pathKey(object.path) === pathKey(expected.sampleObject.path));

@@ -449,7 +449,10 @@ accident: the detail statement keys the last path segment against `pg_class.reln
 `order_total(integer)` answered nothing only because no relation is called that, and a trigger named
 `orders` on table `customers` would have been handed `app.orders`'s 23 columns as its own. Path depth
 is derived from the declaration in the same way, two segments plus one where the kind declares
-`attachedTo`, so nothing hardcodes a number the declaration already carries.
+`attachedTo`. That depth is `containerLevels.length + 1`, read off the declaration rather than
+written as a literal: `2` and `3` are right for a one-level engine and wrong for the five two-level
+ones in this epic, and the segment names in the refusal message come from the same array as the
+depth, so the message and the check cannot disagree.
 
 **Listing order is applied in TypeScript, not with an `ORDER BY`, and sorts by PATH.** Three
 different catalogs answer the three listings, so three `ORDER BY` clauses would be three chances to
@@ -1028,8 +1031,8 @@ Overrides the SQL base defaults:
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` |
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `5432` |
-| `containerLevels` | one level, `schema` — the connection pins one database and nothing can switch it ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
-| `objectKinds` | `table`, `view`, `materialized_view`, `sequence`, `function`, `procedure`, `trigger` — no `index` kind: `pg_index` is keyed by `indrelid`, so an index is a property of a relation and stays in `describeObject()` ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
+| `containerLevels` | one level, `schema`: the connection pins one database and nothing can switch it ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
+| `objectKinds` | `table`, `view`, `materialized_view`, `sequence`, `function`, `procedure`, `trigger`. No `index` kind: `pg_index` is keyed by `indrelid`, so an index is a property of a relation and stays in `describeObject()` ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 
 

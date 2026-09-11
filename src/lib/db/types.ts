@@ -1134,9 +1134,17 @@ export interface DatabaseObject {
    * and not per schema, and `[schema, trigger]` gives two triggers on two tables one
    * address. A routine's segment carries the engine's own disambiguated form, so an
    * overloaded PostgreSQL function is `["app", "order_total(integer)"]`: PostgreSQL
-   * identifies a routine by name AND argument types, and a bare `proname` gives two
-   * overloads one address. Both forms come from the engine
-   * (`pg_get_function_identity_arguments()`), never from string assembly here.
+   * identifies a routine by name AND ARGUMENT TYPES, and a bare `proname` gives two
+   * overloads one address.
+   *
+   * That segment is the argument TYPES and never the parameter names. Overloads differ by
+   * types and never by names, so a name adds nothing to identity while making the identity
+   * change when somebody renames a parameter, and a segment carrying information
+   * irrelevant to identity is wrong even where it round-trips through DDL. PostgreSQL's
+   * `pg_get_function_identity_arguments()` is the obvious candidate and is the wrong one
+   * for exactly that reason: measured on postgres:18 it answers
+   * `order_total(order_id integer)`. See `src/lib/db/providers/sql/postgres.ts` for the
+   * expression that is used instead.
    */
   readonly path: readonly string[];
   /**

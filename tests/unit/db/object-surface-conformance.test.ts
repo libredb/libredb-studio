@@ -14,7 +14,9 @@ function fakeProvider(overrides: Record<string, unknown> = {}) {
     listContainers: async () => [{ path: ["app"], name: "app", level: 0 }],
     countObjects: async () => ({ table: { count: 2 }, view: { count: 4 } }),
     listObjects: async (_c: readonly string[], kind: string) =>
-      kind === "view" ? [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }] : [],
+      kind === "view"
+        ? [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }]
+        : [{ path: ["app", "orders"], name: "orders", kind }],
     describeObject: async (path: readonly string[]) => ({ path, columns: [], indexes: [], foreignKeys: [] }),
     ...overrides,
   };
@@ -42,7 +44,7 @@ describe("assertObjectSurface", () => {
 
   test("rejects an object whose path does not start with its container", async () => {
     const provider = fakeProvider({
-      listObjects: async () => [{ path: ["other", "x"], name: "x", kind: "view" }],
+      listObjects: async (_c: readonly string[], kind: string) => [{ path: ["other", "x"], name: "x", kind }],
     });
     await expect(
       assertObjectSurface(provider as never, {
@@ -113,20 +115,26 @@ describe("assertObjectSurface", () => {
   // path loop iterated zero times and describeObject was handed a path the TEST AUTHOR
   // typed rather than one the provider produced.
   test("rejects a provider that counts a kind and then lists nothing of it", async () => {
-    const provider = fakeProvider({ listObjects: async () => [] });
+    const provider = fakeProvider({
+      listObjects: async (_c: readonly string[], kind: string) =>
+        kind === "view" ? [] : [{ path: ["app", "orders"], name: "orders", kind }],
+    });
     await expect(
       assertObjectSurface(provider as never, {
         containers: [["app"]],
         kinds: { table: 2, view: 4 },
         sampleObject: { path: ["app", "order_summary"], kind: "view" },
       }),
-    ).rejects.toThrow(/did not return the expected sample \["app","order_summary"\]; it returned \[\]/);
+    ).rejects.toThrow(/countObjects reported 4 of kind "view" and listObjects returned none/);
   });
 
   // The same hole with one object in the list: the sample has to be THAT object.
   test("rejects a listing that does not contain the expected sample", async () => {
     const provider = fakeProvider({
-      listObjects: async () => [{ path: ["app", "daily_sales"], name: "daily_sales", kind: "view" }],
+      listObjects: async (_c: readonly string[], kind: string) =>
+        kind === "view"
+          ? [{ path: ["app", "daily_sales"], name: "daily_sales", kind: "view" }]
+          : [{ path: ["app", "orders"], name: "orders", kind }],
     });
     await expect(
       assertObjectSurface(provider as never, {
@@ -150,7 +158,8 @@ describe("assertObjectSurface", () => {
     const asked: (readonly string[])[] = [];
     const askedKinds: string[] = [];
     const provider = fakeProvider({
-      listObjects: async () => listed,
+      listObjects: async (_c: readonly string[], kind: string) =>
+        kind === "view" ? listed : [{ path: ["app", "orders"], name: "orders", kind }],
       describeObject: async (path: readonly string[], kind: string) => {
         asked.push(path);
         askedKinds.push(kind);
@@ -176,10 +185,13 @@ describe("assertObjectSurface", () => {
   // when a provider lists `proname` alone.
   test("rejects two objects in one listing that share a path", async () => {
     const provider = fakeProvider({
-      listObjects: async () => [
-        { path: ["app", "order_total"], name: "order_total", kind: "view" },
-        { path: ["app", "order_total"], name: "order_total", kind: "view" },
-      ],
+      listObjects: async (_c: readonly string[], kind: string) =>
+        kind === "view"
+          ? [
+              { path: ["app", "order_total"], name: "order_total", kind: "view" },
+              { path: ["app", "order_total"], name: "order_total", kind: "view" },
+            ]
+          : [{ path: ["app", "orders"], name: "orders", kind }],
     });
     await expect(
       assertObjectSurface(provider as never, {
@@ -187,7 +199,7 @@ describe("assertObjectSurface", () => {
         kinds: { table: 2, view: 4 },
         sampleObject: { path: ["app", "order_total"], kind: "view" },
       }),
-    ).rejects.toThrow(/two objects of kind "view" share the path \["app","order_total"\]/);
+    ).rejects.toThrow(/two objects of kind "view" both answer the path \["app","order_total"\]/);
   });
 
   // `name` labels and `path` addresses, and they are allowed to differ: an overloaded
@@ -195,16 +207,105 @@ describe("assertObjectSurface", () => {
   // helper used to assert they were equal, which would now fail a correct provider.
   test("accepts an object whose name is not its last path segment", async () => {
     const provider = fakeProvider({
-      listObjects: async () => [
-        { path: ["app", "order_total(integer)"], name: "order_total", kind: "view" },
-        { path: ["app", "order_total(text)"], name: "order_total", kind: "view" },
-      ],
+      listObjects: async (_c: readonly string[], kind: string) =>
+        kind === "view"
+          ? [
+              { path: ["app", "order_total(integer)"], name: "order_total", kind: "view" },
+              { path: ["app", "order_total(text)"], name: "order_total", kind: "view" },
+            ]
+          : [{ path: ["app", "orders"], name: "orders", kind }],
     });
     await assertObjectSurface(provider as never, {
       containers: [["app"]],
       kinds: { table: 2, view: 4 },
       sampleObject: { path: ["app", "order_total(text)"], kind: "view" },
     });
+  });
+
+  // The vacuity one kind narrower, and the third appearance of this defect class in the
+  // epic. listObjects used to be called ONCE, for the sample's kind, so a provider that
+  // declared seven kinds, counted seven and listed nothing for six of them was certified.
+  test("rejects a provider that counts a kind it is not the sample of and lists none of it", async () => {
+    const provider = fakeProvider({
+      listObjects: async (_c: readonly string[], kind: string) =>
+        kind === "view" ? [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }] : [],
+    });
+    await expect(
+      assertObjectSurface(provider as never, {
+        containers: [["app"]],
+        kinds: { table: 2, view: 4 },
+        sampleObject: { path: ["app", "order_summary"], kind: "view" },
+      }),
+    ).rejects.toThrow(/countObjects reported 2 of kind "table" and listObjects returned none/);
+  });
+
+  // A kind expected to hold nothing is the one case where listing nothing is right, so it
+  // is skipped rather than demanded.
+  test("does not demand a listing for a kind expected to hold nothing", async () => {
+    const asked: string[] = [];
+    const provider = fakeProvider({
+      countObjects: async () => ({ table: { count: 0 }, view: { count: 4 } }),
+      listObjects: async (_c: readonly string[], kind: string) => {
+        asked.push(kind);
+        return kind === "view" ? [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }] : [];
+      },
+    });
+    await assertObjectSurface(provider as never, {
+      containers: [["app"]],
+      kinds: { table: 0, view: 4 },
+      sampleObject: { path: ["app", "order_summary"], kind: "view" },
+    });
+    expect(asked).toEqual(["view"]);
+  });
+
+  // Uniqueness is across the WHOLE set of kinds, not within one listing: a tree keys its
+  // nodes by path, so two kinds answering one path is two nodes it cannot tell apart.
+  test("rejects the same path answered by two different kinds", async () => {
+    const provider = fakeProvider({
+      listObjects: async (_c: readonly string[], kind: string) => [
+        { path: ["app", "order_summary"], name: "order_summary", kind },
+      ],
+    });
+    await expect(
+      assertObjectSurface(provider as never, {
+        containers: [["app"]],
+        kinds: { table: 2, view: 4 },
+        sampleObject: { path: ["app", "order_summary"], kind: "view" },
+      }),
+    ).rejects.toThrow(/kinds "table" and "view" both answer the path \["app","order_summary"\]/);
+  });
+
+  test("rejects a listing whose objects carry a kind other than the one requested", async () => {
+    const provider = fakeProvider({
+      listObjects: async () => [{ path: ["app", "orders"], name: "orders", kind: "table" }],
+    });
+    await expect(
+      assertObjectSurface(provider as never, {
+        containers: [["app"]],
+        kinds: { view: 4 },
+        sampleObject: { path: ["app", "orders"], kind: "view" },
+      }),
+    ).rejects.toThrow(/listObjects\("view"\) returned an object of kind "table"/);
+  });
+
+  // The sample's kind need not be one the expectation counts, so it is listed on its own
+  // when the per-kind loop did not already reach it.
+  test("lists the sample's kind even when the expectation does not count it", async () => {
+    const asked: string[] = [];
+    const provider = fakeProvider({
+      listObjects: async (_c: readonly string[], kind: string) => {
+        asked.push(kind);
+        return kind === "view"
+          ? [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }]
+          : [{ path: ["app", "orders"], name: "orders", kind }];
+      },
+    });
+    await assertObjectSurface(provider as never, {
+      containers: [["app"]],
+      kinds: { table: 2 },
+      sampleObject: { path: ["app", "order_summary"], kind: "view" },
+    });
+    expect(asked).toEqual(["table", "view"]);
   });
 
   // One level up, and the same defect: with nothing declared, both kind loops iterate
