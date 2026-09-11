@@ -93,6 +93,7 @@ import type {
 } from "./types";
 import { fenceUntrustedContent, quoteIdentifierForPrompt } from "./untrusted-content";
 import { DatabaseError, ExecutionProfileError } from "@/lib/db/errors";
+import { declaredKinds } from "@/lib/db/object-kinds";
 import type { ColumnSchema, DatabaseConnection, DatabaseType, ForeignKeySchema, IndexSchema } from "@/lib/types";
 
 /**
@@ -216,6 +217,8 @@ interface MutableTable {
   readonly columns: ColumnSchema[];
   readonly indexes: IndexSchema[];
   readonly foreignKeys: ForeignKeySchema[];
+  /** The declared kind id this entry was identified as, where the catalog said. */
+  readonly kind?: string;
 }
 
 type TableIndex = Map<string, MutableTable>;
@@ -234,7 +237,10 @@ type TableIndex = Map<string, MutableTable>;
  */
 interface CatalogPlan {
   readonly kinds: readonly AgentCatalogKind[];
-  readonly build: (rows: ReadonlyMap<AgentCatalogKind, readonly Record<string, unknown>[]>) => TableIndex;
+  readonly build: (
+    rows: ReadonlyMap<AgentCatalogKind, readonly Record<string, unknown>[]>,
+    kindOf: ComposedKindResolver,
+  ) => TableIndex;
 }
 
 const CATALOG_PLANS: Partial<Record<DatabaseType, CatalogPlan>> = {
@@ -243,6 +249,93 @@ const CATALOG_PLANS: Partial<Record<DatabaseType, CatalogPlan>> = {
   // `CREATE TABLE` text, which the object read already returns.
   sqlite: { kinds: ["columns", "indexes"], build: buildSqliteTables },
 };
+
+/**
+ * The engine's own word for what a relation IS, mapped onto the kind id the PROVIDER
+ * declares (#789 fix round 3).
+ *
+ * The composed path does not ask a provider to describe itself: it writes the catalog
+ * statement for the dialect and drives it through `queryReadOnly` inside the run's
+ * read-only envelope, which is why `CATALOG_PLANS` exists at all. The kind is carried the
+ * same way as every other fact that path carries - selected by the statement and folded
+ * out of the rows - rather than by reaching for the curated object surface, whose four
+ * methods send their statements through `provider.query` and would leave the envelope
+ * (fix round 2, and the tests that pin it stay exactly as they are).
+ *
+ * TWO VOCABULARIES MEET HERE and only one of them may reach a run. The catalog answers
+ * the ENGINE's word - a `pg_class.relkind` character, a `sqlite_schema.type` string - and
+ * what the tree, the object routes and `addressableObjects` all speak is the PROVIDER's
+ * declared kind id. So the map's right-hand side is copied from the provider's own
+ * mapping and pinned to it by a source test, the same way `POSTGRES_SYSTEM_SCHEMAS` is:
+ *
+ *  - PostgreSQL: `postgres.ts`'s `COUNTS_RELATION_ARM` is the CASE its own counts and
+ *    listings are taken from, so a relation this path calls a `view` is the one its
+ *    object browser draws under Views.
+ *  - SQLite: `sqlite_schema.type` carries exactly the four words `sqlite.ts` declares as
+ *    ids, so the map is the identity. The composed catalog read selects `table` and
+ *    `view` only; the other two are here because the map is the engine's vocabulary and
+ *    not this reading's sample of it (ruling 5a).
+ *
+ * An engine word with no entry - a PostgreSQL foreign table, `relkind = 'f'`, which
+ * `information_schema.columns` really does answer for - and an id this CONNECTION does
+ * not declare both resolve to NO KIND. The object still reaches the model, named and with
+ * its columns, under no word at all: a missing fact filled in with the commonest value is
+ * exactly how a view came to be handed over as a table, and a kind the provider never
+ * declared is one the tree draws no folder for, so a run and the tree would disagree
+ * about what a thing is.
+ */
+const COMPOSED_KIND_WORDS: Partial<Record<DatabaseType, Readonly<Record<string, string>>>> = {
+  postgres: { r: "table", p: "table", v: "view", m: "materialized_view", S: "sequence" },
+  sqlite: { table: "table", view: "view", index: "index", trigger: "trigger" },
+};
+
+/** What a catalog row's engine word resolves to: a declared kind id, or nothing. */
+type ComposedKindResolver = (word: unknown) => string | undefined;
+
+function composedKindResolver(context: AgentToolContext): ComposedKindResolver {
+  const words = COMPOSED_KIND_WORDS[context.connection.type] ?? {};
+  const declared = new Set(declaredKinds(context.capabilities).map((spec) => spec.id));
+  // ONE gate, and it is the declaration. A prototype-chain hit (`toString`) resolves to
+  // a function rather than an id and is refused by the same line, so a second
+  // `Object.hasOwn` test would be a guard no mutation can distinguish - measured, by
+  // deleting it and watching nothing go red.
+  return (word) => {
+    const id = typeof word === "string" ? words[word] : undefined;
+    return id !== undefined && declared.has(id) ? id : undefined;
+  };
+}
+
+/**
+ * What the composed reading may HONESTLY say the kinds of its inventory are.
+ *
+ * Not the same answer the provider path gives, and the difference is knowledge rather
+ * than taste. There the walk asks the provider for every DECLARED kind, one count and one
+ * listing at a time, so every declared kind is a kind the reading covered and the sampled
+ * and refused states are facts it measured. Here there is no per-kind reading at all: one
+ * catalog statement answers whatever it answers, and on PostgreSQL that is only the
+ * relations `information_schema.columns` holds - measured on postgres:18, the relkinds
+ * `r`, `p`, `v` and `f`, with a materialized view and a sequence absent from that catalog
+ * entirely.
+ *
+ * So this reports the kinds its own objects were identified as, in the provider's
+ * declaration order, with the role and the labels taken from the declaration so a run and
+ * the tree say the same words. It reports NO COUNT, because `AgentInventoryKind` carries
+ * none and this reading took none, and no `sampledFrom`, because nothing here sampled: the
+ * composed reads REFUSE over the row budget rather than truncating, so an inventory that
+ * came back at all came back whole. A declared kind that this reading cannot see is simply
+ * absent, which is the one thing that must not be mistaken for "the database holds none":
+ * `inventoryNotes` and `kindLabel` both speak only about what is in front of them, and
+ * `docs/AGENT.md` states the loss.
+ */
+function composedKinds(
+  objects: readonly AgentInventoryObject[],
+  context: AgentToolContext,
+): readonly AgentInventoryKind[] {
+  const present = new Set(objects.map((object) => object.kind));
+  return declaredKinds(context.capabilities)
+    .filter((spec) => present.has(spec.id))
+    .map((spec) => ({ id: spec.id, role: spec.role, label: spec.label, labelPlural: spec.labelPlural }));
+}
 
 // ============================================================================
 // Reading rows
@@ -311,12 +404,15 @@ function emptyTable(name: string): MutableTable {
   return { name, columns: [], indexes: [], foreignKeys: [] };
 }
 
-function buildPostgresTables(rows: ReadonlyMap<AgentCatalogKind, readonly Record<string, unknown>[]>): TableIndex {
+function buildPostgresTables(
+  rows: ReadonlyMap<AgentCatalogKind, readonly Record<string, unknown>[]>,
+  kindOf: ComposedKindResolver,
+): TableIndex {
   const tables: TableIndex = new Map();
 
   for (const row of rows.get("columns") ?? []) {
     const name = qualified(row.table_schema, row.table_name);
-    const table = tables.get(name) ?? emptyTable(name);
+    const table = tables.get(name) ?? { ...emptyTable(name), kind: kindOf(row.relkind) };
     tables.set(name, table);
     for (const column of parsePostgresColumns(row.columns)) {
       table.columns.push({
@@ -357,7 +453,10 @@ function buildPostgresTables(rows: ReadonlyMap<AgentCatalogKind, readonly Record
   return tables;
 }
 
-function buildSqliteTables(rows: ReadonlyMap<AgentCatalogKind, readonly Record<string, unknown>[]>): TableIndex {
+function buildSqliteTables(
+  rows: ReadonlyMap<AgentCatalogKind, readonly Record<string, unknown>[]>,
+  kindOf: ComposedKindResolver,
+): TableIndex {
   const tables: TableIndex = new Map();
 
   for (const row of rows.get("columns") ?? []) {
@@ -365,6 +464,7 @@ function buildSqliteTables(rows: ReadonlyMap<AgentCatalogKind, readonly Record<s
     const definition = parseSqliteTableDdl(text(row.sql));
     tables.set(name, {
       name,
+      kind: kindOf(row.type),
       columns: [...definition.columns],
       // The constraint-created indexes SQLite stores no DDL for: the composed index
       // read below cannot see them, and they are what kept a UNIQUE-covered foreign
@@ -391,6 +491,10 @@ function finalize(tables: TableIndex): AgentInventoryObject[] {
     .sort((left, right) => (left.name === right.name ? 0 : left.name < right.name ? -1 : 1))
     .map((table) => ({
       name: table.name,
+      // Absent rather than present-and-undefined: the snapshot is serialised into a
+      // ledger and compared to what a later drive builds, so an entry with no kind must
+      // be the same object it was before this path composed any.
+      ...(table.kind === undefined ? {} : { kind: table.kind }),
       columns: table.columns,
       indexes: [...table.indexes].sort((left, right) =>
         left.name === right.name ? 0 : left.name < right.name ? -1 : 1,
@@ -613,32 +717,34 @@ async function readInventory(context: AgentToolContext): Promise<AgentContextCap
   }
 
   /*
-    NO OBJECT-SURFACE READ ON THIS PATH, and it is the ENVELOPE that decides (#789).
+    THE KIND IS COMPOSED HERE, NOT READ OFF THE OBJECT SURFACE (#789).
 
-    The object surface is reached through the four curated provider methods, and every
-    provider sends their catalog statements through `provider.query`: none routes them
-    through `queryReadOnly`, so there is no read-only transaction for them to arrive
-    inside. On the engines `captureFromProvider` grounds that changes nothing, because the
-    whole of their grounding is already one curated call under `agent-operations` — the
-    profile that exists precisely because `agent-read-only` is refused for a provider with
-    no read-only statement path.
+    Two facts decide this and they pull the same way. The curated object surface reaches
+    the four provider methods, and every provider sends their statements through
+    `provider.query`: none routes them through `queryReadOnly`, so there is no read-only
+    transaction for them to arrive inside. A dialect `CATALOG_PLANS` serves is precisely
+    one whose provider HAS that path, and the run's posture on it is that every statement
+    it sends arrives inside `BEGIN READ ONLY` - `postgres.ts`'s connect declines even a
+    bare EXPLAIN-format probe to keep that true. Taking the object read here acquired a
+    second provider under `agent-operations` and sent the walk's catalog SQL outside that
+    envelope, which `tests/isolated/agent-investigation-e2e.test.ts` caught as two bare
+    `listContainers` statements.
 
-    Here it is different in kind. A dialect `CATALOG_PLANS` serves is one whose provider HAS
-    that path, and the run's posture on it is that every statement it sends arrives inside
-    `BEGIN READ ONLY` — `postgres.ts`'s connect declines even a bare EXPLAIN-format probe to
-    keep that true. An object read taken here acquired a second provider under
-    `agent-operations` and sent the walk's catalog SQL outside the envelope the rest of the
-    run is bound by, which `tests/isolated/agent-investigation-e2e.test.ts` caught as two
-    `listContainers` statements arriving bare.
+    But the run must still be told what each entry IS. PostgreSQL and SQLite are the two
+    engines agent mode executes on, and an inventory that hands a model a view under the
+    word table, or under no word where every other engine has one, is the defect #414
+    measured. So the kind is composed the way this path carries every other fact: the
+    catalog statement selects the engine's own word for the relation - `pg_class.relkind`,
+    joined in `composed-sql.ts`, and `sqlite_schema.type`, which that statement already
+    selected and this module used to discard - and `composedKindResolver` maps it onto the
+    kind id the PROVIDER declares. No provider method is called, no second provider is
+    acquired, and the envelope is untouched.
 
-    So the reading is taken by the grounding path whose profile can serve it, and these two
-    dialects keep their grounding and lose the KINDS. That is the same trade this module
-    already makes when an object read is refused: a loss of detail, not of grounding. The
-    alternative that keeps both is an enveloped object surface on the providers that have a
-    read-only statement path, which is seventeen providers' worth of decision and belongs to
-    the epic rather than to this module.
+    What a composed reading cannot know, it does not say: see `composedKinds`.
   */
-  const inventory: AgentInventory = { objects: finalize(plan.build(rows)), kinds: [] };
+  const kindOf = composedKindResolver(context);
+  const objects = finalize(plan.build(rows, kindOf));
+  const inventory: AgentInventory = { objects, kinds: composedKinds(objects, context) };
   return {
     kind: "captured",
     snapshot: {
@@ -757,10 +863,11 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
  * carried as well rather than dropped. Both halves of that are deliberate, since a
  * silently missing object is the defect #414 measured.
  *
- * TAKEN ON THIS PATH ONLY. `captureFromCatalog` does not call this function, and the reason is
- * the read-only envelope rather than a preference: see the block at its call site. So a
- * PostgreSQL or SQLite run reaches the model with the inventory this module built before the
- * object surface existed, and with no kinds.
+ * TAKEN ON THIS PATH ONLY. The composed catalog path does not call this function, and the reason
+ * is the read-only envelope rather than a preference: see the block in `readInventory`. It is
+ * not left kindless for it - it composes its own kind out of the catalog row, which is what
+ * `composedKindResolver` is - so what that path does without is the COLUMNS join below, which it
+ * needs no part of: its own reading already carries the columns on the same row.
  *
  * An entry the object read never named keeps NO kind at all. It is not labelled "table":
  * a missing fact filled in with the most common value is exactly how a view came to be

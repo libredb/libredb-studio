@@ -37,6 +37,8 @@ import type {
   ObjectKindSpec,
   ProviderCapabilities,
 } from "@/lib/db/types";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, DatabaseType, QueryResult, TableSchema } from "@/lib/types";
 
@@ -83,11 +85,15 @@ function result(rows: readonly Record<string, unknown>[]): QueryResult {
   };
 }
 
-/** What a PostgreSQL server answers the composed column read: one row per table (B52). */
+/**
+ * What a PostgreSQL server answers the composed column read: one row per table (B52),
+ * each carrying the `relkind` the statement joins from `pg_class` (#789 fix round 3).
+ */
 const PG_COLUMNS = [
   {
     table_schema: "public",
     table_name: "orders",
+    relkind: "r",
     columns: [
       { name: "id", type: "integer", nullable: "NO" },
       { name: "customer_id", type: "integer", nullable: "NO" },
@@ -97,6 +103,7 @@ const PG_COLUMNS = [
   {
     table_schema: "public",
     table_name: "customers",
+    relkind: "r",
     columns: [
       { name: "id", type: "integer", nullable: "NO" },
       { name: "name", type: "text", nullable: "YES" },
@@ -166,7 +173,11 @@ interface Harness {
 
 const frozenClock = () => 1_000;
 
-function harness(type: DatabaseType, answer?: (sql: string) => Promise<QueryResult>): Harness {
+function harness(
+  type: DatabaseType,
+  answer?: (sql: string) => Promise<QueryResult>,
+  declared?: ProviderCapabilities,
+): Harness {
   const fallback = type === "sqlite" ? answerSqlite : answerPostgres;
   const queryReadOnly = mock(answer ?? (async (sql: string) => fallback(sql)));
   const provider = { queryReadOnly } as unknown as DatabaseProvider;
@@ -180,7 +191,7 @@ function harness(type: DatabaseType, answer?: (sql: string) => Promise<QueryResu
       workflowType: "investigation",
       actor: { sessionId: "session-1", role: "user" },
       connection: connectionOf(type),
-      capabilities,
+      capabilities: declared ?? capabilities,
       labels: TABLE_LABELS,
       registry: createCanonicalOperationRegistry(),
       scope: createTargetScope("conn-1"),
@@ -2042,17 +2053,22 @@ describe("captureContextSnapshot — the object surface that says what each entr
     expect([...new Set(harness.profiles())]).toEqual(["agent-read-only"]);
   });
 
-  test("the enveloped dialect is still grounded, and is charged for the one reading it took", async () => {
-    // The cost of the decision is stated rather than implied: the inventory is there, the
-    // columns are there, and no entry claims a kind nothing read.
+  test("the enveloped dialect is grounded, kinded, and charged for the reads it took", async () => {
+    // What the decision costs and what it does NOT, in one capture. Round 2 asserted
+    // `kinds: []` here, which was this module's behaviour and was the regression: these
+    // are the two engines agent mode executes on, and a run on either reached the model
+    // with an inventory carrying no kinds at all. The kinds are composed now, off the
+    // `relkind` the catalog statement selects - so the inventory is there, the columns
+    // are there, every entry says what it is, and STILL no object-surface call was made
+    // and no fourth statement was charged.
     const harness = objectHarness({ type: "postgres" });
 
     const capture = await captureContextSnapshot(harness.context);
 
     if (capture.kind !== "captured") throw new Error(`expected a capture, got ${capture.kind}`);
     expect(capture.snapshot.objects.map((object) => object.name)).toEqual(["public.customers", "public.orders"]);
-    expect(capture.snapshot.objects.every((object) => object.kind === undefined)).toBe(true);
-    expect(capture.snapshot.kinds).toEqual([]);
+    expect(capture.snapshot.objects.map((object) => object.kind)).toEqual(["table", "table"]);
+    expect(capture.snapshot.kinds).toEqual([{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }]);
     // Three composed catalog reads and no fourth reading.
     expect(capture.charged?.statements).toBe(3);
   });
@@ -2068,6 +2084,231 @@ describe("captureContextSnapshot — the object surface that says what each entr
  * them apart. #414 measured what a run does with that: it drafted `KEYS user:*` against
  * a row nobody had named.
  */
+/**
+ * The kind, composed on the path that composes everything else (#789 fix round 3).
+ *
+ * Fix round 2 took the object-surface read off this path, because the four curated
+ * provider methods send their statements through `provider.query` and a dialect
+ * `CATALOG_PLANS` serves runs every statement of its run inside `BEGIN READ ONLY`. What
+ * that cost was the KINDS, on PostgreSQL and SQLite, which are the two engines agent mode
+ * executes on: an inventory reached the model with a view in it under no word at all, and
+ * the gap it left is one step from the defect #414 measured.
+ *
+ * The kind is composed here instead, the way this path already carries every other fact
+ * about an object: the catalog statement selects the engine's own word for what a relation
+ * IS, and the builder maps that word onto the kind id the PROVIDER declares. No provider
+ * method is called and no second provider is acquired, so the envelope round 2 restored is
+ * untouched and asserted by the tests above.
+ */
+describe("captureContextSnapshot — the kind, composed on the catalog path", () => {
+  /** The kinds `postgres.ts` declares, as a connection's capabilities carry them. */
+  const PG_KINDS: readonly ObjectKindSpec[] = [
+    { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+    { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+    { id: "materialized_view", role: "relation", label: "Materialized View", labelPlural: "Materialized Views" },
+    { id: "sequence", role: "config", label: "Sequence", labelPlural: "Sequences" },
+  ];
+
+  /** The kinds `sqlite.ts` declares. */
+  const SQLITE_KINDS: readonly ObjectKindSpec[] = [
+    { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+    { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+    { id: "index", role: "config", label: "Index", labelPlural: "Indexes" },
+  ];
+
+  const withKinds = (kinds: readonly ObjectKindSpec[]): ProviderCapabilities => ({
+    ...capabilities,
+    objectKinds: kinds,
+  });
+
+  const columnsOf = (name: string) => [{ name: "id", type: "integer", nullable: "NO" }];
+
+  /**
+   * What a PostgreSQL server answers the composed column read once it selects `relkind`.
+   *
+   * The four relkinds `information_schema.columns` can actually produce, measured on
+   * postgres:18 against a fixture holding one of each: an ordinary table `r`, a
+   * partitioned table `p`, a view `v` and a foreign table `f`. A materialized view and a
+   * sequence are deliberately absent from this list because they are absent from that
+   * catalog - measured, not assumed - which is what makes `f` the interesting row: it is
+   * a relkind the catalog DOES return and `postgres.ts` declares no kind for.
+   */
+  const PG_KINDED_ROWS = [
+    { table_schema: "public", table_name: "orders", relkind: "r", columns: columnsOf("orders") },
+    { table_schema: "public", table_name: "orders_2026", relkind: "p", columns: columnsOf("orders_2026") },
+    { table_schema: "public", table_name: "paid_orders", relkind: "v", columns: columnsOf("paid_orders") },
+    { table_schema: "public", table_name: "remote_orders", relkind: "f", columns: columnsOf("remote_orders") },
+  ];
+
+  const answerKindedPostgres = async (sql: string): Promise<QueryResult> =>
+    sql.includes("information_schema.columns") ? result(PG_KINDED_ROWS) : result([]);
+
+  const SQLITE_KINDED_ROWS = [
+    { name: "orders", type: "table", sql: "CREATE TABLE orders (id INTEGER PRIMARY KEY)" },
+    { name: "paid_orders", type: "view", sql: "CREATE VIEW paid_orders AS SELECT id FROM orders" },
+  ];
+
+  const answerKindedSqlite = async (sql: string): Promise<QueryResult> =>
+    result(sql.includes("'index'") ? [] : SQLITE_KINDED_ROWS);
+
+  async function snapshotOf(
+    type: DatabaseType,
+    answer: (sql: string) => Promise<QueryResult>,
+    kinds: readonly ObjectKindSpec[],
+  ): Promise<AgentContextSnapshot> {
+    const capture = await captureContextSnapshot(harness(type, answer, withKinds(kinds)).context);
+    if (capture.kind !== "captured") throw new Error(`expected a snapshot, got ${capture.kind}`);
+    return capture.snapshot;
+  }
+
+  const kindById = (snapshot: AgentContextSnapshot): Record<string, string | undefined> =>
+    Object.fromEntries(snapshot.objects.map((object) => [object.name, object.kind]));
+
+  test("PostgreSQL: each relkind reaches the run as the kind id the provider declares", async () => {
+    const snapshot = await snapshotOf("postgres", answerKindedPostgres, PG_KINDS);
+
+    expect(kindById(snapshot)).toEqual({
+      "public.orders": "table",
+      // A partitioned table is a table, which is the mapping `postgres.ts` itself makes
+      // for `relkind = 'p'` in the CASE its own counts are taken from.
+      "public.orders_2026": "table",
+      "public.paid_orders": "view",
+      // The row that must NOT be guessed: a foreign table is a relkind this catalog
+      // returns and the provider declares no kind for, so it reaches the model named,
+      // with its columns, and under no word at all.
+      "public.remote_orders": undefined,
+    });
+  });
+
+  test("PostgreSQL: the kinds are the declaration's, and only the ones the reading found", async () => {
+    const snapshot = await snapshotOf("postgres", answerKindedPostgres, PG_KINDS);
+
+    // `sequence` and `materialized_view` are declared by the provider and are NOT here:
+    // this reading cannot see either, since `information_schema.columns` holds neither,
+    // and a kind named in an inventory that never listed one is a claim about a read
+    // that did not happen. The role and the labels come from the declaration, so what a
+    // run is told a thing is, is what the tree draws it as.
+    expect(snapshot.kinds).toEqual([
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+    ]);
+  });
+
+  test("SQLite: sqlite_master's own word becomes the declared kind id", async () => {
+    const snapshot = await snapshotOf("sqlite", answerKindedSqlite, SQLITE_KINDS);
+
+    expect(kindById(snapshot)).toEqual({ orders: "table", paid_orders: "view" });
+    expect(snapshot.kinds).toEqual([
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+    ]);
+  });
+
+  test("a kind id this connection does not DECLARE is not applied to anything", async () => {
+    // Ruling 5a of #789, at the join between the engine's vocabulary and the product's:
+    // the ids are the PROVIDER's declaration, so a connection whose provider declares no
+    // `view` kind gets an unkinded view rather than one the tree would draw no folder
+    // for. The mapping cannot introduce a word the declaration does not carry.
+    const snapshot = await snapshotOf(
+      "postgres",
+      answerKindedPostgres,
+      PG_KINDS.filter((kind) => kind.id !== "view"),
+    );
+
+    expect(kindById(snapshot)["public.paid_orders"]).toBeUndefined();
+    expect(snapshot.kinds?.map((kind) => kind.id)).toEqual(["table"]);
+  });
+
+  test("an engine that declares no kinds is exactly as grounded as it was, and says nothing", async () => {
+    const capture = await captureContextSnapshot(harness("postgres", answerKindedPostgres).context);
+
+    if (capture.kind !== "captured") throw new Error(`expected a snapshot, got ${capture.kind}`);
+    expect(capture.snapshot.objects.every((object) => object.kind === undefined)).toBe(true);
+    expect(capture.snapshot.kinds).toEqual([]);
+    expect(capture.snapshot.objects).toHaveLength(4);
+  });
+
+  test("a table REPLACED by a view of the same shape no longer fingerprints the same", async () => {
+    // Why the kind is worth composing at all, in one assertion: the two readings differ
+    // in nothing but what the engine says the object IS, and a resumed run that reused
+    // the first snapshot would draft a write against a view.
+    const asTable = await snapshotOf("postgres", answerKindedPostgres, PG_KINDS);
+    const asView = await snapshotOf(
+      "postgres",
+      async (sql: string) =>
+        sql.includes("information_schema.columns")
+          ? result(PG_KINDED_ROWS.map((row) => (row.table_name === "orders" ? { ...row, relkind: "v" } : row)))
+          : result([]),
+      PG_KINDS,
+    );
+
+    expect(asView.fingerprint).not.toBe(asTable.fingerprint);
+  });
+
+  test("and the packed prompt says the word, which is the whole point of reading it", async () => {
+    const snapshot = await snapshotOf("postgres", answerKindedPostgres, PG_KINDS);
+
+    const packed = packContextForTask(snapshot, "count the paid orders");
+
+    expect(packed).toContain("public.paid_orders (View)");
+    expect(packed).toContain("public.orders (Table)");
+    // The foreign table is shown, and shown under no kind: the renderers say nothing
+    // where they know nothing.
+    expect(packed).toContain("public.remote_orders:");
+  });
+});
+
+/**
+ * The mapping is the PROVIDER's, pinned to its source (#789 ruling 5a).
+ *
+ * The composed path reads the ENGINE's word and a run must be told the PROVIDER's kind
+ * id, or the run and the tree disagree about what a thing is. The right-hand side of
+ * `COMPOSED_KIND_WORDS` is therefore a copy of each provider's own mapping, and a copy
+ * that nothing checks is a copy that drifts - which is why `POSTGRES_SYSTEM_SCHEMAS` is
+ * pinned the same way in `composed-sql.test.ts`. Source-level, because the agent side
+ * must not import a provider module.
+ */
+describe("the composed kind vocabulary cannot drift from the provider's declaration", () => {
+  const readSource = (relativePath: string): string => readFileSync(join(process.cwd(), relativePath), "utf8");
+
+  const composedMap = (dialect: string): Record<string, string> => {
+    const block = new RegExp(`const COMPOSED_KIND_WORDS[\\s\\S]*?${dialect}: \\{([^}]*)\\}`).exec(
+      readSource("src/lib/agent/context-snapshot.ts"),
+    )?.[1];
+    return Object.fromEntries([...(block ?? "").matchAll(/(\w+): "(\w+)"/g)].map((match) => [match[1], match[2]]));
+  };
+
+  test("PostgreSQL: every relkind is mapped exactly as the provider's own CASE maps it", () => {
+    // `COUNTS_RELATION_ARM` is the CASE `postgres.ts` takes its own folder counts and
+    // listings from, so a relation this path calls a view is one its object browser
+    // draws under Views.
+    const providerArm = /const COUNTS_RELATION_ARM = `([\s\S]*?)`;/.exec(
+      readSource("src/lib/db/providers/sql/postgres.ts"),
+    )?.[1];
+    const providerMap = Object.fromEntries(
+      [...(providerArm ?? "").matchAll(/WHEN '(\w)' THEN '(\w+)'/g)].map((match) => [match[1], match[2]]),
+    );
+
+    // Non-vacuity first: a regex that stops matching turns both sides into `{}` and the
+    // comparison into a tautology.
+    expect(Object.keys(providerMap).length).toBeGreaterThan(0);
+    expect(composedMap("postgres")).toEqual(providerMap);
+  });
+
+  test("SQLite: the four words sqlite_schema types objects with are the four ids declared", () => {
+    const declaredIds = [
+      ...(
+        /const SQLITE_OBJECT_KINDS[\s\S]*?\n\];/.exec(readSource("src/lib/db/providers/sql/sqlite.ts"))?.[0] ?? ""
+      ).matchAll(/\{ id: "(\w+)"/g),
+    ].map((match) => match[1]);
+
+    expect(declaredIds.length).toBeGreaterThan(0);
+    // The identity map, which is the claim: `sqlite_schema.type` and the declared kind
+    // ids are the same vocabulary, so neither side may gain a word alone.
+    expect(composedMap("sqlite")).toEqual(Object.fromEntries(declaredIds.map((id) => [id, id])));
+  });
+});
+
 describe("an inventory that knows what its objects ARE", () => {
   const kinded = (overrides: Partial<AgentContextSnapshot> = {}): AgentContextSnapshot => ({
     connectionId: "conn-1",

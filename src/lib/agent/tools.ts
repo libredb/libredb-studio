@@ -2355,8 +2355,14 @@ export type AgentObjectInventoryRead =
  * `readProviderSchemaForGrounding` exactly - there the whole grounding is a curated call under
  * this same profile - and it does not match a dialect `CATALOG_PLANS` serves, where every
  * statement of the run arrives inside `BEGIN READ ONLY` and this read would have been the one
- * that left it. `context-snapshot.ts` is where that decision is written, beside the two paths
- * it chooses between.
+ * that left it.
+ *
+ * The dialects that do not take it are NOT the dialects without kinds (#789 fix round 3). A
+ * composed path composes the kind as well: its statement selects the engine's own word for the
+ * relation and `context-snapshot.ts` maps that onto the id the provider declares, so PostgreSQL
+ * and SQLite are kinded without a provider call and without leaving the envelope.
+ * `context-snapshot.ts` is where both halves of that are written, beside the two paths it
+ * chooses between.
  *
  * It costs ONE statement out of the run's budget, which is a charge for the READING rather
  * than a measure of its traffic: inside that one statement the walk issues a

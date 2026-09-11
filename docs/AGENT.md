@@ -417,20 +417,35 @@ each kind the count did not answer zero for. It runs under the SAME `db.schema.r
 its own fingerprint source, because it is a schema read and an operator denying that descriptor means
 to deny this too.
 
-**It is taken on the provider path only, and the read-only envelope is what decides that.** The object
-surface is reached through the four curated provider methods, and each of them sends its catalog
-statement through `provider.query`: no provider routes those through `queryReadOnly`, so there is no
-read-only transaction for them to arrive inside. On the engines the provider path grounds that costs
-nothing, because their whole grounding is already one curated call under `agent-operations`, the
-profile that exists because `agent-read-only` is refused for a provider with no read-only statement
-path. On PostgreSQL and SQLite it is not free: there the run's posture is that every statement it sends
-arrives inside `BEGIN READ ONLY`, down to the provider declining a bare EXPLAIN-format probe at connect
-to keep that true, and an object read taken there acquired a second provider under `agent-operations`
-and sent the walk's catalog SQL outside that envelope. So those two dialects keep their grounding and
-carry no kinds, which is the same trade a refused object read already makes: a loss of detail, not of
-grounding. Giving them kinds as well needs an object surface that goes through the read-only statement
-path on the providers that have one, and that is an open item of #789 rather than something decided
-here.
+**It is taken on the provider path only, and the read-only envelope is what decides that: the composed
+path reads the kind itself.** The object surface is reached through the four curated provider methods,
+and each of them sends its catalog statement through `provider.query`: no provider routes those through
+`queryReadOnly`, so there is no read-only transaction for them to arrive inside. On the engines the
+provider path grounds that costs nothing, because their whole grounding is already one curated call
+under `agent-operations`, the profile that exists because `agent-read-only` is refused for a provider
+with no read-only statement path. On PostgreSQL and SQLite it is not free: there the run's posture is
+that every statement it sends arrives inside `BEGIN READ ONLY`, down to the provider declining a bare
+EXPLAIN-format probe at connect to keep that true, and an object read taken there acquired a second
+provider under `agent-operations` and sent the walk's catalog SQL outside that envelope.
+
+Those two dialects do not lose the kind for it. They are the two engines agent mode executes on, and
+an inventory that hands a model a view under the word table is the defect #414 measured, so the kind is
+composed on the catalog path the same way every other fact that path carries is: the composed statement
+selects the ENGINE's own word for the relation, and `context-snapshot.ts` maps it onto the kind id the
+PROVIDER declares. On PostgreSQL that word is `pg_class.relkind`, joined into the column read by a pair
+of LEFT JOINs so a wire-compatible engine missing the catalog row loses the kind rather than the table;
+on SQLite it is the `sqlite_schema.type` column that read already selected. No provider method is
+called and no second provider is acquired, so the envelope is untouched.
+
+What that reading can honestly say is narrower than what the provider walk says, and it says only that.
+The ids, roles and labels are the provider's declaration, so a run and the object tree call a thing by
+one word, and an engine word the provider declares no kind for - a PostgreSQL foreign table - keeps NO
+kind rather than the likeliest one. The kinds an inventory declares are the ones its own objects were
+identified as: `information_schema.columns` holds no materialized view and no sequence at all
+(measured on postgres:18), so neither is in the reading and neither is named by it. No count and no
+sampled state travels with them, because this reading takes no per-kind count and samples nothing: a
+composed read that overran the row budget is REFUSED whole rather than truncated, so an inventory that
+arrived at all arrived complete.
 
 What it costs is ONE statement of the run's budget, and that one statement is not one provider call:
 inside it the walk issues `listContainers` per container level, then one `countObjects` per container,
