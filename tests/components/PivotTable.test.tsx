@@ -5,6 +5,41 @@ import "../helpers/mock-navigation";
 import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, fireEvent } from "@testing-library/react";
+
+const mockDownloadText = mock(
+  (_content: string, _mimeType: string, _fileName: string) => { },
+);
+mock.module("@/lib/export/download", () => ({
+  downloadText: mockDownloadText,
+}));
+
+mock.module("@/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  DropdownMenuTrigger: ({
+    children,
+  }: {
+    children: React.ReactNode;
+  }) => <div>{children}</div>,
+  DropdownMenuContent: ({
+    children,
+  }: {
+    children: React.ReactNode;
+  }) => <div>{children}</div>,
+  DropdownMenuItem: ({
+    children,
+    onClick,
+  }: {
+    children: React.ReactNode;
+    onClick?: () => void;
+  }) => (
+    <button type="button" onClick={onClick}>
+      {children}
+    </button>
+  ),
+}));
+
 import { PivotTable, aggregate } from "@/components/PivotTable";
 import type { QueryResult } from "@/lib/types";
 
@@ -23,6 +58,45 @@ const result: QueryResult = {
 describe("PivotTable", () => {
   afterEach(() => {
     cleanup();
+    mockDownloadText.mockClear();
+  });
+
+  test("exports the configured pivot table as CSV", () => {
+    const { getByText } = render(<PivotTable result={result} />);
+
+    fireEvent.click(getByText("Export as CSV"));
+
+    expect(mockDownloadText).toHaveBeenCalledTimes(1);
+
+    const [content, mimeType, fileName] = mockDownloadText.mock.calls[0];
+
+    expect(mimeType).toBe("text/csv");
+    expect(fileName).toMatch(/^pivot_table_\d+\.csv$/);
+    expect(content).toContain("dept");
+    expect(content).toContain("COUNT(salary)");
+    expect(content).toContain("Engineering");
+    expect(content).toContain("Sales");
+    expect(content).toContain("2");
+  });
+
+  test("exports the configured pivot table as JSON", () => {
+    const { getByText } = render(<PivotTable result={result} />);
+
+    fireEvent.click(getByText("Export as JSON"));
+
+    expect(mockDownloadText).toHaveBeenCalledTimes(1);
+
+    const [content, mimeType, fileName] = mockDownloadText.mock.calls[0];
+
+    expect(mimeType).toBe("application/json");
+    expect(fileName).toMatch(/^pivot_table_\d+\.json$/);
+
+    const exported = JSON.parse(content);
+
+    expect(exported).toEqual([
+      { dept: "Engineering", "COUNT(salary)": "2" },
+      { dept: "Sales", "COUNT(salary)": "2" },
+    ]);
   });
 
   test("shows empty state when result is null", () => {
@@ -124,7 +198,7 @@ describe("PivotTable", () => {
   });
 
   test("Generate SQL button appears when onLoadQuery provided and row selected", () => {
-    const onLoadQuery = mock(() => {});
+    const onLoadQuery = mock(() => { });
     const { queryByText } = render(<PivotTable result={result} onLoadQuery={onLoadQuery} />);
     expect(queryByText("Generate SQL")).not.toBeNull();
   });
