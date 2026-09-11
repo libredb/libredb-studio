@@ -1296,6 +1296,7 @@ interface DatabaseConnection {
   instanceName?: string;   // MSSQL: named instance (e.g. SQLEXPRESS)
   localDataCenter?: string; // Cassandra only, and REQUIRED there: the driver refuses to connect without it (`datacenter1` on a stock single node)
   authSource?: string; // MongoDB only: the database the credentials live in (`?authSource=admin`). Not the database being opened - without it the driver checks the user against that one, which fails as a credentials error
+  skipObjectScan?: boolean; // read no catalog when this connection opens: zero reads on connect, so the editor is usable immediately and the object tree offers a load action instead of scanning (#765, an Oracle owner with 43,512 tables froze the browser on connect)
   managed?: boolean;       // true = admin-controlled, read-only in UI
   seedId?: string;         // stable reference to seed config ID
   agentUser?: string;      // optional least-privilege role for the agent read-only execution profile (#328)
