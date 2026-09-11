@@ -30,7 +30,7 @@ FAIL=0
 # green summary line reported a group count no run had.
 # Drifted again before this line was touched: it read 30 while 32 `run_group` calls
 # existed, so every green run reported a group count no run had. 33 is the grep below.
-TOTAL_GROUPS=35
+TOTAL_GROUPS=36
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -319,6 +319,13 @@ run_group "Group 19: ThemeProvider" \
 # engine-count assertions and ConnectionModal's own hint render a two-entry stub registry.
 run_group "Group 20: WireCompatibilityHint" \
   tests/components/WireCompatibilityHint.test.tsx
+
+# Group 23: The object tree (#789). Its own group: it replaces globalThis.fetch for every test
+# and restores it afterwards, and a file that assigns the global at MODULE scope (the pattern
+# tests/components/monitoring/PoolTab.test.tsx uses) would be captured as this file's "real" fetch
+# when the two share a process. It mocks no module, so nothing else needs isolating from it.
+run_group "Group 23: Object tree" \
+  tests/components/object-tree.test.tsx
 
 # Group 21: ui/scroll-area. Its own group for the same reason ui/resizable has one:
 # it is the only suite that renders the REAL @radix-ui/react-scroll-area, while
