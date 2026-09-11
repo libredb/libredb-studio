@@ -67,6 +67,24 @@ CREATE TABLE order_archive (
 -- existing table name answers ERROR 1050).
 CREATE SEQUENCE invoice_number_seq START WITH 1 INCREMENT BY 1;
 
+-- MariaDB's OTHER TABLE_TYPE, and it is in the fixture for the same reason the sequence is:
+-- `tests/live/mysql-object-vocabulary.ts` asks the server `SELECT DISTINCT TABLE_TYPE`, which
+-- reports only the spellings the server's DATA exhibits, so a fixture missing a case makes the
+-- guard blind to it. Measured on 12.3.2, this table is TABLE_TYPE = 'SYSTEM VERSIONED', and the
+-- provider maps it to `table` rather than to a kind of its own: it is a table you still SELECT
+-- from and INSERT into.
+--
+-- The one case a fixture CANNOT carry is TEMPORARY: a temporary table belongs to the session
+-- that made it, and this file's session ends when the image finishes initializing.
+CREATE TABLE order_audit (
+  id       INT NOT NULL,
+  note     VARCHAR(200),
+  row_start BIGINT UNSIGNED GENERATED ALWAYS AS ROW START,
+  row_end   BIGINT UNSIGNED GENERATED ALWAYS AS ROW END,
+  PERIOD FOR SYSTEM_TIME(row_start, row_end),
+  PRIMARY KEY (id)
+) WITH SYSTEM VERSIONING;
+
 DELIMITER //
 
 CREATE DEFINER = `root`@`localhost` PROCEDURE order_archive(IN p_id INT)

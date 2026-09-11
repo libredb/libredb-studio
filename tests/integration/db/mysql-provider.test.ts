@@ -10,6 +10,7 @@ import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
+import { CATALOG_TYPE_RULES } from "@/lib/db/providers/sql/mysql";
 
 // ============================================================================
 // Mock mysql2/promise BEFORE importing the provider
@@ -2989,10 +2990,15 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
     { name: "customers", row_count: 0, size_bytes: 16384 },
     { name: "order_archive", row_count: 0, size_bytes: 16384 },
     { name: "orders", row_count: 0, size_bytes: 49152 },
+    // MariaDB's fixture holds a fourth table, and it arrives through the SAME listing read
+    // rather than a second one: `order_audit` is TABLE_TYPE 'SYSTEM VERSIONED', which the
+    // `table` kind binds alongside 'BASE TABLE'. So the MariaDB conformance run exercises a
+    // multi-spelling kind end to end instead of only in a unit assertion.
+    ...(options.mariadb ? [{ name: "order_audit", row_count: 0, size_bytes: 16384 }] : []),
   ];
   const counts = options.mariadb
     ? [
-        { kind: "table", n: 3 },
+        { kind: "table", n: 4 },
         { kind: "view", n: 1 },
         { kind: "sequence", n: 1 },
         { kind: "procedure", n: 2 },
@@ -3220,7 +3226,10 @@ describe("object surface", () => {
 
     await assertObjectSurface(provider, {
       containers: [["app"], ["reporting"]],
-      kinds: { table: 3, view: 1, sequence: 1, procedure: 2, function: 1, package: 1, trigger: 1, event: 1 },
+      // Four tables, not three: the MariaDB fixture's `order_audit` is SYSTEM VERSIONED and the
+      // `table` kind covers it, so this count is also the assertion that the count arms and the
+      // listing binds read the same spelling list.
+      kinds: { table: 4, view: 1, sequence: 1, procedure: 2, function: 1, package: 1, trigger: 1, event: 1 },
       sampleObject: { path: ["app", "orders_pkg"], kind: "package" },
     });
     await provider.disconnect();
@@ -3274,6 +3283,40 @@ describe("MySQL object listing and detail", () => {
     expect(asTable.columns.length).toBeGreaterThan(0);
     expect(asProcedure.columns).toEqual([]);
     await provider.disconnect();
+  });
+
+  test("every catalog type has exactly one rule, which is what the live guard rests on", () => {
+    // `tests/live/mysql-object-vocabulary.ts` asks a real server for its own
+    // `SELECT DISTINCT TABLE_TYPE` and fails naming anything outside modelled-plus-excluded.
+    // That subset assertion has two ways to be vacuous and neither is visible from the live
+    // run, so both are pinned here where the suite always runs them.
+    for (const catalog of ["tables", "routines"] as const) {
+      const rules = CATALOG_TYPE_RULES[catalog];
+      // An empty modelled list would make the CASE arms empty and the subset check accept
+      // nothing; an empty exclusion map would mean the doc's named exclusions live only in prose.
+      expect(rules.modelled.length).toBeGreaterThan(0);
+      expect(Object.keys(rules.excluded).length).toBeGreaterThan(0);
+      // A spelling in both halves is a contradiction, not belt and braces: the CASE would map
+      // it to a kind while the doc says it is deliberately dropped.
+      expect(rules.modelled.filter((type) => type in rules.excluded)).toEqual([]);
+      // Every exclusion states a reason. A map rather than a list is what makes that possible,
+      // and this is what stops somebody adding an entry with an empty string to silence the
+      // live guard.
+      for (const [type, reason] of Object.entries(rules.excluded)) {
+        expect(reason.length, `exclusion ${type} carries no reason`).toBeGreaterThan(20);
+      }
+    }
+    // Derived from MYSQL_OBJECT_TYPES rather than typed twice, so the multi-spelling kind is
+    // visible here too.
+    expect([...CATALOG_TYPE_RULES.tables.modelled].sort()).toEqual([
+      "BASE TABLE",
+      "SEQUENCE",
+      "SYSTEM VERSIONED",
+      "VIEW",
+    ]);
+    expect([...CATALOG_TYPE_RULES.routines.modelled].sort()).toEqual(["FUNCTION", "PACKAGE", "PROCEDURE"]);
+    expect(Object.keys(CATALOG_TYPE_RULES.tables.excluded).sort()).toEqual(["SYSTEM VIEW", "TEMPORARY"]);
+    expect(Object.keys(CATALOG_TYPE_RULES.routines.excluded)).toEqual(["PACKAGE BODY"]);
   });
 
   test("a container path that is not one database is refused, rather than read as empty", async () => {
@@ -3834,18 +3877,68 @@ describe("MySQL object listing and detail", () => {
       /container path is \[catalog, database\], received \["app","x","y"\]/,
     );
 
-    // And the object's own name is the LAST segment. At this depth `path[1]` is a CONTAINER
-    // segment, so the positional bind would narrow the detail reads to the database name and
-    // answer for no object at all.
+    // AND THE BINDS, which is the half a refusal-only test cannot see. Neither is positional:
+    // at this depth `path[0]` is the CATALOG and `path[1]` is the schema, so binding `path[0]`
+    // as the schema narrows all three detail reads to a database that does not exist, and
+    // binding `path[1]` as the name asks for an object called `app`. Both literals are
+    // depth-identical on MySQL's real one-level declaration, which is why they survived two
+    // providers and a review round: every test written for them stopped at the refusal.
     const bound: unknown[][] = [];
-    mockExecuteFn = async (_sql: string, params?: unknown[]) => {
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
       bound.push(params ?? []);
-      return [[], []];
+      if (!sql.includes("KEY_COLUMN_USAGE")) return [[], []];
+      return [
+        [
+          // Same schema as the object, so the reference is spelled bare.
+          {
+            column_name: "customer_id",
+            referenced_schema: "app",
+            referenced_table: "customers",
+            referenced_column: "id",
+          },
+          // Another schema, so it is qualified. The comparison is against the SCHEMA segment,
+          // and reading `path[0]` there would compare against the catalog and qualify both.
+          {
+            column_name: "region_id",
+            referenced_schema: "reporting",
+            referenced_table: "regions",
+            referenced_column: "id",
+          },
+        ],
+        [],
+      ];
     };
-    await provider.describeObject(["cat", "app", "orders"], "table");
+    const detail = await provider.describeObject(["cat", "app", "orders"], "table");
 
+    // Three reads ACTUALLY ISSUED, which is what stops the per-bind assertion below from
+    // being a loop over an empty array.
     expect(bound).toHaveLength(3);
-    for (const params of bound) expect(params).toEqual(["cat", "orders"]);
+    for (const params of bound) expect(params).toEqual(["app", "orders"]);
+    expect(detail.foreignKeys).toEqual([
+      { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
+      { columnName: "region_id", referencedTable: "reporting.regions", referencedColumn: "id" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a declaration with no schema level is refused rather than bound to nothing", async () => {
+    // The other half of `containerSegment`'s guard. A path long enough for the declared depth
+    // still has no schema segment when the declaration carries no `schema` level, and
+    // `undefined` must not reach mysql2, which rejects it as a bind with a message naming
+    // neither the path nor the method.
+    const provider = await connectedTo(false);
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [{ id: "catalog", label: "Catalog", labelPlural: "Catalogs" }],
+    });
+
+    await expect(provider.countObjects(["cat"])).rejects.toThrow(
+      /needs a "schema" container level and a segment for it; the declaration is \[catalog\]/,
+    );
+    await expect(provider.describeObject(["cat", "orders"], "table")).rejects.toThrow(
+      /needs a "schema" container level and a segment for it/,
+    );
     await provider.disconnect();
   });
 

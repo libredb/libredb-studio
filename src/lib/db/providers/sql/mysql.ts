@@ -9,6 +9,7 @@ import { mysqlColumnTypes } from "./column-types";
 import {
   type ColumnSchema,
   type Container,
+  type ContainerLevelSpec,
   type DatabaseConnection,
   type DatabaseObject,
   type ForeignKeySchema,
@@ -725,6 +726,48 @@ const MYSQL_OBJECT_TYPES: Record<
   package: { catalog: "routines", types: ["PACKAGE"] },
 };
 
+/** Every spelling one catalog answers for, derived so it cannot drift from the table above. */
+function modelledTypes(catalog: "tables" | "routines"): readonly string[] {
+  return Object.values(MYSQL_OBJECT_TYPES)
+    .filter((spec) => spec.catalog === catalog)
+    .flatMap((spec) => spec.types);
+}
+
+/**
+ * Every catalog type this provider has a RULE for, and for the excluded ones the reason.
+ *
+ * This exists because "the vocabulary enumerates the engine" is a claim that decays. A future
+ * MariaDB release can add a `TABLE_TYPE`, and the failure mode is silence: a spelling no CASE
+ * arm names is dropped from the count AND from the listing, so the two still agree, every gate
+ * still passes, and the object is simply absent from the tree. That is how `SYSTEM VERSIONED`
+ * hid here in the first place.
+ *
+ * So the set is exported, and `tests/live/mysql-object-vocabulary.ts` asks a live server for
+ * its own `SELECT DISTINCT TABLE_TYPE` and `SELECT DISTINCT ROUTINE_TYPE` and fails NAMING
+ * anything outside it. The modelled half is derived from `MYSQL_OBJECT_TYPES`; the excluded
+ * half is written here, and it is a map rather than a list so an exclusion cannot be added
+ * without saying why.
+ */
+export const CATALOG_TYPE_RULES: {
+  readonly tables: { readonly modelled: readonly string[]; readonly excluded: Readonly<Record<string, string>> };
+  readonly routines: { readonly modelled: readonly string[]; readonly excluded: Readonly<Record<string, string>> };
+} = {
+  tables: {
+    modelled: modelledTypes("tables"),
+    excluded: {
+      "SYSTEM VIEW": "what information_schema's own tables are, and that schema is not a container here",
+      TEMPORARY:
+        "session-scoped, and a pooled provider hands out a different connection per call, so the folder would badge one connection's tables and list another's",
+    },
+  },
+  routines: {
+    modelled: modelledTypes("routines"),
+    excluded: {
+      "PACKAGE BODY": "the second ROUTINES row of one package node; counting it would double the Packages badge",
+    },
+  },
+};
+
 /**
  * One CASE mapping one catalog's type column onto the kind ids it answers for.
  *
@@ -1029,6 +1072,51 @@ interface ObjectRow extends RowDataPacket {
 }
 
 /**
+ * The container levels this provider declares, sliced to the depth `containerDepth()` reports.
+ *
+ * One reader for the whole file, so the depth and the level list can never be taken by two
+ * different rules. `containerDepth()` is what decides, never `containerLevels.length`.
+ */
+function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerLevelSpec[] {
+  return (capabilities.containerLevels ?? []).slice(0, containerDepth(capabilities));
+}
+
+/**
+ * The segment of `path` belonging to the declared container level `id`.
+ *
+ * NEVER `path[0]`, and that is the general form of a defect this file shipped three times in
+ * two narrower shapes. A container level's POSITION is a property of the declaration, not a
+ * constant: MySQL declares `[schema]`, so the schema is the first segment here, and the five
+ * two-level engines that copy this file declare `[catalog, schema]`, where `path[0]` is the
+ * CATALOG and binding it as the schema narrows every read to a database that does not exist.
+ * The three earlier shapes were `container.length !== 1`, `path[1]` for the object name, and
+ * `path[0]` for the schema; all three are depth-identical on a one-level engine, which is
+ * exactly why each survived a review. Standing ruling 5g forbids the class, not the instances.
+ *
+ * Both failure modes raise through one guard: a declaration with no level of this `id`, and a
+ * path too short to carry it. Neither may fall through to `undefined`, which mysql2 rejects
+ * outright as a bind and which would otherwise surface as a driver error naming neither the
+ * path nor the method.
+ */
+function containerSegment(
+  capabilities: ProviderCapabilities,
+  path: readonly string[],
+  id: ContainerLevelSpec["id"],
+): string {
+  const levels = declaredLevels(capabilities);
+  const index = levels.findIndex((level) => level.id === id);
+  const segment = index < 0 ? undefined : path.slice(0, levels.length)[index];
+  if (segment === undefined) {
+    throw new QueryError(
+      `A MySQL path needs a "${id}" container level and a segment for it; the declaration is ` +
+        `[${levels.map((level) => level.id).join(", ")}] and the path is ${JSON.stringify(path)}`,
+      "mysql",
+    );
+  }
+  return segment;
+}
+
+/**
  * The one database a container path names on this engine.
  *
  * The expected depth is read through `containerDepth()` and the segment NAMES come from the
@@ -1039,22 +1127,22 @@ interface ObjectRow extends RowDataPacket {
  * tell the two spellings apart.
  *
  * A path of any other length is a caller that built it from another engine's shape, and it
- * raises rather than reading `path[0]` and carrying on, because `undefined` bound to `?`
+ * raises rather than reading a segment and carrying on, because `undefined` bound to `?`
  * would answer an empty folder that looks exactly like a database holding nothing - and
  * mysql2 rejects `undefined` outright, which would surface as a driver error naming neither
- * the path nor the method.
+ * the path nor the method. The segment itself comes from `containerSegment()`, so which
+ * position holds the schema is read off the declaration rather than assumed.
  */
 function containerSchema(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = (capabilities.containerLevels ?? [])
-    .slice(0, containerDepth(capabilities))
-    .map((level) => level.label.toLowerCase());
+  const levels = declaredLevels(capabilities);
   if (container.length !== levels.length) {
     throw new QueryError(
-      `A MySQL container path is [${levels.join(", ")}], received ${JSON.stringify(container)}`,
+      `A MySQL container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
+        `received ${JSON.stringify(container)}`,
       "mysql",
     );
   }
-  return container[0];
+  return containerSegment(capabilities, container, "schema");
 }
 
 /**
@@ -1815,9 +1903,7 @@ export class MySQLProvider extends SQLBaseProvider {
     // declared level labels sliced to that same depth, so the message and the check cannot
     // disagree. An attached kind takes either depth, because `objectPath` collapses a
     // parentless trigger onto the container-level address.
-    const levels = (capabilities.containerLevels ?? [])
-      .slice(0, containerDepth(capabilities))
-      .map((level) => level.label.toLowerCase());
+    const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
     const shapes =
       spec.attachedTo === undefined
         ? [[...levels, "name"]]
@@ -1840,10 +1926,13 @@ export class MySQLProvider extends SQLBaseProvider {
     // Three narrow reads, each bound to ONE database and ONE object, which is what the four
     // `SCHEMA_*_SQL` statements are not: those are the N+1 `getSchema()` issues per table.
     //
-    // The object's own name is the LAST segment, never `path[1]`. They are the same string on
-    // a one-level engine and different on the five two-level ones that copy this file, where
-    // `path[1]` is a container segment and the read would narrow to nothing.
-    const binds = [path[0], path[path.length - 1]];
+    // Neither bind is positional. The schema comes from the segment the DECLARATION assigns to
+    // the `schema` level, and the object's own name is the LAST segment. On MySQL those are
+    // `path[0]` and `path[1]`; on the five two-level engines that copy this file `path[0]` is
+    // the catalog and `path[1]` is a container segment, so both literals would narrow these
+    // three reads to an object that does not exist.
+    const schema = containerSegment(capabilities, path, "schema");
+    const binds = [schema, path[path.length - 1]];
     const conn = await this.pool!.getConnection();
     try {
       const columnRows = await this.runObjectQuery(conn, OBJECT_COLUMNS_SQL, binds);
@@ -1877,7 +1966,7 @@ export class MySQLProvider extends SQLBaseProvider {
       const foreignKeys: ForeignKeySchema[] = fkRows.map((row) => ({
         columnName: row.column_name,
         referencedTable:
-          row.referenced_schema === path[0]
+          row.referenced_schema === schema
             ? String(row.referenced_table)
             : `${String(row.referenced_schema)}.${String(row.referenced_table)}`,
         referencedColumn: row.referenced_column,

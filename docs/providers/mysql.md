@@ -674,6 +674,43 @@ The two exclusions are each wrong in a different way if reversed:
   the connection that answered `countObjects` happened to hold, list whatever a different connection
   held, and hand out addresses that resolve on one connection and not the next.
 
+#### A live guard, because "the vocabulary enumerates the engine" is a claim that decays
+
+The table above is right today and a future MariaDB release can add to it, and the failure mode is
+SILENCE: a spelling no `CASE` arm names is dropped from the count and from the listing alike, so the
+two agree, every gate passes, and the object is absent from the tree. That is exactly how
+`SYSTEM VERSIONED` hid here. Prose and an absence from a table do not detect anything.
+
+So the rules are a value, `CATALOG_TYPE_RULES` in
+[`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts): the modelled half is derived from
+`MYSQL_OBJECT_TYPES` so it cannot drift, and the excluded half is a MAP of spelling to reason, so an
+exclusion cannot be added without saying why. `tests/live/mysql-object-vocabulary.ts` then asks a
+real server for its own `SELECT DISTINCT TABLE_TYPE` and `SELECT DISTINCT ROUTINE_TYPE` and exits
+non-zero NAMING any value outside modelled-plus-excluded.
+
+**Where it runs.** It is a live check, so it is not in `bun run test` or `bun run test:ci`:
+`tests/run-core.sh` globs `tests/unit tests/api tests/integration tests/hooks tests/security
+tests/evals`, and nothing under `tests/live/` is collected, the same arrangement
+`tests/live/schema-diff-dialects.ts` has. It runs by hand against a disposable server, and belongs
+permanently in #789's live acceptance run:
+
+```bash
+LIBREDB_LIVE_MYSQL_URLS="mysql://root:root@127.0.0.1:3306/app,mysql://root:root@127.0.0.1:3307/app" \
+  bun tests/live/mysql-object-vocabulary.ts
+```
+
+Point it at a MySQL **and** a MariaDB; a run against one server is half a measurement.
+
+**What it cannot see, stated so the guard can be calibrated.** `SELECT DISTINCT` reports the
+spellings a server's DATA exhibits, not the spellings its grammar can produce, so both fixtures hold
+one object of every spelling this provider knows about, `WITH SYSTEM VERSIONING` included. The one
+spelling a fixture can never carry is `TEMPORARY`, since a temporary table dies with the session that
+made it; it stays recognised through its entry in `CATALOG_TYPE_RULES.tables.excluded`.
+
+The subset assertion has two ways to be vacuous and neither is visible from a live run, so both are
+pinned in the unit suite instead: that neither half of the rules is empty, that no spelling is in
+both halves, and that every exclusion carries a reason.
+
 #### A table and a stored routine can share a name, and this is measured
 
 #789 reasoned that they could and named MySQL as the engine that proves it. Measured 2026-09-11 on
@@ -788,11 +825,14 @@ nobody took. `TABLE_ROWS` on a base table is the engine's own estimate, the same
 PostgreSQL's `reltuples`.
 
 **One known defect this surface inherits rather than repairs:** MariaDB reports
-`COLUMN_DEFAULT` as an EXPRESSION where MySQL reports a VALUE, so a nullable MariaDB column with no
-default is reported as having the default `NULL`, and the string `NULL` means opposite things on the
-two servers. `getSchema()` has it too, over the same view, and repairing one surface alone would
-make the two disagree about one column. Measured both ways and filed as **#795**, which carries the
-measurement table and what "done" looks like.
+`COLUMN_DEFAULT` as the DEFAULT EXPRESSION AS WRITTEN where MySQL reports the VALUE, and the two
+disagree in both directions. A nullable MariaDB column with no default reads as having the default
+`NULL`, and the string `NULL` means opposite things on the two servers; less visibly, MariaDB keeps
+the quotes, so `DEFAULT 'abc'` reads back as `'abc'` there and `abc` on MySQL. A repair that
+special-cases only `NULL` therefore leaves every string default wrong by two characters.
+`getSchema()` has the same read over the same view, and repairing one surface alone would make the
+two disagree about one column. Measured both ways and filed as **#795**, whose comment carries the
+full measurement table and what "done" looks like.
 
 #### The fixture, and running it
 
@@ -1329,6 +1369,15 @@ docker compose -f database-compose.yml --profile compat up -d mariadb  # localho
 Point a connection at either one with type MySQL. MariaDB is the branch worth checking by hand,
 because it is the one that declares Packages and Sequences. Either image runs its fixture once, on a
 fresh data directory only, so a container that already exists has to be recreated first.
+
+With both up, run the catalog-vocabulary guard against them
+([§7.1](#71-the-object-surface-789)), which is the check that a future server has not grown a
+`TABLE_TYPE` this provider silently drops:
+
+```bash
+LIBREDB_LIVE_MYSQL_URLS="mysql://root:root@127.0.0.1:3306/app,mysql://root:root@127.0.0.1:3307/app" \
+  bun tests/live/mysql-object-vocabulary.ts
+```
 
 ---
 
