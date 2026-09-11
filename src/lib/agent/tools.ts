@@ -73,12 +73,14 @@ import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/executi
 import { inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
-import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import type { KindCount, DatabaseProvider, ObjectKindSpec, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import { containerDepth, declaredKinds, isCountSampled, isCountUnavailable } from "@/lib/db/object-kinds";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
 import { connectionIdentity, heldSnapshotForConnection } from "./context-snapshot";
 import { offersRefusalExamples } from "./models";
 import type { ColumnSchema, DatabaseConnection, QueryResult, TableSchema } from "@/lib/types";
+import type { AgentInventory, AgentInventoryObject } from "./types";
 import {
   type AgentCatalogKind,
   AgentComposedSqlError,
@@ -1624,7 +1626,7 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
   // PostgreSQL — while the error names it as the statement wrote it, usually bare. So the last
   // segment is compared as well, which is what makes the two spellings meet.
   const wanted = qualifier.toLowerCase();
-  const table = snapshot.tables.find((entry) => {
+  const table = snapshot.objects.find((entry) => {
     const name = entry.name.toLowerCase();
     return name === wanted || name.split(".").at(-1) === wanted;
   });
@@ -1638,7 +1640,7 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
     answer a model looking for a join key — `emp_no` exists, in dept_emp, employee, salary and
     title — and the whole inventory is already in hand.
   */
-  const elsewhere = snapshot.tables
+  const elsewhere = snapshot.objects
     .filter(
       (entry) => entry !== table && entry.columns.some((column) => column.name.toLowerCase() === missing.toLowerCase()),
     )
@@ -2282,6 +2284,250 @@ export async function readProviderSchemaForGrounding(context: AgentToolContext):
 }
 
 /**
+ * How much of an object inventory one grounding read may take, and why the two bounds
+ * are the route's own numbers (#789).
+ *
+ * They are deliberately the same values `src/lib/api/object-route.ts` bounds
+ * `POST /api/db/objects/inventory` with, so the agent and the route cannot come to
+ * disagree about how much of a database an inventory is. They are declared here rather
+ * than imported because that module imports `next/server` at its top level, and pulling
+ * the request layer into the agent tree to read two integers is a dependency nobody
+ * wants; Task 28's sweep is where a shared home for them belongs, alongside the four
+ * copies of `comparePaths`. Both are stated again in `docs/AGENT.md`.
+ */
+const AGENT_INVENTORY_OBJECT_LIMIT = 5000;
+const AGENT_INVENTORY_PAIR_LIMIT = 1000;
+
+/** The object limit's sentence, and the pair limit's. Phrased as the route phrases them. */
+const AGENT_INVENTORY_TRUNCATION_REASON = "inventory limit reached";
+const AGENT_INVENTORY_PAIR_TRUNCATION_REASON = "container and kind pair limit reached";
+
+/**
+ * The inventory an object-surface read produced: what was listed, what the kinds MEAN,
+ * and whether it is all of it.
+ *
+ * `kinds` carries more than the provider's `ObjectKindSpec` because two facts that decide
+ * whether the model is being told the truth are not on the spec: `sampledFrom`, which
+ * makes every count and listing of that kind a FLOOR, and `derivedGroupings`, which says
+ * the rows are groupings this server derived rather than objects anybody named.
+ */
+export type AgentObjectInventoryRead =
+  | { readonly kind: "completed"; readonly inventory: AgentInventory }
+  /** This engine declares no object kinds, so there is nothing to tag and nothing was read. */
+  | { readonly kind: "unsupported" }
+  | { readonly kind: "unavailable"; readonly modelText: string }
+  | { readonly kind: "timed-out"; readonly grantedMs: number };
+
+/**
+ * The engine's own OBJECT inventory, taken by the server while it grounds a run (#789).
+ *
+ * The third grounding reading, beside the composed catalog and the provider schema
+ * inspection, and the one that answers a question neither of the other two can: WHAT KIND
+ * each entry is. A composed `information_schema.columns` read returns a view's columns
+ * beside a table's with nothing to tell them apart, and `getSchema()` answers one flat
+ * list on every engine, so a run was handed a view, a materialized view, a Redis key
+ * grouping and a Druid datasource under one word. #414 measured what a model does with
+ * that.
+ *
+ * It costs ONE statement out of the run's budget, charged and audited exactly like the
+ * other two, under the same `db.schema.read` descriptor: it is a schema read, an operator
+ * denying that descriptor means to deny this too, and a second canonical descriptor for
+ * the same fact would let the two be governed apart by accident. Its fingerprint source
+ * differs from the schema read's, so the repair ledger does not read the two as one
+ * attempt.
+ *
+ * WHAT IT DOES NOT DO is read columns. The bulk route removed `includeColumns` after
+ * measuring it as one `describeObject` per object, up to 5000 sequential round trips, and
+ * this read would pay the same N+1. So columns keep coming from the reading that already
+ * carries them and this one supplies identity; `context-snapshot.ts` joins the two. The
+ * open item that closes the gap is a bulk column read on the provider surface, which is a
+ * fifth method across seventeen providers and is stated in the epic rather than invented
+ * here.
+ *
+ * `countObjects` is called per container before any listing, which is one extra provider
+ * call per container and pays for itself twice: a kind the engine answers `{ count: 0 }`
+ * for is not listed at all, and a kind whose count is SAMPLED is marked, which is the only
+ * way this read can know its own listing is a floor. `listObjects` reports no bound of its
+ * own, so without the count a Redis keyspace listing bounded by a 1,000-key `SCAN` would
+ * reach the model as the whole keyspace.
+ */
+export async function readObjectInventoryForGrounding(context: AgentToolContext): Promise<AgentObjectInventoryRead> {
+  const declared = declaredKinds(context.capabilities);
+  // Asked before anything is acquired, charged or audited: an engine that declares no
+  // kinds has nothing to answer, and spending a statement to be told so would charge
+  // every run on such an engine for a reading that cannot exist.
+  if (declared.length === 0) return { kind: "unsupported" };
+
+  let inventory: AgentInventory = { objects: [], kinds: [] };
+  let outcome: AgentToolOutcome;
+  try {
+    outcome = await runAuditedAgentCall(context, {
+      operationId: "db.schema.read",
+      fingerprintSource: `objects:${context.connection.id}`,
+      input: {},
+      label: "provider object inventory",
+      grounding: true,
+      invoke: async (_validatedInput, budget, phase) => {
+        const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
+        const startedAtMs = context.clock?.() ?? Date.now();
+        phase.statementSent = true;
+
+        // The same honest limit `readProviderSchemaForGrounding` states: the walk is not
+        // cancelled, this run simply stops waiting for it.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const overran = new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new AgentSchemaReadTimeout(budget.statementTimeoutMs)),
+            budget.statementTimeoutMs,
+          );
+        });
+        try {
+          inventory = await Promise.race([walkObjectInventory(provider, context.capabilities, declared), overran]);
+        } catch (error) {
+          if (error instanceof AgentSchemaReadTimeout) throw error;
+          throw asReadingFailure(error, context.connection.type);
+        } finally {
+          clearTimeout(timer);
+        }
+
+        // The projection is one row per object naming its kind, so the artifact a claim
+        // cites shows the same kinds the prompt was given rather than a bare name list.
+        const rows = inventory.objects.map((object) => ({
+          object: object.name,
+          kind: object.kind ?? "",
+        }));
+        return {
+          rows,
+          fields: ["object", "kind"],
+          rowCount: rows.length,
+          executionTime: (context.clock?.() ?? Date.now()) - startedAtMs,
+        };
+      },
+    });
+  } catch (error) {
+    if (error instanceof AgentSchemaReadTimeout) return { kind: "timed-out", grantedMs: error.grantedMs };
+    throw error;
+  }
+
+  if (outcome.kind !== "completed") return { kind: "unavailable", modelText: outcome.modelText };
+  return { kind: "completed", inventory };
+}
+
+/**
+ * The walk itself: every container, every declared kind, under both bounds.
+ *
+ * Written as one flat pair loop for the reason the route states: two nested loops need a
+ * label to leave both, and a check in the outer one re-enters for every later container.
+ * The counts are taken first because they decide which pairs are worth listing at all.
+ *
+ * A kind whose COUNT was refused is still listed. A refusal to count is not a refusal to
+ * list — on more than one engine the count is an aggregate over a catalog the listing does
+ * not need — and skipping it would drop objects the engine would have named, which is the
+ * absence this epic exists to prevent. A kind the engine counted as zero is skipped,
+ * because that IS the engine's answer and listing it would cost a round trip to be told
+ * the same thing.
+ */
+async function walkObjectInventory(
+  provider: DatabaseProvider,
+  capabilities: ProviderCapabilities,
+  declared: readonly ObjectKindSpec[],
+): Promise<AgentInventory> {
+  const listObjects = provider.listObjects?.bind(provider);
+  // Nothing to walk rather than a thrown refusal: until Task 26 the four object methods
+  // are optional on the interface, so a provider that declares kinds and cannot list them
+  // is a state the TYPE still allows. An empty inventory tags nothing, which leaves the
+  // run exactly as grounded as it was before this read existed.
+  if (listObjects === undefined) return { objects: [], kinds: [] };
+
+  const containers = await enumerateGroundingContainers(provider, capabilities);
+  const sampledFrom = new Map<string, string>();
+  const objects: AgentInventoryObject[] = [];
+  let truncated: AgentInventory["truncated"];
+
+  let pairs = 0;
+  for (const container of containers) {
+    const counts = await countForGrounding(provider, container);
+    for (const spec of declared) {
+      const count = Object.hasOwn(counts, spec.id) ? counts[spec.id] : undefined;
+      if (count !== undefined && !isCountUnavailable(count) && count.count === 0) continue;
+      if (count !== undefined && isCountSampled(count)) sampledFrom.set(spec.id, count.sampledFrom);
+      if (pairs >= AGENT_INVENTORY_PAIR_LIMIT) {
+        truncated = { limit: AGENT_INVENTORY_PAIR_LIMIT, reason: AGENT_INVENTORY_PAIR_TRUNCATION_REASON };
+        break;
+      }
+      pairs += 1;
+      for (const object of await listObjects(container, spec.id)) {
+        if (objects.length >= AGENT_INVENTORY_OBJECT_LIMIT) {
+          // Overwrites a pair-limit reason where both bit, the same way the route resolves
+          // it: the object limit is the one a reader can see reflected in what they hold.
+          truncated = { limit: AGENT_INVENTORY_OBJECT_LIMIT, reason: AGENT_INVENTORY_TRUNCATION_REASON };
+          break;
+        }
+        objects.push({
+          path: object.path,
+          name: object.name,
+          kind: object.kind,
+          columns: [],
+          indexes: [],
+          foreignKeys: [],
+        });
+      }
+      if (truncated !== undefined) break;
+    }
+    if (truncated !== undefined) break;
+  }
+
+  const kinds = declared.map((spec) => ({
+    id: spec.id,
+    role: spec.role,
+    label: spec.label,
+    labelPlural: spec.labelPlural,
+    ...(sampledFrom.has(spec.id) ? { sampledFrom: sampledFrom.get(spec.id) } : {}),
+    // The refusal `tablesAreDerivedGroupings` carries is about the rows of the inventory,
+    // which are the relation kinds: a Redis Function Library is a named object and a Redis
+    // key pattern is not, and both are declared by the one provider that sets the flag.
+    ...(capabilities.tablesAreDerivedGroupings === true && spec.role === "relation" ? { derivedGroupings: true } : {}),
+  }));
+
+  return truncated === undefined ? { objects, kinds } : { objects, kinds, truncated };
+}
+
+/**
+ * Every container the inventory covers, derived from the declared depth.
+ *
+ * `containerDepth()` decides, never `containerLevels.length`, and a zero-level engine has
+ * exactly one container: the empty path.
+ */
+async function enumerateGroundingContainers(
+  provider: DatabaseProvider,
+  capabilities: ProviderCapabilities,
+): Promise<readonly (readonly string[])[]> {
+  const depth = containerDepth(capabilities);
+  if (depth === 0) return [[]];
+  const listContainers = provider.listContainers?.bind(provider);
+  if (listContainers === undefined) return [];
+
+  let level = (await listContainers()).map((container) => container.path);
+  for (let below = 1; below < depth; below += 1) {
+    const next: (readonly string[])[] = [];
+    for (const parent of level) {
+      next.push(...(await listContainers(parent)).map((container) => container.path));
+    }
+    level = next;
+  }
+  return level;
+}
+
+/** One container's counts, or none where the provider declares no counting. */
+async function countForGrounding(
+  provider: DatabaseProvider,
+  container: readonly string[],
+): Promise<Record<string, KindCount>> {
+  const countObjects = provider.countObjects?.bind(provider);
+  return countObjects === undefined ? {} : await countObjects(container);
+}
+
+/**
  * One server-composed statement, taken as part of a run's grounding.
  *
  * The narrow companion to `readCatalogForGrounding`, for the one composed statement
@@ -2920,11 +3166,11 @@ function inventoriedTable(
     // entry here would accept `{schema: "other", table: "orders"}` against SQLite's
     // unqualified `orders` and then target `other.orders` — a table the run never
     // inventoried. Found by review on #345.
-    const entry = snapshot.tables.find((candidate) => candidate.name === `${schema}.${table}`);
+    const entry = snapshot.objects.find((candidate) => candidate.name === `${schema}.${table}`);
     return entry === undefined ? null : { entry, schema, table };
   }
 
-  const bare = snapshot.tables.find((candidate) => candidate.name === table);
+  const bare = snapshot.objects.find((candidate) => candidate.name === table);
   if (bare !== undefined) return { entry: bare, table };
 
   // An unqualified name against a qualified inventory. PostgreSQL's capture names
@@ -2933,7 +3179,7 @@ function inventoriedTable(
   // exactly ONE table ends that way: two schemas holding the same table name is
   // precisely when a guess would profile the wrong one.
   const suffix = `.${table}`;
-  const matches = snapshot.tables.filter((candidate) => candidate.name.endsWith(suffix));
+  const matches = snapshot.objects.filter((candidate) => candidate.name.endsWith(suffix));
   const only = matches.length === 1 ? matches[0] : undefined;
   if (only === undefined) return null;
   // Derived by removing the suffix rather than by splitting on a dot: exact, and it
@@ -3029,7 +3275,7 @@ export function planTableProfile(
     // The first few names, not all of them: the inventory can hold hundreds, and a refusal
     // that turns into a catalog dump is a wall of its own. Enough to show the spelling
     // convention this database uses, which is what a misspelling needs.
-    const offer = (snapshot?.tables ?? []).slice(0, 6).map((entry) => entry.name);
+    const offer = (snapshot?.objects ?? []).slice(0, 6).map((entry) => entry.name);
     return unavailable("TABLE_NOT_INVENTORIED", offer.length === 0 ? undefined : `it lists ${offer.join(", ")}`);
   }
 

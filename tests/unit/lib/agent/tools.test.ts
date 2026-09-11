@@ -3506,7 +3506,7 @@ describe("profileTableTool — the model names a table, the server decides the r
     connectionId: "conn-1",
     fingerprint: "ctx_1",
     capturedAtMs: 1,
-    tables: [
+    objects: [
       {
         name: "public.orders",
         columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
@@ -3642,7 +3642,7 @@ describe("profileTableTool — the model names a table, the server decides the r
     // the run still counted as having profiled the table. Found by review on #345.
     const wide = {
       ...snapshot,
-      tables: [
+      objects: [
         {
           name: "public.wide",
           columns: Array.from({ length: 20 }, (_, index) => ({

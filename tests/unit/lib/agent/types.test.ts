@@ -25,7 +25,7 @@ const SNAPSHOT: AgentContextSnapshot = {
   connectionId: "conn_1",
   fingerprint: "sha256-2f0a",
   capturedAtMs: 1_700_000_000_000,
-  tables: [
+  objects: [
     {
       name: "orders",
       columns: [
@@ -124,7 +124,7 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
     kind: "context-captured",
     atMs: 2,
     fingerprint: SNAPSHOT.fingerprint,
-    tableCount: SNAPSHOT.tables.length,
+    tableCount: SNAPSHOT.objects.length,
     snapshot: SNAPSHOT,
     // And the word the engine used for those rows (#414), which is two strings and
     // therefore as inert as the rest of the entry.
@@ -143,7 +143,7 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
     kind: "context-reused",
     atMs: 2,
     fingerprint: SNAPSHOT.fingerprint,
-    tableCount: SNAPSHOT.tables.length,
+    tableCount: SNAPSHOT.objects.length,
     ageMs: 3_600_000,
     noun: { singular: "key pattern", plural: "key patterns" },
   },

@@ -23,7 +23,7 @@ const snapshot = (tables: readonly TableSchema[]): AgentContextSnapshot => ({
   connectionId: "conn_1",
   fingerprint: "ctx_1",
   capturedAtMs: 1,
-  tables,
+  objects: tables,
 });
 
 /**

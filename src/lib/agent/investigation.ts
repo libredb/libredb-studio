@@ -2825,7 +2825,7 @@ export async function runInvestigation(
         await service.recordEvent(runId, {
           kind: "context-reused",
           fingerprint: held.fingerprint,
-          tableCount: held.tables.length,
+          tableCount: held.objects.length,
           ageMs: Math.max(0, (context.clock?.() ?? Date.now()) - held.capturedAtMs),
           // The same noun the capture entry records, and from the same source: what this
           // engine calls these rows is part of what the run was shown.
@@ -2849,7 +2849,7 @@ export async function runInvestigation(
         await service.recordEvent(runId, {
           kind: "context-captured",
           fingerprint: snapshot.fingerprint,
-          tableCount: snapshot.tables.length,
+          tableCount: snapshot.objects.length,
           snapshot,
           // The same noun this run's own prompt blocks are written with, recorded
           // where the timeline can read it: the rail has no provider to ask.
@@ -2898,7 +2898,7 @@ export async function runInvestigation(
       // #411.
       messages.push({
         role: "user",
-        content: packSchemaStatistics(snapshot.tables, statistics, operations ? { detail: "rows" } : {}),
+        content: packSchemaStatistics(snapshot.objects, statistics, operations ? { detail: "rows" } : {}),
       });
       grounding = {
         schemaKnown: true,
@@ -2912,7 +2912,7 @@ export async function runInvestigation(
       // What the closing statement will be checked against, taken from the same reading
       // the model was shown: a statement validated against an inventory the model never
       // saw would be checked against a database and blamed on a model.
-      planningInventory = snapshot.tables;
+      planningInventory = snapshot.objects;
     };
 
     /**
@@ -3013,7 +3013,7 @@ export async function runInvestigation(
       await service.recordEvent(runId, {
         kind: "context-captured",
         fingerprint: snapshot.fingerprint,
-        tableCount: snapshot.tables.length,
+        tableCount: snapshot.objects.length,
         snapshot,
         // As on the planning path: what the engine calls these rows is part of what was
         // read, so it is written down with the reading rather than guessed at later.
@@ -3703,7 +3703,7 @@ export async function runInvestigation(
           // table instead of asking the model to pick one. The snapshot is optional on the
           // event, and a run without one is told the generic form rather than nothing.
           const inventory = sofar.events.flatMap((event) =>
-            event.kind === "context-captured" && event.snapshot !== undefined ? event.snapshot.tables : [],
+            event.kind === "context-captured" && event.snapshot !== undefined ? event.snapshot.objects : [],
           );
           const spoken = would.flatMap((shortfall) => {
             const advice = shortfallNotice(

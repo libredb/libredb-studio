@@ -80,9 +80,16 @@ import {
   type AgentProviderSchemaRead,
   type AgentToolContext,
   readCatalogForGrounding,
+  readObjectInventoryForGrounding,
   readProviderSchemaForGrounding,
 } from "./tools";
-import type { AgentContextSnapshot, AgentRunEvent } from "./types";
+import type {
+  AgentContextSnapshot,
+  AgentInventory,
+  AgentInventoryKind,
+  AgentInventoryObject,
+  AgentRunEvent,
+} from "./types";
 import { fenceUntrustedContent, quoteIdentifierForPrompt } from "./untrusted-content";
 import { DatabaseError, ExecutionProfileError } from "@/lib/db/errors";
 import type {
@@ -385,7 +392,7 @@ function buildSqliteTables(rows: ReadonlyMap<AgentCatalogKind, readonly Record<s
 }
 
 /** Ordered so two identical inventories serialise identically. */
-function finalize(tables: TableIndex): TableSchema[] {
+function finalize(tables: TableIndex): AgentInventoryObject[] {
   return [...tables.values()]
     .sort((left, right) => (left.name === right.name ? 0 : left.name < right.name ? -1 : 1))
     .map((table) => ({
@@ -405,11 +412,30 @@ function finalize(tables: TableIndex): TableSchema[] {
  * time it was read, not the connection it was read from, not the order the rows
  * arrived in. So the same database fingerprints the same twice, and a resumed run
  * can tell whether it is looking at the schema its earlier claims were made about.
+ *
+ * `kind` is in it and `truncated` is NOT, and the two absences are different decisions.
+ * A kind is a property of the object, so a view where a table was is a changed schema.
+ * Truncation is a property of the READING, and two readings that stopped at different
+ * points hold different object lists and therefore already fingerprint differently; the
+ * marker travels on the snapshot beside the fingerprint, where every reader of the
+ * inventory sees it.
+ *
+ * `kinds` is not in it either, for the narrower reason that it is DERIVED: it is the
+ * provider's declaration plus what the counts said, and nothing in it varies while the
+ * objects stay the same.
  */
-function fingerprintTables(tables: readonly TableSchema[]): string {
+export function fingerprintInventory(inventory: AgentInventory): string {
   const canonical = JSON.stringify(
-    tables.map((table) => [
+    inventory.objects.map((table) => [
       table.name,
+      // The field this epic added, and the reason it is here rather than beside the
+      // rendering: a table REPLACED by a view of the same name and the same columns is a
+      // different schema, and until this line it fingerprinted identically, so a resumed
+      // run reused a snapshot describing an object that no longer accepts a write. An
+      // entry with no kind hashes `null`, which is a different value from every kind id
+      // and from every other absence, so an inventory that gained kinds does not read as
+      // unchanged (#789).
+      table.kind ?? null,
       table.columns.map((column) => [column.name, column.type, column.nullable, column.isPrimary]),
       table.indexes.map((index) => [index.name, index.unique, index.columns]),
       (table.foreignKeys ?? []).map((key) => [key.columnName, key.referencedTable, key.referencedColumn]),
@@ -502,8 +528,8 @@ export function reusableSnapshot(events: readonly AgentRunEvent[], connectionId:
     // entry the checks reject says the ledger is not one this code wrote, and
     // reaching past it would hand the run an inventory two captures out of date.
     if (snapshot === undefined || snapshot.connectionId !== connectionId) return null;
-    if (snapshot.fingerprint !== event.fingerprint || snapshot.tables.length !== event.tableCount) return null;
-    if (fingerprintTables(snapshot.tables) !== snapshot.fingerprint) return null;
+    if (snapshot.fingerprint !== event.fingerprint || snapshot.objects.length !== event.tableCount) return null;
+    if (fingerprintInventory(snapshot) !== snapshot.fingerprint) return null;
     return snapshot;
   }
   return null;
@@ -592,14 +618,14 @@ async function readInventory(context: AgentToolContext): Promise<AgentContextCap
     return failure;
   }
 
-  const tables = finalize(plan.build(rows));
+  const inventory = await tagWithObjectKinds(context, finalize(plan.build(rows)));
   return {
     kind: "captured",
     snapshot: {
       connectionId: context.connection.id,
-      fingerprint: fingerprintTables(tables),
+      fingerprint: fingerprintInventory(inventory),
       capturedAtMs: nowMs,
-      tables,
+      ...inventory,
       // Deliberately not stamped `"composed-catalog"`: absence already means that,
       // and every snapshot written before `readVia` existed came from here. Writing
       // it would change nothing a reader concludes and would make this path's output
@@ -676,17 +702,95 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
   }
   if (read.kind === "unavailable") return unavailable("CATALOG_READ_REFUSED", read.modelText);
 
-  const tables = finalize(providerTables(read.tables));
+  const inventory = await tagWithObjectKinds(context, finalize(providerTables(read.tables)));
   return {
     kind: "captured",
     snapshot: {
       connectionId: context.connection.id,
-      fingerprint: fingerprintTables(tables),
+      fingerprint: fingerprintInventory(inventory),
       capturedAtMs: nowMs,
-      tables,
+      ...inventory,
       readVia: "provider-inventory",
     },
   };
+}
+
+/**
+ * The inventory the run reasons over: the columns one reading carries, joined to the
+ * identity the other one does (#789).
+ *
+ * TWO READINGS ARE JOINED HERE and neither can be dropped, which is the whole shape of
+ * this function. The composed catalog and the provider schema inspection both answer one
+ * FLAT list of names with columns, indexes and keys on each, and neither says what kind
+ * anything is: a PostgreSQL `information_schema.columns` read returns a view's columns
+ * beside a table's, indistinguishable. The object surface says exactly that, and carries
+ * no columns, because reading them in bulk is an N+1 the epic refused (see the route's
+ * own docblock, and `readObjectInventoryForGrounding`).
+ *
+ * The join key is the QUALIFIED NAME, and it is the honest one available rather than a
+ * good one: the flat readings address by a single string, the object surface by segments,
+ * and nothing in either records how the first was built. So an object joins a flat entry
+ * when its segments joined by `.` equal that entry's name, which holds on every engine
+ * measured, and fails to join for a name that itself contains a dot. A failure to join
+ * COSTS COLUMNS AND NEVER INVENTS THEM: the object still reaches the model, named and
+ * kinded, with an empty column list, and the flat entry it could not be matched to is
+ * carried as well rather than dropped. Both halves of that are deliberate, since a
+ * silently missing object is the defect #414 measured.
+ *
+ * An entry the object read never named keeps NO kind at all. It is not labelled "table":
+ * a missing fact filled in with the most common value is exactly how a view came to be
+ * handed over under the word table, and the renderers say nothing where they know nothing.
+ *
+ * A read that was refused, timed out, or found no declared kinds leaves the run with the
+ * inventory it had before this existed, and with no kinds. That is a LOSS OF DETAIL and
+ * not a loss of grounding, so it does not fail the capture: refusing to ground a run at
+ * all because an engine would not enumerate its kinds would trade a real regression for a
+ * label.
+ */
+async function tagWithObjectKinds(
+  context: AgentToolContext,
+  flat: readonly AgentInventoryObject[],
+): Promise<AgentInventory> {
+  const read = await readObjectInventoryForGrounding(context);
+  if (read.kind !== "completed") return { objects: flat, kinds: [] };
+
+  const byName = new Map(flat.map((entry) => [entry.name, entry]));
+  const objects = read.inventory.objects.map((object) => {
+    const columns = byName.get(qualifiedName(object));
+    if (columns !== undefined) byName.delete(columns.name);
+    return {
+      ...object,
+      columns: columns?.columns ?? [],
+      indexes: columns?.indexes ?? [],
+      foreignKeys: columns?.foreignKeys ?? [],
+    };
+  });
+
+  return {
+    ...read.inventory,
+    // Sorted by the name a reader sees, so two captures of one database serialise
+    // identically whatever order the containers were walked in.
+    objects: [...objects, ...byName.values()].sort((left, right) =>
+      displayName(left) === displayName(right) ? 0 : displayName(left) < displayName(right) ? -1 : 1,
+    ),
+  };
+}
+
+/** An object's segments as one qualified name, for the join above and for nothing else. */
+function qualifiedName(object: AgentInventoryObject): string {
+  return object.path === undefined ? object.name : object.path.join(".");
+}
+
+/**
+ * What a model is shown an entry as.
+ *
+ * The qualified path where there is one, because a run that is told `orders` in a database
+ * holding four schemas cannot write a statement against it. `name` alone is the fallback,
+ * and on an entry that never reached the object surface it is already qualified: that is
+ * what the flat readings produce.
+ */
+function displayName(object: AgentInventoryObject): string {
+  return qualifiedName(object);
 }
 
 /**
@@ -871,7 +975,7 @@ export function connectionIdentity(connection: DatabaseConnection): string {
  * Found by review on #384, which had one `delete`/`set` doing both jobs at once.
  */
 export function holdSnapshotForConnection(snapshot: AgentContextSnapshot, identity: string): void {
-  if (fingerprintTables(snapshot.tables) !== snapshot.fingerprint) return;
+  if (fingerprintInventory(snapshot) !== snapshot.fingerprint) return;
   const held = heldSnapshots.get(identity);
   const newest = held !== undefined && held.capturedAtMs > snapshot.capturedAtMs ? held : snapshot;
   // Deleted before it is set, so the connection's place in the eviction order below
@@ -996,7 +1100,62 @@ function renderColumn(table: TableSchema, column: ColumnSchema): string {
   ].join("");
 }
 
-function renderTable(table: TableSchema): string {
+/**
+ * What the run is told ABOUT the inventory, as opposed to what is in it.
+ *
+ * Three sentences, none of them decoration, each closing one way a model reads a true
+ * list as a true statement about the database:
+ *
+ *  - **Incompleteness.** The bulk read bounds both the listings it issues and the objects
+ *    it returns, and an absence the model was not told about is read as an absence in the
+ *    database. #414 is that sentence with a run attached to it.
+ *  - **A sampled kind.** `KindCount`'s fourth state says a number is REAL but BOUNDED:
+ *    Redis counts its key groupings from one `SCAN` walk, LibreDB its keyspaces from a
+ *    bounded key walk. A floor reported as a total is the same defect one level down, so
+ *    the kind is named with the provider's own sentence for what bounded it.
+ *  - **A derived grouping.** `tablesAreDerivedGroupings` says these rows are prefix
+ *    groupings this server derived, not objects anybody named, so no command can be given
+ *    such a name. It is the refusal the old row menu carried, said in the one place the
+ *    model actually reads. Without it, a kinded inventory would hand a run "user:* (Key
+ *    Pattern)" and read as a licence to address it — which is exactly the run #414
+ *    measured drafting `KEYS user:*`.
+ *
+ * Inside the fence with the inventory rather than in the preface, the same as the omission
+ * notice already is: each one is about the lines beside it, and the bound belongs to the
+ * packing that writes them.
+ */
+function inventoryNotes(inventory: AgentInventory): readonly string[] {
+  const notes: string[] = [];
+  const { truncated } = inventory;
+  if (truncated !== undefined) {
+    notes.push(
+      `This inventory is incomplete: the reading stopped at a limit of ${truncated.limit} (${truncated.reason}), so an object that is not listed below may still exist. Do not read an absence from this list as an absence in the database.`,
+    );
+  }
+  for (const kind of inventory.kinds ?? []) {
+    if (kind.sampledFrom !== undefined) {
+      notes.push(
+        `The ${kind.labelPlural} below are at least what is shown and never a total: they were counted from ${kind.sampledFrom}.`,
+      );
+    }
+    if (kind.derivedGroupings === true) {
+      notes.push(
+        `The ${kind.labelPlural} below are groupings derived by this server from a bounded scan, not object names anybody gave: no statement or command can be addressed to one of these names.`,
+      );
+    }
+  }
+  return notes;
+}
+
+/** The label an object's kind was declared with, or nothing at all where none is known. */
+function kindLabel(object: AgentInventoryObject, inventory: AgentInventory): string {
+  // Absent kind renders as nothing rather than as the commonest kind. A missing fact
+  // filled in with a likely value is how a view came to be handed over as a table.
+  const declared = (inventory.kinds ?? []).find((kind) => kind.id === object.kind);
+  return declared === undefined ? "" : ` (${declared.label})`;
+}
+
+function renderTable(table: AgentInventoryObject, inventory: AgentInventory): string {
   const shown = table.columns.slice(0, MAX_COLUMNS_PER_TABLE).map((column) => renderColumn(table, column));
   const hidden = table.columns.length - shown.length;
   if (hidden > 0) shown.push(`+${hidden} more column(s)`);
@@ -1009,7 +1168,7 @@ function renderTable(table: TableSchema): string {
 
   const columnText = shown.length === 0 ? "no columns derivable from the stored definition" : shown.join(", ");
   const indexText = indexes.length === 0 ? "" : `; indexes: ${indexes.join(", ")}`;
-  return `${table.name}: ${columnText}${indexText}`;
+  return `${displayName(table)}${kindLabel(table, inventory)}: ${columnText}${indexText}`;
 }
 
 /**
@@ -1071,13 +1230,13 @@ export function packContextForTask(
   // The capture time is named because the inventory can be REUSED: a run resumed
   // hours later is shown the schema it started with, and a model told only "the
   // schema" would take it for the schema as it is now.
-  const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.tables.length} ${noun.singular}(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since, most task-relevant first.`;
-  if (snapshot.tables.length === 0) {
+  const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.objects.length} ${noun.singular}(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since, most task-relevant first.`;
+  if (snapshot.objects.length === 0) {
     return `${lead}${fenceUntrustedContent(`${header}\nThis database reported no ${noun.plural}.`, source)}`;
   }
 
   const terms = taskTerms(objective);
-  const ranked = [...snapshot.tables].sort((left, right) => {
+  const ranked = [...snapshot.objects].sort((left, right) => {
     const difference = relevance(right, terms) - relevance(left, terms);
     return difference !== 0 ? difference : left.name < right.name ? -1 : 1;
   });
@@ -1088,10 +1247,10 @@ export function packContextForTask(
       ? body
       : `${body}\n${omitted} further ${noun.singular}(s) omitted as less relevant to this task.${advice}`;
 
-  let body = header;
+  let body = [header, ...inventoryNotes(snapshot)].join("\n");
   let shown = 0;
   for (const table of ranked) {
-    const candidate = `${body}\n${renderTable(table)}`;
+    const candidate = `${body}\n${renderTable(table, snapshot)}`;
     if (fenceUntrustedContent(close(candidate, ranked.length - shown - 1), source).length > maxChars) break;
     body = candidate;
     shown += 1;
@@ -1142,8 +1301,8 @@ export function packOperationsInventory(
     reference: snapshot.fingerprint,
   };
 
-  const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.tables.length} ${noun.singular}(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since. Names and the indexes on each; no columns and no relations are included.`;
-  if (snapshot.tables.length === 0) {
+  const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.objects.length} ${noun.singular}(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since. Names and the indexes on each; no columns and no relations are included.`;
+  if (snapshot.objects.length === 0) {
     return `${lead}${fenceUntrustedContent(`${header}\nThis database reported no ${noun.plural}.`, source)}`;
   }
 
@@ -1155,16 +1314,16 @@ export function packOperationsInventory(
       ? body
       : `${body}\n${omitted} further ${noun.singular}(s) exist in this database and are not named here.`;
 
-  let body = header;
+  let body = [header, ...inventoryNotes(snapshot)].join("\n");
   let shown = 0;
-  for (const table of snapshot.tables) {
-    const candidate = `${body}\n${renderOperationsTable(table)}`;
-    if (fenceUntrustedContent(close(candidate, snapshot.tables.length - shown - 1), source).length > maxChars) break;
+  for (const table of snapshot.objects) {
+    const candidate = `${body}\n${renderOperationsTable(table, snapshot)}`;
+    if (fenceUntrustedContent(close(candidate, snapshot.objects.length - shown - 1), source).length > maxChars) break;
     body = candidate;
     shown += 1;
   }
 
-  return `${lead}${fenceUntrustedContent(close(body, snapshot.tables.length - shown), source)}`;
+  return `${lead}${fenceUntrustedContent(close(body, snapshot.objects.length - shown), source)}`;
 }
 
 /**
@@ -1180,13 +1339,13 @@ export function packOperationsInventory(
  * recommend action on an object nobody created, cited against a real snapshot
  * fingerprint. Found by review on #411; `untrusted-content.ts` holds the rule.
  */
-function renderOperationsTable(table: TableSchema): string {
+function renderOperationsTable(table: AgentInventoryObject, inventory: AgentInventory): string {
   const shown = table.indexes
     .slice(0, MAX_INDEXES_PER_TABLE)
     .map((index) => `${quoteIdentifierForPrompt(index.name)}${index.unique ? " unique" : ""}`);
   const hidden = table.indexes.length - shown.length;
   if (hidden > 0) shown.push(`+${hidden} more`);
-  const name = quoteIdentifierForPrompt(table.name);
+  const name = `${quoteIdentifierForPrompt(displayName(table))}${kindLabel(table, inventory)}`;
   // Absence is stated rather than left blank: a table listed with nothing after it
   // reads as a table whose indexes were not captured, and an operations run asked to
   // reason about an unused index would not know which of the two it was looking at.

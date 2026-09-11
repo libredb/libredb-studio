@@ -47,6 +47,7 @@ import type { LLMProviderType } from "@/lib/llm/types";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
 import type { AgentChartSpec, DatabaseType, TableSchema } from "@/lib/types";
+import type { ObjectRole } from "@/lib/db/types";
 import type { AgentContextCharge, AgentContextRowBudget, AgentContextUnavailableCode } from "./context-snapshot";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
 import type { AgentToolName } from "./tools";
@@ -474,19 +475,96 @@ export interface AgentReportClaim {
 export type { AgentChartSpec } from "@/lib/types";
 
 /**
+ * One entry of the inventory a run reasons over (#789).
+ *
+ * It is a `TableSchema` plus the two facts the flat shape could not carry, and it stays
+ * a superset so that `schema-stats.ts`, `table-profile.ts`, `plan-statement.ts` and
+ * `er-diagram.ts` keep reading the four fields they already read. Those consumers move
+ * in Task 25 and the flat surface is removed in Task 26; widening the element rather
+ * than replacing it is what lets those three land one at a time.
+ *
+ * `kind` is the whole point of the widening. An entry with no kind was handed to a model
+ * under whatever noun the engine's labels supplied, so a view arrived under the word
+ * "table" and a run drafted an `INSERT` against it, which is the class #414 measured on
+ * Redis. Absent means the object surface did not answer for this entry, and absent is
+ * rendered as nothing at all rather than as "table": a missing fact must not be filled in
+ * with the most common value.
+ *
+ * `path` ADDRESSES the object and `name` LABELS it, the same split `DatabaseObject`
+ * records. It is optional for exactly one reason: an entry read through the flat schema
+ * surface has a qualified NAME and no segments, and no reader may split that name to
+ * invent them. A table literally called `a.b` in `public` is why.
+ */
+export interface AgentInventoryObject extends TableSchema {
+  /** The object's segments, when the object surface supplied it. Never split from `name`. */
+  readonly path?: readonly string[];
+  /** The declared kind id this object was listed under, when one is known. */
+  readonly kind?: string;
+}
+
+/**
+ * A kind the engine declared, as the run's prose needs it.
+ *
+ * The `ObjectKindSpec` fields a renderer needs, plus the two facts that decide whether
+ * what the model is told about this kind is TRUE — neither of which lives on the spec:
+ *
+ *  - `sampledFrom` is the provider's own sentence from `KindCount`'s fourth state, and its
+ *    presence means every count and every listing of this kind is a FLOOR. Redis counts
+ *    its key groupings from a bounded `SCAN` and LibreDB its keyspaces from a bounded key
+ *    walk; a run told "17 key patterns" over either has been handed a sample as a
+ *    population, which is #414 in one number.
+ *  - `derivedGroupings` says the rows of this kind are prefix groupings this SERVER
+ *    derived, not objects anybody named, so no command can be given such a name. It is
+ *    `ProviderCapabilities.tablesAreDerivedGroupings`, which is still the flag that
+ *    carries the refusal (`src/components/object-tree/row-actions.ts` reads the same one),
+ *    resolved to a boolean at the edge and attached to the relation kinds it is about.
+ */
+export interface AgentInventoryKind {
+  readonly id: string;
+  readonly role: ObjectRole;
+  /** The engine's own word, singular, rendered as-is: "Table", "Key Pattern". */
+  readonly label: string;
+  readonly labelPlural: string;
+  /** What a bounded read of this kind was counted from. Present means every number is a floor. */
+  readonly sampledFrom?: string;
+  /** These rows are groupings this server derived; nothing can be addressed by such a name. */
+  readonly derivedGroupings?: boolean;
+}
+
+/**
+ * The inventory itself: what was read, what the kinds MEAN, and whether it is all of it.
+ *
+ * `truncated` is the field that stops an absence being read as an absence in the database.
+ * The bulk inventory route bounds both the number of listings it issues and the number of
+ * objects it returns, and a saturated slice handed over as a complete inventory makes its
+ * reader treat a missing table as one that does not exist. It carries the same shape the
+ * route reports (`src/lib/api/object-route.ts`), so there is one incompleteness shape in
+ * the product rather than two.
+ */
+export interface AgentInventory {
+  readonly objects: readonly AgentInventoryObject[];
+  /**
+   * The kinds the objects were listed under.
+   *
+   * Optional, and absent means the same thing an empty list does: nothing here is kinded,
+   * so no renderer may name a kind. It is optional because a snapshot recorded in a run's
+   * ledger before this field existed still has to be READABLE — `reusableSnapshot` re-reads
+   * such an entry rather than trusting it, and it must be able to parse it to decide that.
+   */
+  readonly kinds?: readonly AgentInventoryKind[];
+  /** Present only where a bound actually bit. Absent is a claim of completeness. */
+  readonly truncated?: { readonly limit: number; readonly reason: string };
+}
+
+/**
  * The schema inventory a run reasons over, plus the fingerprint that decides
  * whether a refresh has to read anything at all.
- *
- * `tables` reuses the shipped `TableSchema` shape rather than introducing a
- * second schema vocabulary: the providers already produce it, the UI already
- * renders it, and it is serializable as it stands.
  */
-export interface AgentContextSnapshot {
+export interface AgentContextSnapshot extends AgentInventory {
   readonly connectionId: string;
   /** Stable across two identical inventories; changes when the inventory does. */
   readonly fingerprint: string;
   readonly capturedAtMs: number;
-  readonly tables: readonly TableSchema[];
   /**
    * WHICH of the two readings produced this inventory (#414).
    *

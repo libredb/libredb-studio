@@ -121,11 +121,11 @@ interface Relation {
 const IMPLICIT_PRIMARY_KEY = "(primary key)";
 
 function relationsOf(snapshot: AgentContextSnapshot): readonly Relation[] {
-  const known = new Set(snapshot.tables.map((table) => table.name));
+  const known = new Set(snapshot.objects.map((table) => table.name));
   const relations: Relation[] = [];
   const seen = new Set<string>();
 
-  for (const table of snapshot.tables) {
+  for (const table of snapshot.objects) {
     for (const key of table.foreignKeys ?? []) {
       // Deduplicated on the whole edge: PostgreSQL's catalog read returns a
       // composite key as the cross product of its sides (#463), so
@@ -148,7 +148,7 @@ function relationsOf(snapshot: AgentContextSnapshot): readonly Relation[] {
 
 /** The columns worth naming when a reader is judging whether a join is cheap. */
 function keyColumns(snapshot: AgentContextSnapshot, tableName: string): string {
-  const table = snapshot.tables.find((candidate) => candidate.name === tableName);
+  const table = snapshot.objects.find((candidate) => candidate.name === tableName);
   if (table === undefined) return "";
   const primary = table.columns.filter((column) => column.isPrimary).map((column) => column.name);
   // The LEADING column of each index: an index leads on one column, and that is the
@@ -283,7 +283,7 @@ export function renderErDiagram(
 ): string {
   const relations = relationsOf(snapshot);
   const noun = options.noun ?? TABLE_INVENTORY_NOUN;
-  const header = `Relations between the ${snapshot.tables.length} ${noun.singular}(s) in this inventory, as declared foreign keys.`;
+  const header = `Relations between the ${snapshot.objects.length} ${noun.singular}(s) in this inventory, as declared foreign keys.`;
   if (relations.length === 0) {
     if (options.engineDeclaresForeignKeys === false) {
       return `${header}\nNone, and none could be: this engine does not declare foreign keys at all, so there is nothing of that kind here for a reading to have found or missed. Whatever relates these ${noun.plural} to each other is enforced somewhere other than the database, and this run has not seen it.`;
