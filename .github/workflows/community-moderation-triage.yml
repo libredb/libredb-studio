@@ -1,0 +1,155 @@
+name: Community moderation triage
+
+# Conservative, review-only moderation support.
+# This workflow never blocks users, closes content, deletes content, or checks out
+# pull-request code. It only adds a review label when several metadata signals
+# cross a configurable threshold.
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  issue_comment:
+    types: [created, edited]
+  pull_request_target:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: moderation-triage-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    if: github.actor != 'dependabot[bot]' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    env:
+      MODERATION_REVIEW_THRESHOLD: ${{ vars.MODERATION_REVIEW_THRESHOLD || '3' }}
+
+    steps:
+      - name: Evaluate metadata signals
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const payload = context.payload;
+            const eventName = context.eventName;
+
+            const subject = eventName === 'issue_comment'
+              ? payload.issue
+              : eventName === 'pull_request_target'
+                ? payload.pull_request
+                : payload.issue;
+
+            const author = eventName === 'issue_comment'
+              ? payload.comment?.user
+              : subject?.user;
+
+            const association = eventName === 'issue_comment'
+              ? payload.comment?.author_association
+              : subject?.author_association;
+
+            if (!subject || !author || author.type === 'Bot') {
+              core.info('Skipping: no supported human-authored subject found.');
+              return;
+            }
+
+            const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+            if (trustedAssociations.has(association)) {
+              core.info(`Skipping trusted repository association: ${association}.`);
+              return;
+            }
+
+            const text = eventName === 'issue_comment'
+              ? (payload.comment?.body || '')
+              : `${subject.title || ''}\n${subject.body || ''}`;
+
+            const { data: profile } = await github.rest.users.getByUsername({
+              username: author.login,
+            });
+
+            const accountAgeDays = Math.max(
+              0,
+              (Date.now() - new Date(profile.created_at).getTime()) / 86_400_000,
+            );
+
+            let score = 0;
+            const reasons = [];
+
+            if (accountAgeDays < 7) {
+              score += 3;
+              reasons.push('very new account');
+            } else if (accountAgeDays < 30) {
+              score += 2;
+              reasons.push('new account');
+            }
+
+            if (!association || association === 'NONE') {
+              score += 1;
+              reasons.push('no repository association');
+            } else if (association === 'FIRST_TIME_CONTRIBUTOR') {
+              score += 1;
+              reasons.push('first-time contributor');
+            }
+
+            const externalLinks = text.match(/https?:\/\/[^\s)>\]]+/gi) || [];
+            if (externalLinks.length >= 4) {
+              score += 1;
+              reasons.push('many external links');
+            }
+
+            const mentions = text.match(/@[A-Za-z0-9-]+/g) || [];
+            if (mentions.length >= 6) {
+              score += 1;
+              reasons.push('many user mentions');
+            }
+
+            const configuredThreshold = Number(process.env.MODERATION_REVIEW_THRESHOLD);
+            const threshold = Number.isFinite(configuredThreshold) && configuredThreshold > 0
+              ? configuredThreshold
+              : 3;
+
+            core.info(`Moderation triage score: ${score}/${threshold}.`);
+
+            if (score < threshold) {
+              core.info('No review label added.');
+              return;
+            }
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = subject.number;
+            const label = {
+              name: 'needs-human-review',
+              color: 'D4C5F9',
+              description: 'Automated triage signal; requires human review before any moderation action.',
+            };
+
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: label.name });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+
+              try {
+                await github.rest.issues.createLabel({ owner, repo, ...label });
+              } catch (createError) {
+                // Another run may have created the shared label concurrently.
+                if (createError.status !== 422) throw createError;
+              }
+            }
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number,
+              labels: [label.name],
+            });
+
+            await core.summary
+              .addHeading('Community moderation triage')
+              .addRaw(`Flagged #${issue_number} for human review.\n\n`)
+              .addRaw(`Signals: ${reasons.join(', ')}.\n\n`)
+              .addRaw('No user or content moderation action was taken automatically.')
+              .write();
