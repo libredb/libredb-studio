@@ -46,7 +46,7 @@
 
 <div dir="rtl" align="right">
 
-## <span dir="rtl">فوری آغاز</span>
+## <span dir="rtl">فوری شروعات</span>
 
 <span dir="rtl">صرف ایک کمانڈ سے مکمل SQL IDE: نہ clone کرنے کی ضرورت، نہ build کرنے کی۔</span>
 
@@ -102,7 +102,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 
 <div dir="rtl" align="right">
 
-<span dir="rtl">تمام SQL engines ایک ہی schema explorer، ER diagrams، schema comparison اور monitoring panels استعمال کرتے ہیں۔ MongoDB اور Redis SQL engines نہیں ہیں: ان میں ER diagram یا schema comparison نہیں ہوتا۔ Druid، Elasticsearch، OpenSearch اور Trino دوہری استثنائی صورتیں ہیں: HTTP پر ان کے SQL interfaces میں کوئی ایسا URI format نہیں ہے جسے یہ build سمجھ سکے، اس لیے انہیں host اور port سے configure کیا جاتا ہے، اور پیدا ہونے والی migrations اس limitation کو بیان کرتی ہیں، بجائے اس کے کہ ایسے engine کے لیے DDL گھڑ دیا جائے جس کے SQL میں column بدلنے کی statements ہی نہیں۔ Couchbase کی schema-less collections کے ساتھ بھی یہی صورت ہے۔ Search clusters کے ER diagram میں boxes تو ہوتے ہیں مگر lines نہیں: indexes foreign keys declare نہیں کرتے، اور engine model میں declare کرنے کے لیے کوئی موجود بھی نہیں۔</span>
+<span dir="rtl">تمام SQL engines ایک ہی schema explorer، ER diagrams، schema comparison اور monitoring panels استعمال کرتے ہیں۔ MongoDB اور Redis SQL engines نہیں ہیں: ان میں ER diagram یا schema comparison نہیں ہوتا۔ Druid، Elasticsearch، OpenSearch اور Trino کے ساتھ دو الگ مسائل ہیں۔ ان کے SQL interfaces HTTP پر چلتے ہیں، مگر ان میں ایسا URI format نہیں جسے یہ build سمجھ سکے، اس لیے انہیں host اور port سے configure کیا جاتا ہے۔ مزید یہ کہ ان کے SQL میں column تبدیل کرنے کی statements موجود نہیں، لہٰذا پیدا ہونے والی migrations اس limitation کو بیان کرتی ہیں؛ کسی غیر موجود DDL کو گھڑنے کی کوشش نہیں کرتیں۔ Couchbase کی schema-less collections کے ساتھ بھی یہی صورت ہے۔ Search clusters کے ER diagram میں boxes تو ہوتے ہیں مگر lines نہیں: indexes foreign keys declare نہیں کرتے، اور engine model میں declare کرنے کے لیے کوئی موجود بھی نہیں۔</span>
 
 </div>
 
@@ -154,7 +154,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 <li><span dir="rtl"><strong><span dir="ltr">Query security analysis</span></strong>: destructive statements (DELETE، DROP، TRUNCATE) کے لیے execution سے پہلے risk evaluation۔</span></li>
 <li><span dir="rtl"><strong><span dir="ltr">Query explanation</span></strong>: EXPLAIN plans کو سادہ زبان میں، optimization suggestions کے ساتھ۔</span></li>
 <li><span dir="rtl"><strong><span dir="ltr">Schema knowledge</span></strong>: connected database کا schema context کے طور پر بھیجا جاتا ہے، اس لیے explanation آپ کی اپنی tables اور columns کے نام لیتی ہے۔</span></li>
-<li><span dir="rtl"><strong><span dir="ltr">Data profiler summary</span></strong>: profiler کی فی-column statistics کا نثری خلاصہ۔ اس context میں ہر column کے <code dir="ltr">min</code> اور <code dir="ltr">max</code> شامل ہیں، جو آپ کے data کی حقیقی values ہیں؛ <a href="docs/AGENT_DATA_FLOW.md">Agent Data Flow</a> ملاحظہ کریں۔</span></li>
+<li><span dir="rtl"><strong><span dir="ltr">Data profiler summary</span></strong>: profiler کی فی-column statistics کی summary۔ اس context میں ہر column کے <code dir="ltr">min</code> اور <code dir="ltr">max</code> شامل ہیں، جو آپ کے data کی حقیقی values ہیں؛ <a href="docs/AGENT_DATA_FLOW.md">Agent Data Flow</a> ملاحظہ کریں۔</span></li>
 </ul>
 
 ### <span dir="rtl"><span dir="ltr">Data management</span></span>
@@ -233,7 +233,7 @@ npm i @libredb/studio
 
 <span dir="rtl">Studio npm package کے طور پر بھی شائع ہوتا ہے، اس لیے اسے براہِ راست آپ کی application میں embed کیا جا سکتا ہے۔ اگر آپ کا product اپنے users کے لیے databases بناتا ہے تو editor کے لیے یہی سب سے مفید جگہ ہے۔</span>
 
-## <span dir="rtl">قیمت کی لکیر کہاں ہے</span>
+## <span dir="rtl">کیا مفت ہے اور کیا بامعاوضہ ہے؟</span>
 
 <span dir="rtl">Studio MIT ہے کیونکہ اسے ہر جگہ جانے کے قابل ہونا چاہیے۔ جس چیز کی قیمت لی جاتی ہے وہ libredb-platform ہے، اور اس میں دوسرا فریق اسے operate کرنے کی ذمہ داری لیتا ہے: hosting، multi-tenancy، billing اور support۔ یہ کوئی feature نہیں جسے دیوار کے پیچھے منتقل کر دیا گیا ہو۔</span>
 
