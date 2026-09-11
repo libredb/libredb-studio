@@ -502,14 +502,17 @@ whole database, and for every kind except `trigger` it equals the sum over the s
 
 | Read | table | view | procedure | function | trigger | synonym | sequence |
 |---|---|---|---|---|---|---|---|
-| `countObjects(['libredb_objects'])` | 3 | 1 | 1 | 3 | **4** | 1 | 1 |
-| `countObjects(['libredb_objects','app'])` | 2 | 1 | 1 | 3 | 1 | 1 | 1 |
+| `countObjects(['libredb_objects'])` | 5 | 1 | 1 | 3 | **4** | 1 | 1 |
+| `countObjects(['libredb_objects','app'])` | 4 | 1 | 1 | 3 | 1 | 1 | 1 |
 | `countObjects(['libredb_objects','reporting'])` | 1 | 0 | 0 | 0 | 1 | 0 | 0 |
-| sum over the listed schemas | 3 | 1 | 1 | 3 | **2** | 1 | 1 |
+| sum over the listed schemas | 5 | 1 | 1 | 3 | **2** | 1 | 1 |
 
-The trigger column is the one that does not add up, and that is the engine: the two DATABASE-scoped
-DDL triggers belong to no schema, so they are counted at the database level only, which is also the
-depth their address has.
+Four of those five tables are in `app`, and two of the four are the halves of the temporal pair
+below: a table count of 3 here would be this table describing a fixture that no longer exists.
+The only column that does not add up is `trigger`, for the reason underneath.
+
+That trigger column is the engine: the two DATABASE-scoped DDL triggers belong to no schema, so
+they are counted at the database level only, which is also the depth their address has.
 
 #### Seven kinds, and the catalog that answers for each
 

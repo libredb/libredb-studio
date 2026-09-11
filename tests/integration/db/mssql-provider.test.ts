@@ -2319,7 +2319,7 @@ describe("SQL Server object containers, listings and detail", () => {
     expect(databaseRead.inputs).toEqual({});
 
     // A different number from the same fixture, because the schema really is a filter and
-    // not a decoration: app holds two of the three tables.
+    // not a decoration: app holds four of the five tables, `reporting` the fifth.
     const oneSchema = await provider.countObjects(["libredb_objects", "app"]);
     expect(oneSchema.table).toEqual({ count: 4 });
     const schemaRead = issued.at(-1)!;
@@ -2415,6 +2415,18 @@ describe("SQL Server object containers, listings and detail", () => {
     await provider.disconnect();
   });
 
+  test("a fault of OURS is raised, not dressed as the engine's refusal", async () => {
+    const provider = await connectedForObjects();
+    // `{ unavailable }` is rendered to a person verbatim as the reason a folder has no
+    // number, so it must only ever carry a sentence SQL Server said. The catch therefore
+    // covers the READ and not the mapping: here the driver answers a recordset that is not
+    // iterable, the mapping throws, and that surfaces as a thrown error rather than as
+    // "the engine refused" against all seven kinds.
+    mockQueryFn = async () => ({ recordset: {}, rowsAffected: [0] });
+    await expect(provider.countObjects(["libredb_objects", "app"])).rejects.toThrow(/is not iterable/);
+    await provider.disconnect();
+  });
+
   test("lists objects addressed [database, schema, name], with the engine's row count", async () => {
     const provider = await connectedForObjects();
 
@@ -2449,6 +2461,43 @@ describe("SQL Server object containers, listings and detail", () => {
       ["libredb_objects", "reporting", "daily"],
     ]);
 
+    await provider.disconnect();
+  });
+
+  test("a row count that was not measured is ABSENT, never 0", async () => {
+    const provider = await connectedForObjects();
+    // Its own listing rather than a row added to the measured fixture above, because these
+    // two shapes are not in it: the fixture mirrors what the live server answers, and it
+    // answers a number for all five tables.
+    //
+    // NULL is ENGINE-REACHABLE: `SUM(p.rows)` over no matching partition row answers NULL
+    // through the LEFT JOIN, and reporting that as 0 would claim a measurement nobody made.
+    // The unparseable value is a DRIVER-shape guard instead - tedious returns this column as
+    // a number here - and it is pinned because `rowCount` is typed `number`, so a NaN would
+    // reach the wire as `null` with nothing to tell it from the absence above.
+    //
+    // Both arms are pinned by a MUTATION and not by the coverage number: measured on
+    // bun 1.4.2, raw lcov reported `DA:...,9` for both `return undefined` lines while
+    // replacing either one changed nothing in the suite. Standing ruling 5b says the line
+    // gate cannot see a folded arm; here it reported hits for arms that never ran at all.
+    mockQueryFn = async (sql: string, inputs: Record<string, unknown> = {}) => {
+      issued.push({ sql, inputs });
+      if (sql.toUpperCase().includes("SELECT 1 AS TEST")) return { recordset: [{ test: 1 }], rowsAffected: [1] };
+      return {
+        recordset: [
+          { schema_name: "app", name: "counted", row_count: 12 },
+          { schema_name: "app", name: "no_partition_row", row_count: null },
+          { schema_name: "app", name: "unreadable", row_count: "not a number" },
+        ],
+        rowsAffected: [3],
+      };
+    };
+
+    const tables = await provider.listObjects(["libredb_objects", "app"], "table");
+    expect(tables.map((object) => object.rowCount)).toEqual([12, undefined, undefined]);
+    expect(Object.hasOwn(tables[0], "rowCount")).toBe(true);
+    expect(Object.hasOwn(tables[1], "rowCount")).toBe(false);
+    expect(Object.hasOwn(tables[2], "rowCount")).toBe(false);
     await provider.disconnect();
   });
 
@@ -2709,6 +2758,40 @@ describe("SQL Server object containers, listings and detail", () => {
     await expect(provider.describeObject(["x"], "trigger")).rejects.toThrow(/"trigger" path is/);
     await expect(provider.describeObject(["libredb_objects", "app", "orders"], "package")).rejects.toThrow(
       'SQL Server declares no object kind "package"',
+    );
+    await provider.disconnect();
+  });
+
+  test("the attached-kind shapes are read from the DECLARATION, not from a position", async () => {
+    const provider = await connectedForObjects();
+    const real = provider.getCapabilities();
+
+    // Levels DECLARED IN THE OTHER ORDER. Filtering for the level whose id is `catalog` and
+    // taking the first level by position are the same thing on every engine that declares a
+    // catalog first, which is every engine that has one - so this swap is the only way to
+    // tell them apart, and standing ruling 5g's closing line asks for exactly this rather
+    // than a named survivor. The refusal spells the catalog level's own label either way;
+    // under the swap a positional read would spell `[schema, name]`.
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+      ],
+    });
+    await expect(provider.describeObject(["only-one"], "trigger")).rejects.toThrow(
+      '"trigger" path is [schema, database, table, name] or [database, name], received ["only-one"]',
+    );
+
+    // And with no catalog level at all the second shape is GONE rather than empty: an empty
+    // filter spreads to nothing, so `["name"]` would accept a container-less single segment
+    // for an attached kind and answer a detail for it.
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+    });
+    await expect(provider.describeObject(["stamp_order"], "trigger")).rejects.toThrow(
+      '"trigger" path is [schema, table, name], received ["stamp_order"]',
     );
     await provider.disconnect();
   });

@@ -911,10 +911,15 @@ function objectShapes(capabilities: ProviderCapabilities, spec: ObjectKindSpec):
   const levels = declaredLevels(capabilities);
   const names = (specs: readonly ContainerLevelSpec[]) => specs.map((level) => level.label.toLowerCase());
   if (spec.attachedTo === undefined) return [[...names(levels), "name"]];
-  return [
-    [...names(levels), spec.attachedTo, "name"],
-    [...names(levels.filter((level) => level.id === "catalog")), "name"],
-  ];
+
+  const shapes = [[...names(levels), spec.attachedTo, "name"]];
+  // Only when the engine HAS a catalog level. An empty filter would spread to nothing and
+  // leave `["name"]`, a container-less single segment - unreachable on SQL Server, and
+  // reachable in any one-level provider that copies this helper, where it would accept a
+  // bare object name for an attached kind and answer a detail for it.
+  const catalogLevels = levels.filter((level) => level.id === "catalog");
+  if (catalogLevels.length > 0) shapes.push([...names(catalogLevels), "name"]);
+  return shapes;
 }
 
 /**
@@ -979,11 +984,33 @@ function objectListingStatement(
   return { sql: listObjectsSql(catalog, types, bySchema, withRowCount), rows: "schema" };
 }
 
-/** `SUM(p.rows)` as a number, or nothing when the statement did not select it. */
+/**
+ * `SUM(p.rows)` as a number, or nothing - and absence is a different fact from 0.
+ *
+ * Three arms, each on its own LINE so the 100 percent line gate can see them: standing
+ * ruling 5b's warning is that an arm folded onto a shared line is invisible to a line
+ * counter, and the fixture varies all three rather than trusting the number.
+ *
+ * `undefined` is the statement not selecting the column at all, which is every kind but
+ * `table`. NULL is engine-reachable through the LEFT JOIN: `SUM()` over no matching
+ * partition row answers NULL, and reporting that as 0 would claim a measurement nobody
+ * made. The unparseable arm is a DRIVER-shape guard rather than an engine value - tedious
+ * returns this column as a number on the fixture server - and it is here because
+ * `DatabaseObject.rowCount` is typed `number` and NaN would cross the wire as `null`
+ * anyway, one key later and with no way to tell it from the absence above.
+ */
 function measuredRowCount(raw: number | string | null | undefined): number | undefined {
-  if (raw === null || raw === undefined) return undefined;
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw === null) {
+    return undefined;
+  }
   const parsed = Number(raw);
-  return Number.isNaN(parsed) ? undefined : parsed;
+  if (Number.isNaN(parsed)) {
+    return undefined;
+  }
+  return parsed;
 }
 
 /**
@@ -1687,16 +1714,21 @@ export class MSSQLProvider extends SQLBaseProvider {
     const counts = seedZeroCounts(declared);
     const sql = countsSql(this.objectCatalog(catalog), schema !== undefined);
 
+    // The catch covers the READ and nothing else. Mapping the rows inside it would render a
+    // fault of ours as SQL Server's own refusal sentence against every kind, which is our bug
+    // wearing the engine's words - and `{ unavailable }` is rendered to a person verbatim.
+    let rows: KindCountRow[];
     try {
       const result = await this.objectRequest(schema === undefined ? {} : { schema }).query(sql);
-      applyKindCounts(counts, (result.recordset || []) as KindCountRow[]);
-      return counts;
+      rows = (result.recordset || []) as KindCountRow[];
     } catch (error) {
       return unavailableCounts(
         declared.map((kind) => kind.id),
         error,
       );
     }
+    applyKindCounts(counts, rows);
+    return counts;
   }
 
   /**
