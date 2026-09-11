@@ -4,7 +4,7 @@
  * Uses the REAL @libredb/libredb package against a temp file — no mock.module(),
  * so this suite is exempt from the mock-isolation hazard in CLAUDE.md.
  */
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import {
   LIBREDB_ACTIVE_SESSIONS_REFUSAL,
   LIBREDB_INDEX_STATS_REFUSAL,
@@ -14,7 +14,10 @@ import {
 } from "@/lib/db/providers/embedded/libredb";
 import { ConnectionError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
-import { open, kv, doc, table } from "@libredb/libredb";
+import { open, kv, doc, table, CATALOG_PREFIX } from "@libredb/libredb";
+import { buildObjectFixture } from "../../../docker/libredb-init/01-object-fixture";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
+import { containerDepth } from "@/lib/db/object-kinds";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -705,5 +708,256 @@ describe("LibreDBProvider — monitoring", () => {
     await provider.connect();
     await expect(provider.runMaintenance("vacuum")).rejects.toThrow(/not supported/i);
     await provider.disconnect();
+  });
+});
+
+// ============================================================================
+// Object surface (#789)
+//
+// Built by `docker/libredb-init/01-object-fixture.ts`, imported rather than retyped:
+// standing ruling 5i makes the fixture part of the deliverable, and this engine is
+// embedded, so the fixture is a module a person can also run to get a durable file
+// instead of a compose mount.
+// ============================================================================
+
+describe("LibreDBProvider object surface (#789)", () => {
+  let fixtureDir: string;
+  let fixtureFile: string;
+  let provider: LibreDBProvider;
+
+  beforeEach(async () => {
+    fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "libredb-objects-"));
+    fixtureFile = path.join(fixtureDir, "object-fixture.libredb");
+    buildObjectFixture(fixtureFile);
+    provider = new LibreDBProvider(makeConn(fixtureFile));
+    await provider.connect();
+  });
+
+  afterEach(async () => {
+    await provider.disconnect();
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  });
+
+  test("declares the three kinds the store holds and no container level", () => {
+    const capabilities = provider.getCapabilities();
+    expect(containerDepth(capabilities)).toBe(0);
+    expect(capabilities.objectKinds?.map((kind) => [kind.id, kind.role])).toEqual([
+      ["table", "relation"],
+      ["collection", "relation"],
+      ["keyspace", "relation"],
+    ]);
+    // No kind accepts row writes: the grammar has get/put/delete/prefix/range and no
+    // INSERT, so Generate Test Data and the create-object item have nothing to emit.
+    expect(capabilities.objectKinds?.some((kind) => kind.acceptsRowWrites === true)).toBe(false);
+    // Nothing here has readable source: the package publishes no routine of any kind.
+    expect(capabilities.objectKinds?.some((kind) => kind.hasSource === true)).toBe(false);
+  });
+
+  test("object surface conformance against the fixture", async () => {
+    await assertObjectSurface(provider, {
+      containers: [],
+      kinds: { table: 3, collection: 2, keyspace: 3 },
+      sampleObject: { path: ["employees"], kind: "table" },
+    });
+  });
+
+  test("listContainers answers no container, because the engine has none", async () => {
+    expect(await provider.listContainers()).toEqual([]);
+  });
+
+  test("the catalog names the tables and collections; the scan derives the rest", async () => {
+    expect(await provider.countObjects([])).toEqual({
+      table: { count: 3 },
+      collection: { count: 2 },
+      keyspace: { count: 3 },
+    });
+
+    // Addressed by the CATALOG name, labelled with the key pattern `getSchema()` uses.
+    // SORTED, and `applicants` is the row that proves it: the enumerator reaches it after
+    // `employees`, because `scanGroups` appends a cataloged namespace the scan never saw.
+    expect(await provider.listObjects([], "table")).toEqual([
+      { path: ["applicants"], name: "applicants:*", kind: "table", rowCount: 0 },
+      { path: ["employees"], name: "employees:*", kind: "table", rowCount: 2 },
+      // Cataloged and empty: the scan reached none of its keys because it has none, and
+      // the catalog still names it. A count of 0 rows here is the engine answering none.
+      { path: ["vacancies"], name: "vacancies:*", kind: "table", rowCount: 0 },
+    ]);
+    expect(await provider.listObjects([], "collection")).toEqual([
+      { path: ["articles"], name: "articles:*", kind: "collection", rowCount: 2 },
+      { path: ["notes"], name: "notes:*", kind: "collection", rowCount: 1 },
+    ]);
+    // The derived groupings, and NOT the four cataloged namespaces whose keys they would
+    // otherwise double-count.
+    expect(await provider.listObjects([], "keyspace")).toEqual([
+      { path: ["cache:*"], name: "cache:*", kind: "keyspace", rowCount: 2 },
+      { path: ["notes"], name: "notes", kind: "keyspace", rowCount: 1 },
+      { path: ["standalone"], name: "standalone", kind: "keyspace", rowCount: 1 },
+    ]);
+  });
+
+  test("one name, two kinds: the collision the catalog allows is described by KIND", async () => {
+    // Measured on @libredb/libredb 0.2.2: a cataloged collection `notes` and a bare key
+    // `notes` coexist, so the same path answers under two kinds. The tree identifies a row
+    // by path PLUS kind, which is why this is legal rather than a provider defect.
+    const collection = await provider.describeObject(["notes"], "collection");
+    const key = await provider.describeObject(["notes"], "keyspace");
+    expect(collection.columns.map((column) => column.name)).toEqual(["id", "document"]);
+    expect(key.columns.map((column) => column.name)).toEqual(["key", "value"]);
+    expect(collection.path).toEqual(["notes"]);
+    expect(key.path).toEqual(["notes"]);
+  });
+
+  test("describeObject answers a cataloged table's real columns, and no index or foreign key", async () => {
+    const detail = await provider.describeObject(["employees"], "table");
+    expect(detail.columns).toEqual([
+      { name: "id", type: "string", nullable: false, isPrimary: true },
+      { name: "name", type: "string", nullable: false, isPrimary: false },
+      { name: "salary", type: "number", nullable: false, isPrimary: false },
+      { name: "active", type: "boolean", nullable: false, isPrimary: false },
+    ]);
+    // Facts about the engine: the kernel has no secondary index and the catalog records
+    // nothing that references another namespace.
+    expect(detail.indexes).toEqual([]);
+    expect(detail.foreignKeys).toEqual([]);
+  });
+
+  test("an object the current read does not hold raises rather than answering an empty shape", async () => {
+    await expect(provider.describeObject(["no_such_table"], "table")).rejects.toThrow(
+      /holds no "table" named "no_such_table"/,
+    );
+    // A cataloged name under the WRONG kind is the same refusal: the kind decides.
+    await expect(provider.describeObject(["employees"], "collection")).rejects.toThrow(
+      /holds no "collection" named "employees"/,
+    );
+  });
+
+  test("an undeclared kind is refused by the DECLARATION, on both methods", async () => {
+    await expect(provider.listObjects([], "view")).rejects.toThrow(/declares no object kind "view"/);
+    await expect(provider.describeObject(["x"], "view")).rejects.toThrow(/declares no object kind "view"/);
+  });
+
+  test("a container path of another engine's shape is refused, from the declaration", async () => {
+    await expect(provider.countObjects(["main"])).rejects.toThrow(/container path is empty, received \["main"\]/);
+    await expect(provider.listObjects(["main"], "table")).rejects.toThrow(/container path is empty/);
+    await expect(provider.describeObject(["main", "employees"], "table")).rejects.toThrow(
+      /path is \[name\], received \["main","employees"\]/,
+    );
+  });
+
+  /**
+   * Standing ruling 5g, the one test every provider owes whatever its engine's depth.
+   *
+   * LibreDB declares ZERO container levels, so all three forbidden spellings - a hardcoded
+   * length comparison, a positional bind for the object name, and `path[0]` for a
+   * container segment - are behaviour-identical here and none of them can be mutated by a
+   * fixture this engine can produce. So the DECLARATION is varied instead: a two-level
+   * one is spied in, and the call is driven all the way to a BOUND VALUE rather than to a
+   * refusal, which is the part ruling 5g says keeps being skipped.
+   *
+   * Against the derivations: `assertContainerPath` written as `container.length !== 0`
+   * would refuse `["cat", "sch"]`, `enumerate` written with a literal root would answer
+   * one-segment paths, `describeObject`'s depth check written as `path.length !== 1` would
+   * refuse the three-segment path, and its name read as `path[0]` would look up "cat" and
+   * raise instead of describing `employees`.
+   */
+  test("a two-level declaration is followed to a bound value, not to a refusal", async () => {
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+
+    const container = ["cat", "sch"];
+    expect(await provider.countObjects(container)).toEqual({
+      table: { count: 3 },
+      collection: { count: 2 },
+      keyspace: { count: 3 },
+    });
+    expect((await provider.listObjects(container, "table")).map((object) => object.path)).toEqual([
+      ["cat", "sch", "applicants"],
+      ["cat", "sch", "employees"],
+      ["cat", "sch", "vacancies"],
+    ]);
+
+    const detail = await provider.describeObject(["cat", "sch", "employees"], "table");
+    expect(detail.path).toEqual(["cat", "sch", "employees"]);
+    expect(detail.columns.map((column) => column.name)).toEqual(["id", "name", "salary", "active"]);
+
+    // The shape the two-level declaration now refuses is the one it accepted above.
+    await expect(provider.countObjects([])).rejects.toThrow(/container path is \[catalog, schema\], received \[\]/);
+  });
+
+  /**
+   * Standing ruling 5a, enumerate the ENGINE and not the fixture.
+   *
+   * `CatalogEntry.kind` is a union of three and only `relational` and `document` are ever
+   * written by @libredb/libredb 0.2.2 (measured: a raw kv write leaves the catalog
+   * untouched, and the two lens constructors are its only writers). The third arm, `kv`,
+   * and any arm a later release adds, must still reach the tree rather than falling out of
+   * both the count and the listing, so the mapping is total and lands on the derived
+   * grouping where the namespace's keys are visible anyway.
+   *
+   * No fixture this package can build produces such an entry, so the catalog key is
+   * written through the RAW kv lens, which is the layer the package documents as having
+   * full keyspace access. That is the only way to hand the provider the arm the engine's
+   * own type publishes and its writers do not yet emit.
+   */
+  test("a catalog entry this declaration does not model keeps its keys in the derived grouping", async () => {
+    await provider.disconnect();
+    const writer = open({ path: fixtureFile });
+    kv(writer).set(`${CATALOG_PREFIX}legacy`, JSON.stringify({ kind: "kv" }));
+    kv(writer).set("legacy:1", "a namespace cataloged under an arm this provider does not model");
+    writer.close();
+    await provider.connect();
+
+    const counts = await provider.countObjects([]);
+    expect(counts).toEqual({ table: { count: 3 }, collection: { count: 2 }, keyspace: { count: 4 } });
+    const keyspaces = await provider.listObjects([], "keyspace");
+    expect(keyspaces.map((object) => object.path)).toEqual([["cache:*"], ["legacy:*"], ["notes"], ["standalone"]]);
+    // And it describes, so the row is not a dead entry in a listing.
+    const detail = await provider.describeObject(["legacy:*"], "keyspace");
+    expect(detail.columns.map((column) => column.name)).toEqual(["key", "value"]);
+  });
+
+  /**
+   * Standing ruling 4: `tablesAreDerivedGroupings` is a REFUSAL and it had not reached the
+   * object model. Task 20 carried it for Redis and this is the other engine that sets it.
+   *
+   * It STAYS true here, and it is asserted in the same test as the declaration so the
+   * refusal cannot quietly disappear the day somebody edits `objectKinds`. The split is
+   * the one `row-actions.ts` documents: no kind declares `acceptsRowWrites`, so Generate
+   * Test Data and the create item are withheld by the kinds; the single maintenance
+   * operation is `perEntity: false`, so `maintenanceControl` withholds the per-row links;
+   * and Profile reads this engine-wide flag, which is the gate that has no kind-level
+   * declaration behind it.
+   *
+   * The flag costs the two CATALOGED kinds their Profile item as well, and measured, that
+   * costs nothing: `POST /api/db/profile` has no arm for this engine. It branches on
+   * `queryLanguage === "sql"`, and this provider declares `json`, so a profile of a
+   * LibreDB table is sent as a MongoDB aggregate pipeline, which the grammar rejects with
+   * the message this test pins.
+   */
+  test("the derived-grouping refusal survives the declaration, and Profile could not work anyway", async () => {
+    expect(provider.getCapabilities().tablesAreDerivedGroupings).toBe(true);
+    expect(provider.getCapabilities().supportsMaintenance).toBe(false);
+    await expect(
+      provider.query(JSON.stringify({ collection: "employees", operation: "aggregate", pipeline: [] })),
+    ).rejects.toThrow(/Unknown command .* Supported: get, put, delete, prefix, range/);
+  });
+
+  test("the object surface never opens a second handle on the single-writer file", async () => {
+    // `singleWriterFile`: `open({ path })` takes an exclusive `<path>.lock` sidecar, so a
+    // second open throws LOCKED. If any object method opened its own handle it would fail
+    // here, where the provider already holds the file.
+    expect(provider.getCapabilities().singleWriterFile).toBe(true);
+    expect(() => open({ path: fixtureFile })).toThrow();
+    await provider.countObjects([]);
+    await provider.listObjects([], "table");
+    await provider.describeObject(["employees"], "table");
+    // Still usable afterwards: nothing above took or dropped the lock.
+    expect((await provider.getSchema()).length).toBeGreaterThan(0);
   });
 });

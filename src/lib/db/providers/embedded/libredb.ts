@@ -39,7 +39,14 @@ import {
   type TableStats,
   type IndexStats,
   type StorageStats,
+  type Container,
+  type ContainerLevelSpec,
+  type DatabaseObject,
+  type KindCount,
+  type ObjectDetail,
+  type ObjectKindSpec,
 } from "../../types";
+import { containerDepth, declaredKinds, findKind } from "../../object-kinds";
 import { DatabaseConfigError, ConnectionError, QueryError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
@@ -123,6 +130,141 @@ export const LIBREDB_INDEX_STATS_REFUSAL =
 export const LIBREDB_TABLE_STATS_TRUNCATED = `LibreDB keeps no row counter, so this panel counts each namespace's keys - and that scan stops at ${LIBREDB_MAX_KEY_SCAN.toLocaleString("en-US")} keys, which this database exceeds. Every count would be short by an unknown amount, so none is reported. The namespaces themselves are in the schema tree.`;
 
 // ============================================================================
+// Object model (issue #789)
+// ============================================================================
+
+/**
+ * The three kinds this store holds, and the measurement that produced the list.
+ *
+ * Nothing external describes this engine's object surface, so the list below is a
+ * MEASUREMENT of `@libredb/libredb` 0.2.2 rather than a reading of anyone's
+ * documentation. Two things were enumerated: the package's entire export surface, and
+ * a database opened cold after being written through every lens it publishes.
+ *
+ * The whole export surface is twelve names - `open`, `kv`, `doc`, `table`, `catalog`,
+ * `isReservedKey`, `CATALOG_PREFIX`, `RESERVED_MARKER`, `nodeFileSystem`,
+ * `readonlyFileSystem`, `version`, `LibreDbError` - and a `Database` handle publishes
+ * exactly `close` and `transact`. There is no view, no routine, no procedure, no
+ * trigger, no index, no sequence and no constraint anywhere in it, so none of those is
+ * declared here: a kind an engine cannot have is a folder whose zero badge reads as a
+ * measurement (standing ruling 4).
+ *
+ * What it DOES hold is a persisted catalog, and that is why the answer is not the single
+ * kind Redis has. Read cold, the catalog is a registry of NAMED namespaces: a `table()`
+ * records `{ kind: "relational", schema }` and a `doc()` records `{ kind: "document" }`
+ * on its first write, both under the reserved key prefix, and both are addressed by the
+ * name the person who created them chose. Those two are objects somebody named. The
+ * third kind is not: `keyspace` is the prefix grouping this server derives by collapsing
+ * a bounded scan of raw keys, which is what `tablesAreDerivedGroupings` says and what the
+ * refusal below carries.
+ *
+ * `CatalogEntry.kind` publishes a THIRD arm, `"kv"`, which no write in the package ever
+ * records (measured: raw `kv` writes leave the catalog untouched, and the two lens
+ * constructors are the only writers). It is not given a kind of its own, and the mapping
+ * in `objectKindFor` is TOTAL rather than a match over the two arms that exist: a catalog
+ * entry this declaration does not model keeps its keys in the derived `keyspace`
+ * grouping, where they are still counted and still listed, instead of falling out of both
+ * the count and the listing (standing ruling 5a).
+ *
+ * No kind declares `acceptsRowWrites`: the query grammar is `get` / `put` / `delete` /
+ * `prefix` / `range` and has no INSERT, so Generate Test Data would have nothing to emit
+ * and the folder's create item would open a modal this engine cannot serve
+ * (`supportsCreateTable: false`). No kind declares `hasSource` either, for the reason the
+ * export list gives: there is no routine here to have source.
+ */
+const LIBREDB_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
+  { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+  { id: "collection", role: "relation", label: "Collection", labelPlural: "Collections" },
+  { id: "keyspace", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" },
+] as const);
+
+/**
+ * Which declared kind a scanned namespace belongs to, from the CATALOG and nothing else.
+ *
+ * Total on purpose, and the default arm is load-bearing rather than defensive. The
+ * package's `CatalogEntry.kind` is a union of three and only two of them are ever
+ * written today, so a match over exactly those two would silently drop a namespace out
+ * of the tree the day a third appears - the shape standing ruling 5a names as the worst
+ * defect in this epic, because the count and the listing lose it together and every
+ * conformance check still passes. Anything unmodelled lands on the derived grouping,
+ * which is where its raw keys are visible anyway.
+ *
+ * Nothing here reads the NAME to decide what it is holding: a cataloged collection and a
+ * bare key may legitimately be called the same thing, and the fixture holds exactly that
+ * pair.
+ */
+function objectKindFor(entry: LibreCatalogEntry | undefined): string {
+  if (entry?.kind === "relational") return "table";
+  if (entry?.kind === "document") return "collection";
+  return "keyspace";
+}
+
+/**
+ * The container levels this provider declares, sliced to the depth `containerDepth()`
+ * reports.
+ *
+ * One reader for the whole file, so the depth and the level list can never be taken by
+ * two different rules: `containerDepth()` decides, never `containerLevels.length`, and
+ * absent and empty are the same fact. On LibreDB this answers the empty array, and that
+ * is the engine rather than a degenerate case - a database is ONE FILE with one flat
+ * namespace, with no catalog and no schema above it, so every object is addressed at the
+ * root container.
+ */
+function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerLevelSpec[] {
+  return (capabilities.containerLevels ?? []).slice(0, containerDepth(capabilities));
+}
+
+/**
+ * Refuses a container path that is not the shape the DECLARATION describes.
+ *
+ * On LibreDB the only valid container path is the empty one, and `container.length !== 0`
+ * is NOT how that is written: the depth comes from `containerDepth()` through
+ * `declaredLevels` and the segment names from the declared labels, so the check and its
+ * message are the same array. A provider copying this onto a one- or two-level engine
+ * inherits a derivation rather than a literal that would refuse every valid path there
+ * (standing ruling 5g).
+ *
+ * It raises rather than answering an empty folder, because a path of another shape came
+ * from a caller holding another engine's model, and an empty folder looks exactly like a
+ * database holding nothing.
+ */
+function assertContainerPath(capabilities: ProviderCapabilities, container: readonly string[]): void {
+  const levels = declaredLevels(capabilities);
+  if (container.length === levels.length) return;
+  const shape = levels.length === 0 ? "empty" : `[${levels.map((level) => level.label.toLowerCase()).join(", ")}]`;
+  throw new QueryError(`A LibreDB container path is ${shape}, received ${JSON.stringify(container)}`, "libredb");
+}
+
+/**
+ * Order two paths segment by segment.
+ *
+ * Never `JSON.stringify(path)`: at mixed depth the deeper path sorts first, because `,`
+ * is below `]`, and JSON escaping reorders exotic names. This is the fourth-plus copy in
+ * the repo and Task 28's sweep hoists them all into `object-kinds.ts`; it is written the
+ * settled way here so that sweep is a deletion (standing ruling 5h).
+ */
+function comparePaths(left: readonly string[], right: readonly string[]): number {
+  const shared = Math.min(left.length, right.length);
+  for (let index = 0; index < shared; index += 1) {
+    if (left[index] < right[index]) return -1;
+    if (left[index] > right[index]) return 1;
+  }
+  return left.length - right.length;
+}
+
+/** One enumerated object, with the two things `describeObject` needs to describe it. */
+interface LibreDBEnumeratedObject {
+  readonly object: DatabaseObject;
+  /** The catalog entry that named it. Absent for a derived grouping. */
+  readonly entry: LibreCatalogEntry | undefined;
+  /** The scanned key-prefix group it owns: `employees:*` for the table `employees`. */
+  readonly groupName: string;
+  /** The keys the bounded walk saw under it. Carried so `describeObject` can rebuild the
+   * SAME `TableSchema` the flat model builds, rather than a second shape with a 0 in it. */
+  readonly rowCount: number;
+}
+
+// ============================================================================
 // LibreDB Provider
 // ============================================================================
 
@@ -161,6 +303,11 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // grouped by their prefix, so the rows are this server's summary of the keys that
       // scan reached rather than objects the engine declares (#414).
       tablesAreDerivedGroupings: true,
+      // No container level, and that is the engine rather than an omission: a LibreDB
+      // database is ONE FILE holding one flat namespace, with nothing above it to list.
+      // `containerLevels` is therefore absent, which `containerDepth()` reads as 0 -
+      // absent and `[]` are the same fact and only that helper is allowed to decide it.
+      objectKinds: LIBREDB_OBJECT_KINDS,
       // `lib.open({ path })` takes an exclusive `<path>.lock` sidecar, so a second
       // open of a file this process already holds throws `LOCKED` rather than
       // returning a second handle. The two callers that used to open one - the
@@ -399,7 +546,19 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     // group (no colon) is raw kv and must never be "upgraded" to relational /
     // document columns, even if its name happens to match a catalog namespace.
     if (!groupName.endsWith(":*")) return undefined;
-    return registry.get(groupName.slice(0, -2));
+    return registry.get(LibreDBProvider.namespaceOfGroup(groupName));
+  }
+
+  /**
+   * The catalog namespace a scanned prefix group belongs to: `employees:*` -> `employees`.
+   *
+   * One spelling for the whole file, so the group-to-namespace mapping cannot be written
+   * one way where an entry is LOOKED UP and another way where an object is ADDRESSED.
+   * Only ever called on a group name `catalogEntryFor` has already accepted, which is why
+   * it can strip the two trailing characters unconditionally.
+   */
+  private static namespaceOfGroup(groupName: string): string {
+    return groupName.slice(0, -2);
   }
 
   /**
@@ -583,6 +742,207 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       rows.push({ key, value: this.renderValue(value) });
     }
     return { rows, fields: ["key", "value"], rowCount: rows.length };
+  }
+
+  // --------------------------------------------------------------------------
+  // Object model (#789)
+  //
+  // Every read below goes through `this.db` / `this.kv`, the handle `connect()` already
+  // holds, and nothing here calls `lib.open` a second time. That is not style: this is
+  // the one engine that declares `singleWriterFile`, because `open({ path })` takes an
+  // exclusive `<path>.lock` sidecar and a second open of the same file throws `LOCKED`.
+  // A second handle opened for an object read would lock the session out of its own
+  // database (`findOpenSingleWriterProvider`, D3 and B49).
+  // --------------------------------------------------------------------------
+
+  /**
+   * No containers, because the engine has none.
+   *
+   * A LibreDB database is one file holding one flat namespace: there is no catalog, no
+   * schema, no keyspace and no numbered database to select, so every object is addressed
+   * at the root container and this answers the empty array. `getCapabilities()` declares
+   * no `containerLevels` to match, and the two are read through `containerDepth()` so
+   * they cannot disagree.
+   */
+  public async listContainers(): Promise<Container[]> {
+    this.ensureConnected();
+    return [];
+  }
+
+  /**
+   * THE single enumerator behind all three object methods, and the seam standing ruling
+   * 5f is held on.
+   *
+   * The rule is that the listing must contain exactly what the count counted. On a SQL
+   * engine that is a warning about two `WHERE` clauses drifting apart; here there is no
+   * statement layer at all, so the seam is a METHOD: this one reads the catalog and walks
+   * the keyspace, and `countObjects`, `listObjects` and `describeObject` all read what it
+   * returns and nothing else. A count is the LENGTH of the array its own kind was given,
+   * so there is no second scan with a different bound for the badge and the folder to
+   * disagree in.
+   *
+   * It reads through `scanGroups`, which is the same pass `getSchema()` and
+   * `getTableStats()` make, so the flat model and the object model cannot report a
+   * different inventory of the same file while both surfaces are live.
+   *
+   * TWO COUNTS OF DIFFERENT KINDS COME OUT OF THIS, and the difference is written down
+   * rather than smoothed over. `table` and `collection` are enumerated from the CATALOG,
+   * which `catalog()` reads whole as an eager snapshot, so those two counts are
+   * populations: `scanGroups` injects a cataloged namespace the scan never reached, which
+   * is how the empty table `vacancies` is counted and listed at all. `keyspace` is
+   * enumerated from a scan bounded at `LIBREDB_MAX_KEY_SCAN` keys, so on a file larger
+   * than that bound its count is a SAMPLE SIZE and not a population. `KindCount` has no
+   * state that can say so (three engines are affected and a separate task adds a fourth
+   * state), so the provider doc says it instead and this comment says it here.
+   *
+   * Every declared kind is seeded with an empty array BEFORE any group is placed, so a
+   * kind holding nothing lands as an empty listing and a `{ count: 0 }` badge rather than
+   * disappearing from the record.
+   */
+  private enumerate(container: readonly string[]): Record<string, LibreDBEnumeratedObject[]> {
+    const registry: LibreCatalogRegistry = libredbModule!.catalog(this.db!);
+    const { groups } = this.scanGroups(registry);
+
+    const byKind: Record<string, LibreDBEnumeratedObject[]> = {};
+    for (const kind of declaredKinds(this.getCapabilities())) byKind[kind.id] = [];
+
+    for (const { name: groupName, rowCount, entry } of groups) {
+      const kind = objectKindFor(entry);
+      // A cataloged namespace is ADDRESSED by its catalog name (`employees`), which is
+      // the string the catalog keys it under and the one `table()` and `doc()` take. A
+      // derived grouping has no such name and is addressed by the group itself.
+      const segment = kind === "keyspace" ? groupName : LibreDBProvider.namespaceOfGroup(groupName);
+      byKind[kind].push({
+        object: {
+          path: [...container, segment],
+          // The LABEL is the group, deliberately, and it is allowed to differ from the
+          // last path segment (standing ruling 2). Everything the row menu still reaches
+          // through `flatTargetName` looks an object up in `getSchema()`'s list BY NAME,
+          // and that list spells a cataloged namespace `employees:*`; naming the object
+          // `employees` here would miss that lookup, and the generated command would then
+          // be `get employees`, an exact-key read of a key nobody stored, which answers
+          // zero rows and no error (#518). The path already carries the real identity, so
+          // when the flat narrowing goes the label can follow with no identity change.
+          name: groupName,
+          kind,
+          // The keys this bounded walk SAW under the namespace, which is a sample rather
+          // than a total on a file larger than `LIBREDB_MAX_KEY_SCAN`. It is the same
+          // number `getSchema()` reports for the same namespace, from the same pass.
+          rowCount,
+        },
+        entry,
+        groupName,
+        rowCount,
+      });
+    }
+
+    for (const objects of Object.values(byKind)) {
+      objects.sort((left, right) => comparePaths(left.object.path, right.object.path));
+    }
+    return byKind;
+  }
+
+  /**
+   * How many objects of each declared kind the file holds.
+   *
+   * There is no `{ unavailable }` state on this engine, and that is a measurement rather
+   * than an omission. Every kind is counted from ONE read, `catalog()` plus the keyspace
+   * walk, made on a handle this process already holds - there is no per-kind command that
+   * a deployment might not have, the way `FUNCTION LIST` is missing on three Redis-wire
+   * relatives. A failure of that read is a kernel storage condition, and this provider's
+   * settled answer to one is to let it propagate with the kernel's own code intact
+   * (`runCommand`), not to report every folder as unavailable.
+   */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    assertContainerPath(capabilities, container);
+    const enumerated = this.enumerate(container);
+    const counts: Record<string, KindCount> = {};
+    // Over the DECLARATION, so every declared kind gets an entry whatever the file holds
+    // and no group can add a folder the provider never declared.
+    for (const kind of declaredKinds(capabilities)) counts[kind.id] = { count: enumerated[kind.id].length };
+    return counts;
+  }
+
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    // The DECLARATION answers "is this a kind of mine", never the presence of a reader
+    // below: deciding it from the reader would report "declares no object kind" about a
+    // kind `objectKinds` does declare.
+    this.assertDeclaredKind(capabilities, kind);
+    assertContainerPath(capabilities, container);
+    return this.enumerate(container)[kind].map((enumerated) => enumerated.object);
+  }
+
+  /**
+   * What one object of one KIND is made of.
+   *
+   * The KIND decides, and nothing here reads the name to work out what it is holding.
+   * That matters on this engine rather than being a principle recited: a cataloged
+   * document collection and a bare raw key may carry the SAME string, measured, and the
+   * fixture holds that pair - `notes` is a collection of one document and also a key with
+   * a value. Asking the catalog what `notes` is would describe one of them twice.
+   *
+   * The columns come from `schemaForGroup`, which is what `getSchema()` builds its rows
+   * from, so the flat model and the object model cannot describe the same object
+   * differently while both surfaces are live. `indexes` and `foreignKeys` are empty for
+   * every kind, and both are facts about the engine rather than unfinished reads: the
+   * kernel is one ordered keyspace where a key's own byte order is the only index there
+   * is (`LIBREDB_INDEX_STATS_REFUSAL`), and the catalog records a namespace's lens and a
+   * table's columns and nothing that references another namespace
+   * (`declaresForeignKeys: false`).
+   *
+   * An object the current read no longer holds RAISES rather than answering an empty
+   * shape. All three kinds are alike in this, unlike Redis where one kind can be
+   * described without asking: every kind here is enumerated from the same read, so
+   * checking costs nothing, and an empty shape would claim a table that was never
+   * cataloged or a grouping whose last key is gone.
+   */
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    this.assertDeclaredKind(capabilities, kind);
+
+    // Derived, not counted: the depth comes from `containerDepth()` through
+    // `declaredLevels`, and the names in the message are the declared labels, so the
+    // check and its message cannot disagree. No kind declares `attachedTo`, so there is
+    // one shape rather than two.
+    const levels = declaredLevels(capabilities);
+    if (path.length !== levels.length + 1) {
+      throw new QueryError(
+        `A LibreDB "${kind}" path is [${[...levels.map((level) => level.label.toLowerCase()), "name"].join(", ")}], ` +
+          `received ${JSON.stringify(path)}`,
+        "libredb",
+      );
+    }
+
+    // The LAST segment and never `path[0]`: at depth 2 the first segment is a container.
+    const name = path[path.length - 1];
+    const found = this.enumerate(path.slice(0, levels.length))[kind].find(
+      (enumerated) => enumerated.object.path[enumerated.object.path.length - 1] === name,
+    );
+    if (found === undefined) {
+      throw new QueryError(
+        `LibreDB holds no "${kind}" named ${JSON.stringify(name)} (the catalog and a ` +
+          `${LIBREDB_MAX_KEY_SCAN.toLocaleString("en-US")}-key scan were read)`,
+        "libredb",
+      );
+    }
+    return {
+      path: [...path],
+      columns: this.schemaForGroup(found.groupName, found.rowCount, found.entry).columns,
+      indexes: [],
+      foreignKeys: [],
+    };
+  }
+
+  /** One spelling of the declaration check, so two methods cannot refuse by two rules. */
+  private assertDeclaredKind(capabilities: ProviderCapabilities, kind: string): void {
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`LibreDB declares no object kind "${kind}"`, "libredb");
+    }
   }
 
   // --------------------------------------------------------------------------

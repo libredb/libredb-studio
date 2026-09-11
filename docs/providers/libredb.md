@@ -484,6 +484,210 @@ were written through the raw `kv` lens are never cataloged, so they keep the hon
 `key`/`value` view. The reserved-namespace keys are excluded from the schema (see
 [§3.3.1](#331-reserved-namespace-is-excluded-from-every-user-facing-view)).
 
+### 6.1 The object surface (#789)
+
+`getSchema()` above answers one flat namespace list. The object surface answers a lazy,
+kind-tagged tree through four methods, and on this engine they live in the provider class:
+there is no statement layer to split out, because the catalog here is a `Map` the package
+hands over.
+
+#### The measurement, first, because nothing external describes this engine
+
+Every other provider in this repo was written from published documentation and then measured.
+LibreDB is our own embedded store, published as `@libredb/libredb`, and no external source
+describes its object surface at all. So the declaration below is the output of a measurement
+rather than a reading, and the measurement is recorded here so nobody has to repeat it.
+
+**Measured on `@libredb/libredb` 0.2.2**, two ways: the package's entire export surface, and a
+database opened cold after being written through every lens it publishes.
+
+The whole export surface is twelve names:
+
+```
+CATALOG_PREFIX  LibreDbError  RESERVED_MARKER  catalog  doc  isReservedKey
+kv  nodeFileSystem  open  readonlyFileSystem  table  version
+```
+
+A `Database` handle publishes exactly `close` and `transact`. A `Kv` publishes
+`get/set/delete/prefix/range`, a `DocCollection` publishes `get/put/delete/find/all`, and a
+`Table` publishes `get/insert/delete/select/where/join/all`.
+
+**There is no view, no routine, no procedure, no trigger, no index, no sequence and no
+constraint anywhere in it.** None of those is declared, and none is declared-and-zero: a kind
+the engine cannot have draws a folder whose zero badge reads as a measurement of an empty
+database rather than as the absence of the concept (standing ruling 4). The same fact is
+already stated on the monitoring side, where the Indexes panel is ABSENT with its own sentence
+rather than empty ([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)).
+
+**But the answer is NOT "keys and nothing else", which is what it would have been before
+0.0.2.** Read cold, a database carries a persisted catalog, and that catalog is a registry of
+NAMED objects. Written through all three lenses and reopened:
+
+```
+catalog:     articles=document, employees=relational, notes=document, vacancies=relational
+raw keys:    \0libredb:catalog:articles   = {"kind":"document"}
+             \0libredb:catalog:employees  = {"kind":"relational","schema":{"primaryKey":"id","columns":{...}}}
+             cache:a = 1
+             cache:b = 2
+             employees:e1 = {"id":"e1","name":"Ada","salary":100,"active":true}
+             notes = a bare key whose name a cataloged collection also answers to
+             standalone = single-value
+```
+
+So there are **three kinds**: the two the catalog names, and the one this server derives.
+
+| Kind | Role | Catalog | Count is |
+|---|---|---|---|
+| `table` | `relation` | `catalog(db)` entries with `kind: "relational"` | a population |
+| `collection` | `relation` | `catalog(db)` entries with `kind: "document"` | a population |
+| `keyspace` | `relation` | the bounded key scan, collapsed per `:`-prefix, minus every cataloged namespace | a SAMPLE SIZE |
+
+Three further facts were measured and each one shapes the declaration:
+
+- A **relational table is cataloged when `table()` records its schema**, so an empty table is a
+  real, listable object: `vacancies` holds no rows and the catalog still names it, which is why
+  a `{ count: 0 }` here is the engine answering none.
+- A **document collection is cataloged on its FIRST WRITE**, not when `doc()` hands back a
+  handle. An unwritten collection therefore does not exist, and none is invented for one.
+- A **raw `kv` write never touches the catalog**, which is what keeps the third kind's rows
+  disjoint from the first two.
+
+#### The `kv` arm nobody writes, and why the mapping is total
+
+`CatalogEntry.kind` is published as `"kv" | "document" | "relational"` and only the last two are
+ever recorded: measured, the two lens constructors are the catalog's only writers and a raw `kv`
+write leaves it untouched. `objectKindFor` still maps **totally** rather than matching the two
+arms that exist. A namespace whose catalog entry this declaration does not model keeps its keys
+in the derived `keyspace` grouping, where they are counted, listed and describable, instead of
+falling out of both the count and the listing the day a release adds an arm. Standing ruling 5a
+names that shape as the worst defect in this epic, because every conformance check still passes
+while the object is invisible, and the vocabulary here is therefore derived from the package's
+exported TYPE rather than from what the fixture happens to hold. It is pinned by a test that
+writes such an entry through the raw lens, which is the only way to produce an arm the engine's
+own type publishes and its writers do not yet emit.
+
+#### No container level, and that is the engine
+
+A LibreDB database is ONE FILE holding one flat namespace. There is no catalog above it, no
+schema inside it and no numbered database to select, so `containerLevels` is absent,
+`containerDepth()` reads that as 0, `listContainers()` answers `[]`, and every object is
+addressed at the root container. Absent and `[]` are the same fact and only `containerDepth()`
+is allowed to decide it.
+
+#### Where the count and the listing meet
+
+Standing ruling 5f says the listing must contain exactly what the count counted. On a SQL engine
+that is a warning about two `WHERE` clauses; here there is no statement layer at all, so **the
+seam is a method**. `enumerate()` reads the catalog and walks the keyspace once, and
+`countObjects()`, `listObjects()` and `describeObject()` all read what it returned and nothing
+else. A count is the LENGTH of the array its own kind was given, so there is no second scan with
+a different bound for the badge and the folder to disagree in. It reads through `scanGroups()`,
+the same pass `getSchema()` and `getTableStats()` make, so the flat model and the object model
+cannot report different inventories of one file while both surfaces are live.
+
+#### One count is a sample, and the type cannot say so
+
+`table` and `collection` are enumerated from `catalog(db)`, which the package reads whole as an
+eager snapshot, so those two counts are **populations**. `keyspace` is enumerated from the scan
+bounded at `LIBREDB_MAX_KEY_SCAN` (10 000 keys), so on a larger file its badge is a **sample
+size**, and so is every object's `rowCount` on all three kinds.
+
+`KindCount` has three states, not four: not declared, `{ count }`, and `{ unavailable }`. None of
+them says "this number is a sample", so the tree renders a bare number. Redis, MongoDB and this
+engine are the three affected, a separate task adds the fourth state and teaches the tree to
+render it, and until then this paragraph is where the fact lives. Do not read the `keyspace`
+badge on a large file as a population.
+
+There is no `{ unavailable }` state on this engine at all, and that is a measurement rather than
+an omission: every kind is counted from ONE read, made on a handle this process already holds.
+There is no per-kind command a deployment might not have, the way `FUNCTION LIST` is missing on
+three Redis-wire relatives. A failure of that read is a kernel storage condition, and this
+provider's settled answer to one is to let it propagate with the kernel's own code intact.
+
+#### Object identity, and the label that is deliberately not the last path segment
+
+A cataloged object is ADDRESSED by its catalog name: the `table` `employees` is `["employees"]`,
+which is the string the catalog keys it under and the one `table()` and `doc()` take. A derived
+grouping has no such name and is addressed by the group itself, `["cache:*"]`.
+
+The LABEL is the key pattern, `employees:*`, and it is allowed to differ from the last path
+segment (standing ruling 2). This is a Phase 1 constraint written down rather than hidden: every
+row-menu action still reaches its destination through `flatTargetName`, which looks an object up
+in `getSchema()`'s list BY NAME, and that list spells a cataloged namespace `employees:*`.
+Labelling the object `employees` would miss that lookup, and the generated command would then be
+`get employees`, an exact-key read of a key nobody stored, which answers zero rows and **no
+error** (#518, and see [§5.3](#53-schema-explorer-menu-actions)). The path already carries the
+real identity, so when the flat narrowing goes the label can follow it with no identity change.
+
+**One string can address two objects of two different kinds, measured.** A cataloged collection
+`notes` and a bare key `notes` coexist in one file: `assertUserName` forbids a namespace name
+containing `:`, and nothing forbids a raw key equal to a namespace name. A tree row is identified
+by path PLUS kind id, so this is legal rather than a provider defect, and it is exactly why
+`describeObject()` takes the kind and why nothing in the object surface reads a name to work out
+what it is holding.
+
+#### What `describeObject()` answers
+
+The kind decides, and the columns come from `schemaForGroup()`, the same builder `getSchema()`
+uses, so the flat model and the object model cannot describe one object two ways. The column
+shapes are the table in [§6](#6-schema-introspection) above.
+
+`indexes` and `foreignKeys` are empty for every kind, and both are facts about the engine rather
+than unfinished reads: the kernel is one ordered keyspace where a key's own byte order is the
+only index there is, and the catalog records a namespace's lens and a table's columns and nothing
+that references another namespace (`declaresForeignKeys: false`).
+
+An object the current read no longer holds **raises** rather than answering an empty shape, on
+all three kinds alike. Unlike Redis, where one kind can be described without asking, every kind
+here comes out of the same read, so checking costs nothing, and an empty shape would claim a
+table that was never cataloged or a grouping whose last key is gone.
+
+#### The derived-grouping refusal, and the declaration that carries it
+
+`tablesAreDerivedGroupings: true` ([§9](#9-capabilities--labels)) stays. It is a refusal about
+the `keyspace` rows: `cache:*` is a prefix this server derived from a bounded scan, not an object
+anybody named, and no command can be given that row. The flat row menu read the flag directly;
+the object model's menu is driven by the KIND, so the refusal needed somewhere to live, and it
+splits the same three ways Task 20 split it for Redis:
+
+- **Row writes.** No kind declares `acceptsRowWrites`, so Generate Test Data and the folder's
+  create item are withheld by the kinds. That is not a workaround: the grammar is
+  `get` / `put` / `delete` / `prefix` / `range` and has no INSERT for the generator to emit, and
+  `supportsCreateTable` is false.
+- **Maintenance.** `supportsMaintenance` is false ([§8](#8-maintenance)), so `maintenanceControl`
+  withholds the per-row links by the declaration that already governed them.
+- **Profile** has no kind-level declaration behind it, so `rowActions` reads the engine-wide flag,
+  exactly as the flat menu did. [`row-actions.ts`](../../src/components/object-tree/row-actions.ts)
+  says so at the top of the file.
+
+**The flag costs the two CATALOGED kinds their Profile item too, and measured, that costs
+nothing.** `POST /api/db/profile` has no arm for this engine: it branches on
+`queryLanguage === "sql"` and this provider declares `json`, so a profile of a LibreDB table is
+sent as a MongoDB aggregate pipeline. Run against the fixture, the grammar answers:
+
+```
+Unknown command "{collection:employees,operation:aggregate,pipeline:[...]}".
+Supported: get, put, delete, prefix, range
+```
+
+So Profile could not work on any kind here, and withholding it is the honest menu rather than a
+cost of reusing Redis's gate.
+
+**Generate Query is NOT withheld**, which is the same call Task 20 made. The generator answers
+`prefix employees:` for a namespace and `get standalone` for a bare key
+([§5.3](#53-schema-explorer-menu-actions)), both runnable against exactly the keys the row
+summarises, and the row click that opens data runs the same thing.
+
+#### Nothing here opens a second handle
+
+This is the one engine that declares `singleWriterFile`: `open({ path })` takes an exclusive
+`<path>.lock` sidecar and a second open of the same file throws `LOCKED`. Every object read goes
+through the `this.db` / `this.kv` handle `connect()` already holds, and nothing in the object
+surface calls `open` at all. A second handle for an object read would lock the session out of its
+own database (`findOpenSingleWriterProvider`). The suite pins it: it asserts that a second `open`
+of the fixture throws while the provider holds it, then drives all four object methods and a
+`getSchema()` through the held handle.
+
 ---
 
 ## 7. Monitoring & health
@@ -742,7 +946,47 @@ and left byte-for-byte untouched with no lock held; a newer-format file is refus
 `QueryError` without poisoning the open handle. Test temp-file cleanup removes the `.lock`
 sidecars alongside the database files.
 
-### 11.3 Run it
+### 11.3 The object-surface fixture
+
+LibreDB is embedded: there is no image to pull and no service in `database-compose.yml`, so the
+fixture is a module rather than a compose mount. It is
+[`docker/libredb-init/01-object-fixture.ts`](../../docker/libredb-init/01-object-fixture.ts), it
+lives beside the other engines' fixtures, and it is part of the deliverable rather than
+scaffolding (standing ruling 5i): the object-surface tests import `buildObjectFixture` from it,
+so the objects they reason about are created BY the fixture and not by hand in the test.
+
+Run it to get a durable file you can open in Studio:
+
+```bash
+bun docker/libredb-init/01-object-fixture.ts                     # ./.libredb-fixture/object-fixture.libredb
+bun docker/libredb-init/01-object-fixture.ts /tmp/demo.libredb   # anywhere else
+```
+
+It is re-runnable: the target file and its `.lock` sidecar are removed first, so a second run
+produces a database identical to the first rather than one holding both runs' keys. Point a
+connection at the path it prints, with the file path in the `database` field
+([§4.1](#41-configuration-fields)).
+
+What it holds, and why each piece is there:
+
+| Namespace | Lens | Rows | Why |
+|---|---|---|---|
+| `employees` | relational | 2 | a cataloged table with a real column schema |
+| `vacancies` | relational | 0 | a cataloged table holding nothing, so `{ count: 0 }` is the engine answering none |
+| `applicants` | relational | 0 | sorts BEFORE `employees` while the enumerator reaches it AFTER, so an unsorted listing is observable |
+| `articles` | document | 2 | a cataloged collection |
+| `notes` | document | 1 | its name is ALSO a bare key, so one string addresses two objects of two kinds |
+| `cache:a`, `cache:b` | raw kv | 2 keys | an uncataloged prefix grouping |
+| `standalone` | raw kv | 1 key | a bare key, its own grouping |
+| `notes` | raw kv | 1 key | the collision above, from the raw side |
+
+That is `table: 3`, `collection: 2`, `keyspace: 3`. `applicants` is the row worth explaining:
+`scanGroups()` appends a cataloged namespace the key scan never saw AFTER the groups it did see,
+and the scan walks the keyspace in byte order, so without a name that sorts early every natural
+order in the fixture is already the sorted one and deleting the sort changes nothing anybody can
+observe. It was added after a mutation run showed exactly that.
+
+### 11.4 Run it
 
 ```bash
 # Just this file
