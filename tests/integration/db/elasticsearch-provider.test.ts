@@ -200,8 +200,28 @@ const ROOT_BODY = JSON.stringify({
  * Every number is QUOTED even though `bytes=b` was asked for, which is the trap the
  * seam records: the default listing formats them ("5.6kb") and even the
  * machine-readable form arrives as a string.
+ *
+ * The last row is the data stream's BACKING INDEX, and it is here because the whole
+ * argument for declaring `stream` as its own kind rests on it: a backing index is
+ * `.ds-`-prefixed, so the index listing's own dot rule already hides it, which is why
+ * a data stream is reachable through nothing in the tree without that kind AND why
+ * counting both kinds double-counts nothing. Without this row that premise is prose;
+ * with it, `index` is still 3 and `stream` is still 1.
  */
 const CAT_INDICES_BODY = JSON.stringify([
+  {
+    health: "yellow",
+    status: "open",
+    index: ".ds-probe_stream-2026.09.11-000001",
+    uuid: "hVj2mS9dQ1O3hQxhIlP9Aw",
+    pri: "1",
+    rep: "1",
+    "docs.count": "1",
+    "docs.deleted": "0",
+    "store.size": "6284",
+    "pri.store.size": "6284",
+    "dataset.size": "6284",
+  },
   {
     health: "yellow",
     status: "open",
@@ -487,6 +507,19 @@ const DIVIDE_BY_ZERO = engineFault(500, "arithmetic_exception", "/ by zero");
 const MAPPING_NOT_FOUND = engineFault(404, "index_not_found_exception", "no such index [nope_missing]");
 
 /**
+ * A 404 that is a REFUSAL and not an empty set (#789).
+ *
+ * The pipeline endpoint's 404 means "there are none" only while the body is `{}`.
+ * Measured on both products 2026-09-11, a genuine 404 on an object endpoint carries
+ * the full error envelope - `GET /_data_stream/nope` answers
+ * `index_not_found_exception`, "no such index [nope]" - so the body is what separates
+ * a folder that holds nothing from a folder nobody may read. This one wears the same
+ * fault name against the pipeline store, which is what a cluster missing that backing
+ * index answers.
+ */
+const MISSING_PIPELINE_INDEX = engineFault(404, "index_not_found_exception", "no such index [nope_pipeline_store]");
+
+/**
  * `POST /_plugins/_sql` against THIS product - HTTP 400 and `error` as a STRING.
  *
  * This is what an `opensearch` connection pointed at an Elasticsearch node
@@ -579,8 +612,10 @@ const TEMPLATES_BODY = JSON.stringify({
  * The backing index is `.ds-`-prefixed, so the index listing hides it under the same
  * dot rule that hides an engine's own indices: without this listing a data stream is
  * reachable through nothing in the tree. Elasticsearch marks its own with
- * `"system": true`, which OpenSearch's payload omits entirely, so the name convention
- * carries the case on both and the flag sharpens it on one.
+ * `"system": true`, which OpenSearch's payload omits entirely - and NEITHER member is
+ * read: the dot rule already removes every engine-owned data stream that could be
+ * measured, so the flag is carried here as the shape of the live payload and decides
+ * nothing.
  */
 const DATA_STREAMS_BODY = JSON.stringify({
   data_streams: [
@@ -2524,8 +2559,10 @@ describe("Elasticsearch object listings and detail", () => {
       "probe_stream_template",
       "probe_template",
     ]);
-    // A data stream the engine marks `"system": true` is removed by that member, and
-    // the user's is kept.
+    // `.fleet-actions-results` is removed by the DOT rule alone. Its `"system": true`
+    // member is deliberately not read - `DATA_STREAM_FIELDS` says so, because M4
+    // measured that no fixture can distinguish the two rules - so this assertion is
+    // about the dot, and the payload's system flag is inert vocabulary beside it.
     expect((await provider.listObjects([], "stream")).map((object) => object.name)).toEqual(["probe_stream"]);
   });
 
@@ -2589,6 +2626,107 @@ describe("Elasticsearch object listings and detail", () => {
 
     await expect(provider.listObjects([], "view")).rejects.toThrow(/declares no object kind "view"/);
     await expect(provider.describeObject(["anything"], "view")).rejects.toThrow(/declares no object kind "view"/);
+  });
+
+  test("a backing index is hidden by the dot rule, so a data stream is counted once", async () => {
+    // The premise the `stream` kind rests on, asserted rather than argued: the listing
+    // carries `.ds-probe_stream-2026.09.11-000001` and the index folder does not, so
+    // the stream's data is reachable through the `stream` kind and through nothing
+    // else, and the two kinds do not count the same bytes twice.
+    const provider = await connectProvider();
+
+    const indices = (await provider.listObjects([], "index")).map((object) => object.name);
+
+    expect(indices).toEqual(["probe_buckets", "probe_orders", "probe_shapes"]);
+    expect(indices.some((name) => name.startsWith(".ds-"))).toBe(false);
+    expect(await provider.countObjects([])).toMatchObject({ index: { count: 3 }, stream: { count: 1 } });
+  });
+
+  test("a 404 carrying the engine's own error envelope is a refusal, not an empty folder", async () => {
+    // The status alone cannot tell an empty set from a refusal, and both reach this
+    // endpoint. Measured on both products 2026-09-11: the empty set carries `{}` and
+    // nothing else, while a genuine 404 carries the error envelope this transport
+    // categorises everywhere else (`GET /_data_stream/nope` answers 404 with
+    // `index_not_found_exception`). A missing plugin, a denied endpoint and an
+    // index-shaped 404 would all badge this folder 0 if the status were trusted alone.
+    const provider = await connectProvider();
+    overridePath("/_ingest/pipeline", fail(404, MISSING_PIPELINE_INDEX));
+
+    const counts = await provider.countObjects([]);
+
+    expect(counts.pipeline).toEqual({ unavailable: "no such index [nope_pipeline_store]" });
+    expect(counts.pipeline).not.toEqual({ count: 0 });
+    await expect(provider.listObjects([], "pipeline")).rejects.toThrow(/no such index \[nope_pipeline_store\]/);
+    // And the other four folders are untouched: one endpoint's refusal is one kind's.
+    expect(counts.index).toEqual({ count: 3 });
+  });
+
+  test("a 404 whose body is the empty set is still zero, on this product too", async () => {
+    // The control for the test above, and it is not hypothetical upstream: a stock
+    // node ships 21 managed pipelines, and after `DELETE /_ingest/pipeline/*` (HTTP
+    // 200, acknowledged) `GET /_ingest/pipeline` answered HTTP 404 `{}` on
+    // Elasticsearch 9.1.4, measured 2026-09-11. The two tests differ only in the body.
+    const provider = await connectProvider();
+    overridePath("/_ingest/pipeline", fail(404, "{}"));
+
+    expect((await provider.countObjects([])).pipeline).toEqual({ count: 0 });
+    expect(await provider.listObjects([], "pipeline")).toEqual([]);
+  });
+
+  test("a listing entry with no readable name is refused, never dropped", async () => {
+    // Ruling 5a's failure shape reached from the payload: a dropped entry leaves the
+    // count and the listing agreeing with each other (ruling 5f) and both short by
+    // exactly the objects nobody can see, which is an absence that passes every gate.
+    const provider = await connectProvider();
+    overridePath("/_index_template", ok(JSON.stringify({ index_templates: [{ index_template: {} }] })));
+
+    await expect(provider.listObjects([], "template")).rejects.toThrow(
+      /Elasticsearch answered an index template listing the client could not read/,
+    );
+    expect((await provider.countObjects([])).template).toMatchObject({
+      unavailable: expect.stringContaining("an index template listing"),
+    });
+  });
+
+  test("a listing entry that is not an object, and a list key that is not an array, are refused too", async () => {
+    const provider = await connectProvider();
+    overridePath("/_data_stream", ok(JSON.stringify({ data_streams: ["probe_stream"] })));
+    await expect(provider.listObjects([], "stream")).rejects.toThrow(/a data stream listing/);
+
+    overridePath("/_data_stream", ok(JSON.stringify({ data_streams: { probe_stream: {} } })));
+    await expect(provider.listObjects([], "stream")).rejects.toThrow(/a data stream listing/);
+  });
+
+  test("an alias payload member that is not an object is refused, never skipped", async () => {
+    // Measured on both: an index carrying no alias is still listed, with a PRESENT and
+    // empty map. So a member with no readable alias map is a body this client does not
+    // understand, and skipping it would silently lose that index's aliases.
+    const provider = await connectProvider();
+    overridePath(
+      "/_alias",
+      ok(JSON.stringify({ probe_orders: { aliases: { probe_orders_alias: {} } }, probe_shapes: 7 })),
+    );
+
+    await expect(provider.listObjects([], "alias")).rejects.toThrow(/an alias listing/);
+  });
+
+  test("a declared kind with no reader fails the read instead of badging the folder", async () => {
+    // Two defects in one shape. `SEARCH_OBJECT_READERS[kind]` indexes a plain object
+    // literal, so a kind id spelled `toString` resolves up the prototype chain to a
+    // function the provider then calls; and a per-kind catch that swallows everything
+    // renders the resulting JS message on a folder badge, presented as the engine's
+    // own sentence. Neither is something the cluster said.
+    const provider = await connectProvider();
+    const real = new ElasticsearchProvider(makeConnection()).getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [
+        ...(real.objectKinds ?? []),
+        { id: "toString", role: "config", label: "Stringifier", labelPlural: "Stringifiers" },
+      ],
+    });
+
+    await expect(provider.countObjects([])).rejects.toThrow(/declares the object kind "toString" and has no reader/);
   });
 
   test("one kind's refusal is one kind's badge, and the other four still count", async () => {

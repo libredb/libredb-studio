@@ -334,10 +334,14 @@ export interface SearchTransport {
    * The implementation owes one measured translation here, and it is the single
    * biggest behavioural difference this provider's two products showed: with NO
    * pipeline defined, the endpoint answers HTTP 404 with an empty body rather than an
-   * empty set. That is the state of a STOCK OpenSearch node, which ships no pipelines
-   * at all, while a stock Elasticsearch node ships 21 and can never reach it. So a
-   * transport that let the status decide would report "unavailable" for the ordinary
-   * OpenSearch case, and the seam's contract is that an empty cluster answers `[]`.
+   * empty set. That is the state of a STOCK OpenSearch node, which ships no pipelines at
+   * all; upstream it takes deleting the 21 built-ins to reach, and they come back
+   * within about twenty seconds - reachable on both, ordinary on one (measured
+   * 2026-09-11). So a transport that let the status decide would report "unavailable"
+   * for the ordinary OpenSearch case, and the seam's contract is that an empty cluster
+   * answers `[]`. The status is not the whole signal either: a 404 carrying the error
+   * envelope is a refusal, and the implementation owes that distinction as well, or a
+   * folder badges zero where the engine would not answer.
    */
   pipelines(signal?: AbortSignal): Promise<SearchObjectInfo[]>;
 

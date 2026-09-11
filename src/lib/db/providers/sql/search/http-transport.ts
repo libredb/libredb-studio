@@ -191,14 +191,29 @@ const META_FIELDS = Object.freeze({ META: "_meta", MANAGED: "managed" } as const
 /**
  * The status that means "there are none", on the ingest pipeline endpoint only.
  *
- * Measured on BOTH products: with no pipeline defined, `GET /_ingest/pipeline`
- * answers HTTP 404 with the body `{}`, exactly as a request for a pipeline that does
- * not exist does. It is not an error and the seam must not report one - but which
- * product it actually HAPPENS to is the sharpest difference the two showed under
- * #789: a stock OpenSearch node ships no pipeline at all and reaches this on its
- * first run, while a stock Elasticsearch node ships 21 managed ones and never can.
- * Classifying it as a failure would put the engine's own sentence on the Ingest
- * Pipelines folder of every fresh OpenSearch cluster, where the truth is zero.
+ * Measured on BOTH products on 2026-09-11, and on Elasticsearch the state had to be
+ * MADE rather than found: a stock node ships 21 managed ingest pipelines, so
+ * `DELETE /_ingest/pipeline/*` was sent first (HTTP 200, `{"acknowledged":true}`) and
+ * `GET /_ingest/pipeline` then answered **HTTP 404 with the body `{}`** on
+ * Elasticsearch 9.1.4 exactly as it does on a stock OpenSearch 3.8.0 node, which
+ * ships none and reaches the state on its first run. Elasticsearch re-registers its
+ * built-ins within about twenty seconds, so the state is transient upstream and
+ * ordinary on the fork - but it is REACHABLE on both, which is what licenses one rule
+ * for one implementation serving two type-ids. Classifying it as a failure would put
+ * the engine's own sentence on the Ingest Pipelines folder of every fresh OpenSearch
+ * cluster, where the truth is zero.
+ *
+ * It is a status and NOT a body, so on its own it cannot tell an empty set from a
+ * refusal, and both reach this endpoint: a missing plugin, an endpoint a security
+ * role may not read and an index-shaped 404 all answer 404 too. Measured on both
+ * products, `GET /_data_stream/nope` answers HTTP 404 carrying the full error
+ * envelope (`index_not_found_exception`, "no such index [nope]"), while the empty set
+ * carries `{}` and nothing else. So {@link SearchHttpTransport.request} reads the
+ * BODY before it trusts the status: a nominated status is "there is nothing here"
+ * only while the body is a payload, and a 404 carrying the envelope this file
+ * categorises everywhere else stays a refusal. A zero and a refusal are different
+ * facts - that is the whole reason `KindCount` has both states - and a status alone
+ * cannot tell them apart.
  *
  * Deliberately NOT generalised to the other three listings: `_alias`,
  * `_index_template` and `_data_stream` all answer HTTP 200 with an empty collection
@@ -808,6 +823,23 @@ function requestFailure(spec: SearchDialectSpec, cause: unknown, signal?: AbortS
   return new SearchTransportError("unreachable", `${spec.label} could not be reached: ${detail}`);
 }
 
+/**
+ * Whether a body is a failure envelope rather than a payload.
+ *
+ * The one signal that separates an empty set from a refusal when the two answer the
+ * same HTTP status. Both products spell a failure as a member called `error` - an
+ * OBJECT for an engine fault, a STRING for a request that never reached the handler -
+ * and neither puts that member on a payload, so its PRESENCE is the discriminator and
+ * its type is what {@link responseFailure} then reads.
+ *
+ * `Object.hasOwn` and never `in`: `in` walks the prototype chain, and a body is a
+ * parsed JSON object whose prototype carries members of its own.
+ */
+function carriesFailureEnvelope(text: string): boolean {
+  const body = asRecord(parseJson(text));
+  return body !== null && Object.hasOwn(body, ERROR_FIELDS.ENVELOPE);
+}
+
 /** A body the server announced as JSON that is not the object this file parses. */
 function unreadableBody(spec: SearchDialectSpec, what: string): SearchTransportError {
   return new SearchTransportError("engine", `${spec.label} answered ${what} the client could not read`);
@@ -926,23 +958,40 @@ function namedObjects(payload: Record<string, unknown>): SearchObjectInfo[] {
 /**
  * The names in a listing that is an ARRAY under one key, each entry naming itself.
  *
- * This is the index-template and data-stream shape. `bodyKey` is where that entry
- * keeps the definition the `_meta` marker lives in, or null when the entry IS the
- * definition (a data stream carries `system` on itself).
+ * This is the index-template and data-stream shape. `nameKey` is the member that
+ * entry names itself in - taken from the caller's OWN field table rather than from
+ * whichever table happens to be in scope, because the two spell it the same way today
+ * and a constant nothing reads is a cross-wiring nobody can mutate. `bodyKey` is where
+ * the entry keeps the definition the `_meta` marker lives in, or null when the entry
+ * IS the definition.
+ *
+ * Nothing here is DROPPED. An entry that is not an object, an entry with no readable
+ * name, and a list key that is not an array are all refused, because a drop takes the
+ * object out of the count and out of the listing together: the two still agree
+ * (ruling 5f) while the badge is short by exactly the objects nobody can see. That is
+ * ruling 5a's failure shape reached from the payload rather than from a `CASE` arm,
+ * and the measured licence to refuse is that both products always send the list key
+ * (`{"index_templates":[]}` / `{"data_streams":[]}` on an empty cluster, 2026-09-11)
+ * and always name every entry.
  */
-function listedObjects(payload: Record<string, unknown>, listKey: string, bodyKey: string | null): SearchObjectInfo[] {
+function listedObjects(
+  spec: SearchDialectSpec,
+  what: string,
+  payload: Record<string, unknown>,
+  listKey: string,
+  nameKey: string,
+  bodyKey: string | null,
+): SearchObjectInfo[] {
   const entries = payload[listKey];
-  if (!Array.isArray(entries)) return [];
+  if (!Array.isArray(entries)) throw unreadableBody(spec, what);
 
-  return (entries as unknown[]).flatMap((raw) => {
+  return (entries as unknown[]).map((raw) => {
     const entry = asRecord(raw);
-    if (entry === null) return [];
-
-    const name = textField(entry, TEMPLATE_FIELDS.NAME);
-    if (name === null) return [];
+    const name = entry === null ? null : textField(entry, nameKey);
+    if (entry === null || name === null) throw unreadableBody(spec, what);
 
     const body = bodyKey === null ? entry : asRecord(entry[bodyKey]);
-    return [{ name, isSystem: isEngineOwned(name, body) }];
+    return { name, isSystem: isEngineOwned(name, body) };
   });
 }
 
@@ -1121,9 +1170,12 @@ export class SearchHttpTransport implements SearchTransport {
     const byName = new Map<string, SearchObjectInfo>();
     for (const entry of Object.values(payload)) {
       const aliases = asRecord(asRecord(entry)?.[ALIAS_FIELDS.ALIASES]);
-      // An index with no alias is listed with an empty object, and a payload member
-      // that is not an object at all is nothing this can read.
-      if (aliases === null) continue;
+      // Measured on both: an index carrying no alias is still listed, with a PRESENT
+      // and empty map - so a member with no readable alias map is a body this client
+      // does not understand, and it is refused rather than skipped. Skipping would
+      // drop that index's aliases from the count and the listing together, leaving a
+      // folder whose badge is short by exactly the objects nobody can see (ruling 5a).
+      if (aliases === null) throw unreadableBody(this.spec, "an alias listing");
       for (const alias of namedObjects(aliases)) byName.set(alias.name, alias);
     }
     return [...byName.values()];
@@ -1134,7 +1186,11 @@ export class SearchHttpTransport implements SearchTransport {
    *
    * The one place a STATUS decides anything outside the 401/403 pair, and the reason
    * is measured rather than defensive: an empty set answers HTTP 404 on both products,
-   * which is the first-run state of a stock OpenSearch node. See {@link HTTP_NOT_FOUND}.
+   * which is the first-run state of a stock OpenSearch node and was reproduced upstream
+   * by deleting the 21 built-ins. The status is not trusted alone - a 404 carrying the
+   * error envelope is still a refusal, so a missing plugin or a denied endpoint reaches
+   * the folder as the engine's own sentence instead of a zero. See
+   * {@link HTTP_NOT_FOUND}.
    */
   public async pipelines(signal?: AbortSignal): Promise<SearchObjectInfo[]> {
     const body = await this.request(INGEST_PIPELINE_PATH, signal, undefined, HTTP_NOT_FOUND);
@@ -1151,7 +1207,14 @@ export class SearchHttpTransport implements SearchTransport {
     const payload = asRecord(await this.request(INDEX_TEMPLATE_PATH, signal));
     if (payload === null) throw unreadableBody(this.spec, "an index template listing");
 
-    return listedObjects(payload, TEMPLATE_FIELDS.LIST, TEMPLATE_FIELDS.BODY);
+    return listedObjects(
+      this.spec,
+      "an index template listing",
+      payload,
+      TEMPLATE_FIELDS.LIST,
+      TEMPLATE_FIELDS.NAME,
+      TEMPLATE_FIELDS.BODY,
+    );
   }
 
   /**
@@ -1165,7 +1228,14 @@ export class SearchHttpTransport implements SearchTransport {
     const payload = asRecord(await this.request(DATA_STREAM_PATH, signal));
     if (payload === null) throw unreadableBody(this.spec, "a data stream listing");
 
-    return listedObjects(payload, DATA_STREAM_FIELDS.LIST, null);
+    return listedObjects(
+      this.spec,
+      "a data stream listing",
+      payload,
+      DATA_STREAM_FIELDS.LIST,
+      DATA_STREAM_FIELDS.NAME,
+      null,
+    );
   }
 
   public async health(signal?: AbortSignal): Promise<SearchClusterHealth> {
@@ -1220,7 +1290,8 @@ export class SearchHttpTransport implements SearchTransport {
     body?: string,
     /**
      * A status this endpoint uses to say "there is nothing here", answered as `null`
-     * instead of a failure. Exactly one caller passes one; see {@link HTTP_NOT_FOUND}.
+     * instead of a failure - but only when the body is a payload rather than the error
+     * envelope. Exactly one caller passes one; see {@link HTTP_NOT_FOUND}.
      */
     absentStatus?: number,
   ): Promise<unknown> {
@@ -1246,7 +1317,12 @@ export class SearchHttpTransport implements SearchTransport {
       throw requestFailure(this.spec, error, signal);
     }
 
-    if (response.status === absentStatus) return null;
+    // The BODY decides, not the status: an empty set carries `{}` while a refusal
+    // carries the error envelope this file categorises everywhere else, and both
+    // arrive with the same code (see {@link HTTP_NOT_FOUND}). A folder badged 0 where
+    // the truth is "the engine would not answer" is the exact confusion `KindCount`
+    // has two states to prevent.
+    if (response.status === absentStatus && !carriesFailureEnvelope(text)) return null;
     if (!response.ok) throw responseFailure(this.spec, response.status, text);
 
     return parseJson(text);

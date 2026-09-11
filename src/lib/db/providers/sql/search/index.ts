@@ -320,8 +320,8 @@ const SEARCH_KIND_STREAM = "stream";
  * fails if the two ever diverge. The ONE difference the two showed is not in this
  * declaration at all - it is that a stock Elasticsearch node ships 21 ingest
  * pipelines and 61 index templates of its own while a stock OpenSearch node ships
- * none, so the empty-pipeline case (HTTP 404, see the transport) is reachable on one
- * product and not the other.
+ * none, so the empty-pipeline case (HTTP 404, see the transport) is the first-run state
+ * on one product and takes a deletion to reach on the other.
  *
  * WHAT IS ABSENT, and why each absence is a fact rather than a gap:
  *
@@ -953,6 +953,15 @@ abstract class SearchProvider extends SQLBaseProvider {
    * whose an object is, on the same signals it already decides an index by.
    */
   private async readKind(container: readonly string[], kind: string, signal?: AbortSignal): Promise<DatabaseObject[]> {
+    // `Object.hasOwn` and never `kind in`, ruling 5g: a plain object literal carries
+    // `Object.prototype`, so a kind id spelled `toString` or `constructor` would
+    // resolve up the chain to a function this then calls with a transport. The
+    // callers check the DECLARATION; this checks the readers table, and the two
+    // disagreeing is a defect in this file rather than anything the engine said.
+    if (!Object.hasOwn(SEARCH_OBJECT_READERS, kind)) {
+      throw new Error(`${this.product.label} declares the object kind "${kind}" and has no reader for it`);
+    }
+
     const read = SEARCH_OBJECT_READERS[kind];
     const objects = await read(this.requireTransport(), signal);
 
@@ -1034,6 +1043,12 @@ abstract class SearchProvider extends SQLBaseProvider {
         try {
           counts[kind.id] = { count: (await this.readKind(container, kind.id, signal)).length };
         } catch (error) {
+          // Narrowed to the TRANSPORT's own error type. A badge presents its text as
+          // the engine's own sentence, so an internal defect - a TypeError, a broken
+          // invariant, a kind with no reader - must not be dressed up as one; it
+          // propagates and fails the read that is genuinely broken instead of
+          // rendering a JS message on a folder as though the cluster had said it.
+          if (!(error instanceof SearchTransportError)) throw error;
           counts[kind.id] = { unavailable: this.mapSearchError(error).message };
         }
       }),

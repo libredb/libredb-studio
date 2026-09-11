@@ -257,8 +257,27 @@ const WRONG_ENDPOINT_BODY = JSON.stringify({
  * (455 documents), which the default listing does NOT report because it is hidden.
  * So the provider's inventory is the visible indices, and that is what the numbers
  * below are.
+ *
+ * The last row is the data stream's BACKING INDEX, and it is here because the whole
+ * argument for declaring `stream` as its own kind rests on it: a backing index is
+ * `.ds-`-prefixed, so the index listing's own dot rule already hides it, which is why
+ * a data stream is reachable through nothing in the tree without that kind AND why
+ * counting both kinds double-counts nothing. Without this row that premise is prose;
+ * with it, `index` is still 2 and `stream` is still 1.
  */
 const CAT_INDICES_BODY = JSON.stringify([
+  {
+    health: "yellow",
+    status: "open",
+    index: ".ds-probe_stream-000001",
+    uuid: "NzcJ_j43QlaXdvqSuGPRrA",
+    pri: "1",
+    rep: "1",
+    "docs.count": "1",
+    "docs.deleted": "0",
+    "store.size": "5211",
+    "pri.store.size": "5211",
+  },
   {
     health: "green",
     status: "open",
@@ -447,8 +466,9 @@ const PIPELINES_BODY = JSON.stringify({
  * THE measured difference between the two products this one implementation serves,
  * and it is not a difference in the wire contract: both answer 404 for an empty set.
  * It is a difference in what a stock cluster HOLDS. A stock Elasticsearch node ships
- * 21 managed pipelines and can never reach this state; a stock OpenSearch node ships
- * none, so this IS the ordinary first-run answer here. A transport that classified on
+ * 21 managed pipelines, so reaching this state there took `DELETE /_ingest/pipeline/*`
+ * and the built-ins returned about twenty seconds later (measured 2026-09-11); a stock
+ * OpenSearch node ships none, so this IS the ordinary first-run answer here. A transport that classified on
  * the status would put "unavailable" on the Ingest Pipelines folder of every fresh
  * OpenSearch cluster, when the truth is zero.
  */
@@ -470,7 +490,9 @@ const TEMPLATES_BODY = JSON.stringify({
  *
  * Measured shorter than Elasticsearch's: no `system`, no `hidden`, no `index_mode`,
  * and the backing index name carries no date. `name` and the backing indices are the
- * members both products share, and `name` is the only one the listing reads.
+ * members both products share, and `name` is the only one the listing reads - through
+ * this product's OWN name key, which is why the constant exists rather than the
+ * template listing's being borrowed for both.
  */
 const DATA_STREAMS_BODY = JSON.stringify({
   data_streams: [
@@ -1265,6 +1287,71 @@ describe("object surface", () => {
       kinds: FIXTURE_OBJECT_COUNTS,
       sampleObject: { path: ["probe_stream"], kind: "stream" },
     });
+  });
+
+  test("a backing index is hidden by the dot rule, so a data stream is counted once", async () => {
+    // The premise the `stream` kind rests on, asserted rather than argued on this
+    // product too: the listing carries `.ds-probe_stream-000001` and the index folder
+    // does not, so the stream's data is reachable through the `stream` kind and
+    // through nothing else, and the two kinds do not count the same bytes twice.
+    const provider = await connectProvider();
+
+    const indices = (await provider.listObjects([], "index")).map((object) => object.name);
+
+    expect(indices).toEqual(["probe_orders", "probe_shapes"]);
+    expect(indices.some((name) => name.startsWith(".ds-"))).toBe(false);
+    expect(await provider.countObjects([])).toMatchObject({ index: { count: 2 }, stream: { count: 1 } });
+  });
+
+  test("a 404 carrying this product's error envelope is a refusal, not an empty folder", async () => {
+    // The same rule from the other side, and the fork's envelope is its own: a Java
+    // class name where Elasticsearch spells a snake_case type. Measured on OpenSearch
+    // 3.8.0 2026-09-11, `GET /_data_stream/nope` answers HTTP 404 carrying the full
+    // envelope while the empty pipeline set answers HTTP 404 carrying `{}` - so the
+    // BODY is what separates a folder that holds nothing from one nobody may read.
+    const provider = await connectProvider();
+    overridePath("/_ingest/pipeline", {
+      status: 404,
+      body: JSON.stringify({
+        error: {
+          type: "IndexNotFoundException",
+          reason: "Invalid SQL query",
+          details: "no such index [nope_pipeline_store]",
+        },
+        status: 404,
+      }),
+    });
+
+    const counts = await provider.countObjects([]);
+
+    expect(counts.pipeline).toEqual({ unavailable: "no such index [nope_pipeline_store]" });
+    expect(counts.pipeline).not.toEqual({ count: 0 });
+    // And the control is the test below: the same status with `{}` is still zero.
+    expect(counts.template).toEqual({ count: 2 });
+  });
+
+  test("a listing entry with no readable name is refused, never dropped", async () => {
+    // Ruling 5a's failure shape reached from the payload rather than from a CASE arm:
+    // a dropped entry leaves the count and the listing agreeing with each other
+    // (ruling 5f) and both short by exactly the objects nobody can see.
+    const provider = await connectProvider();
+    overridePath("/_data_stream", ok(JSON.stringify({ data_streams: [{ template: "probe_stream_template" }] })));
+
+    await expect(provider.listObjects([], "stream")).rejects.toThrow(
+      /OpenSearch answered a data stream listing the client could not read/,
+    );
+  });
+
+  test("an alias payload member that is not an object is refused, never skipped", async () => {
+    // This product's listing is the one that names the engine's own indices with an
+    // EMPTY alias map, so "an entry contributing nothing" and "an entry this cannot
+    // read" are genuinely different here, and only the second is a refusal.
+    const provider = await connectProvider();
+    overridePath("/_alias", ok(JSON.stringify({ probe_orders: { aliases: { probe_orders_alias: {} } } })));
+    expect((await provider.listObjects([], "alias")).map((object) => object.name)).toEqual(["probe_orders_alias"]);
+
+    overridePath("/_alias", ok(JSON.stringify({ probe_orders: { aliases: { probe_orders_alias: {} } }, bad: 7 })));
+    await expect(provider.listObjects([], "alias")).rejects.toThrow(/an alias listing/);
   });
 
   test("reads a 404 from the pipeline endpoint as an empty set, not a refusal", async () => {

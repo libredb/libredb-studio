@@ -818,10 +818,17 @@ folders; first paint costs one `countObjects` and no container walk.
 | Kind | Role | Source | Filter |
 |---|---|---|---|
 | `index` | relation, accepts row writes | `GET /_cat/indices?format=json&bytes=b` | dot prefix, plus OpenSearch's date-suffixed `top_queries-*` |
-| `alias` | relation | `GET /_alias`, flattened and deduplicated | dot prefix |
-| `stream` | relation | `GET /_data_stream` | dot prefix |
+| `alias` | relation | `GET /_alias`, flattened and deduplicated | dot prefix or `_meta.managed` |
+| `stream` | relation | `GET /_data_stream` | dot prefix or `_meta.managed` |
 | `pipeline` | config | `GET /_ingest/pipeline` | dot prefix or `_meta.managed` |
 | `template` | config | `GET /_index_template` | dot prefix or `_meta.managed` |
+
+The last four all run the same predicate, `isEngineOwned()` in
+[`http-transport.ts`](../../src/lib/db/providers/sql/search/http-transport.ts): a dot prefix **or**
+`_meta.managed`, on every one of them. Only the `index` row is different, and only because `_cat`
+publishes no `_meta` at all, so a name shape is the only signal there is. An alias and a data stream
+carry no `_meta` on either product today, which makes the second half of the rule inert for those two
+rather than absent - and writing "dot prefix" for them would describe a filter the code does not run.
 
 **An alias and a data stream are RELATIONS, not config objects, and that is measured.** Both answer
 rows through the SQL endpoint on both products: `SELECT customer FROM probe_orders_alias` returns the
@@ -832,7 +839,9 @@ append-only through its own API, and in any case no statement this provider can 
 **A data stream is a kind rather than a property of an index, and the reason is that the alternative
 hides it completely.** Its backing indices are `.ds-`-prefixed, which the index listing's own system
 rule already removes, so without this kind a data stream's data is reachable through nothing in the
-tree at all.
+tree at all - and, the other half of the same fact, declaring both kinds counts nothing twice. Both
+`_cat/indices` fixtures carry a `.ds-` backing-index row so that premise is asserted rather than
+argued: the `index` folder does not list it and the `stream` folder holds one object.
 
 **The count and the listing are the same call.** Standing ruling 5f says the listing must contain
 exactly what the count counted; on a SQL engine those drift apart in a second `WHERE` clause, and here
@@ -862,11 +871,37 @@ and this hides it. Elasticsearch's data streams also carry a `system` boolean an
 none; it is deliberately **not** read, because every engine-owned data stream that could be measured
 is dot-prefixed and a second rule no fixture can distinguish from the first is a line nothing proves.
 
-**`GET /_ingest/pipeline` answers HTTP 404 with `{}` when the cluster holds no pipeline**, on both
-products, and the transport reads that as an empty set rather than a failure. It is the one status
-outside the 401/403 pair that decides anything here, and it is not generalised: `_alias`,
-`_index_template` and `_data_stream` all answer HTTP 200 with an empty collection when they hold
-nothing, so a 404 from those really would be something else.
+**`GET /_ingest/pipeline` answers HTTP 404 with `{}` when the cluster holds no pipeline**, and the
+transport reads that as an empty set rather than a failure. It is the one status outside the 401/403
+pair that decides anything here, and it is not generalised: `_alias`, `_index_template` and
+`_data_stream` all answer HTTP 200 with an empty collection when they hold nothing, so a 404 from
+those really would be something else.
+
+Measured on **both** products on 2026-09-11, and upstream the state had to be made rather than found.
+A stock Elasticsearch node ships 21 managed ingest pipelines, so `DELETE /_ingest/pipeline/*` was sent
+first (HTTP 200, `{"acknowledged":true}`); `GET /_ingest/pipeline` then answered HTTP 404 with `{}` on
+Elasticsearch 9.1.4 exactly as it does on a stock OpenSearch 3.8.0 node, which ships none and reaches
+the state on its first run. Elasticsearch re-registers its built-ins within about twenty seconds, so
+the state is transient there and ordinary on the fork - but it is reachable on both, which is what
+licenses one rule for one implementation serving two type-ids.
+
+**A status alone cannot tell an empty set from a refusal, so the body decides.** A missing plugin, an
+endpoint a security role may not read and an index-shaped 404 all answer 404 too, and each of those
+would badge the folder **0** where the truth is a refusal - the exact confusion `KindCount` carries
+both a `count` and an `unavailable` state to prevent. The distinguishing signal is already on the wire:
+an empty set carries `{}` and nothing else, while a genuine failure carries the error envelope the
+transport categorises everywhere else (measured on both, `GET /_data_stream/nope` answers HTTP 404
+with `index_not_found_exception`, *"no such index [nope]"*). So the request helper reads the body
+before it trusts the status, and a 404 carrying that envelope reaches the folder as the engine's own
+sentence rather than as a zero.
+
+**A listing entry this client cannot read is refused, never dropped.** An entry that is not an object,
+an entry naming itself in no member, and an alias payload member with no alias map all raise rather
+than being skipped. A drop would remove the object from the count and from the listing together, so
+the two would still agree (ruling 5f) while the badge is short by exactly the objects nobody can see.
+The measured licence to refuse is that both products always send the list key (`{"index_templates":[]}`
+and `{"data_streams":[]}` on an empty cluster) and always name every entry, and that an index carrying
+no alias is listed with a **present**, empty map.
 
 **What is absent, and why each absence is a fact rather than a gap.**
 
