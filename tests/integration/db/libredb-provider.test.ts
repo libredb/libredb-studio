@@ -757,7 +757,7 @@ describe("LibreDBProvider object surface (#789)", () => {
     await assertObjectSurface(provider, {
       containers: [],
       kinds: { table: 3, collection: 2, keyspace: 3 },
-      sampleObject: { path: ["employees"], kind: "table" },
+      sampleObject: { path: ["employees:*"], kind: "table" },
     });
   });
 
@@ -814,19 +814,20 @@ describe("LibreDBProvider object surface (#789)", () => {
       keyspace: { count: 3 },
     });
 
-    // Addressed by the CATALOG name, labelled with the key pattern `getSchema()` uses.
-    // SORTED, and `applicants` is the row that proves it: the enumerator reaches it after
-    // `employees`, because `scanGroups` appends a cataloged namespace the scan never saw.
+    // Addressed by the GROUP, which is the only identifier unique within the parent here,
+    // and labelled with the same pattern `getSchema()` answers. SORTED, and `applicants` is
+    // the row that proves it: the enumerator reaches it after `employees`, because
+    // `scanGroups` appends a cataloged namespace the scan never saw.
     expect(await provider.listObjects([], "table")).toEqual([
-      { path: ["applicants"], name: "applicants:*", kind: "table", rowCount: 0 },
-      { path: ["employees"], name: "employees:*", kind: "table", rowCount: 2 },
+      { path: ["applicants:*"], name: "applicants:*", kind: "table", rowCount: 0 },
+      { path: ["employees:*"], name: "employees:*", kind: "table", rowCount: 2 },
       // Cataloged and empty: the scan reached none of its keys because it has none, and
       // the catalog still names it. A count of 0 rows here is the engine answering none.
-      { path: ["vacancies"], name: "vacancies:*", kind: "table", rowCount: 0 },
+      { path: ["vacancies:*"], name: "vacancies:*", kind: "table", rowCount: 0 },
     ]);
     expect(await provider.listObjects([], "collection")).toEqual([
-      { path: ["articles"], name: "articles:*", kind: "collection", rowCount: 2 },
-      { path: ["notes"], name: "notes:*", kind: "collection", rowCount: 1 },
+      { path: ["articles:*"], name: "articles:*", kind: "collection", rowCount: 2 },
+      { path: ["notes:*"], name: "notes:*", kind: "collection", rowCount: 1 },
     ]);
     // The derived groupings, and NOT the four cataloged namespaces whose keys they would
     // otherwise double-count.
@@ -837,20 +838,56 @@ describe("LibreDBProvider object surface (#789)", () => {
     ]);
   });
 
-  test("one name, two kinds: the collision the catalog allows is described by KIND", async () => {
+  /**
+   * ONE ADDRESS, ONE OBJECT, across every kind this engine declares (#789).
+   *
+   * Standing ruling 3 stops uniqueness at the kind boundary because a tree row is path
+   * PLUS kind, and that is right for MySQL, where a table and a procedure share a name and
+   * the two kinds have different ROLES. It does not cover this engine: all three kinds here
+   * are `role: "relation"`, so nothing downstream that filters by role can tell two
+   * same-addressed objects apart, and the flat reading, which spells one string per object,
+   * then addresses both and resolves to neither.
+   *
+   * Measured on @libredb/libredb 0.2.2 rather than argued: with a bare key `notes` written
+   * beside a document collection `notes`, `doc(db, "notes").all()` yields `n1` and not the
+   * bare key, and `kv.get("notes")` answers the bare value with the collection intact. Two
+   * objects, not one listed twice. So they must not share an address.
+   */
+  test("no two objects share an address, whatever the catalog and the key scan both hold", async () => {
+    const kinds = provider.getCapabilities().objectKinds ?? [];
+    const listed = (await Promise.all(kinds.map((kind) => provider.listObjects([], kind.id)))).flat();
+    const addresses = listed.map((object) => object.path.join("\u0000"));
+
+    expect(listed.length).toBeGreaterThan(1);
+    expect([...new Set(addresses)].sort()).toEqual([...addresses].sort());
+  });
+
+  test("one NAME, two objects, two addresses: the collision the catalog allows is separated by the group", async () => {
     // Measured on @libredb/libredb 0.2.2: a cataloged collection `notes` and a bare key
-    // `notes` coexist, so the same path answers under two kinds. The tree identifies a row
-    // by path PLUS kind, which is why this is legal rather than a provider defect.
-    const collection = await provider.describeObject(["notes"], "collection");
+    // `notes` coexist in one file, and they are two objects rather than one listed twice -
+    // `doc(db, "notes").all()` yields the collection's documents and not the bare key,
+    // and `kv.get("notes")` answers the bare value with the collection intact.
+    //
+    // They used to be published at ONE address, `["notes"]`, under two kinds that are both
+    // `role: "relation"`. Ruling 3 permits path reuse across kinds, and it is right for
+    // MySQL's table beside a procedure; it is not enough here, because the two kinds share
+    // a role, so the flat reading, which spells one string per object, addressed both and
+    // resolved to neither. The group separates them, and the engine's own grammar is what
+    // it separates them by: `prefix notes:` reaches the collection and `get notes` the key.
+    const collection = await provider.describeObject(["notes:*"], "collection");
     const key = await provider.describeObject(["notes"], "keyspace");
     expect(collection.columns.map((column) => column.name)).toEqual(["id", "document"]);
     expect(key.columns.map((column) => column.name)).toEqual(["key", "value"]);
-    expect(collection.path).toEqual(["notes"]);
+    expect(collection.path).toEqual(["notes:*"]);
     expect(key.path).toEqual(["notes"]);
+    // The LABEL is unchanged and still the pattern `getSchema()` spells, so the row menu's
+    // `flatTargetName` lookup keeps finding it (#518).
+    const listed = await provider.listObjects([], "collection");
+    expect(listed.find((object) => object.path[0] === "notes:*")?.name).toBe("notes:*");
   });
 
   test("describeObject answers a cataloged table's real columns, and no index or foreign key", async () => {
-    const detail = await provider.describeObject(["employees"], "table");
+    const detail = await provider.describeObject(["employees:*"], "table");
     expect(detail.columns).toEqual([
       { name: "id", type: "string", nullable: false, isPrimary: true },
       { name: "name", type: "string", nullable: false, isPrimary: false },
@@ -919,13 +956,13 @@ describe("LibreDBProvider object surface (#789)", () => {
       keyspace: { count: 3 },
     });
     expect((await provider.listObjects(container, "table")).map((object) => object.path)).toEqual([
-      ["cat", "sch", "applicants"],
-      ["cat", "sch", "employees"],
-      ["cat", "sch", "vacancies"],
+      ["cat", "sch", "applicants:*"],
+      ["cat", "sch", "employees:*"],
+      ["cat", "sch", "vacancies:*"],
     ]);
 
-    const detail = await provider.describeObject(["cat", "sch", "employees"], "table");
-    expect(detail.path).toEqual(["cat", "sch", "employees"]);
+    const detail = await provider.describeObject(["cat", "sch", "employees:*"], "table");
+    expect(detail.path).toEqual(["cat", "sch", "employees:*"]);
     expect(detail.columns.map((column) => column.name)).toEqual(["id", "name", "salary", "active"]);
 
     // The shape the two-level declaration now refuses is the one it accepted above.
@@ -1034,7 +1071,7 @@ describe("LibreDBProvider object surface (#789)", () => {
     expect(() => open({ path: fixtureFile })).toThrow();
     await provider.countObjects([]);
     await provider.listObjects([], "table");
-    await provider.describeObject(["employees"], "table");
+    await provider.describeObject(["employees:*"], "table");
     // Still usable afterwards: nothing above took or dropped the lock.
     expect((await provider.getSchema()).length).toBeGreaterThan(0);
   });

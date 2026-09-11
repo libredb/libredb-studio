@@ -859,10 +859,34 @@ export class LibreDBProvider extends BaseDatabaseProvider {
 
     for (const { name: groupName, rowCount, entry } of groups) {
       const kind = objectKindFor(entry);
-      // A cataloged namespace is ADDRESSED by its catalog name (`employees`), which is
-      // the string the catalog keys it under and the one `table()` and `doc()` take. A
-      // derived grouping has no such name and is addressed by the group itself.
-      const segment = kind === "keyspace" ? groupName : LibreDBProvider.namespaceOfGroup(groupName);
+      // EVERY object is ADDRESSED BY ITS GROUP, cataloged or derived, and the catalog name
+      // addresses nothing (#789).
+      //
+      // It was the catalog name until this round, on the reasoning that `employees` is the
+      // string the catalog keys the table under and the one `table()` and `doc()` take.
+      // That is true about the ENGINE'S API and false about this address: standing ruling 2
+      // says the last path segment is the identifier that is UNIQUE WITHIN ITS PARENT, and
+      // a catalog name cannot be, because the catalog and the raw keyspace are one
+      // namespace. Measured on @libredb/libredb 0.2.2: a bare key `notes` and a document
+      // collection `notes` coexist in one file - `assertUserName` forbids `:` in a
+      // namespace name and nothing forbids a raw key equal to one - and they are two
+      // objects rather than one listed twice, because `doc(db, "notes").all()` yields the
+      // collection's documents and not the bare key, while `kv.get("notes")` answers the
+      // bare value with the collection intact. Two objects published at `["notes"]`, both
+      // `role: "relation"`, so neither the kind filter nor a container could separate them
+      // and the flat reading resolved to neither.
+      //
+      // The GROUP name is unique within the parent by construction rather than by luck:
+      // every group comes from one grouping pass over one keyspace, and the injected
+      // `<name>:*` for a cataloged namespace the scan never reached is only pushed when
+      // that group is absent. It is also the spelling `getSchema()` answers, so the two
+      // readings now agree on every object rather than on the derived ones alone.
+      //
+      // This is ruling 2's routine precedent rather than an exception to it: where an
+      // engine's bare name is not unique within its parent, the path carries the
+      // disambiguated form the engine itself tells them apart by, and the LABEL keeps the
+      // bare one. Here the engine tells them apart by the key pattern.
+      const segment = groupName;
       byKind[kind].push({
         object: {
           path: [...container, segment],

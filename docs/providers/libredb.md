@@ -627,27 +627,46 @@ There is no per-kind command a deployment might not have, the way `FUNCTION LIST
 three Redis-wire relatives. A failure of that read is a kernel storage condition, and this
 provider's settled answer to one is to let it propagate with the kernel's own code intact.
 
-#### Object identity, and the label that is deliberately not the last path segment
+#### Object identity: every object is addressed by its GROUP
 
-A cataloged object is ADDRESSED by its catalog name: the `table` `employees` is `["employees"]`,
-which is the string the catalog keys it under and the one `table()` and `doc()` take. A derived
-grouping has no such name and is addressed by the group itself, `["cache:*"]`.
+Every object here, cataloged or derived, is ADDRESSED by the group `scanGroups()` put it in: the
+`table` `employees` is `["employees:*"]`, the collection `notes` is `["notes:*"]`, the derived
+prefix grouping is `["cache:*"]` and a bare key is `["standalone"]`. The LABEL is the same string,
+so the two now agree; ruling 2 still allows them to differ and nothing here needs them to.
 
-The LABEL is the key pattern, `employees:*`, and it is allowed to differ from the last path
-segment (standing ruling 2). This is a Phase 1 constraint written down rather than hidden: every
-row-menu action still reaches its destination through `flatTargetName`, which looks an object up
-in `getSchema()`'s list BY NAME, and that list spells a cataloged namespace `employees:*`.
-Labelling the object `employees` would miss that lookup, and the generated command would then be
-`get employees`, an exact-key read of a key nobody stored, which answers zero rows and **no
-error** (#518, and see [§5.3](#53-schema-explorer-menu-actions)). The path already carries the
-real identity, so when the flat narrowing goes the label can follow it with no identity change.
+**It was the catalog name until #789's join guard, and that was wrong.** `employees` is the string
+the catalog keys the table under and the one `table()` and `doc()` take, which is a true fact about
+the ENGINE'S API and the wrong answer for this address. Standing ruling 2 says the last path
+segment is the identifier that is **unique within its parent**, and a catalog name cannot be:
+the catalog and the raw keyspace are one namespace, so a raw key may be spelled exactly like a
+cataloged one. The group name is unique by construction instead, because every group comes from
+one grouping pass over one keyspace and the injected `<name>:*` for a cataloged namespace the scan
+never reached is only pushed when that group is absent.
 
-**One string can address two objects of two different kinds, measured.** A cataloged collection
-`notes` and a bare key `notes` coexist in one file: `assertUserName` forbids a namespace name
-containing `:`, and nothing forbids a raw key equal to a namespace name. A tree row is identified
-by path PLUS kind id, so this is legal rather than a provider defect, and it is exactly why
-`describeObject()` takes the kind and why nothing in the object surface reads a name to work out
-what it is holding.
+This is ruling 2's routine precedent rather than an exception to it. Where an engine's bare name is
+not unique within its parent, the path carries the disambiguated form the engine itself tells them
+apart by, the way a PostgreSQL routine's segment carries its argument type list. Here the engine
+tells them apart by the key pattern: `prefix employees:` reaches the table's rows and `get
+employees` reads a key of that exact name.
+
+It also makes the two readings agree on every object rather than on the derived ones alone.
+`getSchema()` spells a cataloged namespace `employees:*`, so under the old address no cataloged
+object's flat spelling could resolve to its own path, and the row menu's `flatTargetName` lookup
+(#518, and see [§5.3](#53-schema-explorer-menu-actions)) is a lookup by that same string.
+
+**Two objects, one string, measured.** A cataloged collection `notes` and a bare key `notes`
+coexist in one file: `assertUserName` forbids a namespace name containing `:`, and nothing forbids
+a raw key equal to a namespace name. They are two objects rather than one listed twice, measured
+against a live `@libredb/libredb` 0.2.2 handle: `doc(db, "notes").all()` yields `n1` and not the
+bare key, and `kv.get("notes")` answers the bare value with the collection intact. Under the old
+address both were published at `["notes"]` under two kinds that are BOTH `role: "relation"`, so
+neither the kind filter nor a container could separate them and the flat reading resolved to
+neither. Ruling 3 permits path reuse across kinds and is right for MySQL, where a table sits beside
+a procedure and the two kinds have different roles; it is not enough where the kinds share one.
+They are now `["notes:*"]` and `["notes"]`.
+
+`describeObject()` still takes the kind, and nothing in the object surface reads a name to work out
+what it is holding: a group is mapped to a kind by the CATALOG, never by its spelling.
 
 #### What `describeObject()` answers
 
@@ -998,7 +1017,7 @@ What it holds, and why each piece is there:
 | `vacancies` | relational | 0 | a cataloged table holding nothing, so `{ count: 0 }` is the engine answering none |
 | `applicants` | relational | 0 | sorts BEFORE `employees` while the enumerator reaches it AFTER, so an unsorted listing is observable |
 | `articles` | document | 2 | a cataloged collection |
-| `notes` | document | 1 | its name is ALSO a bare key, so one string addresses two objects of two kinds |
+| `notes` | document | 1 | its name is ALSO a bare key, so two objects are spelled one way and must not share an address |
 | `cache:a`, `cache:b` | raw kv | 2 keys | an uncataloged prefix grouping |
 | `standalone` | raw kv | 1 key | a bare key, its own grouping |
 | `notes` | raw kv | 1 key | the collision above, from the raw side |
