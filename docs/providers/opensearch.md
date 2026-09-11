@@ -801,6 +801,126 @@ index.
 and the client falls back to `getSchema()`; here both halves are empty by construction, so a list would
 be byte-identical and a relations pass would re-read every mapping to return the same empty arrays.
 
+### The object surface (#789)
+
+The schema reader above describes **indices and nothing else**. The object browser's four methods -
+`listContainers`, `countObjects`, `listObjects`, `describeObject` - read four further REST endpoints,
+and **none of these objects is reachable from the SQL endpoint at all**: neither product's grammar has
+a `CREATE` statement for any of them, and OpenSearch's has none of any kind. This is the first
+provider in #789 whose objects come from REST rather than from a catalog query.
+
+**Zero container levels.** An index is not inside anything, and both products' own SQL surfaces say
+so: OpenSearch answers `TABLE_SCHEM` **null** and Elasticsearch reports only a `catalog` that is the
+cluster name and is not addressable in a statement (both measured, [§3](#3-design-decisions)). So
+`listContainers()` answers `[]` without a round trip and the tree opens straight onto the kind
+folders; first paint costs one `countObjects` and no container walk.
+
+| Kind | Role | Source | Filter |
+|---|---|---|---|
+| `index` | relation, accepts row writes | `GET /_cat/indices?format=json&bytes=b` | dot prefix, plus OpenSearch's date-suffixed `top_queries-*` |
+| `alias` | relation | `GET /_alias`, flattened and deduplicated | dot prefix |
+| `stream` | relation | `GET /_data_stream` | dot prefix |
+| `pipeline` | config | `GET /_ingest/pipeline` | dot prefix or `_meta.managed` |
+| `template` | config | `GET /_index_template` | dot prefix or `_meta.managed` |
+
+**An alias and a data stream are RELATIONS, not config objects, and that is measured.** Both answer
+rows through the SQL endpoint on both products: `SELECT customer FROM probe_orders_alias` returns the
+row and `SELECT * FROM probe_stream` returns the column list (2026-09-11). Neither declares
+`acceptsRowWrites`: an alias may span several indices and has no single write target, a data stream is
+append-only through its own API, and in any case no statement this provider can send writes anything.
+
+**A data stream is a kind rather than a property of an index, and the reason is that the alternative
+hides it completely.** Its backing indices are `.ds-`-prefixed, which the index listing's own system
+rule already removes, so without this kind a data stream's data is reachable through nothing in the
+tree at all.
+
+**The count and the listing are the same call.** Standing ruling 5f says the listing must contain
+exactly what the count counted; on a SQL engine those drift apart in a second `WHERE` clause, and here
+there is no `WHERE` clause, so the place they could stop being the same call is **the HTTP request
+itself**. `readKind()` in [`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts) is the
+only place a REST listing becomes objects: `countObjects` is its length per kind and `listObjects` is
+its result for one kind, through the same read, the same system filter, the same path construction and
+the same sort. A refusal is **per kind**, not per cluster - these are four separate endpoints and a
+security plugin grants privileges per endpoint - so one refused folder carries the engine's own
+sentence and the other four still count.
+
+**An alias listing is keyed by INDEX and has to be flattened and deduplicated.** The payload is
+`{"<index>":{"aliases":{"<alias>":{}}}}`, an index with no alias is still listed with an empty map,
+and one alias over several indices is named once per index (measured: adding `shared_alias` to two
+indices lists it twice). The tree addresses an alias by name, so without the dedupe that folder holds
+two rows at one path. An alias can never collide with an index or a data stream: `POST /_aliases`
+adding an alias called `probe_orders` while that index exists is refused with *"an index or data
+stream exists with the same name as the alias"* on both products.
+
+**The engine's own objects are filtered on two signals, because neither is sufficient.** Measured on a
+stock Elasticsearch 9.1.4 node on 2026-09-11: 21 ingest pipelines, all `_meta.managed: true` and
+**none** dot-prefixed; 61 composable index templates, 57 managed and the remaining four
+(`.monitoring-*-mb`) dotted and unmanaged. A dot-only rule leaves every pipeline in, a managed-only
+rule leaves four templates in. The cost is the one the index listing already pays and it is stated
+rather than hidden: a user **can** create a dot-prefixed alias or template (measured, acknowledged),
+and this hides it. Elasticsearch's data streams also carry a `system` boolean and OpenSearch's carry
+none; it is deliberately **not** read, because every engine-owned data stream that could be measured
+is dot-prefixed and a second rule no fixture can distinguish from the first is a line nothing proves.
+
+**`GET /_ingest/pipeline` answers HTTP 404 with `{}` when the cluster holds no pipeline**, on both
+products, and the transport reads that as an empty set rather than a failure. It is the one status
+outside the 401/403 pair that decides anything here, and it is not generalised: `_alias`,
+`_index_template` and `_data_stream` all answer HTTP 200 with an empty collection when they hold
+nothing, so a 404 from those really would be something else.
+
+**What is absent, and why each absence is a fact rather than a gap.**
+
+- **No view, function, procedure or trigger.** Neither product's SQL surface has `CREATE VIEW`, and
+  OpenSearch's grammar contains no `CREATE` statement of any kind (`CREATE TABLE t (id BIGINT)`
+  answers `SQLFeatureNotSupportedException`, *"Query must start with SELECT, DELETE, SHOW or
+  DESCRIBE"*). Elasticsearch 9.4 adds an **ES|QL views API as a technical preview**; a preview surface
+  gets no folder, and Phase 2 is where it is revisited.
+- **No stored script.** Both products have them and neither has a list-all API: `GET /_scripts` is
+  refused outright (*"Invalid index name [_scripts]"*), only get-by-id exists. An object that cannot be
+  enumerated cannot be a tree node - the same call Redis's `EVAL` scripts got.
+- **No legacy index template.** `_template` is a separate namespace whose names may **collide** with
+  the composable ones: measured on both products, `PUT _template/probe_template` succeeds while a
+  composable `probe_template` already exists, so one kind fed by both endpoints would hold two
+  different objects at one path.
+- **No secondary-index kind** in the relational sense. Every mapped field is inverted-indexed as a
+  property of being mapped, so there is nothing a user declared and nothing to name; `index` here is
+  the engine's own word for what a table is.
+
+`describeObject(path, kind)` answers the **mapping** for an `index`, an `alias` and a `stream` - an
+alias resolves to the index behind it and a data stream to its current backing index, both keyed by
+the concrete index name - and **no columns** for a `pipeline` or a `template`, which is the right
+answer rather than a gap: they are JSON documents with no field list, exactly as a routine, a trigger
+and a sequence have no columns on the SQL engines. `indexes` and `foreignKeys` are always empty, for
+the reasons in the table above.
+
+**The fixture is `docker/search-init/01-object-fixture.sh` and it applies unchanged to both
+products.** Neither image has an init-script directory, so it is a script rather than a file the
+entrypoint runs. `database-compose.yml` mounts the directory read-only into both services at
+`/opt/search-init`, so it is applied either from the repo or from inside the container:
+
+```bash
+SEARCH_URL=http://localhost:9200 bash docker/search-init/01-object-fixture.sh
+docker exec libredb-elasticsearch bash /opt/search-init/01-object-fixture.sh
+docker exec libredb-opensearch    bash /opt/search-init/01-object-fixture.sh
+```
+
+It creates one instance of every declared kind: the index `probe_orders`, the alias
+`probe_orders_alias`, the ingest pipeline `probe_pipeline`, the composable index templates
+`probe_template` and `probe_stream_template`, and the data stream `probe_stream`.
+
+**The one measured difference between the two products, and it is not in the declaration.** The
+object surface's five kinds, their roles, their paths and their columns were driven against a live
+OpenSearch 3.8.0 node and a live Elasticsearch 9.1.4 node on 2026-09-11 with the same fixture applied,
+and the output was identical kind for kind, path for path and column for column. What differs is what
+a **stock** cluster already holds: this product ships **no** ingest pipeline and **no** composable
+index template at all, so a fresh cluster's `GET /_ingest/pipeline` really does answer HTTP 404 - that
+is the ordinary first-run state here and the unreachable one upstream, where 21 managed pipelines
+ship. A transport that classified on the status would put the engine's own refusal sentence on the
+Ingest Pipelines folder of every fresh OpenSearch cluster, where the truth is zero. The index filter
+also has more to do here for a second measured reason: a stock node ships `.plugins-ml-config`,
+`.opensearch-sap-log-types-config` and `top_queries-<date>-<n>`, and the last carries no dot at all.
+See [elasticsearch.md](elasticsearch.md) for the other half of that sentence.
+
 ---
 
 ## 7. Monitoring & health
@@ -986,6 +1106,8 @@ difference — `OFFSET` — has no field in `ProviderCapabilities` to declare it
 | `defaultPort` | `9200` | Both schemes; the fixture publishes 9201 on the host ([§4.1](#41-configuration-fields)) |
 | `identifierQuoting` | **`backtick`** | The difference that fails silently: a double-quoted name here is a string literal, so a generated `WHERE "customer" = 'acme'` answers HTTP 200 with no rows ([§5.4](#54-dialect-traps-a-user-will-hit)) |
 | `statementTerminator` | **`none`** | Declared even though this product accepts `;`: the absence runs here too, and the upstream grammar has no terminator at all, so one answer serves both ([§5.4](#54-dialect-traps-a-user-will-hit)) |
+| `containerLevels` | **`[]`** | An index is not inside anything, and both products' own SQL surfaces say so ([§6](#the-object-surface-789)) |
+| `objectKinds` | `index`, `alias`, `stream`, `pipeline`, `template` | The five objects a search cluster publishes over REST; `index` is the only one that accepts row writes ([§6](#the-object-surface-789)) |
 | `schemaRefreshPattern` | `\b(DELETE)\b` | **This is the product it exists for**: a cluster with DELETE enabled really changes the counts this provider reports ([§5.6](#56-this-grammar-has-delete-and-it-is-off)) |
 
 `isGroupedKeyspace` is deliberately **absent**: an index is a real object the cluster holds, named by

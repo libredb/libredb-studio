@@ -36,6 +36,7 @@ import type {
   SearchClusterHealth,
   SearchIndexInfo,
   SearchMappingField,
+  SearchObjectInfo,
   SearchQueryResult,
   SearchTransport,
 } from "@/lib/db/providers/sql/search/transport";
@@ -110,8 +111,26 @@ function createTransport(options: FakeOptions = {}) {
       return options.mappings?.[name] ?? [];
     },
 
-    // Introspection must never reach these three. See the file header for why
-    // `query()` in particular is a design boundary rather than a convenience.
+    // Introspection must never reach these seven. The four object listings (#789)
+    // belong to the OBJECT surface, which is a different reader of the same seam:
+    // `getSchema()` describes indices and nothing else, so an alias, a pipeline, a
+    // template or a data stream reaching this file would be a scope error rather
+    // than a missing case.
+    aliases: (): Promise<SearchObjectInfo[]> => {
+      throw new Error("introspection listed aliases; getSchema describes indices");
+    },
+    pipelines: (): Promise<SearchObjectInfo[]> => {
+      throw new Error("introspection listed ingest pipelines; getSchema describes indices");
+    },
+    templates: (): Promise<SearchObjectInfo[]> => {
+      throw new Error("introspection listed index templates; getSchema describes indices");
+    },
+    dataStreams: (): Promise<SearchObjectInfo[]> => {
+      throw new Error("introspection listed data streams; getSchema describes indices");
+    },
+
+    // See the file header for why `query()` in particular is a design boundary
+    // rather than a convenience.
     query: (): Promise<SearchQueryResult> => {
       throw new Error("introspection ran a statement; the schema comes from the mapping");
     },

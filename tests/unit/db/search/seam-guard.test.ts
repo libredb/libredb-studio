@@ -72,6 +72,15 @@ const WIRE_TOKENS = [
   "/_cluster/health",
   "/_cluster/stats",
   "/_mapping",
+  // The four object listings (#789). None of these objects is reachable from the SQL
+  // endpoint at all - OpenSearch's grammar has no CREATE statement of any kind - so
+  // these paths are the only surface they exist on, and they are wire knowledge like
+  // every other path here. `/_index_template` and NOT `/_template`: the legacy
+  // namespace may collide with the composable one, which the transport records.
+  "/_alias",
+  "/_ingest/pipeline",
+  "/_index_template",
+  "/_data_stream",
   // The two query strings. Without `format=json` Elasticsearch answers its own
   // tabular text with no types in it, and without `bytes=b` the listing reports
   // "5.6kb" (both measured, `http-transport.ts:101-118`).
@@ -120,7 +129,24 @@ const WIRE_TOKENS = [
  *   that nothing reads: the fault name comes from `error.type` and the wording
  *   from `error.reason` (measured, `transport.ts:16-20`).
  */
-const UNUSED_WIRE_TOKENS = ["/_query", "/_search", "/_bulk", "root_cause", "caused_by"];
+const UNUSED_WIRE_TOKENS = [
+  "/_query",
+  "/_search",
+  "/_bulk",
+  "root_cause",
+  "caused_by",
+  // The LEGACY index template namespace, deliberately unread (#789): a legacy template
+  // and a composable one may carry the SAME name on both products (measured), so one
+  // kind fed by both endpoints would hold two objects at one path. Listed here so a
+  // later "aliases are missing their legacy templates" fix fails the build instead of
+  // silently producing duplicate rows. It contains no other token in this file.
+  "/_template",
+  // The stored-script endpoint. Both products have stored scripts and NEITHER has a
+  // list-all API - `GET /_scripts` is refused outright ("Invalid index name
+  // [_scripts]") - so an object that cannot be enumerated cannot be a tree node, the
+  // same call Redis's EVAL scripts got.
+  "/_scripts",
+];
 
 /**
  * Envelope keys whose names the neutral seam deliberately shares, so only the
@@ -144,11 +170,22 @@ const ENVELOPE_KEYS = [
   // The error envelope's readable members.
   "details",
   "reason",
-  // The mapping payload's nesting, and the `_cat` row's name column.
+  // The mapping payload's nesting.
   "mappings",
   "properties",
   "fields",
+  // The `_cat` row's name column. Also the `index` OBJECT KIND ID (#789), which is
+  // why it is exempted at exactly one spelling - see KIND_ID_WORDS.
   "index",
+  // The object listings' nesting (#789). `aliases` is the alias map INSIDE an entry
+  // keyed by index; the other three are the array-under-one-key shape and the two
+  // members that decide whose an object is.
+  "aliases",
+  "index_templates",
+  "index_template",
+  "data_streams",
+  "_meta",
+  "managed",
   // OpenSearch's self-identification, whose ABSENCE is Elasticsearch's signature.
   "distribution",
 ];
@@ -163,6 +200,37 @@ const ENVELOPE_KEYS = [
  * `formatBytes` - is a different concept wearing the same word.
  */
 const UNUSED_ENVELOPE_KEYS = ["size"];
+
+/**
+ * The two OBJECT KIND IDS that are also wire words, and the ONE place each may be
+ * spelled (#789).
+ *
+ * `index` and `alias` are the ids the tree's folders are keyed by, so the provider has
+ * to write them somewhere - and they are also the `_cat` row's name column and
+ * OpenSearch's column-alias member, which is why they are flagged keys above. Both
+ * facts are true, so the exemption is as narrow as it can be made: a string literal
+ * initialising a `const` whose name starts with `SEARCH_KIND_`, and nothing else.
+ * `envelope["index"]`, `row["alias"]`, an object literal member and a comparison all
+ * still fire, which the detector tests below prove in both directions.
+ *
+ * This is the same shape of decision as the `"object"` / `"nested"` hole above: a word
+ * the neutral surface legitimately owns, allowed at exactly one spelling rather than
+ * everywhere.
+ */
+const KIND_ID_WORDS = ["index", "alias"];
+const KIND_CONSTANT_PREFIX = "SEARCH_KIND_";
+
+/**
+ * Whether this node is the value of a `const SEARCH_KIND_* = "..."` declaration.
+ *
+ * Parent pointers exist because `ts.createSourceFile` is called with `setParentNodes`
+ * true, which `findWireLeaks` already relies on for `getStart`.
+ */
+function isKindConstantValue(node: ts.Node): boolean {
+  const parent = node.parent;
+  if (parent === undefined || !ts.isVariableDeclaration(parent) || parent.initializer !== node) return false;
+  return ts.isIdentifier(parent.name) && parent.name.text.startsWith(KIND_CONSTANT_PREFIX);
+}
 
 /**
  * Identifiers matched EXACTLY, because a substring match would fire on every
@@ -265,6 +333,8 @@ function leakedTokens(node: ts.Node): string[] {
 
   const spelled = spelling(node);
   if (spelled === null) return [];
+
+  if (KIND_ID_WORDS.includes(spelled.text) && isKindConstantValue(node)) return [];
 
   const lowered = spelled.text.toLowerCase();
   return mostSpecific([
@@ -453,6 +523,21 @@ export async function readIndices(origin: string) {
     ["ES|QL, which is deliberately unused", 'await post("/_query", body);', "/_query"],
     ["an error member nothing reads", 'const causes = error["root_cause"];', "root_cause"],
     ["a direct fetch", 'await fetch(url, { method: "POST" });', "fetch"],
+    // The kind-id exemption is NARROW, and these four prove where it stops. A kind id
+    // is allowed as the value of a SEARCH_KIND_ constant and nowhere else.
+    ["the _cat name column read as a key", 'const name = row["index"];', "index"],
+    ["the OpenSearch alias member read as a key", 'const label = column["alias"];', "alias"],
+    ["a kind id written into an object literal instead of the constant", 'const kind = { id: "index" };', "index"],
+    ["a kind id in a const that is not a SEARCH_KIND_ one", 'const KIND = "alias";', "alias"],
+    ["the alias listing key", 'const names = entry["aliases"];', "aliases"],
+    ["the index-template listing key", 'const list = payload["index_templates"];', "index_templates"],
+    ["the data-stream listing key", 'const list = payload["data_streams"];', "data_streams"],
+    ["the managed marker", 'const owned = meta["managed"] === true;', "managed"],
+    ["the legacy template endpoint, deliberately unread", 'await get("/_template");', "/_template"],
+    ["the stored-script endpoint, which has no list-all", 'await get("/_scripts");', "/_scripts"],
+    ["the alias listing endpoint", 'const path = "/_alias";', "/_alias"],
+    ["the ingest pipeline endpoint", 'const path = "/_ingest/pipeline";', "/_ingest/pipeline"],
+    ["the data stream endpoint", 'const path = "/_data_stream";', "/_data_stream"],
     ["a fetch off globalThis", "await globalThis.fetch(url);", "fetch"],
     ["a status-driven classification", "if (response.status === 400) return null;", "HTTP 400"],
     ["the status a missing index has on OpenSearch", "if (status === 404) return [];", "HTTP 404"],
@@ -488,6 +573,12 @@ export async function readIndices(origin: string) {
     ["the page bound", "const maxPages = 1000;"],
     ["a row limit that happens to be 200", "const limit = 200;"],
     ["the default port both products ship on", "const port = 9200;"],
+    // The exemption itself, in the one spelling it covers (#789).
+    ["a kind id declared as its own constant", 'const SEARCH_KIND_INDEX = "index";'],
+    ["the other kind id declared the same way", 'const SEARCH_KIND_ALIAS = "alias";'],
+    // The three kind ids that are not wire words at all were never flagged, and the
+    // test says so rather than leaving the reader to check the token lists.
+    ["a kind id that is not wire vocabulary", 'const SEARCH_KIND_PIPELINE = "pipeline";'],
   ])("does not flag %s", (_label, source) => {
     expect(findWireLeaks("index.ts", source)).toEqual([]);
   });

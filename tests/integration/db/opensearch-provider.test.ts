@@ -49,12 +49,14 @@
  * categorisation lives on, and asserting it through a class that erases it would
  * have tested nothing.
  */
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { ElasticsearchProvider, OpenSearchProvider } from "@/lib/db/providers/sql/search";
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
 import { type SearchErrorCategory, SearchTransportError } from "@/lib/db/providers/sql/search/transport";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import { ConnectionError, QueryError } from "@/lib/db/errors";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 // ============================================================================
 // Connection
@@ -408,6 +410,92 @@ const STATS_BODY = JSON.stringify({
 });
 
 // ============================================================================
+// Object-surface payloads (#789), captured from OpenSearch 3.8.0 on 2026-09-11
+// ============================================================================
+
+/**
+ * `GET /_alias`, keyed by INDEX with an inner map of that index's aliases.
+ *
+ * A stock node's own indices are listed too, each with an EMPTY alias map, so the
+ * flattening has to tolerate an index that contributes nothing rather than assume
+ * every entry yields a name.
+ */
+const ALIAS_BODY = JSON.stringify({
+  "top_queries-2026.09.11-04089": { aliases: {} },
+  ".plugins-ml-config": { aliases: {} },
+  ".ds-probe_stream-000001": { aliases: {} },
+  probe_orders: { aliases: { probe_orders_alias: {} } },
+  ".opensearch-sap-log-types-config": { aliases: {} },
+});
+
+/**
+ * `GET /_ingest/pipeline` on a node that HAS a pipeline.
+ *
+ * The whole listing is the user's, because this product ships no built-in pipeline
+ * at all - which is what makes the empty case below a 404 rather than an empty set.
+ */
+const PIPELINES_BODY = JSON.stringify({
+  probe_pipeline: {
+    description: "libredb object-surface fixture (#789)",
+    processors: [{ set: { field: "seen", value: "yes" } }],
+  },
+});
+
+/**
+ * `GET /_ingest/pipeline` on a node that has NONE - HTTP 404, body `{}`.
+ *
+ * THE measured difference between the two products this one implementation serves,
+ * and it is not a difference in the wire contract: both answer 404 for an empty set.
+ * It is a difference in what a stock cluster HOLDS. A stock Elasticsearch node ships
+ * 21 managed pipelines and can never reach this state; a stock OpenSearch node ships
+ * none, so this IS the ordinary first-run answer here. A transport that classified on
+ * the status would put "unavailable" on the Ingest Pipelines folder of every fresh
+ * OpenSearch cluster, when the truth is zero.
+ */
+const PIPELINES_ABSENT_BODY = "{}";
+
+/** `GET /_index_template`. This product ships none, so both entries are the fixture's. */
+const TEMPLATES_BODY = JSON.stringify({
+  index_templates: [
+    { name: "probe_template", index_template: { index_patterns: ["probe-template-*"], composed_of: [] } },
+    {
+      name: "probe_stream_template",
+      index_template: { index_patterns: ["probe_stream*"], data_stream: {}, composed_of: [] },
+    },
+  ],
+});
+
+/**
+ * `GET /_data_stream`.
+ *
+ * Measured shorter than Elasticsearch's: no `system`, no `hidden`, no `index_mode`,
+ * and the backing index name carries no date. `name` and the backing indices are the
+ * members both products share, and `name` is the only one the listing reads.
+ */
+const DATA_STREAMS_BODY = JSON.stringify({
+  data_streams: [
+    {
+      name: "probe_stream",
+      timestamp_field: { name: "@timestamp" },
+      indices: [{ index_name: ".ds-probe_stream-000001", index_uuid: "NzcJ_j43QlaXdvqSuGPRrA" }],
+      generation: 1,
+      status: "YELLOW",
+      template: "probe_stream_template",
+    },
+  ],
+});
+
+/** The mapping an alias and a data stream resolve to, keyed by the CONCRETE index. */
+const ALIAS_MAPPING_BODY = JSON.stringify({
+  probe_orders: { mappings: { properties: { customer: { type: "keyword" }, id: { type: "long" } } } },
+});
+const STREAM_MAPPING_BODY = JSON.stringify({
+  ".ds-probe_stream-000001": {
+    mappings: { _data_stream_timestamp: { enabled: true }, properties: { "@timestamp": { type: "date" } } },
+  },
+});
+
+// ============================================================================
 // Fake cluster
 // ============================================================================
 
@@ -445,6 +533,14 @@ function defaultReply(path: string, body: Record<string, unknown> | null): Reply
   if (path === "/_cluster/stats") return ok(STATS_BODY);
   if (path === "/probe_orders/_mapping") return ok(ORDERS_MAPPING_BODY);
   if (path === "/probe_shapes/_mapping") return ok(SHAPES_MAPPING_BODY);
+  // The object-surface listings (#789), each one GET against a REST endpoint rather
+  // than the SQL surface: neither product's grammar can reach any of these objects.
+  if (path === "/_alias") return ok(ALIAS_BODY);
+  if (path === "/_ingest/pipeline") return ok(PIPELINES_BODY);
+  if (path === "/_index_template") return ok(TEMPLATES_BODY);
+  if (path === "/_data_stream") return ok(DATA_STREAMS_BODY);
+  if (path === "/probe_orders_alias/_mapping") return ok(ALIAS_MAPPING_BODY);
+  if (path === "/probe_stream/_mapping") return ok(STREAM_MAPPING_BODY);
 
   // Every other index name: the core REST layer's snake_case 404.
   if (path.endsWith("/_mapping")) return { status: 404, body: MAPPING_NOT_FOUND_BODY };
@@ -1116,5 +1212,75 @@ describe("OpenSearchProvider monitoring", () => {
     // The ceiling keeps its 0: for `maxConnections` the type says 0 and absence are the
     // SAME fact, and the Connections card reads it as "no limit published".
     expect(overview.maxConnections).toBe(0);
+  });
+});
+
+// ============================================================================
+// The object surface (#789)
+// ============================================================================
+
+/**
+ * What the fixture holds on THIS product once the engine's own objects are removed.
+ *
+ * `index` is 2 of the four `_cat/indices` rows: `.plugins-ml-config` and
+ * `top_queries-2026.08.18-74305` are the node's own, and the second carries no dot at
+ * all, which is why the index listing's system rule is a name SHAPE and not just a
+ * prefix. Every other number equals the Elasticsearch fixture's, because
+ * `docker/search-init/01-object-fixture.sh` applies unchanged to both.
+ */
+const FIXTURE_OBJECT_COUNTS = { index: 2, alias: 1, pipeline: 1, template: 2, stream: 1 };
+
+describe("object surface", () => {
+  test("declares exactly what the other type-id declares", () => {
+    // The two declarations are already pinned as EQUAL above, capability by
+    // capability, so this test asserts the object model's own half rather than
+    // restating it: the kinds, their roles and the zero container depth, all of which
+    // are facts about a search cluster and not about either product.
+    const capabilities = new OpenSearchProvider(makeConnection()).getCapabilities();
+    const kinds = capabilities.objectKinds ?? [];
+
+    expect(kinds.map((kind) => kind.id).sort()).toEqual(["alias", "index", "pipeline", "stream", "template"]);
+    expect(kinds.map((kind) => kind.role)).toEqual(["relation", "relation", "relation", "config", "config"]);
+    expect(capabilities.containerLevels).toEqual([]);
+
+    // OpenSearch's SQL grammar contains no CREATE statement of ANY kind - measured,
+    // `CREATE TABLE t (id BIGINT)` answers `SQLFeatureNotSupportedException`, "Query
+    // must start with SELECT, DELETE, SHOW or DESCRIBE" - so there is no view, no
+    // function, no procedure and no trigger to declare. A stored script exists but has
+    // no list-all API (`GET /_scripts` is refused outright on both products), and an
+    // object that cannot be enumerated cannot be a tree node.
+    for (const absent of ["view", "function", "procedure", "trigger", "script"]) {
+      expect(kinds.find((kind) => kind.id === absent)).toBeUndefined();
+    }
+  });
+
+  test("satisfies the shared object surface contract", async () => {
+    const provider = await connectProvider();
+
+    await assertObjectSurface(provider, {
+      // A zero-level engine lists NO containers, and the helper addresses every object
+      // at the root container. `[[]]` would assert that `listContainers()` answers one
+      // container whose path is empty, which is a different and untrue claim.
+      containers: [],
+      kinds: FIXTURE_OBJECT_COUNTS,
+      sampleObject: { path: ["probe_stream"], kind: "stream" },
+    });
+  });
+
+  test("reads a 404 from the pipeline endpoint as an empty set, not a refusal", async () => {
+    // The one behaviour that differs between the two products in practice, and it is
+    // the stock state of THIS one: a node with no pipeline answers HTTP 404 with `{}`.
+    // Counting it as a refusal would put the engine's own sentence on the Ingest
+    // Pipelines folder of every fresh OpenSearch cluster.
+    const provider = await connectProvider();
+    overridePath("/_ingest/pipeline", { status: 404, body: PIPELINES_ABSENT_BODY });
+
+    const counts = await provider.countObjects([]);
+
+    expect(counts.pipeline).toEqual({ count: 0 });
+    expect(await provider.listObjects([], "pipeline")).toEqual([]);
+    // And the other folders are untouched: a 404 on one endpoint is one kind's answer
+    // and not a fact about the cluster.
+    expect(counts.template).toEqual({ count: 2 });
   });
 });

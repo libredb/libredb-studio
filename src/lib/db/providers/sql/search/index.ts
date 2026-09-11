@@ -83,14 +83,20 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import {
   type ActiveSessionDetails,
+  type Container,
   type DatabaseConnection,
+  type DatabaseObject,
   type DatabaseOverview,
   type HealthInfo,
   type IndexStats,
+  type KindCount,
   type MaintenanceResult,
   type MaintenanceType,
+  type ObjectDetail,
+  type ObjectKindSpec,
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
@@ -106,11 +112,12 @@ import {
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { SearchHttpTransport } from "./http-transport";
-import { getSchema as readSchema, isSystemIndex } from "./introspect";
+import { getSchema as readSchema, isSystemIndex, toColumns } from "./introspect";
 import {
   type SearchClusterHealth,
   type SearchDialectId,
   type SearchIndexInfo,
+  type SearchObjectInfo,
   type SearchQueryResult,
   type SearchTransport,
   SearchTransportError,
@@ -283,6 +290,136 @@ const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
   statementLanguage:
     "OpenSearch SQL, the SQL plugin's own dialect - NOT the JSON query DSL, NOT an aggregation body, and NOT PPL",
 });
+
+// ============================================================================
+// The object surface (#789)
+// ============================================================================
+
+/**
+ * The kind ids, as constants.
+ *
+ * `"index"` and `"alias"` are the two words this provider's seam guard also knows as
+ * wire vocabulary, and `tests/unit/db/search/seam-guard.test.ts` exempts a string
+ * literal only when it initialises a `SEARCH_KIND_*` constant - so these five lines
+ * are the ONLY place either word may be spelled outside `http-transport.ts`, and
+ * everything else refers to the constant. That is why they exist as constants at all.
+ */
+const SEARCH_KIND_INDEX = "index";
+const SEARCH_KIND_ALIAS = "alias";
+const SEARCH_KIND_PIPELINE = "pipeline";
+const SEARCH_KIND_TEMPLATE = "template";
+const SEARCH_KIND_STREAM = "stream";
+
+/**
+ * What a search cluster holds, measured on Elasticsearch 9.1.4 and OpenSearch 3.8.0
+ * on 2026-09-11 with `docker/search-init/01-object-fixture.sh` applied to both.
+ *
+ * ONE declaration for TWO type-ids, and that is a measured claim rather than a
+ * convenience: every endpoint below answered the same shape on both products, and the
+ * capability equality test in `tests/integration/db/opensearch-provider.test.ts`
+ * fails if the two ever diverge. The ONE difference the two showed is not in this
+ * declaration at all - it is that a stock Elasticsearch node ships 21 ingest
+ * pipelines and 61 index templates of its own while a stock OpenSearch node ships
+ * none, so the empty-pipeline case (HTTP 404, see the transport) is reachable on one
+ * product and not the other.
+ *
+ * WHAT IS ABSENT, and why each absence is a fact rather than a gap:
+ *
+ * - NO view, function, procedure or trigger. Neither product's SQL surface has
+ *   CREATE VIEW, and OpenSearch's grammar contains no CREATE statement of any kind
+ *   (measured: `CREATE TABLE t (id BIGINT)` answers `SQLFeatureNotSupportedException`,
+ *   "Query must start with SELECT, DELETE, SHOW or DESCRIBE"). Elasticsearch 9.4 adds
+ *   an ES|QL views API as a TECHNICAL PREVIEW; a preview surface gets no folder, and
+ *   Phase 2 revisits it.
+ * - NO stored script. Both products have them and NEITHER has a list-all API:
+ *   `GET /_scripts` is refused outright on both ("Invalid index name [_scripts]"),
+ *   only get-by-id exists. An object that cannot be enumerated cannot be a tree node,
+ *   which is the same call Redis's EVAL scripts got.
+ * - NO legacy index template. `_template` is a separate namespace whose names may
+ *   COLLIDE with the composable ones (measured on both), so one kind fed by both
+ *   endpoints would hold two different objects at one path.
+ * - NO secondary-index kind, in the relational sense. Every mapped field is inverted
+ *   -indexed as a property of being mapped, so there is nothing a user declared and
+ *   nothing to name. `index` here is the engine's own word for what a table is.
+ *
+ * WHY AN ALIAS AND A DATA STREAM ARE RELATIONS and not config objects: both answer
+ * rows through the SQL endpoint on both products (measured, `SELECT customer FROM
+ * probe_orders_alias` and `SELECT * FROM probe_stream`), which is exactly what
+ * `ObjectRole`'s "relation" means. Neither declares `acceptsRowWrites`: an alias may
+ * span several indices and has no single write target, and a data stream is
+ * append-only through its own API - and in any case no statement this provider can
+ * send writes anything at all.
+ */
+const SEARCH_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
+  {
+    id: SEARCH_KIND_INDEX,
+    role: "relation",
+    label: "Index",
+    // "Indices" is the plural both products use in their own APIs and docs, and it is
+    // the word `getLabels()` already puts everywhere else in the UI.
+    labelPlural: "Indices",
+    // The per-KIND half, and deliberately not conjoined with the engine-wide
+    // `supportsInlineRowEdit: false` this provider declares: that flag is about the
+    // results grid's `UPDATE ... SET`, which has no spelling in either grammar, while
+    // an import into an index is an ordinary bulk document write. See
+    // `kindAcceptsRowWrites()` in object-kinds.ts.
+    acceptsRowWrites: true,
+  },
+  { id: SEARCH_KIND_ALIAS, role: "relation", label: "Alias", labelPlural: "Aliases" },
+  { id: SEARCH_KIND_STREAM, role: "relation", label: "Data Stream", labelPlural: "Data Streams" },
+  { id: SEARCH_KIND_PIPELINE, role: "config", label: "Ingest Pipeline", labelPlural: "Ingest Pipelines" },
+  { id: SEARCH_KIND_TEMPLATE, role: "config", label: "Index Template", labelPlural: "Index Templates" },
+] as const);
+
+/**
+ * Which seam call answers for which kind.
+ *
+ * A table rather than a `switch`, because the only thing that differs per kind IS the
+ * call: every kind is filtered, pathed and sorted by one function below. Adding a kind
+ * is a row here and a row in the declaration above, and the conformance helper fails
+ * the provider if the two disagree.
+ */
+const SEARCH_OBJECT_READERS: Readonly<
+  Record<string, (transport: SearchTransport, signal?: AbortSignal) => Promise<SearchObjectInfo[]>>
+> = Object.freeze({
+  [SEARCH_KIND_INDEX]: (transport, signal) => transport.indices(signal),
+  [SEARCH_KIND_ALIAS]: (transport, signal) => transport.aliases(signal),
+  [SEARCH_KIND_STREAM]: (transport, signal) => transport.dataStreams(signal),
+  [SEARCH_KIND_PIPELINE]: (transport, signal) => transport.pipelines(signal),
+  [SEARCH_KIND_TEMPLATE]: (transport, signal) => transport.templates(signal),
+});
+
+/**
+ * The kinds whose objects resolve to a MAPPING, and therefore have columns.
+ *
+ * An index, an alias and a data stream all answer `_mapping` - measured, an alias
+ * resolves to the index behind it and a data stream to its current backing index, and
+ * both come back keyed by the CONCRETE index name, which the transport already
+ * handles. A pipeline and a template are JSON documents with no field list at all, so
+ * their detail carries no columns, exactly as a routine, a trigger and a sequence do
+ * on the SQL engines.
+ */
+const SEARCH_MAPPED_KINDS: readonly string[] = Object.freeze([
+  SEARCH_KIND_INDEX,
+  SEARCH_KIND_ALIAS,
+  SEARCH_KIND_STREAM,
+]);
+
+/**
+ * Two paths ordered segment by segment, by code unit.
+ *
+ * Never `JSON.stringify`: at mixed depth the deeper path sorts first because `,` is
+ * below `]`, and JSON escaping reorders exotic names. This is the fifth copy in the
+ * repo and standing ruling 5h (#789) assigns the hoist into `object-kinds.ts` to the
+ * sweep rather than to this task, so it is written the settled way and left here.
+ */
+function comparePaths(left: readonly string[], right: readonly string[]): number {
+  const shared = Math.min(left.length, right.length);
+  for (let index = 0; index < shared; index += 1) {
+    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
+  }
+  return left.length - right.length;
+}
 
 // ============================================================================
 // Pure helpers
@@ -484,6 +621,13 @@ abstract class SearchProvider extends SQLBaseProvider {
       // accepts the terminator and also accepts its absence, so omitting it on both
       // keeps this a fact about the family instead of a branch on `dialect`.
       statementTerminator: "none",
+      // ZERO container levels, and both products' own SQL surfaces say so: OpenSearch
+      // answers `TABLE_SCHEM` null and Elasticsearch reports only a `catalog` that is
+      // the cluster name and is not addressable in a statement (measured; see the file
+      // header, point 3). An index is not inside anything, so the tree opens straight
+      // onto the kind folders.
+      containerLevels: [],
+      objectKinds: SEARCH_OBJECT_KINDS,
       schemaRefreshPattern: SEARCH_SCHEMA_REFRESH_PATTERN,
     };
   }
@@ -785,6 +929,203 @@ abstract class SearchProvider extends SQLBaseProvider {
   public async getSchema(): Promise<TableSchema[]> {
     const transport = this.requireTransport();
     return this.guarded(() => readSchema(transport, {}, this.deadline()));
+  }
+
+  // ==========================================================================
+  // Object surface (#789)
+  // ==========================================================================
+
+  /**
+   * THE 5f SEAM, in one method: the ONLY place a REST listing becomes objects.
+   *
+   * Standing ruling 5f says the listing must contain exactly what the count counted.
+   * On a SQL engine those two drift apart in a second WHERE clause; here there is no
+   * WHERE clause and no catalog query at all, so the seam moves to the place where a
+   * COUNT and a LISTING could stop being the same call - and on a REST surface that
+   * place is the HTTP request itself. `countObjects` is `readKind(...).length` per
+   * kind and `listObjects` is `readKind(...)` for one kind, so the two go through the
+   * same call, the same system filter, the same path construction and the same sort.
+   * Nothing is left for them to disagree in.
+   *
+   * The system filter is the part a fixture cannot certify on its own. A stock
+   * Elasticsearch node ships 21 ingest pipelines and 61 index templates of its own, so
+   * an unfiltered count reports a user's single pipeline as 22; the transport decides
+   * whose an object is, on the same signals it already decides an index by.
+   */
+  private async readKind(container: readonly string[], kind: string, signal?: AbortSignal): Promise<DatabaseObject[]> {
+    const read = SEARCH_OBJECT_READERS[kind];
+    const objects = await read(this.requireTransport(), signal);
+
+    return (
+      objects
+        .filter((object) => !object.isSystem)
+        // The one place a path is CONSTRUCTED rather than read, which is the single
+        // exception standing ruling 5g allows to the no-positional-index rule. The
+        // container is spread rather than assumed empty, so the construction stays
+        // correct under a declaration with levels in it.
+        .map((object) => ({ path: [...container, object.name], name: object.name, kind }))
+        .sort((left, right) => comparePaths(left.path, right.path))
+    );
+  }
+
+  /**
+   * The container path a caller handed in, checked against the DECLARATION.
+   *
+   * `containerDepth()` and never `containerLevels.length` at a call site, and never a
+   * hardcoded `0`: this engine declares zero levels today, and the check has to move
+   * with the declaration rather than with what this engine happens to be.
+   */
+  private requireContainer(container: readonly string[]): void {
+    const depth = containerDepth(this.getCapabilities());
+    if (container.length !== depth) {
+      throw new QueryError(
+        `A ${this.product.label} container path has ${depth} segment(s), received ${JSON.stringify(container)}`,
+        this.type,
+      );
+    }
+  }
+
+  /**
+   * There is no container level here, so there is nothing to list.
+   *
+   * An empty array and not a refusal: "this engine has no container above an object"
+   * is a true statement about a search cluster and not a caller mistake. Both
+   * products' own SQL surfaces say it - OpenSearch reports `TABLE_SCHEM` null and
+   * Elasticsearch reports a `catalog` that is the cluster name and is not addressable
+   * in a statement (measured) - so the tree opens straight onto the kind folders and
+   * first paint costs one `countObjects` and no container walk at all.
+   *
+   * `isSessionDefault` has nowhere to be marked for the same reason: standing ruling
+   * 5a2 requires it at every DECLARED level, and there are none.
+   */
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
+    this.ensureConnected();
+    void parent;
+    return [];
+  }
+
+  /**
+   * How many objects of each declared kind the cluster holds.
+   *
+   * Every declared kind is seeded at `{ count: 0 }` from the DECLARATION before any
+   * read, so a kind whose listing comes back empty keeps its folder instead of
+   * disappearing, and a kind the readers table somehow did not answer for cannot
+   * vanish either.
+   *
+   * A refusal is PER KIND and not per cluster, which is the opposite of MongoDB's
+   * call and is measured rather than defensive: these are four separate endpoints, a
+   * security plugin grants privileges per endpoint, and one of them (the ingest
+   * pipeline listing) answers HTTP 404 for "there are none" on a stock OpenSearch
+   * node. So one kind's refusal carries the engine's own sentence on that kind's
+   * badge and leaves the other three alone. The reads are issued together because
+   * they are independent cluster-state GETs and a folder count that arrives four
+   * round trips late is a tree that opens slowly for no reason.
+   */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    this.ensureConnected();
+    this.requireContainer(container);
+    const signal = this.deadline();
+
+    const kinds = declaredKinds(this.getCapabilities());
+    const counts: Record<string, KindCount> = Object.fromEntries(kinds.map((kind) => [kind.id, { count: 0 }]));
+
+    await Promise.all(
+      kinds.map(async (kind) => {
+        try {
+          counts[kind.id] = { count: (await this.readKind(container, kind.id, signal)).length };
+        } catch (error) {
+          counts[kind.id] = { unavailable: this.mapSearchError(error).message };
+        }
+      }),
+    );
+    return counts;
+  }
+
+  /**
+   * The objects of one kind, names only.
+   *
+   * The DECLARATION answers "is this kind declared", not the readers table: deciding
+   * it from what the table happens to hold would let the two disagree and would report
+   * "declares no object kind" about a kind `SEARCH_OBJECT_KINDS` does declare.
+   *
+   * No `rowCount` and no `sizeBytes` on an index row, even though the index listing
+   * carries both. That is a deliberate bound and not an omission: the other four kinds
+   * have no such numbers at all, so filling them for one kind would make the folder's
+   * rows mean different things, and `describeObject` is where one object's detail is
+   * paid for.
+   */
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    this.ensureConnected();
+    if (findKind(this.getCapabilities(), kind) === undefined) {
+      throw new QueryError(`${this.product.label} declares no object kind "${kind}"`, this.type);
+    }
+    this.requireContainer(container);
+
+    return this.guarded(() => this.readKind(container, kind, this.deadline()));
+  }
+
+  /**
+   * One object's fields.
+   *
+   * The KIND decides and nothing reads the name to work out what it is holding: the
+   * lookup requires the listing for THAT kind to contain the path, so asking for a
+   * pipeline by the name of an index is a miss rather than an index described as a
+   * pipeline. An alias and an index can never collide anyway - measured, the engine
+   * refuses an alias that takes an existing index's or data stream's name - but the
+   * lookup does not depend on that.
+   *
+   * `indexes` is ALWAYS empty and so is `foreignKeys`, and both are facts about the
+   * engine rather than unread fields: every mapped field is inverted-indexed as a
+   * property of being mapped, so there is no secondary-index object anybody named,
+   * and the engine has no foreign key constraint in its model at all - the same
+   * measurement behind `declaresForeignKeys: false`.
+   *
+   * A PIPELINE and a TEMPLATE carry no columns, which is the correct answer and not a
+   * gap: they are JSON documents with no field list, exactly as a routine, a trigger
+   * and a sequence have no columns on the SQL engines. Their definitions are a Phase 2
+   * Source tab.
+   */
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`${this.product.label} declares no object kind "${kind}"`, this.type);
+    }
+
+    // Derived from the DECLARATION, not written out: one segment per declared
+    // container level plus the object's own name. No kind here declares `attachedTo`,
+    // so there is one shape.
+    const depth = containerDepth(capabilities);
+    if (path.length !== depth + 1) {
+      throw new QueryError(
+        `A ${this.product.label} "${kind}" path has ${depth + 1} segment(s), received ${JSON.stringify(path)}`,
+        this.type,
+      );
+    }
+
+    // Neither read is positional. The container is every segment the declaration
+    // assigns to a level, and the object's own name is the LAST segment.
+    const container = path.slice(0, depth);
+    const name = path[path.length - 1];
+
+    return await this.guarded(async () => {
+      const signal = this.deadline();
+      // Matched on the whole PATH and not on the name, so the container segments the
+      // declaration assigns are load-bearing rather than decorative: at any declared
+      // depth the object has to be the one this path addresses, and a container read
+      // off the wrong positions no longer finds it.
+      const found = (await this.readKind(container, kind, signal)).find(
+        (object) => comparePaths(object.path, path) === 0,
+      );
+      if (found === undefined) {
+        throw new QueryError(`No ${this.product.label} ${kind} named ${name}`, this.type);
+      }
+
+      const columns = SEARCH_MAPPED_KINDS.includes(kind)
+        ? toColumns(await this.requireTransport().mapping(name, signal))
+        : [];
+      return { path: [...path], columns, indexes: [], foreignKeys: [] };
+    });
   }
 
   // ==========================================================================

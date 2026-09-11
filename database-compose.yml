@@ -473,6 +473,13 @@ services:
       xpack.security.enabled: "false"
       # Sized for a laptop. The image otherwise claims a heap from the host's total memory.
       ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      # The object-surface fixture (#789). Neither image has an init-script directory
+      # and neither product has DDL - an index, an alias, an ingest pipeline, an index
+      # template and a data stream are all created over REST - so the fixture is a
+      # script, mounted read-only and run by hand or by `docker exec`. The exact
+      # commands are in docs/providers/elasticsearch.md.
+      - ./docker/search-init:/opt/search-init:ro
     ports:
       # 9200 is the HTTP API, the only protocol this provider speaks. 9300 (transport) is
       # deliberately not published: there is no transport-protocol client in this codebase.
@@ -501,6 +508,10 @@ services:
       # the node serves HTTPS with a self-signed certificate and a default admin password.
       DISABLE_SECURITY_PLUGIN: "true"
       OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      # The same fixture script, unchanged: every endpoint it calls answered identically
+      # on both products (#789). See docs/providers/opensearch.md for the commands.
+      - ./docker/search-init:/opt/search-init:ro
     ports:
       # 9201 on the host because both products ship on 9200 in the container and the
       # elasticsearch service above already publishes it. The provider's default port stays

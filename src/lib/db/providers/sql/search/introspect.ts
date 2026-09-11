@@ -248,7 +248,7 @@ function toColumn(field: SearchMappingField): ColumnSchema {
  * Sorting by path also keeps `address.city` next to the other `address.*` fields,
  * which is the grouping a container leaves behind once it is dropped as a column.
  */
-function toColumns(fields: SearchMappingField[]): ColumnSchema[] {
+export function toColumns(fields: SearchMappingField[]): ColumnSchema[] {
   return (
     fields
       .filter((field) => !isContainer(field))
@@ -377,9 +377,11 @@ function toTableSchema(index: SearchIndexInfo, columns: ColumnSchema[]): TableSc
  * construction, so there is nothing to defer and a second pass would re-read every
  * mapping to return the same empty arrays.
  *
- * Aliases and data streams are absent, which the seam records as a limitation
- * rather than an oversight: they come from other endpoints, so a queryable alias
- * does not appear in the tree even though SQL accepts it.
+ * Aliases and data streams are absent HERE, deliberately: this function answers the
+ * SCHEMA tree, which describes indices. They are declared object kinds since #789 and
+ * are read from their own endpoints by the provider's object surface, so a queryable
+ * alias does appear in the object tree - and `toColumns` below is shared with it, so
+ * an alias, an index and a data stream get one column rule rather than two.
  */
 export async function getSchema(
   transport: SearchTransport,

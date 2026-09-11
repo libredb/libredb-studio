@@ -235,18 +235,54 @@ export interface SearchIndexInfo {
    * decides what to do with, rather than a filter applied here.
    *
    * NOTE what this list does NOT contain: aliases and data streams. They are a
-   * different endpoint, so a queryable alias will not appear in the schema tree.
-   * That is a recorded limitation, not an oversight.
+   * different endpoint, and `getSchema()` still describes indices alone - so a
+   * queryable alias does not appear in the SCHEMA tree. Since #789 it does appear in
+   * the OBJECT tree, through {@link SearchTransport.aliases} and
+   * {@link SearchTransport.dataStreams}, which is where that limitation was answered.
    */
+  isSystem: boolean;
+}
+
+/**
+ * One object that is neither an index nor a row: an alias, an ingest pipeline, a
+ * composable index template, a data stream (issue #789).
+ *
+ * Two fields and no more, because the tree's folder needs a NAME and the provider
+ * needs to know whose object it is. Everything else these endpoints carry - a
+ * pipeline's processors, a template's patterns, a data stream's backing indices - is
+ * a Phase 2 Source tab rather than anything a listing shows, and reading it here
+ * would make the listing pay for a detail nobody opened.
+ *
+ * `isSystem` is decided on the wire side for the same reason `SearchIndexInfo` decides
+ * it there: the signals are product payload members, and they differ per endpoint.
+ * Measured on 2026-09-11, Elasticsearch 9.1.4 and OpenSearch 3.8.0:
+ *
+ * - a stock Elasticsearch node ships 21 ingest pipelines and 61 composable index
+ *   templates, ALL of them the engine's own, while a stock OpenSearch node ships
+ *   none of either. So an unfiltered pipelines folder would show a user with one
+ *   pipeline a folder of 22 on one product and 1 on the other.
+ * - the dot-prefix convention alone does not catch them: all 21 pipelines and 43 of
+ *   the 61 templates carry no dot. `_meta.managed` catches the pipelines and 57 of
+ *   the templates, and the remaining four (`.monitoring-*-mb`) carry the dot. So
+ *   neither signal is sufficient alone and the transport reads both.
+ */
+export interface SearchObjectInfo {
+  name: string;
+  /** True for an object the engine created for its own bookkeeping. */
   isSystem: boolean;
 }
 
 /**
  * Everything the provider needs from a search cluster.
  *
- * Deliberately small: five calls, each answering one question the provider asks.
+ * Deliberately small: nine calls, each answering one question the provider asks.
  * A second implementation - the official client library, a proxy, a test double -
  * satisfies this and nothing else.
+ *
+ * The four object listings added for #789 return {@link SearchObjectInfo} rather
+ * than anything richer, and each is ONE request: the provider's object surface has
+ * ZERO container levels, so a count and a listing both read the whole cluster and
+ * there is no per-container narrowing for them to disagree about.
  */
 export interface SearchTransport {
   /** Which product this transport speaks to. */
@@ -276,6 +312,56 @@ export interface SearchTransport {
    * a fact about the index and not an error.
    */
   mapping(index: string, signal?: AbortSignal): Promise<SearchMappingField[]>;
+
+  /**
+   * Every alias in the cluster, by name, deduplicated (#789).
+   *
+   * One alias may point at MANY indices (measured: adding `shared_alias` to two
+   * indices succeeds on both products and the listing then names it twice), and the
+   * endpoint is keyed by INDEX rather than by alias, so the flattening and the
+   * deduplication are the implementation's problem. What crosses the seam is the set
+   * of alias names, which is what the tree addresses.
+   *
+   * An alias name cannot collide with an index or data stream name: measured on both
+   * products, adding an alias called `probe_orders` while that index exists is refused
+   * with "an index or data stream exists with the same name as the alias".
+   */
+  aliases(signal?: AbortSignal): Promise<SearchObjectInfo[]>;
+
+  /**
+   * Every ingest pipeline in the cluster (#789).
+   *
+   * The implementation owes one measured translation here, and it is the single
+   * biggest behavioural difference this provider's two products showed: with NO
+   * pipeline defined, the endpoint answers HTTP 404 with an empty body rather than an
+   * empty set. That is the state of a STOCK OpenSearch node, which ships no pipelines
+   * at all, while a stock Elasticsearch node ships 21 and can never reach it. So a
+   * transport that let the status decide would report "unavailable" for the ordinary
+   * OpenSearch case, and the seam's contract is that an empty cluster answers `[]`.
+   */
+  pipelines(signal?: AbortSignal): Promise<SearchObjectInfo[]>;
+
+  /**
+   * Every COMPOSABLE index template in the cluster (#789).
+   *
+   * Composable only, and that is a measured boundary rather than a modern-API
+   * preference: a legacy template and a composable template may carry the SAME name
+   * on both products (measured, both `PUT`s answer `acknowledged: true`), so one kind
+   * fed by both endpoints would hold two different objects at one path, which
+   * `tests/helpers/object-surface-conformance.ts` invariant 5 refuses and a tree
+   * cannot address.
+   */
+  templates(signal?: AbortSignal): Promise<SearchObjectInfo[]>;
+
+  /**
+   * Every data stream in the cluster (#789).
+   *
+   * A data stream is its own object and not a property of an index: its backing
+   * indices are `.ds-`-prefixed, which {@link SearchIndexInfo.isSystem} already hides,
+   * so without this call a data stream's data is reachable through nothing in the
+   * tree at all - while `SELECT * FROM <stream>` answers on both products (measured).
+   */
+  dataStreams(signal?: AbortSignal): Promise<SearchObjectInfo[]>;
 
   /** Cluster health and counts, for the monitoring surfaces. */
   health(signal?: AbortSignal): Promise<SearchClusterHealth>;
