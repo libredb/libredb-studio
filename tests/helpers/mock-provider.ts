@@ -17,7 +17,28 @@ import type {
 } from "@/lib/db/types";
 import type { QueryResult, TableSchema, DatabaseConnection } from "@/lib/types";
 import { mockSchema } from "../fixtures/schemas";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import { mockSelectResult } from "../fixtures/query-results";
+
+/**
+ * The shared object fixture as the DYING flat surface still declares it (#789).
+ *
+ * `DatabaseProvider.getSchema` returns `TableSchema[]`, whose arrays are mutable, and that
+ * interface belongs to the task that removes it: a double may not widen the contract it
+ * stands in for. So the fixture is narrowed here, at the one seam that still needs the flat
+ * shape, rather than the fixture being held back in it. `kind` and `path` are dropped
+ * because the flat shape has nowhere to put them, which is the whole of what this migration
+ * is about. This conversion, `MockProviderOverrides.schema` and `getSchema` itself all go
+ * together when Task 26 deletes the surface.
+ */
+const flatSchema: TableSchema[] = mockSchema.map((object: DetailedObject) => ({
+  name: object.name,
+  columns: [...object.columns],
+  indexes: [...object.indexes],
+  foreignKeys: object.foreignKeys === undefined ? undefined : [...object.foreignKeys],
+  rowCount: object.rowCount,
+  size: object.size,
+}));
 
 const defaultHealthInfo: HealthInfo = {
   activeConnections: 5,
@@ -128,8 +149,8 @@ export function createMockProvider(overrides: MockProviderOverrides = {}): Datab
     }),
     isConnected: mock(() => connected),
     query: mock(async () => overrides.queryResult ?? mockSelectResult),
-    getSchema: mock(async () => overrides.schema ?? mockSchema),
-    getTables: mock(async () => (overrides.schema ?? mockSchema).map((t) => t.name)),
+    getSchema: mock(async () => overrides.schema ?? flatSchema),
+    getTables: mock(async () => (overrides.schema ?? flatSchema).map((t) => t.name)),
     getHealth: mock(async () => overrides.health ?? defaultHealthInfo),
     getMonitoringData: mock(async () => overrides.monitoring ?? defaultMonitoringData),
     getOverview: mock(async () => overrides.overview ?? defaultOverview),

@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
-import type { DatabaseConnection, TableSchema } from "@/lib/types";
+import type { DatabaseConnection } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { WorkspaceConnection } from "@/workspace/types";
 
 interface UseConnectionAdapterParams {
   connections: WorkspaceConnection[];
-  onSchemaFetch: (connectionId: string) => Promise<TableSchema[]>;
+  onSchemaFetch: (connectionId: string) => Promise<readonly DetailedObject[]>;
 }
 
 export function useConnectionAdapter({ connections: externalConnections, onSchemaFetch }: UseConnectionAdapterParams) {
@@ -32,7 +33,7 @@ export function useConnectionAdapter({ connections: externalConnections, onSchem
   // kept being served the captured one — the "still in the list?" test matched on
   // id, so nothing re-synced.
   const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null);
-  const [schema, setSchema] = useState<TableSchema[]>([]);
+  const [schema, setSchema] = useState<readonly DetailedObject[]>([]);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
   /** The connection whose deferred catalog read the user has explicitly asked for, by id. */
   const [scanRequested, setScanRequested] = useState<string | null>(null);

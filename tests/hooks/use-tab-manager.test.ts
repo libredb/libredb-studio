@@ -8,7 +8,8 @@ import "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
 
 import { useTabManager } from "@/hooks/use-tab-manager";
-import type { DatabaseConnection, TableSchema } from "@/lib/types";
+import type { DatabaseConnection } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 
 // Helper to create a minimal connection
@@ -59,7 +60,7 @@ const defaultMetadata: ProviderMetadata = {
 };
 
 // Helper schema
-const testSchema: TableSchema[] = [
+const testSchema: DetailedObject[] = [
   {
     name: "users",
     columns: [
@@ -773,7 +774,7 @@ describe("useTabManager — Redis dialect", () => {
 
   // The provider's schema nodes: a `:`-prefix grouping and a bare key, each
   // carrying the sampled Redis type on the `type` column (redis.ts getSchema).
-  const redisSchema: TableSchema[] = [
+  const redisSchema: DetailedObject[] = [
     {
       name: "session:*",
       columns: [

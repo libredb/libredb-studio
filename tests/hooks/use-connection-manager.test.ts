@@ -11,6 +11,8 @@ import type { ManagedConnectionPayload } from "@/hooks/use-connection-payload";
 import { logger } from "@/lib/logger";
 import { storage } from "@/lib/storage";
 import type { DatabaseConnection, TableSchema } from "@/lib/types";
+import { rowWritableObjects } from "@/lib/db/detailed-object";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
 // ── Test Data ───────────────────────────────────────────────────────────────
 
@@ -1047,8 +1049,12 @@ describe("deferring the object scan", () => {
   const installSchemaRoutes = () =>
     mockGlobalFetch({
       "/api/db/schema/list": { ok: true, json: makeSchema() },
+      "/api/db/objects/inventory": { ok: true, json: { objects: [] } },
       "/api/db/schema/relations": { ok: true, json: [] },
     });
+
+  /** What a connection that reads its catalog asks for, in order. */
+  const FULL_READ = ["/api/db/schema/list", "/api/db/objects/inventory", "/api/db/schema/relations"];
 
   test("a connection that defers its scan reads no catalog at all", async () => {
     const fetchMock = installSchemaRoutes();
@@ -1093,7 +1099,7 @@ describe("deferring the object scan", () => {
     // Nothing failed either, so nothing may be reported as a failure: an empty panel that
     // blames the engine for a read nobody issued is worse than an empty panel.
     expect(result.current.schemaError).toBeNull();
-    expect(catalogPaths(fetchMock)).toEqual(["/api/db/schema/list", "/api/db/schema/relations"]);
+    expect(catalogPaths(fetchMock)).toEqual(FULL_READ);
   });
 
   test("deferring a connection also drops the PREVIOUS connection's failure", async () => {
@@ -1124,7 +1130,7 @@ describe("deferring the object scan", () => {
       await result.current.fetchSchema(makeConnection());
     });
 
-    expect(catalogPaths(fetchMock)).toEqual(["/api/db/schema/list", "/api/db/schema/relations"]);
+    expect(catalogPaths(fetchMock)).toEqual(FULL_READ);
     expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]);
   });
 
@@ -1165,7 +1171,7 @@ describe("deferring the object scan", () => {
 
     await waitFor(() => expect(result.current.objectScanDeferred).toBe(false));
     await waitFor(() => expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]));
-    expect(catalogPaths(fetchMock)).toEqual(["/api/db/schema/list", "/api/db/schema/relations"]);
+    expect(catalogPaths(fetchMock)).toEqual(FULL_READ);
   });
 
   // The state is the connection the reader asked for BY ID, derived rather than reset
@@ -1218,5 +1224,195 @@ describe("deferring the object scan", () => {
 
     expect(catalogPaths(fetchMock)).toEqual([]);
     expect(result.current.objectScanDeferred).toBe(false);
+  });
+});
+
+// =============================================================================
+// The object surface's kinds and paths (#789, Task 25c)
+// =============================================================================
+//
+// Every consumer filter Task 25a wrote reads `kind`, and the flat schema reading carries
+// none, so until this hook asks the object surface for one the filters keep everything and
+// the behaviour is byte-identical to the flat model. These tests are what make the
+// difference observable: each one names the object that must NOT survive a filter, and the
+// mutation that removes the tagging turns them red.
+describe("tagging the schema with the object surface", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    // A sibling describe inherits no beforeEach, and a toast left over from the block above
+    // would make the "no toast" assertion below report another test's call.
+    mockToastError.mockClear();
+  });
+
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  /** The flat reading: PostgreSQL drops the schema for `public` and keeps it otherwise. */
+  const flatList = [
+    { name: "users", columns: [], indexes: [], foreignKeys: [] },
+    { name: "user_summary", columns: [], indexes: [], foreignKeys: [] },
+    { name: "sales.orders", columns: [], indexes: [], foreignKeys: [] },
+  ];
+
+  const inventory = {
+    objects: [
+      { name: "users", kind: "table", path: ["public", "users"] },
+      { name: "user_summary", kind: "view", path: ["public", "user_summary"] },
+      { name: "orders", kind: "table", path: ["sales", "orders"] },
+    ],
+  };
+
+  test("every entry reaches the consumers carrying the kind and the segments", async () => {
+    mockGlobalFetch({
+      "/api/db/schema/list": { ok: true, json: flatList },
+      "/api/db/objects/inventory": { ok: true, json: inventory },
+      "/api/db/schema/relations": { ok: true, json: [] },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(result.current.schema.map((object) => [object.name, object.kind])).toEqual([
+      ["users", "table"],
+      ["user_summary", "view"],
+      ["sales.orders", "table"],
+    ]);
+    // The bare `public` name joined its two segments, which is the case that would
+    // otherwise leave every table on this engine untagged.
+    expect(result.current.schema[0].path).toEqual(["public", "users"]);
+    expect(result.current.schema[2].path).toEqual(["sales", "orders"]);
+  });
+
+  test("the view is refused by the relation filter, which the untagged list could not do", async () => {
+    // The consumer-level assertion this whole task exists for. `relationObjects` is what
+    // SchemaDiagram, DatabaseDocs and CommandPalette filter with; with the kinds absent it
+    // keeps `user_summary` because nothing declared anything about it.
+    mockGlobalFetch({
+      "/api/db/schema/list": { ok: true, json: flatList },
+      "/api/db/objects/inventory": { ok: true, json: inventory },
+      "/api/db/schema/relations": { ok: true, json: [] },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    const capabilities = {
+      queryLanguage: "sql",
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+      ],
+    } as unknown as ProviderCapabilities;
+
+    expect(rowWritableObjects(result.current.schema, capabilities).map((object) => object.name)).toEqual([
+      "users",
+      "sales.orders",
+    ]);
+  });
+
+  test("an engine whose object surface is not implemented keeps its whole flat list", async () => {
+    // A 501 from the inventory route is the Phase 1 answer for a provider that has not been
+    // migrated. It is a loss of DETAIL and never a loss of objects: nothing may disappear
+    // from the explorer because a second read failed.
+    mockGlobalFetch({
+      "/api/db/schema/list": { ok: true, json: flatList },
+      "/api/db/objects/inventory": { ok: false, status: 501, json: { error: "not implemented yet (#789)" } },
+      "/api/db/schema/relations": { ok: true, json: [] },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(result.current.schema.map((object) => object.name)).toEqual(["users", "user_summary", "sales.orders"]);
+    expect(result.current.schema.every((object) => object.kind === undefined)).toBe(true);
+    // A failed inventory is not a schema failure: the explorer shows the tables, not an error.
+    expect(result.current.schemaError).toBeNull();
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("a transport failure on the inventory leaves the list exactly as phase 1 built it", async () => {
+    // Not the same case as a refusal: an unreachable server rejects the promise rather than
+    // answering a status, and the schema must survive that too.
+    const routed = mockGlobalFetch({
+      "/api/db/schema/list": { ok: true, json: flatList },
+      "/api/db/schema/relations": { ok: true, json: [] },
+    });
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), "http://localhost:3000").pathname;
+      if (path.includes("/api/db/objects/inventory")) return Promise.reject(new Error("fetch failed"));
+      return routed(input, init);
+    }) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(result.current.schema.map((object) => object.name)).toEqual(["users", "user_summary", "sales.orders"]);
+    expect(result.current.schema.every((object) => object.kind === undefined)).toBe(true);
+    expect(result.current.schemaError).toBeNull();
+  });
+
+  test("the relations merge does not undo the tagging", async () => {
+    // Two writers of one list, and they run in sequence. Phase 2 maps over the tagged list
+    // by name, so a kind has to survive it or the tagging is undone one request later.
+    mockGlobalFetch({
+      "/api/db/schema/list": { ok: true, json: flatList },
+      "/api/db/objects/inventory": { ok: true, json: inventory },
+      "/api/db/schema/relations": {
+        ok: true,
+        json: [{ name: "users", foreignKeys: [], indexes: [{ name: "users_pkey", columns: ["id"], unique: true }] }],
+      },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    const users = result.current.schema.find((object) => object.name === "users")!;
+    expect(users.kind).toBe("table");
+    expect(users.indexes).toEqual([{ name: "users_pkey", columns: ["id"], unique: true }]);
+  });
+
+  test("the inventory is addressed the way the object routes require, never as a bare body", async () => {
+    // `/api/db/objects/*` refuses a body that names neither `connection` nor `connectionId`
+    // with a 400, unlike the schema routes, which accept a bare connection AS the body. A
+    // request built from the schema payload would therefore be refused on every connection.
+    const bodies: unknown[] = [];
+    mockGlobalFetch({
+      "/api/db/schema/list": { ok: true, json: flatList },
+      "/api/db/objects/inventory": async (req) => {
+        bodies.push(await req.json());
+        return { ok: true, json: inventory };
+      },
+      "/api/db/schema/relations": { ok: true, json: [] },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ managed: true, seedId: "sample" }));
+    });
+
+    expect(bodies).toEqual([
+      { connection: { ...makeConnection(), createdAt: makeConnection().createdAt.toISOString() } },
+      { connectionId: "seed:sample" },
+    ]);
   });
 });

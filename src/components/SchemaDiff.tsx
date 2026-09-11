@@ -34,27 +34,6 @@ interface SchemaDiffProps {
   connection: DatabaseConnection | null;
 }
 
-/**
- * The one narrowing left in this file, and it is deliberate rather than forgotten (#789).
- *
- * `diffSchemas` and `SchemaSnapshot` are both outside this task's files: the engine still
- * compares by table NAME and the stored snapshot still holds the flat shape, so an object's
- * `kind` and `path` have nowhere to go and a diff still cannot say that a view became a
- * table. Copying the arrays here is what lets this component hold the object model while
- * the engine below it has not moved yet; when the engine takes objects, this function goes
- * and the two lists are passed straight through.
- */
-function forDiff(objects: readonly DetailedObject[]) {
-  return objects.map((object) => ({
-    name: object.name,
-    columns: [...object.columns],
-    indexes: [...object.indexes],
-    ...(object.foreignKeys === undefined ? {} : { foreignKeys: [...object.foreignKeys] }),
-    ...(object.rowCount === undefined ? {} : { rowCount: object.rowCount }),
-    ...(object.size === undefined ? {} : { size: object.size }),
-  }));
-}
-
 export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
   const [snapshots, setSnapshots] = useState<SchemaSnapshot[]>(() => storage.getSchemaSnapshots());
   const [sourceId, setSourceId] = useState<string>("current");
@@ -103,7 +82,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
     if (sourceId === targetId) return null;
 
-    return diffSchemas(forDiff(sourceSchema), forDiff(targetSchema));
+    return diffSchemas(sourceSchema, targetSchema);
   }, [sourceId, targetId, schema, snapshots]);
 
   // Generate migration SQL

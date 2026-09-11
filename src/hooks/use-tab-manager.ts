@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import type { DatabaseConnection, TableSchema, QueryTab } from "@/lib/types";
+import type { DatabaseConnection, QueryTab } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
 import { resolveTabType } from "@/lib/editor/tab-language";
@@ -34,7 +35,7 @@ interface PersistedWorkspaceState {
 interface UseTabManagerParams {
   activeConnection: DatabaseConnection | null;
   metadata: ProviderMetadata | null;
-  schema: TableSchema[];
+  schema: readonly DetailedObject[];
   persistWorkspace?: boolean;
 }
 

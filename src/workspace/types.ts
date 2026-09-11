@@ -1,5 +1,6 @@
 // src/workspace/types.ts
-import type { DatabaseType, TableSchema, SavedQuery, QueryWarning } from "@/lib/types";
+import type { DatabaseType, SavedQuery, QueryWarning } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 
 // === Connection (platform → studio) ===
@@ -182,7 +183,22 @@ export interface StudioWorkspaceProps {
       unlimited?: boolean;
     },
   ) => Promise<WorkspaceQueryResult>;
-  onSchemaFetch: (connectionId: string) => Promise<TableSchema[]>;
+  /**
+   * The host's reading of one connection's objects (#789).
+   *
+   * `DetailedObject` rather than the flat `TableSchema` this took before: an entry may now
+   * carry the `kind` its engine declared and the `path` its segments make up, and every
+   * consumer filter in the workspace reads that kind. Both fields are OPTIONAL, so a host
+   * that answers exactly what it answered before still satisfies this and its objects reach
+   * every consumer unfiltered, which is what a declaration nobody made has to mean. A host
+   * that knows its kinds makes the filters live: a view is no longer offered as an import
+   * target, and a routine is not drawn in the diagram.
+   *
+   * This shell has no object routes of its own, so nothing here can fill the fields in on
+   * the host's behalf: the standalone app reads `/api/db/objects/inventory` and this one
+   * reads whatever the host returns.
+   */
+  onSchemaFetch: (connectionId: string) => Promise<readonly DetailedObject[]>;
 
   onTestConnection?: (config: {
     type: DatabaseType;

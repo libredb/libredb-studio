@@ -2,9 +2,9 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { diffSchemas } from "@/lib/schema-diff/diff-engine";
 import { generateMigrationSQL } from "@/lib/schema-diff/migration-generator";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
-function table(columns: string[], indexColumns: string[], unique = false): TableSchema {
+function table(columns: string[], indexColumns: string[], unique = false): DetailedObject {
   return {
     name: "items",
     columns: columns.map((name) => ({ name, type: "INTEGER", nullable: true, isPrimary: false })),

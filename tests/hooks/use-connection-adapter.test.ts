@@ -5,7 +5,8 @@ import { renderHook, act } from "@testing-library/react";
 
 import { useConnectionAdapter } from "@/workspace/hooks/use-connection-adapter";
 import type { WorkspaceConnection } from "@/workspace/types";
-import type { TableSchema } from "@/lib/types";
+import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
 // ── Test Data ───────────────────────────────────────────────────────────────
 
@@ -16,7 +17,7 @@ const makeWorkspaceConnection = (overrides: Partial<WorkspaceConnection> = {}): 
   ...overrides,
 });
 
-const makeSchema = (): TableSchema[] => [
+const makeSchema = (): DetailedObject[] => [
   {
     name: "users",
     columns: [
@@ -124,8 +125,8 @@ describe("useConnectionAdapter", () => {
   // ── fetchSchema sets isLoadingSchema during fetch ───────────────────────
 
   test("fetchSchema sets isLoadingSchema during fetch", async () => {
-    let resolveSchema: ((value: TableSchema[]) => void) | undefined;
-    const schemaPromise = new Promise<TableSchema[]>((resolve) => {
+    let resolveSchema: ((value: DetailedObject[]) => void) | undefined;
+    const schemaPromise = new Promise<DetailedObject[]>((resolve) => {
       resolveSchema = resolve;
     });
     const onSchemaFetch = mock(() => schemaPromise);
@@ -576,5 +577,73 @@ describe("useConnectionAdapter", () => {
       expect(onSchemaFetch).not.toHaveBeenCalled();
       expect(result.current.objectScanDeferred).toBe(false);
     });
+  });
+});
+
+// =============================================================================
+// The object model in the embedded shell (#789, Task 25c)
+// =============================================================================
+//
+// This shell has NO object routes: it holds no credentials and calls back into its host for
+// every reading, so unlike the standalone app it cannot fetch an inventory and tag anything
+// itself. What it can do is stop flattening what the host already knows, which is what
+// `onSchemaFetch` returning `DetailedObject[]` buys. CLAUDE.md is explicit that the two
+// shells are different chrome and that a change verified in one is not verified in the
+// other, so the same property is asserted here rather than inferred from the other hook.
+describe("useConnectionAdapter and the object model", () => {
+  const capabilities = {
+    queryLanguage: "sql",
+    objectKinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+      { id: "procedure", role: "routine", label: "Procedure", labelPlural: "Procedures" },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  test("the kind and the segments the HOST declares reach the consumers unchanged", async () => {
+    const hostObjects: DetailedObject[] = [
+      { name: "users", kind: "table", path: ["public", "users"], columns: [], indexes: [] },
+      {
+        name: "recalculate_totals",
+        kind: "procedure",
+        path: ["public", "recalculate_totals"],
+        columns: [],
+        indexes: [],
+      },
+    ];
+    const connections = [makeWorkspaceConnection()];
+    const onSchemaFetch = mock(() => Promise.resolve(hostObjects));
+
+    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+
+    await act(async () => {
+      await result.current.fetchSchema(result.current.activeConnection!);
+    });
+
+    expect(result.current.schema.map((object) => [object.name, object.kind])).toEqual([
+      ["users", "table"],
+      ["recalculate_totals", "procedure"],
+    ]);
+    expect(result.current.schema[0].path).toEqual(["public", "users"]);
+    // The consumer-level consequence: the routine is not drawn as a relation. Nothing in
+    // the flat shape could have expressed this, because it had no kind to refuse by.
+    expect(relationObjects(result.current.schema, capabilities).map((object) => object.name)).toEqual(["users"]);
+  });
+
+  test("a host that declares no kinds keeps every object, because nothing said otherwise", async () => {
+    // The control, and the compatibility statement: `kind` and `path` are optional, so a
+    // host answering exactly what it answered before this migration loses nothing.
+    const connections = [makeWorkspaceConnection()];
+    const onSchemaFetch = mock(() => Promise.resolve(makeSchema()));
+
+    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+
+    await act(async () => {
+      await result.current.fetchSchema(result.current.activeConnection!);
+    });
+
+    expect(relationObjects(result.current.schema, capabilities).map((object) => object.name)).toEqual([
+      "users",
+      "orders",
+    ]);
   });
 });

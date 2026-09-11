@@ -2,7 +2,9 @@
 
 import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import type { DatabaseConnection, TableSchema, TableRelations } from "@/lib/types";
+import type { DatabaseConnection, TableRelations } from "@/lib/types";
+import { tagObjectKinds, type DetailedObject } from "@/lib/db/detailed-object";
+import type { DatabaseObject } from "@/lib/db/types";
 import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { logger } from "@/lib/logger";
@@ -30,7 +32,7 @@ export function useConnectionManager(storageReady = false) {
    * question a run has to answer before it may persist a bare `seed:<id>`.
    */
   const [servedSeeds, setServedSeeds] = useState<ServedSeeds>(NO_SERVED_SEEDS);
-  const [schema, setSchema] = useState<TableSchema[]>([]);
+  const [schema, setSchema] = useState<readonly DetailedObject[]>([]);
   /**
    * Why the object browser is empty, in the engine's own words, or null when it is
    * empty because the database really has nothing in it.
@@ -64,9 +66,14 @@ export function useConnectionManager(storageReady = false) {
       setIsLoadingSchema(true);
 
       const payload = conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : conn; // bare conn for backward compat with schema route
-      const init = (path: string): [string, RequestInit] => [
+      // The object routes refuse a body that names neither `connection` nor `connectionId`,
+      // where the two schema routes accept a bare connection AS the whole body. One payload
+      // for both would be a 400 on every unmanaged connection.
+      const objectPayload =
+        conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : { connection: conn };
+      const init = (path: string, body: unknown = payload): [string, RequestInit] => [
         path,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
       ];
 
       // Phase 1 — structural list (blocks; this is what the explorer needs)
@@ -76,7 +83,7 @@ export function useConnectionManager(storageReady = false) {
           const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.error || "Failed to fetch schema");
         }
-        const list: TableSchema[] = await response.json();
+        const list: DetailedObject[] = await response.json();
         setSchema(list);
         setSchemaError(null);
       } catch (error) {
@@ -89,6 +96,36 @@ export function useConnectionManager(storageReady = false) {
         return; // finally still clears the loading flag; skip relations
       } finally {
         setIsLoadingSchema(false);
+      }
+
+      // Phase 1b — the kind and the segments of each object, from the object surface, joined
+      // onto the list above (#789). The flat reading says what an object is CALLED and never
+      // what it IS, and every consumer filter reads the kind, so without this the diagram
+      // draws a routine and an import offers a view as a target.
+      //
+      // Best-effort, and deliberately not a phase-1 failure: through Phase 1 the four object
+      // methods are optional, so an engine that has not been migrated answers 501, and that is
+      // a loss of DETAIL rather than of objects. Nothing is ever removed from the list here, so
+      // a refused inventory leaves exactly the explorer the flat reading built. The assertable
+      // evidence is the list itself, which carries no kinds, rather than this log line.
+      try {
+        const objectsRes = await appFetch(...init("/api/db/objects/inventory", objectPayload));
+        if (objectsRes.ok) {
+          const { objects } = (await objectsRes.json()) as { objects?: DatabaseObject[] };
+          if (objects !== undefined) setSchema((prev) => tagObjectKinds(prev, objects));
+        } else {
+          const body = await objectsRes.json().catch(() => ({}));
+          logger.debug("Object inventory unavailable; the schema keeps no kinds", {
+            route: "use-connection-manager",
+            status: objectsRes.status,
+            reason: typeof body.error === "string" ? body.error : undefined,
+          });
+        }
+      } catch (error) {
+        logger.debug("Object inventory failed; the schema keeps no kinds", {
+          route: "use-connection-manager",
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
 
       // Phase 2 — relationships + indexes (best-effort; never breaks the list)

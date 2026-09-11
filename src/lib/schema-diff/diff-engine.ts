@@ -1,7 +1,8 @@
-import type { TableSchema, ColumnSchema, IndexSchema, ForeignKeySchema } from "@/lib/types";
+import type { ColumnSchema, IndexSchema, ForeignKeySchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { SchemaDiff, TableDiff, ColumnDiff, IndexDiff, ForeignKeyDiff } from "./types";
 
-function diffColumns(sourceCols: ColumnSchema[], targetCols: ColumnSchema[]): ColumnDiff[] {
+function diffColumns(sourceCols: readonly ColumnSchema[], targetCols: readonly ColumnSchema[]): ColumnDiff[] {
   const diffs: ColumnDiff[] = [];
   const sourceMap = new Map(sourceCols.map((c) => [c.name, c]));
   const targetMap = new Map(targetCols.map((c) => [c.name, c]));
@@ -76,7 +77,7 @@ function diffColumns(sourceCols: ColumnSchema[], targetCols: ColumnSchema[]): Co
   return diffs;
 }
 
-function diffIndexes(sourceIndexes: IndexSchema[], targetIndexes: IndexSchema[]): IndexDiff[] {
+function diffIndexes(sourceIndexes: readonly IndexSchema[], targetIndexes: readonly IndexSchema[]): IndexDiff[] {
   const diffs: IndexDiff[] = [];
 
   // Build a stable map key from the column set. Copy before sorting so the
@@ -152,7 +153,10 @@ function diffIndexes(sourceIndexes: IndexSchema[], targetIndexes: IndexSchema[])
   return diffs;
 }
 
-function diffForeignKeys(sourceFKs: ForeignKeySchema[], targetFKs: ForeignKeySchema[]): ForeignKeyDiff[] {
+function diffForeignKeys(
+  sourceFKs: readonly ForeignKeySchema[],
+  targetFKs: readonly ForeignKeySchema[],
+): ForeignKeyDiff[] {
   const diffs: ForeignKeyDiff[] = [];
 
   const makeKey = (fk: ForeignKeySchema) => `${fk.columnName}→${fk.referencedTable}.${fk.referencedColumn}`;
@@ -187,7 +191,21 @@ function diffForeignKeys(sourceFKs: ForeignKeySchema[], targetFKs: ForeignKeySch
   return diffs;
 }
 
-export function diffSchemas(source: TableSchema[], target: TableSchema[]): SchemaDiff {
+/**
+ * What changed between two readings of one database (#789).
+ *
+ * It takes the OBJECTS a consumer holds, so `SchemaDiff.tsx` hands its two lists straight
+ * through rather than copying every array of every object to meet a mutable signature.
+ *
+ * THE COMPARISON IS BY NAME, and deliberately not by `kind` or by `path`. A stored snapshot
+ * predates both fields, and a diff that keyed on them would report every object in such a
+ * snapshot as removed and immediately re-added, which is the one answer a schema diff must
+ * never invent. The cost, stated rather than left to be discovered: this cannot say that a
+ * table became a view. Saying it needs the snapshot itself to carry the object model, which
+ * is `SchemaSnapshot` in `src/lib/types.ts` and belongs to the task that removes the flat
+ * shape.
+ */
+export function diffSchemas(source: readonly DetailedObject[], target: readonly DetailedObject[]): SchemaDiff {
   const sourceMap = new Map(source.map((t) => [t.name, t]));
   const targetMap = new Map(target.map((t) => [t.name, t]));
 

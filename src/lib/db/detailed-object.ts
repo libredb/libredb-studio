@@ -20,7 +20,7 @@
  * carries and the `?` can go.
  */
 import { findKind, kindAcceptsRowWrites } from "@/lib/db/object-kinds";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import type { DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema, ForeignKeySchema, IndexSchema } from "@/lib/types";
 
 export interface DetailedObject {
@@ -88,4 +88,70 @@ export function rowWritableObjects(
 ): readonly DetailedObject[] {
   if (capabilities === undefined) return objects;
   return objects.filter((object) => object.kind === undefined || kindAcceptsRowWrites(capabilities, object.kind));
+}
+
+/**
+ * The flat reading of a database, tagged with the kind and the segments the OBJECT surface
+ * answered for the same objects (#789).
+ *
+ * TWO READINGS ARE JOINED HERE and neither can be dropped, for the same reason
+ * `tagWithObjectKinds` in the agent's context snapshot joins the same two: the flat
+ * surface carries columns, indexes and foreign keys and says nothing about kind, while
+ * the object surface carries kind and segments and no columns, because reading columns in
+ * bulk is the N+1 the inventory route refused. A consumer needs both halves at once, so
+ * the hook asks for both and this puts them in one record.
+ *
+ * THE JOIN KEY IS THE NAME, in two passes, and the second pass is not a nicety: the flat
+ * reading qualifies a name only where the container is not the session default, so on
+ * PostgreSQL a table in `public` arrives as `users` while its object is `["public",
+ * "users"]`. A single qualified-name comparison would therefore fail to tag every table on
+ * the most common engine, which is the shape of "the filter is live but nothing is ever
+ * filtered". So an entry matches the object whose segments joined by `.` equal its name,
+ * and failing that the object whose LAST segment equals its name.
+ *
+ * AMBIGUITY REFUSES TO GUESS. Where two objects claim one name, the entry is returned
+ * untagged, because nothing in the flat reading records which container built it and
+ * filing a `sales` view under `public` as a table is worse than knowing nothing: an entry
+ * with no kind is kept by every filter above, and a wrongly kinded one is hidden or
+ * offered for a write.
+ *
+ * THE FLAT LIST IS THE POPULATION. An object the flat reading never named is NOT added
+ * here, which is the one place this deliberately does less than the agent's join. The
+ * agent packs a prompt, where a duplicate costs tokens; these entries are ROWS, and an
+ * object whose name did not join would appear beside the flat entry it failed to match as
+ * a second row for one table. Task 26 removes the flat reading entirely, at which point
+ * the object surface is the population and there is nothing left to join.
+ */
+export function tagObjectKinds(
+  flat: readonly DetailedObject[],
+  objects: readonly DatabaseObject[],
+): readonly DetailedObject[] {
+  const byQualifiedName = claimsByName(objects, (object) => object.path.join("."));
+  const byLastSegment = claimsByName(objects, (object) => object.path[object.path.length - 1]);
+
+  return flat.map((entry) => {
+    const claimants = byQualifiedName.get(entry.name) ?? byLastSegment.get(entry.name);
+    if (claimants === undefined || claimants.length !== 1) return entry;
+    return { ...entry, kind: claimants[0].kind, path: claimants[0].path };
+  });
+}
+
+/**
+ * Every object that claims a name under one reading of it, so the caller above can tell a
+ * single claimant from a contested name. An object with NO segments claims nothing: there
+ * is no name to derive and an empty qualified name would collect all of them.
+ */
+function claimsByName(
+  objects: readonly DatabaseObject[],
+  nameOf: (object: DatabaseObject) => string,
+): Map<string, DatabaseObject[]> {
+  const claims = new Map<string, DatabaseObject[]>();
+  for (const object of objects) {
+    if (object.path.length === 0) continue;
+    const name = nameOf(object);
+    const existing = claims.get(name);
+    if (existing === undefined) claims.set(name, [object]);
+    else existing.push(object);
+  }
+  return claims;
 }

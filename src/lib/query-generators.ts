@@ -189,7 +189,7 @@ function libredbExampleForType(type: string): unknown {
  *  - document collection (`id`/`document`) → a small JSON object
  *  - relational table → a JSON object built from the declared columns
  */
-function libredbExampleValue(columns: ColumnSchema[]): string {
+function libredbExampleValue(columns: readonly ColumnSchema[]): string {
   if (columns.length === 2 && columns[0]?.name === "key" && columns[1]?.name === "value") {
     return "example";
   }
@@ -298,7 +298,7 @@ function escapeGlob(value: string): string {
  * `"string, hash"` (a mixed prefix) deliberately do not. The `value` column
  * carries the same sample joined with `/` and exists for display only (#427).
  */
-function redisKeyType(columns?: ColumnSchema[]): RedisKeyType | null {
+function redisKeyType(columns?: readonly ColumnSchema[]): RedisKeyType | null {
   const sample = columns?.find((c) => c.name === "type")?.type;
   const parts = (sample || "")
     .split(",")
@@ -353,7 +353,7 @@ function libredbNewlineNote(base: string): string | null {
 export function generateTableQuery(
   tableName: string,
   capabilities: ProviderCapabilities,
-  columns?: ColumnSchema[],
+  columns?: readonly ColumnSchema[],
 ): string {
   // LibreDB speaks its own command grammar (get/put/delete/prefix/range), not SQL
   // and not MongoDB JSON. "Scan" lists everything under the group's prefix.
@@ -405,7 +405,7 @@ export function generateTableQuery(
  * any line works as-is). The provider skips `#` comment and blank lines, so
  * running the whole buffer runs its first real command.
  */
-function libredbCheatsheet(tableName: string, columns: ColumnSchema[]): string {
+function libredbCheatsheet(tableName: string, columns: readonly ColumnSchema[]): string {
   const { isPrefixGroup, base } = prefixGroup(tableName);
   const value = libredbExampleValue(columns);
   const header = `# LibreDB commands for ${commentName(tableName)} — select a line and Run Selected.`;
@@ -455,7 +455,7 @@ function libredbCheatsheet(tableName: string, columns: ColumnSchema[]): string {
  * arguments are literal byte strings, so `DEL user:*` would delete nothing (or
  * the wrong thing) rather than the group (#427).
  */
-function redisCheatsheet(tableName: string, columns: ColumnSchema[]): string {
+function redisCheatsheet(tableName: string, columns: readonly ColumnSchema[]): string {
   const { isPrefixGroup, base } = prefixGroup(tableName);
   const key = isPrefixGroup ? `${base}1` : base;
   const keyType = redisKeyType(columns);
@@ -497,7 +497,7 @@ function redisCheatsheet(tableName: string, columns: ColumnSchema[]): string {
 
 export function generateSelectQuery(
   tableName: string,
-  columns: ColumnSchema[],
+  columns: readonly ColumnSchema[],
   capabilities: ProviderCapabilities,
 ): string {
   // LibreDB: emit an explanatory cheatsheet — a use-case comment above each
