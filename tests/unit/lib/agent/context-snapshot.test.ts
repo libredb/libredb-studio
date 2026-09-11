@@ -29,7 +29,14 @@ import {
 } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { OperationRegistry } from "@/lib/db/operations/registry";
-import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
+import type {
+  Container,
+  DatabaseObject,
+  DatabaseProvider,
+  KindCount,
+  ObjectKindSpec,
+  ProviderCapabilities,
+} from "@/lib/db/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, DatabaseType, QueryResult, TableSchema } from "@/lib/types";
 
@@ -1445,6 +1452,375 @@ describe("packContextForTask", () => {
  * an index), so names and index names are what turn an opaque string into a known
  * object; column types are not what such an objective asks about.
  */
+/**
+ * The third grounding reading: the engine's own OBJECT surface (#789).
+ *
+ * The composed catalog and the provider schema inspection both answer one flat list of
+ * names, and neither says what kind anything is: an `information_schema.columns` read
+ * returns a view's columns beside a table's, indistinguishable. This read answers exactly
+ * that, and carries no columns, because reading them in bulk is the N+1 the epic refused.
+ * So what is asserted here is the JOIN of the two, and every way it can be wrong: an
+ * object that matched nothing must keep no kind, a flat entry that matched nothing must
+ * not vanish, a kind the engine counted as zero must not be listed, a kind counted from a
+ * bounded read must be marked a floor, and a read that failed must cost the run detail
+ * rather than its grounding.
+ */
+describe("captureContextSnapshot — the object surface that says what each entry IS", () => {
+  const OBJECT_KINDS: readonly ObjectKindSpec[] = [
+    { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+    { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+    { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+  ];
+
+  const FLAT: TableSchema[] = [
+    {
+      name: "public.orders",
+      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+      indexes: [{ name: "orders_pkey", columns: ["id"], unique: true }],
+      foreignKeys: [],
+    },
+    {
+      name: "public.order_summary",
+      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: false }],
+      indexes: [],
+      foreignKeys: [],
+    },
+  ];
+
+  interface ObjectHarness {
+    readonly context: AgentToolContext;
+    readonly listObjects: ReturnType<typeof mock>;
+    readonly countObjects: ReturnType<typeof mock>;
+  }
+
+  function objectHarness(
+    options: {
+      readonly kinds?: readonly ObjectKindSpec[];
+      readonly containerLevels?: ProviderCapabilities["containerLevels"];
+      readonly derivedGroupings?: boolean;
+      readonly schema?: readonly TableSchema[];
+      readonly counts?: (container: readonly string[]) => Record<string, KindCount>;
+      readonly objects?: (container: readonly string[], kind: string) => readonly DatabaseObject[];
+      readonly containers?: (parent?: readonly string[]) => readonly Container[];
+      readonly omitObjectSurface?: boolean;
+      readonly omitContainerListing?: boolean;
+      readonly listThrows?: Error;
+    } = {},
+  ): ObjectHarness {
+    const listObjects = mock(async (container: readonly string[], kind: string) => {
+      if (options.listThrows !== undefined) throw options.listThrows;
+      return (
+        options.objects?.(container, kind) ??
+        (kind === "table"
+          ? [{ path: [...container, "orders"], name: "orders", kind }]
+          : kind === "view"
+            ? [{ path: [...container, "order_summary"], name: "order_summary", kind }]
+            : [])
+      );
+    });
+    const countObjects = mock(
+      async (container: readonly string[]) =>
+        options.counts?.(container) ?? { table: { count: 1 }, view: { count: 1 }, function: { count: 0 } },
+    );
+    const listContainers = mock(
+      async (parent?: readonly string[]) =>
+        options.containers?.(parent) ?? [{ path: ["public"], name: "public", level: 0 }],
+    );
+
+    const provider = {
+      getSchema: mock(async () => (options.schema ?? FLAT).map((table) => ({ ...table }))),
+      ...(options.omitObjectSurface === true ? {} : { listObjects, countObjects }),
+      ...(options.omitContainerListing === true ? {} : { listContainers }),
+    } as unknown as DatabaseProvider;
+
+    return {
+      context: {
+        runId: "run-1",
+        modelId: "unmeasured-model-for-tests",
+        mode: "agent",
+        workflowType: "investigation",
+        actor: { sessionId: "session-1", role: "user" },
+        connection: connectionOf("mongodb"),
+        capabilities: {
+          ...capabilities,
+          objectKinds: options.kinds ?? OBJECT_KINDS,
+          containerLevels: options.containerLevels ?? [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+          ...(options.derivedGroupings === true ? { tablesAreDerivedGroupings: true } : {}),
+        },
+        labels: TABLE_LABELS,
+        registry: createCanonicalOperationRegistry(),
+        scope: createTargetScope("conn-1"),
+        tracker: new ExecutionBudgetTracker(),
+        artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
+        deadline: new AgentRunDeadline(
+          AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs * 2,
+          frozenClock,
+        ),
+        repairs: new AgentRepairLedger(),
+        acquireProvider: mock(async () => provider),
+        clock: frozenClock,
+      },
+      listObjects,
+      countObjects,
+    };
+  }
+
+  async function inventoryOf(harness: ObjectHarness): Promise<AgentContextSnapshot> {
+    const capture = await captureContextSnapshot(harness.context);
+    if (capture.kind !== "captured") throw new Error(`expected a capture, got ${capture.kind}`);
+    return capture.snapshot;
+  }
+
+  test("each entry carries the kind it was listed under, and the columns the other reading held", async () => {
+    const snapshot = await inventoryOf(objectHarness());
+
+    expect(snapshot.objects.map((object) => [object.name, object.kind])).toEqual([
+      ["order_summary", "view"],
+      ["orders", "table"],
+    ]);
+    // The join: identity from the object read, columns from the reading that has them.
+    expect(snapshot.objects.find((object) => object.kind === "table")?.columns).toEqual([
+      { name: "id", type: "integer", nullable: false, isPrimary: true },
+    ]);
+    expect(snapshot.objects.find((object) => object.kind === "table")?.indexes).toEqual([
+      { name: "orders_pkey", columns: ["id"], unique: true },
+    ]);
+  });
+
+  test("the kinds the engine declared travel with the inventory, so a renderer can name them", async () => {
+    const snapshot = await inventoryOf(objectHarness());
+
+    expect(snapshot.kinds).toEqual([
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+      { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+    ]);
+  });
+
+  /**
+   * The engine's own zero is an answer, not a gap: listing the kind anyway costs a round
+   * trip per container to be told the same thing. A kind whose COUNT was refused is listed
+   * regardless, because a refusal to count is not a refusal to list, and skipping it would
+   * drop objects the engine would have named.
+   */
+  test("a kind counted as zero is never listed, and a kind whose count was refused still is", async () => {
+    const harness = objectHarness({
+      counts: () => ({
+        table: { count: 1 },
+        view: { count: 0 },
+        function: { unavailable: "the current user may not read pg_proc" },
+      }),
+      objects: (container, kind) =>
+        kind === "function"
+          ? [{ path: [...container, "f()"], name: "f", kind }]
+          : [{ path: [...container, "orders"], name: "orders", kind }],
+    });
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(snapshot.objects.map((object) => object.kind).sort()).toEqual(["function", "table"]);
+    expect(harness.listObjects.mock.calls.map((call) => call[1]).sort()).toEqual(["function", "table"]);
+  });
+
+  /**
+   * `KindCount`'s fourth state. The listing reports no bound of its own, so without the
+   * count this read cannot know that a Redis keyspace listing bounded by a 1,000-key SCAN
+   * is a floor, and the run would be told a sample as though it were the population.
+   */
+  test("a kind counted from a bounded read is marked as a floor, with the engine's own sentence", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        counts: () => ({
+          table: { count: 1, sampledFrom: "one 1,000-key SCAN walk" },
+          view: { count: 0 },
+          function: { count: 0 },
+        }),
+      }),
+    );
+
+    expect(snapshot.kinds?.find((kind) => kind.id === "table")?.sampledFrom).toBe("one 1,000-key SCAN walk");
+    expect(snapshot.kinds?.find((kind) => kind.id === "view")?.sampledFrom).toBeUndefined();
+  });
+
+  /**
+   * The refusal `tablesAreDerivedGroupings` carries, which the old row menu read and
+   * nothing in the object model had picked up. It is about the ROWS of the inventory, so
+   * it attaches to the relation kinds: a Redis Function Library is a named object and a
+   * key pattern is not, and one provider declares both.
+   */
+  test("a derived grouping is marked on the relation kinds and on no others", async () => {
+    const snapshot = await inventoryOf(objectHarness({ derivedGroupings: true }));
+
+    expect(snapshot.kinds?.filter((kind) => kind.derivedGroupings === true).map((kind) => kind.id)).toEqual([
+      "table",
+      "view",
+    ]);
+  });
+
+  test("an object the flat reading never named still reaches the model, with no columns invented", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        schema: [],
+        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+      }),
+    );
+
+    expect(snapshot.objects).toHaveLength(1);
+    expect(snapshot.objects[0]?.columns).toEqual([]);
+    expect(snapshot.objects[0]?.kind).toBe("table");
+  });
+
+  /**
+   * The other direction, and the one that must not silently drop anything: an entry the
+   * object read did not name is carried with NO kind rather than labelled a table. A
+   * missing fact filled in with the commonest value is the defect this whole task closes.
+   */
+  test("a flat entry the object read never named is carried, and is labelled nothing at all", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+      }),
+    );
+
+    const unmatched = snapshot.objects.find((object) => object.name === "public.order_summary");
+    expect(unmatched).toBeDefined();
+    expect(unmatched?.kind).toBeUndefined();
+    expect(packContextForTask(snapshot, "orders")).not.toContain("public.order_summary (");
+  });
+
+  /**
+   * Ruling 5g, in this module: the walk down to the containers is derived from
+   * `containerDepth()` and never from a hardcoded level count. A two-level engine has to
+   * reach the BIND — the second `listContainers` call, with the parent path — or the test
+   * says nothing that a one-level engine would not have said.
+   */
+  test("a two-level engine is walked to its second level, and the parent is what the walk passes down", async () => {
+    const harness = objectHarness({
+      containerLevels: [
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+      containers: (parent) =>
+        parent === undefined
+          ? [{ path: ["sales"], name: "sales", level: 0 }]
+          : [{ path: [...parent, "public"], name: "public", level: 1 }],
+      objects: (container, kind) =>
+        kind === "table" ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
+      counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+    });
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(snapshot.objects.find((object) => object.kind === "table")?.path).toEqual(["sales", "public", "orders"]);
+    expect(harness.countObjects.mock.calls[0]?.[0]).toEqual(["sales", "public"]);
+  });
+
+  /** A zero-level engine has exactly one container, and it is the empty path. */
+  test("an engine with no container levels is read once, at the empty path", async () => {
+    const harness = objectHarness({
+      containerLevels: [],
+      objects: (container, kind) =>
+        kind === "table" ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
+      counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+    });
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(harness.countObjects.mock.calls).toEqual([[[]]]);
+    expect(snapshot.objects.find((object) => object.kind === "table")?.path).toEqual(["orders"]);
+  });
+
+  test("more objects than the read may carry is reported as truncated, naming the limit", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        counts: () => ({ table: { count: 6_000 }, view: { count: 0 }, function: { count: 0 } }),
+        objects: (container, kind) =>
+          kind === "table"
+            ? Array.from({ length: 6_000 }, (_unused, index) => ({
+                path: [...container, `t_${index}`],
+                name: `t_${index}`,
+                kind,
+              }))
+            : [],
+      }),
+    );
+
+    // The two entries the flat reading held and the object read never named are carried
+    // as well: a truncated read is a reason to say less, never to drop what was read.
+    expect(snapshot.objects.filter((object) => object.kind !== undefined)).toHaveLength(5_000);
+    expect(snapshot.truncated).toEqual({ limit: 5_000, reason: "inventory limit reached" });
+    expect(packContextForTask(snapshot, "orders")).toContain("This inventory is incomplete");
+  });
+
+  test("more container and kind pairs than the read may issue is reported as truncated too", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        containers: () =>
+          Array.from({ length: 1_200 }, (_unused, index) => ({ path: [`s_${index}`], name: `s_${index}`, level: 0 })),
+        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+        objects: (container, kind) =>
+          kind === "table" ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
+      }),
+    );
+
+    expect(snapshot.truncated).toEqual({ limit: 1_000, reason: "container and kind pair limit reached" });
+    expect(snapshot.objects.filter((object) => object.kind !== undefined)).toHaveLength(1_000);
+  });
+
+  /**
+   * A read that could not happen costs the run DETAIL and not its grounding. Refusing to
+   * ground a run at all because an engine would not enumerate its kinds would trade a
+   * label for a real regression, and the renderers already say nothing where they know
+   * nothing.
+   */
+  test("an engine that declares no kinds is grounded exactly as it was, and is charged nothing for it", async () => {
+    const harness = objectHarness({ kinds: [] });
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(snapshot.objects.map((object) => object.name)).toEqual(["public.order_summary", "public.orders"]);
+    expect(snapshot.objects.every((object) => object.kind === undefined)).toBe(true);
+    expect(snapshot.kinds).toEqual([]);
+    expect(harness.listObjects).not.toHaveBeenCalled();
+    // One statement, not two: the read that cannot exist is never admitted.
+    expect(harness.context.tracker.usage("run-1").executedStatements).toBe(1);
+  });
+
+  test("a provider that declares kinds and cannot list them grounds the run without them", async () => {
+    const snapshot = await inventoryOf(objectHarness({ omitObjectSurface: true }));
+
+    expect(snapshot.objects.map((object) => object.name)).toEqual(["public.order_summary", "public.orders"]);
+    expect(snapshot.objects.every((object) => object.kind === undefined)).toBe(true);
+  });
+
+  test("a provider with container levels and no container listing yields no objects rather than guessing one", async () => {
+    const harness = objectHarness({ omitContainerListing: true });
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(harness.listObjects).not.toHaveBeenCalled();
+    expect(snapshot.objects.map((object) => object.name)).toEqual(["public.order_summary", "public.orders"]);
+  });
+
+  test("a listing the engine rejected loses the kinds and not the inventory", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({ listThrows: new QueryError("relation does not exist", "mongodb") }),
+    );
+
+    expect(snapshot.objects.map((object) => object.name)).toEqual(["public.order_summary", "public.orders"]);
+    expect(snapshot.objects.every((object) => object.kind === undefined)).toBe(true);
+  });
+
+  test("the reading is charged and audited like every other reach, as a second statement", async () => {
+    const harness = objectHarness();
+    const capture = await captureContextSnapshot(harness.context);
+
+    // One for the provider schema inspection, one for the object inventory. A read that
+    // charged nothing would be a path around the budget.
+    expect(capture.charged?.statements).toBe(2);
+  });
+});
+
 /**
  * The three defects #789's Task 24 closes, each of which existed rather than being a
  * feature the object model wanted.

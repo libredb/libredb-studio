@@ -406,6 +406,37 @@ audited statement by statement, carries foreign keys the provider path cannot on
 declares none, and SQLite's inventory is parsed out of stored DDL the provider does not expose the
 same way.
 
+**There is a THIRD reading, and it is the one that says what each entry IS** (#789). Both readings
+above answer one flat list of names: an `information_schema.columns` read returns a view's columns
+beside a table's with nothing to tell them apart, and `getSchema()` answers one list on every engine.
+So a run was handed a view, a materialized view, a Redis key grouping and a Druid datasource under one
+word, and #414 measured what a model does with that — it drafted `KEYS user:*` against a row nobody
+had named. `readObjectInventoryForGrounding` asks the provider's own object surface instead:
+`listContainers` down to the declared depth, then `countObjects` per container, then `listObjects` for
+each kind the count did not answer zero for. It runs under the SAME `db.schema.read` descriptor, with
+its own fingerprint source, because it is a schema read and an operator denying that descriptor means
+to deny this too.
+
+It carries no columns, and that is the measured decision rather than an omission: the bulk inventory
+route removed `includeColumns` after measuring it as one `describeObject` per object, up to 5,000
+sequential round trips. So identity comes from this read, columns from the reading that already
+carries them, and `context-snapshot.ts` joins the two on the qualified name. An object the join could
+not match reaches the model named and kinded with an empty column list; a flat entry it could not
+match is carried with **no kind at all** rather than labelled a table. Filling a missing fact in with
+the commonest value is how a view came to be handed over as one. Closing the gap properly needs a bulk
+column read on the provider surface, which is a fifth method across seventeen providers and is an open
+item of #789 rather than something invented here.
+
+Two bounds, and they are the numbers `POST /api/db/objects/inventory` uses so that the agent and the
+route cannot disagree about how much of a database an inventory is: **5,000 objects** and **1,000
+container-and-kind listings**. Either one biting reports `truncated`, which the packing turns into a
+sentence saying the inventory is incomplete and naming the limit. A kind whose count came back with
+`sampledFrom` — Redis key groupings from one bounded `SCAN`, LibreDB keyspaces from a bounded key walk
+— is reported as a FLOOR ("at least what is shown"), and a kind on an engine declaring
+`tablesAreDerivedGroupings` is named as groupings this server derived rather than objects anybody
+named, so no command can be addressed to one. An absence the model was not told about is read as an
+absence in the database, which is #414 in one sentence.
+
 **What the provider path costs, and what it cannot promise.** One statement of the run's budget, where
 PostgreSQL costs three and SQLite two. `getSchema()` takes no budget on any provider, so the call is
 raced against the timeout this call was granted — which bounds THE RUN and not the database: the driver
@@ -583,7 +614,9 @@ Three consequences worth stating plainly, because each is easy to assume the oth
    statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
    because SQLite resolves table names at prepare time). On the other fifteen it is **one** — the
    single `db.schema.read` call, with no statistics read to add, since those dialects hold none this
-   run knows how to read. They come out of the same per-run statement budget every other read does,
+   run knows how to read. Since #789 an engine that declares object kinds costs **one more**, the
+   object-surface reading above; an engine that declares none is charged nothing extra, because a read
+   that cannot exist is never admitted. They come out of the same per-run statement budget every other read does,
    and they are audited the same way. The ledger-reuse path saves the schema reading and deliberately
    does **not** save the statistics read.
 2. **A plan run now writes `context-captured` to its own ledger**, which it never did before, and
