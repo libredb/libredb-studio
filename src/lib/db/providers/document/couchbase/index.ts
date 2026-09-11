@@ -723,10 +723,13 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
         // two projections are aliased onto the same field names.
         const keyspaceName = attached ? (typeof row.collection_id === "string" ? row.collection_id : undefined) : name;
         const keyspace = resolveKeyspaceOf(bucket, row, keyspaceName);
-        // A row carrying no name at all addresses nothing, so it cannot be a tree row.
+        // A row carrying no name at all addresses nothing, so it cannot be a tree row, and
+        // that is the ONLY thing dropped here. A row that names no keyspace is placed in
+        // `_default` instead, because dropping it would take it out of the count and the
+        // listing together and leave it invisible in the tree.
         // This is not a kind falling out of a classifier: the kind is decided by which
         // catalog the row came from, so there is no vocabulary here to be incomplete.
-        if (keyspace === undefined || name === undefined) continue;
+        if (name === undefined) continue;
         // A COLLECTION is named by the keyspace it resolved to and NOT by the row's own
         // `name`, because the pre-scopes bucket-level row's name is the BUCKET's. Reading
         // the row there would address `_default`.`_default` as a collection called
@@ -837,7 +840,7 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       const name = typeof row.object_name === "string" ? row.object_name : undefined;
       const keyspaceName = typeof row.collection_id === "string" ? row.collection_id : undefined;
       const rowKeyspace = resolveKeyspaceOf(keyspace.bucket, row, keyspaceName);
-      if (name === undefined || rowKeyspace === undefined) continue;
+      if (name === undefined) continue;
       // BOTH halves. One collection NAME can live in two scopes - the fixture puts
       // `airline` in `_default` and in `inventory` - so a filter on the collection alone
       // would hand one of them the other's indexes.

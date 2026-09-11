@@ -623,8 +623,8 @@ with no counts read at all.
 | Read | Catalog | Why not the alternative |
 |------|---------|------------------------|
 | Scopes | `system:all_scopes` | `system:scopes` lists **neither `_default` nor `_system`**. Measured on a bucket holding four scopes: `SELECT s.name FROM system:scopes` answers 2 rows while `SELECT COUNT(*) FROM system:scopes` answers 4. `_default` is where most of a bucket's collections live, so reading `system:scopes` would hide them. |
-| Collections | `system:keyspaces` | `system:all_keyspaces` answers **seven** rows for the fixture bucket where `system:keyspaces` answers five: it adds the `_system` scope's `_mobile` and `_query`, and it adds `_default`.`_default` **alongside** the pre-scopes bucket-level row that already is that collection. One collection would get two paths. |
-| Indexes | `system:indexes` | `system:all_indexes` carries a `#sequentialscan` pseudo-index for every keyspace plus the query service's own `#system` namespace indexes: 67 rows against `system:indexes`' 5. |
+| Collections | `system:keyspaces` | `system:all_keyspaces` answers every `system:keyspaces` row for the bucket **plus three**: the `_system` scope's `_mobile` and `_query`, and a scoped `_default`.`_default` row **alongside** the pre-scopes bucket-level row that already is that collection. One collection would get two paths. The excess is three whatever the bucket holds; the totals move with the fixture ([§6a.8](#6a8-the-fixture)), so they are not quoted here. |
+| Indexes | `system:indexes` | `system:all_indexes` carries a `#sequentialscan` pseudo-index for **every** keyspace it can see, in every namespace, plus the query service's own `#system` namespace indexes. What it adds is not a constant: it grows with the keyspace count, while `system:indexes` answers only the indexes that were created. |
 | Functions | `system:functions` | There is no `system:all_functions` ("Keyspace not found all_functions"). |
 
 **Nothing here counts with `COUNT(*)`, and that is measured rather than stylistic.** A `system:`
@@ -647,6 +647,14 @@ before scopes existed, and naming the collection from the row's own `name` would
 collection called `travel`, which is a keyspace path no statement can reach. One placement function
 (`resolveKeyspaceOf()`) serves both catalogs, because their projections are aliased onto the same
 field names.
+
+That function is **total**: it always returns a placement. A scoped row that names no scope, and an
+index row that names no keyspace, are both placed in `_default`, which is where an unqualified SQL++
+keyspace resolves. Neither shape was observed on 8.0.2, and neither is claimed to be unreachable:
+dropping a row instead would take it out of the **count and the listing together**, which is an
+object that is invisible in the tree while the count still agrees with the listing, so no gate would
+see it. The only row dropped is one carrying no **name**, which addresses nothing and cannot be a
+tree row.
 
 ### 6a.4 Identity
 
@@ -755,14 +763,28 @@ docker exec -e COUCHBASE_HOST=localhost cb bash /fixture/01-object-fixture.sh
 Port **8092** is the CAPI port and is needed only for the map-reduce view; the provider itself uses
 8091 and 8093. What the fixture holds, and the counts it produces:
 
+What it holds, so the counts below can be derived rather than remembered:
+
+- **Collections:** `inventory`.`airline`, `inventory`.`hotel`, `_default`.`airline`,
+  `_default`.`bookings`, plus `_default`.`_default`, which every bucket has and which the query
+  service reports as the pre-scopes bucket-level row ([§6a.3](#6a3-the-two-row-shapes-and-the-bucket-level-one)).
+- **Functions:** `discount` in `inventory` and `discount` in `_default`. The global `celsius` is
+  deliberately outside the tree ([§6a.5](#6a5-a-global-function-is-excluded)) and is not counted.
+- **Indexes:** `ix_name` on each of `inventory`.`airline`, `inventory`.`hotel` and
+  `_default`.`airline`, the primary index on `inventory`.`airline`, and the bucket-level primary
+  index, which the `couchbase-init` sidecar creates before running the script.
+
 | Container | `collection` | `function` | `index` |
 |-----------|--------------|------------|---------|
 | `[travel]` | 5 | 2 | 5 |
 | `[travel, _default]` | 3 | 1 | 2 |
 | `[travel, inventory]` | 2 | 1 | 3 |
 
-Those are the numbers `tests/integration/db/couchbase-provider.test.ts` asserts and the numbers a
-live provider answered against the fixture on 2026-09-11.
+The `[travel]` row is the length of each list above; the two scope rows are the same objects split
+by scope, with `_default`.`_default` and the bucket-level index falling into `_default`. Those are
+the numbers `tests/integration/db/couchbase-provider.test.ts` asserts and the numbers a live
+provider answered against the fixture on 2026-09-11. **They move whenever the script gains an
+object**, so anything stated as a total elsewhere in this document is stated against this list.
 
 ---
 

@@ -47,20 +47,22 @@
 #     behind declaring no `view` kind, together with SQL++ having no CREATE VIEW
 #     statement at all (`CREATE VIEW v AS SELECT 1` is error 3000, "syntax error
 #     ... at: VIEW (reserved word)").
-#  7. `_default`.`airline` carries the SAME collection name as `inventory`.`airline`, with
-#     an index of the same name over a DIFFERENT key, so a scope-blind filter on a
-#     collection's indexes reports the wrong keys rather than merely the wrong count.
 #  6. `airline` holds documents so INFER has a sample to answer describeObject's
 #     columns from, and `hotel` and `bookings` are left EMPTY on purpose: INFER
 #     answers error 7014 "No documents found, unable to infer schema" on an empty
 #     collection, which is an ordinary state the object surface must render as a
 #     collection with no columns rather than fail on.
+#  7. `_default`.`airline` carries the SAME collection name as `inventory`.`airline`, with
+#     an index of the same name over a DIFFERENT key, so a scope-blind filter on a
+#     collection's indexes reports the wrong keys rather than merely the wrong count.
 #
 # The `_system` scope and its collections (`_mobile`, `_query`) are the server's
 # own and are created by it, not here. They are what the `_system` exclusion is
-# measured against: system:all_keyspaces answers seven rows for this bucket and
-# system:keyspaces four, the difference being that scope plus the duplicate
-# bucket-level row.
+# measured against: system:all_keyspaces answers THREE rows more than
+# system:keyspaces for this bucket, that scope's two collections plus a duplicate
+# scoped row for `_default`.`_default`. The excess is three whatever this script
+# creates; the totals move every time it gains a collection, so they are counted
+# in docs/providers/couchbase.md section 6a.8 and not restated here.
 set -eu
 
 HOST="${COUCHBASE_HOST:-couchbase}"

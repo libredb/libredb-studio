@@ -1479,6 +1479,22 @@ describe("CouchbaseProvider object surface (#789)", () => {
     expect(listed.map((object) => object.path)).toEqual([[BUCKET, "_default", "orphan"]]);
   });
 
+  test("places an index row carrying a bucket but no keyspace in _default rather than dropping it", async () => {
+    // The SAME placement rule as the sibling above, on the other half of the row. An index
+    // row that carries a `bucket_id` but names no keyspace was not observed on 8.0.2
+    // either, and neither shape can be pinned by refuting it: the reason to place it is
+    // that the alternative is a row leaving the COUNT and the LISTING at once, which is
+    // standing ruling 5a's invisible absence. Dropping it would still satisfy ruling 5f,
+    // and that is exactly why 5f cannot be the test.
+    queryHandler = (statement) =>
+      statement.includes("object_name") && statement.includes("system:indexes")
+        ? queryPayload([{ bucket_id: BUCKET, scope_id: "inventory", object_name: "ix_orphan", index_key: [] }])
+        : objectQueryPayload(statement);
+    const listed = await objectProvider.listObjects([BUCKET], "index");
+    expect(listed.map((object) => object.path)).toEqual([[BUCKET, "inventory", "_default", "ix_orphan"]]);
+    expect((await objectProvider.countObjects([BUCKET])).index).toEqual({ count: 1 });
+  });
+
   test("orders paths segment by segment, shorter first where one is a prefix of the other", async () => {
     const { comparePaths } = await import("@/lib/db/providers/document/couchbase/objects");
 

@@ -32,14 +32,19 @@
  *    is the LENGTH of the rows the listing itself produces, which is standing ruling 5f
  *    discharged structurally: see `SEAM` below.
  * 3. **The `all_` variants are wrong for the OBJECT reads for the opposite reason.**
- *    `system:all_keyspaces` answers seven rows for the fixture bucket where
- *    `system:keyspaces` answers four: it adds the `_system` scope's `_mobile` and
- *    `_query`, and it adds `_default`.`_default` ALONGSIDE the pre-scopes bucket-level row
- *    that already IS that collection, so one collection would get two paths and the
- *    conformance helper's uniqueness invariant would fail a correct provider.
- *    `system:all_indexes` is worse: it carries a `#sequentialscan` pseudo-index for every
- *    keyspace and the query service's own `#system` namespace indexes, 67 rows against
- *    `system:indexes`' 3.
+ *    `system:all_keyspaces` answers every row `system:keyspaces` answers for the bucket,
+ *    plus THREE the tree must not show: the `_system` scope's `_mobile` and `_query`, which
+ *    are the server's own, and a scoped `_default`.`_default` row ALONGSIDE the pre-scopes
+ *    bucket-level row that already IS that collection, so one collection would get two
+ *    paths and the conformance helper's uniqueness invariant would fail a correct provider.
+ *    The excess is stated as three rather than as a total because the total moves with the
+ *    fixture and the difference does not: the fixture bucket holds one `system:keyspaces`
+ *    row per collection plus the bucket-level one, so whatever that number is,
+ *    `system:all_keyspaces` answers it plus three.
+ *    `system:all_indexes` is worse, and its excess is not even a constant: it carries a
+ *    `#sequentialscan` pseudo-index for EVERY keyspace it can see, in every namespace, plus
+ *    the query service's own `#system` namespace indexes, so what it adds grows with the
+ *    keyspace count while `system:indexes` answers only the indexes that were created.
  * 4. **The pre-scopes BUCKET-LEVEL row.** A bucket created before scopes existed, and the
  *    `_default`.`_default` collection of every bucket, appear in `system:keyspaces` as a
  *    row carrying NO `bucket` and NO `scope` field at all, whose `name` is the BUCKET's
@@ -450,18 +455,25 @@ export function relationKeyspace(capabilities: ProviderCapabilities, path: reado
  *
  * `keyspaceName` is the field carrying the COLLECTION: `object_name` on a collection row,
  * `collection_id` on an index row. The caller supplies it, so this function never has to
- * know which catalog it is reading.
+ * know which catalog it is reading. A row that names NO keyspace is placed in `_default`
+ * too, by the same rule and for the same reason as the scope: `_default`.`_default` is
+ * where an unqualified SQL++ keyspace resolves, and the alternative to placing such a row
+ * is dropping it out of the COUNT and the LISTING at once, which leaves an object invisible
+ * in the tree while standing ruling 5f still holds. Neither shape was observed on 8.0.2,
+ * and neither is claimed to be unreachable: a shape that is merely unobserved is what
+ * standing ruling 5a says to place rather than to reason away. So this function is TOTAL,
+ * and a row that addresses nothing is dropped by its caller on the NAME, which is the one
+ * field a tree row cannot do without.
  */
-export function resolveKeyspaceOf(
-  bucket: string,
-  row: CouchbaseObjectRow,
-  keyspaceName: string | undefined,
-): Keyspace | undefined {
+export function resolveKeyspaceOf(bucket: string, row: CouchbaseObjectRow, keyspaceName: string | undefined): Keyspace {
   if (text(row.bucket_id) === undefined) {
     return { bucket, scope: COUCHBASE_DEFAULT_SCOPE, collection: COUCHBASE_DEFAULT_COLLECTION };
   }
-  if (keyspaceName === undefined) return undefined;
-  return { bucket, scope: text(row.scope_id) ?? COUCHBASE_DEFAULT_SCOPE, collection: keyspaceName };
+  return {
+    bucket,
+    scope: text(row.scope_id) ?? COUCHBASE_DEFAULT_SCOPE,
+    collection: keyspaceName ?? COUCHBASE_DEFAULT_COLLECTION,
+  };
 }
 
 /**
