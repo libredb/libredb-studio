@@ -1063,6 +1063,177 @@ datasource.
 
 ---
 
+### 6.1 The object surface (#789)
+
+`getSchema()` above answers one flat datasource list. The object surface answers a lazy,
+container-aware, kind-tagged tree through four methods, and it lives in
+[`objects.ts`](../../src/lib/db/providers/sql/druid/objects.ts) rather than in the provider class:
+the statements and every derivation over the declaration are there, the connection check and the
+error mapping stay on the class.
+
+Everything below was measured on **Apache Druid 37.0.0**, the build `database-compose.yml` pins,
+against the fixture in [`docker/druid-init/`](../../docker/druid-init/) (see
+[§11.5](#115-the-object-surface-fixture)).
+
+#### The declaration
+
+One container level, and there is no second one to add: `INFORMATION_SCHEMA.SCHEMATA` reports exactly
+one catalog, always `druid`, so a catalog level would be a folder with one child forever. The level's
+structural `id` is `schema`, and here the engine's own word is Schema too.
+
+| Kind | Role | Catalog |
+|---|---|---|
+| `datasource` | `relation` | `INFORMATION_SCHEMA.TABLES`, the DEFAULT arm |
+| `lookup` | `config` | `INFORMATION_SCHEMA.TABLES`, `TABLE_SCHEMA = 'lookup'` |
+| `system_table` | `relation` | `INFORMATION_SCHEMA.TABLES`, `TABLE_TYPE = 'SYSTEM_TABLE'` |
+
+**Five kinds are absent rather than declared and zero, and that is the point of this engine.** Druid
+has no view, no materialized view, no user-defined function, no stored procedure and no trigger, so
+the tree draws no folder for any of them and a user is told the truth instead of being shown five
+empty folders. It is not an omission we are choosing to make: `CREATE` in **any** form is a syntax
+error, and the parser answers by listing every statement it expected, with no form of `CREATE` among
+them.
+
+```
+$ CREATE VIEW v AS SELECT 1
+Incorrect syntax near the keyword 'CREATE' at line 1, column 1.
+Was expecting one of:
+    "INSERT" ... "UPSERT" ... "EXPLAIN" ... "SET" ... "RESET" ... "ALTER" ... "WITH" ...
+    "SELECT" ... "VALUES" ... "VALUE" ... "TABLE" ...
+```
+
+`INFORMATION_SCHEMA.ROUTINES` exists and holds **228 rows**, every one of them `ROUTINE_TYPE =
+'FUNCTION'` and every one of them built in (`COUNT`, `PERCENT_RANK`, `EARLIEST_BY`, ...). With no
+`CREATE FUNCTION` to add to it, a `function` kind here would be a folder holding the engine's own
+operator reference manual rather than anything a person made, so the routine catalog is deliberately
+not read.
+
+No kind declares `acceptsRowWrites`: Druid SQL has no row-level DML at all, which is the same
+measurement behind `supportsInlineRowEdit: false` ([§3.11](#311-the-three-false-capabilities-are-each-impossible-not-merely-unimplemented)).
+
+#### A lookup IS in SQL, and the plan behind #789 said it was not
+
+The plan for this work stated that lookups are not in SQL at all and would have to come from the
+Coordinator's REST API. Measured, that is false, and it is the difference between one transport and
+two. A lookup the Broker has **loaded** is an ordinary row of the catalog:
+
+```
+$ SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, IS_JOINABLE, IS_BROADCAST
+    FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'lookup'
+{"TABLE_SCHEMA":"lookup","TABLE_NAME":"libredb_country_names","TABLE_TYPE":"TABLE",
+ "IS_JOINABLE":"YES","IS_BROADCAST":"YES"}
+
+$ SELECT * FROM lookup.libredb_country_names
+{"k":"TR","v":"Turkey"} ...
+```
+
+So the Coordinator API is how a lookup is **registered**, not how it is read, and the object surface
+speaks nothing but SQL over the existing transport seam. One caveat, and it is a real one: a lookup
+that is registered and **not yet loaded** has no row anywhere in SQL, so this surface shows what is
+queryable and nothing else. That is the honest half of the pair - the tree cannot offer to describe
+an object no query could reach.
+
+#### The kind expression is total, and the schema is what separates a lookup from a datasource
+
+A lookup and a datasource **both** carry `TABLE_TYPE = 'TABLE'`, so the type alone cannot tell them
+apart and the schema is what does. The expression is one `CASE`, and its last arm has no predicate:
+
+```sql
+CASE WHEN TABLE_TYPE = 'SYSTEM_TABLE' THEN 'system_table'
+     WHEN TABLE_SCHEMA = 'lookup'     THEN 'lookup'
+     ELSE 'datasource' END
+```
+
+Totality is standing ruling 5a written as code: every row of `INFORMATION_SCHEMA.TABLES` lands in
+exactly one declared kind, so a `TABLE_TYPE` a later build introduces still reaches the tree as a
+datasource. An inclusion list of known types would drop it out of the count **and** the listing at
+once, which keeps the badge agreeing with its own folder while the object cannot be reached at all -
+the worst shape of absence there is. The vocabulary itself comes from the engine: Druid publishes
+Calcite's `Schema.TableType` names here, and the fixture was built to hold both of the two this
+build produces.
+
+#### Why `system_table` is a kind
+
+`sys` holds six tables and `INFORMATION_SCHEMA` holds four, and `TABLE_TYPE = 'SYSTEM_TABLE'` is the
+engine's own word for them. Without the kind, both of those containers would open onto nothing at
+all while `sys.segments` is right there to be selected from. `getSchema()`'s sidebar deliberately
+filters them out ([§6](#6-schema-introspection)); the object tree does not need to, because a tree
+addresses by container and the two system schemas are containers of their own.
+
+#### The containers are READ, not hardcoded
+
+`INFORMATION_SCHEMA.SCHEMATA` reports **five** schemas on a bare cluster, not the three a person
+would name:
+
+```
+INFORMATION_SCHEMA, druid, lookup, sys, view
+```
+
+`view` is a real schema that this build can hold nothing in, and it is listed anyway: a container
+holding nothing is a true statement about the cluster, while a container we withheld is not. Reading
+the list is also what keeps this right on a cluster whose extensions publish a schema this code has
+never heard of. `isSessionDefault` is `druid`, which is a fact rather than a guess - a Druid
+connection carries no schema to choose, and there is no `CURRENT_SCHEMA` to ask instead (measured:
+*"Column 'CURRENT_SCHEMA' not found in any table"*).
+
+#### One subquery, so the count and the listing cannot drift
+
+`countObjects` GROUPs exactly the text `listObjects` FILTERs, so standing ruling 5f holds by
+construction rather than by two statements agreeing: there is no second `WHERE` clause for the two to
+disagree in. Every declared kind is seeded `{count: 0}` before the rows are applied, so a
+declared-and-empty folder still badges - which on this engine is the ordinary case, since the `druid`
+schema holds no lookup and the `lookup` schema holds nothing else.
+
+A refused read is **never** zero. A `druid-basic-security` cluster answers `FORBIDDEN` for a schema a
+role may not see, and `countObjects` then carries Druid's own sentence in `{unavailable}` for every
+declared kind, unprefixed: the reason a folder has no number is rendered to a person, so our words do
+not go in front of the server's.
+
+#### Escaping: doubling the quote, and NOTHING else
+
+A backslash is an ordinary character inside a Druid string literal, unlike ClickHouse where it
+escapes:
+
+```
+$ SELECT LENGTH('a\b')   -> 3
+$ SELECT LENGTH('a\\b')  -> 4
+$ SELECT LENGTH('a''b')   -> 3
+```
+
+So `druidLiteral()` doubles the quote and leaves everything else alone. Copying ClickHouse's helper
+here would be actively wrong: a datasource really can be called `libredb_back\slash` (it ingests, and
+the fixture holds it), and `TABLE_NAME = 'libredb_back\\slash'` matches **nothing** on this cluster.
+The tree would draw that object and then fail to describe it. The fixture holds `libredb_o'brien` for
+the other half of the rule.
+
+#### `describeObject`
+
+One statement, `INFORMATION_SCHEMA.COLUMNS`, answers for all three kinds - a datasource's dimensions
+and metrics, a lookup's `k` and `v`, and a system table's own columns - so there is no per-kind
+branch and no kind that answers three empty arrays. The rows go through the same `readColumn()` that
+`getSchema()` uses, which is what keeps the detail panel and the sidebar from ever describing one
+datasource two different ways: the type fallback, the nullable reading, and `isPrimary: false` for
+every column including `__time`, are all stated once (§6 above).
+
+`indexes` and `foreignKeys` are always `[]`, by construction rather than by omission, for the same
+two reasons `getSchema()` gives. Zero columns **raises**: every object of every declared kind has at
+least one column, so an empty answer means the object is not there under that name in this schema.
+
+`DatabaseObject` carries no `rowCount` and no `sizeBytes` here. Both would have to come from
+`sys.segments`, and nothing in this surface reads `sys` on purpose: a cluster running
+`druid-basic-security` grants the `sys` schema separately from the catalogs, so a row count taken
+from it would make the whole object tree fail on a cluster that merely declines to describe its
+segments. The per-datasource numbers stay on the Tables panel, which is allowed to lose one panel.
+
+#### Neither derivation is positional
+
+The schema comes from the segment the **declaration** assigns to the `schema` level, the object's own
+name from the last segment, and the expected depth from `containerDepth()`. None of those is a
+literal index, and the provider's own suite pins all three by swapping a **two-level** declaration in
+through `spyOn` and driving the reads to a bound value - with a catalog segment deliberately spelled
+something other than `druid`, because Druid's catalog and its main schema share that name and a test
+written with the engine's own names would certify the defect it exists to catch.
+
 ## 7. Monitoring & health
 
 Every read below degrades to empty/zero when the failure `isMonitoringUnavailable()` —
@@ -1262,6 +1433,8 @@ Both halves of that are real constraints, not scope cuts made lightly:
 | `supportsConnectionString` | **`false`** | Druid has no URI convention, and `http(s)://` is ClickHouse's ([§4.2](#42-there-is-no-connection-string-and-that-is-deliberate)) |
 | `defaultPort` | `8888` | The Router. `8082` (Broker) is equally valid ([§3.3](#33-router-8888-or-broker-8082--both-work-identically)) |
 | `schemaRefreshPattern` | `\b(INSERT\|REPLACE)\b` | The only statements that could change a datasource — and the native engine rejects both, so in practice a query never refreshes the schema, which is correct |
+| `containerLevels` | one `schema` level | `INFORMATION_SCHEMA.SCHEMATA` reports one catalog, always `druid`, so there is no second level to add ([§6.1](#61-the-object-surface-789)) |
+| `objectKinds` | `datasource`, `lookup`, `system_table` | And five kinds ABSENT rather than declared and zero, because `CREATE` is not in the grammar in any form ([§6.1](#61-the-object-surface-789)) |
 
 ### `getLabels()` ([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts))
 
@@ -1474,6 +1647,39 @@ details in that payload are load-bearing for reproducing this document's finding
   `libredb_rollup`, uses `"rollup": true` with a `metricsSpec` of `count` and `doubleSum`, which is
   what a Druid user's aggregating datasource looks like and what the join plan in
   [§3.12](#312-explain-the-native-plan-is-genuinely-a-tree) was captured against.
+
+### 11.5 The object surface fixture
+
+The object surface's fixture is **committed**, not typed into a shell while measuring and then lost
+with the container. It is [`docker/druid-init/`](../../docker/druid-init/), mounted read-only into the
+Router at `/opt/druid-init` by `database-compose.yml`, and it is applied with one command:
+
+```bash
+docker exec libredb-druid-router bash /opt/druid-init/apply.sh
+# or, from the repo, against any cluster:
+DRUID_URL=http://localhost:8888 bash docker/druid-init/apply.sh
+```
+
+**Druid's image has no init-script directory, and there is no DDL a script could run**: a datasource
+comes into existence by being ingested into, and a lookup is registered through the Coordinator's own
+API. So the fixture is four native batch task specs plus a lookup map, and `apply.sh` is what applies
+them. It waits for the Router, submits the tasks, and then waits for two things a naive script would
+miss: for every lookup to report `loaded` on every node, because a registered lookup that the Broker
+has not loaded has no SQL row at all, and for the datasources to appear in SQL, because a task
+reporting `SUCCESS` is a moment earlier than the catalog showing its segments.
+
+| File | What it is for |
+|---|---|
+| `00-lookups.json` | two map lookups, so the `lookup` kind has objects |
+| `01-datasource-orders.json` | six columns over the four SQL types a datasource shows: `TIMESTAMP`, `VARCHAR`, `BIGINT`, `DOUBLE` |
+| `02-datasource-events.json` | a second, smaller datasource, named with a hyphen so the name needs quoting to query |
+| `03-datasource-quoted-name.json` | `libredb_o'brien` - the apostrophe the literal helper must double |
+| `04-datasource-backslash-name.json` | `libredb_back\slash` - the backslash the literal helper must NOT escape |
+
+It is idempotent, and one detail of that is worth knowing before editing it: the lookup version is
+stamped per run as `v<epoch>`, because re-posting a lookup whose version does not sort **above** the
+stored one is refused with HTTP 500 and *"can't replace existing spec"*. The comparison is a string
+compare, so the `v` prefix is load-bearing: a bare epoch sorts below `v1`.
 
 `docker compose -f database-compose.yml --profile druid down -v` resets the cluster to empty — the
 named volumes hold deep storage and task history, so without `-v` a restart keeps both.

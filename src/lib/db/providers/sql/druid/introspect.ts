@@ -319,7 +319,7 @@ export const DRUID_HISTORICAL_STORAGE_SQL = [
 export type DruidQueryRunner = Pick<DruidTransport, "query">;
 
 /** A column row placed against the datasource that owns it. */
-interface OwnedColumn {
+export interface OwnedColumn {
   table: string;
   column: ColumnSchema;
 }
@@ -329,7 +329,7 @@ interface OwnedColumn {
 // ============================================================================
 
 /** An identifier, or null for a row that cannot be placed and must be skipped. */
-function readIdentifier(value: unknown): string | null {
+export function readIdentifier(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
@@ -441,7 +441,7 @@ async function readRow(runner: DruidQueryRunner, sql: string): Promise<DruidRow 
 // Schema
 // ============================================================================
 
-function readColumn(row: DruidRow): OwnedColumn | null {
+export function readColumn(row: DruidRow): OwnedColumn | null {
   const table = readIdentifier(row.tableName);
   const name = readIdentifier(row.columnName);
   if (table === null || name === null) return null;
