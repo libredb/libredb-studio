@@ -27,15 +27,26 @@
  * Never the kind ID and never the database type id. `CLAUDE.md` forbids the second inside
  * `src/lib/db`, and the object model exists so the UI does not need the first.
  *
- * ONE gate of the flat menu has no successor here, deliberately, and the next implementer
- * needs to know which declaration replaces it. `TableItem.tsx` withheld Generate Query and
- * Profile whenever `capabilities.tablesAreDerivedGroupings` was true, because those rows are
- * key-prefix groupings this server derived from a bounded scan rather than objects anybody
- * named, so neither action has a target. Exactly two providers set that flag
- * (`keyvalue/redis.ts` and `embedded/libredb.ts`) and neither declares `objectKinds` yet, so
- * nothing is lost today. When they are migrated, a derived grouping must NOT be declared
- * with `role: "relation"` - that role is what offers both of those actions above - and must
- * not declare `acceptsRowWrites`. Recorded in standing ruling 4 against #789 Tasks 20 and 23.
+ * ONE gate of the flat menu has a successor of its own, and it is the only one that is not
+ * a statement about a KIND. `TableItem.tsx:92` withholds three items whenever
+ * `capabilities.tablesAreDerivedGroupings` is true - Profile, Generate Test Data and the two
+ * per-row maintenance links - because those rows are key-prefix groupings a server derived
+ * from a bounded scan rather than objects anybody named. It does NOT withhold Generate Query,
+ * and that is right rather than an oversight: the Redis generator answers
+ * `SCAN 0 MATCH user:* COUNT 50` for a prefix group, a runnable command against exactly the
+ * keys the row summarises (`src/lib/query-generators.ts`), and the row click that opens data
+ * runs the same thing. Measured in the source on 2026-09-11 while Task 20 migrated Redis; an
+ * earlier version of this note said Generate Query was withheld, and it was not.
+ *
+ * Two of the three therefore need no new gate: a derived grouping declares no
+ * `acceptsRowWrites`, so the test-data and create items are already withheld, and both
+ * engines that set the flag declare their one maintenance operation as `perEntity: false`,
+ * so `maintenanceControl` withholds those. PROFILE is the one that has no kind-level
+ * declaration behind it - profiling needs an ADDRESSABLE object, while every other relation
+ * action here needs only a pattern - so it reads the same engine-wide flag the flat menu
+ * read. Exactly two providers set it, `keyvalue/redis.ts` and `embedded/libredb.ts`, and it
+ * is read `=== true` here for the reason its own docblock gives: absent means ordinary
+ * objects. Standing ruling 4 against #789 Tasks 20 and 23.
  */
 
 import { ChartColumn, Code, Funnel, Plus, Search, Trash2, WandSparkles, type LucideIcon } from "lucide-react";
@@ -146,8 +157,11 @@ function objectActions(
     });
   }
 
+  // Profile, and the one gate here that is engine-wide rather than per kind: see the note
+  // at the top of this file. A Redis `user:*` row is a grouping this server summarised, so
+  // the profiler has no object to run its per-column statistics against (#427).
   const profile = handlers.onProfileObject;
-  if (isRelation && profile !== undefined) {
+  if (isRelation && profile !== undefined && capabilities.tablesAreDerivedGroupings !== true) {
     actions.push({ id: "profile", label: `Profile ${kind.label}`, icon: ChartColumn, run: () => profile(object) });
   }
 

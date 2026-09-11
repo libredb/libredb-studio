@@ -4,7 +4,8 @@
  * Uses mock.module() from bun:test to mock the 'ioredis' driver
  * before importing the RedisProvider class.
  */
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
 import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
 
@@ -80,6 +81,69 @@ const mockCallResults: Record<string, unknown> = {
 const capturedCalls: Array<{ command: string; args: string[] }> = [];
 
 /**
+ * What `SCAN` answers in each numbered database, keyed by the `db` the connection was
+ * OPENED on (issue #789).
+ *
+ * Two databases and not one, because a provider that read the SESSION's database instead
+ * of the CONTAINER's is indistinguishable from a correct one when every database holds the
+ * same keys. `report:daily` exists in db 3 and nowhere else, exactly as
+ * `docker/redis-init/01-object-fixture.redis` builds it on a real server.
+ */
+const MOCK_KEYS_BY_DB: Record<number, string[]> = {
+  0: ["user:1", "user:2", "session:abc"],
+  3: ["report:daily"],
+};
+
+/**
+ * What `CONFIG GET databases` answers. 16 is a stock server; a test sets it to 1 to stand
+ * for the cluster-mode deployment, where the reply really is 1 (measured on redis 8.10.0
+ * started with `--cluster-enabled yes`, where `SELECT 3` also answers "ERR SELECT is not
+ * allowed in cluster mode").
+ */
+let databasesReply: string[] = ["databases", "16"];
+
+/**
+ * One library, in the exact RESP2 shape ioredis hands back: a flat key/value list per
+ * library, measured against redis 8.10.0 holding `docker/redis-init/01-object-fixture.redis`.
+ * The nested `functions` entry is the library's registered functions and is deliberately
+ * present, because a parser that walked the top-level list two entries at a time without
+ * reading the KEYS would take `functions` as a library name.
+ */
+const MOCK_FUNCTION_LIST: unknown[] = [
+  [
+    "library_name",
+    "libredb_probe",
+    "engine",
+    "LUA",
+    "functions",
+    [
+      ["name", "libredb_ping", "description", null, "flags", []],
+      ["name", "libredb_echo_key", "description", null, "flags", []],
+    ],
+  ],
+];
+
+/**
+ * What `FUNCTION LIST` answers, reset to `MOCK_FUNCTION_LIST` before each object-surface
+ * test. A test REORDERS the fields to prove the parser reads `library_name` by its key: the
+ * shipped mock carries the order redis 8.10.0 answered in, and a parser taking `entry[1]`
+ * is indistinguishable from a correct one for as long as that order is the only one tested.
+ */
+let functionListReply: unknown[] = MOCK_FUNCTION_LIST;
+
+/**
+ * When set, `FUNCTION LIST` rejects with this sentence. Three of the four Redis-wire
+ * relatives do exactly that and each says it differently (all measured 2026-09-11):
+ * KeyDB 6.3.4 "ERR unknown command `FUNCTION`, with args beginning with: `LIST`, ",
+ * DragonflyDB df-v1.40.1 "ERR Unknown subcommand or wrong number of arguments for 'LIST'.
+ * Try FUNCTION HELP." and Garnet 2.1.5 "ERR unknown command".
+ */
+let functionRefusal: string | null = null;
+
+/** When set, `SCAN` rejects with this sentence, whatever database it was opened on. */
+let scanRefusal: string | null = null;
+
+/**
  * Every options object the provider handed the `Redis` constructor. The TLS
  * selection is observable nowhere else: ioredis takes it at construction time and
  * never exposes it again.
@@ -103,10 +167,13 @@ let infoOverride: string | null = null;
 mock.module("ioredis", () => {
   class MockRedis {
     private _config: unknown;
+    private _db: number;
 
     constructor(config?: unknown) {
       this._config = config;
-      capturedRedisOptions.push((config ?? {}) as Record<string, unknown>);
+      const options = (config ?? {}) as Record<string, unknown>;
+      capturedRedisOptions.push(options);
+      this._db = typeof options.db === "number" ? options.db : 0;
     }
 
     async connect() {
@@ -127,7 +194,8 @@ mock.module("ioredis", () => {
     }
 
     async scan(): Promise<[string, string[]]> {
-      return ["0", ["user:1", "user:2", "session:abc"]];
+      if (scanRefusal !== null) throw new Error(scanRefusal);
+      return ["0", MOCK_KEYS_BY_DB[this._db] ?? []];
     }
 
     async type() {
@@ -145,6 +213,11 @@ mock.module("ioredis", () => {
       // Simulate a Redis-side error (e.g. unknown command / wrong arity)
       if (cmd === "BOGUS") {
         throw new Error("ERR unknown command 'BOGUS'");
+      }
+      if (cmd === "CONFIG") return databasesReply;
+      if (cmd === "FUNCTION") {
+        if (functionRefusal !== null) throw new Error(functionRefusal);
+        return functionListReply;
       }
       if (cmd in mockCallResults) {
         return mockCallResults[cmd];
@@ -1111,6 +1184,301 @@ describe("RedisProvider", () => {
     test("DBSIZE returns integer key count", async () => {
       const result = await provider.query(JSON.stringify({ command: "DBSIZE", args: [] }));
       expect(result.rows[0].result).toBe("(integer) 42");
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Object surface (#789)
+  // --------------------------------------------------------------------------
+
+  /**
+   * The four object-surface methods on the first NON-SQL engine to get them.
+   *
+   * The mock answers `CONFIG GET databases`, `FUNCTION LIST` and `SCAN` by dispatching on
+   * the command the provider sent, which standing ruling 5b names as a blind spot: a fake
+   * that routes by request content cannot see a change to that content. So every test
+   * below that depends on WHICH command was sent also pins the command text through
+   * `capturedCalls`, and the report sizes what the pins are worth by naming the mutations
+   * that fail without them.
+   */
+  describe("object surface (#789)", () => {
+    /** Every (command, args) the provider sent since this test started. */
+    const commandsSent = () => capturedCalls.map((entry) => [entry.command, ...entry.args].join(" "));
+
+    beforeEach(async () => {
+      databasesReply = ["databases", "16"];
+      functionListReply = MOCK_FUNCTION_LIST;
+      functionRefusal = null;
+      scanRefusal = null;
+      capturedCalls.length = 0;
+      capturedRedisOptions.length = 0;
+      await provider.connect();
+    });
+
+    test("declares one container level and the two kinds this engine really has", () => {
+      const caps = provider.getCapabilities();
+
+      expect(caps.containerLevels).toEqual([{ id: "schema", label: "Database", labelPlural: "Databases" }]);
+      expect(caps.objectKinds).toEqual([
+        { id: "keyspace", role: "relation", label: "Key Pattern", labelPlural: "Key Patterns" },
+        {
+          id: "function",
+          role: "routine",
+          label: "Function Library",
+          labelPlural: "Function Libraries",
+          hasSource: true,
+          sourceLanguage: "lua",
+        },
+      ]);
+      // The derived-grouping refusal, carried forward: `keyspace` rows are this server's
+      // own summary of a bounded SCAN, so nothing may offer to write rows into one.
+      expect(caps.objectKinds?.find((kind) => kind.id === "keyspace")?.acceptsRowWrites).toBeUndefined();
+      expect(caps.tablesAreDerivedGroupings).toBe(true);
+    });
+
+    test("satisfies the object-surface contract", async () => {
+      await assertObjectSurface(provider, {
+        containers: Array.from({ length: 16 }, (_, index) => [String(index)]),
+        kinds: { keyspace: 2, function: 1 },
+        sampleObject: { path: ["0", "user:*"], kind: "keyspace" },
+      });
+    });
+
+    test("the container list is the deployment's own database count, not a constant 16", async () => {
+      databasesReply = ["databases", "1"];
+      const containers = await provider.listContainers();
+
+      expect(containers.map((container) => container.path)).toEqual([["0"]]);
+      expect(commandsSent()).toContain("CONFIG GET databases");
+    });
+
+    test("a nested container list is empty: this engine has one level", async () => {
+      expect(await provider.listContainers(["0"])).toEqual([]);
+    });
+
+    test("the session's own database is the one marked default", async () => {
+      provider = new RedisProvider({ ...baseConfig, database: "3" });
+      await provider.connect();
+      const containers = await provider.listContainers();
+
+      expect(containers.filter((container) => container.isSessionDefault).map((c) => c.name)).toEqual(["3"]);
+      expect(containers.every((container) => container.level === 0)).toBe(true);
+    });
+
+    test("a refused CONFIG GET raises rather than inventing a database list", async () => {
+      databasesReply = [];
+      await expect(provider.listContainers()).rejects.toThrow(/CONFIG GET databases/);
+    });
+
+    test("counts both kinds, seeded at zero before either read answers", async () => {
+      const counts = await provider.countObjects(["0"]);
+
+      expect(counts).toEqual({ keyspace: { count: 2 }, function: { count: 1 } });
+      expect(commandsSent()).toContain("FUNCTION LIST");
+    });
+
+    test("an empty database counts zero rather than losing its folders", async () => {
+      const counts = await provider.countObjects(["7"]);
+      expect(counts).toEqual({ keyspace: { count: 0 }, function: { count: 1 } });
+    });
+
+    // Measured on three of the four Redis-wire relatives, each with its own sentence.
+    test("a server with no FUNCTION command carries its own sentence, not a zero", async () => {
+      functionRefusal = "ERR unknown command `FUNCTION`, with args beginning with: `LIST`, ";
+      const counts = await provider.countObjects(["0"]);
+
+      expect(counts).toEqual({
+        keyspace: { count: 2 },
+        function: { unavailable: "ERR unknown command `FUNCTION`, with args beginning with: `LIST`, " },
+      });
+    });
+
+    test("a refused SCAN leaves the keyspace count unavailable and the function count intact", async () => {
+      scanRefusal = "NOPERM this user has no permissions to run the 'scan' command";
+      const counts = await provider.countObjects(["0"]);
+
+      expect(counts).toEqual({
+        keyspace: { unavailable: "NOPERM this user has no permissions to run the 'scan' command" },
+        function: { count: 1 },
+      });
+    });
+
+    test("the count is the length of the listing it counted", async () => {
+      const counts = await provider.countObjects(["0"]);
+      const keyspaces = await provider.listObjects(["0"], "keyspace");
+      const functions = await provider.listObjects(["0"], "function");
+
+      expect(counts.keyspace).toEqual({ count: keyspaces.length });
+      expect(counts.function).toEqual({ count: functions.length });
+    });
+
+    test("lists key groupings with their sampled key count", async () => {
+      const objects = await provider.listObjects(["0"], "keyspace");
+
+      expect(objects).toEqual([
+        { path: ["0", "session:*"], name: "session:*", kind: "keyspace", rowCount: 1 },
+        { path: ["0", "user:*"], name: "user:*", kind: "keyspace", rowCount: 2 },
+      ]);
+    });
+
+    test("lists function libraries by their library_name, not by position", async () => {
+      const objects = await provider.listObjects(["0"], "function");
+
+      expect(objects).toEqual([{ path: ["0", "libredb_probe"], name: "libredb_probe", kind: "function" }]);
+      expect(commandsSent()).toContain("FUNCTION LIST");
+    });
+
+    /**
+     * The same reply with its fields REORDERED, which is what makes the test above
+     * non-vacuous: redis 8.10.0 happens to answer `library_name` first, so a parser reading
+     * `entry[1]` passes every assertion built from the measured order. Field order is not
+     * part of the protocol contract - RESP3 answers a map, where there is no order at all -
+     * and a server adding a field ahead of this one would rename every library at once.
+     */
+    test("finds library_name wherever in the reply it sits", async () => {
+      functionListReply = [["engine", "LUA", "library_name", "libredb_probe", "functions", []]];
+
+      expect(await provider.listObjects(["0"], "function")).toEqual([
+        { path: ["0", "libredb_probe"], name: "libredb_probe", kind: "function" },
+      ]);
+    });
+
+    /** An entry carrying no `library_name` is skipped: an unaddressable row is not a node. */
+    test("an entry with no library_name is skipped rather than listed as undefined", async () => {
+      functionListReply = [
+        ["engine", "LUA"],
+        ["library_name", "only_real_one", "engine", "LUA"],
+      ];
+
+      expect((await provider.listObjects(["0"], "function")).map((object) => object.name)).toEqual(["only_real_one"]);
+    });
+
+    /**
+     * `CONFIG GET` takes a GLOB and answers every parameter that matches it, so the position
+     * of a parameter in the reply is a property of the request rather than of the parameter.
+     * A stock `CONFIG GET databases` answers one pair and `databases` lands at index 0, which
+     * is precisely why a positional read survives a suite built only from that reply.
+     */
+    test("finds the databases value by its key, not at index 1", async () => {
+      databasesReply = ["maxmemory", "0", "databases", "4", "maxmemory-policy", "noeviction"];
+
+      expect((await provider.listContainers()).map((container) => container.name)).toEqual(["0", "1", "2", "3"]);
+    });
+
+    test("a databases value that is not a positive integer raises rather than being coerced", async () => {
+      databasesReply = ["databases", "not-a-number"];
+      await expect(provider.listContainers()).rejects.toThrow(/"not-a-number"/);
+    });
+
+    test("reads the CONTAINER's database and never the session's", async () => {
+      const objects = await provider.listObjects(["3"], "keyspace");
+
+      expect(objects.map((object) => object.path)).toEqual([["3", "report:*"]]);
+      // The session connection is db 0 and stays on it: nothing SELECTs underneath it.
+      expect(capturedRedisOptions.map((options) => options.db)).toEqual([0, 3]);
+      expect(commandsSent().filter((command) => command.startsWith("SELECT"))).toEqual([]);
+    });
+
+    test("describes a key grouping with the three columns every key row has", async () => {
+      const detail = await provider.describeObject(["0", "user:*"], "keyspace");
+
+      expect(detail.path).toEqual(["0", "user:*"]);
+      expect(detail.columns.map((column) => column.name)).toEqual(["key", "value", "type"]);
+      expect(detail.columns[0]).toEqual({ name: "key", type: "string", nullable: false, isPrimary: true });
+      expect(detail.indexes).toEqual([]);
+      expect(detail.foreignKeys).toEqual([]);
+    });
+
+    test("a grouping the current scan no longer holds raises rather than answering an empty shape", async () => {
+      await expect(provider.describeObject(["0", "gone:*"], "keyspace")).rejects.toThrow(/gone:\*/);
+    });
+
+    test("describes a function library as the columnless object it is", async () => {
+      const detail = await provider.describeObject(["0", "libredb_probe"], "function");
+
+      expect(detail).toEqual({ path: ["0", "libredb_probe"], columns: [], indexes: [], foreignKeys: [] });
+    });
+
+    test("an undeclared kind is refused by name on every method that takes one", async () => {
+      await expect(provider.listObjects(["0"], "stream")).rejects.toThrow(/declares no object kind "stream"/);
+      await expect(provider.describeObject(["0", "x"], "stream")).rejects.toThrow(/declares no object kind "stream"/);
+    });
+
+    test("a container path of the wrong length is refused rather than read positionally", async () => {
+      await expect(provider.countObjects([])).rejects.toThrow(/\[database\]/);
+      await expect(provider.listObjects(["0", "1"], "keyspace")).rejects.toThrow(/\[database\]/);
+      await expect(provider.describeObject(["0"], "keyspace")).rejects.toThrow(/\[database, name\]/);
+    });
+
+    test("a database segment that is not a number is refused with the segment in the message", async () => {
+      await expect(provider.countObjects(["main"])).rejects.toThrow(/"main"/);
+    });
+
+    /**
+     * A kind this engine declares and has no command to enumerate.
+     *
+     * Unreachable from the shipped declaration, which is the point: the two methods answer
+     * "is this a kind of mine" from the DECLARATION and never from whether a reader exists
+     * below, so a kind added to `objectKinds` without a reader has to fail by name rather
+     * than answer an empty folder. Spied in because that is the only way to build the case.
+     */
+    test("a declared kind with no command behind it is refused by name", async () => {
+      const base = provider.getCapabilities();
+      spyOn(provider, "getCapabilities").mockReturnValue({
+        ...base,
+        objectKinds: [...(base.objectKinds ?? []), { id: "stream", role: "relation", label: "S", labelPlural: "S" }],
+      });
+
+      await expect(provider.listObjects(["0"], "stream")).rejects.toThrow(/has no command that lists it/);
+      // And the same kind counts as unavailable rather than as zero, carrying that sentence.
+      const counts = await provider.countObjects(["0"]);
+      expect(counts.stream).toEqual({
+        unavailable: 'Redis declares the kind "stream" but has no command that lists it',
+      });
+    });
+
+    /**
+     * A declaration with container levels but no `schema` level among them.
+     *
+     * The database segment is found by the level's declared ID, so a declaration that names
+     * no such level must raise instead of falling through to `path[0]`, which is the exact
+     * positional read standing ruling 5g forbids.
+     */
+    test("a declaration with no database level is refused rather than read positionally", async () => {
+      const base = provider.getCapabilities();
+      spyOn(provider, "getCapabilities").mockReturnValue({
+        ...base,
+        containerLevels: [{ id: "catalog", label: "Cluster", labelPlural: "Clusters" }],
+      });
+
+      await expect(provider.countObjects(["main"])).rejects.toThrow(/needs a "schema" container level/);
+    });
+
+    /**
+     * Standing ruling 5g, the one test every provider owes whatever its engine's depth.
+     *
+     * A two-level declaration is spied in and the call is driven all the way to the BOUND
+     * VALUE - the `db` the object connection was opened on - rather than to a refusal. Both
+     * mutations die here and neither can die at depth 1: a hardcoded `container.length !== 1`
+     * refuses this path outright, and `Number(container[0])` binds `NaN` for the catalog
+     * segment instead of 3 for the database.
+     */
+    test("a two-level declaration binds the database from the level that declares it", async () => {
+      const base = provider.getCapabilities();
+      spyOn(provider, "getCapabilities").mockReturnValue({
+        ...base,
+        containerLevels: [
+          { id: "catalog", label: "Cluster", labelPlural: "Clusters" },
+          { id: "schema", label: "Database", labelPlural: "Databases" },
+        ],
+      });
+
+      const objects = await provider.listObjects(["main", "3"], "keyspace");
+
+      expect(objects.map((object) => object.path)).toEqual([["main", "3", "report:*"]]);
+      expect(capturedRedisOptions[capturedRedisOptions.length - 1].db).toBe(3);
+      const detail = await provider.describeObject(["main", "3", "report:*"], "keyspace");
+      expect(detail.path).toEqual(["main", "3", "report:*"]);
     });
   });
 });

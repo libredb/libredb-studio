@@ -22,6 +22,7 @@ type Model = Partial<
     | "supportsMaintenance"
     | "maintenanceOperations"
     | "maintenanceOperationSpecs"
+    | "tablesAreDerivedGroupings"
   >
 >;
 
@@ -356,5 +357,41 @@ describe("flatTargetName", () => {
     expect(flatTargetName({ path: ["app", "order_total(integer)"], name: "order_total", kind: "function" })).toBe(
       "order_total",
     );
+  });
+});
+
+/**
+ * The one gate here that is engine-wide rather than per kind (#789 Task 20).
+ *
+ * A Redis `keyspace` row is a prefix grouping this server derived from a bounded SCAN, so
+ * it is a relation - `SCAN 0 MATCH user:* COUNT 50` addresses exactly the keys it
+ * summarises - while having no object a profiler could compute statistics over. The flat
+ * menu withheld Profile on that flag and nothing carried it into the object model.
+ */
+describe("a kind whose rows are derived groupings", () => {
+  const keyspace = { id: "keyspace", role: "relation", label: "Key Pattern", labelPlural: "Key Patterns" } as const;
+  const redis = capabilitiesOf({ objectKinds: [keyspace], tablesAreDerivedGroupings: true });
+  /** The same declaration WITHOUT the flag: the control that makes the assertion non-vacuous. */
+  const ordinary = capabilitiesOf({ objectKinds: [keyspace] });
+  const grouping: DatabaseObject = { path: ["0", "user:*"], name: "user:*", kind: "keyspace" };
+
+  const idsFor = (capabilities: ProviderCapabilities): readonly string[] =>
+    rowActions({
+      row: { ...objectRow("keyspace"), path: ["0", "user:*"] },
+      object: grouping,
+      capabilities,
+      handlers: allHandlers(),
+    }).map((action) => action.id);
+
+  test("is not offered Profile, because the row names no object to profile", () => {
+    expect(idsFor(redis)).not.toContain("profile");
+  });
+
+  test("keeps Generate Query, which the flat menu also kept: a pattern IS scannable", () => {
+    expect(idsFor(redis)).toEqual(["generate-select", "generate-code"]);
+  });
+
+  test("the same kind without the flag IS offered Profile", () => {
+    expect(idsFor(ordinary)).toContain("profile");
   });
 });

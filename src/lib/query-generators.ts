@@ -159,7 +159,7 @@ function commentName(name: string): string {
  * the literal prefix used in commands (`users:*` -> `users:`).
  *
  * Shared by the LibreDB and Redis branches: both build their tree from the same
- * `getKeyPrefix` grouping, so a future change to what a prefix node looks like
+ * `keyGrouping` grouping, so a future change to what a prefix node looks like
  * must not be able to make the two dialects disagree (#427).
  */
 function prefixGroup(name: string): { isPrefixGroup: boolean; base: string } {

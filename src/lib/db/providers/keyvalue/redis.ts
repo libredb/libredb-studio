@@ -16,6 +16,7 @@
 
 import Redis, { type RedisOptions } from "ioredis";
 import { BaseDatabaseProvider } from "../../base-provider";
+import { containerDepth, declaredKinds, findKind } from "../../object-kinds";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -34,6 +35,13 @@ import {
   type TableStats,
   type IndexStats,
   type StorageStats,
+  type ColumnSchema,
+  type Container,
+  type ContainerLevelSpec,
+  type DatabaseObject,
+  type KindCount,
+  type ObjectDetail,
+  type ObjectKindSpec,
 } from "../../types";
 import { DatabaseConfigError, QueryError, ConnectionError } from "../../errors";
 
@@ -66,6 +74,254 @@ function labelServerVersion(parsed: Record<string, string>): string {
     if (version) return `${vendor} ${version} (Redis ${parsed.redis_version || "unknown"})`;
   }
   return parsed.redis_version || "unknown";
+}
+
+// ============================================================================
+// Object model (issue #789)
+// ============================================================================
+
+/**
+ * The one container level Redis has, and there is no second one to add above or below it.
+ *
+ * A Redis server holds a fixed number of NUMBERED databases and nothing else: there is no
+ * catalog above them, and a key is not a container. The structural `id` is `schema`
+ * because that is what `ContainerLevelSpec` calls the innermost level on every engine; the
+ * LABEL is the engine's own word, which is Database.
+ *
+ * How many there are is NOT a constant, which is why `listContainers` asks the server.
+ * Measured 2026-09-11 on redis 8.10.0: a stock server answers `CONFIG GET databases` with
+ * 16, and the SAME image started with `--cluster-enabled yes` answers 1 - cluster mode has
+ * only database 0, and `SELECT 3` there answers "ERR SELECT is not allowed in cluster
+ * mode". So the server's own reply already reflects the deployment and nothing here has to
+ * read `cluster_enabled` to work it out.
+ */
+const REDIS_CONTAINER_LEVELS: readonly ContainerLevelSpec[] = Object.freeze([
+  { id: "schema", label: "Database", labelPlural: "Databases" },
+] as const);
+
+/**
+ * The two kinds this engine has, and the three candidates that are deliberately absent.
+ *
+ * `keyspace` is the grouping `getSchema()` has always produced: a bounded `SCAN` of 1000
+ * keys, collapsed to one row per prefix. Those rows are this server's own summary and NOT
+ * objects anybody named, which is what `tablesAreDerivedGroupings` says, and the
+ * declaration carries that refusal forward - see the note on that flag in
+ * `getCapabilities()`.
+ *
+ * `function` is a real, named, stored object: a Redis 7.0 FUNCTION library is persisted,
+ * replicated, listed by `FUNCTION LIST` and addressed by its `library_name`
+ * (`FUNCTION LIST LIBRARYNAME <name>` answers it and nothing else, measured). It declares
+ * `hasSource`, and it is the only thing in this engine that can: `FUNCTION LIST WITHCODE`
+ * answers the library's Lua source verbatim, shebang line included.
+ *
+ * Three candidates are absent on purpose:
+ *
+ * - An `EVAL` script is not enumerable. Redis publishes `SCRIPT EXISTS <sha>`, which
+ *   answers about a sha the caller already has, and there is no `SCRIPT LIST`. A tree node
+ *   is something that can be listed, so a kind here would draw a folder that could never
+ *   fill.
+ * - A keyspace notification is pub/sub, not a stored trigger: nothing is persisted and
+ *   nothing has a name.
+ * - The separately named "Triggers and Functions" feature is RedisGears-based, ships only
+ *   in Redis Stack and Enterprise, and is on Redis's own deprecated list. Declaring it
+ *   would draw a folder on every plain server that has no such concept at all.
+ *
+ * The list is STATIC, and one measurement is what decides that it has to be. Three of the
+ * four Redis-wire relatives refuse `FUNCTION LIST` outright, each in its own words
+ * (measured 2026-09-11): KeyDB 6.3.4 "ERR unknown command `FUNCTION`, with args beginning
+ * with: `LIST`, ", DragonflyDB df-v1.40.1 "ERR Unknown subcommand or wrong number of
+ * arguments for 'LIST'. Try FUNCTION HELP." and Garnet 2.1.5 "ERR unknown command";
+ * Valkey 9.1.1 (which reports `redis_version:7.2.4`) supports it. A version-driven declaration, the shape `mysql.ts` uses, would
+ * be WRONG here rather than merely awkward: DragonflyDB reports `redis_version:7.4.0` and
+ * still has no `FUNCTION LIST`, so the version cannot answer the question. `countObjects`
+ * therefore carries the server's own sentence under `{ unavailable }`, which is the state
+ * `KindCount` has for a refused read, and the folder says why it has no number instead of
+ * showing a zero nobody measured.
+ */
+const REDIS_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
+  { id: "keyspace", role: "relation", label: "Key Pattern", labelPlural: "Key Patterns" },
+  {
+    id: "function",
+    role: "routine",
+    label: "Function Library",
+    labelPlural: "Function Libraries",
+    hasSource: true,
+    sourceLanguage: "lua",
+  },
+] as const);
+
+/** How many keys one `SCAN` walk samples before it stops. The keyspace kind's whole bound. */
+const KEY_SCAN_LIMIT = 1000;
+
+/**
+ * The container levels this provider declares, sliced to the depth `containerDepth()` reports.
+ *
+ * One reader for the whole file, so the depth and the level list can never be taken by two
+ * different rules. `containerDepth()` decides, never `containerLevels.length`.
+ */
+function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerLevelSpec[] {
+  return (capabilities.containerLevels ?? []).slice(0, containerDepth(capabilities));
+}
+
+/**
+ * The segment of `path` belonging to the declared container level `id`.
+ *
+ * NEVER `path[0]`, which standing ruling 5g forbids as a class rather than as instances: a
+ * container level's POSITION is a property of the declaration. Redis declares one level, so
+ * the database is the first segment here and the two spellings are behaviour-identical -
+ * which is exactly why the wrong one keeps surviving reviews on one-level engines. The
+ * suite pins it by spying a two-level declaration in and driving the call to the BOUND
+ * VALUE.
+ */
+function containerSegment(
+  capabilities: ProviderCapabilities,
+  path: readonly string[],
+  id: ContainerLevelSpec["id"],
+): string {
+  const levels = declaredLevels(capabilities);
+  const index = levels.findIndex((level) => level.id === id);
+  const segment = index < 0 ? undefined : path.slice(0, levels.length)[index];
+  if (segment === undefined) {
+    throw new QueryError(
+      `A Redis path needs a "${id}" container level and a segment for it; the declaration is ` +
+        `[${levels.map((level) => level.id).join(", ")}] and the path is ${JSON.stringify(path)}`,
+      "redis",
+    );
+  }
+  return segment;
+}
+
+/**
+ * The numbered database one container path names.
+ *
+ * Two refusals, and both are explicit rather than a fallback to database 0: a path of the
+ * wrong length is a caller that built it from another engine's shape, and a segment that is
+ * not a number cannot be a Redis database at all. Reading either as 0 would silently answer
+ * for the wrong database, which on this engine is a different set of keys entirely.
+ *
+ * A number that no server has (`SELECT 99`) is NOT refused here, deliberately: the server
+ * answers "ERR DB index is out of range" in its own words, and that sentence names the real
+ * limit of the deployment, which this function does not know without a second round trip.
+ */
+function containerDatabase(capabilities: ProviderCapabilities, container: readonly string[]): number {
+  const levels = declaredLevels(capabilities);
+  if (container.length !== levels.length) {
+    throw new QueryError(
+      `A Redis container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
+        `received ${JSON.stringify(container)}`,
+      "redis",
+    );
+  }
+  const segment = containerSegment(capabilities, container, "schema");
+  if (!/^\d+$/.test(segment)) {
+    throw new QueryError(`A Redis database is a number, received ${JSON.stringify(segment)}`, "redis");
+  }
+  return Number(segment);
+}
+
+/**
+ * Two paths compared SEGMENT BY SEGMENT, so a sort is over the address and never over one
+ * joined string.
+ *
+ * `JSON.stringify(path)` is the obvious spelling and is wrong twice: at mixed depth the
+ * deeper path sorts first, because `,` (0x2C) is below `]` (0x5D), and JSON escaping
+ * reorders a name holding a quote or a control character - which on Redis is a live case,
+ * since a key name is an arbitrary binary string. Standing ruling 5h: written the settled
+ * way here, and hoisted beside `containerDepth` by the sweep rather than by this task.
+ */
+function comparePaths(left: readonly string[], right: readonly string[]): number {
+  const shared = Math.min(left.length, right.length);
+  for (let index = 0; index < shared; index += 1) {
+    if (left[index] < right[index]) return -1;
+    if (left[index] > right[index]) return 1;
+  }
+  return left.length - right.length;
+}
+
+/**
+ * The grouping one key belongs to: `user:123` and `user:456` are both `user:*`, and a key
+ * with no colon is its own grouping.
+ *
+ * Module-level and shared, so `getSchema()` and the object surface can never group the same
+ * keyspace two different ways.
+ */
+function keyGrouping(key: string): string {
+  const colonIdx = key.indexOf(":");
+  if (colonIdx > 0) {
+    return key.substring(0, colonIdx) + ":*";
+  }
+  return key;
+}
+
+/**
+ * The three columns every row of a key grouping has, DERIVED rather than read from a
+ * catalog: Redis publishes no schema for a key, so these are this provider's own statement
+ * about the shape a `SCAN` row comes back in. `key` is the real key name and is the primary
+ * one; `value` and `type` carry the value types SAMPLED from the first three keys of the
+ * grouping, which is why a grouping holding strings and hashes reads `string/hash`.
+ *
+ * Shared by `getSchema()` and `describeObject`, so the flat model and the object model
+ * cannot describe the same grouping differently while both surfaces are live.
+ */
+function keyGroupColumns(sampledTypes: ReadonlySet<string>): ColumnSchema[] {
+  const types = Array.from(sampledTypes);
+  return [
+    { name: "key", type: "string", nullable: false, isPrimary: true },
+    { name: "value", type: types.join("/"), nullable: true, isPrimary: false },
+    { name: "type", type: types.join(", "), nullable: false, isPrimary: false },
+  ];
+}
+
+/**
+ * The `databases` value out of a `CONFIG GET databases` reply.
+ *
+ * The reply is a flat key/value list, so the value is found by its KEY rather than at index
+ * 1: `CONFIG GET` accepts a glob and answers every matching parameter, so the position of a
+ * parameter in the reply is a property of the request, not of the parameter.
+ *
+ * A reply with no such key raises. It is the shape a server that has disabled or renamed
+ * CONFIG answers, and there is no honest fallback: 16 would be a number nobody measured,
+ * and 1 would hide fifteen databases that may hold keys.
+ */
+function parseDatabaseCount(reply: unknown): number {
+  const entries = Array.isArray(reply) ? reply : [];
+  for (let index = 0; index + 1 < entries.length; index += 2) {
+    if (String(entries[index]) !== "databases") continue;
+    const count = Number(entries[index + 1]);
+    if (Number.isInteger(count) && count > 0) return count;
+    throw new QueryError(
+      `Redis answered a CONFIG GET databases value of ${JSON.stringify(entries[index + 1])}`,
+      "redis",
+    );
+  }
+  throw new QueryError("Redis answered no databases value to CONFIG GET databases", "redis");
+}
+
+/**
+ * The library names out of a `FUNCTION LIST` reply, in the order the server listed them.
+ *
+ * Measured against redis 8.10.0 through ioredis (RESP2): one entry per library, each a FLAT
+ * key/value list - `["library_name", "libredb_probe", "engine", "LUA", "functions", [...]]`.
+ * The name is therefore found by walking those pairs and reading the one whose key is
+ * `library_name`, never by taking `entry[1]`: the nested `functions` value is itself a list
+ * of key/value lists, and a parser that read positions would take a field name for a
+ * library name the moment the server adds a field or answers a map instead.
+ *
+ * An entry with no `library_name` is SKIPPED rather than listed as `undefined`, because a
+ * row that cannot be addressed must not become a tree node that opens onto nothing.
+ */
+function parseFunctionLibraries(reply: unknown): string[] {
+  const names: string[] = [];
+  for (const entry of Array.isArray(reply) ? reply : []) {
+    if (!Array.isArray(entry)) continue;
+    for (let index = 0; index + 1 < entry.length; index += 2) {
+      if (String(entry[index]) !== "library_name") continue;
+      const name = entry[index + 1];
+      if (typeof name === "string") names.push(name);
+      break;
+    }
+  }
+  return names;
 }
 
 // ============================================================================
@@ -106,6 +362,21 @@ export class RedisProvider extends BaseDatabaseProvider {
       // `getSchema()` SCANs 1000 keys and groups them by the text before the first
       // colon, so every row it returns is this server's own summary of real key names
       // — `user:*` is a grouping, not a key, and nothing can be addressed by it (#414).
+      //
+      // STILL DECLARED after the object model landed, and it is not redundant with the
+      // `keyspace` kind (#789). The flat row menu read this flag to withhold three items
+      // from a derived grouping, measured in `src/components/schema-explorer/TableItem.tsx`:
+      // Profile Table, Generate Test Data, and the two per-row maintenance links. It did
+      // NOT withhold Generate Query, and that is right: the Redis generator answers
+      // `SCAN 0 MATCH user:* COUNT 50` for a prefix group, which is a runnable command
+      // against exactly the keys the row summarises. The object model reproduces two of
+      // those three from the kind's own declaration - `keyspace` declares no
+      // `acceptsRowWrites`, so no test-data or create item is offered, and this provider
+      // declares `analyze` as `perEntity: false`, so no per-row maintenance item is - and
+      // the third, Profile, has no declaration that can carry it, because profiling needs
+      // an ADDRESSABLE object while every other relation action here needs only a
+      // pattern. `src/components/object-tree/row-actions.ts` reads this flag for that one
+      // item, which is why the flag stays.
       tablesAreDerivedGroupings: true,
       supportsMaintenance: true,
       maintenanceOperations: ["analyze"],
@@ -118,6 +389,10 @@ export class RedisProvider extends BaseDatabaseProvider {
       },
       supportsConnectionString: false,
       defaultPort: 6379,
+      // The object model (#789). Both are module constants: see their docblocks for the
+      // measurements behind the one container level and the two kinds.
+      containerLevels: REDIS_CONTAINER_LEVELS,
+      objectKinds: REDIS_OBJECT_KINDS,
       schemaRefreshPattern: "(DEL|FLUSHDB|FLUSHALL|RENAME)\\b",
     };
   }
@@ -207,6 +482,38 @@ export class RedisProvider extends BaseDatabaseProvider {
   }
 
   /**
+   * The numbered database this connection's SESSION is in. Absent means 0, which is what
+   * ioredis does with no `db` option and what a bare `redis-cli` connects to.
+   */
+  private sessionDatabase(): number {
+    return this.config.database ? parseInt(this.config.database, 10) : 0;
+  }
+
+  /**
+   * Every option ioredis needs, for ONE numbered database.
+   *
+   * Parameterised by `db` rather than reading `this.config.database` directly, because the
+   * object surface reads a database the session is not in: `countObjects(["3"])` has to
+   * scan database 3 while the session stays where the user put it. The alternative,
+   * `SELECT`-ing on the shared client and selecting back, is a race rather than a shortcut
+   * - this provider instance serves concurrent requests, so a query running alongside the
+   * tree would execute against whichever database the object read had left selected.
+   */
+  private redisOptions(db: number): RedisOptions {
+    const tls = this.buildTLSOptions();
+    return {
+      host: this.config.host,
+      port: this.config.port || 6379,
+      username: this.config.user || undefined,
+      password: this.config.password || undefined,
+      db,
+      connectTimeout: this.queryTimeout,
+      lazyConnect: true,
+      ...(tls ? { tls } : {}),
+    };
+  }
+
+  /**
    * The connection form's Username is the Redis 6 ACL user, and it has to reach the
    * driver under ioredis's own name — the field is `user` on the connection and
    * `username` in `RedisOptions`. Without it ioredis sends a one-argument `AUTH`,
@@ -224,17 +531,7 @@ export class RedisProvider extends BaseDatabaseProvider {
    */
   public async connect(): Promise<void> {
     try {
-      const tls = this.buildTLSOptions();
-      this.client = new Redis({
-        host: this.config.host,
-        port: this.config.port || 6379,
-        username: this.config.user || undefined,
-        password: this.config.password || undefined,
-        db: this.config.database ? parseInt(this.config.database, 10) : 0,
-        connectTimeout: this.queryTimeout,
-        lazyConnect: true,
-        ...(tls ? { tls } : {}),
-      });
+      this.client = new Redis(this.redisOptions(this.sessionDatabase()));
 
       await this.client.connect();
       this.setConnected(true);
@@ -526,47 +823,14 @@ export class RedisProvider extends BaseDatabaseProvider {
     this.ensureConnected();
 
     try {
-      // Use SCAN to sample keys and group by prefix pattern
-      const keyPatterns = new Map<string, { count: number; types: Set<string> }>();
-      let cursor = "0";
-      let totalScanned = 0;
-      const maxScan = 1000;
-
-      do {
-        const [nextCursor, keys] = await this.client!.scan(cursor, "COUNT", 100);
-        cursor = nextCursor;
-
-        for (const key of keys) {
-          totalScanned++;
-          const prefix = this.getKeyPrefix(key);
-          if (!keyPatterns.has(prefix)) {
-            keyPatterns.set(prefix, { count: 0, types: new Set() });
-          }
-          keyPatterns.get(prefix)!.count++;
-
-          // Sample type for first few keys per pattern
-          if (keyPatterns.get(prefix)!.types.size < 3) {
-            try {
-              const type = await this.client!.type(key);
-              keyPatterns.get(prefix)!.types.add(type);
-            } catch {
-              // ignore
-            }
-          }
-        }
-      } while (cursor !== "0" && totalScanned < maxScan);
+      const keyPatterns = await RedisProvider.scanKeyGroups(this.client!);
 
       // Convert patterns to TableSchema
       const schemas: TableSchema[] = [];
       for (const [pattern, info] of keyPatterns) {
-        const types = Array.from(info.types);
         schemas.push({
           name: pattern,
-          columns: [
-            { name: "key", type: "string", nullable: false, isPrimary: true },
-            { name: "value", type: types.join("/"), nullable: true, isPrimary: false },
-            { name: "type", type: types.join(", "), nullable: false, isPrimary: false },
-          ],
+          columns: keyGroupColumns(info.types),
           indexes: [],
           rowCount: info.count,
         });
@@ -581,13 +845,241 @@ export class RedisProvider extends BaseDatabaseProvider {
     }
   }
 
-  private getKeyPrefix(key: string): string {
-    // Extract prefix: "user:123" -> "user:*", "session:abc:data" -> "session:*"
-    const colonIdx = key.indexOf(":");
-    if (colonIdx > 0) {
-      return key.substring(0, colonIdx) + ":*";
+  /**
+   * One bounded `SCAN` walk of ONE database, collapsed to one entry per key grouping.
+   *
+   * THE single enumerator for the `keyspace` kind: `getSchema()`, `countObjects`,
+   * `listObjects` and `describeObject` all read this and nothing else reads the keyspace.
+   * That is where standing ruling 5f is held on an engine whose catalog is a command rather
+   * than a query - there is no second SCAN with a different MATCH for a count and a listing
+   * to drift apart in, and the count is the SIZE of the map this returns.
+   *
+   * Bounded at 1000 keys on purpose, and it is the same bound `getSchema()` has always had:
+   * a full walk of a production keyspace is unbounded work on the server. What that costs is
+   * real and is written down in the provider doc: on a keyspace larger than the bound, the
+   * groupings are the groupings of a SAMPLE.
+   *
+   * `SCAN` is never `KEYS *`, which blocks the server for the length of the walk.
+   */
+  private static async scanKeyGroups(client: Redis): Promise<Map<string, { count: number; types: Set<string> }>> {
+    const keyPatterns = new Map<string, { count: number; types: Set<string> }>();
+    let cursor = "0";
+    let totalScanned = 0;
+
+    do {
+      const [nextCursor, keys] = await client.scan(cursor, "COUNT", 100);
+      cursor = nextCursor;
+
+      for (const key of keys) {
+        totalScanned++;
+        const prefix = keyGrouping(key);
+        if (!keyPatterns.has(prefix)) {
+          keyPatterns.set(prefix, { count: 0, types: new Set() });
+        }
+        keyPatterns.get(prefix)!.count++;
+
+        // Sample type for first few keys per pattern
+        if (keyPatterns.get(prefix)!.types.size < 3) {
+          try {
+            const type = await client.type(key);
+            keyPatterns.get(prefix)!.types.add(type);
+          } catch {
+            // ignore
+          }
+        }
+      }
+    } while (cursor !== "0" && totalScanned < KEY_SCAN_LIMIT);
+
+    return keyPatterns;
+  }
+
+  // ============================================================================
+  // Object Model (#789)
+  // ============================================================================
+
+  /**
+   * A short-lived connection to ONE numbered database, for one object read.
+   *
+   * Its own connection rather than the session's, for the reason `redisOptions()` records:
+   * a `SELECT` on the shared client would decide which database a concurrent query ran
+   * against. Closed with `disconnect()` rather than `quit()` because nothing is pending on
+   * it - `quit()` waits for a reply this caller has no use for.
+   */
+  private async withDatabase<T>(db: number, read: (client: Redis) => Promise<T>): Promise<T> {
+    const client = new Redis(this.redisOptions(db));
+    try {
+      await client.connect();
+      return await read(client);
+    } finally {
+      client.disconnect();
     }
-    return key;
+  }
+
+  /**
+   * The numbered databases this deployment actually has.
+   *
+   * `CONFIG GET databases` and not a hardcoded 16: measured on redis 8.10.0, the stock
+   * server answers 16 and the same image with `--cluster-enabled yes` answers 1, so the
+   * reply already carries the deployment's shape. A refused or unparsable reply RAISES
+   * (see `parseDatabaseCount`), because every fallback available here is a number nobody
+   * measured.
+   *
+   * Every database is listed, including the empty ones. A Redis database is not created and
+   * not dropped: all of them exist at all times, so listing only the ones `INFO keyspace`
+   * mentions would hide a database a person is about to write to.
+   */
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
+    this.ensureConnected();
+    if (parent !== undefined && parent.length > 0) return [];
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const reply = await (this.client as any).call("CONFIG", "GET", "databases");
+    const count = parseDatabaseCount(reply);
+    const session = this.sessionDatabase();
+
+    return Array.from({ length: count }, (_, index) => ({
+      path: [String(index)],
+      name: String(index),
+      level: 0,
+      // Redis publishes this one exactly: a connection is IN a database at all times, so
+      // unlike a PostgreSQL `search_path` there is one answer and it is never ambiguous.
+      isSessionDefault: index === session,
+    }));
+  }
+
+  /**
+   * How many objects of each declared kind one database holds.
+   *
+   * The count of a kind is the LENGTH of the listing that kind's own enumerator returns, so
+   * the badge and the folder cannot disagree about what was counted (standing ruling 5f).
+   * On a SQL engine that rule is a warning about two WHERE clauses; here the catalog is a
+   * command, and the seam is this: `listIn` is the only thing that reads either catalog, and
+   * both methods call it.
+   *
+   * Per KIND and not per read, which is what the three-state `KindCount` is for: a Redis-wire
+   * relative with no `FUNCTION` command still has a keyspace, so its function folder carries
+   * the server's own refusal while the keyspace folder carries a real number. Collapsing them
+   * would report a whole database as unavailable because one of two commands is missing.
+   */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const db = containerDatabase(capabilities, container);
+    const declared = declaredKinds(capabilities);
+    const counts: Record<string, KindCount> = {};
+
+    return this.withDatabase(db, async (client) => {
+      // EVERY declared kind gets an entry, whatever the replies hold. Nine providers seed
+      // zeros first and then overwrite from catalog rows; this loop is over the DECLARATION
+      // itself and assigns unconditionally, which is the same guarantee without a write that
+      // no mutation can reach - a kind holding nothing lands as `{ count: 0 }` because the
+      // listing was empty, and a declared-and-empty folder therefore keeps its 0 badge.
+      for (const kind of declared) {
+        try {
+          counts[kind.id] = { count: (await this.listIn(client, container, kind.id)).length };
+        } catch (error) {
+          // The server's own sentence, verbatim and unprefixed: it is rendered to a person
+          // as the reason a folder has no number, so our words must not go in front of it.
+          counts[kind.id] = { unavailable: error instanceof Error ? error.message : String(error) };
+        }
+      }
+      return counts;
+    });
+  }
+
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    // The DECLARATION answers "is this a kind of mine", never the presence of a reader
+    // below: deciding it from the reader would report "declares no object kind" about a
+    // kind `objectKinds` does declare.
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`Redis declares no object kind "${kind}"`, "redis");
+    }
+    const db = containerDatabase(capabilities, container);
+    return this.withDatabase(db, (client) => this.listIn(client, container, kind));
+  }
+
+  /**
+   * The objects of one kind in one database. The ONE reader of either catalog.
+   *
+   * Sorted by PATH, segment by segment, rather than by the order the server answered in:
+   * `SCAN` guarantees no order at all, and `FUNCTION LIST` answers in an internal order that
+   * is not the load order.
+   */
+  private async listIn(client: Redis, container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    if (kind === "keyspace") {
+      const groups = await RedisProvider.scanKeyGroups(client);
+      return [...groups.entries()]
+        .map(([pattern, info]) => ({
+          path: [...container, pattern],
+          name: pattern,
+          kind,
+          // The keys this SCAN walk saw under the prefix, which is a sample and not a total
+          // wherever the keyspace is larger than the bound.
+          rowCount: info.count,
+        }))
+        .sort((left, right) => comparePaths(left.path, right.path));
+    }
+    if (kind === "function") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const reply = await (client as any).call("FUNCTION", "LIST");
+      return parseFunctionLibraries(reply)
+        .map((name) => ({ path: [...container, name], name, kind }))
+        .sort((left, right) => comparePaths(left.path, right.path));
+    }
+    throw new QueryError(`Redis declares the kind "${kind}" but has no command that lists it`, "redis");
+  }
+
+  /**
+   * What one object of one KIND is made of.
+   *
+   * The kind decides, and nothing here reads the name to work out what it is holding: a key
+   * grouping and a function library can legitimately be called the same thing, since one is
+   * a key prefix and the other a Lua library name, and there is no namespace shared between
+   * them to stop it.
+   *
+   * A function library answers three empty arrays with NO round trip. That is a true fact
+   * about the kind rather than a failed read: a library has no columns, no indexes and no
+   * foreign keys, and its SOURCE - the one thing it does have - is Phase 2's, through
+   * `FUNCTION LIST WITHCODE`.
+   */
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`Redis declares no object kind "${kind}"`, "redis");
+    }
+
+    // Derived, not counted: the depth comes from `containerDepth()` through
+    // `declaredLevels`, and the names in the message are the declared labels, so the check
+    // and its message cannot disagree. Neither kind declares `attachedTo`, so there is one
+    // shape rather than two.
+    const levels = declaredLevels(capabilities);
+    if (path.length !== levels.length + 1) {
+      throw new QueryError(
+        `A Redis "${kind}" path is [${[...levels.map((level) => level.label.toLowerCase()), "name"].join(", ")}], ` +
+          `received ${JSON.stringify(path)}`,
+        "redis",
+      );
+    }
+
+    if (kind !== "keyspace") return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
+
+    const db = containerDatabase(capabilities, path.slice(0, levels.length));
+    // The LAST segment and never `path[1]`: at depth 2 the second segment is a container.
+    const name = path[path.length - 1];
+    return this.withDatabase(db, async (client) => {
+      const groups = await RedisProvider.scanKeyGroups(client);
+      const info = groups.get(name);
+      if (info === undefined) {
+        throw new QueryError(
+          `No key under ${JSON.stringify(name)} was found in the ${KEY_SCAN_LIMIT}-key SCAN of database ${db}`,
+          "redis",
+        );
+      }
+      return { path: [...path], columns: keyGroupColumns(info.types), indexes: [], foreignKeys: [] };
+    });
   }
 
   // ============================================================================

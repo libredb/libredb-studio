@@ -148,7 +148,12 @@ const NAMED_CITATIONS = [
       "formatResult",
       "parseInfoResult",
       "getSchema",
-      "getKeyPrefix",
+      // The object surface (#789). Module-level helpers such as `keyGrouping` are cited in
+      // the doc too and cannot be listed here: `declarationLine` matches class members only.
+      "listContainers",
+      "countObjects",
+      "listObjects",
+      "describeObject",
       "calculateHitRatio",
       "getActiveSessions",
     ],

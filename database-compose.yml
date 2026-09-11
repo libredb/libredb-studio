@@ -417,6 +417,12 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
+    # The object-browser fixture (#789) is NOT mounted here on purpose: this image has no
+    # init-script directory and no entrypoint hook of any kind, so there is nowhere to mount
+    # it that would run it. Apply it by hand, in one command, once the service is up:
+    #   docker exec -i libredb-redis redis-cli --no-raw < docker/redis-init/01-object-fixture.redis
+    # redis-cli reading stdin uses ONE connection for the whole file, which is what makes the
+    # `SELECT 3` in the middle of it land in database 3. See docs/providers/redis.md 11.5.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
