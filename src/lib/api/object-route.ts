@@ -4,13 +4,8 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
-import type {
-  ColumnSchema,
-  DatabaseConnection,
-  DatabaseObject,
-  DatabaseProvider,
-  ObjectKindSpec,
-} from "@/lib/db/types";
+import { ApiErrorCode } from "@/lib/api/error-codes";
+import type { DatabaseConnection, DatabaseObject, DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
 
 /**
  * Shared request handling for the six object-tree routes under /api/db/objects (#789).
@@ -60,7 +55,16 @@ export async function handleObjectRequest(
     return NextResponse.json(await run(provider, body));
   } catch (error) {
     if (error instanceof ObjectRouteError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
+      // A 501 carries a code because the tree has to render it as a state of its own, and keying
+      // on the HTTP status alone would make that rendering break the first time another status
+      // means something else. The 400s stay `{ error }`, the shape this handler's own body-shape
+      // refusals above already use.
+      return NextResponse.json(
+        error.code === undefined
+          ? { error: error.message }
+          : { error: error.message, code: error.code, statusCode: error.status },
+        { status: error.status },
+      );
     }
     return createErrorResponse(error, { route });
   }
@@ -86,6 +90,7 @@ export class ObjectRouteError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    public readonly code?: ApiErrorCode,
   ) {
     super(message);
     this.name = "ObjectRouteError";
@@ -109,6 +114,7 @@ export function requireMethod<K extends ObjectMethod>(
       `The ${provider.type} provider does not implement ${method} yet (#789). ` +
         `That is a gap in the provider, not an empty database.`,
       501,
+      ApiErrorCode.OBJECT_SURFACE_UNIMPLEMENTED,
     );
   }
   return implementation.bind(provider) as NonNullable<DatabaseProvider[K]>;
@@ -132,21 +138,17 @@ export function optionalStringArray(body: Record<string, unknown>, name: string)
   return body[name] === undefined ? undefined : requireStringArray(body, name);
 }
 
+/**
+ * A non-blank string, TRIMMED. Trimming here rather than at each call site is what stops `" table "`
+ * reaching one provider's catalog lookup verbatim while the same surrounding space is stripped from
+ * a search term two files away.
+ */
 export function requireString(body: Record<string, unknown>, name: string): string {
   const value = body[name];
   if (typeof value !== "string" || value.trim() === "") {
     throw new ObjectRouteError(`"${name}" must be a non-empty string`, 400);
   }
-  return value;
-}
-
-export function optionalBoolean(body: Record<string, unknown>, name: string): boolean {
-  const value = body[name];
-  if (value === undefined) return false;
-  if (typeof value !== "boolean") {
-    throw new ObjectRouteError(`"${name}" must be true or false`, 400);
-  }
-  return value;
+  return value.trim();
 }
 
 /** An object path addresses an object, so an empty one addresses nothing. */
@@ -167,7 +169,32 @@ export function optionalContainerList(
   if (!Array.isArray(value) || !value.every(isStringArray)) {
     throw new ObjectRouteError(`"${name}" must be an array of container paths`, 400);
   }
+  if (value.length === 0) {
+    // Absent, empty and non-empty are three different requests, and the empty one is a mistake.
+    // Answering it with `{ objects: [] }` and a 200 would be indistinguishable from an empty
+    // database, which is the collapse this whole surface exists to undo.
+    throw new ObjectRouteError(
+      `"${name}" was given as an empty list, which selects nothing. Omit it to read every container.`,
+      400,
+    );
+  }
   return value;
+}
+
+/**
+ * The same paths with repeats removed, first occurrence winning.
+ *
+ * A caller may send the same container twice, and a duplicate costs a full listing round trip per
+ * kind. Applied to the enumerated list too, so there is one rule rather than one rule per source.
+ */
+export function dedupePaths(paths: readonly (readonly string[])[]): readonly (readonly string[])[] {
+  const seen = new Set<string>();
+  return paths.filter((path) => {
+    const key = JSON.stringify(path);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**
@@ -230,17 +257,29 @@ export async function enumerateContainers(provider: DatabaseProvider): Promise<r
   return level;
 }
 
-/** The hard ceiling on one inventory read. A constant, never a caller parameter (#789). */
+/** The hard ceiling on the objects one inventory read returns. Never a caller parameter (#789). */
 export const INVENTORY_LIMIT = 5000;
 export const INVENTORY_TRUNCATION_REASON = "inventory limit reached";
 
-export interface InventoryObject extends DatabaseObject {
-  /** Present only when the caller asked for columns. */
-  readonly columns?: readonly ColumnSchema[];
-}
+/**
+ * The hard ceiling on the LISTINGS one inventory read issues, one per container and kind.
+ *
+ * `INVENTORY_LIMIT` bounds what comes back and does not bound the work done to get it: a body
+ * naming fifty thousand container paths buys fifty thousand sequential round trips, each taking a
+ * pool client, under a single rate-limit token, and every one of them may legitimately answer zero
+ * objects so the object budget never advances. Nothing else in this app limits a request body, so
+ * this is the only bound in that path.
+ *
+ * 1000, which is 142 containers at the seven kinds PostgreSQL declares. It only ever bites on a
+ * fan-out of near-empty containers: at any real object density `INVENTORY_LIMIT` is reached first,
+ * because 142 containers holding an average of 36 objects already saturates it. That is the
+ * amplification this bounds, rather than a claim about how many schemas a database may have.
+ */
+export const INVENTORY_PAIR_LIMIT = 1000;
+export const PAIR_TRUNCATION_REASON = "container and kind pair limit reached";
 
 export interface ObjectInventory {
-  readonly objects: readonly InventoryObject[];
+  readonly objects: readonly DatabaseObject[];
   /** Absent when the whole inventory fits. Never absent when it did not. */
   readonly truncated?: { readonly limit: number; readonly reason: string };
 }

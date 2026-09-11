@@ -30,7 +30,7 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(req: NextRequest) {
   return handleObjectRequest(req, "api/db/objects/search", async (provider, body) => {
-    const term = requireString(body, "term").trim().toLowerCase();
+    const term = requireString(body, "term").toLowerCase();
     const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
 
     const containers = await enumerateContainers(provider);

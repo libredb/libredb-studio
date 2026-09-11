@@ -26,6 +26,11 @@ export const ApiErrorCode = {
   // Application rate limiting (distinct from LLM_RATE_LIMIT, which is the provider's limit)
   RATE_LIMITED: "RATE_LIMITED",
 
+  // Object surface (#789): the provider does not implement the method this route needs. Distinct
+  // from an empty result and from a 400, because through Phase 1 the four object methods are
+  // optional and an unmigrated engine must not render as an engine holding nothing.
+  OBJECT_SURFACE_UNIMPLEMENTED: "OBJECT_SURFACE_UNIMPLEMENTED",
+
   // Generic
   INTERNAL_ERROR: "INTERNAL_ERROR",
   NETWORK_ERROR: "NETWORK_ERROR",

@@ -2,6 +2,8 @@ import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 import { createMockProvider } from "../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { INVENTORY_PAIR_LIMIT } from "@/lib/api/object-route";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { QueryError } from "@/lib/db/errors";
 import type {
   Container,
@@ -339,9 +341,12 @@ describe("POST /api/db/objects/containers", () => {
     );
 
     expect(response.status).toBe(501);
-    const { error } = await parseResponseJSON<{ error: string }>(response);
-    expect(error).toContain("listContainers");
-    expect(error).toContain("mysql");
+    const body = await parseResponseJSON<{ error: string; code: string; statusCode: number }>(response);
+    expect(body.error).toContain("listContainers");
+    expect(body.error).toContain("mysql");
+    // A code, so the tree can render "not migrated yet" as its own state without keying on 501.
+    expect(body.code).toBe(ApiErrorCode.OBJECT_SURFACE_UNIMPLEMENTED);
+    expect(body.statusCode).toBe(501);
   });
 });
 
@@ -381,6 +386,18 @@ describe("POST /api/db/objects/counts", () => {
     expect(response.status).toBe(400);
     expect(await parseResponseJSON(response)).toMatchObject({ error: expect.stringContaining("container depth") });
     expect(countObjects).toHaveBeenCalledTimes(0);
+  });
+
+  test("carries no code on a 400, so the two refusal shapes stay distinguishable", async () => {
+    const response = await countsRoute.POST(
+      createMockRequest("/api/db/objects/counts", {
+        method: "POST",
+        body: { connection, container: ["app", "nested"] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await parseResponseJSON(response)).not.toHaveProperty("code");
   });
 
   test("refuses a missing container", async () => {
@@ -493,6 +510,20 @@ describe("POST /api/db/objects/list", () => {
 
     expect(response.status).toBe(400);
     expect((await parseResponseJSON<{ error: string }>(response)).error).toContain("kind");
+  });
+
+  test("trims the kind before it reaches the catalog lookup", async () => {
+    const listObjects = mock(async () => []);
+    activeProvider = objectProvider({ listObjects });
+
+    await listRoute.POST(
+      createMockRequest("/api/db/objects/list", {
+        method: "POST",
+        body: { connection, container: ["app"], kind: "  table  " },
+      }) as never,
+    );
+
+    expect(listObjects).toHaveBeenCalledWith(["app"], "table");
   });
 
   test("answers 501 when the provider does not implement listObjects", async () => {
@@ -812,39 +843,6 @@ describe("POST /api/db/objects/inventory", () => {
     expect(body.truncated).toEqual({ limit: 5000, reason: "inventory limit reached" });
   });
 
-  test("attaches columns only when the caller asks for them", async () => {
-    const describeObject = mock(async (path: readonly string[]) => ({
-      path,
-      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
-      indexes: [],
-      foreignKeys: [],
-    }));
-    activeProvider = objectProvider({
-      objectKinds: [TABLE_KIND],
-      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
-      listObjects: mock(async () => [object(["app", "orders"], "table")]),
-      describeObject,
-    });
-
-    const withColumns = await inventoryRoute.POST(
-      createMockRequest("/api/db/objects/inventory", {
-        method: "POST",
-        body: { connection, includeColumns: true },
-      }) as never,
-    );
-    const withoutColumns = await inventoryRoute.POST(
-      createMockRequest("/api/db/objects/inventory", { method: "POST", body: { connection } }) as never,
-    );
-
-    expect((await parseResponseJSON<{ objects: { columns?: unknown[] }[] }>(withColumns)).objects[0].columns).toEqual([
-      { name: "id", type: "integer", nullable: false, isPrimary: true },
-    ]);
-    expect(describeObject).toHaveBeenCalledWith(["app", "orders"], "table");
-    expect(
-      (await parseResponseJSON<{ objects: { columns?: unknown[] }[] }>(withoutColumns)).objects[0],
-    ).not.toHaveProperty("columns");
-  });
-
   test("takes the containers the caller named instead of enumerating", async () => {
     const listContainers = mock(async () => [{ path: ["app"], name: "app", level: 0 }]);
     activeProvider = objectProvider({
@@ -899,20 +897,6 @@ describe("POST /api/db/objects/inventory", () => {
     );
   });
 
-  test("refuses a non-boolean includeColumns", async () => {
-    activeProvider = objectProvider({ listObjects: mock(async () => []) });
-
-    const response = await inventoryRoute.POST(
-      createMockRequest("/api/db/objects/inventory", {
-        method: "POST",
-        body: { connection, includeColumns: "yes" },
-      }) as never,
-    );
-
-    expect(response.status).toBe(400);
-    expect((await parseResponseJSON<{ error: string }>(response)).error).toContain("includeColumns");
-  });
-
   test("refuses a kind the engine does not declare", async () => {
     activeProvider = objectProvider({ listObjects: mock(async () => []) });
 
@@ -941,6 +925,68 @@ describe("POST /api/db/objects/inventory", () => {
     expect(listObjects).toHaveBeenCalledWith([], "table");
   });
 
+  test("caps the container and kind fan-out, and says it did", async () => {
+    // One kind, so the pair count IS the container count, and the container count is derived from
+    // the constant rather than pinned to a magnitude of its own.
+    const listObjects = mock(async () => []);
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listObjects,
+      listContainers: mock(async () =>
+        Array.from({ length: INVENTORY_PAIR_LIMIT + 1 }, (_, index) => ({
+          path: [`s${index}`],
+          name: `s${index}`,
+          level: 0,
+        })),
+      ),
+    });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", { method: "POST", body: { connection } }) as never,
+    );
+
+    const body = await parseResponseJSON<{ objects: DatabaseObject[]; truncated: unknown }>(response);
+    // Every listing answers zero objects, so the OBJECT budget never advances. Without a fan-out
+    // cap this request issues one round trip per container and then reports itself as complete.
+    expect(listObjects).toHaveBeenCalledTimes(INVENTORY_PAIR_LIMIT);
+    expect(body.truncated).toEqual({ limit: INVENTORY_PAIR_LIMIT, reason: "container and kind pair limit reached" });
+    expect(body.objects).toHaveLength(0);
+  });
+
+  test("a caller cannot buy extra round trips with duplicate containers", async () => {
+    const listObjects = mock(async (container: readonly string[]) => [object([...container, "orders"], "table")]);
+    activeProvider = objectProvider({ objectKinds: [TABLE_KIND], listObjects });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, containers: [["app"], ["app"], ["ops"], ["app"]] },
+      }) as never,
+    );
+
+    expect(listObjects).toHaveBeenCalledTimes(2);
+    expect((await parseResponseJSON<{ objects: DatabaseObject[] }>(response)).objects.map((o) => o.path)).toEqual([
+      ["app", "orders"],
+      ["ops", "orders"],
+    ]);
+  });
+
+  test("refuses an explicitly empty containers list rather than answering an empty inventory", async () => {
+    const listObjects = mock(async () => []);
+    activeProvider = objectProvider({ listObjects });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, containers: [] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toContain("containers");
+    expect(listObjects).toHaveBeenCalledTimes(0);
+  });
+
   test("answers 501 when the provider has no object surface", async () => {
     activeProvider = objectProvider({ type: "couchbase" });
 
@@ -952,26 +998,5 @@ describe("POST /api/db/objects/inventory", () => {
     const { error } = await parseResponseJSON<{ error: string }>(response);
     expect(error).toContain("listContainers");
     expect(error).toContain("couchbase");
-  });
-
-  test("answers 501 when columns are asked of a provider that cannot describe", async () => {
-    activeProvider = objectProvider({
-      type: "trino",
-      objectKinds: [TABLE_KIND],
-      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
-      listObjects: mock(async () => [object(["app", "orders"], "table")]),
-    });
-
-    const response = await inventoryRoute.POST(
-      createMockRequest("/api/db/objects/inventory", {
-        method: "POST",
-        body: { connection, includeColumns: true },
-      }) as never,
-    );
-
-    expect(response.status).toBe(501);
-    const { error } = await parseResponseJSON<{ error: string }>(response);
-    expect(error).toContain("describeObject");
-    expect(error).toContain("trino");
   });
 });
