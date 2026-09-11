@@ -24,7 +24,8 @@ const previewImage = {
 
 export const metadata: Metadata = {
   title: "LibreDB Studio | Universal Database Editor",
-  description: "A self-hosted database management platform for SQL and NoSQL databases, with schema exploration, query tools, data import, and AI-assisted database development.",
+  description: 
+    "A self-hosted database management platform for SQL and NoSQL databases, with schema exploration, query tools, data import, and AI-assisted database development.",
   openGraph: {
     type: "website",
     url: siteUrl,
