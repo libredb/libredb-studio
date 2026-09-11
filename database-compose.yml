@@ -71,6 +71,11 @@ services:
       MYSQL_DATABASE: mysql
     ports:
       - "3306:3306"
+    volumes:
+      # The object-browser fixture (#789). The image runs it once, on a FRESH data
+      # directory only, so an already-initialized container has to be recreated before an
+      # edit to that file takes effect. Connect against the `app` database it creates.
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d:ro
   mssql:
     # Use 2022-latest to avoid SQL Server 2025 NUMA/processor topology assert in containers.
     # Limit CPUs to avoid: ASSERT (result * DrtlGetProcessorCoreCount() == DrtlGetProcessorCount())
@@ -829,6 +834,12 @@ services:
       MARIADB_DATABASE: probe
     ports:
       - "3307:3306"
+    volumes:
+      # The MariaDB half of the object-browser fixture (#789), and it is a SEPARATE file
+      # from the MySQL one on purpose: this provider's `objectKinds` is resolved from the
+      # server's own version string, and MariaDB declares `package` and `sequence`, which
+      # MySQL does not have at all. See docs/providers/mysql.md.
+      - ./docker/mariadb-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mariadb-admin", "ping", "-uroot", "-proot", "--silent"]
       interval: 5s

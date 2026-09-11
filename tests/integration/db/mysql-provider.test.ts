@@ -3,12 +3,13 @@
  * Uses mock.module() to intercept mysql2/promise before provider import.
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import type { DatabaseConnection } from "@/lib/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 // ============================================================================
 // Mock mysql2/promise BEFORE importing the provider
@@ -134,8 +135,8 @@ mock.module("mysql2/promise", () => ({
 }));
 
 /**
- * FILE SCOPE on purpose. This file has five top-level `describe`s and a hook inside one
- * of them would leave the other four unguarded - the funnel is shared, so its assertion
+ * FILE SCOPE on purpose. This file has eight top-level `describe`s and a hook inside one
+ * of them would leave the other seven unguarded - the funnel is shared, so its assertion
  * has to be too. Drains before asserting, so one unfaithful answer fails the one test
  * that produced it rather than every test after it.
  */
@@ -2950,5 +2951,803 @@ describe("MySQLProvider EXPLAIN grammar probe", () => {
 
     expect(explainProbeCalls()).toEqual([]);
     expect(provider.getCapabilities().explainFormat).toBe("mysql-json");
+  });
+});
+
+// ============================================================================
+// The object surface (#789)
+// ----------------------------------------------------------------------------
+// This provider is the one whose `objectKinds` is NOT a constant. It serves MariaDB as
+// well - there is no `mariadb` type id and choosing MySQL in the dialog is the documented
+// way to reach it (docs/providers/mysql.md 1.1) - and MariaDB has two kinds MySQL does not
+// have at all. So the declaration is resolved from the server's own `VERSION()` string,
+// never from the type id, and BOTH branches are driven below against the rows the two live
+// fixtures answered.
+// ============================================================================
+
+/** MySQL 26.7.0, `mysql:latest`, measured 2026-09-11 on the fixture container. */
+const MYSQL_VERSION_STRING = "26.7.0";
+
+/** MariaDB, `mariadb:latest`, measured 2026-09-11 on the fixture container. */
+const MARIADB_VERSION_STRING = "12.3.2-MariaDB-ubu2404";
+
+/**
+ * The fixture the two `docker/*-init/01-object-fixture.sql` files build, answered from the
+ * mock so the contract can be driven without a server in the loop.
+ *
+ * Every row here is VERBATIM what the live container returned on 2026-09-11, including the
+ * shapes that are easy to invent wrongly: a VIEW's `TABLE_ROWS`, `DATA_LENGTH` and
+ * `INDEX_LENGTH` are all NULL, a MariaDB SEQUENCE is a row of `information_schema.TABLES`
+ * with `TABLE_TYPE = 'SEQUENCE'` carrying `TABLE_ROWS` 1, and a MariaDB package is TWO rows
+ * of `information_schema.ROUTINES`, `PACKAGE` and `PACKAGE BODY`.
+ *
+ * `mariadb: true` changes the version string and adds the two MariaDB-only row sets, and
+ * nothing else. That is the whole experiment: one type id, one fixture, one difference.
+ */
+function objectSurfaceFixture(options: { mariadb: boolean }) {
+  const tables = [
+    { name: "customers", row_count: 0, size_bytes: 16384 },
+    { name: "order_archive", row_count: 0, size_bytes: 16384 },
+    { name: "orders", row_count: 0, size_bytes: 49152 },
+  ];
+  const counts = options.mariadb
+    ? [
+        { kind: "table", n: 3 },
+        { kind: "view", n: 1 },
+        { kind: "sequence", n: 1 },
+        { kind: "procedure", n: 2 },
+        { kind: "function", n: 1 },
+        { kind: "package", n: 1 },
+        { kind: "trigger", n: 1 },
+        { kind: "event", n: 1 },
+      ]
+    : [
+        { kind: "table", n: 3 },
+        { kind: "view", n: 1 },
+        { kind: "procedure", n: 2 },
+        { kind: "function", n: 1 },
+        { kind: "trigger", n: 1 },
+        { kind: "event", n: 1 },
+      ];
+
+  return async (sql: string, params?: unknown[]): Promise<[unknown, unknown[] | undefined]> => {
+    const normalized = sql.trim().toLowerCase();
+    if (normalized.includes("version()")) {
+      return [[{ version: options.mariadb ? MARIADB_VERSION_STRING : MYSQL_VERSION_STRING }], []];
+    }
+    if (normalized.startsWith("explain")) return [[], []];
+    if (normalized.includes("information_schema.schemata")) {
+      return [
+        [
+          { name: "app", is_session_default: 1 },
+          { name: "reporting", is_session_default: 0 },
+        ],
+        [],
+      ];
+    }
+    // Before `information_schema.tables`, which the counting statement also names.
+    if (normalized.includes("group by kind")) return [counts, []];
+    if (normalized.includes("information_schema.tables")) {
+      const type = (params ?? [])[1];
+      if (type === "BASE TABLE") return [tables, []];
+      if (type === "VIEW") {
+        return [[{ name: "order_summary", row_count: null, size_bytes: null }], []];
+      }
+      if (type === "SEQUENCE" && options.mariadb) {
+        return [[{ name: "invoice_number_seq", row_count: 1, size_bytes: 16384 }], []];
+      }
+      return [[], []];
+    }
+    if (normalized.includes("information_schema.routines")) {
+      const type = (params ?? [])[1];
+      if (type === "PROCEDURE") return [[{ name: "order_archive" }, { name: "touch_order" }], []];
+      if (type === "FUNCTION") return [[{ name: "order_total" }], []];
+      if (type === "PACKAGE" && options.mariadb) return [[{ name: "orders_pkg" }], []];
+      return [[], []];
+    }
+    if (normalized.includes("information_schema.triggers")) {
+      return [[{ name: "orders_stamp", parent: "orders" }], []];
+    }
+    if (normalized.includes("information_schema.events")) {
+      return [[{ name: "orders_nightly" }], []];
+    }
+    if (normalized.includes("information_schema.columns")) {
+      return [
+        [
+          { column_name: "id", data_type: "int", is_nullable: "NO", column_default: null, column_key: "PRI" },
+          {
+            column_name: "total",
+            data_type: "decimal",
+            is_nullable: "YES",
+            column_default: "0.00",
+            column_key: "MUL",
+          },
+        ],
+        [],
+      ];
+    }
+    if (normalized.includes("key_column_usage")) {
+      return [
+        [
+          {
+            column_name: "customer_id",
+            referenced_schema: "app",
+            referenced_table: "customers",
+            referenced_column: "id",
+          },
+          {
+            column_name: "region_id",
+            referenced_schema: "reporting",
+            referenced_table: "regions",
+            referenced_column: "id",
+          },
+        ],
+        [],
+      ];
+    }
+    if (normalized.includes("information_schema.statistics")) {
+      return [
+        [
+          { index_name: "PRIMARY", column_name: "id", non_unique: 0 },
+          { index_name: "orders_total_ix", column_name: "total", non_unique: 1 },
+          { index_name: "orders_total_ix", column_name: "note", non_unique: 1 },
+        ],
+        [],
+      ];
+    }
+    return [[], []];
+  };
+}
+
+/** A provider connected against a fixture server of the flavour asked for. */
+async function connectedTo(mariadb: boolean): Promise<InstanceType<typeof MySQLProvider>> {
+  mockExecuteFn = objectSurfaceFixture({ mariadb });
+  const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
+  await provider.connect();
+  return provider;
+}
+
+describe("object surface", () => {
+  beforeEach(() => {
+    mockExecuteFn = defaultMockExecute;
+    protocolCalls = [];
+  });
+
+  test("declares the kinds a MySQL server has, and no index kind", async () => {
+    const provider = await connectedTo(false);
+    const capabilities = provider.getCapabilities();
+    const kinds = capabilities.objectKinds ?? [];
+
+    expect(kinds.map((k) => k.id).sort()).toEqual(["event", "function", "procedure", "table", "trigger", "view"]);
+    expect(kinds.find((k) => k.id === "table")?.role).toBe("relation");
+    expect(kinds.find((k) => k.id === "table")?.acceptsRowWrites).toBe(true);
+    // No `acceptsRowWrites` on a view. MySQL does update a simple updatable view and
+    // refuses the rest, which is a per-OBJECT fact this per-kind declaration cannot state.
+    expect(kinds.find((k) => k.id === "view")?.acceptsRowWrites).toBeUndefined();
+    expect(kinds.find((k) => k.id === "procedure")?.role).toBe("routine");
+    expect(kinds.find((k) => k.id === "function")?.role).toBe("routine");
+    expect(kinds.find((k) => k.id === "trigger")?.role).toBe("attached");
+    expect(kinds.find((k) => k.id === "trigger")?.attachedTo).toBe("table");
+    expect(kinds.find((k) => k.id === "event")?.role).toBe("config");
+    // No `index` kind: MySQL models an index as an attribute of the table it is on, so it
+    // belongs in describeObject's output rather than in a folder of its own.
+    expect(kinds.find((k) => k.id === "index")).toBeUndefined();
+    // MySQL has neither of MariaDB's two, and a kind an engine does not have is ABSENT
+    // rather than declared and counted zero.
+    expect(kinds.find((k) => k.id === "package")).toBeUndefined();
+    expect(kinds.find((k) => k.id === "sequence")).toBeUndefined();
+    expect(capabilities.containerLevels).toEqual([{ id: "schema", label: "Database", labelPlural: "Databases" }]);
+    await provider.disconnect();
+  });
+
+  test("a MariaDB server declares two more kinds, and the version string is what says so", async () => {
+    // The experiment this provider exists to run. Same type id, same config, same fixture:
+    // the ONLY difference is the string `VERSION()` answered, so a declaration resolved
+    // from the type id could not produce two answers here.
+    const mysql = await connectedTo(false);
+    const mariadb = await connectedTo(true);
+
+    const mysqlKinds = (mysql.getCapabilities().objectKinds ?? []).map((k) => k.id);
+    const mariadbKinds = (mariadb.getCapabilities().objectKinds ?? []).map((k) => k.id);
+
+    // Both are the same type id, which is the control: `DatabaseType` has no `mariadb`
+    // entry, so nothing about the configuration can tell these two providers apart.
+    expect([mysql.config.type, mariadb.config.type]).toEqual(["mysql", "mysql"]);
+    expect(mariadbKinds).not.toEqual(mysqlKinds);
+    expect(mariadbKinds.filter((id) => !mysqlKinds.includes(id)).sort()).toEqual(["package", "sequence"]);
+    // Additive: MariaDB has everything MySQL has plus its own two.
+    for (const id of mysqlKinds) expect(mariadbKinds).toContain(id);
+
+    const kinds = mariadb.getCapabilities().objectKinds ?? [];
+    const pkg = kinds.find((k) => k.id === "package");
+    expect(pkg?.role).toBe("group");
+    expect(pkg?.childKinds).toEqual(["procedure", "function"]);
+    expect(kinds.find((k) => k.id === "sequence")?.role).toBe("config");
+    await mysql.disconnect();
+    await mariadb.disconnect();
+  });
+
+  test("an unconnected provider declares the kinds every MySQL-protocol server has", () => {
+    // POST /api/db/provider-meta reads capabilities off a provider it never connects
+    // (#457), so the pre-connect answer is a real surface rather than an internal state.
+    // It is the MySQL set, because declaring MariaDB's two for a server that has not
+    // identified itself would draw folders nothing can fill.
+    const kinds = (new MySQLProvider(makeMySQLConfig()).getCapabilities().objectKinds ?? []).map((k) => k.id);
+
+    expect(kinds.sort()).toEqual(["event", "function", "procedure", "table", "trigger", "view"]);
+  });
+
+  test("the containers are the server's user databases, with the connected one marked", async () => {
+    const provider = await connectedTo(false);
+
+    const containers = await provider.listContainers();
+
+    expect(containers).toEqual([
+      { path: ["app"], name: "app", level: 0, isSessionDefault: true },
+      { path: ["reporting"], name: "reporting", level: 0, isSessionDefault: false },
+    ]);
+    // The statement excludes the four schemas both servers reserve, and it is bound to
+    // nothing: the container list is the SERVER's databases, not the one the pool opened
+    // against, which is what makes `reporting` reachable at all.
+    const read = protocolCalls.find((c) => c.sql.includes("information_schema.SCHEMATA"));
+    expect(read?.params).toBeUndefined();
+    for (const schema of ["information_schema", "mysql", "performance_schema", "sys"]) {
+      expect(read?.sql).toContain(`'${schema}'`);
+    }
+    await provider.disconnect();
+  });
+
+  test("nothing nests under a database", async () => {
+    const provider = await connectedTo(false);
+
+    expect(await provider.listContainers(["app"])).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("satisfies the shared object surface contract on MySQL", async () => {
+    const provider = await connectedTo(false);
+
+    await assertObjectSurface(provider, {
+      containers: [["app"], ["reporting"]],
+      kinds: { table: 3, view: 1, procedure: 2, function: 1, trigger: 1, event: 1 },
+      sampleObject: { path: ["app", "orders"], kind: "table" },
+    });
+    await provider.disconnect();
+  });
+
+  test("satisfies the shared object surface contract on MariaDB", async () => {
+    const provider = await connectedTo(true);
+
+    await assertObjectSurface(provider, {
+      containers: [["app"], ["reporting"]],
+      kinds: { table: 3, view: 1, sequence: 1, procedure: 2, function: 1, package: 1, trigger: 1, event: 1 },
+      sampleObject: { path: ["app", "orders_pkg"], kind: "package" },
+    });
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The rest of the object surface: the catalog reads behind each kind, the detail rows, the
+ * refusals, and the namespace measurement #789 owed. Kept out of the block above so
+ * `-t "object surface"` still runs exactly the seven conformance tests.
+ */
+describe("MySQL object listing and detail", () => {
+  beforeEach(() => {
+    mockExecuteFn = defaultMockExecute;
+    protocolCalls = [];
+  });
+
+  test("a table and a stored routine of ONE name are two addressable objects", async () => {
+    // THE MEASUREMENT #789 owed, and the reason `assertObjectSurface` checks path
+    // uniqueness WITHIN a kind and not across kinds. Measured 2026-09-11 on MySQL 26.7.0
+    // and MariaDB 12.3.2, in one database:
+    //
+    //   CREATE TABLE app.foo (id INT PRIMARY KEY)           -> accepted
+    //   CREATE PROCEDURE app.foo() SELECT 1                 -> accepted
+    //   CREATE FUNCTION app.foo() RETURNS INT ... RETURN 1   -> accepted
+    //   CREATE TRIGGER app.foo BEFORE INSERT ON app.foo ...  -> accepted
+    //   CREATE EVENT app.foo ON SCHEDULE EVERY 1 DAY ...     -> accepted
+    //   CREATE VIEW app.foo AS SELECT 1                      -> ERROR 1050 "Table 'foo' already exists"
+    //
+    // So a table and a routine really are in separate namespaces, and the one namespace
+    // that IS shared is the table/view/sequence one. The fixture ships the pair as
+    // `app.order_archive`, a table AND a procedure.
+    const provider = await connectedTo(false);
+
+    const tables = await provider.listObjects(["app"], "table");
+    const procedures = await provider.listObjects(["app"], "procedure");
+
+    const tablePath = tables.find((o) => o.name === "order_archive")?.path;
+    const procedurePath = procedures.find((o) => o.name === "order_archive")?.path;
+    expect(tablePath).toEqual(["app", "order_archive"]);
+    // The SAME path under a different kind, which is exactly what the tree's row identity
+    // (path plus kind id) is built to carry and what a cross-kind uniqueness assertion
+    // would have reported as a broken provider.
+    expect(procedurePath).toEqual(tablePath);
+    expect([tables[0].kind, procedures[0].kind]).toEqual(["table", "procedure"]);
+
+    // And the two describe differently, which is what the kind argument buys. A name-driven
+    // describe would have handed the procedure the table's columns.
+    const asTable = await provider.describeObject(["app", "order_archive"], "table");
+    const asProcedure = await provider.describeObject(["app", "order_archive"], "procedure");
+    expect(asTable.columns.length).toBeGreaterThan(0);
+    expect(asProcedure.columns).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("a container path that is not one database is refused, rather than read as empty", async () => {
+    const provider = await connectedTo(false);
+
+    // Not [] and not a zero count: mysql2 rejects an `undefined` bind outright, so the
+    // alternative is a driver error naming neither the path nor the method.
+    await expect(provider.countObjects([])).rejects.toThrow(/one database name/);
+    await expect(provider.listObjects(["catalog", "app"], "table")).rejects.toThrow(/one database name/);
+    await provider.disconnect();
+  });
+
+  test("a kind this server does not declare is refused, not answered empty", async () => {
+    // MariaDB's two are the live case: this provider carries a listing statement for
+    // `package` and `sequence` whatever server is connected, so a MySQL server has to
+    // refuse them from the DECLARATION rather than from the absence of a statement.
+    const provider = await connectedTo(false);
+
+    for (const kind of ["package", "sequence", "index"]) {
+      await expect(provider.listObjects(["app"], kind)).rejects.toThrow(
+        new RegExp(`declares no object kind "${kind}"`),
+      );
+      await expect(provider.describeObject(["app", "x"], kind)).rejects.toThrow(
+        new RegExp(`declares no object kind "${kind}"`),
+      );
+    }
+    await provider.disconnect();
+  });
+
+  test("the same two kinds ARE listable once the server says it is MariaDB", async () => {
+    // The control for the negatives above. Without it, "refused" could mean the statements
+    // do not work rather than that the declaration refused them.
+    const provider = await connectedTo(true);
+
+    expect(await provider.listObjects(["app"], "package")).toEqual([
+      { path: ["app", "orders_pkg"], name: "orders_pkg", kind: "package", rowCount: undefined, sizeBytes: undefined },
+    ]);
+    expect(await provider.listObjects(["app"], "sequence")).toEqual([
+      {
+        path: ["app", "invoice_number_seq"],
+        name: "invoice_number_seq",
+        kind: "sequence",
+        rowCount: 1,
+        sizeBytes: 16384,
+      },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("every declared kind binds its own catalog spelling, derived from the declaration", async () => {
+    // Derived rather than pinned to a list: a kind added to `objectKinds` without an entry
+    // in the vocabulary table fails here instead of drawing a folder nothing can fill.
+    const provider = await connectedTo(true);
+    const bound = new Map<string, { sql: string; params: unknown[] }>();
+
+    const declared = (provider.getCapabilities().objectKinds ?? []).map((k) => k.id);
+    expect(declared.length).toBeGreaterThan(0);
+    for (const kind of declared) {
+      mockExecuteFn = async (sql: string, params?: unknown[]) => {
+        bound.set(kind, { sql, params: params ?? [] });
+        return [[], []];
+      };
+      await provider.listObjects(["app"], kind);
+    }
+
+    expect(bound.get("table")?.params).toEqual(["app", "BASE TABLE"]);
+    expect(bound.get("view")?.params).toEqual(["app", "VIEW"]);
+    expect(bound.get("sequence")?.params).toEqual(["app", "SEQUENCE"]);
+    expect(bound.get("procedure")?.params).toEqual(["app", "PROCEDURE"]);
+    expect(bound.get("function")?.params).toEqual(["app", "FUNCTION"]);
+    expect(bound.get("package")?.params).toEqual(["app", "PACKAGE"]);
+    // The trigger and event views are keyed by database alone and have no type to bind.
+    expect(bound.get("trigger")?.params).toEqual(["app"]);
+    expect(bound.get("trigger")?.sql).toContain("information_schema.TRIGGERS");
+    expect(bound.get("event")?.params).toEqual(["app"]);
+    expect(bound.get("event")?.sql).toContain("information_schema.EVENTS");
+    expect(bound.size).toBe(declared.length);
+    await provider.disconnect();
+  });
+
+  test("counting is one statement that reads no column of any table", async () => {
+    const statements: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      statements.push(sql);
+      if (sql.toLowerCase().includes("version()")) return [[{ version: MYSQL_VERSION_STRING }], []];
+      if (sql.toLowerCase().startsWith("explain")) return [[], []];
+      return [[{ kind: "table", n: 43512 }], []];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
+    await provider.connect();
+    statements.length = 0;
+
+    const counts = await provider.countObjects(["app"]);
+
+    // One round trip for the whole folder row, and none of the four schema reads
+    // `getSchema()` issues per table.
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).toContain("GROUP BY kind");
+    expect(statements[0]).not.toContain("information_schema.COLUMNS");
+    expect(statements[0]).not.toContain("information_schema.STATISTICS");
+    expect(counts.table).toEqual({ count: 43512 });
+    // Seeded before the read: a declared kind the GROUP BY did not answer for holds none,
+    // which is a different fact from a kind the server does not have.
+    expect(counts.view).toEqual({ count: 0 });
+    expect(counts.event).toEqual({ count: 0 });
+    await provider.disconnect();
+  });
+
+  test("the counting statement has one CASE arm per catalog spelling and drops what it cannot name", async () => {
+    let counted = "";
+    mockExecuteFn = async (sql: string) => {
+      if (sql.includes("GROUP BY kind")) counted = sql;
+      if (sql.toLowerCase().includes("version()")) return [[{ version: MARIADB_VERSION_STRING }], []];
+      return [[], []];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
+    await provider.connect();
+    await provider.countObjects(["app"]);
+
+    // PACKAGE BODY is a second ROUTINES row for one node, exactly as on Oracle, so counting
+    // it would double the Packages badge. SYSTEM VIEW is what information_schema's own
+    // tables are. Both fall out of `kind IS NOT NULL` rather than being filtered by name.
+    expect(counted).not.toContain("PACKAGE BODY");
+    expect(counted).not.toContain("SYSTEM VIEW");
+    expect(counted).toContain("WHERE kind IS NOT NULL");
+    // The four views the four arms read, so "one statement" is a measurement rather than a
+    // claim about a statement that only reads one of them.
+    for (const view of [
+      "information_schema.TABLES",
+      "information_schema.ROUTINES",
+      "information_schema.TRIGGERS",
+      "information_schema.EVENTS",
+    ]) {
+      expect(counted).toContain(view);
+    }
+    // Derived, never pinned to a magnitude: the arms are built from the same vocabulary
+    // table the listings bind from, so this counts them rather than asserting "six".
+    const spellings = ["BASE TABLE", "VIEW", "SEQUENCE", "PROCEDURE", "FUNCTION", "PACKAGE"];
+    for (const spelling of spellings) expect(counted).toContain(`WHEN '${spelling}' THEN`);
+    expect(counted.match(/WHEN '[A-Z ]+' THEN/g) ?? []).toHaveLength(spellings.length);
+    await provider.disconnect();
+  });
+
+  test("a catalog row for an undeclared kind draws no folder", async () => {
+    // A live case, not a defensive one: the counting statement is the same text on both
+    // servers, so a MariaDB whose version probe came back empty answers `sequence` and
+    // `package` rows against a MySQL declaration. The DECLARATION decides which folders
+    // exist and a catalog row cannot add one.
+    mockExecuteFn = async (sql: string) => {
+      if (sql.toLowerCase().includes("version()")) return [[{ version: MYSQL_VERSION_STRING }], []];
+      if (sql.toLowerCase().startsWith("explain")) return [[], []];
+      return [
+        [
+          { kind: "table", n: 3 },
+          { kind: "sequence", n: 7 },
+          { kind: "package", n: 2 },
+        ],
+        [],
+      ];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
+    await provider.connect();
+
+    const counts = await provider.countObjects(["app"]);
+
+    expect(counts.table).toEqual({ count: 3 });
+    expect("sequence" in counts).toBe(false);
+    expect("package" in counts).toBe(false);
+    expect(Object.keys(counts).sort()).toEqual(["event", "function", "procedure", "table", "trigger", "view"]);
+    await provider.disconnect();
+  });
+
+  test("a refused count is reported as unavailable, never as zero", async () => {
+    const provider = await connectedTo(false);
+    mockExecuteFn = async () => {
+      throw Object.assign(new Error("SELECT command denied to user 'app'@'%' for table 'orders'"), {
+        code: "ER_TABLEACCESS_DENIED_ERROR",
+        errno: 1142,
+      });
+    };
+
+    const counts = await provider.countObjects(["app"]);
+    for (const kind of provider.getCapabilities().objectKinds ?? []) {
+      // The server's own sentence, unmapped and unprefixed.
+      expect(counts[kind.id]).toEqual({
+        unavailable: "SELECT command denied to user 'app'@'%' for table 'orders'",
+      });
+    }
+    await provider.disconnect();
+  });
+
+  test("a trigger nests under the table it fires on, and a parentless row falls back to the database", async () => {
+    mockExecuteFn = async (sql: string) => {
+      if (sql.toLowerCase().includes("version()")) return [[{ version: MYSQL_VERSION_STRING }], []];
+      if (!sql.includes("information_schema.TRIGGERS")) return [[], []];
+      return [
+        [
+          { name: "orders_stamp", parent: "orders" },
+          { name: "customers_stamp", parent: "customers" },
+          // Defensive rather than measured: information_schema.TRIGGERS has no row without a
+          // base table on either server. It collapses to the container-level address, which
+          // is a COMPLETE address here because a trigger name is unique per database
+          // (measured, ER_TRG_ALREADY_EXISTS on a second CREATE against another table).
+          { name: "orphan_stamp", parent: null },
+        ],
+        [],
+      ];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
+    await provider.connect();
+
+    // Sorted by PATH, so a table's triggers group under that table rather than by name.
+    expect((await provider.listObjects(["app"], "trigger")).map((o) => o.path)).toEqual([
+      ["app", "customers", "customers_stamp"],
+      ["app", "orders", "orders_stamp"],
+      ["app", "orphan_stamp"],
+    ]);
+    // Both depths describe, which is what the two accepted path shapes are for.
+    expect((await provider.describeObject(["app", "orders", "orders_stamp"], "trigger")).columns).toEqual([]);
+    expect((await provider.describeObject(["app", "orphan_stamp"], "trigger")).columns).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("a view carries neither a row count nor a size, while a table carries both", async () => {
+    // Measured: information_schema.TABLES answers NULL in TABLE_ROWS, DATA_LENGTH and
+    // INDEX_LENGTH for a VIEW. Reporting 0 and 0 would be a measurement nobody took.
+    const provider = await connectedTo(false);
+
+    const [view] = await provider.listObjects(["app"], "view");
+    expect(view).toEqual({
+      path: ["app", "order_summary"],
+      name: "order_summary",
+      kind: "view",
+      rowCount: undefined,
+      sizeBytes: undefined,
+    });
+    const orders = (await provider.listObjects(["app"], "table")).find((o) => o.name === "orders");
+    expect(orders?.rowCount).toBe(0);
+    expect(orders?.sizeBytes).toBe(49152);
+    await provider.disconnect();
+  });
+
+  test("a listing is sorted by path and not by the order the catalog answered", async () => {
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      if (sql.toLowerCase().includes("version()")) return [[{ version: MYSQL_VERSION_STRING }], []];
+      if ((params ?? [])[1] !== "BASE TABLE") return [[], []];
+      return [[{ name: "zeta" }, { name: "alpha" }, { name: "mid" }], []];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
+    await provider.connect();
+
+    expect((await provider.listObjects(["app"], "table")).map((o) => o.name)).toEqual(["alpha", "mid", "zeta"]);
+    await provider.disconnect();
+  });
+
+  test("a listing refusal is raised, mapped, quoting the statement the server received", async () => {
+    const provider = await connectedTo(false);
+    mockExecuteFn = async (sql: string) => {
+      if (!sql.includes("information_schema.EVENTS")) return [[], []];
+      throw Object.assign(new Error("SELECT command denied to user 'app'@'%' for table 'events'"), {
+        code: "ER_TABLEACCESS_DENIED_ERROR",
+        errno: 1142,
+      });
+    };
+
+    const failure = await provider.listObjects(["app"], "event").catch((error: unknown) => error);
+    expect((failure as Error).message).toContain("SELECT command denied");
+    expect((failure as { query?: string }).query).toContain("information_schema.EVENTS");
+    await provider.disconnect();
+  });
+
+  test("a table's detail carries its columns, primary key, foreign keys and indexes", async () => {
+    const provider = await connectedTo(false);
+    const bound: unknown[][] = [];
+    const base = objectSurfaceFixture({ mariadb: false });
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      bound.push(params ?? []);
+      return base(sql, params);
+    };
+
+    const detail = await provider.describeObject(["app", "orders"], "table");
+
+    expect(detail.path).toEqual(["app", "orders"]);
+    expect(detail.columns).toEqual([
+      { name: "id", type: "int", nullable: false, isPrimary: true, defaultValue: undefined },
+      { name: "total", type: "decimal", nullable: true, isPrimary: false, defaultValue: "0.00" },
+    ]);
+    // One entry per index with its columns in SEQ_IN_INDEX order, and NON_UNIQUE negated:
+    // 0 is a unique index. GROUP_CONCAT is deliberately not used - group_concat_max_len is
+    // 1024 by default on both servers and truncates silently.
+    expect(detail.indexes).toEqual([
+      { name: "PRIMARY", columns: ["id"], unique: true },
+      { name: "orders_total_ix", columns: ["total", "note"], unique: false },
+    ]);
+    // Bare within the container, qualified outside it: a bare cross-database name addresses
+    // a table in the wrong database, and InnoDB does accept a foreign key into another one.
+    expect(detail.foreignKeys).toEqual([
+      { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
+      { columnName: "region_id", referencedTable: "reporting.regions", referencedColumn: "id" },
+    ]);
+    // Three reads, each narrowed to ONE database and ONE object.
+    expect(bound).toHaveLength(3);
+    for (const params of bound) expect(params).toEqual(["app", "orders"]);
+    await provider.disconnect();
+  });
+
+  test("the column read carries no LIMIT, because a cap cannot be told from a count", async () => {
+    const provider = await connectedTo(false);
+    const columnReads: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      if (sql.includes("information_schema.COLUMNS")) columnReads.push(sql);
+      // One table, so getSchema() reaches its own column read below.
+      if (sql.includes("information_schema.TABLES")) return [[{ table_name: "orders" }], []];
+      return [[], []];
+    };
+
+    await provider.describeObject(["app", "orders"], "table");
+    // THE CONTROL, and the reason this test is not vacuous: `getSchema()` reads the same
+    // view for the same purpose and its statement DOES cap, at 100 columns. Without this
+    // half, "no LIMIT" would pass for a statement that never ran at all.
+    await provider.getSchema();
+
+    expect(columnReads).toHaveLength(2);
+    expect(columnReads[0]).toContain("information_schema.COLUMNS");
+    expect(columnReads[0].toUpperCase()).not.toContain("LIMIT");
+    expect(columnReads[1]).toContain("LIMIT 100");
+    await provider.disconnect();
+  });
+
+  test("a kind with no table behind it describes as three empty lists, without asking the server", async () => {
+    // Not an optimisation and not a name test. The three reads key the last path segment
+    // against TABLE_NAME, and on MySQL a table and a procedure CAN share a name, so a
+    // name-driven describe would hand the procedure the table's columns. The KIND settles it.
+    const provider = await connectedTo(true);
+    let asked = 0;
+    mockExecuteFn = async () => {
+      asked += 1;
+      return [[], []];
+    };
+
+    for (const [path, kind] of [
+      [["app", "touch_order"], "procedure"],
+      [["app", "order_total"], "function"],
+      [["app", "orders_nightly"], "event"],
+      [["app", "orders_pkg"], "package"],
+      [["app", "orders", "orders_stamp"], "trigger"],
+    ] as [string[], string][]) {
+      expect(await provider.describeObject(path, kind)).toEqual({
+        path,
+        columns: [],
+        indexes: [],
+        foreignKeys: [],
+      });
+    }
+    expect(asked).toBe(0);
+    await provider.disconnect();
+  });
+
+  test("a MariaDB sequence DOES describe, because the column dictionary answers for it", async () => {
+    // Measured on 12.3.2: information_schema.COLUMNS answers eight real columns for a
+    // sequence, because a sequence is a table underneath. Keying the detail read on the
+    // CATALOG rather than on role === "relation" is what makes that come out right - a
+    // sequence is `config`, since nobody selects rows from it.
+    const provider = await connectedTo(true);
+    mockExecuteFn = async (sql: string) => {
+      if (!sql.includes("information_schema.COLUMNS")) return [[], []];
+      return [
+        [
+          {
+            column_name: "next_not_cached_value",
+            data_type: "bigint",
+            is_nullable: "NO",
+            column_default: null,
+            column_key: "",
+          },
+        ],
+        [],
+      ];
+    };
+
+    const detail = await provider.describeObject(["app", "invoice_number_seq"], "sequence");
+    expect(detail.columns).toEqual([
+      { name: "next_not_cached_value", type: "bigint", nullable: false, isPrimary: false, defaultValue: undefined },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("an object path that is not [database, name] is refused", async () => {
+    const provider = await connectedTo(false);
+
+    await expect(provider.describeObject(["app"], "table")).rejects.toThrow(/"table" path is \[database, name\]/);
+    await expect(provider.describeObject(["a", "b", "c"], "table")).rejects.toThrow(
+      /"table" path is \[database, name\]/,
+    );
+    // An attached kind takes either depth, and only those two.
+    await expect(provider.describeObject(["a", "b", "c", "d"], "trigger")).rejects.toThrow(
+      /"trigger" path is \[database, table, name\] or \[database, name\]/,
+    );
+    await expect(provider.describeObject(["a"], "trigger")).rejects.toThrow(
+      /"trigger" path is \[database, table, name\] or \[database, name\]/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a kind that is declared but has no listing statement says so, not that it is undeclared", async () => {
+    // Two questions, and only the declaration answers the first. Deciding "declared" from
+    // whether a statement exists would report "declares no object kind" about a kind
+    // `objectKinds` does declare, and this provider is the one where the two lists really
+    // can differ: `MYSQL_OBJECT_TYPES` carries MariaDB's entries on a MySQL server.
+    const provider = await connectedTo(false);
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [...(real.objectKinds ?? []), { id: "tablespace", role: "config", label: "T", labelPlural: "Ts" }],
+    });
+
+    await expect(provider.listObjects(["app"], "tablespace")).rejects.toThrow(
+      /declares the kind "tablespace" but has no statement that lists it/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a server that will not answer VERSION() still connects, and declares the MySQL kinds", async () => {
+    // The probe is a capability measurement, not a connection check, exactly like the
+    // EXPLAIN grammar probe beside it. The cost of an unmeasured flavour is two folders a
+    // MariaDB user does not get, never the connection.
+    mockExecuteFn = async (sql: string) => {
+      if (sql.toLowerCase().includes("version()")) {
+        throw Object.assign(new Error("SELECT command denied"), { errno: 1142 });
+      }
+      return [[], []];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
+
+    await expect(provider.connect()).resolves.toBeUndefined();
+    expect(provider.isConnected()).toBe(true);
+    expect((provider.getCapabilities().objectKinds ?? []).map((k) => k.id).sort()).toEqual([
+      "event",
+      "function",
+      "procedure",
+      "table",
+      "trigger",
+      "view",
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a server that answers no row for VERSION() declares the MySQL kinds too", async () => {
+    // StarRocks 3.3.22 and Doris 4.1.3 answer 0 rows to SHOW STATUS, so an empty result set
+    // from a probe is a shape this family really produces.
+    mockExecuteFn = async () => [[], []];
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
+    await provider.connect();
+
+    expect((provider.getCapabilities().objectKinds ?? []).map((k) => k.id)).not.toContain("package");
+    await provider.disconnect();
+  });
+
+  test("a version string that names another vendor does not get MariaDB's kinds", async () => {
+    // The narrow control on the regex. TiDB, Vitess and OceanBase all self-identify in
+    // VERSION() and none of them has a package or a sequence, so a test keyed on "did the
+    // server name a vendor at all" would pass for all three and be wrong for all three.
+    for (const version of ["8.0.11-TiDB-v8.5.1", "8.0.43-Vitess", "5.7.25-OceanBase_CE-v4.4.2.1", "26.7.0"]) {
+      mockExecuteFn = async (sql: string) => {
+        if (sql.toLowerCase().includes("version()")) return [[{ version }], []];
+        return [[], []];
+      };
+      const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
+      await provider.connect();
+
+      const ids = (provider.getCapabilities().objectKinds ?? []).map((k) => k.id);
+      expect(ids).not.toContain("package");
+      expect(ids).not.toContain("sequence");
+      await provider.disconnect();
+    }
   });
 });
