@@ -66,16 +66,23 @@ const MAIN_SCHEMA = "main";
 // `name NOT LIKE 'sqlite\_%' ESCAPE '\'`, in the six statements below
 //
 // Names SQLite reserves for itself, excluded from every count and every listing. This can
-// never hide a user's object: the engine refuses the name outright, `CREATE TABLE
-// sqlite_foo` answering "object name reserved for internal use: sqlite_foo" over Hrana as
-// well. What it removes is real and arrives without being asked for - `sqlite_schema` is a
-// row of `PRAGMA table_list` on every database, `sqlite_sequence` appears the moment a
-// table declares AUTOINCREMENT, and `sqlite_autoindex_<table>_<n>` the moment a PRIMARY
-// KEY needs an index.
+// never hide a user's object: the engine refuses the name outright, over Hrana as well,
+// answering "object name reserved for internal use" to a table, an index, a view and a
+// trigger alike. What it removes is real and arrives without being asked for -
+// `sqlite_schema` is a row of `PRAGMA table_list` on every database, `sqlite_sequence`
+// appears the moment a table declares AUTOINCREMENT, and `sqlite_autoindex_<table>_<n>`
+// the moment a UNIQUE constraint needs an index.
+//
+// That last one is a row of `sqlite_schema` as well as of `pragma_index_list`, so it
+// reaches the Indexes FOLDER and not only an object's detail. Measured on sqld 0.24.33:
+// `code TEXT UNIQUE` on a ROWID table puts `sqlite_autoindex_badges_1` into
+// `sqlite_schema` typed `index`. The one shape that does NOT is a WITHOUT ROWID table,
+// whose autoindex `pragma_index_list` publishes and `sqlite_schema` omits - which is why
+// a fixture holding only that shape makes this predicate look untestable when it is not.
 //
 // `ESCAPE` is load-bearing: `_` is LIKE's single-character wildcard, so the unescaped
 // `'sqlite_%'` also matches `sqliteXledger`, a name a user CAN create. Measured on the
-// fixture, the unescaped form answers five tables where the engine holds six.
+// fixture, the unescaped form answers nine tables where the engine holds ten.
 //
 // The same predicate is applied to every population, in the counts and in the listings, so
 // the badge and its folder can never disagree about what an object is.
@@ -111,8 +118,8 @@ const COUNTS_SQL = `
 // `PRAGMA table_list` is read here instead of `sqlite_schema`. An FTS5 table is one
 // `virtual` row plus five `shadow` rows, and `sqlite_schema` types every one of them
 // `table`: measured on the fixture in `tests/integration/db/libsql-provider.test.ts`,
-// which holds eight tables and one FTS5 table, a naive scan answers 14. A user SELECTs
-// from the `virtual` row and never from a `shadow` one.
+// which holds ten objects of the table kind, a naive scan answers 16. A user SELECTs from
+// the `virtual` row and never from a `shadow` one.
 const LIST_TABLES_SQL = `
       SELECT t.name AS name
         FROM pragma_table_list AS t
@@ -381,6 +388,24 @@ export interface LibSQLObjectReader {
   readonly mapError: (error: unknown, sql?: string) => Error;
 }
 
+/**
+ * A catalog value that IDENTIFIES something, or a refusal.
+ *
+ * `readText(...) ?? ""` is the obvious spelling and it masks: an object row with no name
+ * would become an addressable object whose last path segment is the empty string, and a
+ * column with no name would key the results grid on nothing. Neither is reachable on this
+ * engine, because every one of these columns is `NOT NULL` in the catalog it comes from -
+ * which is exactly why a silent default here would never be noticed if it ever were.
+ *
+ * The house rule is to raise rather than recover, and a refusal naming the statement is
+ * what tells whoever reads it which read produced the row.
+ */
+function requiredName(value: unknown, what: string, sql: string): string {
+  const name = readText(value);
+  if (name === undefined) throw new QueryError(`libSQL answered a ${what} with no name`, "libsql", sql);
+  return name;
+}
+
 /** The rows one statement of a batch answered, or that statement's own failure, raised. */
 function rowsOrThrow(reader: LibSQLObjectReader, outcome: LibSQLBatchOutcome, sql: string): LibSQLRow[] {
   if (!outcome.ok) throw reader.mapError(outcome.error, sql);
@@ -477,20 +502,21 @@ export async function listLibSQLObjects(
   }
 
   return rows
-    .map((row) => ({
-      path: objectPath(container, readText(row.name) ?? "", readText(row.parent)),
-      name: readText(row.name) ?? "",
-      kind,
-    }))
+    .map((row) => {
+      const name = requiredName(row.name, `${kind} row`, statement.sql);
+      // `parent` is selected by the trigger listing alone, so ABSENT is the normal answer
+      // for the other three and is what `objectPath` reads as "this kind does not nest".
+      return { path: objectPath(container, name, readText(row.parent)), name, kind };
+    })
     .sort((left, right) => comparePaths(left.path, right.path));
 }
 
 /** One column of an object, as `pragma_table_xinfo` publishes it. */
-function toColumn(row: LibSQLRow): ColumnSchema {
+function toColumn(row: LibSQLRow, sql: string): ColumnSchema {
   const defaultValue = row.dflt_value;
 
   return {
-    name: readText(row.name) ?? "",
+    name: requiredName(row.name, "column", sql),
     // The empty string on a virtual table's columns and on a column declared with no type
     // at all, which SQLite allows. `readSchema()` spells that absence "TEXT", which is a
     // guess about affinity; the empty string is what the engine said.
@@ -578,7 +604,7 @@ export async function describeLibSQLObject(
 
   return {
     path: [...path],
-    columns: columnRows.map(toColumn),
+    columns: columnRows.map((row) => toColumn(row, OBJECT_COLUMNS_SQL)),
     ...(await readIndexesAndKeys(reader, binds, indexRows, foreignKeyRows)),
   };
 }
@@ -597,15 +623,14 @@ async function readIndexesAndKeys(
   foreignKeyRows: readonly LibSQLRow[],
 ): Promise<{ indexes: IndexSchema[]; foreignKeys: ForeignKeySchema[] }> {
   const [, schema] = binds;
-  const indexNames = indexRows.map((row) => readText(row.name) ?? "");
+  const indexNames = indexRows.map((row) => requiredName(row.name, "index", OBJECT_INDEXES_SQL));
   // Only a constraint that named no column needs its parent's key, and a parent is asked
   // once however many of its columns are referenced.
   const parents = [
     ...new Set(
       foreignKeyRows
         .filter((row) => readText(row.to) === undefined)
-        .map((row) => readText(row.table) ?? "")
-        .filter((parent) => parent !== ""),
+        .map((row) => requiredName(row.table, "foreign key parent", OBJECT_FOREIGN_KEYS_SQL)),
     ),
   ];
 
@@ -630,16 +655,16 @@ async function readIndexesAndKeys(
   for (const [position, parent] of parents.entries()) {
     parentKeys.set(
       parent,
-      rowsOrThrow(reader, outcomes[indexNames.length + position], PARENT_KEY_COLUMNS_SQL).map(
-        (row) => readText(row.name) ?? "",
+      rowsOrThrow(reader, outcomes[indexNames.length + position], PARENT_KEY_COLUMNS_SQL).map((row) =>
+        requiredName(row.name, "primary key column", PARENT_KEY_COLUMNS_SQL),
       ),
     );
   }
 
   const foreignKeys = foreignKeyRows.map((row) => {
-    const parent = readText(row.table) ?? "";
+    const parent = requiredName(row.table, "foreign key parent", OBJECT_FOREIGN_KEYS_SQL);
     return {
-      columnName: readText(row.from) ?? "",
+      columnName: requiredName(row.from, "foreign key column", OBJECT_FOREIGN_KEYS_SQL),
       // A bare name, never qualified: a foreign key's parent is resolved inside the same
       // database, so there is no cross-schema case to spell.
       referencedTable: parent,

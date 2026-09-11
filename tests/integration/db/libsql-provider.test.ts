@@ -706,6 +706,7 @@ const TABLE_LIST_ROWS: readonly { schema: string; name: string; type: string }[]
   { schema: "main", name: "legacy", type: "table" },
   { schema: "main", name: "order_summary", type: "view" },
   { schema: "main", name: "sqlite_schema", type: "table" },
+  { schema: "main", name: "badges", type: "table" },
   { schema: "main", name: "orders", type: "table" },
   { schema: "main", name: "shipments", type: "table" },
   { schema: "main", name: "regions", type: "table" },
@@ -757,6 +758,13 @@ const SQLITE_SCHEMA_ROWS: readonly { type: string; name: string; tbl_name: strin
   { type: "table", name: "legacy", tbl_name: "legacy" },
   { type: "table", name: "legacy_ref", tbl_name: "legacy_ref" },
   { type: "table", name: "shipments", tbl_name: "shipments" },
+  { type: "table", name: "badges", tbl_name: "badges" },
+  // The implicit index behind `code TEXT UNIQUE` on a ROWID table, and it IS a row of
+  // `sqlite_schema` rather than an invisible structure. Measured: a WITHOUT ROWID table
+  // (`regions`) produces an autoindex that `pragma_index_list` publishes and
+  // `sqlite_schema` does NOT, which is exactly the shape that hid this row from an
+  // earlier fixture and made the reserved-name predicate look untestable here.
+  { type: "index", name: "sqlite_autoindex_badges_1", tbl_name: "badges" },
 ];
 
 /**
@@ -820,6 +828,11 @@ const COLUMNS: Readonly<Record<string, ColumnRow[]>> = {
     column("order_id", "INTEGER", 0, null, 0),
     column("carrier", "TEXT", 0, null, 0),
   ],
+  badges: [
+    column("id", "INTEGER", 0, null, 1),
+    column("code", "TEXT", 0, null, 0),
+    column("label", "TEXT", 0, null, 0),
+  ],
 };
 
 /** `pragma_index_list(name, 'main')` per object, including the implicit ones. */
@@ -832,6 +845,9 @@ const INDEX_LIST: Readonly<Record<string, [string, number][]>> = {
   // WITHOUT ROWID with a composite primary key, so the engine made an index nobody
   // declared and nobody can drop. The `sqlite_` predicate is what removes it.
   regions: [["sqlite_autoindex_regions_1", 1]],
+  // `code TEXT UNIQUE` on a ROWID table. Same exclusion, and unlike the one above this
+  // index is ALSO a row of `sqlite_schema`, so it reaches the Indexes folder too.
+  badges: [["sqlite_autoindex_badges_1", 1]],
 };
 
 /** `pragma_index_info(name, 'main')`, in `seqno` order. A null name is an EXPRESSION key. */
@@ -841,6 +857,7 @@ const INDEX_COLUMNS: Readonly<Record<string, (string | null)[]>> = {
   idx_orders_placed: [null],
   idx_customers_name: ["name"],
   sqlite_autoindex_regions_1: ["region", "year"],
+  sqlite_autoindex_badges_1: ["code"],
 };
 
 /** `pragma_foreign_key_list(name, 'main')`. A null `to` means the parent's primary key. */
@@ -854,7 +871,7 @@ const FOREIGN_KEYS: Readonly<Record<string, [number, number, string, string, str
 };
 
 /** Every kind, and how many of it `main` holds. Counted by hand off the fixture DDL. */
-const EXPECTED_COUNTS = { table: 9, view: 1, index: 3, trigger: 2 } as const;
+const EXPECTED_COUNTS = { table: 10, view: 1, index: 3, trigger: 2 } as const;
 
 /** True when the statement carries the reserved-name predicate, escaped or not. */
 function reservedPredicate(sql: string): "escaped" | "wildcard" | "none" {
@@ -1101,13 +1118,14 @@ describe("LibSQLProvider object surface (#789)", () => {
     // The control, measured live: `sqlite_schema` types an FTS5 table's five shadow
     // tables `table`, so a naive scan answers 14 where the engine holds 8.
     const naive = SQLITE_SCHEMA_ROWS.filter((row) => row.type === "table");
-    expect(naive).toHaveLength(15);
+    expect(naive).toHaveLength(16);
     expect(naive.map((row) => row.name)).toContain("notes_data");
 
     const tables = await objects.listObjects([], "table");
 
     expect(tables.map((table) => table.name)).toEqual([
       "archive",
+      "badges",
       "customers",
       "legacy",
       "legacy_ref",
@@ -1151,6 +1169,37 @@ describe("LibSQLProvider object surface (#789)", () => {
     // `sqlite_schema` is a row of `PRAGMA table_list` on every database there is.
     expect(tables).not.toContain("sqlite_sequence");
     expect(tables).not.toContain("sqlite_schema");
+  });
+
+  test("an index the engine created for itself is not an object, and it IS a row of sqlite_schema", async () => {
+    // The reserved-name predicate on the INDEX listing, pinned by BEHAVIOUR.
+    //
+    // An earlier version of this suite claimed it could not be: the fixture's only
+    // implicit index belonged to `regions`, a WITHOUT ROWID table, whose autoindex
+    // `pragma_index_list` publishes and `sqlite_schema` does NOT. That one shape is the
+    // exception. Measured on sqld 0.24.33, `code TEXT UNIQUE` on an ordinary ROWID table
+    // puts `sqlite_autoindex_badges_1` straight into `sqlite_schema` as an `index` row,
+    // so the predicate removes a real row here and a test can see it.
+    objects = await connectedWithObjects();
+
+    // The control, and the non-vacuity guard: the catalog really does hold the row this
+    // test exists to exclude, so the assertions below are not about an empty population.
+    const catalogIndexes = SQLITE_SCHEMA_ROWS.filter((row) => row.type === "index");
+    expect(catalogIndexes.map((row) => row.name)).toContain("sqlite_autoindex_badges_1");
+
+    const listed = await objects.listObjects([], "index");
+    const counts = await objects.countObjects([]);
+
+    expect(listed.map((index) => index.name)).toEqual([
+      "idx_customers_name",
+      "idx_orders_customer",
+      "idx_orders_placed",
+    ]);
+    // The badge counts what the folder lists, one row fewer than the catalog holds.
+    expect(counts.index).toEqual({ count: catalogIndexes.length - 1 });
+    // And the same predicate applies inside the object's own detail, so the two surfaces
+    // cannot disagree about what an index is.
+    expect(await objects.describeObject(["badges"], "table")).toMatchObject({ indexes: [] });
   });
 
   test("a temp object shadowing a main one never reaches the tree, which sqld really can produce", async () => {
@@ -1358,6 +1407,27 @@ describe("LibSQLProvider object surface (#789)", () => {
     ]);
   });
 
+  test("a catalog row with no name is refused rather than addressed by an empty segment", async () => {
+    // `readText(...) ?? ""` is the obvious spelling and it MASKS: the row would become an
+    // object whose last path segment is the empty string, which the tree would draw, let a
+    // user click, and then describe as nothing. Every one of these catalog columns is NOT
+    // NULL, so this is unreachable on the engine - which is precisely why a silent default
+    // would never be noticed if it ever stopped being unreachable.
+    objects = await connectedWithObjects();
+    server = () => result([["name", "TEXT"]], [[{ type: "null" }]]);
+
+    const refusal = await objects.listObjects([], "index").then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    expect(refusal).toBeInstanceOf(DatabaseError);
+    expect((refusal as DatabaseError).message).toBe("libSQL answered a index row with no name");
+    // Naming the statement, so whoever reads it knows which of the four listings produced
+    // the row rather than being told only that something was nameless.
+    expect((refusal as DatabaseError).query).toContain("s.type = 'index'");
+  });
+
   test("an object that is not there is a failed read and says so", async () => {
     objects = await connectedWithObjects();
 
@@ -1441,17 +1511,19 @@ describe("LibSQLProvider object surface (#789)", () => {
 
   test("every population the object surface reads applies the SAME two restrictions", async () => {
     // Standing ruling 5f from the statement side, and it is a SHAPE assertion on purpose.
-    //
-    // Two of the four restrictions cannot be told apart by any data this engine can
-    // produce, which is why they are pinned here rather than left to a behaviour test:
+    // It covers exactly the two places no data this engine can produce reaches, and every
+    // other restriction is pinned by behaviour in the tests above:
     //
     // - `t.schema = ?` on the TABLE listing. sqld refuses `CREATE TEMP TABLE` and
-    //   `CREATE TABLE temp.x` outright and accepts only `CREATE VIEW temp.x`, so a temp
-    //   object shadowing a main one is reachable for the VIEW listing (the test above
-    //   drives it) and unreachable for the table one.
-    // - the reserved-name predicate on the INDEX and TRIGGER listings. Measured, the only
-    //   `sqlite`-prefixed rows `sqlite_schema` ever holds are TABLES: `sqlite_autoindex_*`
-    //   is implicit and is not a row at all, and a user cannot create the prefix.
+    //   `CREATE TABLE temp.x` outright and accepts only `CREATE VIEW temp.x`, whose row
+    //   is typed `view` and so can never enter a `type IN ('table','virtual')` listing.
+    //   The counts arm and the view listing are driven behaviourally by the temp test.
+    // - the reserved-name predicate on the TRIGGER listing. Measured on sqld 0.24.33:
+    //   `CREATE TRIGGER sqlite_guard ...` is refused, "object name reserved for internal
+    //   use", and the engine creates no trigger of its own, so no `sqlite`-prefixed
+    //   trigger row can exist. The INDEX listing is NOT in this category and is pinned
+    //   behaviourally above, because an implicit `sqlite_autoindex_*` on a ROWID table IS
+    //   a row of `sqlite_schema`.
     //
     // Both stay, because a badge and its folder must enumerate one population however the
     // engine happens to be shaped today, and this is what keeps them from drifting apart.

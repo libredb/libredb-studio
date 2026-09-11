@@ -13,7 +13,7 @@
 | **Database type id** | `libsql` |
 | **Family** | SQL (`src/lib/db/providers/sql/libsql/`) |
 | **Driver** | None — HTTP only (`fetch`, a runtime built-in) |
-| **Query language** | `sql` (SQLite's dialect, 3.47.0 on both deployments measured) |
+| **Query language** | `sql` (SQLite's dialect. The embedded version depends on the BUILD, not on the version number: `:latest` and Turso Cloud answered 3.47.0 and the pinned `v0.24.33` answers 3.45.1 - see **Reproducible with** below) |
 | **Default port** | `8080` (sqld's own). `443` when TLS is on, which is how Turso Cloud serves every database |
 | **Connection pooling** | None — each statement is one stateless HTTP request |
 | **Connection string** | Supported (`libsql://<database>-<org>.turso.io?authToken=<jwt>`) |
@@ -25,7 +25,7 @@
 | **Tests** | [`tests/integration/db/libsql-provider.test.ts`](../../tests/integration/db/libsql-provider.test.ts) + [`tests/unit/db/libsql/`](../../tests/unit/db/libsql/) |
 | **Tracking issue** | [#424 — the database coverage map](https://github.com/libredb/libredb-studio/issues/424) |
 | **Probed against** | `ghcr.io/tursodatabase/libsql-server` reporting `sqld 0.24.33 (f8fb14f3 2026-08-11)`, and a Turso Cloud database in `aws-eu-west-1`, both on 2026-08-27 |
-| **Reproducible with** | `ghcr.io/tursodatabase/libsql-server:v0.24.33`, the tag `database-compose.yml` pins. It is a DIFFERENT build of the same version - `sqld 0.24.33 (40a151bd 2025-12-19)`, because `:latest` is a rolling rebuild - and it was re-probed surface by surface on 2026-08-27: the same 17 of 19, the same four refusals with byte-identical wording, and the same `"notnull"` behaviour. Every measurement below therefore holds on the pinned tag as well as on the build it was taken from. |
+| **Reproducible with** | `ghcr.io/tursodatabase/libsql-server:v0.24.33`, the tag `database-compose.yml` pins. It is a DIFFERENT build of the same version - `sqld 0.24.33 (40a151bd 2025-12-19)`, because `:latest` is a rolling rebuild - and it was re-probed surface by surface on 2026-08-27: the same 17 of 19, the same four refusals with byte-identical wording, and the same `"notnull"` behaviour. **One thing the two builds do NOT share is the embedded SQLite version**: `:latest` and Turso Cloud answer `3.47.0` and the pinned tag answers `3.45.1`, re-measured 2026-09-11 while building the object surface. Every measurement below holds on the pinned tag, and where a version floor matters the doc says which build it was taken from. |
 
 ---
 
@@ -224,6 +224,10 @@ reads:
 
 Neither is "Unknown", because in both cases the engine answered something.
 
+Both halves come from the deployment rather than from this product, which is why the pinned
+`v0.24.33` image reads `sqld 0.24.33 (40a151bd 2025-12-19) (SQLite 3.45.1)` instead: same version
+number, different build, different embedded engine.
+
 ### 3.11 No sessions, no uptime, no connection ceiling
 
 Hrana is stateless: a statement is a request. There is no session object anywhere, so
@@ -350,9 +354,9 @@ all. The object surface replaces it with four container-aware methods (`listCont
 #789's last task; both surfaces are live through Phase 1.
 
 Everything below was measured on 2026-09-11 against `ghcr.io/tursodatabase/libsql-server:v0.24.33`, the
-image [`database-compose.yml`](../../database-compose.yml) pins. **That build embeds SQLite 3.45.1**, not
-the 3.47.0 recorded elsewhere in this doc for `:latest` and for Turso Cloud, which is the compose file's
-own point about `:latest` being a rolling rebuild of one version number.
+image [`database-compose.yml`](../../database-compose.yml) pins, which embeds **SQLite 3.45.1** (§0's
+**Reproducible with** row records why that differs from the 3.47.0 the `:latest` build and Turso Cloud
+answer). The floor that matters here is 3.37, and both builds are above it.
 
 #### libSQL is a ZERO-CONTAINER engine, and `[]` is an answer
 
@@ -395,8 +399,8 @@ build is 3.45.1.
 
 That matters because `sqlite_schema.type` is too coarse to count tables with. An FTS5 table is ONE object a
 user selects from plus five SHADOW tables the module owns; `sqlite_schema` types every one of them `table`.
-Measured on the fixture below, which holds nine real tables and one FTS5 table, a naive `sqlite_schema`
-scan answers **15**.
+Measured on the fixture below, which holds nine ordinary tables and one FTS5 table, a naive `sqlite_schema`
+scan answers **16**.
 
 | `table_list.type` | Kind | Why |
 | --- | --- | --- |
@@ -437,14 +441,24 @@ object would live in the separate `sqlite_temp_schema`.
 Every population excludes `name NOT LIKE 'sqlite\_%' ESCAPE '\'`. It can never hide a user's object: the
 engine refuses the name outright over Hrana too, `CREATE TABLE sqlite_foo` answering *"object name reserved
 for internal use: sqlite_foo"*. `ESCAPE` is load-bearing rather than decoration, because `_` is LIKE's
-single-character wildcard: measured on the fixture, the unescaped pattern answers eight tables where the
-engine holds nine, having swallowed `sqliteXledger`.
+single-character wildcard: measured on the fixture, the unescaped pattern answers nine tables where the
+engine holds ten, having swallowed `sqliteXledger`.
 
-Measured limit of what it removes, recorded because it decides where the rule can be tested: the only
-`sqlite`-prefixed rows `sqlite_schema` ever holds are TABLES (`sqlite_sequence`, and `sqlite_stat1` after an
-`ANALYZE` the server refuses). `sqlite_autoindex_*` is implicit and is not a row at all. So on the two
-`sqlite_schema` populations the predicate removes nothing today and is carried for uniformity; on the two
-`PRAGMA table_list` populations and in `pragma_index_list` it removes real rows.
+What it removes, per population, because that decides where the rule can be tested:
+
+| Population | Rows the predicate removes |
+|---|---|
+| `PRAGMA table_list` (tables, views) | `sqlite_schema` on every database, `sqlite_sequence` once a table declares `AUTOINCREMENT` |
+| `sqlite_schema` (indexes) | `sqlite_autoindex_<table>_<n>`, the index behind a `UNIQUE` constraint |
+| `sqlite_schema` (triggers) | nothing that can exist. Measured, `CREATE TRIGGER sqlite_guard ...` is refused *"object name reserved for internal use"* and the engine creates no trigger of its own |
+| `pragma_index_list` (an object's detail) | the same `sqlite_autoindex_*` rows, so the folder and the detail agree |
+
+The index row is the one worth spelling out, because one table shape hides it. An implicit
+`sqlite_autoindex_*` on an ordinary ROWID table IS a row of `sqlite_schema` typed `index`, so it reaches
+the Indexes FOLDER and not only an object's detail: measured, `CREATE TABLE badges(id INTEGER PRIMARY KEY,
+code TEXT UNIQUE, label TEXT)` puts `sqlite_autoindex_badges_1` there. A `WITHOUT ROWID` table is the
+exception, and its autoindex appears in `pragma_index_list` while `sqlite_schema` omits it. A fixture
+holding only the second shape makes this predicate look untestable when it is not.
 
 #### `describeObject()` reads for the two relation kinds only, in TWO round trips
 
@@ -509,6 +523,7 @@ CREATE TABLE sqliteXledger (id INTEGER PRIMARY KEY, note TEXT);
 CREATE TABLE legacy (note TEXT);
 CREATE TABLE legacy_ref (id INTEGER PRIMARY KEY, note TEXT REFERENCES legacy);
 CREATE TABLE shipments (id INTEGER PRIMARY KEY, order_id INTEGER REFERENCES orders(id), carrier TEXT);
+CREATE TABLE badges (id INTEGER PRIMARY KEY, code TEXT UNIQUE, label TEXT);
 CREATE VIRTUAL TABLE notes USING fts5(title, body);
 CREATE VIEW order_summary AS SELECT c.name, o.total FROM orders o JOIN customers c ON c.id = o.customer_id;
 CREATE INDEX idx_orders_customer ON orders(customer_id);
@@ -521,10 +536,11 @@ CREATE TRIGGER order_summary_guard INSTEAD OF INSERT ON order_summary
 ```
 
 It holds one of every declared kind, all four `table_list.type` values, a generated column, a composite
-primary key on a `WITHOUT ROWID` table, an `AUTOINCREMENT` table, an expression index, an implicit index
-the `sqlite_` predicate excludes, an `INSTEAD OF` trigger on a view, a `sqliteXledger` table, a foreign key
-that names its column and two that do not, and a foreign-key parent with no primary key. Counts:
-`table 9, view 1, index 3, trigger 2`.
+primary key on a `WITHOUT ROWID` table, an `AUTOINCREMENT` table, an expression index, BOTH implicit-index
+shapes (the `WITHOUT ROWID` one that only `pragma_index_list` publishes and the `UNIQUE`-on-a-ROWID-table
+one that is also a `sqlite_schema` row), an `INSTEAD OF` trigger on a view, a `sqliteXledger` table, a
+foreign key that names its column and two that do not, and a foreign-key parent with no primary key.
+Counts: `table 10, view 1, index 3, trigger 2`.
 
 ---
 
@@ -534,7 +550,7 @@ Measured through the provider against both deployments (fixture: 2 tables, 3 and
 
 | Panel | Reading |
 |---|---|
-| Version | `sqld 0.24.33 (f8fb14f3 2026-08-11) (SQLite 3.47.0)` / `SQLite 3.47.0` on Turso Cloud |
+| Version | `sqld 0.24.33 (f8fb14f3 2026-08-11) (SQLite 3.47.0)` / `SQLite 3.47.0` on Turso Cloud. The pinned `v0.24.33` image reads `(40a151bd 2025-12-19) (SQLite 3.45.1)`: the panel names the build it is talking to |
 | Database size | `64 KB` (65536 bytes), from `page_count × page_size` |
 | Database size unavailable | `databaseSize` is `"N/A"`; `databaseSizeBytes` is omitted, not zeroed |
 | Tables / indexes | 2 / 1 |

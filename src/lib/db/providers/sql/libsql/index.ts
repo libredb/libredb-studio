@@ -3,8 +3,10 @@
  *
  * One type-id for two deployments of the same engine: a self-hosted libSQL server
  * (`sqld`) and Turso Cloud, which is that server managed. Both speak Hrana, both
- * embed SQLite 3.47.0, and everything the provider asks is SQL - so this file is
- * the SQLite dialect over a network rather than a second engine.
+ * embed SQLite, and everything the provider asks is SQL - so this file is the SQLite
+ * dialect over a network rather than a second engine. WHICH SQLite depends on the build
+ * rather than on the version number: `:latest` and Turso Cloud answer 3.47.0 and the
+ * `v0.24.33` tag `database-compose.yml` pins answers 3.45.1 (docs/providers/libsql.md).
  *
  * It is NOT the SQLite provider with a different handle, and the differences are
  * measured rather than assumed (2026-08-27, sqld 0.24.33 and Turso Cloud):
