@@ -670,6 +670,47 @@ export interface DatabaseProvider {
   describeObject?(path: readonly string[], kind: string): Promise<ObjectDetail>;
 
   /**
+   * Columns, indexes and foreign keys for EVERY object of one kind in one container, in
+   * one round trip (#789).
+   *
+   * The fifth method, and it exists because a consumer none of the other four serves was
+   * measured rather than imagined: `src/lib/agent/tools.ts` reads the agent's whole
+   * column, index and foreign-key grounding through `getSchema()`, and the phase that
+   * deletes `getSchema` would otherwise leave the agent with no columns at all on fifteen
+   * engines. It is the object-model-shaped successor of `getSchema()`, not a new
+   * invention, so a provider reshapes that method's own body rather than writing a new
+   * statement: those bodies carry which catalog answers which fact, which system schemas
+   * are excluded and how an extension-owned relation is hidden.
+   *
+   * ONE ROUND TRIP PER CONTAINER AND KIND, never one per object. `includeColumns` on the
+   * inventory route was built as one `describeObject` per object, up to 5000 sequential
+   * round trips, and removed as an N+1 this epic should not ship. A provider that loops
+   * `describeObject` here has re-introduced it.
+   *
+   * The arguments are a container and a kind, the same pair `listObjects` takes, and not
+   * a list of paths. Three reasons, in order of how much they cost. A caller's fan-out is
+   * then bounded by the SAME container-and-kind product it already bounds for listing
+   * (`INVENTORY_PAIR_LIMIT`), instead of by a second, differently shaped budget. A path
+   * list would have to reach the engine as an IN list, which on a two-level engine is an
+   * IN list over TUPLES and on a kind with mixed path depth (an Oracle schema-level
+   * trigger against a table-level one) is two of them, so the statement's shape would
+   * depend on the caller's selection rather than on the engine. And a caller holding 5000
+   * paths would have to chunk them itself, which is a fan-out no bound in this repo
+   * describes.
+   *
+   * `limit` bounds ONE read, which nothing else in the object surface does: the inventory
+   * route's own docblock records that it can bound the number of listings and the number
+   * of objects returned, and cannot bound a single listing from the outside. Absent means
+   * unbounded, and a provider must not invent a cap of its own and stay silent about it -
+   * it may cap, but then `truncated` says so.
+   *
+   * A kind that legitimately has no columns - a routine, a trigger, a sequence on some
+   * engines - answers an empty `details` array without a round trip, exactly as
+   * `describeObject` answers three empty arrays for one of them.
+   */
+  describeObjects?(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch>;
+
+  /**
    * Get list of table names
    */
   getTables(): Promise<string[]>;
@@ -1218,4 +1259,25 @@ export interface ObjectDetail {
   readonly columns: readonly ColumnSchema[];
   readonly indexes: readonly IndexSchema[];
   readonly foreignKeys: readonly ForeignKeySchema[];
+}
+
+/**
+ * What one bulk column read answered, and whether it was complete (#789).
+ *
+ * `details` is keyed by `ObjectDetail.path`, which is the only key this surface has: a
+ * joined name is what `query-generators.ts` used to split back on `.`, and every
+ * dot-splitting defect this epic fixed came from a name standing in for an address. A
+ * caller matches these against the objects `listObjects` named, path against path.
+ *
+ * `truncated` carries the bound the provider actually applied and its own sentence for
+ * why, the same two fields `POST /api/db/objects/inventory` answers with. It is present
+ * whenever the read stopped short and absent whenever it did not, because a bounded read
+ * handed over as a complete one is what makes its reader treat a missing table as an
+ * absent one - the #414 defect, measured against the agent. `details.length` never
+ * exceeds `truncated.limit`.
+ */
+export interface ObjectDetailBatch {
+  readonly details: readonly ObjectDetail[];
+  /** Absent when every object of that kind in that container was described. */
+  readonly truncated?: { readonly limit: number; readonly reason: string };
 }

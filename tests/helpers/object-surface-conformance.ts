@@ -7,7 +7,9 @@
  *   3. every kind counted non-empty LISTS something, so no folder opens onto nothing;
  *   4. every object's path starts with its container's path, so the tree can address it;
  *   5. no two objects of ONE kind share a path, so that kind's folder can address each;
- *   6. describeObject accepts a path listObjects ACTUALLY PRODUCED, with its kind.
+ *   6. describeObject accepts a path listObjects ACTUALLY PRODUCED, with its kind;
+ *   7. describeObjects, where a provider declares it, describes objects listObjects NAMED,
+ *      matched on path, and reports its own truncation when a bound bites.
  *
  * **Invariant 5 stops at the kind boundary, and that is a decision rather than an
  * oversight.** A tree row is identified by path PLUS kind id, not by path alone, which is
@@ -46,6 +48,10 @@
  * displayed as `order_total`. Uniqueness is what the old assertion was reaching for and
  * is the thing a tree actually needs.
  *
+ * Invariant 7 is skipped entirely for a provider that does not declare `describeObjects`,
+ * which is sixteen of the seventeen while the bulk read lands one family at a time. What it
+ * asserts, and why each part of it is not vacuous, is in `assertBulkColumnRead()` below.
+ *
  * One further check guards the caller rather than the provider: an expectation naming a
  * kind countObjects never answered for is reported by name. That is a caller-side
  * mistake, a kind id written into the expectation that this engine never declares, and
@@ -53,7 +59,7 @@
  * which names neither the kind nor the expectation.
  */
 import { expect } from "bun:test";
-import type { DatabaseObject, DatabaseProvider, KindCount } from "@/lib/db/types";
+import type { DatabaseObject, DatabaseProvider, KindCount, ObjectDetailBatch } from "@/lib/db/types";
 import { declaredKinds, isCountUnavailable } from "@/lib/db/object-kinds";
 
 export interface ObjectSurfaceExpectation {
@@ -113,7 +119,7 @@ export async function assertObjectSurface(
   // listing are two reads at two instants and a live engine may legitimately disagree
   // between them, so pinning the magnitude would make this helper flaky rather than
   // strict. Non-emptiness is the part that cannot be a timing artefact.
-  let sampleListing: DatabaseObject[] | undefined;
+  const listings = new Map<string, DatabaseObject[]>();
 
   for (const [id, want] of Object.entries(expected.kinds)) {
     if (want === 0) continue;
@@ -137,12 +143,14 @@ export async function assertObjectSurface(
       }
       seen.add(key);
     }
-    if (id === expected.sampleObject.kind) sampleListing = listed;
+    listings.set(id, listed);
   }
 
   // The sample's kind need not be one the expectation counts, so list it on its own when
   // the loop above did not already reach it.
-  const objects = sampleListing ?? (await provider.listObjects!(container, expected.sampleObject.kind));
+  const objects =
+    listings.get(expected.sampleObject.kind) ?? (await provider.listObjects!(container, expected.sampleObject.kind));
+  listings.set(expected.sampleObject.kind, objects);
 
   // The sample must be a path the PROVIDER produced, not one the expectation typed.
   const sample = objects.find((object) => pathKey(object.path) === pathKey(expected.sampleObject.path));
@@ -158,4 +166,90 @@ export async function assertObjectSurface(
   // it is holding from what the name happens to match.
   const detail = await provider.describeObject!(sample.path, sample.kind);
   expect(detail.path).toEqual([...sample.path]);
+
+  await assertBulkColumnRead(provider, container, listings);
+}
+
+/**
+ * The fifth method, checked against the provider's OWN listing (#789).
+ *
+ * Skipped entirely when the provider does not declare it, which is where sixteen of the
+ * seventeen are while the bulk read lands one family at a time. That skip is the reason
+ * every assertion below is written against `listings`: the only thing that makes this
+ * block non-vacuous is that it compares two answers the provider gave, never one the test
+ * author typed.
+ *
+ * Three properties, one per ruling:
+ *
+ *   1. one round trip per container and kind, which is the SHAPE of the call and is
+ *      pinned by the argument assertion in the helper's own suite rather than here;
+ *   2. keyed by `path`, so every column set must match an object `listObjects` named, by
+ *      path and never by a joined name;
+ *   3. truncation is reported, which is checked by bounding a read whose unbounded answer
+ *      is already known to be larger - the only probe that can tell a provider that stops
+ *      short and says so from one that stops short silently.
+ *
+ * The zero-iteration case of each loop is what the two throws guard: a provider answering
+ * `{ details: [] }` for every kind satisfies every check inside them, so the richest
+ * listing has to hold something, and it has to hold TWO of something or a limit of 1
+ * returns the whole answer and the truncation probe can only pass.
+ */
+async function assertBulkColumnRead(
+  provider: DatabaseProvider,
+  container: readonly string[],
+  listings: ReadonlyMap<string, DatabaseObject[]>,
+): Promise<void> {
+  const describeObjects = provider.describeObjects;
+  if (describeObjects === undefined) return;
+
+  function check(kind: string, batch: ObjectDetailBatch, addressable: ReadonlySet<string>): void {
+    const seen = new Set<string>();
+    for (const detail of batch.details) {
+      const key = pathKey(detail.path);
+      if (!addressable.has(key)) {
+        throw new Error(`describeObjects("${kind}") answered for ${key}, which listObjects did not name`);
+      }
+      if (seen.has(key)) throw new Error(`describeObjects("${kind}") answered twice for ${key}`);
+      seen.add(key);
+    }
+    if (batch.truncated === undefined) return;
+    if (batch.details.length > batch.truncated.limit) {
+      throw new Error(
+        `describeObjects("${kind}") reported a limit of ${batch.truncated.limit} and returned ` +
+          `${batch.details.length} column sets`,
+      );
+    }
+    if (batch.truncated.reason.length === 0) {
+      throw new Error(`describeObjects("${kind}") reported truncation with no reason a person can read`);
+    }
+  }
+
+  let richest: { kind: string; count: number } | undefined;
+  for (const [kind, listed] of listings) {
+    const batch = await describeObjects.call(provider, container, kind);
+    check(kind, batch, new Set(listed.map((object) => pathKey(object.path))));
+    if (richest === undefined || batch.details.length > richest.count) {
+      richest = { kind, count: batch.details.length };
+    }
+  }
+
+  if (richest === undefined || richest.count === 0) {
+    throw new Error("describeObjects answered no column set for any listed kind, so every check of it is vacuous");
+  }
+  if (richest.count < 2) {
+    throw new Error(
+      `describeObjects answered at most one column set per kind (${richest.kind}), so no kind holds two objects, ` +
+        "so a bounded read cannot be told from an unbounded one",
+    );
+  }
+
+  const bounded = await describeObjects.call(provider, container, richest.kind, 1);
+  check(richest.kind, bounded, new Set(listings.get(richest.kind)!.map((object) => pathKey(object.path))));
+  if (bounded.truncated === undefined) {
+    throw new Error(
+      `describeObjects("${richest.kind}", limit 1) returned ${bounded.details.length} of ${richest.count} ` +
+        "column sets and reported no truncation",
+    );
+  }
+  expect(bounded.truncated.limit).toBe(1);
 }

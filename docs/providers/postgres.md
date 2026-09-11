@@ -377,11 +377,18 @@ new folder, the materialized view #710 is about, with an empty column list. The 
 key and index CTEs *are* reused, so a fork that needs `withoutForeignKeyCatalog()` or
 `withoutJsonAggFunctions()` gets the same repair here that `getSchema()` gets.
 
-The type text still matches. `format_type(a.atttypid, NULL)` is passed NULL rather than
-`a.atttypmod` because that is exactly what `information_schema.columns.data_type` says:
+The type text matches on every column but one shape. `format_type(a.atttypid, NULL)` is passed NULL
+rather than `a.atttypmod` because that is what `information_schema.columns.data_type` says:
 `character varying` and `numeric`, not `character varying(50)` and `numeric(12,2)`. Verified column
 by column on `app.orders`, so the object surface and the flat schema tree name a column's type
 identically while both are live.
+
+The exception is an ARRAY column, measured on `postgres:18` while the bulk read below was being
+reshaped from this statement. `app.products.tags` is `text[]`: `format_type` answers `text[]` and
+both object-model surfaces show that, while `information_schema.columns.data_type` answers the bare
+word `ARRAY` and puts the element type in `information_schema.element_types`, so `getSchema()` shows
+`ARRAY`. The two disagree on exactly those columns and the object model has the better half of the
+disagreement, so this is recorded rather than repaired; it disappears when `getSchema()` does.
 
 `OBJECT_DETAIL_SQL` also strips the `AS MATERIALIZED` hints, which is the opposite of what
 [§3.1](#31-materialized-ctes-for-schema-introspection) wants and for the opposite reason. There the
@@ -478,6 +485,77 @@ describe revenue_by_month: cols=2 idx=0 fk=0 first=month:timestamp with time zon
 
 The four views are `customer_lifetime_value`, `daily_sales`, `order_summary` and
 `product_sales_summary`, which are the ones #710 reported the app never showed.
+
+**`describeObjects()` is the bulk column read, and it is `describeObject()` with the target chosen by
+RELKIND instead of by name (#789).** One statement answers every relation of one kind in one schema,
+with its columns, primary key, foreign keys and indexes. The lineage is `SCHEMA_FULL_SQL` ->
+`OBJECT_DETAIL_SQL` -> `bulkDetailSql()`, and it is a reshaping rather than a new statement on
+purpose: those bodies carry which catalog answers which fact and which schemas are excluded, all of
+it measured, and the shared PK, FK and index CTEs bring their fallback repairs with them.
+
+Why it exists at all: `src/lib/agent/tools.ts` reads the agent's whole column, index and foreign-key
+grounding through `getSchema()`, and the four methods above cannot answer that. The inventory route
+tried, as one `describeObject` per object, and removed it as an N+1 of up to 5000 sequential round
+trips. Measured here on a 200-table schema: **33 ms for one `describeObjects()` against 4,135 ms for
+200 `describeObject()` calls**, both answering the same 600 columns, 200 indexes and 200 foreign keys.
+
+| Argument | Meaning |
+|----------|---------|
+| `container` | the schema, exactly as `listObjects` takes it |
+| `kind` | the declared kind; a kind with no relation behind it answers `{ details: [] }` with no round trip |
+| `limit` | optional; bounds ONE read, which nothing else in the object surface can do |
+
+Three properties it holds to:
+
+1. **One round trip per container and kind, never per object.** The arguments are a container and a
+   kind, the same pair `listObjects` takes, so a caller's fan-out is bounded by the container-and-kind
+   product it already bounds for listing rather than by a second, differently shaped budget. A list of
+   paths was the alternative and was rejected: it reaches a two-level engine as an IN list over
+   tuples, needs a second one for a kind with mixed path depth, and leaves a caller holding 5000 paths
+   to chunk them itself.
+2. **Keyed by `path`.** Every `ObjectDetail.path` is built by `objectPath()`, the same function
+   `listObjects` builds its paths with, because every caller joins the two answers on path. Never a
+   joined name: `"app.orders"` is what `query-generators.ts` used to split back on `.`.
+3. **It reports its own truncation.** `limit + 1` rows are asked for, so a saturated read is
+   distinguishable from an exact one without a second count; the extra row is dropped and
+   `truncated` carries the caller's own limit with the sentence `column read limit reached`. An
+   unbounded call runs without a `LIMIT` clause and can never report truncation. `getSchema()`'s
+   `FILTER (WHERE c.ordinal_position <= 100)` column cap is deliberately NOT carried over, because an
+   unreported bound is the defect this field exists to prevent.
+
+**The `AS MATERIALIZED` hints are stripped here too, and the measurement is the other way round from
+the plan estimate.** `EXPLAIN (ANALYZE)` on `postgres:18` against the seeded `app` schema, ten
+tables: **6.5 ms** stripped against **20.2 ms** with the hints. The plan COST estimate disagrees,
+1301.35 stripped against 1287.54 with them, which is why the decision is recorded from ANALYZE. The
+gap grows with the schema rather than closing, because the hint forbids the planner from pushing
+`$1` into the shared CTEs and it then computes every constraint and index in the database: on a
+200-table schema, **29 ms against 730 ms**. Rebuild that schema with
+
+```sql
+CREATE SCHEMA bulkprobe;
+DO $$ BEGIN FOR i IN 1..200 LOOP EXECUTE format(
+  'CREATE TABLE bulkprobe.t%s (id serial primary key, a text, b int references bulkprobe.t%s(id))',
+  i, greatest(i-1,1)); END LOOP; END $$;
+```
+
+`ORDER BY c.relname` inside the target CTE is what makes a bounded read deterministic, and it is the
+one sort in this file that runs under the SERVER's collation. It decides WHICH objects a bound keeps
+and nothing else: the result is re-sorted by path in TypeScript, segment by segment, and a caller
+joins on path rather than on position.
+
+**Verified against the seed**, `docker/postgres-init/02-sample-data.sql`, on `postgres:18`:
+
+```
+describeObjects(app, table):             10 details, 1 round trip, truncated=undefined
+describeObjects(app, view):              4 details      materialized_view: 1     sequence: 11
+describeObjects(app, function|trigger):  0 details, 0 round trips
+describeObjects(app, table, limit 3):    3 details, truncated={"limit":3,"reason":"column read limit reached"}
+describeObjects(app, table, limit 10):   10 details, truncated=undefined
+```
+
+Every detail path was found in that kind's own `listObjects()` answer, and every column list matched
+`describeObject()` for the same table column for column. Against `getSchema()` the ten tables agree
+on every column, index and foreign key except `app.products.tags`, which is the ARRAY spelling above.
 
 ### 3.2 Schema SQL hoisted to module scope
 
@@ -867,7 +945,7 @@ Common behaviour:
 - Sizes use `pg_total_relation_size` formatted by `formatBytes()`.
 - Display names follow the public/qualified rule from [§3.4](#34-cross-schema-display-names--fk-references).
 
-Four more methods answer the container-aware object model (#789) and are documented in [§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it):
+Five more methods answer the container-aware object model (#789) and are documented in [§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it):
 
 | Method | SQL const | Returns |
 |--------|-----------|---------|
@@ -875,6 +953,7 @@ Four more methods answer the container-aware object model (#789) and are documen
 | `countObjects(container)` | `COUNTS_SQL` | one `KindCount` per declared kind, seeded at `{ count: 0 }` |
 | `listObjects(container, kind)` | `LIST_RELATIONS_SQL[kind]`, `LIST_ROUTINES_SQL`, `LIST_TRIGGERS_SQL` | names, plus `reltuples` and size for relations |
 | `describeObject(path, kind)` | `OBJECT_DETAIL_SQL` | columns, indexes and foreign keys for one object; the KIND decides whether there is a relation to read, so nothing infers it from the name |
+| `describeObjects(container, kind, limit?)` | `BULK_DETAIL_SQL[kind]`, `BULK_DETAIL_SQL_BOUNDED[kind]` | the same four aggregates for EVERY object of that kind in that container, in one round trip, keyed by path, with `truncated` when the caller's `limit` bit |
 
 ---
 

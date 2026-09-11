@@ -4034,7 +4034,31 @@ describe("object surface", () => {
   });
 
   test("satisfies the shared object surface contract", async () => {
-    mockQueryFn = async (sql) => {
+    // The relations each kind holds, one place, because the helper now reads the listing
+    // and the bulk column read against each other: two lists that had to be kept in step
+    // by hand would make a mismatch look like a provider defect.
+    const relations: Record<string, string[]> = {
+      "'v'": ["order_summary", "daily_sales"],
+      "'m'": ["revenue_by_month"],
+      "'r','p'": ["orders", "products"],
+    };
+    const relkindOf = (sql: string) => Object.keys(relations).find((relkinds) => sql.includes(`IN (${relkinds})`))!;
+    mockQueryFn = async (sql, params) => {
+      // Checked FIRST: the bulk statement also joins pg_namespace and also carries an
+      // ORDER BY, so a looser arm below would answer it with a container row.
+      if (sql.includes("described_columns")) {
+        const names = relations[relkindOf(sql)];
+        const bound = params?.[1] as number | undefined;
+        return {
+          rows: (bound === undefined ? names : names.slice(0, bound)).map((name) => ({
+            name,
+            pk_columns: null,
+            columns: [{ name: "id", type: "integer", nullable: false, defaultValue: null }],
+            indexes: null,
+            foreign_keys: null,
+          })),
+        };
+      }
       if (sql.includes("pg_namespace") && sql.includes("ORDER BY")) return { rows: [{ name: "app" }] };
       if (sql.includes("GROUP BY kind")) {
         return {
@@ -4049,9 +4073,9 @@ describe("object surface", () => {
         // One row per relkind, and they must be DISTINCT rows. The shared helper lists
         // every counted kind and requires paths unique across all of them, so one row
         // reused for three kinds is three objects at one address.
-        if (sql.includes("'v'")) return { rows: [{ name: "order_summary", row_count: null, size_bytes: null }] };
-        if (sql.includes("'m'")) return { rows: [{ name: "revenue_by_month", row_count: null, size_bytes: null }] };
-        return { rows: [{ name: "orders", row_count: null, size_bytes: null }] };
+        return {
+          rows: relations[relkindOf(sql)].map((name) => ({ name, row_count: null, size_bytes: null })),
+        };
       }
       return { rows: [] };
     };
@@ -4447,6 +4471,229 @@ describe("PostgreSQL object listing and detail", () => {
     for (const kind of ["table", "view", "materialized_view", "sequence", "function", "procedure", "trigger"]) {
       expect(counts[kind]).toEqual({ unavailable: "column c.relkind does not exist" });
     }
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The fifth provider method (#789): every relation of one kind in one schema, described in
+ * ONE round trip.
+ *
+ * This mock dispatches on the statement the provider built, which ruling 5b names as a
+ * blind spot: a rewrite it cannot see stays green here. So every behaviour these tests
+ * reason about is either asserted against the statement TEXT or measured against a live
+ * postgres:18 in the task report, and the two catalog choices that matter - pg_attribute
+ * rather than information_schema.columns, and no 100-column cap - are pinned by text below.
+ */
+describe("PostgreSQL bulk column read", () => {
+  function makeProvider() {
+    return new PostgresProvider(makePgConfig());
+  }
+
+  /** The rows the bulk statement answers for the two-table fixture, in catalog order. */
+  function bulkRows() {
+    return [
+      {
+        name: "orders",
+        pk_columns: ["id"],
+        columns: [{ name: "id", type: "integer", nullable: false, defaultValue: null }],
+        indexes: [{ name: "orders_pkey", columns: ["id"], unique: true }],
+        foreign_keys: [
+          { columnName: "customer_id", referencedSchema: "app", referencedTable: "customers", referencedColumn: "id" },
+        ],
+      },
+      {
+        name: "audit_log",
+        pk_columns: null,
+        columns: [{ name: "payload", type: "jsonb", nullable: true, defaultValue: null }],
+        indexes: null,
+        foreign_keys: null,
+      },
+    ];
+  }
+
+  test("describes every relation of one kind in one round trip", async () => {
+    const asked: { sql: string; params?: unknown[] }[] = [];
+    mockQueryFn = async (sql, params) => {
+      if (!sql.includes("described_columns")) return { rows: [] };
+      asked.push({ sql, params });
+      return { rows: bulkRows() };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["app"], "table");
+    // ONE statement for the whole folder. A loop over describeObject is the N+1 the
+    // inventory route already refused once.
+    expect(asked).toHaveLength(1);
+    expect(asked[0].params).toEqual(["app"]);
+    // The columns come from pg_attribute, not from information_schema.columns, and that is
+    // measured rather than stylistic: information_schema.columns is defined over relkinds
+    // r, v, f and p only, so it has no row at all for a materialized view or a sequence.
+    expect(asked[0].sql).toContain("pg_catalog.pg_attribute");
+    expect(asked[0].sql).not.toContain("information_schema.columns");
+    // No 100-column cap. getSchema() carries one, unreported, and an unreported bound is
+    // the defect this method's `truncated` exists to avoid.
+    expect(asked[0].sql).not.toContain("ordinal_position <= 100");
+    // Unbounded, so no LIMIT reaches the server and nothing claims truncation.
+    expect(asked[0].sql).not.toContain("LIMIT");
+    expect(batch.truncated).toBeUndefined();
+
+    // Keyed by PATH, built by the same rule listObjects uses, and sorted by it.
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["app", "audit_log"],
+      ["app", "orders"],
+    ]);
+    const orders = batch.details[1];
+    expect(orders.columns).toEqual([
+      { name: "id", type: "integer", nullable: false, isPrimary: true, defaultValue: undefined },
+    ]);
+    expect(orders.indexes).toEqual([{ name: "orders_pkey", columns: ["id"], unique: true }]);
+    expect(orders.foreignKeys).toEqual([
+      { columnName: "customer_id", referencedTable: "app.customers", referencedColumn: "id" },
+    ]);
+    // An object the catalog answered nothing for still describes as three empty lists.
+    expect(batch.details[0]).toEqual({
+      path: ["app", "audit_log"],
+      columns: [{ name: "payload", type: "jsonb", nullable: true, isPrimary: false, defaultValue: undefined }],
+      indexes: [],
+      foreignKeys: [],
+    });
+    await provider.disconnect();
+  });
+
+  test("a bounded read reports its own truncation", async () => {
+    let bound: unknown;
+    mockQueryFn = async (sql, params) => {
+      if (!sql.includes("described_columns")) return { rows: [] };
+      expect(sql).toContain("LIMIT");
+      bound = params?.[1];
+      // The provider asks for one row more than the bound, which is how it can tell a
+      // saturated read from an exact one without a second count.
+      return { rows: bulkRows().slice(0, Number(bound)) };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["app"], "table", 1);
+    expect(bound).toBe(2);
+    expect(batch.details).toHaveLength(1);
+    expect(batch.truncated).toEqual({ limit: 1, reason: "column read limit reached" });
+    await provider.disconnect();
+  });
+
+  test("a bounded read that fits reports nothing", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("described_columns")) return { rows: [] };
+      return { rows: bulkRows() };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    // Two rows against a bound of two: the read reached the end, so marking it would
+    // teach a reader to discount every badge.
+    const batch = await provider.describeObjects(["app"], "table", 2);
+    expect(batch.details).toHaveLength(2);
+    expect(batch.truncated).toBeUndefined();
+    await provider.disconnect();
+  });
+
+  test("a kind with no relation behind it answers empty without asking the server", async () => {
+    let asked = 0;
+    mockQueryFn = async (sql) => {
+      if (sql.includes("described_columns")) asked += 1;
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    for (const kind of ["function", "procedure", "trigger"]) {
+      expect(await provider.describeObjects(["app"], kind)).toEqual({ details: [] });
+    }
+    expect(asked).toBe(0);
+    await provider.disconnect();
+  });
+
+  test("a kind this engine does not declare is refused, not answered empty", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObjects(["app"], "package")).rejects.toThrow(/declares no object kind "package"/);
+    await provider.disconnect();
+  });
+
+  test("a container path that is not one schema is refused, rather than read as empty", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObjects([], "table")).rejects.toThrow(/one schema name/);
+    await provider.disconnect();
+  });
+
+  test("a limit that cannot bound anything is refused, rather than silently ignored", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    // 0 would answer nothing while reporting a truncation nobody asked for, and a
+    // fractional bound reaches the server as a bind it cannot use.
+    await expect(provider.describeObjects(["app"], "table", 0)).rejects.toThrow(/limit must be a positive whole/);
+    await expect(provider.describeObjects(["app"], "table", 1.5)).rejects.toThrow(/limit must be a positive whole/);
+    await provider.disconnect();
+  });
+
+  test("a refusal the fallback chain cannot repair is raised, mapped", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("described_columns")) return { rows: [] };
+      throw new Error("permission denied for schema app");
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObjects(["app"], "table")).rejects.toThrow(/permission denied for schema app/);
+    await provider.disconnect();
+  });
+
+  test("a fork with no constraint_column_usage loses the foreign keys, not the columns", async () => {
+    // Materialize. The bulk read goes through the same fallback chain getSchema() does,
+    // which is the point of reshaping that body rather than writing a new statement.
+    const asked: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("described_columns")) return { rows: [] };
+      asked.push(sql);
+      if (sql.includes("constraint_column_usage")) {
+        throw new Error('relation "information_schema.constraint_column_usage" does not exist');
+      }
+      return { rows: [bulkRows()[0]] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["app"], "table");
+    expect(asked).toHaveLength(2);
+    expect(asked[1]).not.toContain("constraint_column_usage");
+    expect(batch.details[0].columns).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("the paths it answers are the paths listObjects answers", async () => {
+    // The two surfaces are joined on path by every caller, so they are built by one rule
+    // rather than by two that happen to agree.
+    mockQueryFn = async (sql) => {
+      if (sql.includes("described_columns")) {
+        return { rows: [{ name: "orders", pk_columns: null, columns: null, indexes: null, foreign_keys: null }] };
+      }
+      if (sql.includes("relkind")) return { rows: [{ name: "orders", row_count: null, size_bytes: null }] };
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const listed = await provider.listObjects(["app"], "table");
+    const batch = await provider.describeObjects(["app"], "table");
+    expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
     await provider.disconnect();
   });
 });

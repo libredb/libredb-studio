@@ -374,3 +374,171 @@ describe("assertObjectSurface", () => {
     ).rejects.toThrow(/countObjects returned nothing for expected kind "materialized_view"/);
   });
 });
+
+/**
+ * The fifth method (#789). A provider that does not declare `describeObjects` is skipped
+ * entirely, which is why every test above still describes a four-method fake: sixteen
+ * providers are in that state while the bulk read lands one family at a time.
+ */
+describe("assertObjectSurface and the bulk column read", () => {
+  const listed: Record<string, { path: readonly string[]; name: string; kind: string }[]> = {
+    table: [
+      { path: ["app", "orders"], name: "orders", kind: "table" },
+      { path: ["app", "products"], name: "products", kind: "table" },
+    ],
+    view: [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }],
+  };
+
+  function detailsFor(kind: string) {
+    return (listed[kind] ?? []).map((object) => ({
+      path: object.path,
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    }));
+  }
+
+  function bulkProvider(overrides: Record<string, unknown> = {}) {
+    return fakeProvider({
+      listObjects: async (_c: readonly string[], kind: string) => listed[kind] ?? [],
+      describeObjects: async (_c: readonly string[], kind: string, limit?: number) => {
+        const all = detailsFor(kind);
+        if (limit !== undefined && all.length > limit) {
+          return { details: all.slice(0, limit), truncated: { limit, reason: "column read limit reached" } };
+        }
+        return { details: all };
+      },
+      ...overrides,
+    });
+  }
+
+  const expectation = {
+    containers: [["app"]],
+    kinds: { table: 2, view: 4 },
+    sampleObject: { path: ["app", "order_summary"], kind: "view" },
+  };
+
+  test("passes a provider whose bulk read describes exactly what it listed", async () => {
+    await assertObjectSurface(bulkProvider() as never, expectation);
+  });
+
+  // Property 2 of the ruling: keyed by PATH, never by a joined name. A provider that
+  // answers `"app.orders"` matches nothing the listing named, and this is the assertion
+  // that says so rather than letting the caller's join quietly return zero columns.
+  test("rejects a column set for an object listObjects never named", async () => {
+    const provider = bulkProvider({
+      describeObjects: async () => ({
+        details: [{ path: ["app.orders"], columns: [], indexes: [], foreignKeys: [] }],
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /describeObjects\("table"\) answered for \["app.orders"\], which listObjects did not name/,
+    );
+  });
+
+  test("rejects two column sets answering to one path", async () => {
+    const provider = bulkProvider({
+      describeObjects: async (_c: readonly string[], kind: string) => {
+        const all = detailsFor(kind);
+        return { details: kind === "table" ? [all[0], all[0]] : all };
+      },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /describeObjects\("table"\) answered twice for \["app","orders"\]/,
+    );
+  });
+
+  // The vacuity this block would otherwise have: every loop over `details` iterates zero
+  // times for a provider that answers `{ details: [] }` everywhere, so each assertion
+  // above passes and nothing has been checked.
+  test("rejects a provider that describes nothing for any kind it listed", async () => {
+    const provider = bulkProvider({ describeObjects: async () => ({ details: [] }) });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /describeObjects answered no column set for any listed kind/,
+    );
+  });
+
+  // Property 3: it reports its own truncation. A provider that silently returns one of
+  // two objects is the #414 defect, and the only way to see it is to bound a read whose
+  // unbounded answer is already known to be larger.
+  test("rejects a bounded read that stops short and says nothing", async () => {
+    const provider = bulkProvider({
+      describeObjects: async (_c: readonly string[], kind: string, limit?: number) => ({
+        details: limit === undefined ? detailsFor(kind) : detailsFor(kind).slice(0, limit),
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /describeObjects\("table", limit 1\) returned 1 of 2 column sets and reported no truncation/,
+    );
+  });
+
+  test("rejects a bounded read that returns more than the bound it reports", async () => {
+    const provider = bulkProvider({
+      describeObjects: async (_c: readonly string[], kind: string, limit?: number) =>
+        limit === undefined
+          ? { details: detailsFor(kind) }
+          : { details: detailsFor(kind), truncated: { limit, reason: "column read limit reached" } },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /describeObjects\("table"\) reported a limit of 1 and returned 2 column sets/,
+    );
+  });
+
+  test("rejects a truncation carrying no reason a person can read", async () => {
+    const provider = bulkProvider({
+      describeObjects: async (_c: readonly string[], kind: string, limit?: number) => {
+        const all = detailsFor(kind);
+        if (limit !== undefined && all.length > limit) {
+          return { details: all.slice(0, limit), truncated: { limit, reason: "" } };
+        }
+        return { details: all };
+      },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /describeObjects\("table"\) reported truncation with no reason/,
+    );
+  });
+
+  // The bar is on the FIXTURE, and it is stated rather than skipped: with one object of
+  // every kind, a limit of 1 returns everything and the truncation check can only pass.
+  test("rejects a fixture too small to exercise the bound", async () => {
+    const single = { table: [listed.table[0]], view: listed.view };
+    const provider = bulkProvider({
+      listObjects: async (_c: readonly string[], kind: string) => single[kind as keyof typeof single] ?? [],
+      describeObjects: async (_c: readonly string[], kind: string) => ({
+        details: (single[kind as keyof typeof single] ?? []).map((object) => ({
+          path: object.path,
+          columns: [],
+          indexes: [],
+          foreignKeys: [],
+        })),
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /no kind holds two objects, so a bounded read cannot be told from an unbounded one/,
+    );
+  });
+
+  // The container and kind the bulk read is asked for are the ones that were listed, not
+  // a pair the helper composed: a provider answering for a different container would
+  // otherwise satisfy every path check by accident on a single-container fixture.
+  test("asks the bulk read for the same container and kind it listed", async () => {
+    const asked: { container: readonly string[]; kind: string; limit?: number }[] = [];
+    const provider = bulkProvider({
+      describeObjects: async (container: readonly string[], kind: string, limit?: number) => {
+        asked.push({ container, kind, limit });
+        const all = detailsFor(kind);
+        if (limit !== undefined && all.length > limit) {
+          return { details: all.slice(0, limit), truncated: { limit, reason: "column read limit reached" } };
+        }
+        return { details: all };
+      },
+    });
+    await assertObjectSurface(provider as never, expectation);
+    expect(asked).toEqual([
+      { container: ["app"], kind: "table", limit: undefined },
+      { container: ["app"], kind: "view", limit: undefined },
+      { container: ["app"], kind: "table", limit: 1 },
+    ]);
+  });
+});
