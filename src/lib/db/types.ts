@@ -641,6 +641,22 @@ export interface DatabaseProvider {
   getSchemaRelations?(): Promise<TableRelations[]>;
 
   /**
+   * Containers at `parent`, or the top level when `parent` is absent (#789).
+   *
+   * Optional through Phase 1 so providers can land one at a time; the phase that removes
+   * `getSchema` makes all four required. Optional is also what keeps an external
+   * implementer of this published interface compiling, the same reason
+   * `containerLevels` gives above.
+   */
+  listContainers?(parent?: readonly string[]): Promise<Container[]>;
+  /** Per-kind counts for one container. A refused read is `{ unavailable }`, never 0. */
+  countObjects?(container: readonly string[]): Promise<Record<string, KindCount>>;
+  /** Objects of one kind in one container. Names only: columns come from describeObject. */
+  listObjects?(container: readonly string[], kind: string): Promise<DatabaseObject[]>;
+  /** Columns, indexes and foreign keys for one object. */
+  describeObject?(path: readonly string[]): Promise<ObjectDetail>;
+
+  /**
    * Get list of table names
    */
   getTables(): Promise<string[]>;

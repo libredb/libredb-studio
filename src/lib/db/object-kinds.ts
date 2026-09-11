@@ -48,6 +48,14 @@ export function relationKindIds(capabilities: ProviderCapabilities): readonly st
     .map((kind) => kind.id);
 }
 
-export function isCountUnavailable(count: KindCount): count is { unavailable: string } {
+/**
+ * The `readonly` in the predicate is load-bearing, not decoration. A predicate written
+ * `count is { unavailable: string }` narrows the true branch and NOTHING on the false
+ * branch: subtracting a constituent uses the subtype relation, which does check readonly
+ * modifiers, so `{ readonly unavailable: string }` survives the subtraction and every
+ * caller is left holding the whole union with no `.count` on it. Measured against
+ * TypeScript 6.0.3.
+ */
+export function isCountUnavailable(count: KindCount): count is { readonly unavailable: string } {
   return "unavailable" in count;
 }
