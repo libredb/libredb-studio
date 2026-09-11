@@ -1108,13 +1108,36 @@ export interface Container {
 }
 
 /**
- * One object. `path` is the container path plus the name and is NEVER a joined string:
- * the old flat model spelled a qualified name `"sales.orders"`, and
- * `query-generators.ts` split it back on `.`, so a table literally named `a.b` in
- * `public` generated `"a"."b"`. An array cannot be misread that way.
+ * One object. `path` ADDRESSES it and `name` LABELS it, and they are allowed to differ.
+ *
+ * `path` is never a joined string: the old flat model spelled a qualified name
+ * `"sales.orders"`, and `query-generators.ts` split it back on `.`, so a table literally
+ * named `a.b` in `public` generated `"a"."b"`. An array cannot be misread that way.
  */
 export interface DatabaseObject {
+  /**
+   * The container path, then one segment per nesting level down to this object, each
+   * segment being the identifier that is UNIQUE WITHIN ITS PARENT.
+   *
+   * Two consequences, and both are engines this repo serves rather than hypotheticals.
+   * A kind that declares `attachedTo` nests under the object it is attached to, so a
+   * PostgreSQL trigger is `[schema, table, trigger]`: a trigger name is unique per table
+   * and not per schema, and `[schema, trigger]` gives two triggers on two tables one
+   * address. A routine's segment carries the engine's own disambiguated form, so an
+   * overloaded PostgreSQL function is `["app", "order_total(integer)"]`: PostgreSQL
+   * identifies a routine by name AND argument types, and a bare `proname` gives two
+   * overloads one address. Both forms come from the engine
+   * (`pg_get_function_identity_arguments()`), never from string assembly here.
+   */
   readonly path: readonly string[];
+  /**
+   * The display label, which is NOT required to equal the last path segment.
+   *
+   * A tree renders this and addresses with `path`, so the disambiguation the path needs
+   * never has to be read by a person: the overloaded function above shows as
+   * `order_total` while its path stays unique. Where the two would be the same string,
+   * they are, and every relation kind on every engine is in that case.
+   */
   readonly name: string;
   readonly kind: string;
   /** Only where the engine publishes one: Oracle's VALID / INVALID. */

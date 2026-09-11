@@ -404,11 +404,37 @@ the listing statement is repairable by that chain anyway: it has no `AS MATERIAL
 because `schemaExclusion()` carries the `pg_depend` ownership test and
 `withoutExtensionOwnershipTest()` drops only a filter.
 
-**Listing order is applied in TypeScript, not with an `ORDER BY`.** Three different catalogs answer
-the three listings, so three `ORDER BY` clauses would be three chances to disagree; and a SQL sort
-runs under the database's own collation, which is `C` on the seeded fixture and `en_US.UTF-8` on
-plenty of real servers, so one schema would come back in two orders on two servers. One code-point
-sort here is one rule everywhere.
+**`path` addresses, `name` labels, and the two are allowed to differ.** `DatabaseObject.path`'s
+last segment is the identifier that is unique WITHIN ITS PARENT, and two kinds here need more than a
+bare name for that:
+
+| Kind | Path | `name` |
+|---|---|---|
+| relation | `["app", "orders"]` | `orders` |
+| routine | `["app", "order_total(order_id integer)"]` | `order_total` |
+| trigger | `["app", "orders", "orders_stamp_updated_at"]` | `orders_stamp_updated_at` |
+
+A routine's segment comes from `pg_get_function_identity_arguments()` and is never assembled here.
+That function is chosen because its output is exactly the argument list `ALTER FUNCTION` and
+`DROP FUNCTION` accept, so the segment round-trips to the engine that produced it. Measured on
+`postgres:18`, it renders the parameter NAME and mode as well as the type, so the seed's three
+routines come back as `order_total(order_id integer)`, `stamp_updated_at()` and
+`touch_order(IN order_id integer)` rather than as bare type lists. Stripping the names would be
+inventing a form of our own and would lose the DDL-target property.
+
+A trigger nests under its table because `attachedTo: 'table'` says it does, and because a trigger
+name is unique per table and not per schema: `[schema, trigger]` gives two triggers on two tables
+one address. The path builder reads this off the ROW - a `parent` column adds a segment, an
+`identity` column replaces the last one - so the three listings share one rule and no code branches
+on a kind id.
+
+**Listing order is applied in TypeScript, not with an `ORDER BY`, and sorts by PATH.** Three
+different catalogs answer the three listings, so three `ORDER BY` clauses would be three chances to
+disagree; and a SQL sort runs under the database's own collation, which is `C` on the seeded fixture
+and `en_US.UTF-8` on plenty of real servers, so one schema would come back in two orders on two
+servers. Sorting by path rather than by name matters for the same reason the path exists: two
+overloads share a name, so a name sort leaves their order to whatever the catalog happened to
+answer, and sorting by address also groups one table's triggers together.
 
 **Verified against the seed.** `docker/postgres-init/02-sample-data.sql` creates one instance of
 every declared kind in schema `app`, and the provider was run against it end to end:
@@ -418,6 +444,9 @@ containers: [{"path":["app"],...},{"path":["public"],...}]
 counts(app): {"table":{"count":10},"view":{"count":4},"materialized_view":{"count":1},
               "sequence":{"count":11},"function":{"count":2},"procedure":{"count":1},
               "trigger":{"count":1}}
+function: 2 -> [[["app","order_total(order_id integer)"],"order_total"],
+               [["app","stamp_updated_at()"],"stamp_updated_at"]]
+trigger: 1 -> [[["app","orders","orders_stamp_updated_at"],"orders_stamp_updated_at"]]
 describe revenue_by_month: cols=2 idx=0 fk=0 first=month:timestamp with time zone
 ```
 
@@ -1324,9 +1353,17 @@ bun run test:coverage                                      # CI coverage workflo
 The committed tests are mock-based by design. To smoke-test against a real server:
 
 ```bash
-docker run --rm -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:18
-# then point a connection at localhost:5432 (db=postgres, user=postgres) in the Studio UI
+docker compose -f database-compose.yml up -d postgres
+# then point a connection at localhost:5432 (db=libredb_dev, user=postgres, password=postgres)
 ```
+
+That service mounts `docker/postgres-init/`, which creates `libredb_dev`, the `app` schema and one
+instance of every object kind the provider declares
+([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)). The init scripts
+run **only on a fresh data directory**, so a container that already exists has to be recreated
+before a change to them takes effect. Nothing in this repo recreates a container for you, and
+nothing should: a `libredb-postgres` already running on a machine may hold somebody's own
+databases.
 
 The E2E suite (`e2e/`) has been verified against PostgreSQL 18.x.
 
@@ -1372,14 +1409,11 @@ await provider.disconnect();
   active queries is available.
 - **WAL size and checkpoint times require elevated privileges** and are silently omitted otherwise.
 - **Column introspection is capped at 100 columns** per table.
-- **A routine's overloads collapse to one entry.** PostgreSQL identifies a routine by name AND
-  argument types, while `DatabaseObject.path` is `[schema, name]` and has room for a name only, so
-  `listObjects()` selects `DISTINCT proname`. Two overloads of one function are one row rather than
-  two a reader cannot tell apart. The signature is what a Source tab would have to carry.
-- **Two triggers with the same name in one schema share a path.** A trigger name is unique per
-  table, not per schema, and the Phase 1 path for an attached object is `[schema, name]` like every
-  other kind. `attachedTo: 'table'` is the declaration that says where a trigger really hangs; the
-  path does not yet carry the table.
+- **`describeObject()` answers for the last path segment only.** A three-segment path (a trigger)
+  returns three empty lists without asking the server, which is correct and also avoids handing a
+  trigger the columns of a same-named table. A two-segment path whose name happens to look like a
+  routine signature would still be looked up in `pg_class`; a relation would have to be deliberately
+  quoted to contain parentheses for that to collide.
 - **`blocked` on active sessions is always `false`** — lock-wait detection (`pg_locks`) is not yet
   wired in.
 - **Cloud SSL auto-detect does not verify the server certificate.** When SSL is enabled by host

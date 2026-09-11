@@ -45,6 +45,14 @@ services:
       POSTGRES_DB: postgres
     ports:
       - "5432:5432"
+    volumes:
+      # The seed this file's postgres is for. Without it the service came up with an
+      # empty `postgres` database and no `libredb_dev` at all, so the object-tree
+      # fixture in 02-sample-data.sql (#710, #789) was never applied and an acceptance
+      # run measured an absence we had created. The scripts run in alphabetical order
+      # and ONLY on a fresh data directory, so an existing container has to be
+      # recreated before they take effect.
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
   mongodb:
     image: mongo:latest
     container_name: libredb-mongodb

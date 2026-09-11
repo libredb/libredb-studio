@@ -4130,9 +4130,11 @@ describe("PostgreSQL object listing and detail", () => {
     mockQueryFn = async (sql, params) => {
       if (sql.includes("prokind")) {
         expect(params).toEqual(["app", "p"]);
-        return { rows: [{ name: "touch_order" }] };
+        return { rows: [{ name: "touch_order", identity: "touch_order(IN order_id integer)" }] };
       }
-      if (sql.includes("tgisinternal")) return { rows: [{ name: "orders_stamp_updated_at" }] };
+      if (sql.includes("tgisinternal")) {
+        return { rows: [{ name: "orders_stamp_updated_at", parent: "orders" }] };
+      }
       if (sql.includes("relkind")) {
         return {
           rows: [
@@ -4148,18 +4150,21 @@ describe("PostgreSQL object listing and detail", () => {
     const provider = makeProvider();
     await provider.connect();
 
+    // The path carries the engine's own identity form; the label stays readable.
     expect(await provider.listObjects(["app"], "procedure")).toEqual([
       {
-        path: ["app", "touch_order"],
+        path: ["app", "touch_order(IN order_id integer)"],
         name: "touch_order",
         kind: "procedure",
         rowCount: undefined,
         sizeBytes: undefined,
       },
     ]);
+    // attachedTo: "table", so the table is a path segment. A trigger name is unique per
+    // table, not per schema.
     expect(await provider.listObjects(["app"], "trigger")).toEqual([
       {
-        path: ["app", "orders_stamp_updated_at"],
+        path: ["app", "orders", "orders_stamp_updated_at"],
         name: "orders_stamp_updated_at",
         kind: "trigger",
         rowCount: undefined,
@@ -4289,6 +4294,28 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.disconnect();
   });
 
+  test("an attached object describes as empty without asking the server", async () => {
+    // Not an optimisation. The detail statement keys the LAST segment against
+    // pg_class.relname, so a trigger named `orders` on table `customers` would have been
+    // handed app.orders's columns as if they were its own.
+    let asked = 0;
+    mockQueryFn = async (sql) => {
+      if (sql.includes("object_columns")) asked += 1;
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect(await provider.describeObject(["app", "customers", "orders"])).toEqual({
+      path: ["app", "customers", "orders"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    expect(asked).toBe(0);
+    await provider.disconnect();
+  });
+
   test("a detail statement that returns no row at all is a failure, not an empty object", async () => {
     // OBJECT_DETAIL_SQL's aggregate has no GROUP BY, so any server that ran it answers
     // exactly one row. Zero means the statement that ran was not the one we wrote.
@@ -4306,6 +4333,7 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.connect();
 
     await expect(provider.describeObject(["app"])).rejects.toThrow(/\[schema, name\]/);
+    await expect(provider.describeObject(["a", "b", "c", "d"])).rejects.toThrow(/\[schema, parent, name\]/);
     await provider.disconnect();
   });
 

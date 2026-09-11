@@ -96,14 +96,19 @@ interface KindCountRow {
 }
 
 /**
- * One row of the three listing statements. Only the relation listing selects
- * `row_count` and `size_bytes`; the routine and trigger listings answer a name alone,
- * which is why both are optional rather than nullable.
+ * One row of the three listing statements, which select different columns: the relation
+ * listing adds `row_count` and `size_bytes`, the routine listing adds `identity`, and the
+ * trigger listing adds `parent`. Every one of those is optional here because the column
+ * is absent from the other two statements, not because its value can be null.
  */
 interface ObjectRow {
   name: string;
   row_count?: string | null;
   size_bytes?: string | null;
+  /** The engine's disambiguated form, used as the last path segment where it differs. */
+  identity?: string;
+  /** The object this one hangs off, for a kind that declares `attachedTo`. */
+  parent?: string;
 }
 
 /** The single row `OBJECT_DETAIL_SQL` always returns. */
@@ -640,19 +645,33 @@ const LIST_RELATIONS_SQL_WITHOUT_SIZE: Record<string, string> = Object.fromEntri
 // The prokind character each routine kind id is spelled with on the wire.
 const PROKIND_BY_KIND: Record<string, string> = { function: "f", procedure: "p" };
 
-// DISTINCT, because PostgreSQL identifies a routine by name AND argument types while
-// `DatabaseObject.path` has room for a name only. Two overloads of `app.order_total`
-// would otherwise be two rows a reader cannot tell apart and no path can address
-// separately, so they collapse to the one entry the path model can carry. The signature
-// is what Phase 2's Source tab has to show.
+// PostgreSQL identifies a routine by name AND argument types, so `proname` alone is not
+// an address: two overloads of `app.order_total` would be two rows nothing can tell
+// apart. `identity` is what the path carries and `name` is what a person reads, which
+// `DatabaseObject` now says are allowed to differ.
+//
+// The signature comes from `pg_get_function_identity_arguments()` rather than from
+// anything assembled here, and that function is chosen because its output is exactly the
+// argument list `ALTER FUNCTION` and `DROP FUNCTION` accept - so the segment round-trips
+// back to the engine that produced it. Measured on postgres:18: it renders the parameter
+// NAME and mode too, so the three routines in the seed come back as
+// `order_total(order_id integer)`, `stamp_updated_at()` and
+// `touch_order(IN order_id integer)`, not as the bare type lists a reader might expect.
+// Stripping the names would be assembling a form of our own, and would lose the property
+// that makes this segment usable as a DDL target.
 const LIST_ROUTINES_SQL = `
-        SELECT DISTINCT p.proname AS name
+        SELECT
+          p.proname AS name,
+          p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS identity
         FROM pg_catalog.pg_proc p
         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = $1 AND p.prokind = $2`;
 
+// A trigger name is unique per TABLE, not per schema - two tables in one schema may each
+// carry a trigger called `stamp_updated_at` - so the table is a path segment and not
+// decoration. That is the same nesting the `attachedTo: "table"` declaration states.
 const LIST_TRIGGERS_SQL = `
-        SELECT t.tgname AS name
+        SELECT t.tgname AS name, c.relname AS parent
         FROM pg_catalog.pg_trigger t
         JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -791,6 +810,26 @@ function objectListingStatement(
   if (prokind !== undefined) return { sql: LIST_ROUTINES_SQL, params: [schema, prokind] };
   if (kind === "trigger") return { sql: LIST_TRIGGERS_SQL, params: [schema] };
   return undefined;
+}
+
+/**
+ * Where one listed object is addressed, which is not always where it is labelled.
+ *
+ * Built from the ROW rather than from the kind id, so the three listing statements share
+ * one rule: a `parent` column adds a nesting segment, and an `identity` column replaces
+ * the last one. `src/lib/db` does not branch on the type id, and it should not branch on
+ * the kind id where the data already says what to do either.
+ *
+ * `DatabaseObject.path` is the container path plus one segment per nesting level, each
+ * unique within its parent, and `name` is only the label - so a trigger is
+ * `[schema, table, trigger]` and an overloaded routine's last segment carries its
+ * signature while its name does not.
+ */
+function objectPath(schema: string, row: ObjectRow): string[] {
+  const segments = [schema];
+  if (row.parent !== undefined) segments.push(row.parent);
+  segments.push(row.identity ?? row.name);
+  return segments;
 }
 
 /**
@@ -2069,20 +2108,28 @@ export class PostgresProvider extends SQLBaseProvider {
       const result = await this.queryListing(client, statement);
       return result.rows
         .map((row: ObjectRow) => ({
-          path: [schema, row.name],
+          path: objectPath(schema, row),
           name: row.name,
           kind,
           rowCount: estimatedRowCount(row.row_count),
           sizeBytes: measuredSizeBytes(row.size_bytes),
         }))
-        .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+        .sort((left, right) => {
+          // By PATH, not by name: two overloads of one routine share a name, so a
+          // name sort leaves their order up to whatever the catalog happened to
+          // answer. Sorting by the address also groups a table's triggers together.
+          const leftKey = JSON.stringify(left.path);
+          const rightKey = JSON.stringify(right.path);
+          return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+        });
     } finally {
       client.release();
     }
   }
 
   /**
-   * Columns, indexes and foreign keys for one object, addressed as `[schema, name]`.
+   * Columns, indexes and foreign keys for one object, addressed as `[schema, name]` or,
+   * for a kind that declares `attachedTo`, as `[schema, parent, name]`.
    *
    * A kind that has none of the three - a sequence, a routine, a trigger - answers three
    * empty arrays rather than an error, because having no columns is a true fact about
@@ -2091,11 +2138,23 @@ export class PostgresProvider extends SQLBaseProvider {
    * IS a failed read: `OBJECT_DETAIL_SQL`'s aggregate has no GROUP BY, so on any server
    * that ran it there is exactly one row, and zero means the fallback chain rewrote it
    * into something else.
+   *
+   * The three-segment path answers those empty arrays WITHOUT asking the server, and that
+   * is a correctness fix rather than a shortcut. An attached object has no columns of its
+   * own, and the query keys on the last segment against `pg_class.relname` - so a trigger
+   * named `orders` on table `customers` would otherwise have been handed
+   * `app.orders`'s 23 columns as if they were its own.
    */
   public async describeObject(path: readonly string[]): Promise<ObjectDetail> {
     this.ensureConnected();
-    if (path.length !== 2) {
-      throw new QueryError(`A PostgreSQL object path is [schema, name], received ${JSON.stringify(path)}`, "postgres");
+    if (path.length < 2 || path.length > 3) {
+      throw new QueryError(
+        `A PostgreSQL object path is [schema, name] or [schema, parent, name], received ${JSON.stringify(path)}`,
+        "postgres",
+      );
+    }
+    if (path.length === 3) {
+      return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
     }
 
     const client = await this.pool!.connect();
