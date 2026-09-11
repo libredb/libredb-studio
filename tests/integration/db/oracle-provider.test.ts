@@ -2807,7 +2807,7 @@ describe("Oracle object listing and detail", () => {
     // Not [] and not a zero count: binding undefined to :1 would answer an owner holding
     // nothing, which is indistinguishable from a real empty owner.
     await expect(provider.countObjects([])).rejects.toThrow(QueryError);
-    await expect(provider.listObjects(["CATALOG", "APP"], "table")).rejects.toThrow(/one owner name/);
+    await expect(provider.listObjects(["CATALOG", "APP"], "table")).rejects.toThrow(/container path is \[schema\]/);
     await provider.disconnect();
   });
 
@@ -2832,14 +2832,17 @@ describe("Oracle object listing and detail", () => {
     await provider.disconnect();
   });
 
-  test("a listing reads the owner it was asked for, not the connecting user", async () => {
-    // The whole point of #765's second half. Every other read in this provider is scoped
-    // to OWNER = <connecting user>, so a listing that ignored its argument would still
-    // look correct against a single-owner fixture.
+  test("every owner-bound read uses the container it was asked for, not the connecting user", async () => {
+    // The whole point of #765's second half, and the regression it must never take again.
+    // All THREE owner-bound methods are pinned here, because each one is a separate place
+    // `this.config.user.toUpperCase()` can creep back into: pinning only the listing left
+    // that substitution in countObjects and describeObject passing the whole suite. Every
+    // container below is deliberately NOT the connecting user, so a read that ignored its
+    // argument cannot look correct by coincidence.
     const bound: unknown[][] = [];
     mockExecuteFn = async (_sql: string, params?: unknown[]) => {
       bound.push(params ?? []);
-      return { rows: [{ NAME: "REPORT_DAILY", STATUS: "VALID" }] };
+      return { rows: [{ NAME: "REPORT_DAILY", STATUS: "VALID", COLUMN_NAME: "REPORT_DAY", DATA_TYPE: "DATE" }] };
     };
     const provider = makeProvider({ user: "app" });
     await provider.connect();
@@ -2849,6 +2852,16 @@ describe("Oracle object listing and detail", () => {
     expect(objects).toEqual([
       { path: ["REPORTING", "REPORT_DAILY"], name: "REPORT_DAILY", kind: "table", status: "VALID" },
     ]);
+
+    bound.length = 0;
+    await provider.countObjects(["REPORTING"]);
+    expect(bound).toHaveLength(1);
+    expect(bound[0]).toEqual(["REPORTING"]);
+
+    bound.length = 0;
+    await provider.describeObject(["REPORTING", "REPORT_DAILY"], "table");
+    expect(bound).toHaveLength(4);
+    for (const params of bound) expect(params).toEqual(["REPORTING", "REPORT_DAILY"]);
     await provider.disconnect();
   });
 
@@ -2880,8 +2893,9 @@ describe("Oracle object listing and detail", () => {
     expect(bound.get("procedure")?.slice(1)).toEqual(["PROCEDURE"]);
     expect(bound.get("function")?.slice(1)).toEqual(["FUNCTION"]);
     expect(bound.get("package")?.slice(1)).toEqual(["PACKAGE", "PACKAGE BODY"]);
-    // The trigger listing reads ALL_TRIGGERS, which is keyed by owner alone.
-    expect(bound.get("trigger")).toEqual(["APP"]);
+    // The trigger listing is ALL_OBJECTS too, so it binds its dictionary spelling like the
+    // other eight rather than naming 'TRIGGER' in its own text.
+    expect(bound.get("trigger")?.slice(1)).toEqual(["TRIGGER"]);
     expect(bound.size).toBe(declared.length);
     await provider.disconnect();
   });
@@ -2906,6 +2920,7 @@ describe("Oracle object listing and detail", () => {
     // window only NOTICES the twin and the filter is what drops it. Oracle executes them,
     // so this is all a unit test can see; the live acceptance run measures the effect
     // (the fixture owner holds three ALL_OBJECTS TABLE rows and two tables, badge 2).
+    expect(counted).toContain("CASE WHEN o.OBJECT_TYPE = 'MATERIALIZED VIEW'");
     expect(counted).toContain("OVER (PARTITION BY o.OBJECT_NAME)");
     expect(counted).toContain("WHERE NOT (KIND = 'TABLE' AND MV_TWIN > 0)");
     // The IN list is derived from the same vocabulary table the listings bind from, so it
@@ -2931,8 +2946,8 @@ describe("Oracle object listing and detail", () => {
     // The rule needs no second dictionary view: measured on 21c XE, a TABLE and a
     // MATERIALIZED VIEW cannot share a name in one owner (ORA-00955), so a same-named
     // pair is always the materialized view's own container.
-    expect(listed).toContain("MATERIALIZED VIEW");
     expect(listed).toContain("NOT EXISTS");
+    expect(listed).toContain("m.OBJECT_TYPE = 'MATERIALIZED VIEW'");
     await provider.disconnect();
   });
 
@@ -2945,9 +2960,14 @@ describe("Oracle object listing and detail", () => {
           // ALL_TRIGGERS separates OWNER from TABLE_OWNER, and a trigger on another
           // owner's table is a real case. It stays in the container that OWNS it.
           { NAME: "REPORT_DAILY_TRG", PARENT: "REPORT_DAILY", STATUS: "VALID" },
-          // A SCHEMA or DATABASE trigger has no base object at all: measured, TABLE_NAME
-          // is NULL and BASE_OBJECT_TYPE is SCHEMA. It hangs off the container itself.
+          // Two rows with no parent, for the TWO reasons the outer join answers NULL, and
+          // they are deliberately indistinguishable here. A SCHEMA or DATABASE trigger has
+          // no base object at all (measured: TABLE_NAME NULL, BASE_OBJECT_TYPE SCHEMA),
+          // and a trigger whose base table this user cannot see has no ALL_TRIGGERS row to
+          // read one from. Both hang off the container, and both are LISTED, which is what
+          // keeps the folder equal to the badge.
           { NAME: "APP_LOGON_TRG", PARENT: null, STATUS: "VALID" },
+          { NAME: "APP_HIDDEN_BASE_TRG", PARENT: null, STATUS: "VALID" },
         ],
       };
     };
@@ -2955,10 +2975,39 @@ describe("Oracle object listing and detail", () => {
     await provider.connect();
 
     expect(await provider.listObjects(["APP"], "trigger")).toEqual([
+      { path: ["APP", "APP_HIDDEN_BASE_TRG"], name: "APP_HIDDEN_BASE_TRG", kind: "trigger", status: "VALID" },
       { path: ["APP", "APP_LOGON_TRG"], name: "APP_LOGON_TRG", kind: "trigger", status: "VALID" },
       { path: ["APP", "APP_ORDERS", "APP_ORDERS_TRG"], name: "APP_ORDERS_TRG", kind: "trigger", status: "VALID" },
       { path: ["APP", "REPORT_DAILY", "REPORT_DAILY_TRG"], name: "REPORT_DAILY_TRG", kind: "trigger", status: "VALID" },
     ]);
+    await provider.disconnect();
+  });
+
+  test("the trigger count and the trigger listing read one catalog, so the badge cannot outrun the folder", async () => {
+    // Standing ruling 5f: the listing must contain exactly what the count counted. The
+    // count reads ALL_OBJECTS, and ALL_TRIGGERS is exposed by BASE-TABLE accessibility
+    // rather than by ownership, so an INNER join to it silently drops triggers the count
+    // already counted. On the owner this task unlocks - somebody else's - the badge would
+    // then say 3 and the folder open with fewer, which is the defect ruling 5f names.
+    const statements = new Map<string, string>();
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      statements.set(sql.includes("GROUP BY") ? "count" : String((params ?? [])[1]), sql);
+      return { rows: [] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+    await provider.countObjects(["REPORTING"]);
+    await provider.listObjects(["REPORTING"], "trigger");
+
+    const counted = statements.get("count") ?? "";
+    const listed = statements.get("TRIGGER") ?? "";
+    expect(counted).toContain("FROM ALL_OBJECTS");
+    // The same spine, so the two reads see the same population.
+    expect(listed).toContain("FROM ALL_OBJECTS");
+    expect(listed).not.toContain("FROM ALL_TRIGGERS");
+    // ALL_TRIGGERS still supplies the parent segment, and only that, outer-joined so a
+    // missing row costs the segment rather than the object.
+    expect(listed).toContain("LEFT JOIN ALL_TRIGGERS");
     await provider.disconnect();
   });
 
@@ -3085,24 +3134,27 @@ describe("Oracle object listing and detail", () => {
       if (sql.includes("'R'")) {
         return {
           rows: [
-            { COLUMN_NAME: "CUSTOMER_ID", REF_OWNER: "APP", REF_TABLE: "APP_CUSTOMERS", REF_COLUMN: "ID" },
             { COLUMN_NAME: "REGION_ID", REF_OWNER: "REPORTING", REF_TABLE: "REGIONS", REF_COLUMN: "ID" },
+            { COLUMN_NAME: "CUSTOMER_ID", REF_OWNER: "APP", REF_TABLE: "APP_CUSTOMERS", REF_COLUMN: "ID" },
           ],
         };
       }
       return {
         rows: [
-          { INDEX_NAME: "APP_ORDERS_PK", UNIQUENESS: "UNIQUE", COLUMN_NAME: "ID" },
-          { INDEX_NAME: "APP_ORDERS_TOTAL_IX", UNIQUENESS: "NONUNIQUE", COLUMN_NAME: "TOTAL" },
-          { INDEX_NAME: "APP_ORDERS_TOTAL_IX", UNIQUENESS: "NONUNIQUE", COLUMN_NAME: "NOTE" },
+          { INDEX_NAME: "REPORT_DAILY_PK", UNIQUENESS: "UNIQUE", COLUMN_NAME: "ID" },
+          { INDEX_NAME: "REPORT_DAILY_TOTAL_IX", UNIQUENESS: "NONUNIQUE", COLUMN_NAME: "TOTAL" },
+          { INDEX_NAME: "REPORT_DAILY_TOTAL_IX", UNIQUENESS: "NONUNIQUE", COLUMN_NAME: "NOTE" },
         ],
       };
     };
     const provider = makeProvider({ user: "app" });
     await provider.connect();
 
-    const detail = await provider.describeObject(["APP", "APP_ORDERS"], "table");
-    expect(detail.path).toEqual(["APP", "APP_ORDERS"]);
+    // The object is in REPORTING and the session is APP, so every bind below has to come
+    // from the PATH. With the container equal to the connecting user upper-cased, swapping
+    // the binds for `this.config.user.toUpperCase()` leaves this test green.
+    const detail = await provider.describeObject(["REPORTING", "REPORT_DAILY"], "table");
+    expect(detail.path).toEqual(["REPORTING", "REPORT_DAILY"]);
     expect(detail.columns).toEqual([
       { name: "ID", type: "NUMBER", nullable: false, isPrimary: true, defaultValue: undefined },
       // DATA_DEFAULT is a LONG carrying the source text with its trailing whitespace.
@@ -3110,19 +3162,21 @@ describe("Oracle object listing and detail", () => {
       { name: "NOTE", type: "VARCHAR2", nullable: true, isPrimary: false, defaultValue: undefined },
     ]);
     expect(detail.indexes).toEqual([
-      { name: "APP_ORDERS_PK", columns: ["ID"], unique: true },
-      { name: "APP_ORDERS_TOTAL_IX", columns: ["TOTAL", "NOTE"], unique: false },
+      { name: "REPORT_DAILY_PK", columns: ["ID"], unique: true },
+      { name: "REPORT_DAILY_TOTAL_IX", columns: ["TOTAL", "NOTE"], unique: false },
     ]);
     // Same spelling getSchema() uses for a same-owner reference; a reference into another
-    // owner is qualified, because the bare name would address the wrong table.
+    // owner is qualified, because the bare name would address the wrong table. "Same owner"
+    // is the OBJECT's owner and not the session's, which is why the bare one here is the
+    // REPORTING reference while the APP one is qualified.
     expect(detail.foreignKeys).toEqual([
-      { columnName: "CUSTOMER_ID", referencedTable: "APP_CUSTOMERS", referencedColumn: "ID" },
-      { columnName: "REGION_ID", referencedTable: "REPORTING.REGIONS", referencedColumn: "ID" },
+      { columnName: "REGION_ID", referencedTable: "REGIONS", referencedColumn: "ID" },
+      { columnName: "CUSTOMER_ID", referencedTable: "APP.APP_CUSTOMERS", referencedColumn: "ID" },
     ]);
     // #765 again, one level down: every detail read is narrowed to ONE owner and ONE
     // object. The five reads getSchema() issues are each scoped to the owner alone.
     expect(bound).toHaveLength(4);
-    for (const params of bound) expect(params).toEqual(["APP", "APP_ORDERS"]);
+    for (const params of bound) expect(params).toEqual(["REPORTING", "REPORT_DAILY"]);
     await provider.disconnect();
   });
 

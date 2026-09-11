@@ -872,7 +872,7 @@ the phase that removes `getSchema()` is #789's last task.
 | `package` | `group` | `PACKAGE` (+ `PACKAGE BODY`) | `ALL_OBJECTS`, two rows collapsed | `childKinds: ['procedure', 'function']` |
 | `procedure` | `routine` | `PROCEDURE` | `ALL_OBJECTS` | |
 | `function` | `routine` | `FUNCTION` | `ALL_OBJECTS` | |
-| `trigger` | `attached` | `TRIGGER` | `ALL_TRIGGERS` joined back to `ALL_OBJECTS` | `attachedTo: 'table'` |
+| `trigger` | `attached` | `TRIGGER` | `ALL_OBJECTS`, with `ALL_TRIGGERS` OUTER joined for the parent | `attachedTo: 'table'` |
 
 `containerLevels` is one level, `schema`, and on Oracle that level IS a user: a schema is not a
 thing created beside a user, it is what a user owns. No `catalog` level is declared, because a pool
@@ -921,6 +921,14 @@ this schema Oracle's", so no hand-written name denylist exists here and none sho
 measured on Oracle Database 21c XE, **29 of the 33 rows in `ALL_USERS` are Oracle's own**, and a
 list written by hand would be wrong on the next release. `ALL_USERS` itself is not privilege
 filtered, so every user sees every owner.
+
+**The cost of that filter is a known limitation, and `SYSTEM` is the name to know.** An
+Oracle-maintained owner other than the session user is not in the container list at all, so it
+cannot be browsed, and `SYSTEM` is one of them while genuinely holding user-visible objects:
+measured, the fixture's `APP` user counts 4 tables and 1 view in `SYSTEM`. `MDSYS` and `XDB` are in
+the same position. This is the same trade PostgreSQL's system-schema exclusion makes, for the same
+reason, and it is why the session's own owner is exempted: connecting as `SYSTEM` still browses
+`SYSTEM`.
 
 The session's own owner is kept whatever `ORACLE_MAINTAINED` says
 (`OR USERNAME = SYS_CONTEXT('USERENV','SESSION_USER')`), because connecting as `SYSTEM` must not
@@ -1035,12 +1043,12 @@ Triggers are the one kind in a different namespace, and that is measured too:
 `CREATE TRIGGER app.app_orders ... ON app.app_orders` succeeds beside the table of that name. It
 costs nothing, because a trigger's path has three segments where a table's has two.
 
-#### Where a trigger hangs, including the two cases that are not a table
+#### Where a trigger hangs, including the cases that are not a table
 
 `attachedTo: 'table'`, so a trigger is `[owner, table, trigger]` and not `[owner, trigger]`. Oracle
 would in fact allow the shorter form, since a trigger name is unique within its owner rather than
 within its table, but the nesting is what the tree renders and it is the same rule every engine in
-#789 follows. Three measured cases:
+#789 follows. Four cases, all measured:
 
 - **Base table in another owner.** `ALL_TRIGGERS` separates `OWNER` from `TABLE_OWNER`, and a
   trigger `APP` owns on `REPORTING`'s table is real. It is listed in **APP's** container, because
@@ -1052,16 +1060,30 @@ within its table, but the nesting is what the tree renders and it is the same ru
 - **Base object is a view.** An `INSTEAD OF` trigger gives `BASE_OBJECT_TYPE = 'VIEW'` with the view
   in `TABLE_NAME`, so it nests under the view. The `attachedTo` declaration names one kind and the
   path names the object, which is what addresses it.
+- **The base table is invisible to this user.** `ALL_TRIGGERS` is outer joined, so there is no row
+  to read a parent from and the trigger lists at two segments, exactly like the case below. The two
+  are deliberately indistinguishable: what the tree needs is an address, and the object is counted
+  either way.
 - **No base object at all.** A `SCHEMA` or `DATABASE` trigger (`AFTER LOGON ON SCHEMA`) leaves
   `TABLE_NAME` NULL. It hangs off the container itself, so its path is two segments,
   `['APP', 'APP_LOGON_TRG']`. Filtering it out of the listing instead would have made the folder
   disagree with the badge, since the count comes from `ALL_OBJECTS`, which counts every trigger.
   `describeObject()` accepts both depths for an attached kind for the same reason.
 
-Counting and listing read two different dictionary views for this kind, so on an owner whose
-triggers you can only partly see the badge and the folder can differ by a row. The shared
-conformance helper deliberately does not assert `list.length === count` for that reason: they are
-two reads at two instants.
+**The count and the listing read ONE catalog, and for triggers that took fixing.** Standing ruling
+5f requires the listing to contain exactly what the count counted, and the count reads
+`ALL_OBJECTS`. The two dictionary views do not expose the same population, which is measured rather
+than argued: a user holding nothing but `CREATE SESSION` and one `SELECT` grant sees **83 rows in
+`ALL_TRIGGERS` and 0 in `ALL_OBJECTS`**, because `ALL_OBJECTS` answers by privilege on the object
+while `ALL_TRIGGERS` also answers by accessibility of the BASE TABLE. Driving the listing from
+`ALL_TRIGGERS` with an inner join therefore computes an INTERSECTION, which can only ever be a
+SUBSET of what the badge counted: the badge can outrun the folder, never the reverse. On 21c XE no
+reader could be constructed where that subset was strictly smaller, so the divergence is structural
+rather than exhibited, and the outer join removes the question at no cost. Verified live on the
+fixture: 4 counted, 4 listed.
+
+The shared conformance helper still does not assert `list.length === count`, because a count and a
+listing remain two reads at two instants against a live engine.
 
 #### `describeObject()` reads four statements, each bound to one owner and one object
 
@@ -1070,6 +1092,11 @@ Columns from `ALL_TAB_COLUMNS`, the primary key and the foreign keys from
 sequence on one pooled connection, because a single `oracledb` connection serialises its statements
 anyway. `ALL_TAB_COLUMNS` answers for a view and for a materialized view's container table as well
 as for a table, so none of the three relation kinds needs a dictionary of its own.
+
+All four bind `[path[0], path[path.length - 1]]`. The object's own name is the LAST segment and
+never `path[1]`: the two are the same string on a one-level engine like this one and different on
+the five two-level engines that copy this file, where `path[1]` is a container segment and the read
+would narrow to nothing.
 
 The KIND decides whether they run at all: only the three kinds whose `role` is `relation` have
 columns, so a package, a routine, a synonym, a sequence and a trigger answer three empty arrays
@@ -1617,6 +1644,12 @@ the object tree's own routes under `POST /api/db/objects/*`
   ([§7.2](#72-when-the-connection-count-is-not-measurable)). `getPerformanceMetrics()` reports only the cache-hit ratio (no QPS,
   deadlocks, or buffer-pool usage), and **omits even that** when `V$SYSSTAT` is unreadable rather
   than substituting a figure — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable).
+- **An Oracle-maintained owner other than the session user is not browsable**, `SYSTEM`, `MDSYS`
+  and `XDB` included, because `listContainers()` filters on `ALL_USERS.ORACLE_MAINTAINED`. Measured:
+  the fixture's `APP` user can see 4 tables and 1 view in `SYSTEM`, and none of them is reachable in
+  the tree. Same trade as PostgreSQL's system-schema exclusion, and the session's own owner is
+  exempted so connecting as `SYSTEM` still browses `SYSTEM`
+  ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)).
 - **A package's members are not browsable.** The `package` kind declares
   `childKinds: ['procedure', 'function']`, which is true of the engine, but Phase 1's provider
   surface is container-scoped end to end and nothing lists an object's children. Phase 2 owns it.

@@ -248,6 +248,15 @@ const ORACLE_OBJECT_TYPES: Record<string, { dictionary: string; metadata: string
  */
 const PACKAGE_BODY_OBJECT_TYPE = { dictionary: "PACKAGE BODY", metadata: "PACKAGE_BODY" };
 
+/**
+ * The one dictionary spelling a statement needs inside its TEXT rather than as a bind.
+ *
+ * Two predicates name a type that is not the type being asked for: the materialized-view
+ * container rule in `COUNTS_SQL` and in `LIST_TABLES_SQL`. Derived from the table above so
+ * it cannot drift from the spelling every other read binds.
+ */
+const MATERIALIZED_VIEW_TYPE = ORACLE_OBJECT_TYPES.materialized_view.dictionary;
+
 /** The kind id each dictionary spelling answers for. Built from the table, never typed twice. */
 const KIND_BY_DICTIONARY_TYPE: Record<string, string> = Object.fromEntries(
   Object.entries(ORACLE_OBJECT_TYPES).map(([kind, type]) => [type.dictionary, kind]),
@@ -326,7 +335,7 @@ const CONTAINERS_SQL_WITHOUT_ORACLE_MAINTAINED = `SELECT USERNAME AS NAME,
 const COUNTS_SQL = `SELECT KIND, COUNT(*) AS N
          FROM (
            SELECT o.OBJECT_TYPE AS KIND,
-                  COUNT(CASE WHEN o.OBJECT_TYPE = 'MATERIALIZED VIEW' THEN 1 END)
+                  COUNT(CASE WHEN o.OBJECT_TYPE = '${MATERIALIZED_VIEW_TYPE}' THEN 1 END)
                     OVER (PARTITION BY o.OBJECT_NAME) AS MV_TWIN
            FROM ALL_OBJECTS o
            WHERE o.OWNER = :1 AND o.OBJECT_TYPE IN (${COUNTED_OBJECT_TYPES})
@@ -357,7 +366,7 @@ const LIST_TABLES_SQL = `SELECT o.OBJECT_NAME AS NAME, o.STATUS
            AND NOT EXISTS (
              SELECT 1 FROM ALL_OBJECTS m
              WHERE m.OWNER = o.OWNER AND m.OBJECT_NAME = o.OBJECT_NAME
-               AND m.OBJECT_TYPE = 'MATERIALIZED VIEW'
+               AND m.OBJECT_TYPE = '${MATERIALIZED_VIEW_TYPE}'
            )`;
 
 /**
@@ -373,22 +382,37 @@ const LIST_PACKAGES_SQL = `SELECT OBJECT_NAME AS NAME, OBJECT_TYPE, STATUS
 /**
  * The owner's triggers, each with the object it fires on.
  *
- * `TABLE_NAME` is the parent segment and not decoration, which is what the
- * `attachedTo: "table"` declaration states. Two measured cases shape this statement.
- * `TABLE_OWNER` can differ from `OWNER` - a trigger APP owns on REPORTING's table is real
- * and is listed here, in APP's container, because APP is what owns it. And a SCHEMA or
- * DATABASE trigger has no base object at all: measured on 21c XE, `AFTER LOGON ON SCHEMA`
- * leaves `TABLE_NAME` NULL, so that trigger hangs off the container itself.
+ * `ALL_OBJECTS` is the SPINE and `ALL_TRIGGERS` is OUTER joined, which is the whole point
+ * of this statement's shape rather than a stylistic choice. `countObjects` counts triggers
+ * from `ALL_OBJECTS`, and standing ruling 5f (#789) requires this listing to contain
+ * exactly what that count counted. The two views do not expose the same population:
+ * `ALL_OBJECTS` answers by privilege on the OBJECT, while `ALL_TRIGGERS` also answers by
+ * accessibility of the BASE TABLE. Driving the listing from `ALL_TRIGGERS` with an inner
+ * join therefore drops triggers the badge has already counted, and on somebody else's
+ * owner - exactly the case this task unlocks - the badge says 3 and the folder opens with
+ * fewer.
  *
- * The join to `ALL_OBJECTS` is what makes the status mean the same thing here as it does
- * for every other kind. It cannot multiply rows: a trigger name is unique within its
- * owner, and `ALL_OBJECTS` holds one TRIGGER row per name.
+ * So `ALL_TRIGGERS` supplies one thing, the parent segment, and a missing row there costs
+ * that segment rather than the object. `TABLE_NAME` is the parent and not decoration,
+ * which is what the `attachedTo: "table"` declaration states, and it arrives NULL for two
+ * different reasons that are deliberately indistinguishable here: a SCHEMA or DATABASE
+ * trigger has no base object at all (measured on 21c XE, `AFTER LOGON ON SCHEMA` leaves
+ * `TABLE_NAME` NULL), and a trigger whose base table this user cannot see has no row to
+ * read one from. Both hang off the container, which ruling 5f allows.
+ *
+ * `TABLE_OWNER` can differ from `OWNER`: a trigger APP owns on REPORTING's table is real
+ * and is listed here, in APP's container, because APP is what owns it.
+ *
+ * `STATUS` stays `ALL_OBJECTS`'s VALID / INVALID, the same fact every other kind carries.
+ * `ALL_TRIGGERS.STATUS` says ENABLED / DISABLED, which is a different fact about a
+ * different thing. The outer join cannot multiply rows: a trigger name is unique within
+ * its owner, so `ALL_TRIGGERS` holds at most one row per (OWNER, TRIGGER_NAME).
  */
-const LIST_TRIGGERS_SQL = `SELECT t.TRIGGER_NAME AS NAME, t.TABLE_NAME AS PARENT, o.STATUS
-         FROM ALL_TRIGGERS t
-         JOIN ALL_OBJECTS o
-           ON o.OWNER = t.OWNER AND o.OBJECT_NAME = t.TRIGGER_NAME AND o.OBJECT_TYPE = 'TRIGGER'
-         WHERE t.OWNER = :1`;
+const LIST_TRIGGERS_SQL = `SELECT o.OBJECT_NAME AS NAME, t.TABLE_NAME AS PARENT, o.STATUS
+         FROM ALL_OBJECTS o
+         LEFT JOIN ALL_TRIGGERS t
+           ON t.OWNER = o.OWNER AND t.TRIGGER_NAME = o.OBJECT_NAME
+         WHERE o.OWNER = :1 AND o.OBJECT_TYPE = :2`;
 
 // ----------------------------------------------------------------------------
 // One object's detail. Four narrow reads, each bound to ONE owner and ONE object.
@@ -460,9 +484,9 @@ interface KindCountRow {
 /**
  * One listed object, from whichever of the four listing statements answered.
  *
- * `PARENT` is present only in the trigger listing and is NULL there for a trigger with no
- * base object; `OBJECT_TYPE` only in the package listing, which is the one that reads two
- * dictionary rows per node.
+ * `PARENT` is present only in the trigger listing, and is NULL there both for a trigger
+ * with no base object and for one whose base table this user cannot see. `OBJECT_TYPE` is
+ * present only in the package listing, the one that reads two dictionary rows per node.
  */
 interface ObjectRow {
   NAME: string;
@@ -474,19 +498,27 @@ interface ObjectRow {
 /**
  * The one owner a container path names on this engine.
  *
- * Oracle declares exactly one container level, so a path of any other length is a caller
- * that built it from another engine's shape. It raises rather than reading `path[0]` and
- * carrying on, because `undefined` bound to `:1` would answer an empty folder that looks
- * exactly like an owner holding nothing.
+ * The expected depth is read through `containerDepth()` and the segment NAMES come from
+ * the declared level labels, so the check and its message are the same array and a
+ * provider copying this file cannot inherit a hardcoded `1`. A path of any other length is
+ * a caller that built it from another engine's shape, and it raises rather than reading
+ * `path[0]` and carrying on, because `undefined` bound to `:1` would answer an empty
+ * folder that looks exactly like an owner holding nothing.
  *
  * The segment is passed through verbatim and is never upper-cased. `getSchema()` upper-
  * cases `connection.user` because it is reading a value a person typed into a form; this
  * one came out of `ALL_USERS`, so it is already the dictionary's own spelling - and
  * `CREATE USER "app"` is legal, so upper-casing here would make that owner unreachable.
  */
-function containerOwner(container: readonly string[]): string {
-  if (container.length !== 1) {
-    throw new QueryError(`An Oracle container path is one owner name, received ${JSON.stringify(container)}`, "oracle");
+function containerOwner(capabilities: ProviderCapabilities, container: readonly string[]): string {
+  const levels = (capabilities.containerLevels ?? [])
+    .slice(0, containerDepth(capabilities))
+    .map((level) => level.label.toLowerCase());
+  if (container.length !== levels.length) {
+    throw new QueryError(
+      `An Oracle container path is [${levels.join(", ")}], received ${JSON.stringify(container)}`,
+      "oracle",
+    );
   }
   return container[0];
 }
@@ -528,19 +560,20 @@ function applyKindCounts(counts: Record<string, KindCount>, rows: readonly KindC
 /**
  * Which statement answers for one kind, or nothing when this engine has no such kind.
  *
- * Three shapes, and the kind decides which: a package reads two dictionary rows, a trigger
- * reads `ALL_TRIGGERS` for the object it hangs off, and the other seven are one
- * `ALL_OBJECTS` row each with the dictionary spelling BOUND rather than interpolated.
- * `table` takes the same statement with the materialized-view containers removed, for the
- * reason `COUNTS_SQL` gives.
+ * Every one of the four statements reads `ALL_OBJECTS` and binds its dictionary spelling,
+ * so nothing a caller supplied reaches the statement text and every kind is counted and
+ * listed from one catalog. They differ only in what they add: a package reads its second
+ * dictionary row, a trigger outer-joins `ALL_TRIGGERS` for the object it hangs off, and
+ * `table` drops the materialized-view containers, each for the reason its own statement
+ * gives.
  */
 function objectListingStatement(owner: string, kind: string): { sql: string; params: unknown[] } | undefined {
-  if (kind === "trigger") return { sql: LIST_TRIGGERS_SQL, params: [owner] };
   const type = ORACLE_OBJECT_TYPES[kind];
   if (type === undefined) return undefined;
   if (kind === "package") {
     return { sql: LIST_PACKAGES_SQL, params: [owner, type.dictionary, PACKAGE_BODY_OBJECT_TYPE.dictionary] };
   }
+  if (kind === "trigger") return { sql: LIST_TRIGGERS_SQL, params: [owner, type.dictionary] };
   if (kind === "table") return { sql: LIST_TABLES_SQL, params: [owner, type.dictionary] };
   return { sql: LIST_BY_TYPE_SQL, params: [owner, type.dictionary] };
 }
@@ -1384,8 +1417,9 @@ export class OracleProvider extends SQLBaseProvider {
    */
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
     this.ensureConnected();
-    const owner = containerOwner(container);
-    const declared = declaredKinds(this.getCapabilities());
+    const capabilities = this.getCapabilities();
+    const owner = containerOwner(capabilities, container);
+    const declared = declaredKinds(capabilities);
     const counts = seedZeroCounts(declared);
 
     const conn = await this.pool!.getConnection();
@@ -1419,12 +1453,13 @@ export class OracleProvider extends SQLBaseProvider {
    */
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     this.ensureConnected();
-    const owner = containerOwner(container);
+    const capabilities = this.getCapabilities();
+    const owner = containerOwner(capabilities, container);
     // Two questions, asked in order, and only the DECLARATION answers the first. Deciding
     // "is this kind declared" from whether a listing statement exists would make the two
     // methods disagree, and would report "declares no object kind" about a kind
     // `objectKinds` does declare.
-    if (findKind(this.getCapabilities(), kind) === undefined) {
+    if (findKind(capabilities, kind) === undefined) {
       throw new QueryError(`Oracle declares no object kind "${kind}"`, "oracle");
     }
     const statement = objectListingStatement(owner, kind);
@@ -1475,7 +1510,8 @@ export class OracleProvider extends SQLBaseProvider {
    */
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
     this.ensureConnected();
-    const spec = findKind(this.getCapabilities(), kind);
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
     if (spec === undefined) {
       throw new QueryError(`Oracle declares no object kind "${kind}"`, "oracle");
     }
@@ -1485,7 +1521,6 @@ export class OracleProvider extends SQLBaseProvider {
     // are the declared labels sliced to that same depth, so the message and the check
     // cannot disagree. An attached kind takes either depth, because a trigger's base
     // object may be a table, a view, or - for a SCHEMA or DATABASE trigger - nothing.
-    const capabilities = this.getCapabilities();
     const levels = (capabilities.containerLevels ?? [])
       .slice(0, containerDepth(capabilities))
       .map((level) => level.label.toLowerCase());
@@ -1508,7 +1543,10 @@ export class OracleProvider extends SQLBaseProvider {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
     }
 
-    const binds = [path[0], path[1]];
+    // The object's own name is the LAST segment, never `path[1]`. They are the same string
+    // on a one-level engine and different on the five two-level ones that copy this file,
+    // where `path[1]` is a container segment and the read would narrow to nothing.
+    const binds = [path[0], path[path.length - 1]];
     const conn = await this.pool!.getConnection();
     try {
       const columnRows = (await this.runObjectQuery(conn, OBJECT_COLUMNS_SQL, binds)).rows ?? [];
