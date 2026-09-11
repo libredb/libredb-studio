@@ -164,7 +164,10 @@ export const LIBREDB_TABLE_STATS_TRUNCATED = `LibreDB keeps no row counter, so t
  * in `objectKindFor` is TOTAL rather than a match over the two arms that exist: a catalog
  * entry this declaration does not model keeps its keys in the derived `keyspace`
  * grouping, where they are still counted and still listed, instead of falling out of both
- * the count and the listing (standing ruling 5a).
+ * the count and the listing (standing ruling 5a). Totality of the MAPPING is only half of
+ * it: `scanGroups` injects every cataloged namespace the key scan never reached through
+ * the same mapping, with no arm filtered out ahead of it, so an unmodelled entry holding
+ * ZERO keys is counted and listed too rather than being the one shape that disappears.
  *
  * No kind declares `acceptsRowWrites`: the query grammar is `get` / `put` / `delete` /
  * `prefix` / `range` and has no INSERT, so Generate Test Data would have nothing to emit
@@ -325,6 +328,16 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // The catalog namespaces are read from a bounded `kv.range` over 10000 keys and
       // grouped by their prefix, so the rows are this server's summary of the keys that
       // scan reached rather than objects the engine declares (#414).
+      //
+      // It stays true with the object model, and it is now a HALF-truth this engine
+      // carries knowingly: of the three declared kinds only `keyspace` is derived, while
+      // `table` and `collection` are entries the persisted catalog names. The flag is
+      // engine-wide and its only remaining reader, the Profile item in
+      // `src/components/object-tree/row-actions.ts`, therefore withholds Profile from
+      // those two named kinds as well. Measured, that costs nothing: `/api/db/profile`
+      // branches on `queryLanguage === "sql"` and this provider declares `json`, so
+      // Profile could not work on any kind here. Backlog X13 carries the per-kind half
+      // and the condition that would make the gap bite (#789).
       tablesAreDerivedGroupings: true,
       // No container level, and that is the engine rather than an omission: a LibreDB
       // database is ONE FILE holding one flat namespace, with nothing above it to list.
@@ -529,10 +542,22 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       rowCount,
       entry: this.catalogEntryFor(name, registry),
     }));
-    // Surface cataloged namespaces that exist but have no scanned rows yet (an
-    // empty table/collection), so the catalog view is complete.
+    // Surface cataloged namespaces that exist but have no scanned rows yet (an empty
+    // table/collection), so the catalog view is complete.
+    //
+    // EVERY catalog entry, with no arm skipped, and that is standing ruling 5a rather than
+    // tidiness. This loop used to skip `entry.kind === "kv"`, on the reasoning that the raw
+    // layer is never cataloged as a table - which is true of what the package WRITES, and
+    // says nothing about what it can hold. The effect was that an entry of an arm this
+    // provider does not model fell out of both the count and the listing whenever it held
+    // no keys, while an empty table or collection was injected and listed: invisible in the
+    // tree with the badge agreeing with the folder, which is the worst shape this epic has.
+    // `objectKindFor` is total, but a total mapping is worth nothing behind a filter that
+    // decides which entries reach it, so the filter is gone and the mapping decides. An
+    // unmodelled entry lands on the derived `keyspace` grouping and `schemaForGroup` gives
+    // it the raw key/value columns, so nothing is "upgraded" to relational or document
+    // columns it does not have (#789).
     for (const [catalogName, entry] of registry) {
-      if (entry.kind === "kv") continue; // kv is the raw layer, never cataloged as a table
       const groupName = `${catalogName}:*`;
       if (groupCounts.has(groupName)) continue;
       groups.push({ name: groupName, rowCount: 0, entry });

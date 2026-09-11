@@ -965,6 +965,42 @@ describe("LibreDBProvider object surface (#789)", () => {
   });
 
   /**
+   * The same ruling, on the case the test above cannot see: the unmodelled entry holds NO
+   * keys.
+   *
+   * The test above writes the catalog entry AND a key under it, so the bounded scan
+   * produces the group and the mapping is asked about it. A cataloged entry with zero keys
+   * is never produced by the scan, and the injection that exists for exactly that case -
+   * the one that makes the empty table `vacancies` a listable object - used to skip the
+   * `kv` arm before `objectKindFor` was ever asked. An empty table and an empty collection
+   * were injected and listed while an empty unmodelled namespace fell out of BOTH the count
+   * and the listing, which is ruling 5a's shape with the badge and the folder agreeing on
+   * an object nobody can see. The injection is now total too: it asks the same mapping every
+   * other group is put through.
+   */
+  test("a cataloged entry of an unmodelled arm holding ZERO keys is still counted and listed", async () => {
+    await provider.disconnect();
+    const writer = open({ path: fixtureFile });
+    // The entry and nothing under it: the key scan can never reach this namespace, so only
+    // the injection can put it in front of the mapping.
+    kv(writer).set(`${CATALOG_PREFIX}orphan`, JSON.stringify({ kind: "kv" }));
+    writer.close();
+    await provider.connect();
+
+    expect(await provider.countObjects([])).toEqual({
+      table: { count: 3 },
+      collection: { count: 2 },
+      keyspace: { count: 4 },
+    });
+    const keyspaces = await provider.listObjects([], "keyspace");
+    expect(keyspaces.map((object) => object.path)).toEqual([["cache:*"], ["notes"], ["orphan:*"], ["standalone"]]);
+    expect(keyspaces.find((object) => object.path[0] === "orphan:*")?.rowCount).toBe(0);
+    // And it describes, so the row is not a dead entry in a listing.
+    const detail = await provider.describeObject(["orphan:*"], "keyspace");
+    expect(detail.columns.map((column) => column.name)).toEqual(["key", "value"]);
+  });
+
+  /**
    * Standing ruling 4: `tablesAreDerivedGroupings` is a REFUSAL and it had not reached the
    * object model. Task 20 carried it for Redis and this is the other engine that sets it.
    *

@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D52, U17 · 13
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X12, U2–U21 · 6
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X13, U2–U21 · 7
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -679,6 +679,34 @@ and calling that lossless would be a lie.
 **Done when:** a declared type the target cannot parse is either translated or refused with something a
 reader can act on, proven by replaying a `jsonb` and a `json` result into ClickHouse, Trino and
 Cassandra.
+
+### X13. Profile is withheld from two engines by an engine-wide flag, and LibreDB has named objects behind it
+
+`row-actions.ts:164` gates Profile on `capabilities.tablesAreDerivedGroupings !== true`, which is a
+PROVIDER fact, while every other gate beside it is a per-kind declaration. The flag says "the rows
+this engine shows are prefix groupings this server derived from a bounded scan", and on Redis that
+is true of every row it has. On LibreDB it is true of one kind out of three: `keyspace` is derived,
+while `table` and `collection` are entries the persisted catalog NAMES, created by `table()` and
+`doc()` and addressed by the name their author chose (#789, Task 23). Those two are refused Profile
+purely because the gate never got a per-kind half.
+
+Nothing regresses today and that is measured, not assumed: `POST /api/db/profile` branches on
+`queryLanguage === "sql"` and this provider declares `json`, so a profile of a LibreDB table is sent
+as a MongoDB aggregate pipeline and the grammar answers
+`Unknown command ... Supported: get, put, delete, prefix, range`. Profile cannot work on ANY kind
+here, so withholding it from all three is the honest menu rather than a cost. That is pinned by a
+test in `tests/integration/db/libredb-provider.test.ts`.
+
+The condition that makes it bite is a separate fact changing: the day the profile route grows an arm
+for this engine's grammar, two named-object kinds stay silently refused with no declaration
+recording why, and the reason will read as a Redis decision rather than a LibreDB one. The same
+would happen to any future engine that sets the flag while holding cataloged objects.
+
+**Done when:** the per-kind half exists - a kind-level declaration saying whether a kind's rows are
+derived groupings, read beside the engine-wide flag the way `kindAcceptsRowWrites` is read beside
+`supportsInlineRowEdit` - or the engine-wide gate is deliberately kept with that decision written at
+`libredb.ts`'s `tablesAreDerivedGroupings` site and in `docs/providers/libredb.md`. Either way
+LibreDB's `table` and `collection` stop being refused by a flag that was never about them.
 
 ---
 

@@ -566,6 +566,15 @@ exported TYPE rather than from what the fixture happens to hold. It is pinned by
 writes such an entry through the raw lens, which is the only way to produce an arm the engine's
 own type publishes and its writers do not yet emit.
 
+A total mapping is only half of the guarantee, and the other half is the step AHEAD of it.
+`scanGroups` injects every cataloged namespace the bounded key scan never reached, which is what
+makes the empty table `vacancies` a listable object, and that injection is total as well: it
+filters no arm out before the mapping is asked. It used to skip `kind: "kv"`, so a cataloged
+entry of an unmodelled arm holding zero keys fell out of both the count and the listing while an
+empty table or collection was injected and shown - ruling 5a's shape exactly, invisible in the
+tree with the badge agreeing with the folder. Both cases are pinned by tests now: one where the
+unmodelled entry holds a key, and one where it holds none.
+
 #### No container level, and that is the engine
 
 A LibreDB database is ONE FILE holding one flat namespace. There is no catalog above it, no
