@@ -19,6 +19,16 @@ export interface StorageData {
   threshold_config: ThresholdConfig[];
   /** seedIds the user dismissed (deleted a managed:false seed copy) so it is not re-added. */
   dismissed_seeds: string[];
+  /**
+   * Connection ids the user has starred, kept separate from `connections` rather than as a
+   * field on `DatabaseConnection`: a `managed:true` connection is always taken fresh from the
+   * server on every load (see `mergeManagedConnections` in `use-connection-manager.ts`), so a
+   * field on the connection object itself would be silently discarded on reload for exactly the
+   * connections a user is most likely to want to favorite. A separate id list favorites
+   * correctly regardless of who owns the connection, and a duplicated connection (which gets a
+   * new id) does not inherit the original's favorite status for free.
+   */
+  favorite_connections: string[];
 }
 
 /** Collection names that can be synced to server storage */
@@ -36,6 +46,7 @@ export const STORAGE_COLLECTIONS: StorageCollection[] = [
   "masking_config",
   "threshold_config",
   "dismissed_seeds",
+  "favorite_connections",
 ];
 
 /**

@@ -4,11 +4,15 @@ import "../../helpers/mock-navigation";
 
 import { mock } from "bun:test";
 let capturedDuplicateHandler: unknown;
+let capturedFavoriteIds: unknown;
+let capturedToggleFavoriteHandler: unknown;
 
 // Mock child components to isolate Sidebar logic
 mock.module("@/components/sidebar/ConnectionsList", () => ({
   ConnectionsList: (props: Record<string, unknown>) => {
     capturedDuplicateHandler = props.onDuplicateConnection;
+    capturedFavoriteIds = props.favoriteConnectionIds;
+    capturedToggleFavoriteHandler = props.onToggleFavoriteConnection;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     const connections = props.connections as Array<Record<string, unknown>> | undefined;
@@ -199,6 +203,17 @@ describe("Sidebar", () => {
     expect(connList.getAttribute("data-connections-count")).toBe("2");
     expect(connList.getAttribute("data-active-connection")).toBe(mockPostgresConnection.id);
     expect(capturedDuplicateHandler).toBe(onDuplicateConnection);
+  });
+
+  test("passes favoriteConnectionIds and onToggleFavoriteConnection through to ConnectionsList", () => {
+    const favoriteConnectionIds = new Set([mockPostgresConnection.id]);
+    const onToggleFavoriteConnection = mock(() => {});
+    const props = createDefaultProps({ favoriteConnectionIds, onToggleFavoriteConnection });
+
+    render(<Sidebar {...props} />);
+
+    expect(capturedFavoriteIds).toBe(favoriteConnectionIds);
+    expect(capturedToggleFavoriteHandler).toBe(onToggleFavoriteConnection);
   });
 
   /**

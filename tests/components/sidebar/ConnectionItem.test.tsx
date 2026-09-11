@@ -243,4 +243,80 @@ describe("ConnectionItem", () => {
     // onSelect should NOT have been called (stopPropagation)
     expect(defaultOnSelect).toHaveBeenCalledTimes(0);
   });
+
+  describe("favorite toggle", () => {
+    test("no star button when onToggleFavorite is not passed", () => {
+      const { queryByLabelText } = render(
+        <ConnectionItem
+          connection={mockPostgresConnection}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+        />,
+      );
+
+      expect(queryByLabelText("Add to favorites")).toBeNull();
+      expect(queryByLabelText("Remove from favorites")).toBeNull();
+    });
+
+    test("shows an unfavorited star labeled to add, and toggles it with stopPropagation", () => {
+      const onToggleFavorite = mock(() => {});
+      const { getByLabelText } = render(
+        <ConnectionItem
+          connection={mockPostgresConnection}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+          isFavorite={false}
+          onToggleFavorite={onToggleFavorite}
+        />,
+      );
+
+      const star = getByLabelText("Add to favorites");
+      expect(star.getAttribute("aria-pressed")).toBe("false");
+
+      fireEvent.click(star);
+
+      expect(onToggleFavorite).toHaveBeenCalledTimes(1);
+      expect(onToggleFavorite).toHaveBeenCalledWith(mockPostgresConnection.id);
+      expect(defaultOnSelect).not.toHaveBeenCalled();
+    });
+
+    test("a favorited connection shows a filled star labeled to remove", () => {
+      const onToggleFavorite = mock(() => {});
+      const { getByLabelText } = render(
+        <ConnectionItem
+          connection={mockPostgresConnection}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+          isFavorite={true}
+          onToggleFavorite={onToggleFavorite}
+        />,
+      );
+
+      const star = getByLabelText("Remove from favorites");
+      expect(star.getAttribute("aria-pressed")).toBe("true");
+
+      fireEvent.click(star);
+
+      expect(onToggleFavorite).toHaveBeenCalledWith(mockPostgresConnection.id);
+    });
+
+    test("star toggle is available for managed connections", () => {
+      const onToggleFavorite = mock(() => {});
+      const { getByLabelText } = render(
+        <ConnectionItem
+          connection={{ ...mockPostgresConnection, managed: true }}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+          onToggleFavorite={onToggleFavorite}
+        />,
+      );
+
+      fireEvent.click(getByLabelText("Add to favorites"));
+      expect(onToggleFavorite).toHaveBeenCalledWith(mockPostgresConnection.id);
+    });
+  });
 });

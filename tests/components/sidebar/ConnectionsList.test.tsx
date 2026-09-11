@@ -286,4 +286,150 @@ describe("ConnectionsList", () => {
 
     expect(queryByText("No database connections established yet.")).toBeNull();
   });
+
+  describe("favorites", () => {
+    const defaultOnToggleFavorite = mock(() => {});
+
+    beforeEach(() => {
+      defaultOnToggleFavorite.mockClear();
+    });
+
+    test("no Favorites section when favoriteConnectionIds is not passed", () => {
+      const { queryByText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+        />,
+      );
+
+      expect(queryByText("Favorites")).toBeNull();
+    });
+
+    test("no Favorites section when favoriteConnectionIds is empty", () => {
+      const { queryByText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set()}
+        />,
+      );
+
+      expect(queryByText("Favorites")).toBeNull();
+    });
+
+    test("renders a Favorites section above Connections when a connection is favorited", () => {
+      const { getByText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set([mockMySQLConnection.id])}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      const favoritesHeader = getByText("Favorites");
+      const connectionsHeader = getByText("Connections");
+      // DOM order: Favorites section precedes the Connections section
+      expect(
+        favoritesHeader.compareDocumentPosition(connectionsHeader) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
+    test("a favorited connection renders once, under Favorites, not duplicated under Connections", () => {
+      const { container } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set([mockMySQLConnection.id])}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      const matches = Array.from(container.querySelectorAll("span")).filter((el) => el.textContent === "Test MySQL");
+      expect(matches.length).toBe(1);
+    });
+
+    test("non-favorited connections keep rendering under Connections", () => {
+      const { queryByText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set([mockMySQLConnection.id])}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      expect(queryByText("Test PostgreSQL")).not.toBeNull();
+    });
+
+    test("clicking the star toggle calls onToggleFavoriteConnection with the connection id", () => {
+      const { getByLabelText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set()}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      fireEvent.click(getByLabelText("Add to favorites"));
+
+      expect(defaultOnToggleFavorite).toHaveBeenCalledTimes(1);
+      expect(defaultOnToggleFavorite).toHaveBeenCalledWith(mockPostgresConnection.id);
+      // stopPropagation: the item itself must not be selected
+      expect(defaultOnSelect).not.toHaveBeenCalled();
+    });
+
+    test("a favorited connection's star toggle is labeled to remove it", () => {
+      const { getByLabelText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set([mockPostgresConnection.id])}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      fireEvent.click(getByLabelText("Remove from favorites"));
+
+      expect(defaultOnToggleFavorite).toHaveBeenCalledWith(mockPostgresConnection.id);
+    });
+
+    test("shows the Connections empty state only when there are truly no connections, not when all are favorited", () => {
+      const { queryByText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set([mockPostgresConnection.id])}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      expect(queryByText("No database connections established yet.")).toBeNull();
+    });
+  });
 });
