@@ -1575,8 +1575,8 @@ describe("captureContextSnapshot — the object surface that says what each entr
     const snapshot = await inventoryOf(objectHarness());
 
     expect(snapshot.objects.map((object) => [object.name, object.kind])).toEqual([
-      ["order_summary", "view"],
-      ["orders", "table"],
+      ["public.order_summary", "view"],
+      ["public.orders", "table"],
     ]);
     // The join: identity from the object read, columns from the reading that has them.
     expect(snapshot.objects.find((object) => object.kind === "table")?.columns).toEqual([
@@ -1811,6 +1811,166 @@ describe("captureContextSnapshot — the object surface that says what each entr
     expect(snapshot.objects.every((object) => object.kind === undefined)).toBe(true);
   });
 
+  /**
+   * The join key, on the engines whose flat reading is NOT the composed form (#789 fix
+   * round). `getSchema()` names a MySQL table BARE (`mysql.ts`, the `table_name` row is
+   * pushed as `name`) while its object path is `[database, table]`, and SQL Server strips
+   * `dbo.` from a flat name (`mssql.ts`) while its object path is three segments. Keying
+   * the join on the composed name alone therefore matched NOTHING on either engine, and
+   * both halves were then carried into the prompt: a kinded row with no columns beside a
+   * kindless row with the real ones, doubling the header count and spending the character
+   * bound on saying everything twice.
+   */
+  test("a flat reading that names a table the way MySQL does joins the object that addresses it", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        containers: () => [{ path: ["app"], name: "app", level: 0 }],
+        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+        objects: (container, kind) =>
+          kind === "table" ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
+        schema: [
+          {
+            name: "orders",
+            columns: [{ name: "id", type: "int", nullable: false, isPrimary: true }],
+            indexes: [{ name: "PRIMARY", columns: ["id"], unique: true }],
+            foreignKeys: [],
+          },
+        ],
+      }),
+    );
+
+    expect(snapshot.objects).toHaveLength(1);
+    expect(snapshot.objects[0]?.kind).toBe("table");
+    expect(snapshot.objects[0]?.columns).toEqual([{ name: "id", type: "int", nullable: false, isPrimary: true }]);
+  });
+
+  /**
+   * SQL Server's spelling, and the reason the key is tried from the MOST qualified form
+   * down: `dbo.orders` reaches the flat reading as `orders` and `sales.orders` keeps its
+   * schema, against three-segment paths. A bare key claimed first would have given the
+   * `dbo` table the `sales` table's columns.
+   */
+  test("a flat reading that strips the default schema joins each object to its own columns", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        containerLevels: [
+          { id: "catalog", label: "Database", labelPlural: "Databases" },
+          { id: "schema", label: "Schema", labelPlural: "Schemas" },
+        ],
+        containers: (parent) =>
+          parent === undefined
+            ? [{ path: ["shop"], name: "shop", level: 0 }]
+            : [
+                { path: [...parent, "dbo"], name: "dbo", level: 1 },
+                { path: [...parent, "sales"], name: "sales", level: 1 },
+              ],
+        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+        objects: (container, kind) =>
+          kind === "table" ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
+        schema: [
+          {
+            name: "orders",
+            columns: [{ name: "dbo_id", type: "int", nullable: false, isPrimary: true }],
+            indexes: [],
+            foreignKeys: [],
+          },
+          {
+            name: "sales.orders",
+            columns: [{ name: "sales_id", type: "int", nullable: false, isPrimary: true }],
+            indexes: [],
+            foreignKeys: [],
+          },
+        ],
+      }),
+    );
+
+    expect(snapshot.objects.map((object) => [object.name, object.columns[0]?.name])).toEqual([
+      ["shop.dbo.orders", "dbo_id"],
+      ["shop.sales.orders", "sales_id"],
+    ]);
+  });
+
+  /**
+   * The join's other half: where it SUCCEEDS, the entry keeps the qualified name it was
+   * addressable by. Replacing it with the object surface's display label reintroduced
+   * #345 on every composed engine: `planTableProfile` answered that the qualifier was
+   * unknown and let `search_path` choose the relation, and `er-diagram.ts` read every
+   * foreign key as pointing outside the inventory. The label is carried beside the name
+   * rather than instead of it.
+   */
+  test("a joined entry keeps the qualified name it is addressable by, and carries the display label beside it", async () => {
+    const snapshot = await inventoryOf(objectHarness());
+
+    expect(snapshot.objects.map((object) => [object.name, object.kind])).toEqual([
+      ["public.order_summary", "view"],
+      ["public.orders", "table"],
+    ]);
+    expect(snapshot.objects.map((object) => object.label)).toEqual(["order_summary", "orders"]);
+  });
+
+  /**
+   * The suffix key is tried against a flat reading that may not span the whole engine:
+   * MySQL's `getSchema()` reads one database, so two databases holding `orders` both end
+   * at the bare key while only one of them is what the flat entry describes. Neither takes
+   * it. Costing a column list is the failure this join already accepts; handing a model
+   * another object's columns is not.
+   */
+  test("two objects that can only be spelled the same way are both left without columns", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        containers: () => [
+          { path: ["app"], name: "app", level: 0 },
+          { path: ["archive"], name: "archive", level: 0 },
+        ],
+        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+        objects: (container, kind) =>
+          kind === "table" ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
+        schema: [
+          {
+            name: "orders",
+            columns: [{ name: "id", type: "int", nullable: false, isPrimary: true }],
+            indexes: [],
+            foreignKeys: [],
+          },
+        ],
+      }),
+    );
+
+    expect(snapshot.objects.map((object) => [object.name, object.columns.length])).toEqual([
+      ["app.orders", 0],
+      ["archive.orders", 0],
+      // The entry nothing could claim is still carried rather than dropped.
+      ["orders", 1],
+    ]);
+  });
+
+  /**
+   * Standing ruling 3, measured on MySQL 26.7.0: a table and a procedure called `foo`
+   * coexist in one database. The join key ignores role, so the procedure would have taken
+   * the table's columns and reached the model as a routine with a column list.
+   */
+  test("a routine sharing a table's name takes none of the table's columns", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        containers: () => [{ path: ["app"], name: "app", level: 0 }],
+        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 1 } }),
+        objects: (container, kind) =>
+          kind === "view" ? [] : [{ path: [...container, "orders"], name: "orders", kind }],
+        schema: [
+          {
+            name: "orders",
+            columns: [{ name: "id", type: "int", nullable: false, isPrimary: true }],
+            indexes: [],
+            foreignKeys: [],
+          },
+        ],
+      }),
+    );
+
+    expect(snapshot.objects.find((object) => object.kind === "function")?.columns).toEqual([]);
+    expect(snapshot.objects.find((object) => object.kind === "table")?.columns).toHaveLength(1);
+  });
+
   test("the reading is charged and audited like every other reach, as a second statement", async () => {
     const harness = objectHarness();
     const capture = await captureContextSnapshot(harness.context);
@@ -1971,6 +2131,58 @@ describe("an inventory that knows what its objects ARE", () => {
 
     expect(packed).toContain("derived by this server");
     expect(packed).toContain("not object names");
+  });
+
+  /**
+   * The incompleteness notice on the one reading where it matters most (#789 fix round).
+   * An inventory that truncated with NO objects took the empty early return, which printed
+   * "This database reported no tables." and stopped: a reading that stopped at a limit
+   * stated completeness, and an absence the model was not told about is read as an absence
+   * in the database.
+   */
+  test("an inventory that truncated before it listed anything still says it is incomplete", () => {
+    const truncated = kinded({
+      objects: [],
+      truncated: { limit: 1000, reason: "container and kind pair limit reached" },
+    });
+
+    expect(packContextForTask(truncated, "summarise the orders")).toContain("This inventory is incomplete");
+    expect(packOperationsInventory(truncated)).toContain("This inventory is incomplete");
+  });
+
+  /**
+   * The notes say "the Key Patterns BELOW are", so a note about a kind none of which is
+   * below is a sentence about nothing, and on a sampled kind it is worse than nothing: it
+   * tells a run to discount numbers it was never shown. Ranking and the character bound
+   * both decide what is rendered, so the gate is on what was rendered.
+   */
+  test("a note is emitted only for a kind that is actually rendered", () => {
+    const sampled = kinded({
+      objects: [
+        { path: ["app", "orders"], name: "app.orders", kind: "table", columns: [], indexes: [], foreignKeys: [] },
+        { path: ["0", "user:*"], name: "0.user:*", kind: "keyspace", columns: [], indexes: [], foreignKeys: [] },
+      ],
+      kinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        {
+          id: "keyspace",
+          role: "relation",
+          label: "Key Pattern",
+          labelPlural: "Key Patterns",
+          sampledFrom: "the first 1,000 keys of one SCAN walk",
+        },
+      ],
+    });
+
+    const whole = packContextForTask(sampled, "orders");
+    expect(whole).toContain("the first 1,000 keys of one SCAN walk");
+
+    // Bounded so that only the objective's own row fits: the key pattern is omitted, and
+    // the sentence about key patterns goes with it.
+    const bounded = packContextForTask(sampled, "orders", { maxChars: whole.length - 40 });
+    expect(bounded).toContain("app.orders");
+    expect(bounded).not.toContain("0.user:*");
+    expect(bounded).not.toContain("the first 1,000 keys of one SCAN walk");
   });
 
   test("the operations packing names the kinds and the incompleteness too", () => {

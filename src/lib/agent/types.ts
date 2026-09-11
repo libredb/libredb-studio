@@ -500,6 +500,18 @@ export interface AgentInventoryObject extends TableSchema {
   readonly path?: readonly string[];
   /** The declared kind id this object was listed under, when one is known. */
   readonly kind?: string;
+  /**
+   * The engine's own display label, present only where it differs from `name`.
+   *
+   * `name` is the ADDRESS a statement can be written against, qualified wherever the
+   * object surface supplied segments, because four consumers resolve a model's spelling
+   * against it: `planTableProfile` reads a bare name as an unqualified target and lets the
+   * engine's search path choose the relation (#345), and `er-diagram.ts` compares it to
+   * still-qualified foreign key targets. Ruling 2 of #789 lets the two differ - a
+   * PostgreSQL routine's last path segment carries its overload form while its label is
+   * the bare name - so the label is carried beside the address rather than instead of it.
+   */
+  readonly label?: string;
 }
 
 /**

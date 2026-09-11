@@ -754,12 +754,25 @@ async function tagWithObjectKinds(
   const read = await readObjectInventoryForGrounding(context);
   if (read.kind !== "completed") return { objects: flat, kinds: [] };
 
-  const byName = new Map(flat.map((entry) => [entry.name, entry]));
-  const objects = read.inventory.objects.map((object) => {
-    const columns = byName.get(qualifiedName(object));
-    if (columns !== undefined) byName.delete(columns.name);
+  const unmatched = new Map(flat.map((entry) => [entry.name, entry]));
+  const relationKinds = new Set(
+    (read.inventory.kinds ?? []).filter((kind) => kind.role === "relation").map((kind) => kind.id),
+  );
+  const joinable = read.inventory.objects.map((object) =>
+    object.kind !== undefined && relationKinds.has(object.kind) ? joinKeys(object) : [],
+  );
+  const matched = joinFlatEntries(joinable, unmatched);
+
+  const objects = read.inventory.objects.map((object, index) => {
+    const columns = matched.get(index);
+    const name = qualifiedName(object);
     return {
       ...object,
+      name,
+      // The engine's own display label, kept because `name` is now the ADDRESS and the
+      // two differ: ruling 2 of #789 lets a routine's last path segment carry the
+      // overload form while its label is the bare name.
+      ...(object.name === name ? {} : { label: object.name }),
       columns: columns?.columns ?? [],
       indexes: columns?.indexes ?? [],
       foreignKeys: columns?.foreignKeys ?? [],
@@ -770,10 +783,75 @@ async function tagWithObjectKinds(
     ...read.inventory,
     // Sorted by the name a reader sees, so two captures of one database serialise
     // identically whatever order the containers were walked in.
-    objects: [...objects, ...byName.values()].sort((left, right) =>
+    objects: [...objects, ...unmatched.values()].sort((left, right) =>
       displayName(left) === displayName(right) ? 0 : displayName(left) < displayName(right) ? -1 : 1,
     ),
   };
+}
+
+/**
+ * The keys an object may be spelled by in a FLAT reading, most qualified first.
+ *
+ * The flat readings do not agree on how much of the address they put in the one string
+ * they answer with, and keying the join on the fully composed form alone matched NOTHING
+ * on two engines rather than degrading: MySQL's `getSchema()` names a table bare while its
+ * object path is `[database, table]`, and SQL Server strips `dbo.` from a flat name while
+ * its object path is `[catalog, schema, table]`. Every object then failed to join, and
+ * BOTH halves reached the prompt - a kinded row with no columns beside a kindless row with
+ * the real ones - so the header count doubled and the duplicates spent the character bound
+ * that decides what is omitted.
+ *
+ * So the key is every SUFFIX of the path, from the whole address down to the bare
+ * identifier, and `joinFlatEntries` tries them a round at a time so that the most
+ * qualified spelling always claims its entry first. A path-less object has one key, its
+ * own name, which is what the flat readings already produce.
+ */
+function joinKeys(object: AgentInventoryObject): readonly string[] {
+  const path = object.path;
+  if (path === undefined) return [object.name];
+  return path.map((_segment, index) => path.slice(index).join("."));
+}
+
+/**
+ * The join itself: object index to the flat entry carrying its columns.
+ *
+ * Round by round, from the most qualified spelling to the least, and an entry is CONSUMED
+ * when it is claimed, so a shorter key can only take what no longer key wanted. That is
+ * what keeps SQL Server's two `orders` apart: `sales.orders` matches in the second round
+ * and `dbo`'s bare `orders` in the third, rather than the bare key taking whichever object
+ * the walk happened to reach first.
+ *
+ * A key two objects claim in the same round is left UNJOINED on both. The columns would be
+ * one object's and the other's would be wrong, and this read costing a column list is the
+ * failure the module already accepts; handing a model another object's columns is not.
+ */
+function joinFlatEntries(
+  keys: readonly (readonly string[])[],
+  unmatched: Map<string, AgentInventoryObject>,
+): Map<number, AgentInventoryObject> {
+  const matched = new Map<number, AgentInventoryObject>();
+  const rounds = Math.max(0, ...keys.map((candidate) => candidate.length));
+
+  for (let round = 0; round < rounds; round += 1) {
+    const claimants = new Map<string, number[]>();
+    for (const [index, candidate] of keys.entries()) {
+      if (matched.has(index)) continue;
+      const key = candidate[round];
+      if (key === undefined || !unmatched.has(key)) continue;
+      const claimed = claimants.get(key);
+      if (claimed === undefined) claimants.set(key, [index]);
+      else claimed.push(index);
+    }
+    for (const [key, claimed] of claimants) {
+      const only = claimed.length === 1 ? claimed[0] : undefined;
+      const entry = only === undefined ? undefined : unmatched.get(key);
+      if (only === undefined || entry === undefined) continue;
+      matched.set(only, entry);
+      unmatched.delete(key);
+    }
+  }
+
+  return matched;
 }
 
 /** An object's segments as one qualified name, for the join above and for nothing else. */
@@ -1124,7 +1202,7 @@ function renderColumn(table: TableSchema, column: ColumnSchema): string {
  * notice already is: each one is about the lines beside it, and the bound belongs to the
  * packing that writes them.
  */
-function inventoryNotes(inventory: AgentInventory): readonly string[] {
+function inventoryNotes(inventory: AgentInventory, shown: readonly AgentInventoryObject[]): readonly string[] {
   const notes: string[] = [];
   const { truncated } = inventory;
   if (truncated !== undefined) {
@@ -1132,7 +1210,13 @@ function inventoryNotes(inventory: AgentInventory): readonly string[] {
       `This inventory is incomplete: the reading stopped at a limit of ${truncated.limit} (${truncated.reason}), so an object that is not listed below may still exist. Do not read an absence from this list as an absence in the database.`,
     );
   }
+  // Each kind note says "the X BELOW are", so it is gated on the kind being in what was
+  // actually rendered rather than on what the engine declared. Ranking and the character
+  // bound both decide that, so a declared kind can have nothing below it, and a sampled
+  // kind named there would tell a run to discount numbers it was never shown.
+  const rendered = new Set(shown.map((object) => object.kind));
   for (const kind of inventory.kinds ?? []) {
+    if (!rendered.has(kind.id)) continue;
     if (kind.sampledFrom !== undefined) {
       notes.push(
         `The ${kind.labelPlural} below are at least what is shown and never a total: they were counted from ${kind.sampledFrom}.`,
@@ -1232,7 +1316,10 @@ export function packContextForTask(
   // schema" would take it for the schema as it is now.
   const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.objects.length} ${noun.singular}(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since, most task-relevant first.`;
   if (snapshot.objects.length === 0) {
-    return `${lead}${fenceUntrustedContent(`${header}\nThis database reported no ${noun.plural}.`, source)}`;
+    // The notes come BEFORE the empty sentence, because a reading that stopped at a limit
+    // before it listed anything is the one case where "this database reported no tables"
+    // is read as a fact about the database rather than about the reading (#789).
+    return `${lead}${fenceUntrustedContent([header, ...inventoryNotes(snapshot, []), `This database reported no ${noun.plural}.`].join("\n"), source)}`;
   }
 
   const terms = taskTerms(objective);
@@ -1247,16 +1334,22 @@ export function packContextForTask(
       ? body
       : `${body}\n${omitted} further ${noun.singular}(s) omitted as less relevant to this task.${advice}`;
 
-  let body = [header, ...inventoryNotes(snapshot)].join("\n");
-  let shown = 0;
+  // The notes are recomposed for each candidate rather than written once ahead of the
+  // loop: they are gated on the kinds actually rendered, so what fits decides what is
+  // said about it, and the bound still covers everything inside the fence.
+  const rendered: AgentInventoryObject[] = [];
+  const lines: string[] = [];
+  const compose = (shown: readonly AgentInventoryObject[], rows: readonly string[]): string =>
+    [header, ...inventoryNotes(snapshot, shown), ...rows].join("\n");
+
   for (const table of ranked) {
-    const candidate = `${body}\n${renderTable(table, snapshot)}`;
-    if (fenceUntrustedContent(close(candidate, ranked.length - shown - 1), source).length > maxChars) break;
-    body = candidate;
-    shown += 1;
+    const candidate = compose([...rendered, table], [...lines, renderTable(table, snapshot)]);
+    if (fenceUntrustedContent(close(candidate, ranked.length - rendered.length - 1), source).length > maxChars) break;
+    lines.push(renderTable(table, snapshot));
+    rendered.push(table);
   }
 
-  return `${lead}${fenceUntrustedContent(close(body, ranked.length - shown), source)}`;
+  return `${lead}${fenceUntrustedContent(close(compose(rendered, lines), ranked.length - rendered.length), source)}`;
 }
 
 /**
@@ -1303,7 +1396,8 @@ export function packOperationsInventory(
 
   const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.objects.length} ${noun.singular}(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since. Names and the indexes on each; no columns and no relations are included.`;
   if (snapshot.objects.length === 0) {
-    return `${lead}${fenceUntrustedContent(`${header}\nThis database reported no ${noun.plural}.`, source)}`;
+    // The same reason as the task packing: an empty inventory that TRUNCATED says so.
+    return `${lead}${fenceUntrustedContent([header, ...inventoryNotes(snapshot, []), `This database reported no ${noun.plural}.`].join("\n"), source)}`;
   }
 
   // Names no tool, in either mode: an operations agent run holds no `inspect_schema`
@@ -1314,16 +1408,22 @@ export function packOperationsInventory(
       ? body
       : `${body}\n${omitted} further ${noun.singular}(s) exist in this database and are not named here.`;
 
-  let body = [header, ...inventoryNotes(snapshot)].join("\n");
-  let shown = 0;
+  const rendered: AgentInventoryObject[] = [];
+  const lines: string[] = [];
+  const compose = (shown: readonly AgentInventoryObject[], rows: readonly string[]): string =>
+    [header, ...inventoryNotes(snapshot, shown), ...rows].join("\n");
+
   for (const table of snapshot.objects) {
-    const candidate = `${body}\n${renderOperationsTable(table, snapshot)}`;
-    if (fenceUntrustedContent(close(candidate, snapshot.objects.length - shown - 1), source).length > maxChars) break;
-    body = candidate;
-    shown += 1;
+    const candidate = compose([...rendered, table], [...lines, renderOperationsTable(table, snapshot)]);
+    if (
+      fenceUntrustedContent(close(candidate, snapshot.objects.length - rendered.length - 1), source).length > maxChars
+    )
+      break;
+    lines.push(renderOperationsTable(table, snapshot));
+    rendered.push(table);
   }
 
-  return `${lead}${fenceUntrustedContent(close(body, snapshot.objects.length - shown), source)}`;
+  return `${lead}${fenceUntrustedContent(close(compose(rendered, lines), snapshot.objects.length - rendered.length), source)}`;
 }
 
 /**

@@ -417,10 +417,23 @@ each kind the count did not answer zero for. It runs under the SAME `db.schema.r
 its own fingerprint source, because it is a schema read and an operator denying that descriptor means
 to deny this too.
 
+What it costs is ONE statement of the run's budget, and that one statement is not one provider call:
+inside it the walk issues `listContainers` per container level, then one `countObjects` per container,
+then one `listObjects` per container-and-kind pair the count did not answer zero for, up to the pair
+bound of 1,000. So the budget charge is a charge for the READING and not a measure of the traffic, and
+an engine with many containers pays for the reading in latency rather than in budget. The audit stream
+carries the one call, and the deadline this call was granted is what bounds the whole walk.
+
 It carries no columns, and that is the measured decision rather than an omission: the bulk inventory
 route removed `includeColumns` after measuring it as one `describeObject` per object, up to 5,000
 sequential round trips. So identity comes from this read, columns from the reading that already
-carries them, and `context-snapshot.ts` joins the two on the qualified name. An object the join could
+carries them, and `context-snapshot.ts` joins the two on the object's ADDRESS. The key is every suffix
+of the object's path, most qualified first, because the flat readings do not agree on how much of the
+address they put in the single string they answer with: MySQL names a table bare against a
+`[database, table]` path and SQL Server strips `dbo.` against a `[catalog, schema, table]` one, so a
+join keyed on the fully composed form alone matched nothing at all on either engine and carried both
+halves of every object into the prompt. Only relation kinds join, since a MySQL procedure may share a
+table's name. An object the join could
 not match reaches the model named and kinded with an empty column list; a flat entry it could not
 match is carried with **no kind at all** rather than labelled a table. Filling a missing fact in with
 the commonest value is how a view came to be handed over as one. Closing the gap properly needs a bulk

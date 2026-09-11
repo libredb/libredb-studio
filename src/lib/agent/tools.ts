@@ -2329,8 +2329,11 @@ export type AgentObjectInventoryRead =
  * grouping and a Druid datasource under one word. #414 measured what a model does with
  * that.
  *
- * It costs ONE statement out of the run's budget, charged and audited exactly like the
- * other two, under the same `db.schema.read` descriptor: it is a schema read, an operator
+ * It costs ONE statement out of the run's budget, which is a charge for the READING rather
+ * than a measure of its traffic: inside that one statement the walk issues a
+ * `listContainers` per container level, a `countObjects` per container and a `listObjects`
+ * per container-and-kind pair, up to the pair bound below. It is charged and audited
+ * exactly like the other two, under the same `db.schema.read` descriptor: it is a schema read, an operator
  * denying that descriptor means to deny this too, and a second canonical descriptor for
  * the same fact would let the two be governed apart by accident. Its fingerprint source
  * differs from the schema read's, so the repair ledger does not read the two as one
