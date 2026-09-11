@@ -1987,6 +1987,15 @@ describe("MSSQLProvider declared column types", () => {
  */
 function objectRead(sql: string): string {
   const upper = sql.toUpperCase();
+  // The bulk column read's five statements first: each carries the `described` CTE, and
+  // each would otherwise match one of the single-object reads below.
+  if (upper.includes("WITH DESCRIBED AS")) {
+    if (upper.includes("IS_PRIMARY_KEY = 1")) return "bulk-pk";
+    if (upper.includes("SYS.FOREIGN_KEYS")) return "bulk-fks";
+    if (upper.includes("IS_PRIMARY_KEY = 0")) return "bulk-indexes";
+    if (upper.includes("SYS.COLUMNS")) return "bulk-columns";
+    return "bulk-target";
+  }
   if (upper.includes("SYS.DATABASES")) return "databases";
   if (upper.includes("SYS.DATABASE_PRINCIPALS")) return "schemas";
   if (upper.includes("GROUP BY KIND")) return "counts";
@@ -2085,6 +2094,38 @@ const FIXTURE_COLUMNS: Record<string, Array<Record<string, unknown>>> = {
  * would pass - and the test would be pinning the wrong behaviour rather than measuring
  * the right one.
  */
+/**
+ * The target set of a bulk read, in the order SQL Server returns it.
+ *
+ * `ORDER BY s.name, o.name` runs under the DATABASE's collation, which is
+ * SQL_Latin1_General_CP1_CI_AS on the fixture server (measured), and this array is that
+ * answer. Each row carries the `object_id` the five statements group on, because a name is
+ * a string a caller can spell and an object id is the engine's own key.
+ */
+const FIXTURE_BULK_TARGET: Record<string, Array<{ object_id: number; schema_name: string; name: string }>> = {
+  table: [
+    { object_id: 1, schema_name: "app", name: "customers" },
+    { object_id: 2, schema_name: "app", name: "order_audit" },
+    { object_id: 3, schema_name: "app", name: "order_audit_history" },
+    { object_id: 4, schema_name: "app", name: "orders" },
+    { object_id: 5, schema_name: "reporting", name: "daily" },
+  ],
+  view: [{ object_id: 6, schema_name: "app", name: "order_summary" }],
+};
+
+/** Which kind a bulk statement is about, read off the type list it interpolated. */
+function bulkKind(sql: string): string {
+  return sql.includes("o.type IN ('U')") ? "table" : "view";
+}
+
+/** The target rows one bulk statement covers, filtered by schema and cut by TOP. */
+function bulkTarget(sql: string, inputs: Record<string, unknown>) {
+  const schema = sql.includes("@schema") ? (inputs.schema as string | undefined) : undefined;
+  const rows = FIXTURE_BULK_TARGET[bulkKind(sql)].filter((row) => schema === undefined || row.schema_name === schema);
+  const limit = sql.includes("TOP (@limit)") ? Number(inputs.limit) : undefined;
+  return limit === undefined ? rows : rows.slice(0, limit);
+}
+
 function fixtureRead(read: string, inputs: Record<string, unknown>, sql: string): unknown {
   // The SERVER filters, not the bind. A statement that binds `@schema` and never mentions
   // it returns every row, so the filter is read off the STATEMENT here and not off the
@@ -2128,6 +2169,48 @@ function fixtureRead(read: string, inputs: Record<string, unknown>, sql: string)
       // Keyed on the NAME the provider bound, so a read that bound the schema segment
       // instead answers nothing - which is exactly what the last-segment pin needs.
       const rows = FIXTURE_COLUMNS[(inputs.name as string) ?? ""] ?? [];
+      return { recordset: rows, rowsAffected: [rows.length] };
+    }
+    case "bulk-target": {
+      const rows = bulkTarget(sql, inputs);
+      return { recordset: rows, rowsAffected: [rows.length] };
+    }
+    case "bulk-columns": {
+      // Only two of the fixture's objects have column rows here, which is deliberate: an
+      // object the detail reads answer nothing for must still come back, with three empty
+      // lists rather than missing.
+      const rows = bulkTarget(sql, inputs).flatMap((target) =>
+        (FIXTURE_COLUMNS[target.name] ?? []).map((column) => ({ object_id: target.object_id, ...column })),
+      );
+      return { recordset: rows, rowsAffected: [rows.length] };
+    }
+    case "bulk-pk": {
+      const rows = bulkTarget(sql, inputs)
+        .filter((target) => FIXTURE_COLUMNS[target.name] !== undefined)
+        .map((target) => ({ object_id: target.object_id, name: "id" }));
+      return { recordset: rows, rowsAffected: [rows.length] };
+    }
+    case "bulk-fks": {
+      const rows = bulkTarget(sql, inputs)
+        .filter((target) => FIXTURE_COLUMNS[target.name] !== undefined)
+        .map((target) => ({
+          object_id: target.object_id,
+          column_name: "customer_id",
+          ref_schema: "app",
+          ref_table: "customers",
+          ref_column: "id",
+        }));
+      return { recordset: rows, rowsAffected: [rows.length] };
+    }
+    case "bulk-indexes": {
+      const rows = bulkTarget(sql, inputs)
+        .filter((target) => target.name === "orders")
+        .map((target) => ({
+          object_id: target.object_id,
+          index_name: "app_orders_total_ix",
+          is_unique: false,
+          column_name: "total",
+        }));
       return { recordset: rows, rowsAffected: [rows.length] };
     }
     case "pk":
@@ -2844,6 +2927,268 @@ describe("SQL Server object containers, listings and detail", () => {
     // opens onto an error. Measured on the fixture, HAS_DBACCESS answers 0 for an OFFLINE
     // database while sys.databases still holds its row.
     expect(sql).toContain("HAS_DBACCESS(d.name) = 1");
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The fifth provider method (#789): every object of one kind in one container described in
+ * FIVE round trips rather than four per object.
+ *
+ * This mock dispatches on the statement the provider built, which standing ruling 5b names
+ * as a blind spot: a rewrite it cannot see stays green here. So the decisions a rewrite
+ * would silently undo are pinned by statement TEXT below - the target set comes from
+ * `sys.objects` with the same `is_ms_shipped = 0` predicate the listing uses, the cut is
+ * `TOP (@limit)` with an `ORDER BY`, and nothing here caps a column - and all of them are
+ * measured live in the task report.
+ */
+describe("SQL Server bulk column read", () => {
+  beforeEach(installObjectFixture);
+
+  test("describes every table of a database in five round trips, keyed by path", async () => {
+    const provider = await connectedForObjects();
+    issued = [];
+
+    const batch = await provider.describeObjects(["libredb_objects"], "table");
+
+    // FIVE statements for the whole folder, whatever the folder holds. The single read is
+    // four per object, which at five tables is twenty.
+    expect(issued).toHaveLength(5);
+    expect(issued[0].sql).toContain("[libredb_objects].sys.objects");
+    expect(issued[0].sql).toContain("o.is_ms_shipped = 0");
+    expect(issued[0].sql).toContain("o.type IN ('U')");
+    // A database-level container binds no schema and the statement does not mention one.
+    expect(issued[0].sql).not.toContain("@schema");
+    // Unbounded: no TOP, and with no TOP there is no ORDER BY either, because SQL Server
+    // does not take one in a CTE without a row bound and an unbounded read cuts nothing.
+    for (const call of issued) {
+      expect(call.sql).not.toContain("TOP (@limit)");
+      expect(call.sql).not.toContain("ORDER BY s.name, o.name");
+    }
+    expect(batch.truncated).toBeUndefined();
+
+    // Every object of the kind, at [database, schema, name], sorted by path.
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["libredb_objects", "app", "customers"],
+      ["libredb_objects", "app", "order_audit"],
+      ["libredb_objects", "app", "order_audit_history"],
+      ["libredb_objects", "app", "orders"],
+      ["libredb_objects", "reporting", "daily"],
+    ]);
+    const orders = batch.details[3];
+    expect(orders.columns).toEqual([
+      { name: "id", type: "int", nullable: false, isPrimary: true, defaultValue: undefined },
+      { name: "customer_id", type: "int", nullable: true, isPrimary: false, defaultValue: undefined },
+      { name: "total", type: "decimal", nullable: true, isPrimary: false, defaultValue: "((0))" },
+      { name: "note", type: "nvarchar", nullable: true, isPrimary: false, defaultValue: undefined },
+    ]);
+    expect(orders.indexes).toEqual([{ name: "app_orders_total_ix", columns: ["total"], unique: false }]);
+    // Bare inside the object's OWN schema, qualified outside it, which is per object rather
+    // than per read: `app.orders` and `reporting.daily` carry the same foreign key and only
+    // one of them crosses a schema boundary.
+    expect(orders.foreignKeys).toEqual([
+      { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
+    ]);
+    expect(batch.details[4].foreignKeys).toEqual([
+      { columnName: "customer_id", referencedTable: "app.customers", referencedColumn: "id" },
+    ]);
+    // An object the four detail reads answered nothing for is still IN the answer.
+    expect(batch.details[0]).toEqual({
+      path: ["libredb_objects", "app", "customers"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    await provider.disconnect();
+  });
+
+  test("a schema-level container describes that schema and binds it", async () => {
+    const provider = await connectedForObjects();
+    issued = [];
+
+    const batch = await provider.describeObjects(["libredb_objects", "reporting"], "table");
+
+    expect(issued[0].sql).toContain("s.name = @schema");
+    expect(issued[0].inputs.schema).toBe("reporting");
+    expect(batch.details.map((detail) => detail.path)).toEqual([["libredb_objects", "reporting", "daily"]]);
+    await provider.disconnect();
+  });
+
+  test("the bulk read and the single read spell one object identically", async () => {
+    // ONE mapper serves both, so the two answers for one table cannot disagree about a
+    // foreign key, an index or which column is the primary key.
+    const provider = await connectedForObjects();
+
+    const bulk = (await provider.describeObjects(["libredb_objects", "app"], "table")).details.find(
+      (detail) => detail.path[2] === "orders",
+    );
+    const single = await provider.describeObject(["libredb_objects", "app", "orders"], "table");
+
+    expect(bulk).toEqual(single);
+    await provider.disconnect();
+  });
+
+  test("a bounded read binds one row more than the bound and reports its own truncation", async () => {
+    const provider = await connectedForObjects();
+    issued = [];
+
+    const batch = await provider.describeObjects(["libredb_objects"], "table", 2);
+
+    // limit + 1, which is how a saturated read is told from an exact one with no second
+    // count, and the cut is ordered so the bound keeps a determinate set.
+    expect(issued[0].inputs.limit).toBe(3);
+    expect(issued[0].sql).toContain("TOP (@limit)");
+    expect(issued[0].sql).toContain("ORDER BY s.name, o.name");
+    expect(batch.details.map((detail) => detail.path[2])).toEqual(["customers", "order_audit"]);
+    expect(batch.truncated).toEqual({ limit: 2, reason: "column read limit reached" });
+    await provider.disconnect();
+  });
+
+  test("a bounded read that fits reports nothing", async () => {
+    const provider = await connectedForObjects();
+
+    const batch = await provider.describeObjects(["libredb_objects"], "table", 5);
+
+    expect(batch.details).toHaveLength(5);
+    expect(batch.truncated).toBeUndefined();
+    await provider.disconnect();
+  });
+
+  test("a kind SQL Server holds no columns for answers empty without asking the server", async () => {
+    // Measured on SQL Server 2022 CU26 against the fixture: of the types a person writes,
+    // only `U` and `V` have sys.columns rows - a scalar function, a procedure, a synonym, a
+    // SEQUENCE and a trigger all have zero. A sequence having none is the contrast with
+    // PostgreSQL, where one has three columns, and with MariaDB, where one has eight.
+    const provider = await connectedForObjects();
+    issued = [];
+
+    for (const kind of ["procedure", "function", "synonym", "sequence", "trigger"]) {
+      expect(await provider.describeObjects(["libredb_objects"], kind)).toEqual({ details: [] });
+    }
+    expect(issued).toHaveLength(0);
+    await provider.disconnect();
+  });
+
+  test("an empty container costs one round trip and not five", async () => {
+    const provider = await connectedForObjects();
+    issued = [];
+
+    expect(await provider.describeObjects(["libredb_objects", "dbo"], "table")).toEqual({ details: [] });
+    expect(issued).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("a kind this engine does not declare is refused, not answered empty", async () => {
+    const provider = await connectedForObjects();
+
+    await expect(provider.describeObjects(["libredb_objects"], "package")).rejects.toThrow(
+      /declares no object kind "package"/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a container path that is neither shape is refused, rather than read as empty", async () => {
+    const provider = await connectedForObjects();
+
+    await expect(provider.describeObjects([], "table")).rejects.toThrow(
+      /container path is \[database\] or \[database, schema\]/,
+    );
+    await expect(provider.describeObjects(["a", "b", "c"], "table")).rejects.toThrow(
+      /container path is \[database\] or \[database, schema\]/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a limit that cannot bound anything is refused, rather than silently ignored", async () => {
+    const provider = await connectedForObjects();
+
+    await expect(provider.describeObjects(["libredb_objects"], "table", 0)).rejects.toThrow(
+      /limit must be a positive whole number, received 0/,
+    );
+    await expect(provider.describeObjects(["libredb_objects"], "table", 1.5)).rejects.toThrow(
+      /limit must be a positive whole number, received 1.5/,
+    );
+    await provider.disconnect();
+  });
+
+  test("the paths it answers are the paths listObjects answers", async () => {
+    const provider = await connectedForObjects();
+
+    const listed = await provider.listObjects(["libredb_objects"], "table");
+    const batch = await provider.describeObjects(["libredb_objects"], "table");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+    await provider.disconnect();
+  });
+
+  test("the CALLER's catalog is what is read, and the schema comes from its declared level", async () => {
+    // Standing ruling 5g (#789) driven to a BOUND VALUE. SQL Server is the engine where
+    // `path[0]` is the catalog and `path[1]` is the schema, so a positional read of either
+    // narrows every one of the five statements to an object that does not exist.
+    const provider = await connectedForObjects();
+    issued = [];
+
+    await provider.describeObjects(["libredb_objects_two", "app"], "table");
+
+    for (const call of issued) {
+      expect(call.sql).toContain("[libredb_objects_two].sys.");
+      expect(call.sql).not.toContain("[libredb_objects].sys.");
+      expect(call.inputs.schema).toBe("app");
+    }
+    await provider.disconnect();
+  });
+
+  test("the container segments are read from the DECLARATION, not from a position", async () => {
+    // Standing ruling 5g (#789)'s closing line: `container[0]` is the catalog and
+    // `container[1]` is the schema on every engine that declares them in that order, so the
+    // only thing that can tell a derivation from a position is a declaration in the OTHER
+    // order - and this one is driven to a BOUND VALUE rather than to a refusal.
+    const provider = await connectedForObjects();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...provider.getCapabilities(),
+      containerLevels: [
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+      ],
+    });
+    issued = [];
+
+    await provider.describeObjects(["app", "libredb_objects_two"], "table");
+
+    for (const call of issued) {
+      expect(call.sql).toContain("[libredb_objects_two].sys.");
+      expect(call.sql).not.toContain("[app].sys.");
+      expect(call.inputs.schema).toBe("app");
+    }
+    await provider.disconnect();
+  });
+
+  test("the answer is sorted by path, whatever order the server cut it in", async () => {
+    const provider = await connectedForObjects();
+    mockQueryFn = async (sql: string) => {
+      if (!sql.toUpperCase().includes("WITH DESCRIBED AS")) return { recordset: [], rowsAffected: [0] };
+      if (!sql.includes("sys.columns")) {
+        return {
+          recordset: [
+            { object_id: 5, schema_name: "reporting", name: "daily" },
+            { object_id: 4, schema_name: "app", name: "orders" },
+          ],
+          rowsAffected: [2],
+        };
+      }
+      return { recordset: [], rowsAffected: [0] };
+    };
+
+    const batch = await provider.describeObjects(["libredb_objects"], "table");
+
+    // The server's order decides which objects a bound keeps; the order a caller reads is
+    // ours, one rule on every engine, because callers join the two answers on path. By PATH
+    // and not by name: `app.orders` sorts above `reporting.daily` because the SCHEMA segment
+    // is compared first, which is what groups a database-level folder by schema.
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["libredb_objects", "app", "orders"],
+      ["libredb_objects", "reporting", "daily"],
+    ]);
     await provider.disconnect();
   });
 });

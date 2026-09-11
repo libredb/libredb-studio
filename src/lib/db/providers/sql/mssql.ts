@@ -31,6 +31,7 @@ import {
   type DatabaseObject,
   type KindCount,
   type ObjectDetail,
+  type ObjectDetailBatch,
   type ObjectKindSpec,
   type ColumnSchema,
   type IndexSchema,
@@ -738,6 +739,114 @@ function objectIndexesSql(database: string): string {
       `;
 }
 
+// ----------------------------------------------------------------------------
+// Every object of one kind, described together (#789)
+//
+// FIVE statements for a whole folder rather than four per object. They share one
+// `described` CTE, which is the target set, and each detail read joins it on `object_id`
+// rather than on a name: an object id is the engine's own key for the object, so nothing
+// here has to compare two strings under a collation to decide which rows belong together.
+//
+// The five are separate statements rather than one batch of result sets, on the precedent
+// the four single-object reads set in this file: each failure names its own statement
+// through `mapDatabaseError`, and one connection serialises them anyway. The COUNT is what
+// matters and it is constant - five, whether the folder holds one object or five thousand.
+// ----------------------------------------------------------------------------
+
+/**
+ * The objects one bulk read describes, ordered and cut only when the caller bounded it.
+ *
+ * `TOP (@limit)` is SQL Server's spelling of a row bound and the value is BOUND rather than
+ * interpolated. It comes with `ORDER BY s.name, o.name`, and the two travel together in
+ * both directions: SQL Server refuses an `ORDER BY` inside a CTE that has no row bound
+ * (Msg 1033), and a bound with no order would cut an arbitrary set. So the unbounded
+ * statement carries neither, which is correct rather than a compromise - an unbounded read
+ * cuts nothing, and the answer is re-sorted by path in code either way.
+ *
+ * The order runs under the DATABASE's collation, which is SQL_Latin1_General_CP1_CI_AS on
+ * the fixture server (measured) and is case-insensitive there. `(schema, name)` is unique
+ * within a database, so the order is TOTAL and all five statements cut the same set.
+ */
+function describedSql(database: string, types: readonly string[], bySchema: boolean, bounded: boolean): string {
+  return `
+        WITH described AS (
+          SELECT ${bounded ? "TOP (@limit) " : ""}o.object_id, s.name AS schema_name, o.name AS name
+          FROM ${database}.sys.objects o
+          JOIN ${database}.sys.schemas s ON s.schema_id = o.schema_id
+          WHERE o.is_ms_shipped = 0 AND o.type IN (${typeList(types)})${bySchema ? " AND s.name = @schema" : ""}${
+            bounded ? "\n          ORDER BY s.name, o.name" : ""
+          }
+        )`;
+}
+
+/** The target set itself, which is what says WHICH objects the answer is about. */
+function bulkTargetSql(database: string, types: readonly string[], bySchema: boolean, bounded: boolean): string {
+  return `${describedSql(database, types, bySchema, bounded)}
+        SELECT d.object_id, d.schema_name, d.name FROM described d`;
+}
+
+/**
+ * The four detail reads, each re-pointed from ONE object to the whole target set.
+ *
+ * They are the `object*Sql()` bodies above with `WHERE s.name = @schema AND o.name = @name`
+ * replaced by a join to `described`, so every measured decision those statements carry
+ * still applies: columns come from `sys.columns` and `sys.types` rather than from
+ * `INFORMATION_SCHEMA.COLUMNS`, `i.name IS NOT NULL` drops the heap, `is_primary_key = 0`
+ * drops the index behind the primary key, and the foreign-key pairs come from
+ * `sys.foreign_key_columns`, which carries both sides of each pair in one row.
+ *
+ * Nothing here caps a column list. An unreported bound is the defect
+ * `ObjectDetailBatch.truncated` exists to prevent; what is bounded here is the number of
+ * OBJECTS, by the caller, and it is reported.
+ */
+function bulkDetailSql(
+  database: string,
+  types: readonly string[],
+  bySchema: boolean,
+  bounded: boolean,
+): { columns: string; primaryKey: string; foreignKeys: string; indexes: string } {
+  const described = describedSql(database, types, bySchema, bounded);
+  return {
+    columns: `${described}
+        SELECT d.object_id, c.name AS name, ty.name AS data_type, c.is_nullable, dc.definition AS default_definition
+        FROM described d
+        JOIN ${database}.sys.columns c ON c.object_id = d.object_id
+        JOIN ${database}.sys.types ty ON ty.user_type_id = c.user_type_id
+        LEFT JOIN ${database}.sys.default_constraints dc ON dc.object_id = c.default_object_id
+        ORDER BY d.object_id, c.column_id`,
+    primaryKey: `${described}
+        SELECT d.object_id, c.name AS name
+        FROM described d
+        JOIN ${database}.sys.indexes i ON i.object_id = d.object_id AND i.is_primary_key = 1
+        JOIN ${database}.sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+        JOIN ${database}.sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id`,
+    foreignKeys: `${described}
+        SELECT d.object_id, pc.name AS column_name, rs.name AS ref_schema, ro.name AS ref_table, rc.name AS ref_column
+        FROM described d
+        JOIN ${database}.sys.foreign_keys fk ON fk.parent_object_id = d.object_id
+        JOIN ${database}.sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+        JOIN ${database}.sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+        JOIN ${database}.sys.objects ro ON ro.object_id = fk.referenced_object_id
+        JOIN ${database}.sys.schemas rs ON rs.schema_id = ro.schema_id
+        JOIN ${database}.sys.columns rc ON rc.object_id = fkc.referenced_object_id
+               AND rc.column_id = fkc.referenced_column_id
+        ORDER BY d.object_id, fk.name, fkc.constraint_column_id`,
+    indexes: `${described}
+        SELECT d.object_id, i.name AS index_name, i.is_unique, c.name AS column_name
+        FROM described d
+        JOIN ${database}.sys.indexes i ON i.object_id = d.object_id AND i.name IS NOT NULL AND i.is_primary_key = 0
+        JOIN ${database}.sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+        JOIN ${database}.sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+        ORDER BY d.object_id, i.name, ic.key_ordinal`,
+  };
+}
+
+/**
+ * The provider's own sentence for what stopped a bulk read, phrased for a person reading a
+ * partial answer. It is the CALLER's limit that bit and never a bound this file invented.
+ */
+const BULK_TRUNCATION_REASON = "column read limit reached";
+
 // ============================================================================
 // Object surface shapes and derivations (#789)
 // ============================================================================
@@ -1044,7 +1153,7 @@ function measuredRowCount(raw: number | string | null | undefined): number | und
 function listedSchemaObject(catalog: string, kind: string, row: SchemaObjectRow): DatabaseObject {
   const rowCount = measuredRowCount(row.row_count);
   return {
-    path: [catalog, row.schema_name, row.name],
+    path: schemaObjectPath(catalog, row),
     name: row.name,
     kind,
     ...(rowCount === undefined ? {} : { rowCount }),
@@ -1065,6 +1174,90 @@ function listedTrigger(catalog: string, kind: string, row: TriggerRow): Database
       ? [catalog, row.name]
       : [catalog, row.parent_schema, row.parent_name, row.name];
   return { path, name: row.name, kind, status: row.is_disabled ? "DISABLED" : "ENABLED" };
+}
+
+/** One bulk row, whichever of the four detail reads produced it, with the object it is about. */
+interface BulkRow {
+  object_id: number;
+}
+
+/** One row of the bulk target read: an object, its schema and the key the four reads group on. */
+interface BulkTargetRow extends BulkRow {
+  schema_name: string;
+  name: string;
+}
+
+/** The four row sets one object's detail is built from, whichever read produced them. */
+interface DetailRows {
+  readonly columns: readonly ColumnRow[];
+  readonly primaryKey: readonly SchemaNameRow[];
+  readonly foreignKeys: readonly ForeignKeyRow[];
+  readonly indexes: readonly IndexRow[];
+}
+
+/**
+ * Four catalog row sets turned into one `ObjectDetail`, shared by the single and the bulk
+ * read.
+ *
+ * ONE function because the two reads select the same columns from the same views and a
+ * caller joins their results together: two copies of this mapping would be two chances for
+ * the bulk read to spell a foreign key differently from the single read of the SAME table.
+ *
+ * `schema` is the object's OWN schema and not the container's, which is what makes the
+ * qualification rule right at the database level, where one bulk read spans every schema:
+ * `referencedTable` is spelled the way `getSchema()` spells it, bare within the object's
+ * schema and qualified outside it, because `ForeignKeySchema` carries one string and both
+ * surfaces are live through Phase 1. SQL Server has no cross-DATABASE foreign key, so the
+ * catalog never needs naming.
+ */
+function objectDetailFromRows(path: readonly string[], schema: string, rows: DetailRows): ObjectDetail {
+  const primaryKey = new Set(rows.primaryKey.map((row) => row.name));
+  const columns: ColumnSchema[] = rows.columns.map((row) => ({
+    name: row.name,
+    type: row.data_type,
+    nullable: row.is_nullable,
+    isPrimary: primaryKey.has(row.name),
+    defaultValue: row.default_definition ?? undefined,
+  }));
+
+  // One entry per index, its columns in key_ordinal order, which is the order both
+  // statements return them in.
+  const byIndex = new Map<string, IndexSchema>();
+  for (const row of rows.indexes) {
+    const index = byIndex.get(row.index_name) ?? { name: row.index_name, columns: [], unique: row.is_unique };
+    index.columns.push(row.column_name);
+    byIndex.set(row.index_name, index);
+  }
+
+  const foreignKeys: ForeignKeySchema[] = rows.foreignKeys.map((row) => ({
+    columnName: row.column_name,
+    referencedTable: row.ref_schema === schema ? row.ref_table : `${row.ref_schema}.${row.ref_table}`,
+    referencedColumn: row.ref_column,
+  }));
+
+  return { path: [...path], columns, indexes: [...byIndex.values()], foreignKeys };
+}
+
+/**
+ * Where one object of a schema-scoped kind is addressed.
+ *
+ * The schema comes from the ROW rather than from the container, which is load-bearing at
+ * the database level, where one listing and one bulk read each span every schema. It is one
+ * function because `listObjects` and `describeObjects` are joined on path by every caller.
+ */
+function schemaObjectPath(catalog: string, row: { schema_name: string; name: string }): string[] {
+  return [catalog, row.schema_name, row.name];
+}
+
+/** The rows of one bulk read grouped by the object each belongs to, keyed by the engine's own id. */
+function byObjectId<T extends BulkRow>(rows: readonly T[]): Map<number, T[]> {
+  const grouped = new Map<number, T[]>();
+  for (const row of rows) {
+    const held = grouped.get(row.object_id);
+    if (held === undefined) grouped.set(row.object_id, [row]);
+    else held.push(row);
+  }
+  return grouped;
 }
 
 /**
@@ -1863,38 +2056,103 @@ export class MSSQLProvider extends SQLBaseProvider {
     const fkRows = await this.runObjectRows<ForeignKeyRow>(objectForeignKeysSql(quotedCatalog), binds);
     const indexRows = await this.runObjectRows<IndexRow>(objectIndexesSql(quotedCatalog), binds);
 
-    const primaryKey = new Set(pkRows.map((row) => row.name));
-    const columns: ColumnSchema[] = columnRows.map((row) => ({
-      name: row.name,
-      type: row.data_type,
-      nullable: row.is_nullable,
-      isPrimary: primaryKey.has(row.name),
-      defaultValue: row.default_definition ?? undefined,
-    }));
+    return objectDetailFromRows(path, binds.schema, {
+      columns: columnRows,
+      primaryKey: pkRows,
+      foreignKeys: fkRows,
+      indexes: indexRows,
+    });
+  }
 
-    // One entry per index, its columns in key_ordinal order, which is the order the
-    // statement returns them in.
-    const byIndex = new Map<string, IndexSchema>();
-    for (const row of indexRows) {
-      const index = byIndex.get(row.index_name) ?? { name: row.index_name, columns: [], unique: row.is_unique };
-      index.columns.push(row.column_name);
-      byIndex.set(row.index_name, index);
+  /**
+   * Columns, indexes and foreign keys for EVERY object of one kind in one container (#789).
+   *
+   * FIVE round trips for the whole folder, which is the entire reason this method exists:
+   * the inventory route built the same answer as one `describeObject` per object - four
+   * statements each, up to 5000 objects - and removed it as an N+1. The five are the target
+   * read plus the four `bulkDetailSql()` reads, and the count does not grow with the folder.
+   *
+   * Only the two kinds SQL Server resolves as relations can have any of the three, so a
+   * routine, a synonym, a sequence and a trigger answer an empty batch with NO round trip at
+   * all, exactly as `describeObject` answers three empty arrays for one of them. That is a
+   * true fact about those kinds and not a refused read, so it is `{ details: [] }` rather
+   * than a throw or a truncation. Measured on SQL Server 2022 CU26 against the fixture: of
+   * the types a person writes, only `U` and `V` have `sys.columns` rows, and a SEQUENCE has
+   * none - which is the contrast with PostgreSQL, where a sequence has three columns. The
+   * one thing this engine has that the rule does not carry is a TABLE-VALUED function: `IF`
+   * and `TF` do have `sys.columns` rows (2 each on the fixture), and reporting a routine's
+   * result shape belongs to the phase that renders a routine, the same place
+   * `describeObject` leaves it.
+   *
+   * An empty container costs ONE round trip rather than five: there is nothing for the four
+   * detail reads to be about.
+   *
+   * The bound is the CALLER's and is never invented here. `TOP (@limit)` is bound at
+   * `limit + 1`, so a saturated read is distinguishable from an exact one without a second
+   * count, the extra object is dropped, and `truncated` carries the caller's own limit. An
+   * unbounded call runs a statement with no `TOP` and can never report truncation.
+   *
+   * The paths are built by `schemaObjectPath()`, the same rule `listObjects` builds its
+   * paths with, and sorted by the same `comparePaths`, because every caller joins the two
+   * answers on path. A database-level container spans every schema and the schema comes from
+   * the row, which is why the two reads share that function rather than agreeing by accident.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`SQL Server declares no object kind "${kind}"`, "mssql");
     }
+    const target = containerTarget(capabilities, container);
+    const catalog = requiredSegment(target, "catalog");
+    const schema = target.schema;
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      // Not clamped and not ignored. A 0 would answer nothing while reporting a truncation
+      // the caller never asked for, and a fraction reaches the server as a bind it cannot
+      // use; both are caller mistakes and neither has a right answer to guess at.
+      throw new QueryError(
+        `A SQL Server bulk column read limit must be a positive whole number, received ${limit}`,
+        "mssql",
+      );
+    }
+    if (spec.role !== "relation") return { details: [] };
 
-    // `referencedTable` is spelled the way `getSchema()` spells it within the object's own
-    // schema - a bare name - and QUALIFIED outside it, because `ForeignKeySchema` carries
-    // one string and both surfaces are live through Phase 1. The phase that removes
-    // `getSchema` is where that string becomes a path. Qualifying the cross-schema case is
-    // not cosmetic: a bare name there addresses a table in the wrong schema, which is what
-    // the flat query's `OBJECT_NAME()` answers. SQL Server has no cross-DATABASE foreign
-    // key, so the catalog never needs naming.
-    const foreignKeys: ForeignKeySchema[] = fkRows.map((row) => ({
-      columnName: row.column_name,
-      referencedTable: row.ref_schema === binds.schema ? row.ref_table : `${row.ref_schema}.${row.ref_table}`,
-      referencedColumn: row.ref_column,
-    }));
+    const quotedCatalog = this.objectCatalog(catalog);
+    const types = MSSQL_OBJECT_TYPES[kind];
+    const bySchema = schema !== undefined;
+    const bounded = limit !== undefined;
+    // One row more than the bound, so the read itself says whether it stopped short.
+    const binds = {
+      ...(schema === undefined ? {} : { schema }),
+      ...(limit === undefined ? {} : { limit: limit + 1 }),
+    };
 
-    return { path: [...path], columns, indexes: [...byIndex.values()], foreignKeys };
+    const targetRows = await this.runObjectRows<BulkTargetRow>(
+      bulkTargetSql(quotedCatalog, types, bySchema, bounded),
+      binds,
+    );
+    const truncated = bounded && targetRows.length > limit;
+    const described = truncated ? targetRows.slice(0, limit) : targetRows;
+    if (described.length === 0) return { details: [] };
+
+    const statements = bulkDetailSql(quotedCatalog, types, bySchema, bounded);
+    const columns = byObjectId(await this.runObjectRows<ColumnRow & BulkRow>(statements.columns, binds));
+    const primaryKey = byObjectId(await this.runObjectRows<SchemaNameRow & BulkRow>(statements.primaryKey, binds));
+    const foreignKeys = byObjectId(await this.runObjectRows<ForeignKeyRow & BulkRow>(statements.foreignKeys, binds));
+    const indexes = byObjectId(await this.runObjectRows<IndexRow & BulkRow>(statements.indexes, binds));
+
+    const details = described
+      .map((row) =>
+        objectDetailFromRows(schemaObjectPath(catalog, row), row.schema_name, {
+          columns: columns.get(row.object_id) ?? [],
+          primaryKey: primaryKey.get(row.object_id) ?? [],
+          foreignKeys: foreignKeys.get(row.object_id) ?? [],
+          indexes: indexes.get(row.object_id) ?? [],
+        }),
+      )
+      .sort((left, right) => comparePaths(left.path, right.path));
+    return truncated ? { details, truncated: { limit, reason: BULK_TRUNCATION_REASON } } : { details };
   }
 
   // ============================================================================

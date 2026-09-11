@@ -722,6 +722,86 @@ it. Measured on the fixture: `app.orders` reports `customers`, and `reporting.da
 one column on SQL Server (`CREATE TABLE t ()` is a syntax error), so no rows means the object is not
 there, and `describeObject` raises rather than rendering a dropped table as a table with no columns.
 
+#### `describeObjects()` describes a whole folder in five statements (#789)
+
+`describeObjects(container, kind, limit?)` answers columns, indexes and foreign keys for EVERY object
+of one kind in one container, in FIVE round trips whatever the folder holds, against four per object
+for the single read.
+Measured on SQL Server 2022 CU26 against a 200-table database: **161 ms for one `describeObjects()`
+against 433 ms for 200 `describeObject()` calls**, the same 600 columns and 200 indexes.
+
+The container is either shape this engine accepts: a database-level call describes every schema's
+objects and binds no `@schema`, a schema-level one binds it.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.**
+The same `sys` views `describeObject()` reads, three-part named at the CALLER's database, and not
+`INFORMATION_SCHEMA`, for the reason the single read gives: `OBJECT_NAME()` and `COL_NAME()` resolve
+in the connected database.
+The five statements share one `described` CTE, and the four detail reads join it on `object_id`
+rather than on a name, so nothing here has to compare two strings under a collation to decide which
+rows belong to which object.
+
+**Which kinds have no columns.**
+Everything but `table` and `view`.
+Measured on the fixture server with
+`SELECT o.type, (SELECT COUNT(*) FROM sys.columns c WHERE c.object_id = o.object_id) FROM sys.objects o WHERE o.is_ms_shipped = 0`:
+`U` and `V` have column rows and a scalar function (`FN`), a procedure (`P`), a synonym (`SN`), a
+**sequence** (`SO`) and a trigger (`TR`) all have zero.
+A sequence having none is the contrast worth writing down, because it does not transfer: a
+PostgreSQL sequence has three columns and a MariaDB one has eight.
+The one case the rule does not carry is a TABLE-VALUED function: `IF` and `TF` do have `sys.columns`
+rows, 2 each on the fixture, and this surface reports none for the `function` kind because the kind
+also covers the scalar forms and a routine's result shape belongs to the phase that renders a
+routine, which is where `describeObject` leaves it too.
+
+**What bounds the read on the wire.**
+`TOP (@limit)` inside the CTE, the value BOUND rather than interpolated, at `limit + 1` so a
+saturated read is told from an exact one with no second count.
+The extra object is dropped and `truncated` carries the CALLER's limit.
+An unbounded call runs a statement with no `TOP` and can never report truncation.
+Nothing here caps a column list: an unreported bound is the defect `truncated` exists to prevent.
+
+**What orders the cut, and under whose collation.**
+`ORDER BY s.name, o.name`, and it appears ONLY in the bounded statement.
+The two travel together in both directions: SQL Server refuses an `ORDER BY` inside a CTE with no row
+bound (Msg 1033), and a bound with no order would cut an arbitrary set.
+That order runs under the DATABASE's collation, which is `SQL_Latin1_General_CP1_CI_AS` on the
+fixture server (measured) and is case-insensitive there, so a bounded read's membership is the
+server's rather than ours.
+`(schema, name)` is unique within a database, so the order is TOTAL and all five statements cut the
+same set.
+The ANSWER's order is ours: it is re-sorted by path, which sorts a database-level folder by schema
+first, and callers join the two readings on path rather than on position.
+
+**Mixed path depth (ruling 5f).**
+Not in this engine's relation set.
+`table` and `view` are addressed `[database, schema, name]` without exception; `trigger` is the kind
+that sits at two depths here, and it has no columns.
+
+An empty container costs ONE round trip rather than five.
+
+Rebuilding the 200-table database the timing above was measured on, so the number is re-runnable
+rather than asserted:
+
+```sql
+CREATE DATABASE bulk26a1;
+GO
+USE bulk26a1;
+GO
+DECLARE @i INT = 0, @s NVARCHAR(400);
+WHILE @i < 200
+BEGIN
+  SET @s = N'CREATE TABLE dbo.t' + RIGHT('000' + CAST(@i AS NVARCHAR(3)), 3) +
+           N' (id INT NOT NULL PRIMARY KEY, a NVARCHAR(20), b DECIMAL(10,2));';
+  EXEC sp_executesql @s;
+  SET @s = N'CREATE INDEX ix_a ON dbo.t' + RIGHT('000' + CAST(@i AS NVARCHAR(3)), 3) + N' (a);';
+  EXEC sp_executesql @s;
+  SET @i = @i + 1;
+END;
+```
+
 #### What is not carried
 
 - **No `sizeBytes`.** `DatabaseObject.sizeBytes` is optional and only carried where the engine
