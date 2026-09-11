@@ -726,6 +726,16 @@ database because it is a map key of the scan walk. A `function` object's last se
 `library_name`, which Redis enforces as unique per server: a second `FUNCTION LOAD` of the same name
 is refused unless `REPLACE` is given, and `FUNCTION LIST LIBRARYNAME <name>` addresses exactly one.
 
+**A function library is SERVER-scoped while its folder is PER DATABASE, so the same library is listed
+under every database.** On a stock server answering `CONFIG GET databases` with 16, one
+`libredb_probe` appears in all sixteen Function Libraries folders, at sixteen different paths, and
+`countObjects` for a database holding no keys at all still answers a `function` count of 1. Measured
+on Redis 8.10.1: `FUNCTION LIST` takes no database argument and answers identically after `SELECT 0`
+and after `SELECT 7`, where `DBSIZE` is 0. This is deliberate. The engine declares one container
+level, the numbered database, so there is no server level to hang the folder on, and showing the
+libraries under one chosen database would invent a home the engine does not have while making the
+other fifteen lie about what the server holds.
+
 A key grouping describes to the same three columns `getSchema()` emits, from one shared helper, so
 the flat model and the object model cannot describe the same grouping differently while both surfaces
 are live. A grouping the CURRENT scan no longer holds raises rather than answering an empty shape: on
@@ -733,6 +743,18 @@ this engine a prefix disappears the moment its last key is deleted.
 
 A function library answers three empty arrays with **no round trip**. That is a true fact about the
 kind rather than a failed read — a library has no columns, no indexes and no foreign keys.
+
+**The two kinds are therefore asymmetric about EXISTENCE, on purpose.** `describeObject()` answers a
+valid detail for ANY `function` name, a library that was never loaded included, because nothing there
+reads the catalog; a `keyspace` whose grouping the current scan no longer holds raises. Existence is
+not the same question on the two kinds: a key grouping is derived from a scan and ceases to exist the
+moment its last key is deleted, so an empty shape would claim a grouping that is gone, while a
+library's detail at this depth is a property of the KIND rather than of the object and is correct
+without asking. Paying a `FUNCTION LIST` round trip only to raise would buy a check Phase 1 never
+shows a person. Phase 2's Source tab is where the two must agree, and it needs care: measured on Redis
+8.10.1, `FUNCTION LIST LIBRARYNAME no_such_library` answers an **empty array rather than an error**,
+so the reader has to treat emptiness as absence itself, and the miss then belongs in
+`describeObject()` rather than in the tab.
 
 #### Reads go to the CONTAINER's database, never the session's
 

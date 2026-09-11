@@ -1006,6 +1006,18 @@ export class RedisProvider extends BaseDatabaseProvider {
    * Sorted by PATH, segment by segment, rather than by the order the server answered in:
    * `SCAN` guarantees no order at all, and `FUNCTION LIST` answers in an internal order that
    * is not the load order.
+   *
+   * A FUNCTION LIBRARY IS SERVER-SCOPED AND THIS FOLDER IS PER DATABASE, so the SAME library
+   * is listed under every database, at a different path each time: on a stock server answering
+   * `CONFIG GET databases` with 16, `libredb_probe` appears in all sixteen Function Libraries
+   * folders, and `countObjects` for a database holding no keys at all still answers a function
+   * count of 1. That is deliberate rather than a leak. `FUNCTION LIST` takes no database and
+   * `SELECT` does not change its answer: measured on redis 8.10.1, one `FUNCTION LOAD` of
+   * `libredb_probe` is listed identically after `SELECT 0` and after `SELECT 7`, where `DBSIZE`
+   * is 0. This engine declares one container level, the numbered database, so there is no
+   * server level to hang the folder on.
+   * Hiding the libraries under every database but one would invent a home the engine does not
+   * have and would make fifteen of sixteen databases lie about what the server holds.
    */
   private async listIn(client: Redis, container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     if (kind === "keyspace") {
@@ -1043,6 +1055,20 @@ export class RedisProvider extends BaseDatabaseProvider {
    * about the kind rather than a failed read: a library has no columns, no indexes and no
    * foreign keys, and its SOURCE - the one thing it does have - is Phase 2's, through
    * `FUNCTION LIST WITHCODE`.
+   *
+   * THE TWO KINDS ARE DELIBERATELY ASYMMETRIC ABOUT EXISTENCE, and this is the reason. A
+   * `function` path describes successfully for ANY name, because nothing here reads the
+   * catalog to answer it; a `keyspace` path whose grouping the current scan no longer holds
+   * RAISES below. Existence is not the same question on the two kinds: a key grouping is
+   * derived from a scan, so it ceases to exist the moment its last key is deleted and an
+   * empty shape would claim a grouping that is gone, while a library's detail at this depth
+   * is a property of the KIND rather than of the object and is correct without asking. Paying
+   * a `FUNCTION LIST` round trip here only to raise would buy a check nothing in Phase 1 shows
+   * a person. Phase 2 is where the two must agree: its Source tab reads
+   * `FUNCTION LIST WITHCODE LIBRARYNAME <name>`, which is a round trip that can miss, and it
+   * misses QUIETLY: measured on redis 8.10.1, `FUNCTION LIST LIBRARYNAME no_such_library`
+   * answers an empty array rather than an error, so whatever reads it has to treat emptiness as
+   * absence itself. That belongs in `describeObject` at that point rather than in the tab.
    */
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
     this.ensureConnected();

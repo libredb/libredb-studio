@@ -148,8 +148,9 @@ const NAMED_CITATIONS = [
       "formatResult",
       "parseInfoResult",
       "getSchema",
-      // The object surface (#789). Module-level helpers such as `keyGrouping` are cited in
-      // the doc too and cannot be listed here: `declarationLine` matches class members only.
+      // The object surface (#789). Module-level helpers such as `keyGrouping` are cited in the
+      // doc too and cannot be listed here, because `declarationLine` matches class members
+      // only; `keyGrouping()` is pinned by its own test in the `redis provider doc` block.
       "listContainers",
       "countObjects",
       "listObjects",
@@ -339,6 +340,22 @@ describe("redis provider doc", () => {
     expect(text).toContain("`getMonitoringData()` from\n[`base-provider.ts`](../../src/lib/db/base-provider.ts)");
     expect(text).not.toMatch(/base-provider\.ts:\d/);
     expect(declarationLine(read(BASE_PROVIDER), "getMonitoringData")).toBeGreaterThan(-1);
+  });
+
+  /**
+   * `keyGrouping()` is MODULE-LEVEL, so `NAMED_CITATIONS` cannot reach it: `declarationLine`
+   * matches `public`/`protected`/`private` members only, and the object surface (#789) renamed
+   * this helper out of the class precisely so `getSchema()` and `describeObject()` could share
+   * it. Three citations moved with the rename and nothing was measuring any of them, which is
+   * the same shape of stranding this whole file exists to stop. Pinned the way the measured
+   * aggregate helper below is pinned: the citation text, then the declaration it names.
+   */
+  test("names keyGrouping() where the object surface and getSchema() share it", () => {
+    expect(read("docs/providers/redis.md")).toContain(
+      "`keyGrouping()` ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts))",
+    );
+    expect(read("src/lib/query-generators.ts")).toContain("`keyGrouping` grouping");
+    expect(read("src/lib/db/providers/keyvalue/redis.ts")).toMatch(/^function keyGrouping\(/m);
   });
 });
 

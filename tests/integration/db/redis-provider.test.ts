@@ -1192,7 +1192,9 @@ describe("RedisProvider", () => {
   // --------------------------------------------------------------------------
 
   /**
-   * The four object-surface methods on the first NON-SQL engine to get them.
+   * The four object-surface methods on an engine whose catalog is a COMMAND rather than a
+   * query. Not the first non-SQL engine to get them: MongoDB's landed in 16b1b23a, two
+   * minutes before this, and an earlier version of this comment claimed otherwise.
    *
    * The mock answers `CONFIG GET databases`, `FUNCTION LIST` and `SCAN` by dispatching on
    * the command the provider sent, which standing ruling 5b names as a blind spot: a fake
