@@ -10,6 +10,10 @@ export type {
   TableSchema,
   TableRelations,
   ColumnSchema,
+  // `ObjectDetail` below is defined over these two, so a provider implementing
+  // `describeObject` needs them from here rather than reaching past this module (#789).
+  IndexSchema,
+  ForeignKeySchema,
   QueryResult,
   QueryWarning,
 } from "../types";
@@ -1114,6 +1118,17 @@ export interface Container {
   readonly name: string;
   /** Index into `containerLevels`. */
   readonly level: number;
+  /**
+   * Whether this container is the one the session is already in (#789).
+   *
+   * Absent means the engine does not publish the fact, which is most of them: on
+   * PostgreSQL a `search_path` names several schemas and none of them owns the session.
+   * Oracle is the case this exists for, and there it is not decoration: the connecting
+   * user IS a container, every other owner in `ALL_USERS` is a peer of it, and without
+   * this a user connecting as `SYSADM` gets an alphabetical list with no indication which
+   * entry is their own.
+   */
+  readonly isSessionDefault?: boolean;
 }
 
 /**

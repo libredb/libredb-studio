@@ -1,9 +1,10 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import type oracledb from "oracledb";
-import { ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, DatabaseError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes } from "@/lib/export/binary";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 // ---------------------------------------------------------------------------
 // Mock oracledb BEFORE loading the provider
@@ -2577,5 +2578,620 @@ describe("OracleProvider declared column types", () => {
 
     expect(result.columnTypes).toEqual({ B: "BLOB" });
     await provider.rollbackTransaction();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The object surface (#789), and the bug it closes (#765)
+// ---------------------------------------------------------------------------
+
+/**
+ * `makeProvider()` is local rather than shared with the blocks above: these tests each
+ * install their own `mockExecuteFn` before connecting, so they need a provider built after
+ * that assignment and no `afterEach` reaching for a shared handle.
+ */
+describe("object surface", () => {
+  beforeEach(() => {
+    mockExecuteFn = async (sql: string) => defaultExecute(sql);
+    mockConnCloseFn = async () => {};
+    mockBreakFn = async () => {};
+    mockPoolCloseFn = async () => {};
+    mockCreatePoolFn = async () => createMockPool();
+  });
+
+  function makeProvider(overrides: Partial<DatabaseConnection> = {}) {
+    return new OracleProvider({ ...baseConfig, ...overrides });
+  }
+
+  test("declares the kinds Oracle has, with the package spec and body as one kind", () => {
+    const capabilities = makeProvider().getCapabilities();
+    const kinds = capabilities.objectKinds ?? [];
+
+    expect(kinds.map((k) => k.id).sort()).toEqual([
+      "function",
+      "materialized_view",
+      "package",
+      "procedure",
+      "sequence",
+      "synonym",
+      "table",
+      "trigger",
+      "view",
+    ]);
+    // A package is one tree node holding routines, not two rows and not a routine itself.
+    expect(kinds.find((k) => k.id === "package")?.role).toBe("group");
+    expect(kinds.find((k) => k.id === "package")?.childKinds).toEqual(["procedure", "function"]);
+    expect(kinds.find((k) => k.id === "trigger")?.attachedTo).toBe("table");
+    expect(kinds.find((k) => k.id === "table")?.acceptsRowWrites).toBe(true);
+    // Oracle updates a key-preserved view and refuses the rest, which is a per-object fact
+    // this per-kind declaration cannot state; a materialized view takes no write at all.
+    expect(kinds.find((k) => k.id === "view")?.acceptsRowWrites).toBeUndefined();
+    expect(kinds.find((k) => k.id === "materialized_view")?.acceptsRowWrites).toBeUndefined();
+    // No `index` kind: Oracle models an index as an attribute of the table it is on, so it
+    // belongs in describeObject's output rather than in a folder of its own.
+    expect(kinds.find((k) => k.id === "index")).toBeUndefined();
+    expect(capabilities.containerLevels).toEqual([{ id: "schema", label: "Schema", labelPlural: "Schemas" }]);
+  });
+
+  test("the container is the connecting user, and other owners are reachable", async () => {
+    const statements: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      statements.push(sql);
+      if (!sql.includes("ALL_USERS")) return { rows: [] };
+      return {
+        rows: [
+          { NAME: "APP", IS_SESSION_DEFAULT: 1 },
+          { NAME: "REPORTING", IS_SESSION_DEFAULT: 0 },
+        ],
+      };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const containers = await provider.listContainers();
+    expect(containers.map((c) => c.name)).toEqual(["APP", "REPORTING"]);
+    expect(containers.map((c) => c.path)).toEqual([["APP"], ["REPORTING"]]);
+    expect(containers.find((c) => c.name === "APP")?.isSessionDefault).toBe(true);
+    expect(containers.find((c) => c.name === "REPORTING")?.isSessionDefault).toBe(false);
+    // The confinement this task lifts. getSchema() hard-scopes every read to
+    // OWNER = <connecting user>, which is why the app showed exactly one schema; the
+    // container read is bound to nothing at all.
+    expect(statements[0]).not.toContain(":1");
+    expect(statements[0]).toContain("ALL_USERS");
+    // Oracle's own answer for who is connected, rather than the configured user: it is
+    // right under external authentication and right for a quoted lower-case user, and it
+    // is what keeps the session's own owner in the list when Oracle maintains it.
+    expect(statements[0]).toContain("SYS_CONTEXT('USERENV','SESSION_USER')");
+    await provider.disconnect();
+  });
+
+  test("a package spec and its body collapse to one object carrying both statuses", async () => {
+    // Three packages, not one, and the rows are deliberately not in a consistent order.
+    // A test with only a valid package cannot tell a working collapse from no collapse at
+    // all, and a single ordering cannot tell a merge from "the first row wins" or "the
+    // last row wins".
+    mockExecuteFn = async (sql: string) => {
+      if (!sql.includes("ALL_OBJECTS")) return { rows: [] };
+      return {
+        rows: [
+          { NAME: "APP_BROKEN_PKG", OBJECT_TYPE: "PACKAGE", STATUS: "VALID" },
+          { NAME: "APP_BROKEN_PKG", OBJECT_TYPE: "PACKAGE BODY", STATUS: "INVALID" },
+          { NAME: "APP_ORDERS_PKG", OBJECT_TYPE: "PACKAGE BODY", STATUS: "VALID" },
+          { NAME: "APP_ORDERS_PKG", OBJECT_TYPE: "PACKAGE", STATUS: "VALID" },
+          { NAME: "APP_LEGACY_PKG", OBJECT_TYPE: "PACKAGE BODY", STATUS: "INVALID" },
+          { NAME: "APP_LEGACY_PKG", OBJECT_TYPE: "PACKAGE", STATUS: "VALID" },
+        ],
+      };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const packages = await provider.listObjects(["APP"], "package");
+    expect(packages).toHaveLength(3);
+    expect(packages).toEqual([
+      { path: ["APP", "APP_BROKEN_PKG"], name: "APP_BROKEN_PKG", kind: "package", status: "INVALID" },
+      { path: ["APP", "APP_LEGACY_PKG"], name: "APP_LEGACY_PKG", kind: "package", status: "INVALID" },
+      { path: ["APP", "APP_ORDERS_PKG"], name: "APP_ORDERS_PKG", kind: "package", status: "VALID" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("counting does not read a single column of a single table", async () => {
+    // #765: the old getSchema() ran five bulk ALL_* queries over the whole owner on
+    // connect, materialising about 1.6 million rows before the UI could paint.
+    const statements: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      statements.push(sql);
+      return { rows: [{ KIND: "TABLE", N: 43512 }] };
+    };
+    const provider = makeProvider({ user: "sysadm" });
+    await provider.connect();
+
+    const counts = await provider.countObjects(["SYSADM"]);
+    expect(statements.some((s) => s.includes("ALL_TAB_COLUMNS"))).toBe(false);
+    expect(statements.some((s) => s.includes("ALL_IND_COLUMNS"))).toBe(false);
+    // The control for the two negatives above: a statement WAS issued and it was the
+    // dictionary read, so "never touched" is a measurement rather than an empty log.
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).toContain("ALL_OBJECTS");
+    expect(counts.table).toEqual({ count: 43512 });
+    // Seeded before the read: a declared kind the GROUP BY did not answer for holds none,
+    // which is a different fact from a kind Oracle does not have.
+    expect(counts.view).toEqual({ count: 0 });
+    expect(counts.package).toEqual({ count: 0 });
+    await provider.disconnect();
+  });
+
+  test("satisfies the shared object surface contract", async () => {
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      if (sql.includes("ALL_USERS")) {
+        return {
+          rows: [
+            { NAME: "APP", IS_SESSION_DEFAULT: 1 },
+            { NAME: "REPORTING", IS_SESSION_DEFAULT: 0 },
+          ],
+        };
+      }
+      if (sql.includes("GROUP BY")) {
+        return {
+          rows: [
+            { KIND: "TABLE", N: 2 },
+            { KIND: "VIEW", N: 1 },
+            { KIND: "PACKAGE", N: 2 },
+            { KIND: "TRIGGER", N: 1 },
+          ],
+        };
+      }
+      if (sql.includes("ALL_TRIGGERS")) {
+        return { rows: [{ NAME: "APP_ORDERS_TRG", PARENT: "APP_ORDERS", STATUS: "VALID" }] };
+      }
+      // One row set per bound dictionary type, and they must be DISTINCT: the shared
+      // helper lists every counted kind and requires paths unique within each of them.
+      const type = (params ?? [])[1];
+      if (type === "TABLE") {
+        return {
+          rows: [
+            { NAME: "APP_ORDERS", STATUS: "VALID" },
+            { NAME: "APP_CUSTOMERS", STATUS: "VALID" },
+          ],
+        };
+      }
+      if (type === "VIEW") return { rows: [{ NAME: "APP_ORDER_SUMMARY", STATUS: "VALID" }] };
+      if (type === "PACKAGE") {
+        return {
+          rows: [
+            { NAME: "APP_ORDERS_PKG", OBJECT_TYPE: "PACKAGE", STATUS: "VALID" },
+            { NAME: "APP_ORDERS_PKG", OBJECT_TYPE: "PACKAGE BODY", STATUS: "VALID" },
+            { NAME: "APP_BROKEN_PKG", OBJECT_TYPE: "PACKAGE", STATUS: "VALID" },
+            { NAME: "APP_BROKEN_PKG", OBJECT_TYPE: "PACKAGE BODY", STATUS: "INVALID" },
+          ],
+        };
+      }
+      return { rows: [] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    await assertObjectSurface(provider, {
+      containers: [["APP"], ["REPORTING"]],
+      kinds: { table: 2, view: 1, package: 2, trigger: 1 },
+      sampleObject: { path: ["APP", "APP_ORDERS"], kind: "table" },
+    });
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The rest of the object surface: the dictionary reads behind each kind, the detail row,
+ * and the refusals. Kept out of the block above so `-t "object surface"` still runs
+ * exactly the five conformance tests.
+ */
+describe("Oracle object listing and detail", () => {
+  beforeEach(() => {
+    mockExecuteFn = async (sql: string) => defaultExecute(sql);
+    mockConnCloseFn = async () => {};
+    mockBreakFn = async () => {};
+    mockPoolCloseFn = async () => {};
+    mockCreatePoolFn = async () => createMockPool();
+  });
+
+  function makeProvider(overrides: Partial<DatabaseConnection> = {}) {
+    return new OracleProvider({ ...baseConfig, ...overrides });
+  }
+
+  test("a container path that is not one owner is refused, rather than read as empty", async () => {
+    mockExecuteFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    // Not [] and not a zero count: binding undefined to :1 would answer an owner holding
+    // nothing, which is indistinguishable from a real empty owner.
+    await expect(provider.countObjects([])).rejects.toThrow(QueryError);
+    await expect(provider.listObjects(["CATALOG", "APP"], "table")).rejects.toThrow(/one owner name/);
+    await provider.disconnect();
+  });
+
+  test("nothing nests under an owner", async () => {
+    mockExecuteFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect(await provider.listContainers(["APP"])).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("a kind this engine does not declare is refused, not answered empty", async () => {
+    mockExecuteFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.listObjects(["APP"], "dictionary")).rejects.toThrow(/declares no object kind "dictionary"/);
+    await expect(provider.describeObject(["APP", "X"], "dictionary")).rejects.toThrow(
+      /declares no object kind "dictionary"/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a listing reads the owner it was asked for, not the connecting user", async () => {
+    // The whole point of #765's second half. Every other read in this provider is scoped
+    // to OWNER = <connecting user>, so a listing that ignored its argument would still
+    // look correct against a single-owner fixture.
+    const bound: unknown[][] = [];
+    mockExecuteFn = async (_sql: string, params?: unknown[]) => {
+      bound.push(params ?? []);
+      return { rows: [{ NAME: "REPORT_DAILY", STATUS: "VALID" }] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const objects = await provider.listObjects(["REPORTING"], "table");
+    expect(bound[0][0]).toBe("REPORTING");
+    expect(objects).toEqual([
+      { path: ["REPORTING", "REPORT_DAILY"], name: "REPORT_DAILY", kind: "table", status: "VALID" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("every declared kind binds its own dictionary spelling, and a package binds both of its rows", async () => {
+    // Derived from the declaration rather than pinned to a list: a kind added to
+    // objectKinds without an entry in the vocabulary table fails here instead of drawing
+    // a folder nothing can fill.
+    const bound = new Map<string, unknown[]>();
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const declared = (provider.getCapabilities().objectKinds ?? []).map((k) => k.id);
+    expect(declared.length).toBeGreaterThan(0);
+    for (const kind of declared) {
+      mockExecuteFn = async (_sql: string, params?: unknown[]) => {
+        bound.set(kind, params ?? []);
+        return { rows: [] };
+      };
+      await provider.listObjects(["APP"], kind);
+    }
+
+    // Eight kinds are one ALL_OBJECTS row each; a package is two rows collapsed into one
+    // node, so it binds both spellings.
+    expect(bound.get("table")?.slice(1)).toEqual(["TABLE"]);
+    expect(bound.get("view")?.slice(1)).toEqual(["VIEW"]);
+    expect(bound.get("materialized_view")?.slice(1)).toEqual(["MATERIALIZED VIEW"]);
+    expect(bound.get("synonym")?.slice(1)).toEqual(["SYNONYM"]);
+    expect(bound.get("sequence")?.slice(1)).toEqual(["SEQUENCE"]);
+    expect(bound.get("procedure")?.slice(1)).toEqual(["PROCEDURE"]);
+    expect(bound.get("function")?.slice(1)).toEqual(["FUNCTION"]);
+    expect(bound.get("package")?.slice(1)).toEqual(["PACKAGE", "PACKAGE BODY"]);
+    // The trigger listing reads ALL_TRIGGERS, which is keyed by owner alone.
+    expect(bound.get("trigger")).toEqual(["APP"]);
+    expect(bound.size).toBe(declared.length);
+    await provider.disconnect();
+  });
+
+  test("the count statement never counts a package body, and never counts a materialized view twice", async () => {
+    // Two facts measured on Oracle Database 21c XE, both of which turn a badge into a lie
+    // if they are missed. A PACKAGE BODY is a second dictionary row for one tree node.
+    // CREATE MATERIALIZED VIEW writes a TABLE row of the same name for its container, and
+    // an owner with 100 materialized views then reports 100 tables nobody created.
+    let counted = "";
+    mockExecuteFn = async (sql: string) => {
+      if (sql.includes("GROUP BY")) counted = sql;
+      return { rows: [] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+    await provider.countObjects(["APP"]);
+
+    expect(counted).toContain("ALL_OBJECTS");
+    expect(counted).not.toContain("PACKAGE BODY");
+    // Both halves of the container-table rule, because either one alone is inert: the
+    // window only NOTICES the twin and the filter is what drops it. Oracle executes them,
+    // so this is all a unit test can see; the live acceptance run measures the effect
+    // (the fixture owner holds three ALL_OBJECTS TABLE rows and two tables, badge 2).
+    expect(counted).toContain("OVER (PARTITION BY o.OBJECT_NAME)");
+    expect(counted).toContain("WHERE NOT (KIND = 'TABLE' AND MV_TWIN > 0)");
+    // The IN list is derived from the same vocabulary table the listings bind from, so it
+    // carries exactly one literal per declared kind. Derived, never pinned to a number: a
+    // guard that asserted "nine" would have to be edited for every kind added and would
+    // then be asserting the inventory rather than the invariant.
+    const declared = provider.getCapabilities().objectKinds ?? [];
+    const inList = counted.match(/IN \(([^)]*)\)/)?.[1] ?? "";
+    expect(inList.match(/'[A-Z ]+'/g) ?? []).toHaveLength(declared.length);
+    await provider.disconnect();
+  });
+
+  test("a materialized view's container table is excluded from the table listing", async () => {
+    let listed = "";
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      if ((params ?? [])[1] === "TABLE") listed = sql;
+      return { rows: [] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+    await provider.listObjects(["APP"], "table");
+
+    // The rule needs no second dictionary view: measured on 21c XE, a TABLE and a
+    // MATERIALIZED VIEW cannot share a name in one owner (ORA-00955), so a same-named
+    // pair is always the materialized view's own container.
+    expect(listed).toContain("MATERIALIZED VIEW");
+    expect(listed).toContain("NOT EXISTS");
+    await provider.disconnect();
+  });
+
+  test("a trigger nests under the object it is attached to, wherever that object lives", async () => {
+    mockExecuteFn = async (sql: string) => {
+      if (!sql.includes("ALL_TRIGGERS")) return { rows: [] };
+      return {
+        rows: [
+          { NAME: "APP_ORDERS_TRG", PARENT: "APP_ORDERS", STATUS: "VALID" },
+          // ALL_TRIGGERS separates OWNER from TABLE_OWNER, and a trigger on another
+          // owner's table is a real case. It stays in the container that OWNS it.
+          { NAME: "REPORT_DAILY_TRG", PARENT: "REPORT_DAILY", STATUS: "VALID" },
+          // A SCHEMA or DATABASE trigger has no base object at all: measured, TABLE_NAME
+          // is NULL and BASE_OBJECT_TYPE is SCHEMA. It hangs off the container itself.
+          { NAME: "APP_LOGON_TRG", PARENT: null, STATUS: "VALID" },
+        ],
+      };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    expect(await provider.listObjects(["APP"], "trigger")).toEqual([
+      { path: ["APP", "APP_LOGON_TRG"], name: "APP_LOGON_TRG", kind: "trigger", status: "VALID" },
+      { path: ["APP", "APP_ORDERS", "APP_ORDERS_TRG"], name: "APP_ORDERS_TRG", kind: "trigger", status: "VALID" },
+      { path: ["APP", "REPORT_DAILY", "REPORT_DAILY_TRG"], name: "REPORT_DAILY_TRG", kind: "trigger", status: "VALID" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a refused count is reported as unavailable, never as zero", async () => {
+    mockExecuteFn = async () => {
+      throw Object.assign(new Error("ORA-00942: table or view does not exist"), { errorNum: 942 });
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const counts = await provider.countObjects(["SALES"]);
+    for (const kind of provider.getCapabilities().objectKinds ?? []) {
+      expect(counts[kind.id]).toEqual({ unavailable: "ORA-00942: table or view does not exist" });
+    }
+    await provider.disconnect();
+  });
+
+  test("a server without ALL_USERS.ORACLE_MAINTAINED loses the filter, not the container list", async () => {
+    // ORACLE_MAINTAINED arrived in 12.1. Thin mode refuses anything older (NJS-138), but
+    // Thick mode is an explicit opt-in for exactly those servers, so an 11.2 instance
+    // answering ORA-00904 here is a supported configuration.
+    const asked: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      asked.push(sql);
+      if (sql.includes("ORACLE_MAINTAINED")) {
+        throw Object.assign(new Error('ORA-00904: "ORACLE_MAINTAINED": invalid identifier'), { errorNum: 904 });
+      }
+      return { rows: [{ NAME: "SYSTEM", IS_SESSION_DEFAULT: 1 }] };
+    };
+    const provider = makeProvider({ user: "system" });
+    await provider.connect();
+
+    expect(await provider.listContainers()).toEqual([
+      { path: ["SYSTEM"], name: "SYSTEM", level: 0, isSessionDefault: true },
+    ]);
+    expect(asked).toHaveLength(2);
+    expect(asked[1]).not.toContain("ORACLE_MAINTAINED");
+    await provider.disconnect();
+  });
+
+  test("an ORA-00904 that does not name ORACLE_MAINTAINED takes the container list down", async () => {
+    // The retry repairs nothing when the missing column is one the fallback keeps, so
+    // answering an empty container list there would be a guess dressed as a measurement.
+    //
+    // The statement WITHOUT the filter answers normally here, and that is the control: a
+    // mock that refused both reads would reject whether or not the retry ran, and the
+    // assertion would be measuring nothing.
+    const asked: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      asked.push(sql);
+      if (sql.includes("ORACLE_MAINTAINED")) {
+        throw Object.assign(new Error('ORA-00904: "USERNAME": invalid identifier'), { errorNum: 904 });
+      }
+      return { rows: [{ NAME: "APP", IS_SESSION_DEFAULT: 1 }] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    await expect(provider.listContainers()).rejects.toThrow(/"USERNAME": invalid identifier/);
+    expect(asked).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("the container list's own refusal is raised, mapped", async () => {
+    mockExecuteFn = async () => {
+      throw Object.assign(new Error("ORA-01031: insufficient privileges"), { errorNum: 1031 });
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    await expect(provider.listContainers()).rejects.toThrow(/ORA-01031: insufficient privileges/);
+    await provider.disconnect();
+  });
+
+  test("a kind that is declared but has no listing statement says so, not that it is undeclared", async () => {
+    // Two questions, and only the declaration answers the first. Deciding "declared" from
+    // whether a statement exists would report "declares no object kind" about a kind
+    // objectKinds does declare.
+    mockExecuteFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [...(real.objectKinds ?? []), { id: "dictionary", role: "config", label: "D", labelPlural: "Ds" }],
+    });
+
+    await expect(provider.listObjects(["APP"], "dictionary")).rejects.toThrow(
+      /declares the kind "dictionary" but has no statement that lists it/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a listing refusal is raised, mapped, quoting the statement the server received", async () => {
+    mockExecuteFn = async (sql: string) => {
+      if (!sql.includes("ALL_TRIGGERS")) return { rows: [] };
+      throw Object.assign(new Error("ORA-01031: insufficient privileges"), { errorNum: 1031 });
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const failure = await provider.listObjects(["APP"], "trigger").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(DatabaseError);
+    expect((failure as DatabaseError).message).toContain("ORA-01031: insufficient privileges");
+    // The statement the server actually received, so a reader is pointed at real text.
+    expect((failure as DatabaseError).query).toContain("ALL_TRIGGERS");
+    await provider.disconnect();
+  });
+
+  test("a table's detail carries its columns, primary key, foreign keys and indexes", async () => {
+    const bound: unknown[][] = [];
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      bound.push(params ?? []);
+      if (sql.includes("ALL_TAB_COLUMNS")) {
+        return {
+          rows: [
+            { COLUMN_NAME: "ID", DATA_TYPE: "NUMBER", NULLABLE: "N", DATA_DEFAULT: null },
+            { COLUMN_NAME: "TOTAL", DATA_TYPE: "NUMBER", NULLABLE: "Y", DATA_DEFAULT: "0 " },
+            { COLUMN_NAME: "NOTE", DATA_TYPE: "VARCHAR2", NULLABLE: "Y", DATA_DEFAULT: null },
+          ],
+        };
+      }
+      if (sql.includes("'P'")) return { rows: [{ COLUMN_NAME: "ID" }] };
+      if (sql.includes("'R'")) {
+        return {
+          rows: [
+            { COLUMN_NAME: "CUSTOMER_ID", REF_OWNER: "APP", REF_TABLE: "APP_CUSTOMERS", REF_COLUMN: "ID" },
+            { COLUMN_NAME: "REGION_ID", REF_OWNER: "REPORTING", REF_TABLE: "REGIONS", REF_COLUMN: "ID" },
+          ],
+        };
+      }
+      return {
+        rows: [
+          { INDEX_NAME: "APP_ORDERS_PK", UNIQUENESS: "UNIQUE", COLUMN_NAME: "ID" },
+          { INDEX_NAME: "APP_ORDERS_TOTAL_IX", UNIQUENESS: "NONUNIQUE", COLUMN_NAME: "TOTAL" },
+          { INDEX_NAME: "APP_ORDERS_TOTAL_IX", UNIQUENESS: "NONUNIQUE", COLUMN_NAME: "NOTE" },
+        ],
+      };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const detail = await provider.describeObject(["APP", "APP_ORDERS"], "table");
+    expect(detail.path).toEqual(["APP", "APP_ORDERS"]);
+    expect(detail.columns).toEqual([
+      { name: "ID", type: "NUMBER", nullable: false, isPrimary: true, defaultValue: undefined },
+      // DATA_DEFAULT is a LONG carrying the source text with its trailing whitespace.
+      { name: "TOTAL", type: "NUMBER", nullable: true, isPrimary: false, defaultValue: "0" },
+      { name: "NOTE", type: "VARCHAR2", nullable: true, isPrimary: false, defaultValue: undefined },
+    ]);
+    expect(detail.indexes).toEqual([
+      { name: "APP_ORDERS_PK", columns: ["ID"], unique: true },
+      { name: "APP_ORDERS_TOTAL_IX", columns: ["TOTAL", "NOTE"], unique: false },
+    ]);
+    // Same spelling getSchema() uses for a same-owner reference; a reference into another
+    // owner is qualified, because the bare name would address the wrong table.
+    expect(detail.foreignKeys).toEqual([
+      { columnName: "CUSTOMER_ID", referencedTable: "APP_CUSTOMERS", referencedColumn: "ID" },
+      { columnName: "REGION_ID", referencedTable: "REPORTING.REGIONS", referencedColumn: "ID" },
+    ]);
+    // #765 again, one level down: every detail read is narrowed to ONE owner and ONE
+    // object. The five reads getSchema() issues are each scoped to the owner alone.
+    expect(bound).toHaveLength(4);
+    for (const params of bound) expect(params).toEqual(["APP", "APP_ORDERS"]);
+    await provider.disconnect();
+  });
+
+  test("a kind with no relation behind it describes as three empty lists, without asking the server", async () => {
+    // Not an optimisation and not a name test. The detail reads key the last path segment
+    // against TABLE_NAME, so a trigger named APP_ORDERS on table APP_CUSTOMERS would have
+    // been handed APP_ORDERS's columns as if they were its own. The KIND settles it.
+    let asked = 0;
+    mockExecuteFn = async () => {
+      asked += 1;
+      return { rows: [] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    for (const [path, kind] of [
+      [["APP", "APP_ORDERS_PKG"], "package"],
+      [["APP", "APP_ORDER_TOTAL"], "function"],
+      [["APP", "APP_TOUCH_ORDER"], "procedure"],
+      [["APP", "APP_INVOICE_SEQ"], "sequence"],
+      [["APP", "APP_ORDERS_SYN"], "synonym"],
+      [["APP", "APP_ORDERS", "APP_ORDERS_TRG"], "trigger"],
+      [["APP", "APP_LOGON_TRG"], "trigger"],
+    ] as [string[], string][]) {
+      expect(await provider.describeObject(path, kind)).toEqual({
+        path,
+        columns: [],
+        indexes: [],
+        foreignKeys: [],
+      });
+    }
+    expect(asked).toBe(0);
+    await provider.disconnect();
+  });
+
+  test("a view and a materialized view describe from the same column dictionary a table does", async () => {
+    mockExecuteFn = async (sql: string) => {
+      if (!sql.includes("ALL_TAB_COLUMNS")) return { rows: [] };
+      return { rows: [{ COLUMN_NAME: "ID", DATA_TYPE: "NUMBER", NULLABLE: "Y", DATA_DEFAULT: null }] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    // Measured on 21c XE: ALL_TAB_COLUMNS answers for a view and for a materialized view's
+    // container table, so neither needs a dictionary of its own.
+    for (const kind of ["view", "materialized_view"]) {
+      const detail = await provider.describeObject(["APP", "APP_ORDER_SUMMARY"], kind);
+      expect(detail.columns).toEqual([
+        { name: "ID", type: "NUMBER", nullable: true, isPrimary: false, defaultValue: undefined },
+      ]);
+    }
+    await provider.disconnect();
+  });
+
+  test("an object path that is not [schema, name] is refused", async () => {
+    mockExecuteFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObject(["APP"], "table")).rejects.toThrow(/"table" path is \[schema, name\]/);
+    await expect(provider.describeObject(["A", "B", "C"], "table")).rejects.toThrow(/"table" path is \[schema, name\]/);
+    // An attached kind takes either depth, and only those two: measured, a trigger's base
+    // object may be a table, a view, or nothing at all.
+    await expect(provider.describeObject(["A", "B", "C", "D"], "trigger")).rejects.toThrow(
+      /"trigger" path is \[schema, table, name\] or \[schema, name\]/,
+    );
+    await expect(provider.describeObject(["A"], "trigger")).rejects.toThrow(
+      /"trigger" path is \[schema, table, name\] or \[schema, name\]/,
+    );
+    await provider.disconnect();
   });
 });

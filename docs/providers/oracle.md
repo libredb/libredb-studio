@@ -36,7 +36,7 @@ providers, with several Oracle-isms that are worth knowing before reading the co
 |--------|------------|--------|
 | Driver mode | `pg` | `oracledb` **Thin** by default (Thick opt-in via `ORACLE_CLIENT_LIB_DIR`) |
 | Pagination | `LIMIT … OFFSET` | `FETCH FIRST n ROWS ONLY` / `OFFSET m ROWS FETCH NEXT n` |
-| Schema scope | all non-system schemas | the connecting **user's** schema (`OWNER = USER`) |
+| Schema scope | all non-system schemas | `getSchema()`: the connecting **user's** schema (`OWNER = USER`). The object surface: every owner in `ALL_USERS` ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)) |
 | Schema queries | 1 `MATERIALIZED`-CTE round-trip | **5 bulk** `ALL_*` queries grouped in memory |
 | Maintenance | vacuum / analyze / reindex / kill | `analyze` (DBMS_STATS) / `optimize` (rebuild one table's indexes, or the schema's) / `kill` |
 | Transaction timeout | 5-minute auto-rollback | **none** |
@@ -163,6 +163,11 @@ table. This is neither the Postgres single-CTE approach nor MySQL's per-table N+
 5 round-trips regardless of table count. There is no `getSchemaList()`/`getSchemaRelations()`
 (no two-phase split), and the returned `TableSchema` has **no `size` field** (only `rowCount` from
 `NUM_ROWS`, an optimizer estimate that can be stale/`NULL`).
+
+Both of those are what the object surface replaces (#765): it loads in two phases by construction,
+and it is not owner-scoped. See
+[§7](#the-object-surface-789-and-the-confinement-it-lifts-765). `getSchema()` stays until #789's
+last task removes it.
 
 ### 3.4 No transaction auto-rollback timeout
 
@@ -845,6 +850,269 @@ Surfaced via `POST /api/db/transaction`.
 
 No `getSchemaList()`/`getSchemaRelations()`; no `size` on the returned tables (see [§3.3](#33-owner-scoped-five-query-schema-introspection)).
 
+### The object surface (#789), and the confinement it lifts (#765)
+
+`getSchema()` above is the flat model, and on Oracle it is also a cage: every one of its five reads
+is bound to `OWNER = <connecting user>`, so the app has shown exactly one schema on Oracle with no
+way to reach another. The object surface replaces it with four container-aware methods
+(`listContainers`, `countObjects`, `listObjects`, `describeObject`) declared in
+[`types.ts`](../../src/lib/db/types.ts) and implemented in
+[`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts). Both surfaces are live through Phase 1;
+the phase that removes `getSchema()` is #789's last task.
+
+#### Nine kinds, and the dictionary that answers for each
+
+| Kind | `role` | `ALL_OBJECTS.OBJECT_TYPE` | Listing read | Note |
+|---|---|---|---|---|
+| `table` | `relation` | `TABLE` | `ALL_OBJECTS`, minus materialized-view containers | `acceptsRowWrites: true` |
+| `view` | `relation` | `VIEW` | `ALL_OBJECTS` | not a row-write target |
+| `materialized_view` | `relation` | `MATERIALIZED VIEW` | `ALL_OBJECTS` | not a row-write target |
+| `synonym` | `config` | `SYNONYM` | `ALL_OBJECTS` | |
+| `sequence` | `config` | `SEQUENCE` | `ALL_OBJECTS` | |
+| `package` | `group` | `PACKAGE` (+ `PACKAGE BODY`) | `ALL_OBJECTS`, two rows collapsed | `childKinds: ['procedure', 'function']` |
+| `procedure` | `routine` | `PROCEDURE` | `ALL_OBJECTS` | |
+| `function` | `routine` | `FUNCTION` | `ALL_OBJECTS` | |
+| `trigger` | `attached` | `TRIGGER` | `ALL_TRIGGERS` joined back to `ALL_OBJECTS` | `attachedTo: 'table'` |
+
+`containerLevels` is one level, `schema`, and on Oracle that level IS a user: a schema is not a
+thing created beside a user, it is what a user owns. No `catalog` level is declared, because a pool
+is opened against one service and nothing in the product can switch the pluggable database on a
+live connection.
+
+**No `index` kind**, on the same line PostgreSQL is read against. Oracle's own dictionary models an
+index as an attribute of the table it is on: `ALL_INDEXES` is keyed by `TABLE_OWNER` and
+`TABLE_NAME`, and an index cannot exist apart from them. So an index stays in `describeObject()`'s
+output beside that object's columns rather than becoming a container-level folder.
+
+**A package's members are declared but not browsable yet.** `childKinds` is a true statement about
+the engine and Phase 2 renders it, but Phase 1's provider surface is container-scoped end to end:
+`countObjects(container)` and `listObjects(container, kind)` both take a container, and nothing
+lists an object's children. A Procedures folder under a package would therefore render, never
+badge, and expand to nothing. `listObjects(container, 'package')` returns the packages themselves.
+
+#### Two dictionary vocabularies for the same nine kinds
+
+`ALL_OBJECTS.OBJECT_TYPE` writes the type names with spaces; the `object_type` argument
+`DBMS_METADATA.GET_DDL` takes writes them with underscores. They are not interchangeable, and Phase
+2 (the Source tab) reads the second column, so both are written once in `ORACLE_OBJECT_TYPES` in
+[`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts) rather than typed out twice:
+
+| Kind | `ALL_OBJECTS.OBJECT_TYPE` | `DBMS_METADATA.GET_DDL` |
+|---|---|---|
+| `table` | `TABLE` | `TABLE` |
+| `view` | `VIEW` | `VIEW` |
+| `materialized_view` | `MATERIALIZED VIEW` | `MATERIALIZED_VIEW` |
+| `synonym` | `SYNONYM` | `SYNONYM` |
+| `sequence` | `SEQUENCE` | `SEQUENCE` |
+| `package` | `PACKAGE` | `PACKAGE` |
+| (a package body) | `PACKAGE BODY` | `PACKAGE_BODY` |
+| `procedure` | `PROCEDURE` | `PROCEDURE` |
+| `function` | `FUNCTION` | `FUNCTION` |
+| `trigger` | `TRIGGER` | `TRIGGER` |
+
+The package body is deliberately outside the kind table and kept beside it: it is not a kind, it is
+the second dictionary row of the one `package` node, and putting it in the table would add it to
+the counting statement and report every package twice.
+
+#### `listContainers()` reads `ALL_USERS`, and that is what ends the single-schema confinement
+
+One statement, bound to nothing. `ORACLE_MAINTAINED = 'N'` is the dictionary's own answer to "is
+this schema Oracle's", so no hand-written name denylist exists here and none should be added:
+measured on Oracle Database 21c XE, **29 of the 33 rows in `ALL_USERS` are Oracle's own**, and a
+list written by hand would be wrong on the next release. `ALL_USERS` itself is not privilege
+filtered, so every user sees every owner.
+
+The session's own owner is kept whatever `ORACLE_MAINTAINED` says
+(`OR USERNAME = SYS_CONTEXT('USERENV','SESSION_USER')`), because connecting as `SYSTEM` must not
+hide `SYSTEM`. That same `SYS_CONTEXT` call, not `connection.user`, is what marks
+`Container.isSessionDefault`: it is Oracle's own answer for who is connected, so it is right under
+external authentication and right for an owner created with a quoted lower-case name.
+
+**`ORACLE_MAINTAINED` costs the filter, never the list.** The column arrived in Oracle Database
+12.1. Thin mode refuses anything older with `NJS-138`, but Thick mode is an explicit opt-in for
+exactly those servers ([§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir)), so an 11.2 instance
+answering `ORA-00904` here is a supported configuration; `listContainers()` re-runs the statement
+without the filter. The retry is keyed on the COLUMN NAME as well as on `ORA-00904`, because 00904
+is "invalid identifier" generally and re-running without the filter repairs nothing when the
+missing column was `USERNAME`. Both halves of that key survive a non-English `NLS_LANGUAGE`:
+Oracle translates the sentence, never the `ORA-` prefix and never the quoted identifier.
+
+A container path is passed to the other three methods verbatim and is never upper-cased.
+`getSchema()` upper-cases `connection.user` because it is reading what a person typed into a form;
+a container segment came out of `ALL_USERS`, so it is already the dictionary's own spelling, and
+`CREATE USER "app"` is legal.
+
+#### `countObjects()` is one statement that reads no column of any table
+
+This is what #765 is. Measured on 21c XE against the `SYS` owner (1,672 tables, 113,264 columns),
+which is the nearest thing on a laptop to the reporter's PeopleSoft instance:
+
+| | statements | rows materialised | wall clock |
+|---|---|---|---|
+| `getSchema()`, today, on connect | 5 | 121,462 | 1,490 ms |
+| `listContainers()` + `countObjects()` | 2 | 12 | 72 ms |
+
+Verified from the server side rather than from the client: after a flushed shared pool, a connect
+plus first paint leaves exactly three statements in `V$SQL` for the app user (the container read,
+the counting read, and node-oracledb's own `BEGIN NULL; END;` connection test) and **zero**
+touching `ALL_TAB_COLUMNS` or `ALL_IND_COLUMNS`. One `describeObject()` call then puts two of them
+there, which is the control that makes the zero a measurement rather than an empty log.
+
+Two exclusions inside that one statement, and both turn a badge into a lie if they are missed.
+
+**`PACKAGE BODY` is not counted.** A body is not a separate tree node, so counting it would double
+the Packages badge.
+
+**A materialized view's container table is not counted as a table.** Measured:
+`CREATE MATERIALIZED VIEW app_revenue_mv` writes TWO rows into `ALL_OBJECTS`, the materialized view
+and a `TABLE` of the same name for its container, with `GENERATED = 'N'` on both, so nothing about
+the table row says it is not a table somebody created. Left in, an owner with 100 materialized
+views reports 100 tables nobody wrote, and each one opens onto the materialized view's own columns.
+`getSchema()` has that defect today, and it is visible on the fixture: it returns three tables for
+an owner holding two.
+
+The rule needs no second dictionary view, and that is measured rather than assumed. A table and a
+materialized view cannot share a name in one owner, because they share Oracle's schema-object
+namespace: `CREATE TABLE app.app_revenue_mv` against the fixture's materialized view answered
+`ORA-00955`. So a same-named `TABLE`/`MATERIALIZED VIEW` pair is always the container, and one
+analytic window over the rows already being read finds it. Reading `ALL_MVIEWS` instead answers the
+same and costs more: against the 15,636-object `SYS` owner, the window form takes **10,385
+consistent gets** and a correlated `NOT EXISTS` over `ALL_OBJECTS` takes **18,285**.
+
+**A refused read is `{ unavailable }`, never 0**, carrying Oracle's own sentence unmapped, and every
+declared kind is seeded at `{ count: 0 }` before the read so a folder the owner holds none of
+renders a zero rather than disappearing. There is no partial outcome to report here and no retry
+that could produce one: `ALL_OBJECTS` is the single source for all nine kinds, so Oracle refuses it
+whole or not at all. Worth knowing when reading a small number: `ALL_*` views FILTER by privilege
+rather than refusing, so an owner you can see only part of answers a real count of the part you can
+see, not a refusal. Measured: `APP` counting `SYSTEM` gets 4 tables and 1 view.
+
+#### A package's specification and body are one object carrying both statuses
+
+Oracle stores them as two dictionary rows with two statuses, and a user wrote one package.
+`listObjects(container, 'package')` reads both and collapses them by name; the collapsed object's
+`status` is `INVALID` when EITHER half is, because "the package works" is false if either half does
+not compile. Neither row is privileged: a body can outlive its specification, and a specification
+usually exists with no body while it is being written. All four combinations are real, and the
+fixture ships the second one because it is the state Oracle is in most often:
+
+| Specification | Body | Rendered |
+|---|---|---|
+| `VALID` | `VALID` | `VALID` |
+| `VALID` | `INVALID` | `INVALID` |
+| `INVALID` | `VALID` | `INVALID` |
+| `VALID` | absent | `VALID` |
+
+A successful `CREATE OR REPLACE PACKAGE BODY` can leave an `INVALID` body behind rather than
+failing, which is why `docker/oracle-init/01-object-fixture.sql` contains a package whose body
+deliberately does not compile. Do not "fix" it.
+
+`STATUS` is `ALL_OBJECTS`'s `VALID`/`INVALID` for every kind, triggers included. `ALL_TRIGGERS` has
+a `STATUS` column of its own that says `ENABLED`/`DISABLED`, which is a different fact about a
+different thing, so the trigger listing joins back to `ALL_OBJECTS` rather than putting two
+vocabularies in one field. A trigger's enabled state is a Phase 2 detail-tab fact.
+
+#### Object identity: Oracle needs no disambiguator on the last path segment
+
+`DatabaseObject.path`'s last segment must be unique within its parent, and on PostgreSQL that
+forces a routine's segment to carry its argument types. Oracle does not, and this was measured
+rather than reasoned:
+
+- `CREATE OR REPLACE FUNCTION app.app_order_total(p_a NUMBER, p_b NUMBER)` against the fixture's
+  existing single-argument `APP_ORDER_TOTAL` **replaced** it. `ALL_OBJECTS` still held one row.
+  Oracle has no routine overloading at schema level.
+- A function cannot even share a name with a table: `CREATE OR REPLACE FUNCTION app.app_orders`
+  answered `ORA-00955`. Tables, views, materialized views, sequences, private synonyms, packages,
+  standalone procedures and functions all share ONE namespace per owner, so Oracle paths happen to
+  be unique across those kinds as well as within each of them. The shared conformance helper only
+  requires the second, and nothing here should be tightened to depend on the first.
+
+`ALL_ARGUMENTS` does carry an `OVERLOAD` column, and it is the right column: a PACKAGE can hold
+overloaded members. Phase 1 lists packages and not their members, so nothing needs it yet, and
+`OVERLOAD` is what Phase 2 should reach for rather than a format invented here.
+
+Triggers are the one kind in a different namespace, and that is measured too:
+`CREATE TRIGGER app.app_orders ... ON app.app_orders` succeeds beside the table of that name. It
+costs nothing, because a trigger's path has three segments where a table's has two.
+
+#### Where a trigger hangs, including the two cases that are not a table
+
+`attachedTo: 'table'`, so a trigger is `[owner, table, trigger]` and not `[owner, trigger]`. Oracle
+would in fact allow the shorter form, since a trigger name is unique within its owner rather than
+within its table, but the nesting is what the tree renders and it is the same rule every engine in
+#789 follows. Three measured cases:
+
+- **Base table in another owner.** `ALL_TRIGGERS` separates `OWNER` from `TABLE_OWNER`, and a
+  trigger `APP` owns on `REPORTING`'s table is real. It is listed in **APP's** container, because
+  `APP` is what owns it, and its path is `['APP', 'REPORT_DAILY', 'REPORT_DAILY_TRG']`. The middle
+  segment then names a table that APP's own Tables folder does not list. That is the honest answer
+  of the three available: putting it in `REPORTING`'s container would list an object that owner does
+  not own, and joining the owner into the segment (`REPORTING.REPORT_DAILY`) would put a qualified
+  name back into a path, which is the exact defect `DatabaseObject.path` exists to prevent.
+- **Base object is a view.** An `INSTEAD OF` trigger gives `BASE_OBJECT_TYPE = 'VIEW'` with the view
+  in `TABLE_NAME`, so it nests under the view. The `attachedTo` declaration names one kind and the
+  path names the object, which is what addresses it.
+- **No base object at all.** A `SCHEMA` or `DATABASE` trigger (`AFTER LOGON ON SCHEMA`) leaves
+  `TABLE_NAME` NULL. It hangs off the container itself, so its path is two segments,
+  `['APP', 'APP_LOGON_TRG']`. Filtering it out of the listing instead would have made the folder
+  disagree with the badge, since the count comes from `ALL_OBJECTS`, which counts every trigger.
+  `describeObject()` accepts both depths for an attached kind for the same reason.
+
+Counting and listing read two different dictionary views for this kind, so on an owner whose
+triggers you can only partly see the badge and the folder can differ by a row. The shared
+conformance helper deliberately does not assert `list.length === count` for that reason: they are
+two reads at two instants.
+
+#### `describeObject()` reads four statements, each bound to one owner and one object
+
+Columns from `ALL_TAB_COLUMNS`, the primary key and the foreign keys from
+`ALL_CONSTRAINTS` + `ALL_CONS_COLUMNS`, indexes from `ALL_INDEXES` + `ALL_IND_COLUMNS`. They run in
+sequence on one pooled connection, because a single `oracledb` connection serialises its statements
+anyway. `ALL_TAB_COLUMNS` answers for a view and for a materialized view's container table as well
+as for a table, so none of the three relation kinds needs a dictionary of its own.
+
+The KIND decides whether they run at all: only the three kinds whose `role` is `relation` have
+columns, so a package, a routine, a synonym, a sequence and a trigger answer three empty arrays
+without a round trip. That is a true fact about those kinds rather than a failed read. Deciding it
+from the NAME instead would be correct only by coincidence, and Oracle is where the coincidence
+breaks: these statements key the last path segment against `TABLE_NAME`, and a trigger named
+`APP_ORDERS` on table `APP_CUSTOMERS` is legal, so it would have been handed `APP_ORDERS`'s columns
+as if they were its own.
+
+Two of the four statements differ from their `getSchema()` counterparts on purpose:
+
+- The foreign-key read pairs columns with `rcc.POSITION = acc.POSITION`. Without it a two-column
+  foreign key joins every referencing column to every referenced one and reports four pairs for two.
+  `SCHEMA_FOREIGN_KEYS_SQL` still has that defect.
+- The index read is keyed by `ai.TABLE_OWNER`, not `ai.OWNER`. An index one user owns on another
+  user's table belongs to the table when a person is looking at the table, and an index this owner
+  holds on somebody else's table does not.
+
+`ForeignKeySchema.referencedTable` is one string while both surfaces are live, so it is spelled the
+way `getSchema()` spells it: bare within the same owner, `OWNER.TABLE` outside it. Qualifying the
+cross-owner case is not cosmetic, since a bare name there addresses a table in the wrong schema.
+The phase that removes `getSchema()` is where that string becomes a path.
+
+#### The fixture
+
+[`docker/oracle-init/01-object-fixture.sql`](../../docker/oracle-init/01-object-fixture.sql),
+mounted at `/container-entrypoint-initdb.d` by the `oracle` service in `database-compose.yml`. It
+creates two owners so the lifted confinement is observable, one object of every declared kind, the
+three trigger cases above, and the package whose body does not compile. Connect as `APP` /
+`Password123!` on service `XEPDB1`.
+
+Three things about it are load-bearing:
+
+- The `/` statement terminators are a SQL*Plus convention and are correct in a mounted init script,
+  which SQL*Plus runs. They must **never** be sent through `node-oracledb`, which takes one
+  statement per `execute()` and answers `ORA-00911` for a trailing terminator.
+- `GRANT CREATE TABLE TO app` looks redundant beside `RESOURCE`, and is not: creating a materialized
+  view in another user's schema checks that the owner holds `CREATE TABLE` **directly**, and a
+  privilege held through a role does not satisfy that check. Without the line,
+  `CREATE MATERIALIZED VIEW` answered `ORA-01031` while `SYS` held `CREATE ANY MATERIALIZED VIEW`.
+- The scripts run once and only on a fresh data directory, so an existing container has to be
+  recreated before an edit takes effect.
+
 ---
 
 ## 8. Monitoring & health
@@ -1116,6 +1384,8 @@ is what lets the Operations tab render those words and send an operation Oracle 
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `1521` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
+| `containerLevels` | one level, `schema` - and on Oracle that level is a USER ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)) |
+| `objectKinds` | nine: table, view, materialized view, synonym, sequence, package, procedure, function, trigger. No `index` kind ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)) |
 
 ### Labels — overridden (`getLabels()`, [`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
 
@@ -1205,6 +1475,13 @@ and **every `ssl.mode` branch** (the TCPS switch, the
 DN-match flag, the concatenated `walletContent`, and a pasted connect string keeping its own
 protocol) asserted against the attributes `createPool` received.
 
+It also covers **the object surface** (#789): the nine declared kinds and their roles, the shared
+`assertObjectSurface` contract, the container list and its `ORACLE_MAINTAINED` fallback, the
+one-statement count and its two exclusions, the package spec-and-body collapse across all three
+row orderings, the three trigger shapes, the four narrow detail reads, and every refusal. Each of
+those invariants was mutation-checked: the logic behind it was deleted and the suite confirmed to
+go red, which caught two assertions that were passing vacuously.
+
 ### 12.3 Run it
 
 ```bash
@@ -1218,6 +1495,16 @@ bun run test:coverage                                    # CI coverage workflow 
 ```bash
 docker run --rm -e ORACLE_PASSWORD=secret -p 1521:1521 gvenzl/oracle-free:slim
 # then connect to localhost:1521 / FREEPDB1 (user system, password secret) in the Studio UI
+```
+
+For the object surface, use the compose service instead, which mounts the fixture
+([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)). Connecting as `SYSTEM` is a
+weaker test than connecting as `APP`: `SYSTEM` reads every owner, so a read that was still
+owner-scoped would look correct.
+
+```bash
+docker compose -f database-compose.yml up -d oracle
+# then connect to localhost:1521 / XEPDB1 as APP / Password123!
 ```
 
 ---
@@ -1240,7 +1527,9 @@ await provider.disconnect();
 ```
 
 Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/cancel`,
-`POST /api/db/maintenance` (admin), `POST /api/db/schema/list` (falls back to `getSchema()`).
+`POST /api/db/maintenance` (admin), `POST /api/db/schema/list` (falls back to `getSchema()`), and
+the object tree's own routes under `POST /api/db/objects/*`
+([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)).
 
 ---
 
@@ -1313,8 +1602,12 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   string to decide silently.
 - **No transaction auto-rollback timeout** (unlike Postgres/MySQL) — an abandoned transaction holds
   its connection/locks until committed, rolled back, or pool-reclaimed.
-- **Schema is owner-scoped** to the connecting user (`OWNER = USER`); objects in other schemas the
-  user can see are not listed, and tables carry no size field.
+- **`getSchema()` is owner-scoped** to the connecting user (`OWNER = USER`), tables carry no size
+  field, and it has no `getSchemaList()`/`getSchemaRelations()` split, so `/api/db/schema/list`
+  falls back to the whole thing. None of that is a limitation of the object browser any more: the
+  object surface reaches every owner and loads in two phases by construction
+  (#765, [§7](#the-object-surface-789-and-the-confinement-it-lifts-765)). It is what the flat
+  schema route still does, and it goes when #789's last task removes `getSchema()`.
 - **`getIndexStats().scans` is always `0`** and `isPrimary` always `false` — Oracle index usage
   counters aren't read here.
 - **Row counts (`NUM_ROWS`) are optimizer estimates** populated by `DBMS_STATS`; they can be stale
@@ -1324,7 +1617,14 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   ([§7.2](#72-when-the-connection-count-is-not-measurable)). `getPerformanceMetrics()` reports only the cache-hit ratio (no QPS,
   deadlocks, or buffer-pool usage), and **omits even that** when `V$SYSSTAT` is unreadable rather
   than substituting a figure — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable).
-- **No two-phase schema loading** — `/api/db/schema/list` falls back to the full `getSchema()`.
+- **A package's members are not browsable.** The `package` kind declares
+  `childKinds: ['procedure', 'function']`, which is true of the engine, but Phase 1's provider
+  surface is container-scoped end to end and nothing lists an object's children. Phase 2 owns it.
+- **A materialized view still shows as a table in `getSchema()`.** Oracle writes a `TABLE` row for
+  every materialized view's container and `ALL_TABLES` lists it, so the flat schema tree reports one
+  table per materialized view that nobody created. The object surface excludes them
+  ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)); `getSchema()` is left alone
+  because it is being removed.
 
 ---
 

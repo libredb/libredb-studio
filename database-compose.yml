@@ -93,10 +93,21 @@ services:
     container_name: libredb-oracle
     restart: unless-stopped
     environment:
+      # Inert against this image and left alone rather than removed, because it records
+      # what somebody expected. ORACLE_PDB is the Oracle-published image's variable;
+      # gvenzl/oracle-xe reads ORACLE_DATABASE, and setting that one creates a SECOND
+      # pluggable database and adds minutes to the first start. Measured: the service name
+      # to connect to is XEPDB1.
       ORACLE_PDB: ORCLPDB1
       ORACLE_PASSWORD: Password123!
     ports:
       - "1521:1521"
+    volumes:
+      # The object-browser fixture (#789, #765): two owners, one object of every declared
+      # kind, and a package whose body deliberately does not compile. SQL*Plus runs these
+      # once and ONLY on a fresh data directory, so an existing container has to be
+      # recreated before an edit takes effect. Connect as APP / Password123! on XEPDB1.
+      - ./docker/oracle-init:/container-entrypoint-initdb.d:ro
   couchbase:
     # The image ships an uninitialized node: the cluster, the credentials below,
     # the bucket and its primary index are all applied by the couchbase-init
