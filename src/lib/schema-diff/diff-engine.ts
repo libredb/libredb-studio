@@ -197,13 +197,23 @@ function diffForeignKeys(
  * It takes the OBJECTS a consumer holds, so `SchemaDiff.tsx` hands its two lists straight
  * through rather than copying every array of every object to meet a mutable signature.
  *
- * THE COMPARISON IS BY NAME, and deliberately not by `kind` or by `path`. A stored snapshot
- * predates both fields, and a diff that keyed on them would report every object in such a
- * snapshot as removed and immediately re-added, which is the one answer a schema diff must
- * never invent. The cost, stated rather than left to be discovered: this cannot say that a
- * table became a view. Saying it needs the snapshot itself to carry the object model, which
- * is `SchemaSnapshot` in `src/lib/types.ts` and belongs to the task that removes the flat
- * shape.
+ * THE COMPARISON IS BY NAME, and deliberately not by `kind` or by `path`. A snapshot stored
+ * BEFORE the object surface landed carries neither field, and a diff that keyed on them
+ * would report every object in such a snapshot as removed and immediately re-added, which is
+ * the one answer a schema diff must never invent. A snapshot taken since does carry both:
+ * `SchemaDiff.tsx` copies the tagged list the hook produces, and `SchemaSnapshot` in
+ * `src/lib/types.ts` now says so. So the two populations differ in what they hold, they meet
+ * here, and NAME is the only thing both spell.
+ *
+ * No false pairing follows from mixing them, on the population that reaches this: both sides
+ * come from the flat reading, which holds relations only (`postgres.ts:225` is
+ * `'BASE TABLE','MATERIALIZED VIEW'`), so a routine and a relation sharing a name in one
+ * container never both enter the map. What DOES survive, and predates all of this, is that
+ * two flat names colliding leave `new Map()` holding the last entry.
+ *
+ * The cost, stated rather than left to be discovered: this cannot say that a table became a
+ * view. Saying it needs BOTH readings to carry the object model, which is what the task that
+ * removes the flat shape settles.
  */
 export function diffSchemas(source: readonly DetailedObject[], target: readonly DetailedObject[]): SchemaDiff {
   const sourceMap = new Map(source.map((t) => [t.name, t]));

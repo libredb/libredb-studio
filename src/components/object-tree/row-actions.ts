@@ -108,13 +108,19 @@ export interface TreeRowActionContext {
  * `DataProfiler`, `CodeGenerator`, `TestDataGenerator`, `handleGenerateSelect` and the
  * maintenance deep link all take a table NAME and look it up by `name` in the list the
  * shell holds. Those consumers now take `DetailedObject` rather than the flat shape
- * (#789), and the LOOKUP is still by name: the list the shells search is the one
- * `use-connection-manager` produces, which carries no `path` yet.
- * `path` is what ADDRESSES an object and `name` is what LABELS it
- * (standing ruling 2), so the name is the half those consumers can still use, and it is
- * the same string `onObjectClick` already hands `handleTableClick` in both shells. A
- * schema-qualified object therefore behaves exactly as it did under the flat explorer,
- * including its ambiguity when two schemas hold the same table name.
+ * (#789), and the LOOKUP is still by name.
+ *
+ * The list the shells search does now carry `path`, where the object surface answered for
+ * the entry, so the reason is no longer that there is nothing better available: it is that
+ * `name` is what the consumers on the other side of this seam are written in, down to
+ * `conn.schema.find((t) => t.name === profilerTable)`. `path` is what ADDRESSES an object
+ * and `name` is what LABELS it (standing ruling 2), and `name` is the same string
+ * `onObjectClick` already hands `handleTableClick` in both shells. A schema-qualified object
+ * therefore behaves exactly as it did under the flat explorer, including its ambiguity when
+ * two schemas hold the same table name, and including the miss the review recorded: this
+ * hands over the BARE identifier while a flat entry outside the default container is spelled
+ * `sales.orders`, so that lookup finds nothing. Migrating those consumers onto `path` is the
+ * task that removes the flat reading.
  *
  * Exported, and called at the SHELL rather than inside the tree, so that the tree stays in
  * object-model terms and every site Task 25 has to migrate is one grep for this name.

@@ -1,3 +1,5 @@
+import type { DetailedObject } from "@/lib/db/detailed-object";
+
 export type DatabaseType =
   | "postgres"
   | "mysql"
@@ -390,7 +392,22 @@ export interface SchemaSnapshot {
   connectionId: string;
   connectionName: string;
   databaseType: DatabaseType;
-  schema: TableSchema[];
+  /**
+   * The objects as the consumer held them when the snapshot was taken (#789).
+   *
+   * `DetailedObject` rather than `TableSchema` because that is what is really stored:
+   * `SchemaDiff.tsx` copies the list `use-connection-manager` produces, and since the object
+   * surface landed that list carries `kind` and `path`. The declaration said `TableSchema`
+   * and the stored JSON carried two more fields, which is the sort of drift that makes a
+   * later reader trust the type instead of the data.
+   *
+   * A snapshot stored BEFORE that landed carries neither field, and it stays readable
+   * unchanged: both are optional on `DetailedObject` for exactly this reason, absent means
+   * "the object surface did not answer for this entry", and `diffSchemas` compares by NAME,
+   * so an old snapshot diffs against a new reading with no object reported as removed and
+   * re-added. Nothing migrates these records and nothing needs to.
+   */
+  schema: DetailedObject[];
   createdAt: Date;
   label?: string;
 }
