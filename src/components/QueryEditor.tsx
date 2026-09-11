@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle } from "react";
+import { SHORTCUTS, shortcutLabel, monacoKeybinding } from "@/lib/keyboard-shortcuts";
 import Editor from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { Zap, LoaderCircle, TextAlignStart, Trash2, Copy, Play, Hash } from "lucide-react";
@@ -559,7 +560,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               size="sm"
               className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-2"
               onClick={handleFormat}
-              title={language === "json" ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
+              title={`Format ${language === "json" ? "JSON" : "SQL"} (${shortcutLabel(SHORTCUTS.formatQuery)})`}
             >
               <TextAlignStart strokeWidth={1.5} className="w-3 h-3" /> Format
             </Button>
@@ -615,7 +616,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               </Button>
             )}
             <kbd className="px-1.5 py-0.5 rounded bg-raised border border-hairline text-[0.5625rem] text-fg-subtle font-mono">
-              ⌘+Enter
+              {shortcutLabel(SHORTCUTS.executeQuery)}
             </kbd>
           </div>
         </div>
@@ -648,12 +649,12 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               });
 
               // Add custom keyboard shortcut
-              editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+              editor.addCommand(monacoKeybinding(SHORTCUTS.executeQuery, monaco), () => {
                 handleExecute();
               });
 
               // Add format shortcut
-              editor.addCommand(monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => {
+              editor.addCommand(monacoKeybinding(SHORTCUTS.formatQuery, monaco), () => {
                 handleFormat();
               });
 
@@ -661,7 +662,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               editor.addAction({
                 id: "run-query",
                 label: "Run Query",
-                keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
+                keybindings: [monacoKeybinding(SHORTCUTS.executeQuery, monaco)],
                 contextMenuGroupId: "navigation",
                 contextMenuOrder: 1,
                 run: () => handleExecute(),
@@ -683,7 +684,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               editor.addAction({
                 id: "format-sql",
                 label: "Format SQL",
-                keybindings: [monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
+                keybindings: [monacoKeybinding(SHORTCUTS.formatQuery, monaco)],
                 contextMenuGroupId: "modification",
                 contextMenuOrder: 1,
                 run: () => handleFormat(),

@@ -351,6 +351,7 @@ describe("StudioTabBar", () => {
     fireEvent.keyDown(document, { key: "x", code: "KeyX", ctrlKey: true });
     fireEvent.keyDown(document, { key: "X", code: "KeyX", shiftKey: true });
     fireEvent.keyDown(document, { key: "x", code: "KeyX" });
+    fireEvent.keyDown(document, { key: "X", code: "KeyX", ctrlKey: true, shiftKey: true, altKey: true });
     expect(onAddTab).not.toHaveBeenCalled();
   });
 
@@ -377,7 +378,7 @@ describe("StudioTabBar", () => {
   test("new tab button title advertises the shortcut", () => {
     const props = createDefaultProps();
     const { getByRole } = render(<StudioTabBar {...props} />);
-    expect(getByRole("button", { name: "New tab" }).getAttribute("title")).toBe("New Query Tab (Ctrl+Shift+X)");
+    expect(getByRole("button", { name: "New tab" }).getAttribute("title")).toBe("New Query Tab (Cmd/Ctrl+Shift+X)");
   });
 
   test("shortcut listener is removed when the tab bar unmounts", () => {

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useMemo } from "react";
+import { SHORTCUTS, matchesShortcut, shortcutLabel } from "@/lib/keyboard-shortcuts";
 import {
   CommandDialog,
   CommandInput,
@@ -78,7 +79,7 @@ export function CommandPalette({
   // Register Cmd+K / Ctrl+K keyboard shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if (matchesShortcut(e, SHORTCUTS.commandPalette)) {
         e.preventDefault();
         setOpen((prev) => !prev);
       }
@@ -115,7 +116,7 @@ export function CommandPalette({
           <CommandItem onSelect={() => runAction(onExecuteQuery)}>
             <Play strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-blue" />
             <span>Run Query</span>
-            <CommandShortcut>Ctrl+Enter</CommandShortcut>
+            <CommandShortcut>{shortcutLabel(SHORTCUTS.executeQuery)}</CommandShortcut>
           </CommandItem>
           <CommandItem onSelect={() => runAction(onFormatQuery)}>
             <TextAlignStart strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-tertiary" />

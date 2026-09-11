@@ -338,7 +338,7 @@ describe("Studio: the palette's agent item asks about the editor's statement (#3
     });
 
     // The entry point: the palette, opened by its shortcut, and its item selected.
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
     const item = await view.findByText(AGENT_ITEM);
     fireEvent.click(item.closest('[role="option"]')!);
 

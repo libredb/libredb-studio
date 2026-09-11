@@ -267,6 +267,7 @@ run_group "Group 15/16: Remaining components" \
   tests/components/QueryHistory.test.tsx \
   tests/components/ConnectionModal.test.tsx \
   tests/components/CommandPalette.test.tsx \
+  tests/components/sidebar-shortcuts.test.tsx \
   tests/components/ResultsGrid.test.tsx \
   tests/components/SchemaDiagram.test.tsx \
   tests/components/DataProfiler.test.tsx \
