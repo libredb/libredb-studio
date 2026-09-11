@@ -9,8 +9,8 @@
  * are computed here, per sibling group, before any row of that group is emitted, and the
  * row component takes all four numbers verbatim.
  */
-import { isCountUnavailable } from "@/lib/db/object-kinds";
-import type { Container, ContainerLevelSpec, DatabaseObject, KindCount, ObjectKindSpec } from "@/lib/db/types";
+import { containerDepth, isCountUnavailable } from "@/lib/db/object-kinds";
+import type { Container, DatabaseObject, KindCount, ObjectKindSpec } from "@/lib/db/types";
 
 /**
  * One visible row.
@@ -51,13 +51,8 @@ export interface TreeRowModel {
 }
 
 /**
- * Everything the walk reads. The three maps are keyed by row id, which is what lets the
+ * Everything the walk reads. The two maps are keyed by row id, which is what lets the
  * caller cache per node without a second addressing scheme.
- *
- * A missing key and an empty array are different states and stay different: `objects`
- * holding no key for a folder means its contents have not been fetched, while holding
- * `[]` means the folder was fetched and is empty. Collapsing the two is what makes a
- * tree show a spinner forever or an empty folder wrongly.
  */
 export interface FlattenTreeState {
   /** Every kind the provider declares, in declaration order, which is the folder order. */
@@ -66,32 +61,46 @@ export interface FlattenTreeState {
   readonly containers: readonly Container[];
   /** Row ids the user has opened. */
   readonly expanded: ReadonlySet<string>;
-  /** `countObjects` answers, keyed by the container path joined with `/`. */
+  /** `countObjects` answers, keyed by the container path joined with `/`, so the root is `""`. */
   readonly counts: Readonly<Record<string, Record<string, KindCount>>>;
-  /** `listObjects` answers, keyed by folder row id. */
+  /**
+   * `listObjects` answers, keyed by folder row id.
+   *
+   * A missing key and an empty array are different states in here and the caller must keep
+   * them apart: no key means the folder has not been fetched, `[]` means it was fetched and
+   * is empty. They are NOT distinguishable in the output, since both render as a folder with
+   * no child rows, so a spinner or an empty-folder message can only come from the cache that
+   * owns this map.
+   */
   readonly objects: Readonly<Record<string, readonly DatabaseObject[]>>;
   /**
-   * The provider's `containerLevels`, which decides where the kind folders sit.
+   * How many container levels this engine nests its objects in, which decides where the
+   * kind folders sit.
    *
-   * Absent means one level, which is the shape of seven engines and of every fixture
-   * that predates this field. Five engines have no container at all (sqlite, libsql,
-   * elasticsearch, opensearch, libredb) and pass `[]`, which puts the kind folders
-   * themselves at the root under the empty container path. Five have two (postgres's
-   * catalog level is not one of them: a connection pins the database), and there the
-   * catalogs hold schemas and only the schemas hold folders.
+   * Pass what `containerDepth()` in `src/lib/db/object-kinds.ts` answered for this
+   * provider, which is why the type is that function's return type: `containerLevels` on
+   * `ProviderCapabilities` says in its own doc to be read through that helper and never by
+   * length, so that an absent declaration and an empty one cannot be answered differently
+   * by two callers. `src/lib/api/object-route.ts` reads the same helper for the routes that
+   * fill this state, and 0 there means one container whose path is empty, which is exactly
+   * what 0 draws here.
    *
-   * It has to be declared rather than inferred from the loaded containers: a catalog
-   * whose schemas have not been fetched yet is indistinguishable from a leaf container
-   * that holds objects, and guessing wrong draws folders that address nothing.
+   * Required rather than defaulted. A default would be this module answering the question
+   * the helper exists to answer, and the engines it would answer wrongly are the ones that
+   * declare nothing: the per-engine inventory is on issue #789.
+   *
+   * It has to come from the declaration rather than be inferred from the loaded containers:
+   * a catalog whose schemas have not been fetched yet is indistinguishable from a leaf
+   * container that holds objects, and guessing wrong draws folders that address nothing.
    */
-  readonly containerLevels?: readonly ContainerLevelSpec[];
+  readonly containerDepth: ReturnType<typeof containerDepth>;
 }
 
 /**
  * A depth-first walk from a virtual root: containers, nested as deep as the engine
  * declares, then each leaf container's declared kinds in declaration order, then the
- * loaded objects of an expanded folder, then whatever an object's kind declares as its
- * own children.
+ * loaded objects of an expanded folder. Objects are leaves, for the reason
+ * `appendObject` records.
  */
 export function flattenTree(state: FlattenTreeState): readonly TreeRowModel[] {
   const rows: TreeRowModel[] = [];
@@ -110,9 +119,11 @@ type ContainerChild = { readonly container: Container } | { readonly spec: Objec
  * container level carries folders, but a row's `aria-setsize` has to describe the group
  * that is actually rendered rather than the group that was expected.
  *
- * The virtual root is `parentDepth === -1`, so an engine declaring zero container levels
- * satisfies `depth >= levels` immediately and its folders are the top group. That is the
- * same rule the deeper levels use and not a special case.
+ * The virtual root is `parentDepth === -1`, so an engine whose declared container depth is
+ * 0 satisfies the depth test immediately and its folders are the top group, hanging under
+ * the empty container path. That is the same rule the deeper levels use and not a special
+ * case, and it is the shape `enumerateContainers` in `src/lib/api/object-route.ts` already
+ * answers for those engines.
  */
 function appendContainerChildren(
   state: FlattenTreeState,
@@ -121,12 +132,11 @@ function appendContainerChildren(
   parentDepth: number,
 ): void {
   const depth = parentDepth + 1;
-  const levels = state.containerLevels?.length ?? 1;
   const children: readonly ContainerChild[] = [
     ...state.containers
       .filter((candidate) => isChildPath(parentPath, candidate.path))
       .map((container) => ({ container })),
-    ...(depth >= levels ? state.kinds.map((spec) => ({ spec })) : []),
+    ...(depth >= state.containerDepth ? state.kinds.map((spec) => ({ spec })) : []),
   ];
 
   children.forEach((child, index) => {
@@ -178,7 +188,9 @@ function appendContainer(
  *
  * A refused folder is a LEAF. Its contents were not merely unread, the engine declined
  * to answer for them, so offering a twisty that opens on nothing would turn a refusal
- * into an empty folder.
+ * into an empty folder. Every other folder is expandable whether or not its objects are
+ * cached: a row that reads as a leaf until its contents arrive can never be opened to
+ * fetch them.
  */
 function appendFolder(
   state: FlattenTreeState,
@@ -217,52 +229,38 @@ function formatCount(count: KindCount | undefined): { readonly badge?: string; r
 
 function appendObjects(state: FlattenTreeState, rows: TreeRowModel[], folderId: string, folderDepth: number): void {
   const objects = state.objects[folderId] ?? [];
-  objects.forEach((object, index) => appendObject(state, rows, object, folderDepth + 1, objects.length, index + 1));
+  objects.forEach((object, index) => appendObject(rows, object, folderDepth + 1, objects.length, index + 1));
 }
 
 /**
- * Expandability comes from the DECLARATION and never from what happens to be cached: a
- * row that reads as a leaf until its own contents arrive can never be opened to fetch
- * them. So an object is expandable exactly when its kind declares `childKinds` that this
- * provider also declares in full, an Oracle package holding procedures being the case
- * this exists for, and it carries no badge of its own because a row count is an estimate
- * on most engines while a badge is a count.
+ * An object row is a LEAF, and that holds even for a kind that declares `childKinds`.
+ *
+ * The declaration is true: an Oracle package really does hold routines. What is missing is
+ * a way to fill that folder. Both listing methods are container-scoped,
+ * `countObjects(container)` and `listObjects(container, kind)`, and nothing on the
+ * provider surface lists the children of one OBJECT, so a package's Procedures folder
+ * would draw, never badge, and open on nothing. Inventing an object-scoped method across
+ * every engine before the consumer that needs it exists is what this epic declined to do,
+ * so the nesting lands with that method and not before. Tracked on issue #789.
+ *
+ * No badge either: `DatabaseObject.rowCount` is an estimate on most engines and a badge is
+ * a count.
  */
 function appendObject(
-  state: FlattenTreeState,
   rows: TreeRowModel[],
   object: DatabaseObject,
   depth: number,
   setSize: number,
   posInSet: number,
 ): void {
-  const id = [...object.path, object.kind].join("/");
-  const childSpecs = childKindSpecs(state, object.kind);
-  const expanded = childSpecs.length > 0 ? state.expanded.has(id) : undefined;
   rows.push({
-    id,
+    id: [...object.path, object.kind].join("/"),
     kind: "object",
     label: object.name,
     depth,
     setSize,
     posInSet,
-    expanded,
     path: object.path,
     kindId: object.kind,
   });
-  if (expanded === true) {
-    childSpecs.forEach((spec, index) =>
-      appendFolder(state, rows, object.path, spec, depth + 1, childSpecs.length, index + 1),
-    );
-  }
-}
-
-/**
- * `childKinds` names ids, and only the declaration carries the plural a folder is
- * labelled with, so a child id this provider does not declare draws nothing. An object
- * of a kind that is not declared at all is a leaf for the same reason.
- */
-function childKindSpecs(state: FlattenTreeState, kindId: string): readonly ObjectKindSpec[] {
-  const childIds = state.kinds.find((spec) => spec.id === kindId)?.childKinds ?? [];
-  return childIds.map((id) => state.kinds.find((spec) => spec.id === id)).filter((spec) => spec !== undefined);
 }

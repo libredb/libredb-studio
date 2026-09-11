@@ -1,5 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { flattenTree } from "@/components/object-tree/flatten";
+import { containerDepth } from "@/lib/db/object-kinds";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
 const kinds = [
   { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
@@ -11,6 +13,7 @@ describe("flattenTree", () => {
   test("a collapsed container yields one row and no children", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set<string>(),
       counts: {},
@@ -23,6 +26,7 @@ describe("flattenTree", () => {
   test("aria positions are per sibling group, not per visible row", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [
         { path: ["app"], name: "app", level: 0 },
         { path: ["sales"], name: "sales", level: 0 },
@@ -44,6 +48,7 @@ describe("flattenTree", () => {
   test("a declared kind with zero objects still renders a folder with a zero badge", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app"]),
       counts: { app: { table: { count: 2 }, view: { count: 0 }, procedure: { count: 1 } } },
@@ -55,6 +60,7 @@ describe("flattenTree", () => {
   test("a refused count carries the engine's sentence and no number", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["sales"], name: "sales", level: 0 }],
       expanded: new Set(["sales"]),
       counts: { sales: { table: { unavailable: "permission denied for schema sales" } } },
@@ -68,6 +74,7 @@ describe("flattenTree", () => {
   test("a kind the engine never declared produces no row at all", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app"]),
       counts: { app: { table: { count: 1 }, view: { count: 0 }, procedure: { count: 0 } } },
@@ -81,6 +88,7 @@ describe("flattenTree", () => {
     // as a count is how a saturated list passes every gate while being wrong.
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app", "app/table"]),
       counts: { app: { table: { count: 43512 }, view: { count: 0 }, procedure: { count: 0 } } },
@@ -94,6 +102,7 @@ describe("flattenTree row identity", () => {
   test("a row id is its path joined with a slash, plus the kind id on folders and objects", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app", "app/table"]),
       counts: { app: { table: { count: 1 } } },
@@ -112,6 +121,7 @@ describe("flattenTree row identity", () => {
         { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
         { id: "procedure", role: "routine", label: "Procedure", labelPlural: "Procedures" },
       ],
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app", "app/table", "app/procedure"]),
       counts: {},
@@ -128,6 +138,7 @@ describe("flattenTree row identity", () => {
   test("a container row carries no kind id", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set<string>(),
       counts: {},
@@ -145,6 +156,7 @@ describe("flattenTree labels", () => {
     // path would show `order_total(integer)` to a person.
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app", "app/procedure"]),
       counts: {},
@@ -163,6 +175,7 @@ describe("flattenTree labels", () => {
   test("a folder is labelled by the engine's own plural and a container by its name", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["reporting"], name: "reporting", level: 0 }],
       expanded: new Set(["reporting"]),
       counts: {},
@@ -180,6 +193,7 @@ describe("flattenTree folder set", () => {
     // without a badge rather than hiding them.
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app"]),
       counts: { app: { procedure: { count: 3 }, table: { count: 1 } } },
@@ -192,6 +206,7 @@ describe("flattenTree folder set", () => {
   test("a container with no counts at all still draws every declared folder", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app"]),
       counts: {},
@@ -208,6 +223,7 @@ describe("flattenTree expandability", () => {
     // as a leaf until its own contents arrive can never be opened to fetch them.
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app", "app/table"]),
       counts: { app: { table: { count: 9 } } },
@@ -220,6 +236,7 @@ describe("flattenTree expandability", () => {
   test("a folder loaded as empty is expandable, expanded and childless", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app", "app/table"]),
       counts: { app: { table: { count: 0 } } },
@@ -232,6 +249,7 @@ describe("flattenTree expandability", () => {
   test("a collapsed folder holds its loaded objects back", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app"]),
       counts: { app: { table: { count: 1 } } },
@@ -247,6 +265,7 @@ describe("flattenTree expandability", () => {
     // rather than as something the row component works out for itself.
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app", "app/table"]),
       counts: { app: { table: { unavailable: "permission denied for schema app" } } },
@@ -257,9 +276,10 @@ describe("flattenTree expandability", () => {
     expect(rows.filter((r) => r.kind === "object")).toHaveLength(0);
   });
 
-  test("an object is a leaf unless its kind declares child kinds", () => {
+  test("an object is a leaf", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app", "app/table"]),
       counts: {},
@@ -276,47 +296,34 @@ const packageKinds = [
 ] as const;
 
 describe("flattenTree object children", () => {
-  test("an object of a kind declaring child kinds is expandable and nests its own folders", () => {
+  test("an object whose kind declares child kinds is still a leaf in Phase 1", () => {
+    // `childKinds` is a true claim about the engine: an Oracle package really does hold
+    // routines. Nothing can FILL that folder yet, because `countObjects(container)` and
+    // `listObjects(container, kind)` are both container-scoped and no method lists the
+    // children of one object, so a nested Procedures folder would draw, never badge, and
+    // open on nothing. It renders when that method exists (#789).
     const rows = flattenTree({
       kinds: packageKinds,
+      containerDepth: 1,
       containers: [{ path: ["hr"], name: "hr", level: 0 }],
-      expanded: new Set(["hr", "hr/package", "hr/payroll/package", "hr/payroll/procedure"]),
+      expanded: new Set(["hr", "hr/package", "hr/payroll/package"]),
       counts: { hr: { package: { count: 1 }, procedure: { count: 4 } } },
-      objects: {
-        "hr/package": [{ path: ["hr", "payroll"], name: "payroll", kind: "package" }],
-        "hr/payroll/procedure": [{ path: ["hr", "payroll", "run"], name: "run", kind: "procedure" }],
-      },
+      objects: { "hr/package": [{ path: ["hr", "payroll"], name: "payroll", kind: "package" }] },
     });
     expect(rows.map((r) => `${r.depth}:${r.kind}:${r.posInSet}/${r.setSize}:${r.id}`)).toEqual([
       "0:container:1/1:hr",
       "1:folder:1/3:hr/package",
       "2:object:1/1:hr/payroll/package",
-      "3:folder:1/2:hr/payroll/procedure",
-      "4:object:1/1:hr/payroll/run/procedure",
-      "3:folder:2/2:hr/payroll/type",
       "1:folder:2/3:hr/procedure",
       "1:folder:3/3:hr/type",
     ]);
+    expect(rows.find((r) => r.kind === "object")?.expanded).toBeUndefined();
   });
 
-  test("a child kind the provider never declared draws no folder and does not inflate the set size", () => {
-    // `childKinds` names ids; only the declaration carries the label a folder needs. This
-    // provider holds packages and procedures and has no `type` kind at all.
-    const rows = flattenTree({
-      kinds: packageKinds.filter((spec) => spec.id !== "type"),
-      containers: [{ path: ["hr"], name: "hr", level: 0 }],
-      expanded: new Set(["hr", "hr/package", "hr/payroll/package"]),
-      counts: {},
-      objects: { "hr/package": [{ path: ["hr", "payroll"], name: "payroll", kind: "package" }] },
-    });
-    const nested = rows.filter((r) => r.depth === 3);
-    expect(nested.map((r) => r.id)).toEqual(["hr/payroll/procedure"]);
-    expect(nested[0]?.setSize).toBe(1);
-  });
-
-  test("an object of an undeclared kind is a leaf rather than a crash", () => {
+  test("an object of a kind the provider never declared is a leaf rather than a crash", () => {
     const rows = flattenTree({
       kinds: packageKinds,
+      containerDepth: 1,
       containers: [{ path: ["hr"], name: "hr", level: 0 }],
       expanded: new Set(["hr", "hr/procedure", "hr/legacy/synonym"]),
       counts: {},
@@ -333,6 +340,7 @@ describe("flattenTree object rows", () => {
   test("objects carry their own aria positions inside their folder", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app", "app/table"]),
       counts: { app: { table: { count: 3 } } },
@@ -356,6 +364,7 @@ describe("flattenTree object rows", () => {
   test("an object row carries no badge, because a row count is an estimate and a badge is a count", () => {
     const rows = flattenTree({
       kinds,
+      containerDepth: 1,
       containers: [{ path: ["app"], name: "app", level: 0 }],
       expanded: new Set(["app", "app/table"]),
       counts: {},
@@ -365,16 +374,11 @@ describe("flattenTree object rows", () => {
   });
 });
 
-const twoLevels = [
-  { id: "catalog", label: "Database", labelPlural: "Databases" },
-  { id: "schema", label: "Schema", labelPlural: "Schemas" },
-] as const;
-
 describe("flattenTree container levels", () => {
   test("two declared levels nest, and only the deeper level carries folders", () => {
     const rows = flattenTree({
       kinds,
-      containerLevels: twoLevels,
+      containerDepth: 2,
       containers: [
         { path: ["main"], name: "main", level: 0 },
         { path: ["main", "app"], name: "app", level: 1 },
@@ -403,7 +407,7 @@ describe("flattenTree container levels", () => {
   test("a schema under an unexpanded catalog stays out of the flat list", () => {
     const rows = flattenTree({
       kinds,
-      containerLevels: twoLevels,
+      containerDepth: 2,
       containers: [
         { path: ["main"], name: "main", level: 0 },
         { path: ["main", "app"], name: "app", level: 1 },
@@ -420,7 +424,7 @@ describe("flattenTree container levels", () => {
     // the kind folders themselves are the top row group and the container path is empty.
     const rows = flattenTree({
       kinds,
-      containerLevels: [],
+      containerDepth: 0,
       containers: [],
       expanded: new Set(["table"]),
       counts: { "": { table: { count: 2 }, view: { count: 0 }, procedure: { count: 0 } } },
@@ -436,19 +440,39 @@ describe("flattenTree container levels", () => {
     expect(rows[0]?.path).toEqual([]);
   });
 
-  test("one declared level renders exactly what the default does", () => {
-    const state = {
-      kinds,
-      containers: [{ path: ["app"], name: "app", level: 0 }],
-      expanded: new Set(["app"]),
-      counts: { app: { table: { count: 2 } } },
-      objects: {},
+  test("a provider that declares no container level renders its folders, not an empty tree", () => {
+    // The depth is whatever `containerDepth()` answered, and this walks the real helper
+    // rather than a number typed here: `ProviderCapabilities.containerLevels` says absent
+    // and empty both mean the engine has none, so a provider that omits the field entirely
+    // must reach the same tree as one declaring `[]`. Reading the field by length in this
+    // module instead would have answered one level and drawn nothing at all, since a
+    // no-container engine has no container row to hang the folders under.
+    const declaresNothing: ProviderCapabilities = {
+      queryLanguage: "sql",
+      supportsExplain: false,
+      supportsExternalQueryLimiting: false,
+      supportsCreateTable: false,
+      supportsMaintenance: false,
+      maintenanceOperations: [],
+      supportsConnectionString: false,
+      defaultPort: null,
+      schemaRefreshPattern: "",
+      objectKinds: kinds,
     };
-    const declared = flattenTree({
-      ...state,
-      containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+    const rows = flattenTree({
+      kinds,
+      containerDepth: containerDepth(declaresNothing),
+      containers: [],
+      expanded: new Set<string>(),
+      counts: { "": { table: { count: 5 } } },
+      objects: {},
     });
-    expect(declared).toEqual(flattenTree(state));
-    expect(declared.map((r) => r.id)).toEqual(["app", "app/table", "app/view", "app/procedure"]);
+    expect(containerDepth(declaresNothing)).toBe(0);
+    expect(rows.map((r) => `${r.depth}:${r.posInSet}/${r.setSize}:${r.id}`)).toEqual([
+      "0:1/3:table",
+      "0:2/3:view",
+      "0:3/3:procedure",
+    ]);
+    expect(rows[0]?.badge).toBe("5");
   });
 });
