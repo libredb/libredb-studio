@@ -3683,6 +3683,124 @@ describe("profileTableTool — the model names a table, the server decides the r
     expect(outcome.reasonCode).toBe("TABLE_QUALIFIER_UNKNOWN");
   });
 
+  /**
+   * The two-part address a 2/3-level engine's inventory does not spell (#789 fix round 2).
+   *
+   * On an engine whose container depth is 2 the inventory now carries the catalog as well,
+   * so an entry is `shop.sales.orders` while `sales.orders` is the form the engine's own
+   * documentation, and every statement the model has ever seen, writes. An exact-name match
+   * refused that outright, which is safe and still wrong: the model was shown a spelling and
+   * refused the only other one it could reasonably produce, with nothing in the refusal
+   * saying what to change.
+   *
+   * The resolution stays exactly as strict where strictness is what #345 bought: a named
+   * qualifier is still part of the answer, still never matched against a bare entry, and
+   * two objects that both answer one spelling are still refused rather than guessed between.
+   */
+  const twoLevelRun = {
+    runId: "run-1",
+    events: [
+      {
+        kind: "context-captured",
+        atMs: 1,
+        fingerprint: "ctx_1",
+        tableCount: 2,
+        snapshot: {
+          connectionId: "conn-1",
+          fingerprint: "ctx_1",
+          capturedAtMs: 1,
+          objects: [
+            {
+              name: "shop.sales.orders",
+              path: ["shop", "sales", "orders"],
+              kind: "table",
+              columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+              indexes: [],
+            },
+            {
+              name: "shop.dbo.customers",
+              path: ["shop", "dbo", "customers"],
+              kind: "table",
+              columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+              indexes: [],
+            },
+          ],
+          kinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+        },
+      },
+    ],
+  } as Pick<AgentRunRecord, "runId" | "events">;
+
+  test("a two-part address resolves against a catalog-qualified inventory", () => {
+    const outcome = planTableProfile(harness().context, twoLevelRun, { schema: "sales", table: "orders" });
+
+    if (outcome.kind !== "planned") throw new Error(`expected a plan, got ${outcome.kind}`);
+    expect(outcome.plan.target.entry.name).toBe("shop.sales.orders");
+  });
+
+  test("the whole address resolves too, so the spelling the model was SHOWN still works", () => {
+    const outcome = planTableProfile(harness().context, twoLevelRun, { schema: "shop.sales", table: "orders" });
+
+    if (outcome.kind !== "planned") throw new Error(`expected a plan, got ${outcome.kind}`);
+    expect(outcome.plan.target.entry.name).toBe("shop.sales.orders");
+  });
+
+  test("a qualifier that is not the object's own container is still refused", () => {
+    // #345, unchanged: `dbo.orders` is not this inventory's `sales.orders`, and profiling
+    // the one the caller did not name is worse than refusing.
+    const outcome = planTableProfile(harness().context, twoLevelRun, { schema: "dbo", table: "orders" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_QUALIFIER_UNKNOWN");
+  });
+
+  test("two containers answering one two-part spelling are refused rather than guessed between", () => {
+    const ambiguous = {
+      runId: "run-1",
+      events: [
+        {
+          kind: "context-captured",
+          atMs: 1,
+          fingerprint: "ctx_1",
+          tableCount: 2,
+          snapshot: {
+            connectionId: "conn-1",
+            fingerprint: "ctx_1",
+            capturedAtMs: 1,
+            objects: [
+              {
+                name: "shop.sales.orders",
+                path: ["shop", "sales", "orders"],
+                kind: "table",
+                columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+                indexes: [],
+              },
+              {
+                name: "archive.sales.orders",
+                path: ["archive", "sales", "orders"],
+                kind: "table",
+                columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+                indexes: [],
+              },
+            ],
+            kinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+          },
+        },
+      ],
+    } as Pick<AgentRunRecord, "runId" | "events">;
+
+    const outcome = planTableProfile(harness().context, ambiguous, { schema: "sales", table: "orders" });
+
+    // A PIN on the refusal rather than a change to it, and the code is the right one of the
+    // two: nothing about this spelling's QUALIFIER is unknown, there are simply two objects
+    // wearing it, so the answer that helps is the one that offers the inventory's own
+    // addresses back and lets the model pick the catalog it meant.
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_NOT_INVENTORIED");
+    expect(outcome.modelText).toContain("shop.sales.orders");
+    expect(outcome.modelText).toContain("archive.sales.orders");
+  });
+
   test("the composed statement targets what was RESOLVED, not what was asked for", () => {
     // An unqualified name resolving to a qualified entry composed `FROM "orders"`,
     // leaving search_path to decide which relation was read while the ledger said

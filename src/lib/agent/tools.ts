@@ -80,6 +80,7 @@ import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
 import { connectionIdentity, heldSnapshotForConnection } from "./context-snapshot";
 import { offersRefusalExamples } from "./models";
 import type { ColumnSchema, DatabaseConnection, QueryResult } from "@/lib/types";
+import { resolveInventoryAddress } from "./inventory-address";
 import { addressableObjects } from "./inventory-objects";
 import type { AgentInventory, AgentInventoryObject } from "./types";
 import {
@@ -3183,39 +3184,54 @@ function describeFindings(findings: readonly AgentProfileFinding[]): string {
  */
 interface ResolvedProfileTarget {
   readonly entry: AgentInventoryObject;
+  /**
+   * The resolved ADDRESS, which is what the statement is composed from.
+   *
+   * Segments rather than one string, because the composition quotes each of them: an
+   * address joined before it is quoted becomes an identifier no engine holds.
+   */
+  readonly segments: readonly string[];
+  /** The leading segments as one label, for the audit target and a report's citation. */
   readonly schema?: string;
   readonly table: string;
 }
 
+/**
+ * The table the run inventoried, found by the spelling the model gave.
+ *
+ * Resolved by `resolveInventoryAddress`, which is the same rule the ER diagram and the
+ * inventory join use, and the reason this stopped being an `=== name` test is measured: on
+ * an engine whose containers are two deep the inventory entry is `shop.sales.orders`, while
+ * `sales.orders` is the form that engine's own documentation writes and the only other one a
+ * model can reasonably produce. An exact comparison refused it - safely, and with nothing in
+ * the refusal saying what to change (#789 fix round 2).
+ *
+ * Everything #345 bought is unchanged, because the address rule already makes those refusals
+ * for its own reasons. A NAMED qualifier is still part of the answer and is still never
+ * matched against a bare entry: `sales.orders` is not a suffix of `["orders"]`, so SQLite's
+ * unqualified `orders` cannot be targeted as `other.orders`. And a spelling two entries
+ * answer to at the same length is still refused rather than guessed between, which is the
+ * case where a guess profiles the table the caller did not name.
+ */
 function inventoriedTable(
   objects: readonly AgentInventoryObject[],
   schema: string | undefined,
   table: string,
 ): ResolvedProfileTarget | null {
-  if (schema !== undefined) {
-    // A schema was named, so it is part of the answer. Matching a BARE inventory
-    // entry here would accept `{schema: "other", table: "orders"}` against SQLite's
-    // unqualified `orders` and then target `other.orders` — a table the run never
-    // inventoried. Found by review on #345.
-    const entry = objects.find((candidate) => candidate.name === `${schema}.${table}`);
-    return entry === undefined ? null : { entry, schema, table };
-  }
-
-  const bare = objects.find((candidate) => candidate.name === table);
-  if (bare !== undefined) return { entry: bare, table };
-
-  // An unqualified name against a qualified inventory. PostgreSQL's capture names
-  // tables `schema.table` and SQLite's does not, so a model that has read either
-  // inventory may reasonably name a table without its schema. Resolved only when
-  // exactly ONE table ends that way: two schemas holding the same table name is
-  // precisely when a guess would profile the wrong one.
-  const suffix = `.${table}`;
-  const matches = objects.filter((candidate) => candidate.name.endsWith(suffix));
-  const only = matches.length === 1 ? matches[0] : undefined;
-  if (only === undefined) return null;
-  // Derived by removing the suffix rather than by splitting on a dot: exact, and it
-  // cannot misread a name that carries one.
-  return { entry: only, schema: only.name.slice(0, only.name.length - suffix.length), table };
+  const resolution = resolveInventoryAddress(objects, schema === undefined ? table : `${schema}.${table}`);
+  if (resolution.kind !== "resolved") return null;
+  const entry = resolution.object;
+  // The entry's OWN address, never the spelling that reached it: an unqualified `orders`
+  // that resolved to `sales.orders` composed `FROM "orders"` and let the search path decide
+  // which relation was read while the ledger said `sales.orders`. Found by review on #345.
+  const segments = entry.path ?? entry.name.split(".");
+  const leading = segments.slice(0, -1);
+  return {
+    entry,
+    segments,
+    ...(leading.length === 0 ? {} : { schema: leading.join(".") }),
+    table: segments[segments.length - 1],
+  };
 }
 
 /**

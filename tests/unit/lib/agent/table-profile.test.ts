@@ -31,14 +31,14 @@ describe("the composed statement", () => {
     "%s: passes the same statement guard a model-drafted read does",
     (dialect) => {
       for (const depth of ["basic", "distribution", "pattern"] as const) {
-        const sql = composeTableProfile(dialect, { table: "employee", depth }, COLUMNS);
+        const sql = composeTableProfile(dialect, { segments: ["employee"], depth }, COLUMNS);
         expect(inspectAgentStatement(sql), `${dialect}/${depth}`).toBeNull();
       }
     },
   );
 
   test("every projected expression is a count, so no value can come back", () => {
-    const sql = composeTableProfile("postgres", { table: "employee", depth: "pattern" }, COLUMNS);
+    const sql = composeTableProfile("postgres", { segments: ["employee"], depth: "pattern" }, COLUMNS);
     const projection = sql.slice("SELECT ".length, sql.indexOf(" FROM "));
 
     for (const part of projection.split(", ")) expect(part.startsWith("count("), part).toBe(true);
@@ -48,9 +48,9 @@ describe("the composed statement", () => {
   });
 
   test("deepening adds aggregates rather than replacing them", () => {
-    const basic = composeTableProfile("postgres", { table: "t", depth: "basic" }, COLUMNS);
-    const distribution = composeTableProfile("postgres", { table: "t", depth: "distribution" }, COLUMNS);
-    const pattern = composeTableProfile("postgres", { table: "t", depth: "pattern" }, COLUMNS);
+    const basic = composeTableProfile("postgres", { segments: ["t"], depth: "basic" }, COLUMNS);
+    const distribution = composeTableProfile("postgres", { segments: ["t"], depth: "distribution" }, COLUMNS);
+    const pattern = composeTableProfile("postgres", { segments: ["t"], depth: "pattern" }, COLUMNS);
 
     expect(basic).not.toContain("DISTINCT");
     expect(distribution).toContain("count(DISTINCT");
@@ -62,7 +62,7 @@ describe("the composed statement", () => {
     // Comparing an integer column to a string pattern is an error on PostgreSQL,
     // and casting every column to text would turn a bounded read into a full
     // conversion of the table.
-    const sql = composeTableProfile("postgres", { table: "t", depth: "pattern" }, COLUMNS);
+    const sql = composeTableProfile("postgres", { segments: ["t"], depth: "pattern" }, COLUMNS);
 
     expect(sql).toContain('count(CASE WHEN "email" LIKE');
     expect(sql).not.toContain('count(CASE WHEN "id" LIKE');
@@ -75,8 +75,8 @@ describe("the composed statement", () => {
   // both spellings were run against a live engine; see the live-execution test
   // below and the module comment for the PostgreSQL 18 measurement.
   test("the digit-run test is the dialect's own operator, not a shared LIKE", () => {
-    const postgres = composeTableProfile("postgres", { table: "t", depth: "pattern" }, COLUMNS);
-    const sqlite = composeTableProfile("sqlite", { table: "t", depth: "pattern" }, COLUMNS);
+    const postgres = composeTableProfile("postgres", { segments: ["t"], depth: "pattern" }, COLUMNS);
+    const sqlite = composeTableProfile("sqlite", { segments: ["t"], depth: "pattern" }, COLUMNS);
 
     expect(postgres).toContain(`"email" ~ '[0-9]{${DIGIT_RUN_LENGTH},}'`);
     expect(postgres).not.toContain("GLOB");
@@ -86,7 +86,7 @@ describe("the composed statement", () => {
 
   test("both shape tests still project a count and nothing else on either dialect", () => {
     for (const dialect of ["postgres", "sqlite"] as const) {
-      const sql = composeTableProfile(dialect, { table: "t", depth: "pattern" }, COLUMNS);
+      const sql = composeTableProfile(dialect, { segments: ["t"], depth: "pattern" }, COLUMNS);
       const projection = sql.slice("SELECT ".length, sql.indexOf(" FROM "));
 
       for (const part of projection.split(", ")) expect(part.startsWith("count("), `${dialect}: ${part}`).toBe(true);
@@ -95,7 +95,7 @@ describe("the composed statement", () => {
   });
 
   test("an identifier carrying the closing quote is escaped, not interpolated", () => {
-    const sql = composeTableProfile("postgres", { table: 'we"ird', depth: "basic" }, [column('c"1')]);
+    const sql = composeTableProfile("postgres", { segments: ['we"ird'], depth: "basic" }, [column('c"1')]);
 
     expect(sql).toContain('"we""ird"');
     expect(sql).toContain('"c""1"');
@@ -103,16 +103,40 @@ describe("the composed statement", () => {
   });
 
   test("a schema is qualified when given and omitted when not", () => {
-    expect(composeTableProfile("postgres", { schema: "public", table: "t", depth: "basic" }, COLUMNS)).toContain(
+    expect(composeTableProfile("postgres", { segments: ["public", "t"], depth: "basic" }, COLUMNS)).toContain(
       'FROM "public"."t"',
     );
-    expect(composeTableProfile("sqlite", { table: "t", depth: "basic" }, COLUMNS)).toContain('FROM "t"');
+    expect(composeTableProfile("sqlite", { segments: ["t"], depth: "basic" }, COLUMNS)).toContain('FROM "t"');
+  });
+
+  /**
+   * The target is EVERY segment of the resolved address, each quoted on its own (#789).
+   *
+   * It was a schema and a table, and that pair is enough for the two dialects composed here
+   * and for nothing else. The address a resolution now produces is as deep as the object
+   * read made it, and joining the leading segments into one string before quoting them
+   * composes `"shop.sales"."orders"`: a single identifier no engine holds, built out of two
+   * that it does. A refusal would be safe; a fabricated identifier is not, so the shape that
+   * can only ever be right is one quoted segment per segment.
+   */
+  test("every leading segment is quoted on its own, never joined into one identifier", () => {
+    const sql = composeTableProfile("postgres", { segments: ["shop", "sales", "orders"], depth: "basic" }, COLUMNS);
+    expect(sql).toContain('FROM "shop"."sales"."orders"');
+    expect(sql).not.toContain('"shop.sales"');
+  });
+
+  test("an address with no segments at all is refused rather than composed", () => {
+    expect(() => composeTableProfile("postgres", { segments: [], depth: "basic" }, COLUMNS)).toThrow(/usable length/);
   });
 
   test("an unverified dialect and an empty column list are refused rather than composed", () => {
-    expect(() => composeTableProfile("mysql", { table: "t", depth: "basic" }, COLUMNS)).toThrow(/no verified profile/);
-    expect(() => composeTableProfile("postgres", { table: "t", depth: "basic" }, [])).toThrow(/no columns/);
-    expect(() => composeTableProfile("postgres", { table: "  ", depth: "basic" }, COLUMNS)).toThrow(/usable length/);
+    expect(() => composeTableProfile("mysql", { segments: ["t"], depth: "basic" }, COLUMNS)).toThrow(
+      /no verified profile/,
+    );
+    expect(() => composeTableProfile("postgres", { segments: ["t"], depth: "basic" }, [])).toThrow(/no columns/);
+    expect(() => composeTableProfile("postgres", { segments: ["  "], depth: "basic" }, COLUMNS)).toThrow(
+      /usable length/,
+    );
   });
 });
 
@@ -357,7 +381,7 @@ describe("types with no equality operator", () => {
   // so a single json column would have failed distribution and pattern profiling for
   // every other column in the table.
   test.each(["json", "jsonb", "xml", "point", "polygon"])("%s gets no distinct count", (type) => {
-    const sql = composeTableProfile("postgres", { table: "t", depth: "distribution" }, [
+    const sql = composeTableProfile("postgres", { segments: ["t"], depth: "distribution" }, [
       column("payload", type),
       column("name", "text"),
     ]);
@@ -381,7 +405,9 @@ describe("types with no equality operator", () => {
   });
 
   test("presence is still counted for a type nothing can compare", () => {
-    const sql = composeTableProfile("postgres", { table: "t", depth: "distribution" }, [column("payload", "json")]);
+    const sql = composeTableProfile("postgres", { segments: ["t"], depth: "distribution" }, [
+      column("payload", "json"),
+    ]);
 
     expect(sql).toContain('count("payload")');
   });
@@ -462,7 +488,7 @@ describe("the shape tests against a live engine", () => {
       database.run('CREATE TABLE "people" (id INTEGER, contact TEXT, note TEXT)');
       for (const row of rows) database.run('INSERT INTO "people" VALUES (?, ?, ?)', row as never);
 
-      const sql = composeTableProfile("sqlite", { table: "people", depth: "pattern" }, COLUMNS_LIVE);
+      const sql = composeTableProfile("sqlite", { segments: ["people"], depth: "pattern" }, COLUMNS_LIVE);
       const aggregate = database.query(sql).get() as Record<string, unknown>;
       return readTableProfile("people", "pattern", COLUMNS_LIVE, [aggregate]);
     } finally {

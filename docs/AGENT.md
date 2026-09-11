@@ -986,12 +986,18 @@ what it may resolve to is narrowed by the declared role the same way the identif
 a sequence or a macro in the inventory is refused with `OBJECT_NOT_PROFILABLE`, which CONFIRMS the
 object and refuses the action rather than denying a name the model can see in the inventory, and
 carries the engine's own word for the kind as its detail. The names such a refusal offers back are
-only ones it would then accept. An unqualified name is resolved against a qualified inventory only
-when exactly one table matches —
-two schemas holding the same table name is precisely when a guess would profile the wrong one. **The
-composed statement targets what was RESOLVED**, not the model's spelling: composing from the
-spelling left PostgreSQL's `search_path` to decide which relation was read while the ledger said a
-qualified one had been profiled.
+only ones it would then accept. **A spelling is resolved against the inventory's addresses rather
+than compared to them**, by the one rule in `src/lib/db/object-address.ts`: it matches an entry whose
+address ENDS with it, segment by segment, with the most qualified match winning outright. So a model
+may name `orders` against a `sales.orders` inventory, and on an engine whose containers are two deep
+it may name `sales.orders` against a `shop.sales.orders` one, which is the form that engine's own
+documentation writes. Two entries answering one spelling at the same length are refused rather than
+guessed between, because two schemas holding the same table name is precisely when a guess would
+profile the wrong one, and a named qualifier is never matched against a bare entry. **The composed
+statement targets what was RESOLVED**, not the model's spelling, and it quotes the resolved address
+one segment at a time: composing from the spelling left PostgreSQL's `search_path` to decide which
+relation was read while the ledger said a qualified one had been profiled, and joining the address
+before quoting it would name an identifier no engine holds.
 
 A profile **settles a step**, like every other database reach: its invocation is on the ledger before
 its effect, so it inherits the cancellation checkpoint, the replay of an identical call, and the
