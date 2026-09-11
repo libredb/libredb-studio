@@ -6,7 +6,7 @@ import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { TestDataGenerator } from "@/components/TestDataGenerator";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
 // The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
 // `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
@@ -22,7 +22,7 @@ function setExecCommand(execCommand: ((command: string) => boolean) | undefined)
   Object.defineProperty(globalThis.document, "execCommand", { value: execCommand, configurable: true });
 }
 
-const schema: TableSchema = {
+const schema: DetailedObject = {
   name: "employees",
   indexes: [],
   columns: [
@@ -77,7 +77,7 @@ describe("TestDataGenerator", () => {
     // written into the statement unquoted because the type said numeric. Same
     // shape as the import defect (PR #304 review) — here it makes broken SQL
     // rather than an injection, because the vocabulary is the generator's own.
-    const mismatched: TableSchema = {
+    const mismatched: DetailedObject = {
       name: "contacts",
       indexes: [],
       columns: [{ name: "phone", type: "BIGINT", nullable: false, isPrimary: false }],
@@ -394,7 +394,7 @@ describe("TestDataGenerator", () => {
   // ── Numeric types not quoted in SQL ─────────────────────────────────────────
 
   test("numeric types are not quoted in SQL output", () => {
-    const numericSchema: TableSchema = {
+    const numericSchema: DetailedObject = {
       name: "metrics",
       indexes: [],
       columns: [
@@ -435,7 +435,7 @@ describe("TestDataGenerator", () => {
   // ── String types quoted in SQL ──────────────────────────────────────────────
 
   test("string types are quoted with single quotes in SQL output", () => {
-    const stringSchema: TableSchema = {
+    const stringSchema: DetailedObject = {
       name: "people",
       indexes: [],
       columns: [
@@ -476,7 +476,7 @@ describe("TestDataGenerator", () => {
   // ── subject/description/color/ip ────────────────────────────────────────────
 
   test("maps location and content columns to their fake generators", () => {
-    const richSchema: TableSchema = {
+    const richSchema: DetailedObject = {
       name: "profiles",
       indexes: [],
       columns: [
@@ -561,7 +561,7 @@ describe("TestDataGenerator", () => {
   // ── Type-based fake generators: date/timestamp/uuid/json + default fallback ─
 
   test("maps date, timestamp, uuid, json, and unmatched columns to their fake generators", () => {
-    const typedSchema: TableSchema = {
+    const typedSchema: DetailedObject = {
       name: "events",
       indexes: [],
       columns: [

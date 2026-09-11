@@ -635,7 +635,11 @@ export default function Studio() {
                     <React.Suspense
                       fallback={<ViewLoading label="Loading the diagram" className="absolute inset-0 z-20" />}
                     >
-                      <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />
+                      <SchemaDiagram
+                        schema={conn.schema}
+                        capabilities={metadata?.capabilities}
+                        onClose={() => setShowDiagram(false)}
+                      />
                     </React.Suspense>
                   </ChunkBoundary>
                 )}
@@ -863,6 +867,7 @@ export default function Studio() {
         onClose={() => setIsImportModalOpen(false)}
         onImport={(sql) => queryExec.executeQuery(sql)}
         tables={conn.schema}
+        capabilities={metadata?.capabilities}
         databaseType={conn.activeConnection?.type}
       />
       <QuerySafetyDialog
@@ -978,6 +983,7 @@ export default function Studio() {
         connections={conn.connections}
         activeConnection={conn.activeConnection}
         schema={conn.schema}
+        capabilities={metadata?.capabilities}
         onSelectConnection={conn.setActiveConnection}
         onTableClick={onTableClick}
         onAddConnection={() => setIsConnectionModalOpen(true)}

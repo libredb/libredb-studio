@@ -1,5 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
-import type { ColumnSchema, TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
+import type { ColumnSchema } from "@/lib/types";
 
 /** Maximum column rows rendered per table card before the "+N more" expander. */
 export const MAX_VISIBLE_COLUMNS = 12;
@@ -8,9 +9,9 @@ export const TABLE_SOURCE_HANDLE = "__table-source";
 export const TABLE_TARGET_HANDLE = "__table-target";
 
 export interface TableNodeData extends Record<string, unknown> {
-  table: TableSchema;
+  table: DetailedObject;
   compact: boolean;
-  visibleColumns: ColumnSchema[];
+  visibleColumns: readonly ColumnSchema[];
   hiddenCount: number;
   sourceAnchors: string[];
   targetAnchors: string[];
@@ -46,7 +47,7 @@ export interface BuiltGraph {
  * table's own FK columns, `targets` are its columns referenced by other
  * tables. Only FKs whose referenced table is present in the schema count.
  */
-export function computeFkColumnMap(schema: TableSchema[]): FkColumnMap {
+export function computeFkColumnMap(schema: readonly DetailedObject[]): FkColumnMap {
   const tableSet = new Set(schema.map((t) => t.name));
   const sources = new Map<string, Set<string>>();
   const targets = new Map<string, Set<string>>();
@@ -80,10 +81,10 @@ export function computeFkColumnMap(schema: TableSchema[]): FkColumnMap {
  * order is preserved.
  */
 export function selectVisibleColumns(
-  table: TableSchema,
+  table: DetailedObject,
   anchors: Set<string>,
   expanded: boolean,
-): { visible: ColumnSchema[]; hiddenCount: number } {
+): { visible: readonly ColumnSchema[]; hiddenCount: number } {
   const columns = table.columns || [];
   if (expanded || columns.length <= MAX_VISIBLE_COLUMNS) {
     return { visible: columns, hiddenCount: 0 };
@@ -115,7 +116,7 @@ interface EdgeSpec {
   heuristic: boolean;
 }
 
-function collectFkEdgeSpecs(schema: TableSchema[], tableSet: Set<string>): EdgeSpec[] {
+function collectFkEdgeSpecs(schema: readonly DetailedObject[], tableSet: Set<string>): EdgeSpec[] {
   const specs: EdgeSpec[] = [];
   const seen = new Set<string>();
   for (const table of schema) {
@@ -137,7 +138,7 @@ function collectFkEdgeSpecs(schema: TableSchema[], tableSet: Set<string>): EdgeS
   return specs;
 }
 
-function collectHeuristicEdgeSpecs(schema: TableSchema[]): EdgeSpec[] {
+function collectHeuristicEdgeSpecs(schema: readonly DetailedObject[]): EdgeSpec[] {
   const byName = new Map(schema.map((t) => [t.name, t]));
   const specs: EdgeSpec[] = [];
   const seen = new Set<string>();
@@ -199,11 +200,11 @@ function gridPosition(index: number, total: number, compact: boolean): { x: numb
 }
 
 /**
- * Pure translation of a TableSchema[] into React Flow nodes and edges.
+ * Pure translation of a readonly DetailedObject[] into React Flow nodes and edges.
  * Selection/highlight state is deliberately NOT part of node identity — it
  * lives in the highlight store so selecting a table never rebuilds the graph.
  */
-export function buildGraph(schema: TableSchema[], options: BuildGraphOptions): BuiltGraph {
+export function buildGraph(schema: readonly DetailedObject[], options: BuildGraphOptions): BuiltGraph {
   const { compact, expandedTables } = options;
   const tableSet = new Set(schema.map((t) => t.name));
   const { sources, targets } = computeFkColumnMap(schema);

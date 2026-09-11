@@ -18,7 +18,9 @@ import {
   LoaderCircle,
   X,
 } from "lucide-react";
-import type { DatabaseType, TableSchema } from "@/lib/types";
+import type { DatabaseType } from "@/lib/types";
+import { rowWritableObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import { quoteLiteral } from "@/lib/sql/values";
 import type { CsvDelimiter } from "@/lib/export/csv";
 
@@ -26,8 +28,18 @@ interface DataImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onImport: (sql: string) => void;
-  tables: TableSchema[];
+  tables: readonly DetailedObject[];
   databaseType?: string;
+  /**
+   * The provider's own declaration, used for one question: which of `tables` an import may
+   * be pointed at. The gate is `acceptsRowWrites` on the entry's KIND and nothing else,
+   * because the engine-wide `supportsInlineRowEdit` is a different fact about the results
+   * grid, and MongoDB, Couchbase and Cassandra declare it false while declaring a kind that
+   * genuinely takes row writes (standing ruling 4 against #789). Optional, because the
+   * metadata read is asynchronous and until it answers nothing has said a target is not
+   * writable.
+   */
+  capabilities?: ProviderCapabilities;
 }
 
 export interface ParsedData {
@@ -198,7 +210,14 @@ export function generateImportSQL(
   return statements.join("\n\n");
 }
 
-export function DataImportModal({ isOpen, onClose, onImport, tables, databaseType }: DataImportModalProps) {
+export function DataImportModal({
+  isOpen,
+  onClose,
+  onImport,
+  tables,
+  databaseType,
+  capabilities,
+}: DataImportModalProps) {
   const [step, setStep] = useState<ImportStep>("upload");
   const [parsedData, setParsedData] = useState<ParsedData | null>(null);
   const [fileName, setFileName] = useState("");
@@ -213,6 +232,10 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
   const fileInputRef = useRef<HTMLInputElement>(null);
   const csvTextRef = useRef("");
   const [csvDelimiter, setCsvDelimiter] = useState<CsvDelimiter>(",");
+
+  // A view has columns and is a relation, and an INSERT into it is meaningless on most
+  // engines, so only the provider's own per-kind declaration can tell the two apart (#789).
+  const targets = useMemo(() => rowWritableObjects(tables, capabilities), [tables, capabilities]);
 
   const resetState = useCallback(() => {
     setStep("upload");
@@ -580,7 +603,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                     className="w-full mt-1 bg-overlay border border-hairline-strong rounded-md px-3 py-2 text-xs text-fg-secondary outline-none focus:border-brand-tint/40"
                   >
                     <option value="">-- Select a table --</option>
-                    {tables.map((t) => (
+                    {targets.map((t) => (
                       <option key={t.name} value={t.name}>
                         {t.name}
                       </option>

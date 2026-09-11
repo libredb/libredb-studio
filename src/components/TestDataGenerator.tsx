@@ -4,14 +4,15 @@ import React, { useState, useMemo } from "react";
 import { WandSparkles, X, Play, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/copy-button";
-import { DatabaseType, TableSchema } from "@/lib/types";
+import { DatabaseType } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import { quoteLiteral } from "@/lib/sql/values";
 
 interface TestDataGeneratorProps {
   isOpen: boolean;
   onClose: () => void;
   tableName: string;
-  tableSchema: TableSchema | null;
+  tableSchema: DetailedObject | null;
   databaseType?: string;
   queryLanguage?: string;
   onExecuteQuery: (query: string) => void;

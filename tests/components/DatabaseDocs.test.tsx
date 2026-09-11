@@ -7,9 +7,10 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DatabaseDocs } from "@/components/DatabaseDocs";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
-const schema: TableSchema[] = [
+const schema: DetailedObject[] = [
   {
     name: "users",
     rowCount: 100,
@@ -30,7 +31,7 @@ const schema: TableSchema[] = [
   },
 ];
 
-const emptySchema: TableSchema[] = [];
+const emptySchema: DetailedObject[] = [];
 
 function mockFetchStream(body: string, ok = true, errorBody?: { error: string }) {
   const encoder = new TextEncoder();
@@ -376,5 +377,36 @@ describe("DatabaseDocs", () => {
     const { queryByText } = render(<DatabaseDocs schema={schema} schemaContext="[]" />);
     expect(queryByText("AI Describe")).not.toBeNull();
     expect(queryByText("Export MD")).not.toBeNull();
+  });
+});
+
+// =============================================================================
+// The object model: what this page documents at all (#789)
+// =============================================================================
+
+describe("DatabaseDocs object filtering", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const capabilities = {
+    queryLanguage: "sql",
+    objectKinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+      { id: "procedure", role: "routine", label: "Procedure", labelPlural: "Procedures" },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  const inventory: DetailedObject[] = [
+    { name: "users", kind: "table", columns: [], indexes: [], rowCount: 100 },
+    { name: "recalculate_totals", kind: "procedure", columns: [], indexes: [] },
+  ];
+
+  test("a routine is neither counted nor documented", () => {
+    const { queryByText } = render(<DatabaseDocs schema={inventory} schemaContext="[]" capabilities={capabilities} />);
+    expect(queryByText("users")).not.toBeNull();
+    expect(queryByText("recalculate_totals")).toBeNull();
+    // The header count is the same derivation, so a routine cannot be counted as a table.
+    expect(queryByText("1 tables")).not.toBeNull();
   });
 });

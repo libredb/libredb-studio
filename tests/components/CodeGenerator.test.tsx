@@ -6,7 +6,7 @@ import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { CodeGenerator } from "@/components/CodeGenerator";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
 // The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
 // `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
@@ -22,7 +22,7 @@ function setExecCommand(execCommand: ((command: string) => boolean) | undefined)
   Object.defineProperty(globalThis.document, "execCommand", { value: execCommand, configurable: true });
 }
 
-const schema: TableSchema = {
+const schema: DetailedObject = {
   name: "users",
   indexes: [],
   columns: [

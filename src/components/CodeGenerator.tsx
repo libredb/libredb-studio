@@ -4,13 +4,13 @@ import React, { useState, useMemo } from "react";
 import { Code, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/copy-button";
-import { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
 interface CodeGeneratorProps {
   isOpen: boolean;
   onClose: () => void;
   tableName: string;
-  tableSchema: TableSchema | null;
+  tableSchema: DetailedObject | null;
   databaseType?: string;
 }
 
@@ -175,7 +175,7 @@ export function mapSqlTypeToJava(sqlType: string): string {
   return "String";
 }
 
-export function generateCode(lang: Language, table: TableSchema): string {
+export function generateCode(lang: Language, table: DetailedObject): string {
   const name = toIdentifier(table.name);
   const columns = table.columns || [];
 

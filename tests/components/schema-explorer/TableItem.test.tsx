@@ -62,7 +62,7 @@ mock.module("@/components/schema-explorer/ColumnList", () => ({
 // ── Imports after mocks ─────────────────────────────────────────────────────
 
 import { TableItem } from "@/components/schema-explorer/TableItem";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 
 // Capability fixtures are partial on purpose: TableItem reads three fields, and
@@ -132,7 +132,7 @@ const labelsFor = (partial: Partial<Labels>): Labels =>
 
 // ── Test data ───────────────────────────────────────────────────────────────
 
-const largeTable: TableSchema = {
+const largeTable: DetailedObject = {
   name: "users",
   rowCount: 1500,
   indexes: [{ name: "idx_users_email", columns: ["email"], unique: true }],
@@ -142,7 +142,7 @@ const largeTable: TableSchema = {
   ],
 };
 
-const smallTable: TableSchema = {
+const smallTable: DetailedObject = {
   name: "settings",
   rowCount: 42,
   indexes: [],
@@ -152,7 +152,7 @@ const smallTable: TableSchema = {
   ],
 };
 
-const noRowCountTable: TableSchema = {
+const noRowCountTable: DetailedObject = {
   name: "logs",
   indexes: [],
   columns: [{ name: "id", type: "SERIAL", nullable: false, isPrimary: true }],

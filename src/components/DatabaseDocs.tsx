@@ -4,14 +4,22 @@ import { appFetch } from "@/lib/config/base-path";
 import React, { useState } from "react";
 import { FileText, LoaderCircle, Search, Sparkles, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { TableSchema } from "@/lib/types";
+import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import { renderInline } from "@/components/rich-text";
 import { downloadText } from "@/lib/export/download";
 
 interface DatabaseDocsProps {
-  schema: TableSchema[];
+  schema: readonly DetailedObject[];
   schemaContext: string;
   databaseType?: string;
+  /**
+   * The provider's own declaration, used to decide which of `schema`'s entries this page
+   * documents: a reference of columns is a statement about relations, and a routine or a
+   * trigger has none to print. Optional because the metadata read is asynchronous, and
+   * until it answers nothing has said any entry is not a relation (#789).
+   */
+  capabilities?: ProviderCapabilities;
 }
 
 interface ParsedSchemaTable {
@@ -20,13 +28,17 @@ interface ParsedSchemaTable {
   columns?: { name: string; type: string; isPrimary?: boolean; isNullable?: boolean }[];
 }
 
-export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDocsProps) {
+export function DatabaseDocs({ schema, schemaContext, databaseType, capabilities }: DatabaseDocsProps) {
   const [search, setSearch] = useState("");
   const [aiDocs, setAiDocs] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const filteredSchema = schema.filter(
+  // By the declared ROLE and never by a kind id, so a new engine's relation kind is
+  // documented without a change here (#789).
+  const relations = relationObjects(schema, capabilities);
+
+  const filteredSchema = relations.filter(
     (t) =>
       t.name.toLowerCase().includes(search.toLowerCase()) ||
       t.columns?.some((c) => c.name.toLowerCase().includes(search.toLowerCase())),
@@ -95,7 +107,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
   const exportMarkdown = () => {
     let md = `# Database Documentation\n\n`;
     md += `**Type:** ${databaseType || "Unknown"}\n`;
-    md += `**Tables:** ${schema.length}\n\n`;
+    md += `**Tables:** ${relations.length}\n\n`;
 
     if (aiDocs) {
       md += `## AI Analysis\n\n${aiDocs}\n\n---\n\n`;
@@ -103,7 +115,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
 
     md += `## Table Reference\n\n`;
 
-    for (const table of schema) {
+    for (const table of relations) {
       md += `### ${table.name}\n\n`;
       if (table.rowCount !== undefined) md += `Rows: ${table.rowCount.toLocaleString()}\n\n`;
 
@@ -167,7 +179,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
             <FileText strokeWidth={1.5} className="w-3 h-3 text-hue-teal" />
           </div>
           <span className="text-xs font-medium text-hue-teal">Database Docs</span>
-          <span className="text-[0.625rem] text-fg-muted font-mono">{schema.length} tables</span>
+          <span className="text-[0.625rem] text-fg-muted font-mono">{relations.length} tables</span>
         </div>
         <div className="flex items-center gap-1.5">
           <button

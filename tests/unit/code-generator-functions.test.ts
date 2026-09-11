@@ -12,7 +12,7 @@ import {
   mapSqlTypeToJava,
   generateCode,
 } from "@/components/CodeGenerator";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
 // ============================================================================
 // Naming helpers
@@ -149,7 +149,7 @@ describe("mapSqlTypeToJava", () => {
 // generateCode
 // ============================================================================
 
-const testSchema: TableSchema = {
+const testSchema: DetailedObject = {
   name: "order_items",
   indexes: [],
   columns: [
@@ -225,7 +225,7 @@ describe("generateCode", () => {
   });
 
   test("Go struct without time import when no date columns", () => {
-    const schema: TableSchema = {
+    const schema: DetailedObject = {
       name: "tags",
       indexes: [],
       columns: [
@@ -238,7 +238,7 @@ describe("generateCode", () => {
   });
 
   test("Python dataclass without optional/datetime when not needed", () => {
-    const schema: TableSchema = {
+    const schema: DetailedObject = {
       name: "flags",
       indexes: [],
       columns: [
@@ -252,7 +252,7 @@ describe("generateCode", () => {
   });
 
   test("Java POJO without LocalDateTime import when not needed", () => {
-    const schema: TableSchema = {
+    const schema: DetailedObject = {
       name: "tags",
       indexes: [],
       columns: [{ name: "id", type: "INTEGER", nullable: false, isPrimary: true }],
@@ -262,7 +262,7 @@ describe("generateCode", () => {
   });
 
   test("empty columns produces empty body", () => {
-    const schema: TableSchema = { name: "empty", indexes: [], columns: [] };
+    const schema: DetailedObject = { name: "empty", indexes: [], columns: [] };
     const code = generateCode("typescript", schema);
     expect(code).toContain("export interface Empty");
     expect(code).toContain("{\n\n}");
@@ -300,7 +300,7 @@ describe("toIdentifier", () => {
 });
 
 describe("generateCode — non-identifier table names (#427)", () => {
-  const redisSchema: TableSchema = {
+  const redisSchema: DetailedObject = {
     name: "user:*",
     indexes: [],
     columns: [
@@ -347,7 +347,7 @@ describe("generateCode — non-identifier table names (#427)", () => {
 
   // Every target language accepts Unicode letters in an identifier, so a
   // non-ASCII table name must survive intact in all six outputs (#427).
-  const unicodeSchema: TableSchema = {
+  const unicodeSchema: DetailedObject = {
     name: "m\u00fc\u015fteri",
     indexes: [],
     columns: [{ name: "id", type: "INT", nullable: false, isPrimary: true }],

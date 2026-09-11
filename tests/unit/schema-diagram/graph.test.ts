@@ -9,9 +9,10 @@ import {
   graphSignature,
   selectVisibleColumns,
 } from "@/components/schema-diagram/graph";
-import type { ColumnSchema, TableSchema } from "@/lib/types";
+import type { ColumnSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
-function makeTable(name: string, columns: Partial<ColumnSchema>[], foreignKeys: TableSchema["foreignKeys"] = []) {
+function makeTable(name: string, columns: Partial<ColumnSchema>[], foreignKeys: DetailedObject["foreignKeys"] = []) {
   return {
     name,
     columns: columns.map((c, i) => ({
@@ -24,7 +25,7 @@ function makeTable(name: string, columns: Partial<ColumnSchema>[], foreignKeys: 
     indexes: [],
     foreignKeys,
     rowCount: 0,
-  } as TableSchema;
+  } as DetailedObject;
 }
 
 const users = makeTable("users", [
@@ -291,9 +292,10 @@ describe("buildGraph", () => {
   });
 
   test("undefined foreignKeys is tolerated", () => {
-    const bare = { ...makeTable("bare", [{ name: "id", isPrimary: true }]) };
-    delete (bare as Partial<TableSchema>).foreignKeys;
-    const { nodes, edgeCount } = buildGraph([bare as TableSchema], { compact: false });
+    // Built WITHOUT the key rather than by deleting it: `DetailedObject`'s fields are
+    // readonly, and the absence is the whole subject of the test.
+    const { foreignKeys: _absent, ...bare } = makeTable("bare", [{ name: "id", isPrimary: true }]);
+    const { nodes, edgeCount } = buildGraph([bare], { compact: false });
     expect(nodes.length).toBe(1);
     expect(edgeCount).toBe(0);
   });

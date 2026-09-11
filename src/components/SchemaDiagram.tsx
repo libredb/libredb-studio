@@ -17,7 +17,8 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { TableSchema } from "@/lib/types";
+import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import { Download, Info, LoaderCircle, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
@@ -55,8 +56,19 @@ function yieldToPaint(): Promise<void> {
 }
 
 interface SchemaDiagramProps {
-  schema: TableSchema[];
+  schema: readonly DetailedObject[];
   onClose: () => void;
+  /**
+   * The provider's own declaration. WHICH kinds this diagram draws is a filter over the
+   * kinds the engine declared with `role: "relation"`, not a constant in this file: a
+   * diagram is columns and foreign keys, which is what a relation has and a routine, a
+   * trigger and a ClickHouse dictionary do not. A new engine's relation kind is therefore
+   * drawn with no change here (#789).
+   *
+   * Optional because the metadata read is asynchronous, and an empty canvas while it is in
+   * flight would read as a database with no tables.
+   */
+  capabilities?: ProviderCapabilities;
 }
 
 /**
@@ -84,7 +96,7 @@ const DIAGRAM_THEME = {
   },
 } as const;
 
-function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
+function SchemaDiagramInner({ schema, onClose, capabilities }: SchemaDiagramProps) {
   const mode = useEffectiveTheme();
   const diagram = DIAGRAM_THEME[mode];
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
@@ -106,12 +118,15 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
   const [highlightStore] = useState(createHighlightStore);
   const { toast } = useToast();
 
+  // What this canvas may draw at all: the engine's declared relation kinds.
+  const relations = useMemo(() => relationObjects(schema, capabilities), [schema, capabilities]);
+
   // Filter tables by search (deferred so typing stays responsive on large schemas)
   const filteredSchema = useMemo(() => {
-    if (!deferredQuery.trim()) return schema;
+    if (!deferredQuery.trim()) return relations;
     const q = deferredQuery.toLowerCase();
-    return schema.filter((t) => t.name.toLowerCase().includes(q));
-  }, [schema, deferredQuery]);
+    return relations.filter((t) => t.name.toLowerCase().includes(q));
+  }, [relations, deferredQuery]);
 
   const graph = useMemo(
     () => buildGraph(filteredSchema, { compact: compactMode, expandedTables: new Set(expandedTables) }),
@@ -344,13 +359,13 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
   // Warn when the DISPLAYED graph runs on guesses: either the schema carries
   // no FK data at all, or the current (possibly filtered) view fell back to
   // dashed heuristic edges because no FK is usable within it.
-  const schemaHasFkData = schema.some((t) => (t.foreignKeys || []).length > 0);
+  const schemaHasFkData = relations.some((t) => (t.foreignKeys || []).length > 0);
   const showHeuristicWarning = graph.usedHeuristic || !schemaHasFkData;
   const heuristicWarningText = graph.usedHeuristic
     ? `${schemaHasFkData ? "No usable FK relationships in this view." : "No FK data available."} Showing heuristic relationships (dashed).`
     : "No FK data available.";
 
-  if (schema.length === 0) {
+  if (relations.length === 0) {
     return (
       <div className="absolute inset-0 z-50 bg-canvas flex flex-col items-center justify-center">
         <LoaderCircle strokeWidth={1.5} className="w-8 h-8 text-brand animate-spin mb-4" />
@@ -520,10 +535,10 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
   );
 }
 
-export function SchemaDiagram({ schema, onClose }: SchemaDiagramProps) {
+export function SchemaDiagram({ schema, onClose, capabilities }: SchemaDiagramProps) {
   return (
     <ReactFlowProvider>
-      <SchemaDiagramInner schema={schema} onClose={onClose} />
+      <SchemaDiagramInner schema={schema} onClose={onClose} capabilities={capabilities} />
     </ReactFlowProvider>
   );
 }

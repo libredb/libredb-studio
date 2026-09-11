@@ -24,14 +24,24 @@ import {
   TextAlignStart,
   Save,
 } from "lucide-react";
-import { DatabaseConnection, TableSchema, SavedQuery, QueryHistoryItem } from "@/lib/types";
+import { DatabaseConnection, SavedQuery, QueryHistoryItem } from "@/lib/types";
+import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import { storage } from "@/lib/storage";
 import { getDBIcon } from "@/lib/db-ui-config";
 
 interface CommandPaletteProps {
   connections: DatabaseConnection[];
   activeConnection: DatabaseConnection | null;
-  schema: TableSchema[];
+  schema: readonly DetailedObject[];
+  /**
+   * The provider's own declaration, used for one thing: which of `schema`'s entries this
+   * palette may offer. Selecting an item EXECUTES a generated query through
+   * `onTableClick`, so a routine or a trigger here is a statement that fails as soon as it
+   * is clicked. Optional because the metadata read is asynchronous and a palette that hid
+   * every object until it answered would look like an empty database (#789).
+   */
+  capabilities?: ProviderCapabilities;
   onSelectConnection: (conn: DatabaseConnection) => void;
   onTableClick: (tableName: string) => void;
   onAddConnection: () => void;
@@ -59,6 +69,7 @@ export function CommandPalette({
   connections,
   activeConnection,
   schema,
+  capabilities,
   onSelectConnection,
   onTableClick,
   onAddConnection,
@@ -74,6 +85,10 @@ export function CommandPalette({
   onLogout,
 }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
+
+  // Relations only, by the kind's declared ROLE and never by its id: an item here runs a
+  // generated query the moment it is selected (#789).
+  const tables = useMemo(() => relationObjects(schema, capabilities), [schema, capabilities]);
 
   // Register Cmd+K / Ctrl+K keyboard shortcut
   useEffect(() => {
@@ -179,9 +194,9 @@ export function CommandPalette({
         )}
 
         {/* Tables */}
-        {schema.length > 0 && (
+        {tables.length > 0 && (
           <CommandGroup heading="Tables">
-            {schema.map((table) => (
+            {tables.map((table) => (
               <CommandItem key={table.name} onSelect={() => runAction(() => onTableClick(table.name))}>
                 <Table2 strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-muted" />
                 <span>{table.name}</span>

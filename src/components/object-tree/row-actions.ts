@@ -106,8 +106,11 @@ export interface TreeRowActionContext {
  * The one place the object model is narrowed to the old flat model.
  *
  * `DataProfiler`, `CodeGenerator`, `TestDataGenerator`, `handleGenerateSelect` and the
- * maintenance deep link all take a table NAME and look it up in the flat `TableSchema`
- * list by `name`. `path` is what ADDRESSES an object and `name` is what LABELS it
+ * maintenance deep link all take a table NAME and look it up by `name` in the list the
+ * shell holds. Those consumers now take `DetailedObject` rather than the flat shape
+ * (#789), and the LOOKUP is still by name: the list the shells search is the one
+ * `use-connection-manager` produces, which carries no `path` yet.
+ * `path` is what ADDRESSES an object and `name` is what LABELS it
  * (standing ruling 2), so the name is the half those consumers can still use, and it is
  * the same string `onObjectClick` already hands `handleTableClick` in both shells. A
  * schema-qualified object therefore behaves exactly as it did under the flat explorer,

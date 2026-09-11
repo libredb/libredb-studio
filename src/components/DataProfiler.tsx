@@ -4,7 +4,8 @@ import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useMemo } from "react";
 import { LoaderCircle, ChartColumn, X, Hash, CircleAlert, Sparkles, Lock, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { TableSchema, DatabaseConnection } from "@/lib/types";
+import { DatabaseConnection } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import { detectSensitiveColumns, maskValue } from "@/lib/data-masking";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { dataProfileText, type ColumnProfile, type ProfileData } from "@/lib/export/data-profile";
@@ -21,7 +22,7 @@ interface DataProfilerProps {
   isOpen: boolean;
   onClose: () => void;
   tableName: string;
-  tableSchema: TableSchema | null;
+  tableSchema: DetailedObject | null;
   connection: DatabaseConnection | null;
   schemaContext?: string;
   databaseType?: string;

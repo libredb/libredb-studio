@@ -19,7 +19,8 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { TableSchema, SchemaSnapshot, DatabaseType, DatabaseConnection } from "@/lib/types";
+import type { SchemaSnapshot, DatabaseType, DatabaseConnection } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import { storage } from "@/lib/storage";
 import { logger } from "@/lib/logger";
 import { useAllConnections } from "@/hooks/use-all-connections";
@@ -29,8 +30,29 @@ import type { SchemaDiff as SchemaDiffType, TableDiff } from "@/lib/schema-diff/
 import { SnapshotTimeline } from "@/components/SnapshotTimeline";
 
 interface SchemaDiffProps {
-  schema: TableSchema[];
+  schema: readonly DetailedObject[];
   connection: DatabaseConnection | null;
+}
+
+/**
+ * The one narrowing left in this file, and it is deliberate rather than forgotten (#789).
+ *
+ * `diffSchemas` and `SchemaSnapshot` are both outside this task's files: the engine still
+ * compares by table NAME and the stored snapshot still holds the flat shape, so an object's
+ * `kind` and `path` have nowhere to go and a diff still cannot say that a view became a
+ * table. Copying the arrays here is what lets this component hold the object model while
+ * the engine below it has not moved yet; when the engine takes objects, this function goes
+ * and the two lists are passed straight through.
+ */
+function forDiff(objects: readonly DetailedObject[]) {
+  return objects.map((object) => ({
+    name: object.name,
+    columns: [...object.columns],
+    indexes: [...object.indexes],
+    ...(object.foreignKeys === undefined ? {} : { foreignKeys: [...object.foreignKeys] }),
+    ...(object.rowCount === undefined ? {} : { rowCount: object.rowCount }),
+    ...(object.size === undefined ? {} : { size: object.size }),
+  }));
 }
 
 export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
@@ -81,7 +103,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
     if (sourceId === targetId) return null;
 
-    return diffSchemas(sourceSchema, targetSchema);
+    return diffSchemas(forDiff(sourceSchema), forDiff(targetSchema));
   }, [sourceId, targetId, schema, snapshots]);
 
   // Generate migration SQL

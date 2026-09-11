@@ -6,7 +6,8 @@ import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, within, fireEvent, act, waitFor } from "@testing-library/react";
 import { DataImportModal } from "@/components/DataImportModal";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
 // The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
 // `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
@@ -26,7 +27,7 @@ function setExecCommand(execCommand: ((command: string) => boolean) | undefined)
 
 const noop = mock(() => {});
 
-const sampleTables: TableSchema[] = [
+const sampleTables: DetailedObject[] = [
   { name: "users", columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }], indexes: [] },
   { name: "orders", columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }], indexes: [] },
 ];
@@ -995,5 +996,64 @@ describe("DataImportModal", () => {
       expect(within(baseElement).getByLabelText("Target column for name")).not.toBeNull();
       expect(within(baseElement).getByLabelText("Target column for age")).not.toBeNull();
     });
+  });
+});
+
+// =============================================================================
+// The object model: what an import may be pointed at (#789)
+// =============================================================================
+
+describe("DataImportModal target filtering", () => {
+  // Its own cleanup: an afterEach declared in a sibling describe does not reach this one,
+  // and a leaked modal would make every getByLabelText below ambiguous.
+  afterEach(() => {
+    cleanup();
+  });
+
+  const capabilities = {
+    queryLanguage: "sql",
+    objectKinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+      { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  const inventory: DetailedObject[] = [
+    { name: "orders", kind: "table", columns: [], indexes: [] },
+    { name: "order_summary", kind: "view", columns: [], indexes: [] },
+    { name: "order_total", kind: "function", columns: [], indexes: [] },
+  ];
+
+  function targetNames(capabilitiesProp?: ProviderCapabilities): string[] {
+    const { baseElement } = render(
+      <DataImportModal isOpen onClose={noop} onImport={noop} tables={inventory} capabilities={capabilitiesProp} />,
+    );
+    act(() => {
+      simulateFileUpload(baseElement, "name,age\nAlice,30", "data.csv");
+    });
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("Configure Import"));
+    });
+    const select = within(baseElement).getByLabelText("Select Table") as HTMLSelectElement;
+    return Array.from(select.options)
+      .map((option) => option.value)
+      .filter((value) => value !== "");
+  }
+
+  test("a view has columns and is a relation, and is still not an import target", () => {
+    expect(targetNames(capabilities)).toEqual(["orders"]);
+  });
+
+  test("the engine-wide inline-row-edit flag does not withhold a target", () => {
+    // MongoDB, Couchbase and Cassandra declare it false while declaring a kind that takes
+    // row writes, so conjoining the two would refuse an import all three engines support
+    // (standing ruling 4).
+    const noInlineEdit = { ...capabilities, supportsInlineRowEdit: false } as ProviderCapabilities;
+    expect(targetNames(noInlineEdit)).toEqual(["orders"]);
+  });
+
+  test("with no declaration yet, every entry is still a target", () => {
+    expect(targetNames(undefined)).toEqual(["orders", "order_summary", "order_total"]);
   });
 });

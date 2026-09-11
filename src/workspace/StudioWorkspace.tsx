@@ -408,7 +408,11 @@ export function StudioWorkspace({
                       <React.Suspense
                         fallback={<ViewLoading label="Loading the diagram" className="absolute inset-0 z-20" />}
                       >
-                        <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />
+                        <SchemaDiagram
+                          schema={conn.schema}
+                          capabilities={conn.metadata?.capabilities}
+                          onClose={() => setShowDiagram(false)}
+                        />
                       </React.Suspense>
                     </ChunkBoundary>
                   )}
@@ -518,6 +522,7 @@ export function StudioWorkspace({
           onClose={() => setIsImportModalOpen(false)}
           onImport={(sql) => queryExec.executeQuery(sql)}
           tables={conn.schema}
+          capabilities={conn.metadata?.capabilities}
           databaseType={conn.activeConnection?.type}
         />
       )}

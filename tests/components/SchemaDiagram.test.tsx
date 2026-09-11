@@ -177,14 +177,15 @@ import {
 } from "@/components/schema-diagram/highlight-store";
 import { mockToastError } from "../helpers/mock-sonner";
 import { mockSchema, emptySchema } from "../fixtures/schemas";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
 // =============================================================================
 // Test Data
 // =============================================================================
 
 // Schema with NO foreign keys at all (triggers heuristic fallback)
-const schemaNoFK: TableSchema[] = [
+const schemaNoFK: DetailedObject[] = [
   {
     name: "users",
     columns: [
@@ -208,7 +209,7 @@ const schemaNoFK: TableSchema[] = [
 ];
 
 // Schema with heuristic _id column (no FK data, but column ends with _id)
-const schemaHeuristic: TableSchema[] = [
+const schemaHeuristic: DetailedObject[] = [
   {
     name: "users",
     columns: [
@@ -233,7 +234,7 @@ const schemaHeuristic: TableSchema[] = [
 ];
 
 // Schema with heuristic _id column matching singular table name (no plural 's')
-const schemaHeuristicSingular: TableSchema[] = [
+const schemaHeuristicSingular: DetailedObject[] = [
   {
     name: "author",
     columns: [
@@ -258,7 +259,7 @@ const schemaHeuristicSingular: TableSchema[] = [
 ];
 
 // Schema with foreignKeys field omitted (tests `|| []` guards)
-const schemaUndefinedFK: TableSchema[] = [
+const schemaUndefinedFK: DetailedObject[] = [
   {
     name: "items",
     columns: [
@@ -267,11 +268,11 @@ const schemaUndefinedFK: TableSchema[] = [
     ],
     indexes: [],
     rowCount: 20,
-  } as TableSchema,
+  } as DetailedObject,
 ];
 
 // Multi-FK schema for highlighting tests
-const schemaMultiFK: TableSchema[] = [
+const schemaMultiFK: DetailedObject[] = [
   {
     name: "users",
     columns: [
@@ -306,8 +307,8 @@ const schemaMultiFK: TableSchema[] = [
   },
 ];
 
-// Single table schema
-const singleTableSchema: TableSchema[] = [
+// A single relation, used wherever a test needs exactly one node
+const singleTableFixture: DetailedObject[] = [
   {
     name: "settings",
     columns: [
@@ -445,7 +446,7 @@ describe("SchemaDiagram", () => {
   });
 
   test("shows single table count", () => {
-    const props = createDefaultProps({ schema: singleTableSchema });
+    const props = createDefaultProps({ schema: singleTableFixture });
     const { container } = render(<SchemaDiagram {...props} />);
     const view = within(container);
 
@@ -640,7 +641,7 @@ describe("SchemaDiagram", () => {
   test("shows warning when FK data exists but the displayed graph is heuristic", () => {
     // invoices HAS FK data, but it references a table outside the schema -
     // the diagram falls back to dashed heuristic edges and must explain them.
-    const unusableFk: TableSchema[] = [
+    const unusableFk: DetailedObject[] = [
       {
         name: "customer",
         columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
@@ -755,7 +756,7 @@ describe("SchemaDiagram", () => {
     const view = within(container);
     expect(view.queryByText("3 tables")).not.toBeNull();
 
-    rerender(<SchemaDiagram schema={singleTableSchema} onClose={onClose} />);
+    rerender(<SchemaDiagram schema={singleTableFixture} onClose={onClose} />);
     expect(view.queryByText("1 tables")).not.toBeNull();
   });
 
@@ -786,7 +787,7 @@ describe("SchemaDiagram", () => {
   // ── Schema with many tables ─────────────────────────────────────────
 
   test("schema with many tables renders correct count", () => {
-    const manyTables: TableSchema[] = Array.from({ length: 10 }, (_, i) => ({
+    const manyTables: DetailedObject[] = Array.from({ length: 10 }, (_, i) => ({
       name: `table_${i}`,
       columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
       indexes: [],
@@ -841,7 +842,7 @@ describe("SchemaDiagram", () => {
     });
 
     test("displays column names", () => {
-      const props = createDefaultProps({ schema: singleTableSchema });
+      const props = createDefaultProps({ schema: singleTableFixture });
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
 
@@ -850,7 +851,7 @@ describe("SchemaDiagram", () => {
     });
 
     test("displays column type text", () => {
-      const props = createDefaultProps({ schema: singleTableSchema });
+      const props = createDefaultProps({ schema: singleTableFixture });
       const { container } = render(<SchemaDiagram {...props} />);
 
       // Column types should be rendered in uppercase
@@ -860,7 +861,7 @@ describe("SchemaDiagram", () => {
     });
 
     test("shows NN for NOT NULL columns", () => {
-      const props = createDefaultProps({ schema: singleTableSchema });
+      const props = createDefaultProps({ schema: singleTableFixture });
       const { container } = render(<SchemaDiagram {...props} />);
 
       // 'key' column has nullable: false
@@ -870,7 +871,7 @@ describe("SchemaDiagram", () => {
     });
 
     test("compact mode hides column details", () => {
-      const props = createDefaultProps({ schema: singleTableSchema });
+      const props = createDefaultProps({ schema: singleTableFixture });
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
 
@@ -909,7 +910,7 @@ describe("SchemaDiagram", () => {
       // Schema with a valid table ensures at least one node renders
       // The guard `if (!data) return null; if (!table) return null;` is tested
       // by the fact that the enhanced mock passes correct data through
-      const props = createDefaultProps({ schema: singleTableSchema });
+      const props = createDefaultProps({ schema: singleTableFixture });
       const { container } = render(<SchemaDiagram {...props} />);
 
       const nodeEl = container.querySelector('[data-node-id="settings"]');
@@ -1493,7 +1494,7 @@ describe("SchemaDiagram", () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   describe("Large schemas", () => {
-    const bigSchema: TableSchema[] = Array.from({ length: 150 }, (_, i) => ({
+    const bigSchema: DetailedObject[] = Array.from({ length: 150 }, (_, i) => ({
       name: `table_${i}`,
       columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
       indexes: [],
@@ -1550,7 +1551,7 @@ describe("SchemaDiagram", () => {
       expect(container.querySelector('[data-node-id="posts"]')!.querySelector(".border-brand-tint\\/60")).toBeNull();
 
       // Relations arrive: posts now references users
-      const withFk: TableSchema[] = [
+      const withFk: DetailedObject[] = [
         schemaNoFK[0],
         {
           ...schemaNoFK[1],
@@ -1586,7 +1587,7 @@ describe("SchemaDiagram", () => {
 
       // FK arrival adds handles -> React Flow must be told to re-measure,
       // otherwise the new edges never attach.
-      const withFk: TableSchema[] = [
+      const withFk: DetailedObject[] = [
         schemaNoFK[0],
         {
           ...schemaNoFK[1],
@@ -1607,7 +1608,7 @@ describe("SchemaDiagram", () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   describe("Layout failure", () => {
-    const wideTable: TableSchema[] = [
+    const wideTable: DetailedObject[] = [
       {
         name: "wide",
         columns: Array.from({ length: 30 }, (_, i) => ({
@@ -1732,7 +1733,7 @@ describe("SchemaDiagram", () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   describe("Column capping", () => {
-    const wideTable: TableSchema[] = [
+    const wideTable: DetailedObject[] = [
       {
         name: "wide",
         columns: Array.from({ length: 30 }, (_, i) => ({
@@ -1864,5 +1865,75 @@ describe("SchemaDiagram", () => {
 
       expect(view.queryByText(/No FK data available/)).not.toBeNull();
     });
+  });
+});
+
+// =============================================================================
+// The object model: which kinds this canvas draws (#789)
+// =============================================================================
+
+describe("SchemaDiagram kind filtering", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  // Two relation kinds and one routine. WHICH of them is drawn is a filter over what the
+  // engine declared, not a constant in the component, so an engine declaring a third
+  // relation kind is drawn with no change to this file.
+  const capabilities = {
+    queryLanguage: "sql",
+    objectKinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+      { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  const inventory: DetailedObject[] = [
+    {
+      name: "orders",
+      kind: "table",
+      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+      indexes: [],
+      foreignKeys: [],
+    },
+    {
+      name: "order_summary",
+      kind: "view",
+      columns: [{ name: "total", type: "numeric", nullable: true, isPrimary: false }],
+      indexes: [],
+      foreignKeys: [],
+    },
+    {
+      name: "order_total",
+      kind: "function",
+      columns: [{ name: "result", type: "numeric", nullable: true, isPrimary: false }],
+      indexes: [],
+      foreignKeys: [],
+    },
+  ];
+
+  test("both declared relation kinds are drawn and the routine is not", () => {
+    const { container } = render(<SchemaDiagram schema={inventory} capabilities={capabilities} onClose={() => {}} />);
+
+    expect(container.querySelector('[data-testid="node-orders"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="node-order_summary"]')).not.toBeNull();
+    // It has columns, so the flat model drew it as a card with a fabricated shape.
+    expect(container.querySelector('[data-testid="node-order_total"]')).toBeNull();
+  });
+
+  test("an inventory of nothing but routines renders no canvas at all", () => {
+    const routinesOnly = inventory.filter((object) => object.kind === "function");
+    const { container } = render(
+      <SchemaDiagram schema={routinesOnly} capabilities={capabilities} onClose={() => {}} />,
+    );
+
+    expect(container.querySelector('[data-testid="mock-react-flow"]')).toBeNull();
+  });
+
+  test("with no declaration yet, every entry is drawn", () => {
+    const { container } = render(<SchemaDiagram schema={inventory} onClose={() => {}} />);
+
+    expect(container.querySelector('[data-testid="node-order_total"]')).not.toBeNull();
   });
 });

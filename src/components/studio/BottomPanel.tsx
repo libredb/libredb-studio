@@ -3,7 +3,8 @@
 import type { CsvDelimiter } from "@/lib/export/csv";
 
 import React, { useMemo } from "react";
-import type { DatabaseConnection, QueryTab, TableSchema, QueryResult } from "@/lib/types";
+import type { DatabaseConnection, QueryTab, QueryResult } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { MaskingConfig } from "@/lib/data-masking";
 import type { AgentArtifactHydration } from "@/components/agent/hydration";
@@ -141,7 +142,7 @@ interface BottomPanelProps {
   mode: BottomPanelMode;
   onSetMode: (mode: BottomPanelMode) => void;
   currentTab: QueryTab;
-  schema: TableSchema[];
+  schema: readonly DetailedObject[];
   schemaContext: string;
   activeConnection: DatabaseConnection | null;
   metadata: ProviderMetadata | null;
@@ -476,7 +477,12 @@ export function BottomPanel({
                 databaseType={activeConnection?.type}
               />
             ) : mode === "docs" ? (
-              <DatabaseDocs schema={schema} schemaContext={schemaContext} databaseType={activeConnection?.type} />
+              <DatabaseDocs
+                schema={schema}
+                schemaContext={schemaContext}
+                databaseType={activeConnection?.type}
+                capabilities={metadata?.capabilities}
+              />
             ) : mode === "history" ? (
               <QueryHistory
                 refreshTrigger={historyKey}

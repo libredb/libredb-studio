@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useCallback } from "react";
-import { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { Search, Hash, LoaderCircle, CircleAlert, Database, Plus, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { AnimatePresence } from "framer-motion";
 import { TableItem } from "./TableItem";
 
 interface SchemaExplorerProps {
-  schema: TableSchema[];
+  schema: readonly DetailedObject[];
   isLoadingSchema: boolean;
   /**
    * Why the schema read produced nothing, in the engine's own words. Optional so the

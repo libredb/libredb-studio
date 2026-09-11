@@ -1,5 +1,5 @@
 import React from "react";
-import { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import {
   Search,
@@ -37,7 +37,7 @@ import { writeToClipboard } from "@/components/copy-button";
 import { ColumnList } from "./ColumnList";
 
 interface TableItemProps {
-  table: TableSchema;
+  table: DetailedObject;
   isExpanded: boolean;
   onToggle: () => void;
   // `labels` is itself optional on ProviderMetadata, so the indexed access already
@@ -64,7 +64,7 @@ type TableItemCallbacks = Pick<
  * travels as one object rather than as a positional list.
  */
 interface MenuItemsContext {
-  table: TableSchema;
+  table: DetailedObject;
   labels: TableItemProps["labels"];
   capabilities: TableItemProps["capabilities"];
   isAdmin: boolean;
@@ -158,7 +158,7 @@ function renderMenuItems({
 
           What this gate CANNOT answer is the rest of U22: both items are deep links, and the
           destination renders a per-table control only for a ROW it has statistics for. Nothing
-          here knows whether one will arrive: `TableSchema.rowCount` and `.size` are optional and
+          here knows whether one will arrive: `DetailedObject.rowCount` and `.size` are optional and
           come from the schema read, not from the monitoring statistics the destination lists, and
           no declared capability says whether an engine publishes per-table figures - so
           withholding the link would need a new capability flag this repo does not want. The

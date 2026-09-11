@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 import { buildGraph } from "@/components/schema-diagram/graph";
 import { DEFAULT_ELK_OPTIONS, applyLayout, buildElkGraph, estimateNodeSize } from "@/components/schema-diagram/layout";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
-const schema: TableSchema[] = [
+const schema: DetailedObject[] = [
   {
     name: "users",
     columns: [
