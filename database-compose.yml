@@ -166,6 +166,13 @@ services:
       COUCHBASE_USER: Administrator
       COUCHBASE_PASSWORD: password123
       COUCHBASE_BUCKET: travel
+    volumes:
+      # The object-browser fixture (#789). Couchbase has no
+      # /docker-entrypoint-initdb.d, so the sidecar sources it after the cluster,
+      # the bucket and the bucket-level primary index exist. The script is
+      # re-runnable, so `docker compose up couchbase-init` re-applies an edit
+      # without recreating the data node.
+      - ./docker/couchbase-init:/fixture:ro
     entrypoint: ["/bin/bash", "-c"]
     command:
       # $$ escapes compose interpolation: these expand in the container's shell.
@@ -190,7 +197,11 @@ services:
             "http://$$COUCHBASE_HOST:8093/query/service" \
             --data-urlencode "statement=CREATE PRIMARY INDEX IF NOT EXISTS ON \`$$COUCHBASE_BUCKET\`"; then
             echo "couchbase ready: bucket $$COUCHBASE_BUCKET has a primary index"
-            exit 0
+            # The object-browser fixture (#789): the scope, the collections, the
+            # two same-named indexes, the two same-named scope functions, the
+            # global function and the legacy map-reduce view. Every claim the
+            # provider doc makes about this engine is re-measurable against it.
+            exec bash /fixture/01-object-fixture.sh
           fi
           sleep 2
         done

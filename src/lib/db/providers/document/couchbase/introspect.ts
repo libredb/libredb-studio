@@ -48,7 +48,7 @@ const UNKNOWN_TYPE = "unknown";
 const UNKNOWN_INDEX_NAME = "unknown";
 
 /** How SQL++ addresses the document key a primary index is built on. */
-const DOCUMENT_KEY_EXPRESSION = "META().id";
+export const DOCUMENT_KEY_EXPRESSION = "META().id";
 
 /**
  * Column carrying the document key. It matches the alias the generated
@@ -218,7 +218,7 @@ function columnsFromFlavours(flavours: unknown[]): ColumnSchema[] {
 }
 
 /** Strip the quoting Couchbase applies to a plain index key identifier. */
-function unquoteIndexKey(key: string): string {
+export function unquoteIndexKey(key: string): string {
   const match = QUOTED_IDENTIFIER.exec(key);
   return match ? match[1].replaceAll("``", "`") : key;
 }

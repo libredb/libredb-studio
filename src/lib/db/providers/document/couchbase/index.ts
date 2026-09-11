@@ -22,16 +22,22 @@
  */
 
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
+import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import {
   type ActiveSession,
   type ActiveSessionDetails,
+  type Container,
   type DatabaseConnection,
+  type DatabaseObject,
   type DatabaseOverview,
   type HealthInfo,
+  type IndexSchema,
   type IndexStats,
+  type KindCount,
   type MaintenanceResult,
   type MaintenanceType,
+  type ObjectDetail,
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
@@ -54,9 +60,35 @@ import {
   CATALOG_TIMEOUT_MS,
   getSchemaList as introspectSchemaList,
   getSchemaRelations as introspectSchemaRelations,
+  inferColumns,
   listCollections,
 } from "./introspect";
-import { keyspaceFromDisplayName, keyspacePath, quoteIdentifier } from "./keyspace";
+import { COUCHBASE_DEFAULT_SCOPE, keyspaceFromDisplayName, keyspacePath, quoteIdentifier } from "./keyspace";
+import {
+  BUCKETS_SQL,
+  COLLECTIONS_SQL,
+  COUCHBASE_CONTAINER_LEVELS,
+  COUCHBASE_DEFAULT_COLLECTION,
+  COUCHBASE_KIND_FUNCTION,
+  COUCHBASE_KIND_INDEX,
+  COUCHBASE_OBJECT_KINDS,
+  comparePaths,
+  containerRead,
+  type ContainerNameRow,
+  type CouchbaseFunctionRow,
+  type CouchbaseObjectRow,
+  FUNCTIONS_SQL,
+  INDEXES_SQL,
+  indexSchemaOf,
+  isInsideContainer,
+  listedObject,
+  checkObjectPath,
+  objectPath,
+  relationKeyspace,
+  resolveFunctionIdentity,
+  resolveKeyspaceOf,
+  SCOPES_SQL,
+} from "./objects";
 import { CouchbaseError, type CouchbaseQueryResult, type CouchbaseRow, type CouchbaseTransport } from "./transport";
 
 // ============================================================================
@@ -338,6 +370,8 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       },
       supportsConnectionString: true,
       defaultPort: 8091,
+      containerLevels: COUCHBASE_CONTAINER_LEVELS,
+      objectKinds: COUCHBASE_OBJECT_KINDS,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER)\\s+(COLLECTION|SCOPE|INDEX)\\b",
     };
   }
@@ -585,6 +619,234 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     const transport = this.requireTransport();
     const collections = await this.guarded(() => listCollections(transport, this.bucket));
     return collections.map((collection) => collection.displayName);
+  }
+
+  // ==========================================================================
+  // The object surface (#789)
+  // ==========================================================================
+
+  /** One catalog read, with the cluster's own refusal mapped onto a provider error. */
+  private async objectRows<T extends CouchbaseRow>(sql: string, args?: unknown[]): Promise<T[]> {
+    const transport = this.requireTransport();
+    const result = await this.guarded(() => transport.query(sql, { args, timeoutMs: CATALOG_TIMEOUT_MS }));
+    return result.rows as T[];
+  }
+
+  /**
+   * The containers at `parent`: the cluster's buckets, or one bucket's scopes.
+   *
+   * The top level is every bucket the connected user can see and NOT the one this
+   * connection pinned, because SQL++ addresses any bucket by a three-part name and the
+   * query service is cluster-wide. Which bucket the session opened reaches the tree as
+   * `isSessionDefault` rather than as a filter.
+   *
+   * `isSessionDefault` is marked at BOTH levels, and standing ruling 5a2 (#789) is why:
+   * first paint walks the container chain down to the session default at the DEEPEST
+   * declared level, so a two-level engine that marked only its buckets would leave the
+   * tree opening a bucket and stopping, with no counts read at all. The scope it marks is
+   * `_default`, in the session's own bucket only: an unqualified SQL++ keyspace resolves
+   * into `_default`, and `keyspace.ts` already treats that scope as the implicit one for
+   * the flat explorer, so the two surfaces agree about which scope a person is in.
+   *
+   * Below the last declared level the answer is `[]` rather than a refusal, because
+   * "nothing nests under a scope" is a true statement about Couchbase and not a caller
+   * mistake, and it is answered without a round trip.
+   */
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const parentPath = parent ?? [];
+    // `Container.level` is the index into `containerLevels`, so a container listed under a
+    // parent of depth d sits at level d. Derived from the parent rather than written twice
+    // as a literal 0 and 1.
+    const level = parentPath.length;
+
+    if (level === 0) {
+      const rows = await this.objectRows<ContainerNameRow>(BUCKETS_SQL);
+      return rows
+        .map((row) => String(row.bucket_name))
+        .map((name) => ({ path: [name], name, level, isSessionDefault: name === this.bucket }))
+        .sort((left, right) => comparePaths(left.path, right.path));
+    }
+    if (level >= containerDepth(capabilities)) return [];
+
+    const { bucket } = containerRead(capabilities, parentPath);
+    const rows = await this.objectRows<ContainerNameRow>(SCOPES_SQL, [bucket]);
+    return rows
+      .map((row) => String(row.scope_name))
+      .map((name) => ({
+        path: [...parentPath, name],
+        name,
+        level,
+        isSessionDefault: bucket === this.bucket && name === COUCHBASE_DEFAULT_SCOPE,
+      }))
+      .sort((left, right) => comparePaths(left.path, right.path));
+  }
+
+  /**
+   * The objects of one kind in one container, already placed and ordered.
+   *
+   * THE ONE READ. `countObjects` tallies what this returns and `listObjects` returns it
+   * unchanged, which is standing ruling 5f (#789) discharged structurally rather than by
+   * care: the listing cannot contain anything other than what the count counted, because
+   * they are the same array. Four providers in this epic drifted a count statement and a
+   * listing statement apart in a WHERE clause; there is no second statement here to drift.
+   *
+   * A `COUNT(*)` would have been one round trip instead of three, and it is ruled out by
+   * measurement rather than by preference: on Server 8.0.2, `SELECT COUNT(*) FROM
+   * system:scopes` answers 4 where `SELECT s.name FROM system:scopes` answers 2 rows, so a
+   * `system:` keyspace can count rows its own projection never returns. A badge taken that
+   * way would be a number the folder can never show.
+   */
+  private async kindObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    const capabilities = this.getCapabilities();
+    const { bucket } = containerRead(capabilities, container);
+
+    const objects: DatabaseObject[] = [];
+    if (kind === COUCHBASE_KIND_FUNCTION) {
+      for (const row of await this.objectRows<CouchbaseFunctionRow>(FUNCTIONS_SQL)) {
+        const identity = resolveFunctionIdentity(row);
+        // A global function carries no bucket and no scope, so it has no container here.
+        // The bucket check is what the statement deliberately does not do, so that the
+        // exclusion stays one visible rule rather than a server-side predicate.
+        if (identity === undefined || identity.bucket !== bucket) continue;
+        const keyspace = { bucket, scope: identity.scope, collection: COUCHBASE_DEFAULT_COLLECTION };
+        objects.push(listedObject(objectPath(capabilities, keyspace, [identity.name]), identity.name, kind));
+      }
+    } else {
+      const attached = kind === COUCHBASE_KIND_INDEX;
+      const sql = attached ? INDEXES_SQL : COLLECTIONS_SQL;
+      for (const row of await this.objectRows<CouchbaseObjectRow>(sql, [bucket])) {
+        const name = typeof row.object_name === "string" ? row.object_name : undefined;
+        // The COLLECTION a row is about: the row's own name for a collection, the
+        // keyspace it indexes for an index. One placement rule serves both, because the
+        // two projections are aliased onto the same field names.
+        const keyspaceName = attached ? (typeof row.collection_id === "string" ? row.collection_id : undefined) : name;
+        const keyspace = resolveKeyspaceOf(bucket, row, keyspaceName);
+        // A row carrying no name at all addresses nothing, so it cannot be a tree row.
+        // This is not a kind falling out of a classifier: the kind is decided by which
+        // catalog the row came from, so there is no vocabulary here to be incomplete.
+        if (keyspace === undefined || name === undefined) continue;
+        // A COLLECTION is named by the keyspace it resolved to and NOT by the row's own
+        // `name`, because the pre-scopes bucket-level row's name is the BUCKET's. Reading
+        // the row there would address `_default`.`_default` as a collection called
+        // `travel`, which is a keyspace path no statement can reach. An INDEX keeps the
+        // row's name, which is the index's own.
+        const tail = attached ? [keyspace.collection, name] : [keyspace.collection];
+        objects.push(listedObject(objectPath(capabilities, keyspace, tail), tail[tail.length - 1], kind));
+      }
+    }
+
+    return objects
+      .filter((object) => isInsideContainer(object.path, container))
+      .sort((left, right) => comparePaths(left.path, right.path));
+  }
+
+  /**
+   * How many objects of each declared kind one container holds.
+   *
+   * Three outcomes, and `KindCount` keeps all three apart. A kind the catalogs answered
+   * for carries its number. A kind they did not carries `{ count: 0 }`, because every
+   * declared kind is seeded before any row is read. A refused read carries the cluster's
+   * own sentence for EVERY kind, which is right rather than a shortcut: the three catalogs
+   * are read over one connection with one set of credentials, and the refusal a restricted
+   * user meets ("User does not have credentials to run queries", error 13014) is one fact
+   * about the whole surface rather than a per-catalog privilege.
+   */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    this.ensureConnected();
+    const declared = declaredKinds(this.getCapabilities());
+    // The container path is checked BEFORE the try, so a caller-built path of the wrong
+    // shape raises instead of being reported as the engine refusing a read.
+    containerRead(this.getCapabilities(), container);
+
+    try {
+      // The record is built by walking the DECLARATION, so every declared kind carries a
+      // number whether or not any catalog row mentioned it. That is what a seeded zero
+      // buys the other providers in #789, here bought by construction instead.
+      //
+      // The three reads run in PARALLEL: they are three independent catalogs over one
+      // stateless HTTP query service, so nothing sequences them, and a count is the read a
+      // person waits on when a folder opens.
+      const listings = await Promise.all(declared.map((kind) => this.kindObjects(container, kind.id)));
+      return Object.fromEntries(
+        declared.map((kind, index) => [kind.id, { count: listings[index].length } as KindCount]),
+      );
+    } catch (error) {
+      // A refused read is never 0. "this scope holds no functions" and "nobody has looked"
+      // are different facts, and this is the type that keeps them apart.
+      const reason = error instanceof Error ? error.message : String(error);
+      return Object.fromEntries(declared.map((kind) => [kind.id, { unavailable: reason } as KindCount]));
+    }
+  }
+
+  /**
+   * The objects of one kind in one container, names only.
+   *
+   * Two questions, asked in order, and only the DECLARATION answers the first. Deciding
+   * "is this kind declared" from whether a statement exists would make the two methods
+   * disagree, and would report "declares no object kind" about a kind `objectKinds` does
+   * declare.
+   */
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    this.ensureConnected();
+    if (findKind(this.getCapabilities(), kind) === undefined) {
+      throw new QueryError(`Couchbase declares no object kind "${kind}"`, this.type);
+    }
+    return this.kindObjects(container, kind);
+  }
+
+  /**
+   * One object's columns and indexes.
+   *
+   * The KIND decides and nothing here reads the name to work out what it is holding. Only
+   * the relation kind has either: a function's parameters and its body are Phase 2's job,
+   * and an index describing itself would need a shape no other provider in this epic
+   * produces, so both answer three empty arrays rather than a read nobody asked for.
+   *
+   * A collection's columns are INFERRED from a document sample, the same way `getSchema()`
+   * infers them and with the same bound, because Couchbase stores no schema to read. A
+   * rejected INFER yields no columns rather than an error: the two common causes, the user
+   * lacking SELECT on the collection and the collection being empty (error 7014, "No
+   * documents found, unable to infer schema"), are both states the tree should render. The
+   * fixture leaves `hotel` and `bookings` empty so that stays measured.
+   *
+   * `foreignKeys` is ALWAYS empty, the same measurement behind `declaresForeignKeys:
+   * false`: SQL++ has no referential constraint at all.
+   */
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`Couchbase declares no object kind "${kind}"`, this.type);
+    }
+
+    checkObjectPath(capabilities, spec, path);
+    if (spec.role !== "relation") {
+      return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
+    }
+    const keyspace = relationKeyspace(capabilities, path);
+
+    const transport = this.requireTransport();
+    const columns = await this.guarded(() => inferColumns(transport, keyspace));
+    const rows = await this.objectRows<CouchbaseObjectRow>(INDEXES_SQL, [keyspace.bucket]);
+
+    const indexes: IndexSchema[] = [];
+    for (const row of rows) {
+      const name = typeof row.object_name === "string" ? row.object_name : undefined;
+      const keyspaceName = typeof row.collection_id === "string" ? row.collection_id : undefined;
+      const rowKeyspace = resolveKeyspaceOf(keyspace.bucket, row, keyspaceName);
+      if (name === undefined || rowKeyspace === undefined) continue;
+      // BOTH halves. One collection NAME can live in two scopes - the fixture puts
+      // `airline` in `_default` and in `inventory` - so a filter on the collection alone
+      // would hand one of them the other's indexes.
+      if (rowKeyspace.scope !== keyspace.scope || rowKeyspace.collection !== keyspace.collection) continue;
+      indexes.push(indexSchemaOf(row, name));
+    }
+    indexes.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+
+    return { path: [...path], columns, indexes, foreignKeys: [] };
   }
 
   // ==========================================================================
