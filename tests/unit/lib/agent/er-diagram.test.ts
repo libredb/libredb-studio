@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MAX_ER_CHARS, erDetailForWorkflow, renderErDiagram } from "@/lib/agent/er-diagram";
-import type { AgentContextSnapshot } from "@/lib/agent/types";
+import type { AgentContextSnapshot, AgentInventoryObject } from "@/lib/agent/types";
 import type { TableSchema } from "@/lib/types";
 
 /**
@@ -19,7 +19,15 @@ const table = (name: string, overrides: Partial<TableSchema> = {}): TableSchema 
   ...overrides,
 });
 
-const snapshot = (tables: readonly TableSchema[]): AgentContextSnapshot => ({
+/**
+ * The inventory a run actually carries, which is NOT `TableSchema[]`.
+ *
+ * `AgentContextSnapshot.objects` is `AgentInventoryObject[]`: every field readonly, and
+ * `path` and `kind` beside the flat reading's fields. Typing this helper as `TableSchema[]`
+ * was harmless only while every fixture here was a bare flat table; a fixture carrying the
+ * address segments a real object read supplies does not assign to it.
+ */
+const snapshot = (tables: readonly AgentInventoryObject[]): AgentContextSnapshot => ({
   connectionId: "conn_1",
   fingerprint: "ctx_1",
   capturedAtMs: 1,
@@ -135,6 +143,151 @@ describe("detail levels say more about each relation, never fewer relations", ()
     for (const detail of ["minimal", "medium", "full"] as const) {
       expect(relationLines(renderErDiagram(many, detail)), detail).toHaveLength(2);
     }
+  });
+});
+
+/**
+ * The spelling a PROVIDER writes a foreign key target in, against the ADDRESS an entry
+ * carries (#789).
+ *
+ * Every fixture above is bare on both sides, which is the one shape no engine produces
+ * once the object surface has named the entries: a target is spelled by whichever provider
+ * read the key, in its own flat dialect, and each of them qualifies LESS than the address.
+ * Measured in the providers rather than derived from what makes this file pass:
+ * `postgres.ts` strips `public.` from a same-schema target, `mysql.ts` emits the bare table
+ * name against a `database.table` address, and `mssql.ts` strips the object's own schema
+ * from a `catalog.schema.table` one. Compared to the address as strings, EVERY same-schema
+ * key on those three engines reads as pointing outside the inventory it is sitting in.
+ */
+describe("a foreign key target is resolved against the address, not compared to it", () => {
+  const entry = (name: string, path: readonly string[], overrides: Partial<AgentInventoryObject> = {}) => ({
+    name,
+    path,
+    columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+    indexes: [],
+    ...overrides,
+  });
+
+  test("PostgreSQL's public schema: a stripped target still finds the object it names", () => {
+    // `postgres.ts` composes `referencedTable` without the `public.` qualifier, and the
+    // object read addresses the same table `public.customers`.
+    const rendered = renderErDiagram(
+      snapshot([
+        entry("public.orders", ["public", "orders"], {
+          foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
+        }),
+        entry("public.customers", ["public", "customers"]),
+      ]),
+      "minimal",
+    );
+
+    expect(rendered).not.toContain("not in this inventory");
+    // Rendered by the ADDRESS the inventory listed, because that is the name the model is
+    // being asked to write statements against.
+    expect(rendered).toContain('"public.orders" -> "public.customers"');
+  });
+
+  test("MySQL: a bare target against a database-qualified address", () => {
+    const rendered = renderErDiagram(
+      snapshot([
+        entry("app.orders", ["app", "orders"], {
+          foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
+        }),
+        entry("app.customers", ["app", "customers"]),
+      ]),
+      "medium",
+    );
+
+    expect(rendered).not.toContain("not in this inventory");
+    expect(rendered).toContain('"app.orders"."customer_id" -> "app.customers"."id"');
+  });
+
+  test("SQL Server: a schema-qualified target against a catalog-qualified address", () => {
+    // `mssql.ts` strips the object's OWN schema, so a cross-schema key keeps two segments
+    // while the address carries three.
+    const rendered = renderErDiagram(
+      snapshot([
+        entry("shop.dbo.orders", ["shop", "dbo", "orders"], {
+          foreignKeys: [{ columnName: "customer_id", referencedTable: "sales.customers", referencedColumn: "id" }],
+        }),
+        entry("shop.sales.customers", ["shop", "sales", "customers"]),
+      ]),
+      "minimal",
+    );
+
+    expect(rendered).not.toContain("not in this inventory");
+    expect(rendered).toContain('"shop.dbo.orders" -> "shop.sales.customers"');
+  });
+
+  test("two objects answering one spelling are not guessed between, and are not called missing either", () => {
+    // The refusal that matters as much as the match: picking one of these would assert a
+    // relation the database may not have. Saying "not in this inventory" would be false
+    // about an inventory holding both.
+    const rendered = renderErDiagram(
+      snapshot([
+        entry("app.orders", ["app", "orders"], {
+          foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
+        }),
+        entry("app.customers", ["app", "customers"]),
+        entry("archive.customers", ["archive", "customers"]),
+      ]),
+      "minimal",
+    );
+
+    expect(rendered).toContain("more than one object in this inventory is spelled that way");
+    expect(rendered).not.toContain("target not in this inventory");
+    // The provider's own spelling is kept, since this run cannot say which address it meant.
+    expect(rendered).toContain('"app.orders" -> "customers"');
+  });
+
+  test("the most qualified match wins outright rather than being made ambiguous", () => {
+    // A two-segment spelling that one address equals and another merely ends with. The
+    // equal one is the answer; treating them as rivals would phantom a key that is exact.
+    const rendered = renderErDiagram(
+      snapshot([
+        entry("sales.orders", ["sales", "orders"], {
+          foreignKeys: [{ columnName: "customer_id", referencedTable: "sales.customers", referencedColumn: "id" }],
+        }),
+        entry("sales.customers", ["sales", "customers"]),
+        entry("warehouse.sales.customers", ["warehouse", "sales", "customers"]),
+      ]),
+      "minimal",
+    );
+
+    expect(rendered).toContain('"sales.orders" -> "sales.customers"');
+    expect(rendered).not.toContain("not in this inventory");
+    expect(rendered).not.toContain("more than one object");
+  });
+
+  test("a target nothing answers to is still the edge of what the run read", () => {
+    const rendered = renderErDiagram(
+      snapshot([
+        entry("app.orders", ["app", "orders"], {
+          foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
+        }),
+      ]),
+      "minimal",
+    );
+
+    expect(rendered).toContain("target not in this inventory");
+  });
+
+  test("an entry that never reached the object surface is addressed by the name it has", () => {
+    // The composed catalog path carries no `path`: its entries are one qualified string,
+    // and a stripped target has to resolve against that too. The dot split is the last
+    // resort stated in `inventory-address.ts`, not the rule.
+    const rendered = renderErDiagram(
+      snapshot([
+        table("public.orders", {
+          foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
+        }),
+        table("public.customers"),
+      ]),
+      "minimal",
+    );
+
+    expect(rendered).not.toContain("not in this inventory");
+    expect(rendered).toContain('"public.orders" -> "public.customers"');
   });
 });
 

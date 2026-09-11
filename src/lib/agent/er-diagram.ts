@@ -28,13 +28,18 @@
  *  - **A target outside the inventory is marked, never dropped.** A foreign key
  *    pointing at a table this run did not capture is a real edge with a missing
  *    node — the run reached the edge of what it read, which is a fact worth showing.
- *    Dropping it would make the graph look complete.
+ *    Dropping it would make the graph look complete. A target the inventory holds
+ *    MORE THAN ONE candidate for is marked differently and is not guessed between:
+ *    the provider spells a key with fewer segments than an address carries, so two
+ *    objects in different containers can both answer one spelling, and choosing is
+ *    how this diagram would come to assert a relation nobody declared.
  *  - **Detail is a level, not a filter on tables.** Every relation appears at every
  *    level; what changes is how much is said about each one. A level that omitted
  *    relations would be a graph that lies by omission at exactly the moment a reader
  *    trusts it most.
  */
 
+import { resolveInventoryAddress } from "./inventory-address";
 import { type AgentInventoryNoun, TABLE_INVENTORY_NOUN } from "./inventory-noun";
 import type { AgentContextSnapshot, AgentRunWorkflowType } from "./types";
 import { quoteIdentifierForPrompt } from "./untrusted-content";
@@ -106,11 +111,25 @@ const omissionReserve = (advice: string): number => 60 + advice.length;
 interface Relation {
   readonly from: string;
   readonly column: string;
+  /** The target's ADDRESS where this inventory holds it, and the provider's spelling where it does not. */
   readonly to: string;
   readonly toColumn: string;
-  /** The referenced table is not in this inventory — the edge of what the run read. */
-  readonly phantom: boolean;
+  /** What this inventory could not say about the target, or `null` when it holds exactly one. */
+  readonly targetNote: string | null;
 }
+
+/**
+ * The two things this inventory can fail to say about a foreign key's target, in the words
+ * the model is shown.
+ *
+ * They are DIFFERENT facts and they used to be one. A target outside the inventory is the
+ * edge of what the run read: a real edge with a missing node. A target more than one object
+ * answers to is a run that read all of them and cannot tell which the key means, because the
+ * provider spelled it with fewer segments than the address carries. Reporting the second as
+ * the first would tell a model that a table it was shown a moment ago is missing.
+ */
+const TARGET_ABSENT = "target not in this inventory";
+const TARGET_AMBIGUOUS = "more than one object in this inventory is spelled that way; this run cannot say which";
 
 /**
  * SQLite's parser answers this when `REFERENCES parent` names no column, which is
@@ -120,25 +139,48 @@ interface Relation {
  */
 const IMPLICIT_PRIMARY_KEY = "(primary key)";
 
+/**
+ * The relations, with each target RESOLVED against the inventory rather than compared to it.
+ *
+ * A set of names and an `=== name` test was what this did, and it was right only while both
+ * sides of the comparison were spelled the same way. They are not: an entry's `name` is its
+ * ADDRESS, qualified as far as the object read supplied segments, while `referencedTable` is
+ * written by the provider in its own flat dialect — `postgres.ts` strips `public.`,
+ * `mssql.ts` strips the object's own schema, `mysql.ts` is always bare. Every same-schema
+ * foreign key on PostgreSQL `public`, SQL Server `dbo` and all of MySQL was therefore
+ * annotated as pointing outside the inventory it is sitting in.
+ *
+ * So the target is resolved by `resolveInventoryAddress`, which is the same suffix rule
+ * `context-snapshot.ts` joins the two readings on, and a spelling two objects answer to is
+ * left unresolved rather than guessed: a diagram that picks one of two candidate tables
+ * asserts a relation the database may not have, which is the failure the quoting in this
+ * file exists to prevent, arrived at by a name shortage instead of a hostile name.
+ *
+ * A RESOLVED target is then rendered by its ADDRESS, not by the provider's spelling. The
+ * model is asked to write statements against this inventory, and telling it `-> "orders"`
+ * while the inventory lists `app.orders` hands it a name it cannot address.
+ */
 function relationsOf(snapshot: AgentContextSnapshot): readonly Relation[] {
-  const known = new Set(snapshot.objects.map((table) => table.name));
   const relations: Relation[] = [];
   const seen = new Set<string>();
 
   for (const table of snapshot.objects) {
     for (const key of table.foreignKeys ?? []) {
+      const resolution = resolveInventoryAddress(snapshot.objects, key.referencedTable);
+      const to = resolution.kind === "resolved" ? resolution.object.name : key.referencedTable;
       // Deduplicated on the whole edge: PostgreSQL's catalog read returns a
       // composite key as the cross product of its sides (#463), so
       // the same pair can arrive more than once.
-      const identity = JSON.stringify([table.name, key.columnName, key.referencedTable, key.referencedColumn]);
+      const identity = JSON.stringify([table.name, key.columnName, to, key.referencedColumn]);
       if (seen.has(identity)) continue;
       seen.add(identity);
       relations.push({
         from: table.name,
         column: key.columnName,
-        to: key.referencedTable,
+        to,
         toColumn: key.referencedColumn,
-        phantom: !known.has(key.referencedTable),
+        targetNote:
+          resolution.kind === "resolved" ? null : resolution.kind === "absent" ? TARGET_ABSENT : TARGET_AMBIGUOUS,
       });
     }
   }
@@ -172,10 +214,9 @@ function renderRelation(snapshot: AgentContextSnapshot, relation: Relation, deta
       ? `${quote(relation.from)} -> ${quote(relation.to)}`
       : `${quote(relation.from)}.${quote(relation.column)} -> ${target}`;
 
-  const notes = [
-    relation.phantom ? "target not in this inventory" : null,
-    detail === "full" ? keyColumns(snapshot, relation.from) : null,
-  ].filter((note) => note !== null && note.length > 0);
+  const notes = [relation.targetNote, detail === "full" ? keyColumns(snapshot, relation.from) : null].filter(
+    (note) => note !== null && note.length > 0,
+  );
 
   return notes.length === 0 ? head : `${head}  [${notes.join("; ")}]`;
 }
@@ -203,7 +244,7 @@ function renderAmbiguous(snapshot: AgentContextSnapshot, group: readonly Relatio
       : `${quote(first.from)} (${columns}) -> ${quote(first.to)} (${targets})`;
   const notes = [
     "several keys or one composite key; this inventory cannot pair the columns",
-    first.phantom ? "target not in this inventory" : null,
+    first.targetNote,
     // The same note an exact line carries at this level: a level says more about
     // each relation, and a group is still one relation between two tables.
     detail === "full" ? keyColumns(snapshot, first.from) : null,
