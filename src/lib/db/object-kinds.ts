@@ -22,7 +22,23 @@ export function findKind(capabilities: ProviderCapabilities, id: string): Object
   return declaredKinds(capabilities).find((kind) => kind.id === id);
 }
 
-export function acceptsRowWrites(capabilities: ProviderCapabilities, id: string): boolean {
+/**
+ * Whether THIS KIND accepts a row write. Absent and undeclared both read as false.
+ *
+ * Deliberately NOT conjoined with the engine-wide `supportsInlineRowEdit`, and the name
+ * says `kind` so a caller cannot mistake the scope. That flag has exactly one reader in
+ * this repo, `src/components/Studio.tsx:144`, where it gates the results grid's inline
+ * row editor and nothing else. Folding it in here would answer false for three engines
+ * that do take row writes: MongoDB (`src/lib/db/providers/document/mongodb.ts:170`),
+ * Couchbase (`src/lib/db/providers/document/couchbase/index.ts:316`) and Cassandra
+ * (`src/lib/db/providers/sql/cassandra/index.ts:242`) all declare
+ * `supportsInlineRowEdit: false`, and #789 declares a kind that accepts a row write on
+ * each of the three, so a conjunction would silently drop all three out of the import
+ * target list.
+ *
+ * A caller that needs both facts writes both, which is now visible at the call site.
+ */
+export function kindAcceptsRowWrites(capabilities: ProviderCapabilities, id: string): boolean {
   return findKind(capabilities, id)?.acceptsRowWrites === true;
 }
 

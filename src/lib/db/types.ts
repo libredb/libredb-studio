@@ -399,8 +399,8 @@ export interface ProviderCapabilities {
    * rather than a gap in the declaration: SQLite, libSQL, Elasticsearch, OpenSearch and
    * LibreDB address every object by a bare name, so the tree draws objects directly
    * under the connection. One level is a database, a keyspace or a bucket; two is a
-   * catalog plus a schema. The per-engine inventory this is declared from is section 10
-   * of `docs/superpowers/specs/2026-09-11-database-object-model-design.md`.
+   * catalog plus a schema. The per-engine inventory each provider declares from is on
+   * the epic, issue #789.
    *
    * Read it through `containerDepth()` in `src/lib/db/object-kinds.ts` and never by
    * length here, so the empty and the absent cases cannot be answered differently by
@@ -418,9 +418,9 @@ export interface ProviderCapabilities {
    * Absent means no object kind is declared, so the tree stays empty for this engine
    * rather than falling back to a table-shaped default. The permissive default is wrong
    * here for the reason the flat model was replaced: it would claim a concept on an
-   * engine nobody asked, and section 10 of the design doc named above records that
-   * Druid has no view, no materialized view, no routine and no trigger, that Cassandra
-   * has no view, and that MySQL has never had a materialized view.
+   * engine nobody asked: Druid has no view, no materialized view, no routine and no
+   * trigger, Cassandra has no view, and MySQL has never had a materialized view. The
+   * per-engine inventory behind those absences is on issue #789.
    *
    * A kind that is absent from this list is a different fact from a kind that is
    * declared and holds nothing, which is what `KindCount` carries. Read this through
@@ -1060,8 +1060,17 @@ export interface ObjectKindSpec {
    * Absent reads as false, so a kind that declares nothing never appears as an import
    * or inline-edit target. The permissive default is wrong here: writing rows into a
    * view is meaningless on most engines and only sometimes possible on PostgreSQL, and
-   * only the provider knows which. The engine-wide `supportsInlineRowEdit` stays and
-   * both must be true.
+   * only the provider knows which.
+   *
+   * The engine-wide `supportsInlineRowEdit` stays, and it is a SEPARATE fact rather than
+   * the other half of a conjunction. It has one reader, `src/components/Studio.tsx:144`,
+   * where it gates the results grid's inline row editor and nothing else. MongoDB,
+   * Couchbase and Cassandra declare it false, and #789 declares a kind that accepts row
+   * writes on each of those three, so requiring both would refuse an import all three
+   * engines do support.
+   * Read this field through `kindAcceptsRowWrites()` in `src/lib/db/object-kinds.ts`,
+   * whose name states that scope; a caller that needs the editor gate as well reads
+   * both.
    */
   readonly acceptsRowWrites?: boolean;
 }

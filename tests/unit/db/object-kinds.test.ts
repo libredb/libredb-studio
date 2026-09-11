@@ -4,7 +4,7 @@ import {
   containerDepth,
   declaredKinds,
   findKind,
-  acceptsRowWrites,
+  kindAcceptsRowWrites,
   relationKindIds,
   isCountUnavailable,
 } from "@/lib/db/object-kinds";
@@ -55,17 +55,32 @@ describe("declaredKinds", () => {
   });
 });
 
-describe("acceptsRowWrites", () => {
+describe("kindAcceptsRowWrites", () => {
   test("an absent flag reads as false, so an undeclared kind is never an import target", () => {
-    expect(acceptsRowWrites(withKinds, "view")).toBe(false);
+    expect(kindAcceptsRowWrites(withKinds, "view")).toBe(false);
   });
 
   test("only an explicit true admits a kind", () => {
-    expect(acceptsRowWrites(withKinds, "table")).toBe(true);
+    expect(kindAcceptsRowWrites(withKinds, "table")).toBe(true);
   });
 
   test("a kind this engine does not declare is refused rather than assumed", () => {
-    expect(acceptsRowWrites(withKinds, "package")).toBe(false);
+    expect(kindAcceptsRowWrites(withKinds, "package")).toBe(false);
+  });
+
+  // Pins the ruling that this function answers the per-kind half only. Folding the
+  // engine-wide `supportsInlineRowEdit` in here would drop MongoDB, Couchbase and
+  // Cassandra out of the import target list, and all three declare it false while
+  // declaring a kind that takes row writes.
+  test("the engine-wide supportsInlineRowEdit is not folded in, so a kind still answers for itself", () => {
+    const inlineEditRefused = {
+      ...base,
+      supportsInlineRowEdit: false,
+      objectKinds: [
+        { id: "collection", role: "relation", label: "Collection", labelPlural: "Collections", acceptsRowWrites: true },
+      ],
+    } as unknown as ProviderCapabilities;
+    expect(kindAcceptsRowWrites(inlineEditRefused, "collection")).toBe(true);
   });
 });
 
