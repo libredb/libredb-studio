@@ -34,6 +34,21 @@
  *    an inclusion list of the three user-defined origins: a fourth origin in a later
  *    build is then a function this tree shows, not one it loses.
  *
+ * 6. A DICTIONARY is published in TWO catalogs and neither one holds all of them. A
+ *    DDL dictionary (`CREATE DICTIONARY`) has a `system.tables` row with engine
+ *    `Dictionary` AND a `system.dictionaries` row. A CONFIG-FILE dictionary, declared
+ *    in `/etc/clickhouse-server/*_dictionary.xml`, has NO `system.tables` row and no
+ *    `system.columns` row at all: it exists only in `system.dictionaries`, with an
+ *    EMPTY `database`, the same way a user-defined function exists only in
+ *    `system.functions`. So `system.dictionaries` is unioned into the same subquery -
+ *    the count and the listing still read one text, so no 5f seam comes back with it -
+ *    and it is also what `describeObject` reads for the kind, because it is the only
+ *    catalog both flavours are in. The engine name is NOT what identifies a
+ *    dictionary either: `CREATE TABLE d (...) ENGINE = Dictionary(other_dict)` is
+ *    accepted and produces a `system.tables` row with engine `Dictionary` and no
+ *    `system.dictionaries` row. That object is a TABLE that reads a dictionary, so the
+ *    kind expression asks `system.dictionaries` for membership instead.
+ *
  * Two absences are declarations rather than gaps. ClickHouse has no trigger and no
  * stored procedure, so neither kind is declared at all - a declared kind draws a
  * folder, and a folder for a concept the engine does not have is a lie its 0 badge
@@ -108,13 +123,27 @@ export const CLICKHOUSE_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze(
  * today - a dictionary is `config` and still resolves in `system.columns` - and a
  * later kind could break the coincidence without breaking this.
  */
-const CLICKHOUSE_OBJECT_CATALOGS: Readonly<Record<string, "tables" | "functions">> = Object.freeze({
+type ObjectCatalog = "tables" | "dictionaries" | "functions";
+
+const CLICKHOUSE_OBJECT_CATALOGS: Readonly<Record<string, ObjectCatalog>> = Object.freeze({
   table: "tables",
   view: "tables",
   materialized_view: "tables",
-  dictionary: "tables",
+  dictionary: "dictionaries",
   function: "functions",
 });
+
+/**
+ * The catalog a kind reads, or undefined for a kind that has none.
+ *
+ * `Object.hasOwn` and not a bare index, for the reason `applyKindCounts` uses it: a
+ * plain object answers `CLICKHOUSE_OBJECT_CATALOGS["toString"]` with
+ * `Function.prototype.toString`, so a declared kind of that name would pass a
+ * `!== undefined` guard carrying a function where a catalog name belongs.
+ */
+function objectCatalog(kind: string): ObjectCatalog | undefined {
+  return Object.hasOwn(CLICKHOUSE_OBJECT_CATALOGS, kind) ? CLICKHOUSE_OBJECT_CATALOGS[kind] : undefined;
+}
 
 // ============================================================================
 // SQL
@@ -151,17 +180,21 @@ const CONTAINERS_SQL = [
   "ORDER BY name ASC",
 ].join(" ");
 
+/** Every dictionary on the server, by address. See point 6 of this file's docblock. */
+const DICTIONARY_ADDRESSES_SQL = "SELECT dd.database, dd.name FROM system.dictionaries AS dd";
+
 /**
- * The three engine names diverted off the `table` default, and nothing else.
+ * The exceptions diverted off the `table` default, and nothing else.
  *
  * Read the docblock at the top of this file for why the arms are written as
- * exceptions rather than as an inclusion list.
+ * exceptions rather than as an inclusion list, and why the dictionary arm asks
+ * `system.dictionaries` for MEMBERSHIP instead of matching the engine name.
  */
 const OBJECT_KIND_EXPR = [
   "multiIf(",
   "t.engine = 'View', 'view',",
   "t.engine = 'MaterializedView', 'materialized_view',",
-  "t.engine = 'Dictionary', 'dictionary',",
+  `(t.database, t.name) IN (${DICTIONARY_ADDRESSES_SQL}), 'dictionary',`,
   "'table')",
 ].join(" ");
 
@@ -208,6 +241,13 @@ function databaseObjectsSql(database: string): string {
     "CAST(NULL, 'Nullable(UInt64)') AS objectBytes",
     "FROM system.functions AS f",
     "WHERE f.origin != 'System'",
+    "UNION ALL",
+    "SELECT d.name AS objectName,",
+    "'dictionary' AS objectKind,",
+    "CAST(NULL, 'Nullable(UInt64)') AS objectRows,",
+    "CAST(NULL, 'Nullable(UInt64)') AS objectBytes",
+    "FROM system.dictionaries AS d",
+    "WHERE d.database = ''",
   ].join(" ");
 }
 
@@ -235,6 +275,35 @@ function objectColumnsSql(database: string, name: string): string {
     "FROM system.columns AS c",
     `WHERE c.database = ${literal(database)} AND c.table = ${literal(name)}`,
     "ORDER BY c.position",
+  ].join(" ");
+}
+
+/**
+ * One dictionary's columns, out of `system.dictionaries`.
+ *
+ * The catalog publishes them as four PARALLEL ARRAYS - `key.names`, `key.types`,
+ * `attribute.names`, `attribute.types` - so they are zipped and flattened HERE rather
+ * than in TypeScript: the transport reads scalar columns out of every other statement
+ * in this file, and an array-valued column would be the only place it had to know
+ * about ClickHouse's own array encoding.
+ *
+ * The empty database is accepted alongside the container's own, because a config-file
+ * dictionary carries no database and is reached through whichever one the tree opened.
+ * `ORDER BY database DESC LIMIT 1` then prefers the DDL dictionary if a config one
+ * happens to share its name, so the answer is one object's columns and never two
+ * objects' concatenated.
+ */
+function dictionaryColumnsSql(database: string, name: string): string {
+  return [
+    "SELECT c.1 AS columnName, c.2 AS columnType, c.3 AS isKeyColumn",
+    "FROM (SELECT arrayJoin(arrayConcat(",
+    "arrayMap((n, t) -> (n, t, 1), d.keyNames, d.keyTypes),",
+    "arrayMap((n, t) -> (n, t, 0), d.attributeNames, d.attributeTypes))) AS c",
+    "FROM (SELECT key.names AS keyNames, key.types AS keyTypes,",
+    "attribute.names AS attributeNames, attribute.types AS attributeTypes",
+    "FROM system.dictionaries",
+    `WHERE (database = ${literal(database)} OR database = '') AND name = ${literal(name)}`,
+    "ORDER BY database DESC LIMIT 1) AS d)",
   ].join(" ");
 }
 
@@ -485,13 +554,13 @@ export async function listObjects(
   container: readonly string[],
   kind: string,
 ): Promise<DatabaseObject[]> {
-  const database = containerDatabase(capabilities, container);
   if (findKind(capabilities, kind) === undefined) {
     throw new QueryError(`ClickHouse declares no object kind "${kind}"`, PROVIDER);
   }
-  if (CLICKHOUSE_OBJECT_CATALOGS[kind] === undefined) {
+  if (objectCatalog(kind) === undefined) {
     throw new QueryError(`ClickHouse declares the kind "${kind}" but has no statement that lists it`, PROVIDER);
   }
+  const database = containerDatabase(capabilities, container);
 
   const sql = listingSql(database, kind);
   const result = await transport.query(sql);
@@ -512,6 +581,49 @@ export async function listObjects(
     });
   }
   return objects.sort((left, right) => comparePaths(left.path, right.path));
+}
+
+/**
+ * One dictionary's key and attribute columns.
+ *
+ * `system.dictionaries` is the only catalog BOTH flavours of dictionary are in. The
+ * first spelling read `system.columns`, which answers a DDL dictionary's columns
+ * (measured) and cannot answer a config-file one's: that dictionary has no
+ * `system.tables` row, so it has no `system.columns` row either (measured, count 0).
+ *
+ * A key column is reported `isPrimary`, which is the catalog's own split rather than a
+ * guess. A dictionary has no index - its LAYOUT is not one and
+ * `system.data_skipping_indices` holds nothing for it - and no foreign key, the same
+ * fact as everywhere else here.
+ */
+async function describeDictionary(
+  transport: ClickHouseTransport,
+  path: readonly string[],
+  database: string,
+  name: string,
+): Promise<ObjectDetail> {
+  const sql = dictionaryColumnsSql(database, name);
+  const rows = (await transport.query(sql)).rows;
+  if (rows.length === 0) {
+    // A dictionary always declares at least a key, so an empty answer means it is not
+    // there under that name, the same reading as the zero-column refusal below.
+    throw new QueryError(`No ClickHouse dictionary named ${name} in ${database}`, PROVIDER, sql);
+  }
+
+  const columns: ColumnSchema[] = [];
+  for (const row of rows) {
+    const columnName = readIdentifier(row.columnName);
+    if (columnName === null) continue;
+    const type = readText(row.columnType);
+    columns.push({
+      name: columnName,
+      type,
+      nullable: isNullableType(type),
+      isPrimary: row.isKeyColumn === 1,
+      defaultValue: undefined,
+    });
+  }
+  return { path: [...path], columns, indexes: [], foreignKeys: [] };
 }
 
 /**
@@ -563,7 +675,16 @@ export async function describeObject(
     );
   }
 
-  if (CLICKHOUSE_OBJECT_CATALOGS[kind] !== "tables") {
+  // The same two questions `listObjects` asks, in the same order: the DECLARATION
+  // decides whether the kind exists, then the catalog map decides whether anything can
+  // read it. A kind added to `CLICKHOUSE_OBJECT_KINDS` alone raised from `listObjects`
+  // and answered three empty arrays here, so the tree drew a real-looking empty detail
+  // panel for a kind nothing can read.
+  const catalog = objectCatalog(kind);
+  if (catalog === undefined) {
+    throw new QueryError(`ClickHouse declares the kind "${kind}" but has no statement that describes it`, PROVIDER);
+  }
+  if (catalog === "functions") {
     return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
   }
 
@@ -572,6 +693,10 @@ export async function describeObject(
   // which is right at every depth.
   const database = containerSegment(capabilities, path, "schema");
   const name = path[path.length - 1];
+
+  if (catalog === "dictionaries") {
+    return describeDictionary(transport, path, database, name);
+  }
 
   const columnsSql = objectColumnsSql(database, name);
   const columnRows = (await transport.query(columnsSql)).rows;

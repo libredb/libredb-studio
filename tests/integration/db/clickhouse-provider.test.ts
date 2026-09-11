@@ -1741,6 +1741,10 @@ const OBJECT_ROWS = [
   // A user-created table under the reserved-looking prefix. It survives.
   { objectName: ".inner_id.fake", objectKind: "table", objectRows: "0", objectBytes: "0" },
   { objectName: "dict_users", objectKind: "dictionary", objectRows: null, objectBytes: null },
+  // A CONFIG-FILE dictionary. It has no `system.tables` row at all (measured), so the
+  // provider unions `system.dictionaries` in to reach it, the same way it unions
+  // `system.functions` in for an object no database owns.
+  { objectName: "dict_regions_config", objectKind: "dictionary", objectRows: null, objectBytes: null },
   { objectName: "events", objectKind: "table", objectRows: "3", objectBytes: "1024" },
   { objectName: "events_view", objectKind: "view", objectRows: null, objectBytes: null },
   { objectName: "mv_inner", objectKind: "materialized_view", objectRows: "2", objectBytes: "512" },
@@ -1749,13 +1753,23 @@ const OBJECT_ROWS = [
   { objectName: "probe_double", objectKind: "function", objectRows: null, objectBytes: null },
 ];
 
-const OBJECT_COUNT_ROWS = [
-  { objectKind: "dictionary", objectCount: "1" },
-  { objectKind: "function", objectCount: "1" },
-  { objectKind: "materialized_view", objectCount: "2" },
-  { objectKind: "table", objectCount: "3" },
-  { objectKind: "view", objectCount: "1" },
-];
+/**
+ * The counts, GROUPED from `OBJECT_ROWS` rather than written out a second time.
+ *
+ * A hand-written count fixture is a SECOND fixture, and two fixtures agreeing is
+ * something a person maintains rather than something the shape guarantees. Standing
+ * ruling 5f is that the listing contains exactly what the count counted; deriving the
+ * counts here is the behavioural half of that rule, which no statement-shape assertion
+ * can give: change a row in `OBJECT_ROWS` and the fake server cannot disagree with
+ * itself.
+ */
+function groupedCountRows(): { objectKind: string; objectCount: string }[] {
+  const counts = new Map<string, number>();
+  for (const row of OBJECT_ROWS) counts.set(row.objectKind, (counts.get(row.objectKind) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([objectKind, count]) => ({ objectKind, objectCount: String(count) }))
+    .sort((left, right) => (left.objectKind < right.objectKind ? -1 : 1));
+}
 
 const CONTAINER_ROWS = [
   { containerName: OBJECT_DATABASE, isSessionDefault: 1 },
@@ -1778,13 +1792,23 @@ const OBJECT_COLUMN_ROWS = [
 const OBJECT_INDEX_ROWS = [{ indexName: "idx_amount", indexExpression: "amount" }];
 
 /**
+ * What `system.dictionaries` answers for a dictionary, one row per key and attribute.
+ * The provider flattens the four parallel arrays in SQL, so the transport still sees
+ * scalar columns.
+ */
+const DICTIONARY_COLUMN_ROWS = [
+  { columnName: "id", columnType: "UInt64", isKeyColumn: 1 },
+  { columnName: "name", columnType: "Nullable(String)", isKeyColumn: 0 },
+];
+
+/**
  * Routes the object-surface statements, keyed on the aliases the provider itself
  * chose, and falls back to `defaultReply` for everything else so a test in this block
  * still gets the monitoring and schema fixtures.
  */
 function objectReply(sql: string): Reply {
   if (sql.includes("containerName")) return jsonReply(CONTAINER_ROWS);
-  if (sql.includes("objectCount")) return jsonReply(OBJECT_COUNT_ROWS);
+  if (sql.includes("objectCount")) return jsonReply(groupedCountRows());
   if (sql.includes("objectKind")) {
     // The listing filters the same subquery the count grouped, so the fake server
     // applies the same filter rather than carrying a second fixture. Ruling 5f holds
@@ -1793,6 +1817,7 @@ function objectReply(sql: string): Reply {
     if (match === null) return jsonReply(OBJECT_ROWS);
     return jsonReply(OBJECT_ROWS.filter((row) => row.objectKind === match[1]));
   }
+  if (sql.includes("isKeyColumn")) return jsonReply(DICTIONARY_COLUMN_ROWS);
   if (sql.includes("columnName")) return jsonReply(OBJECT_COLUMN_ROWS);
   if (sql.includes("indexName") && sql.includes("data_skipping_indices")) return jsonReply(OBJECT_INDEX_ROWS);
   return defaultReply(sql);
@@ -1835,7 +1860,7 @@ describe("object surface", () => {
 
     await assertObjectSurface(provider, {
       containers: [[OBJECT_DATABASE], ["default"], ["demo"]],
-      kinds: { table: 3, view: 1, materialized_view: 2, dictionary: 1, function: 1 },
+      kinds: { table: 3, view: 1, materialized_view: 2, dictionary: 2, function: 1 },
       sampleObject: { path: [OBJECT_DATABASE, "events"], kind: "table" },
     });
     await provider.disconnect();
@@ -1967,17 +1992,60 @@ describe("object surface internals", () => {
       table: { count: 3 },
       view: { count: 1 },
       materialized_view: { count: 2 },
-      dictionary: { count: 1 },
+      // Two: the DDL one and the config-file one.
+      dictionary: { count: 2 },
       function: { count: 1 },
     });
-    // A dictionary is a row of `system.tables` too, with engine `Dictionary`
-    // (measured), so the kind expression diverts it off the `table` default. `table`
-    // is the default arm because `system.tables.engine` is an OPEN set - 129 distinct
-    // values on a bare server - and an inclusion list would make every engine this
-    // code has never heard of invisible.
+    // A dictionary is a row of `system.tables` too (measured), so it has to be diverted
+    // off the `table` default or it is counted twice. The divert is MEMBERSHIP of
+    // `system.dictionaries`, not the engine name: measured on 26.7.1.1315,
+    // `CREATE TABLE d (id UInt64, name String) ENGINE = Dictionary(demo.dict_customers)`
+    // is accepted and produces a `system.tables` row with engine `Dictionary` and NO
+    // `system.dictionaries` row. That object is a table that reads a dictionary, and the
+    // engine name alone cannot tell the two apart. `table` stays the default arm because
+    // `system.tables.engine` is an OPEN set - 129 distinct values on a bare server - and
+    // an inclusion list would make every engine this code has never heard of invisible.
     const counting = sqlWith("objectCount");
-    expect(counting).toContain("t.engine = 'Dictionary', 'dictionary',");
+    expect(counting).toContain("(t.database, t.name) IN (SELECT dd.database, dd.name FROM system.dictionaries AS dd)");
+    expect(counting).not.toContain("t.engine = 'Dictionary'");
     expect(counting).toContain("'table')");
+    await provider.disconnect();
+  });
+
+  test("a CONFIG-FILE dictionary is reached, because it has no system.tables row at all", async () => {
+    // Measured on 26.7.1.1315 against a server carrying both flavours. A dictionary
+    // declared in `/etc/clickhouse-server/*_dictionary.xml` appears in
+    // `system.dictionaries` with an EMPTY `database` and produces NO `system.tables` row
+    // and no `system.columns` row:
+    //
+    //   SELECT database, name FROM system.dictionaries
+    //     ->  ''    dict_regions_config     <- the config one
+    //         demo  dict_customers          <- the DDL one
+    //   SELECT count() FROM system.tables WHERE name = 'dict_regions_config'   ->  0
+    //
+    // Sourcing dictionaries from `system.tables` alone therefore lost it from the count
+    // AND the listing together, which is standing ruling 5a's exact absence: invisible in
+    // the tree while the badge keeps agreeing with the folder, so 5f holds and nothing
+    // detects it. The union is written INTO the same subquery the count groups and the
+    // listing filters, so no 5f seam comes back with it.
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const dictionaries = await provider.listObjects([OBJECT_DATABASE], "dictionary");
+
+    expect(dictionaries.map((object) => object.name)).toEqual(["dict_regions_config", "dict_users"]);
+    const listing = sqlWith("objectKind = 'dictionary'");
+    expect(listing).toContain("FROM system.dictionaries AS d");
+    // The empty database IS the config-file dictionary's address: a database cannot be
+    // named the empty string, so this arm can never duplicate a DDL dictionary, which
+    // always carries its own database (measured). Like a function, it is server-global,
+    // so it is listed under every database and its path records the container it was
+    // reached through.
+    expect(listing).toContain("WHERE d.database = ''");
+    expect(dictionaries.map((object) => object.path)).toEqual([
+      [OBJECT_DATABASE, "dict_regions_config"],
+      [OBJECT_DATABASE, "dict_users"],
+    ]);
     await provider.disconnect();
   });
 
@@ -2168,17 +2236,103 @@ describe("object surface internals", () => {
     await provider.disconnect();
   });
 
-  test("a dictionary describes, because it is a table underneath", async () => {
-    // Measured: `system.columns` answers a dictionary's key and attribute columns,
-    // because a DDL dictionary carries engine `Dictionary` in `system.tables`. Keying
-    // the branch on the CATALOG rather than on `role === "relation"` is what makes
-    // that come out right - a dictionary is declared `config`.
+  test("a dictionary describes from system.dictionaries, which is the only catalog BOTH flavours are in", async () => {
+    // `system.columns` answers a DDL dictionary's columns (measured), and that was the
+    // first spelling. It cannot answer a CONFIG-FILE dictionary's, because that
+    // dictionary has no `system.tables` row and therefore no `system.columns` row either
+    // (measured: count 0). Describing every dictionary out of `system.dictionaries`
+    // instead is the one catalog both flavours are in, and it carries the key/attribute
+    // split, so a key column is reported `isPrimary` rather than guessed at.
     installObjectReplies();
     const provider = await connectProvider({ database: OBJECT_DATABASE });
 
-    const detail = await provider.describeObject([OBJECT_DATABASE, "dict_users"], "dictionary");
+    const detail = await provider.describeObject([OBJECT_DATABASE, "dict_regions_config"], "dictionary");
 
-    expect(detail.columns).toHaveLength(3);
+    expect(detail.columns).toEqual([
+      { name: "id", type: "UInt64", nullable: false, isPrimary: true, defaultValue: undefined },
+      { name: "name", type: "Nullable(String)", nullable: true, isPrimary: false, defaultValue: undefined },
+    ]);
+    // No index and no foreign key: a dictionary's LAYOUT is not an index, and
+    // `system.data_skipping_indices` holds nothing for one.
+    expect(detail.indexes).toEqual([]);
+    expect(detail.foreignKeys).toEqual([]);
+    // The control: `system.columns` was never read for a dictionary.
+    expect(sentSql.filter((sql) => sql.includes("FROM system.columns"))).toEqual([]);
+    // A config dictionary is addressed under whatever database it was reached through,
+    // so the read has to accept the empty database as well as the container's own.
+    expect(sqlWith("isKeyColumn")).toContain(
+      `WHERE (database = '${OBJECT_DATABASE}' OR database = '') AND name = 'dict_regions_config'`,
+    );
+    await provider.disconnect();
+  });
+
+  test("a dictionary that is not there raises rather than describing itself as empty", async () => {
+    replyFor = (sql) => (sql.includes("isKeyColumn") ? jsonReply([]) : objectReply(sql));
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await expect(provider.describeObject([OBJECT_DATABASE, "ghost"], "dictionary")).rejects.toThrow(
+      /No ClickHouse dictionary named ghost in analytics/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a declared kind with no catalog says so in BOTH methods, rather than describing as empty", async () => {
+    // The two methods have to agree about what an unmapped kind is. `listObjects` raised
+    // and `describeObject` returned three empty arrays, so a kind added to the
+    // declaration alone drew a real-looking empty detail panel instead of an error - and
+    // the `projection` test below it only exercised `listObjects`, so it pinned the
+    // wrong direction.
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [...(real.objectKinds ?? []), { id: "projection", role: "config", label: "P", labelPlural: "Ps" }],
+    });
+
+    await expect(provider.describeObject([OBJECT_DATABASE, "p"], "projection")).rejects.toThrow(
+      /declares the kind "projection" but has no statement that describes it/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a kind named after a prototype member inherits no catalog", async () => {
+    // The catalog map is a plain object, so `CATALOGS["toString"]` answers
+    // `Function.prototype.toString` rather than undefined. A declared kind of that name
+    // would then pass the "has a catalog" guard and reach a statement builder with a
+    // catalog that is a function. `Object.hasOwn` is the same guard `applyKindCounts`
+    // already uses for the counts.
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [...(real.objectKinds ?? []), { id: "toString", role: "config", label: "T", labelPlural: "Ts" }],
+    });
+
+    await expect(provider.listObjects([OBJECT_DATABASE], "toString")).rejects.toThrow(
+      /declares the kind "toString" but has no statement that lists it/,
+    );
+    await expect(provider.describeObject([OBJECT_DATABASE, "x"], "toString")).rejects.toThrow(
+      /declares the kind "toString" but has no statement that describes it/,
+    );
+    await provider.disconnect();
+  });
+
+  test("the KIND is checked before the path, in both methods", async () => {
+    // Two guards, one order. `listObjects` checked the container first and
+    // `describeObject` the kind first, so one bad call reported the container and the
+    // other the kind. The kind is a question about the DECLARATION and is answered
+    // without looking at any data, so it goes first in both.
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await expect(provider.listObjects([OBJECT_DATABASE, "too", "long"], "sequence")).rejects.toThrow(
+      /declares no object kind "sequence"/,
+    );
+    await expect(provider.describeObject([OBJECT_DATABASE, "too", "long"], "sequence")).rejects.toThrow(
+      /declares no object kind "sequence"/,
+    );
     await provider.disconnect();
   });
 

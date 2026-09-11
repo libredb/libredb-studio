@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<!--
+  A CONFIG-FILE dictionary for the ClickHouse object surface (#789).
+
+  Mounted straight into /etc/clickhouse-server/, where the default config's
+  <dictionaries_config>*_dictionary.*ml</dictionaries_config> glob picks it up. The file
+  name therefore has to keep its `_dictionary.xml` suffix.
+
+  This is the only object in the fixture that is declared outside SQL, and it is here for
+  one measured reason: a dictionary defined in a config file has NO system.tables row at
+  all. It exists only in system.dictionaries, with an EMPTY `database` column, the same
+  way a user-defined function exists only in system.functions. Reading dictionaries out of
+  system.tables alone therefore loses it from the count and the listing together, which is
+  the invisible-object shape standing ruling 5a exists for. Deleting this file makes the
+  provider's system.dictionaries union pass whether it is there or not.
+-->
+<clickhouse>
+  <dictionary>
+    <name>dict_regions_config</name>
+    <source>
+      <clickhouse>
+        <db>reporting</db>
+        <table>regions</table>
+        <user>libredb</user>
+        <password>password123</password>
+      </clickhouse>
+    </source>
+    <lifetime>0</lifetime>
+    <layout><flat/></layout>
+    <structure>
+      <id><name>id</name></id>
+      <attribute>
+        <name>name</name>
+        <type>String</type>
+        <null_value></null_value>
+      </attribute>
+    </structure>
+  </dictionary>
+</clickhouse>

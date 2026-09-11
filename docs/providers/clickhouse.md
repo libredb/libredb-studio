@@ -765,7 +765,7 @@ the engine's own word, Database.
 | `table` | `relation` | `system.tables`, the DEFAULT arm |
 | `view` | `relation` | `system.tables`, `engine = 'View'` |
 | `materialized_view` | `relation` | `system.tables`, `engine = 'MaterializedView'` |
-| `dictionary` | `config` | `system.tables`, `engine = 'Dictionary'` |
+| `dictionary` | `config` | `system.tables` joined to `system.dictionaries`, plus a union arm for the config-file ones |
 | `function` | `routine` | `system.functions`, `origin != 'System'` |
 
 Two kinds are **absent rather than declared and zero**: ClickHouse has no trigger and no stored
@@ -795,6 +795,38 @@ losing it silently.
 
 One consequence worth stating plainly: a **dictionary is a row of `system.tables` too**, so counting
 everything in that catalog as a table counts each dictionary twice. The kind expression diverts it.
+
+#### A dictionary is published in TWO catalogs, and neither one holds all of them
+
+Measured on a server carrying both flavours:
+
+| Dictionary | `system.dictionaries` | `system.tables` | `system.columns` |
+|---|---|---|---|
+| `demo.dict_customers`, created by `CREATE DICTIONARY` | Yes, `database = 'demo'` | Yes, engine `Dictionary` | Yes |
+| `dict_regions_config`, declared in `/etc/clickhouse-server/regions_dictionary.xml` | Yes, `database = ''` | **No row at all** | **No row at all** |
+
+So sourcing dictionaries from `system.tables` alone loses every config-file dictionary from the count
+and the listing **together**. That is standing ruling 5a's exact absence: invisible in the tree while
+the badge keeps agreeing with its own folder, so ruling 5f still holds and nothing detects it.
+
+`system.dictionaries` is therefore unioned into the same kind-tagged subquery, on the arm
+`WHERE d.database = ''`, which is the config-file dictionary's whole address: a database cannot be
+named the empty string, so that arm can never duplicate a DDL dictionary, and the count and the
+listing still read **one text**. Like a function, such a dictionary is server-global: it appears under
+every database, and its path records the container it was reached through.
+
+The engine name is not what identifies a dictionary either. Measured:
+
+| Statement | Answer |
+|---|---|
+| `CREATE TABLE demo.dict_customers_proxy (id UInt64, name String) ENGINE = Dictionary(demo.dict_customers)` | accepted |
+
+That produces a `system.tables` row with engine `Dictionary` and **no** `system.dictionaries` row. It
+is a table that reads a dictionary, and `engine = 'Dictionary'` would file it under Dictionaries,
+where its detail read would then find nothing. So the kind expression asks `system.dictionaries` for
+**membership**, `(t.database, t.name) IN (SELECT database, name FROM system.dictionaries)`, and that
+proxy table stays a table. `docker/clickhouse-init/01-object-fixture.sql` carries all three shapes, so
+the rule can be re-measured rather than re-argued.
 
 #### The implicit inner table, and why the obvious rule is wrong
 
@@ -843,6 +875,22 @@ verbatim and unprefixed, because that text is rendered to a person as the reason
 number. It is a live case rather than a defensive arm: `system.functions` needs its own grant and a
 restricted user sees `500` / code `497`.
 
+#### What the last path segment carries
+
+The last segment of a `DatabaseObject.path` is the object's **bare name**, for every one of the five
+kinds, and it is unique within its parent. Nothing is appended to disambiguate it, because there is
+nothing to disambiguate: **ClickHouse has no routine overloading**. `CREATE FUNCTION f AS (x) -> x`
+followed by a second `CREATE FUNCTION f AS (x, y) -> x` answers code 609 `FUNCTION_ALREADY_EXISTS`,
+so a name identifies one function and an argument-type list in the segment - the form PostgreSQL needs
+(standing ruling 2) - would carry no information here and would change identity whenever a parameter
+list changed.
+
+The one qualification is which parent a bare name is unique within, and two kinds answer it
+differently. A `table`, `view`, `materialized_view` or DDL `dictionary` is unique within its
+**database**, which is the container segment above it. A `function`, and a config-file `dictionary`,
+is unique within the **server**: neither has a database, and the container segment of its path records
+where it was reached from. The next section is that measurement.
+
 #### Functions are SERVER-GLOBAL, and the path says where they were reached
 
 `system.functions` has no database column, and that is the engine: `CREATE FUNCTION` takes no
@@ -857,10 +905,20 @@ The kind decides everything and nothing reads the name to work out what it is ho
 `system.tables` kinds read columns and data-skipping indexes; a `function` answers three empty arrays
 with **no round trip**, which is a true fact about the kind rather than a failed read.
 
-A **dictionary does describe**, measured: `system.columns` answers its key and attribute columns,
-because a DDL dictionary carries engine `Dictionary` in `system.tables`. The branch is keyed on the
-catalog rather than on `role === 'relation'` for exactly that reason - a dictionary is declared
-`config`.
+A **dictionary does describe**, out of `system.dictionaries` rather than `system.columns`. That is the
+only catalog both flavours are in: `system.columns` answers a DDL dictionary's columns (measured) and
+holds nothing at all for a config-file one. The catalog publishes the columns as four parallel arrays,
+`key.names` / `key.types` / `attribute.names` / `attribute.types`, which the statement zips and
+flattens in SQL so the transport still reads scalar columns; a key column is reported `isPrimary`,
+which is the catalog's own split rather than a guess. A dictionary reports no index, because its
+LAYOUT is not one and `system.data_skipping_indices` holds nothing for it. The branch is keyed on the
+CATALOG rather than on `role === 'relation'` - a dictionary is declared `config` - and a declared kind
+with no catalog entry **raises in both `listObjects` and `describeObject`**, so a kind added to the
+declaration alone cannot draw a real-looking empty detail panel. The kind is checked before the path
+in both methods, so one bad call reports the same thing either way.
+
+An empty column answer raises for a dictionary too, for the same reason as for a table: a dictionary
+always declares at least a key, so nothing there under that name is the only way to read it.
 
 `foreignKeys` is always `[]`, the same fact as in section 6: ClickHouse parses `REFERENCES` and
 enforces nothing by it, and `system.*` holds no constraint catalog to read one back from.
@@ -1118,6 +1176,16 @@ docker compose -f database-compose.yml up clickhouse
 
 Port `9000` (the native protocol) is deliberately not exposed — there is no native-protocol
 transport in this codebase to connect with it.
+
+Two mounts seed the object surface's own fixture, and the service is useless for #789 without them:
+
+| Mount | Holds |
+|---|---|
+| `docker/clickhouse-init/01-object-fixture.sql` | one object of every declared kind, plus the three shapes the exclusion rules are measured against: a materialized view with an implicit inner table, one with a `TO` target, a user table named `.inner_id.fake`, and a table whose engine is `Dictionary` |
+| `docker/clickhouse-config/regions_dictionary.xml` | the config-file dictionary, which SQL cannot create and which has no `system.tables` row |
+
+Both run on a **fresh data directory only**, so an already-initialized container has to be recreated
+(`docker compose -f database-compose.yml rm -sfv clickhouse`) before an edit to either takes effect.
 
 ---
 
