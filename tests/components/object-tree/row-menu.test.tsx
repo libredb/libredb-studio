@@ -5,7 +5,8 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ObjectTree } from "@/components/object-tree";
-import { menuPlacement } from "@/components/object-tree/RowMenu";
+import { menuPlacement, RowMenu } from "@/components/object-tree/RowMenu";
+import { Plus } from "lucide-react";
 import type { TreeRowActionHandlers } from "@/components/object-tree/row-actions";
 import type { DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
@@ -351,6 +352,41 @@ describe("the row menu stays inside the viewport", () => {
       top: 120,
       left: 0,
     });
+  });
+
+  test("the height counts the border as well as the padding", () => {
+    // `p-1` is 4px top and bottom and the box carries a 1px border on each side, which
+    // `getBoundingClientRect` includes: four items are 112 + 8 + 2 = 122 tall. Asserted one
+    // pixel either side of the fold, so the arithmetic and the rendered box cannot drift
+    // apart by even the two pixels the border contributes.
+    const height = 4 * 28 + 10;
+    const justFits = { x: 10, top: 0, bottom: VIEWPORT.height - height };
+    expect(menuPlacement(justFits, 4, VIEWPORT)).toEqual({ top: justFits.bottom, left: 10 });
+
+    const oneTooLow = { x: 10, top: 300, bottom: VIEWPORT.height - height + 1 };
+    expect(menuPlacement(oneTooLow, 4, VIEWPORT)).toEqual({ bottom: VIEWPORT.height - 300, left: 10 });
+  });
+
+  test("a menu pinned under its cap can still be scrolled to the items the cap hides", () => {
+    // The third vertical case is only usable if the box scrolls. Nothing else in this file
+    // can reach it: the tree offers at most six actions, so the menu is rendered directly
+    // with enough items to overflow the viewport, which is the state the cap exists for.
+    const tall = Math.ceil(VIEWPORT.height / 28) + 4;
+    const actions = Array.from({ length: tall }, (_, index) => ({
+      id: `a${index}`,
+      label: `Item ${index}`,
+      icon: Plus,
+      run: () => {},
+    }));
+    render(
+      <RowMenu actions={actions} anchor={{ x: 10, top: 20, bottom: 30 }} label="Actions for x" onClose={() => {}} />,
+    );
+
+    const menu = screen.getByRole("menu");
+    expect(menu.style.maxHeight).toBe(`${VIEWPORT.height}px`);
+    // A capped box that cannot scroll hides the items it clipped with no way to reach them,
+    // which is the same unreachable-item defect the placement exists to prevent.
+    expect(menu.className).toContain("overflow-y-auto");
   });
 
   test("the keyboard path anchors on the row's BOX, so a flipped menu sits above the row", async () => {

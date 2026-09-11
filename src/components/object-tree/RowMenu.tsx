@@ -39,8 +39,16 @@ export interface RowMenuAnchor {
   readonly bottom: number;
 }
 
-/** `p-1` top and bottom: what the box adds to the sum of its items. */
-const MENU_PADDING_Y = 8;
+/**
+ * What the BOX adds to the sum of its items: `p-1` top and bottom, plus the 1px border on
+ * each side.
+ *
+ * The border counts. `getBoundingClientRect` includes it, `box-sizing: border-box` does not
+ * subtract it from a box whose height is auto, so the rendered menu really is two pixels
+ * taller than its padding and items, and leaving it out let the "room below" branch overhang
+ * the viewport by exactly that much.
+ */
+const MENU_CHROME_Y = 10;
 /** `max-w-64`. The widest this menu can be, which is why it can be assumed rather than measured. */
 const MENU_MAX_WIDTH = 256;
 
@@ -71,7 +79,7 @@ export function menuPlacement(
   itemCount: number,
   viewport: { readonly width: number; readonly height: number },
 ): React.CSSProperties {
-  const height = itemCount * TREE_ROW_HEIGHT + MENU_PADDING_Y;
+  const height = itemCount * TREE_ROW_HEIGHT + MENU_CHROME_Y;
   const vertical =
     anchor.bottom + height <= viewport.height
       ? { top: anchor.bottom }
@@ -184,6 +192,9 @@ export function RowMenu({ actions, anchor, label, onClose }: RowMenuProps) {
       // reader's gesture, so there is no server render to guard against, and a resize while
       // a menu is open closes it through focus long before it could matter.
       style={menuPlacement(anchor, actions.length, { width: window.innerWidth, height: window.innerHeight })}
+      // `overflow-y-auto` is not decoration: the third vertical case pins the box to an edge
+      // under a `max-height`, and a capped box that cannot scroll hides the items it clipped
+      // with no way to reach them, which is the defect this placement exists to prevent.
       className="fixed z-50 min-w-48 max-w-64 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-md"
     >
       {actions.map((action) => (
