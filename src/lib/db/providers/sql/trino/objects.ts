@@ -116,7 +116,7 @@ export const TRINO_MATERIALIZED_VIEW_KIND = "materialized_view";
  * {@link applyKindCounts} raises naming it. A spelling this record does not hold is
  * therefore reported, not dropped.
  */
-export const TRINO_TABLE_TYPE_KINDS: Readonly<Record<string, string>> = {
+const TRINO_TABLE_TYPE_KINDS: Readonly<Record<string, string>> = {
   "BASE TABLE": "table",
   VIEW: "view",
 };
@@ -298,17 +298,6 @@ export interface KindCountRow {
   n: unknown;
 }
 
-export interface ObjectNameRow {
-  schemaName: unknown;
-  objectName: unknown;
-}
-
-export interface ColumnNameRow {
-  columnName: unknown;
-  dataType: unknown;
-  isNullable: unknown;
-}
-
 /** One identifier as text, or null for a row that cannot be placed and must be skipped. */
 export function readIdentifier(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
@@ -324,7 +313,7 @@ export function readIdentifier(value: unknown): string | null {
  * leaves the kind at whatever it was seeded with rather than turning it into the NaN that
  * `Number(null)` and friends produce.
  */
-export function readCount(value: unknown): number | undefined {
+function readCount(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 

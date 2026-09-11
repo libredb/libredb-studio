@@ -143,7 +143,7 @@ export const CASSANDRA_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
  * An exact list rather than a prefix, and that is refuted rather than preferred: see
  * point 1 of this file's docblock.
  */
-export const CASSANDRA_SYSTEM_KEYSPACES: readonly string[] = Object.freeze([
+const CASSANDRA_SYSTEM_KEYSPACES: readonly string[] = Object.freeze([
   "system",
   "system_schema",
   "system_auth",

@@ -136,7 +136,7 @@ export const COUCHBASE_CONTAINER_LEVELS: readonly ContainerLevelSpec[] = Object.
   { id: "schema", label: "Scope", labelPlural: "Scopes" },
 ] as const);
 
-export const COUCHBASE_KIND_COLLECTION = "collection";
+const COUCHBASE_KIND_COLLECTION = "collection";
 export const COUCHBASE_KIND_FUNCTION = "function";
 export const COUCHBASE_KIND_INDEX = "index";
 
@@ -169,7 +169,7 @@ export const COUCHBASE_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
 ] as const);
 
 /** The scope the server owns. Its collections (`_mobile`, `_query`) are not a person's. */
-export const COUCHBASE_SYSTEM_SCOPE = "_system";
+const COUCHBASE_SYSTEM_SCOPE = "_system";
 
 /** The collection a bucket-level catalog row means: `_default`.`_default`. */
 export const COUCHBASE_DEFAULT_COLLECTION = "_default";
@@ -387,7 +387,7 @@ export function containerRead(capabilities: ProviderCapabilities, container: rea
  * container part comes from the declared LEVELS, so reversing or shortening the
  * declaration moves the shape with it.
  */
-export function objectShape(capabilities: ProviderCapabilities, spec: ObjectKindSpec): string[] {
+function objectShape(capabilities: ProviderCapabilities, spec: ObjectKindSpec): string[] {
   const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
   return spec.attachedTo === undefined ? [...levels, "name"] : [...levels, spec.attachedTo, "name"];
 }

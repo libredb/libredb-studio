@@ -86,7 +86,7 @@ interface ObjectRequestBody {
  * empty 200 would collapse those two, which is the same collapse `KindCount` exists to prevent
  * one level down.
  */
-export class ObjectRouteError extends Error {
+class ObjectRouteError extends Error {
   constructor(
     message: string,
     public readonly status: number,

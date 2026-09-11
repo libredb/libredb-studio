@@ -128,7 +128,7 @@ export const DRUID_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
  * catalog read: these statements are built once per call and the literal keeps the
  * exported statement text complete, which is what the tests pin.
  */
-export function druidLiteral(value: string): string {
+function druidLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
@@ -140,7 +140,7 @@ export function druidLiteral(value: string): string {
  * the second holding nothing. Listing what the server answers is what keeps this right
  * on a cluster whose extensions publish a schema this code has never heard of.
  */
-export const DRUID_CONTAINER_LIST_SQL = [
+const DRUID_CONTAINER_LIST_SQL = [
   'SELECT SCHEMA_NAME AS "containerName"',
   "FROM INFORMATION_SCHEMA.SCHEMATA",
   "ORDER BY SCHEMA_NAME",
@@ -151,7 +151,7 @@ export const DRUID_CONTAINER_LIST_SQL = [
  * datasource apart: both carry `TABLE_TYPE = 'TABLE'` (measured), so the type alone
  * cannot distinguish them.
  */
-export const DRUID_LOOKUP_SCHEMA_NAME = "lookup";
+const DRUID_LOOKUP_SCHEMA_NAME = "lookup";
 
 /**
  * The kind expression, and it is TOTAL by construction.
@@ -193,7 +193,7 @@ function schemaObjectsSql(schema: string): string {
   ].join(" ");
 }
 
-export function druidCountsSql(schema: string): string {
+function druidCountsSql(schema: string): string {
   return [
     'SELECT "objectKind", COUNT(*) AS "objectCount"',
     `FROM (${schemaObjectsSql(schema)})`,
@@ -201,7 +201,7 @@ export function druidCountsSql(schema: string): string {
   ].join(" ");
 }
 
-export function druidListingSql(schema: string, kind: string): string {
+function druidListingSql(schema: string, kind: string): string {
   return [
     'SELECT "objectName"',
     `FROM (${schemaObjectsSql(schema)})`,
@@ -223,7 +223,7 @@ export function druidListingSql(schema: string, kind: string): string {
  * `INFORMATION_SCHEMA.COLUMNS` answers for a datasource, for a lookup's `k` and `v`,
  * and for a `sys` table alike (measured: 11, 4 and 66 rows for the fixture's schemas).
  */
-export function druidObjectColumnsSql(schema: string, name: string): string {
+function druidObjectColumnsSql(schema: string, name: string): string {
   return [
     'SELECT TABLE_NAME AS "tableName", COLUMN_NAME AS "columnName",',
     'DATA_TYPE AS "dataType", IS_NULLABLE AS "isNullable"',
