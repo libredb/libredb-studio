@@ -150,11 +150,11 @@ interface OwnedEntry<T> {
 // ============================================================================
 
 /** An identifier, or null for a row that cannot be placed and must be skipped. */
-function readIdentifier(value: unknown): string | null {
+export function readIdentifier(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
-function readText(value: unknown): string {
+export function readText(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
@@ -168,7 +168,7 @@ function readText(value: unknown): string {
  * shown as "0 rows" when the server never said so is a number the explorer
  * invented, and a view reports null for exactly this field.
  */
-function readCount(value: unknown): number | undefined {
+export function readCount(value: unknown): number | undefined {
   if (typeof value === "number") return value;
   if (typeof value !== "string") return undefined;
   const parsed = Number(value);
@@ -183,7 +183,7 @@ function readCount(value: unknown): number | undefined {
  * three non-nullable columns nullable; `LowCardinality(Nullable(String))` is the
  * one combination spelled the other way round, so a bare prefix test misses it.
  */
-function isNullableType(type: string): boolean {
+export function isNullableType(type: string): boolean {
   const inner = type.startsWith(LOW_CARDINALITY_PREFIX) ? type.slice(LOW_CARDINALITY_PREFIX.length) : type;
   return inner.startsWith(NULLABLE_PREFIX);
 }
@@ -198,7 +198,7 @@ function isNullableType(type: string): boolean {
  * supplies — `MATERIALIZED` and `ALIAS` are computed, `EPHEMERAL` is insert-only
  * and never stored — so printing their expression bare would misread as one.
  */
-function readDefault(kind: string, expression: string): string | undefined {
+export function readDefault(kind: string, expression: string): string | undefined {
   if (kind === "" || expression === "") return undefined;
   return kind === DEFAULT_KIND ? expression : `${kind} ${expression}`;
 }
@@ -275,7 +275,7 @@ function unwrapOuterParens(expression: string): string {
  * elements. Every comma that matters is outside every parenthesis, which is why
  * depth alone is enough and no lexer is needed.
  */
-function splitKeyExpression(expression: string): string[] {
+export function splitKeyExpression(expression: string): string[] {
   const listed = unwrapOuterParens(expression.trim());
   if (listed === "") return [];
 

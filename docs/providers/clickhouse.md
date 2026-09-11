@@ -742,6 +742,151 @@ list, exactly as the SQL providers' two-phase loading does; `getSchemaRelations(
 returns an entry — empty list included — for every table, so the client can merge indexes in
 without losing a table that legitimately has none.
 
+
+### 6.1 The object surface (#789)
+
+`getSchema()` above answers one flat table list. The object surface answers a lazy,
+container-aware, kind-tagged tree through four methods, and it lives in
+[`objects.ts`](../../src/lib/db/providers/sql/clickhouse/objects.ts) rather than in the provider
+class: the statements and every derivation over the declaration are there, the connection check and
+the error mapping stay on the class.
+
+Everything below was measured on **ClickHouse 26.7.1.1315**, the build `database-compose.yml` pins.
+
+#### The declaration
+
+One container level, and there is no second one to add: ClickHouse has no schema level below a
+database, and `CREATE SCHEMA` is not an alias for anything. The level's structural `id` is `schema`
+because that is what `ContainerLevelSpec` calls the innermost level on every engine; the **label** is
+the engine's own word, Database.
+
+| Kind | Role | Catalog |
+|---|---|---|
+| `table` | `relation` | `system.tables`, the DEFAULT arm |
+| `view` | `relation` | `system.tables`, `engine = 'View'` |
+| `materialized_view` | `relation` | `system.tables`, `engine = 'MaterializedView'` |
+| `dictionary` | `config` | `system.tables`, `engine = 'Dictionary'` |
+| `function` | `routine` | `system.functions`, `origin != 'System'` |
+
+Two kinds are **absent rather than declared and zero**: ClickHouse has no trigger and no stored
+procedure. A declared kind draws a folder, and a folder for a concept the engine does not have is a
+lie its 0 badge makes look like a fact.
+
+No kind declares `acceptsRowWrites`. A row mutation here is spelled `ALTER TABLE ... UPDATE`, which
+is the same measurement behind `supportsInlineRowEdit: false` (section 13).
+
+#### The vocabulary comes from the ENGINE, not from the fixture
+
+`system.tables.engine` is an **open** set: 129 distinct values on a bare server, one per storage
+engine. So `table` is the DEFAULT arm and only three engine names are diverted off it. An inclusion
+list of engine names would make every engine this code has never heard of invisible, and invisible is
+the worst shape of absence, because the count and the listing lose it together and the badge keeps
+agreeing with its own folder.
+
+`system.functions.origin` needs no list at all, because **the column type IS the vocabulary**:
+
+```
+Enum8('System' = 0, 'SQLUserDefined' = 1, 'ExecutableUserDefined' = 2, 'WasmUserDefined' = 3)
+```
+
+So the filter is written as `origin != 'System'`. That admits all three user-defined origins ClickHouse
+has today - SQL, executable and WASM - and a fourth one a later build adds to the enum, rather than
+losing it silently.
+
+One consequence worth stating plainly: a **dictionary is a row of `system.tables` too**, so counting
+everything in that catalog as a table counts each dictionary twice. The kind expression diverts it.
+
+#### The implicit inner table, and why the obvious rule is wrong
+
+A materialised view declared without a `TO` clause owns an implicit inner table holding its state.
+Measured: `CREATE MATERIALIZED VIEW probe.mv_inner ENGINE = MergeTree ... AS SELECT` produces
+``probe.`.inner_id.0ec1eae5-fa15-41b8-98bb-9a0a01d5df45` `` with engine `MergeTree`, and that suffix
+is the view's own `uuid`. Such a table must appear in neither the count nor the listing: it is
+storage the server created, not an object a person named.
+
+The obvious rule is a name pattern, and it is **refuted rather than merely unattractive**. Measured:
+
+| Statement | Answer |
+|---|---|
+| ``CREATE TABLE probe.`.inner_id.fake` (x UInt8) ENGINE = MergeTree ORDER BY x`` | accepted |
+
+So `name LIKE '.inner%'` would hide a table a person created. The rule used instead is structural and
+reads only columns the server publishes: a table is an implicit inner table exactly when some
+MaterializedView's `(target_database, target_table)` names it **and** that view's `target_table` is
+`concat('.inner_id.', toString(uuid))`. The uuid equality is the half that separates an inner table
+from an explicit `TO` target, which is an ordinary user table.
+
+Measured against a fixture built to break it:
+
+| Object | In the listing |
+|---|---|
+| `.inner_id.<mv_inner's uuid>`, the implicit inner table | No |
+| `.inner_id.fake`, created by a person under the same prefix | Yes |
+| `mv_target`, the explicit `TO` target of `mv_to` | Yes |
+
+The Ordinary-database era spelling `.inner.<view name>` is unreachable on this build:
+`CREATE DATABASE ... ENGINE = Ordinary` answers code 336 `UNKNOWN_DATABASE_ENGINE`.
+
+#### `countObjects()` and `listObjects()` read ONE subquery
+
+The kind-tagged subquery is built once. The count `GROUP BY`s it and the listing `WHERE`s it. That is
+how the listing is guaranteed to contain exactly what the count counted: there is no second `WHERE`
+clause for the two to drift apart in, and no seam where a count over one catalog meets a listing over
+another.
+
+`total_rows` / `total_bytes` are `Nullable(UInt64)` and really are null for a view, for a dictionary
+and for a materialised view with a `TO` clause (measured). Null is reported as `undefined` - unknown -
+never coerced to zero.
+
+A refused count is reported per kind as `{ unavailable }` carrying **the server's own sentence**,
+verbatim and unprefixed, because that text is rendered to a person as the reason a folder has no
+number. It is a live case rather than a defensive arm: `system.functions` needs its own grant and a
+restricted user sees `500` / code `497`.
+
+#### Functions are SERVER-GLOBAL, and the path says where they were reached
+
+`system.functions` has no database column, and that is the engine: `CREATE FUNCTION` takes no
+qualified name and the function resolves from any database. So the Functions folder holds the same
+objects under every database, and the container segment of a function's path records the container it
+was **reached through**, not one that owns it. The alternative - showing functions under one chosen
+database - would leave the folder empty everywhere else while the functions are callable there.
+
+#### `describeObject()` takes the KIND, and only the table-backed kinds read a catalog
+
+The kind decides everything and nothing reads the name to work out what it is holding. The four
+`system.tables` kinds read columns and data-skipping indexes; a `function` answers three empty arrays
+with **no round trip**, which is a true fact about the kind rather than a failed read.
+
+A **dictionary does describe**, measured: `system.columns` answers its key and attribute columns,
+because a DDL dictionary carries engine `Dictionary` in `system.tables`. The branch is keyed on the
+catalog rather than on `role === 'relation'` for exactly that reason - a dictionary is declared
+`config`.
+
+`foreignKeys` is always `[]`, the same fact as in section 6: ClickHouse parses `REFERENCES` and
+enforces nothing by it, and `system.*` holds no constraint catalog to read one back from.
+
+Zero columns **raises**: `CREATE TABLE t ()` is a syntax error (code 62), so every table-backed object
+has at least one column and an empty answer means the object is not there under that name.
+
+The index read here **does not degrade to empty**, unlike `getSchema()`'s.
+`system.data_skipping_indices` needs its own grant and answers code `497` without it, and "this
+object has no skipping index" is a different fact from "you may not see its indexes". A detail panel
+showing the first when the second is true is a claim nobody measured.
+
+#### Paths are derived, never indexed positionally
+
+The container depth comes from `containerDepth()`, the database segment from the declared level whose
+`id` is `schema`, and the object's own name from the last segment. None of those is a literal index.
+On a one-level engine all three are behaviour-identical to the positional spellings, which is exactly
+why three spellings of that defect shipped elsewhere in #789 before being caught, so the suite hands
+this provider a synthetic **two-level** declaration through `spyOn` and drives it all the way to the
+bound database and the bound object name, not merely to the refusal.
+
+Sorting is over the path segment by segment and never over `JSON.stringify(path)`, which is wrong
+twice: at mixed depth the deeper path sorts first, because `,` (0x2C) is below `]` (0x5D), and JSON
+escaping reorders names holding a quote or a backslash - all of which ClickHouse accepts in a
+backquoted identifier.
+
 ---
 
 ## 7. Monitoring & health

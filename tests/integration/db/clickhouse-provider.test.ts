@@ -21,10 +21,16 @@
  * - `FORMAT`/`SETTINGS` are TRAILING clauses, so appending `LIMIT n` after one
  *   is a hard syntax error.
  */
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { ClickHouseProvider } from "@/lib/db/providers/sql/clickhouse";
+import {
+  CLICKHOUSE_CONTAINER_LEVELS,
+  CLICKHOUSE_OBJECT_KINDS,
+  comparePaths,
+} from "@/lib/db/providers/sql/clickhouse/objects";
 import { maintenanceControl } from "@/lib/db/types";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import {
   AuthenticationError,
   ConnectionError,
@@ -440,6 +446,10 @@ describe("ClickHouseProvider metadata", () => {
       },
       supportsConnectionString: true,
       defaultPort: 8123,
+      // #789. Asserted in full in the `object surface` block below; repeated here only
+      // so this exhaustive comparison stays exhaustive.
+      containerLevels: CLICKHOUSE_CONTAINER_LEVELS,
+      objectKinds: CLICKHOUSE_OBJECT_KINDS,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER|RENAME|TRUNCATE|ATTACH|DETACH)\\b",
     });
   });
@@ -1696,5 +1706,678 @@ describe("ClickHouseProvider maintenance", () => {
     denyEverything();
 
     await expect(provider.runMaintenance("optimize", "users")).rejects.toBeInstanceOf(AuthenticationError);
+  });
+});
+
+// ============================================================================
+// The object surface (#789)
+// ----------------------------------------------------------------------------
+// Every payload below was captured from ClickHouse 26.7.1.1315 (`task15-clickhouse`,
+// host port 18123, the same image `database-compose.yml` pins) against a database
+// built to hold one instance of every declared kind PLUS the three shapes that break
+// a naive implementation:
+//
+//   - `.inner_id.<uuid of mv_inner>`, the implicit inner table a `TO`-less
+//     materialised view owns, which must appear in NEITHER the count nor the listing;
+//   - `.inner_id.fake`, a table a PERSON created under that same prefix, which proves
+//     a name-pattern exclusion would hide a user's own table (measured: the CREATE
+//     succeeds);
+//   - `mv_target`, the explicit `TO` target of `mv_to`, which is an ordinary user
+//     table and must stay visible.
+// ============================================================================
+
+/**
+ * `system.tables` exactly as the server answers it for the fixture database, before
+ * any exclusion. The provider's own statement carries the exclusion, so these rows
+ * are what a naive `SELECT ... FROM system.tables` sees.
+ */
+const OBJECT_DATABASE = "analytics";
+
+const MV_INNER_UUID = "0ec1eae5-fa15-41b8-98bb-9a0a01d5df45";
+const MV_INNER_TABLE = `.inner_id.${MV_INNER_UUID}`;
+
+/** What the provider's kind-tagged subquery answers once its exclusion has run. */
+const OBJECT_ROWS = [
+  // A user-created table under the reserved-looking prefix. It survives.
+  { objectName: ".inner_id.fake", objectKind: "table", objectRows: "0", objectBytes: "0" },
+  { objectName: "dict_users", objectKind: "dictionary", objectRows: null, objectBytes: null },
+  { objectName: "events", objectKind: "table", objectRows: "3", objectBytes: "1024" },
+  { objectName: "events_view", objectKind: "view", objectRows: null, objectBytes: null },
+  { objectName: "mv_inner", objectKind: "materialized_view", objectRows: "2", objectBytes: "512" },
+  { objectName: "mv_target", objectKind: "table", objectRows: "0", objectBytes: "0" },
+  { objectName: "mv_to", objectKind: "materialized_view", objectRows: null, objectBytes: null },
+  { objectName: "probe_double", objectKind: "function", objectRows: null, objectBytes: null },
+];
+
+const OBJECT_COUNT_ROWS = [
+  { objectKind: "dictionary", objectCount: "1" },
+  { objectKind: "function", objectCount: "1" },
+  { objectKind: "materialized_view", objectCount: "2" },
+  { objectKind: "table", objectCount: "3" },
+  { objectKind: "view", objectCount: "1" },
+];
+
+const CONTAINER_ROWS = [
+  { containerName: OBJECT_DATABASE, isSessionDefault: 1 },
+  { containerName: "default", isSessionDefault: 0 },
+  { containerName: "demo", isSessionDefault: 0 },
+];
+
+const OBJECT_COLUMN_ROWS = [
+  { columnName: "id", columnType: "UInt64", isPrimaryKey: 1, defaultKind: "", defaultExpression: "" },
+  { columnName: "day", columnType: "Date", isPrimaryKey: 0, defaultKind: "", defaultExpression: "" },
+  {
+    columnName: "amount",
+    columnType: "LowCardinality(Nullable(String))",
+    isPrimaryKey: 0,
+    defaultKind: "DEFAULT",
+    defaultExpression: "''",
+  },
+];
+
+const OBJECT_INDEX_ROWS = [{ indexName: "idx_amount", indexExpression: "amount" }];
+
+/**
+ * Routes the object-surface statements, keyed on the aliases the provider itself
+ * chose, and falls back to `defaultReply` for everything else so a test in this block
+ * still gets the monitoring and schema fixtures.
+ */
+function objectReply(sql: string): Reply {
+  if (sql.includes("containerName")) return jsonReply(CONTAINER_ROWS);
+  if (sql.includes("objectCount")) return jsonReply(OBJECT_COUNT_ROWS);
+  if (sql.includes("objectKind")) {
+    // The listing filters the same subquery the count grouped, so the fake server
+    // applies the same filter rather than carrying a second fixture. Ruling 5f holds
+    // in the fixture for the same reason it holds in the provider.
+    const match = /objectKind = '([a-z_]+)'/.exec(sql);
+    if (match === null) return jsonReply(OBJECT_ROWS);
+    return jsonReply(OBJECT_ROWS.filter((row) => row.objectKind === match[1]));
+  }
+  if (sql.includes("columnName")) return jsonReply(OBJECT_COLUMN_ROWS);
+  if (sql.includes("indexName") && sql.includes("data_skipping_indices")) return jsonReply(OBJECT_INDEX_ROWS);
+  return defaultReply(sql);
+}
+
+function installObjectReplies(): void {
+  replyFor = objectReply;
+}
+
+describe("object surface", () => {
+  test("declares one database container level and the five kinds ClickHouse has", async () => {
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+    const capabilities = provider.getCapabilities();
+
+    expect(capabilities.containerLevels).toEqual([{ id: "schema", label: "Database", labelPlural: "Databases" }]);
+    expect((capabilities.objectKinds ?? []).map((kind) => ({ id: kind.id, role: kind.role }))).toEqual([
+      { id: "table", role: "relation" },
+      { id: "view", role: "relation" },
+      { id: "materialized_view", role: "relation" },
+      { id: "dictionary", role: "config" },
+      { id: "function", role: "routine" },
+    ]);
+
+    // ClickHouse has no trigger and no stored procedure, so neither is DECLARED. A
+    // declared kind draws a folder, and a folder for a concept the engine does not
+    // have is a lie its 0 badge makes look like a fact (standing ruling 4).
+    const ids = (capabilities.objectKinds ?? []).map((kind) => kind.id);
+    expect(ids).not.toContain("trigger");
+    expect(ids).not.toContain("procedure");
+
+    // A row write here is `ALTER TABLE ... UPDATE`, not the statement the inline row
+    // editor builds, so no kind accepts one.
+    expect((capabilities.objectKinds ?? []).every((kind) => kind.acceptsRowWrites === undefined)).toBe(true);
+    await provider.disconnect();
+  });
+
+  test("satisfies the shared object surface contract", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await assertObjectSurface(provider, {
+      containers: [[OBJECT_DATABASE], ["default"], ["demo"]],
+      kinds: { table: 3, view: 1, materialized_view: 2, dictionary: 1, function: 1 },
+      sampleObject: { path: [OBJECT_DATABASE, "events"], kind: "table" },
+    });
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The rest of the object surface: the catalog reads behind each kind, the detail rows,
+ * the refusals and the two derivations standing ruling 5g names. Kept OUT of the
+ * `object surface` describe above so `-t "object surface"` still runs exactly the two
+ * conformance tests.
+ */
+describe("object surface internals", () => {
+  test("the container listing is bound to nothing and marks the session's own database", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const containers = await provider.listContainers();
+
+    expect(containers).toEqual([
+      { path: [OBJECT_DATABASE], name: OBJECT_DATABASE, level: 0, isSessionDefault: true },
+      { path: ["default"], name: "default", level: 0, isSessionDefault: false },
+      { path: ["demo"], name: "demo", level: 0, isSessionDefault: false },
+    ]);
+    // The server's own answer for which container the session is in, never the
+    // configured string, which is what a person typed into a form.
+    expect(sqlWith("containerName")).toContain("name = currentDatabase()");
+    // The system databases are excluded, and `information_schema` really does exist
+    // twice, once in each case (live-verified).
+    expect(sqlWith("containerName")).toContain("name NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA')");
+    await provider.disconnect();
+  });
+
+  test("nothing nests under a database, so a parent path answers empty without a read", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    expect(await provider.listContainers([OBJECT_DATABASE])).toEqual([]);
+    // The control: no statement was sent at all, so this is an answer rather than an
+    // empty read.
+    expect(sentSql.filter((sql) => sql.includes("containerName"))).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("a container row with no usable name is skipped rather than addressed as empty", async () => {
+    replyFor = (sql) =>
+      sql.includes("containerName") ? jsonReply([{ containerName: "", isSessionDefault: 0 }]) : objectReply(sql);
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    expect(await provider.listContainers()).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("the count and the listing read ONE subquery, which is what makes them agree", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await provider.countObjects([OBJECT_DATABASE]);
+    await provider.listObjects([OBJECT_DATABASE], "view");
+
+    const counting = sqlWith("objectCount");
+    const listing = sqlWith("objectKind = 'view'");
+    // Standing ruling 5f, held by construction rather than by two statements agreeing:
+    // the count GROUPs the same text the listing FILTERs, so there is no second WHERE
+    // clause for the two to drift apart in. Oracle and MySQL both failed 5f on their
+    // first pass, and both had a count and a listing reading different catalogs.
+    const subquery = [
+      "FROM system.tables AS t",
+      `WHERE t.database = '${OBJECT_DATABASE}'`,
+      "AND (t.database, t.name) NOT IN (",
+    ].join(" ");
+    expect(counting).toContain(subquery);
+    expect(listing).toContain(subquery);
+    await provider.disconnect();
+  });
+
+  test("the implicit inner table of a TO-less materialized view is excluded STRUCTURALLY", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await provider.listObjects([OBJECT_DATABASE], "table");
+    const listing = sqlWith("objectKind = 'table'");
+
+    // Measured on 26.7.1.1315 rather than assumed: a materialised view with no `TO`
+    // clause owns `.inner_id.<its own uuid>`, and its `target_table` names that table
+    // exactly. The uuid equality is the half that separates an inner table from an
+    // explicit `TO` target, which is an ordinary user table.
+    expect(listing).toContain("FROM system.tables AS mv");
+    expect(listing).toContain("WHERE mv.engine = 'MaterializedView'");
+    expect(listing).toContain("AND mv.target_table = concat('.inner_id.', toString(mv.uuid))");
+
+    // And NOT by name. `CREATE TABLE analytics.`.inner_id.fake`` succeeds on this
+    // engine (measured), so a `LIKE '.inner%'` predicate would hide a table a person
+    // created. The fixture carries that table and the listing returns it.
+    expect(listing).not.toContain("LIKE");
+    const tables = await provider.listObjects([OBJECT_DATABASE], "table");
+    expect(tables.map((object) => object.name)).toEqual([".inner_id.fake", "events", "mv_target"]);
+    // `mv_target` is the explicit `TO` target of `mv_to` and stays visible; the real
+    // inner table is absent from the same listing.
+    expect(tables.map((object) => object.name)).not.toContain(MV_INNER_TABLE);
+    await provider.disconnect();
+  });
+
+  test("a user-defined function is enumerated by EXCLUDING the engine's own origin", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const functions = await provider.listObjects([OBJECT_DATABASE], "function");
+
+    expect(functions).toEqual([{ path: [OBJECT_DATABASE, "probe_double"], name: "probe_double", kind: "function" }]);
+    // Standing ruling 5a, and the ENGINE publishes the vocabulary in the column type:
+    // `system.functions.origin` is `Enum8('System' = 0, 'SQLUserDefined' = 1,
+    // 'ExecutableUserDefined' = 2, 'WasmUserDefined' = 3)`. Writing the filter as "not
+    // System" admits all three user-defined origins AND a fourth one a later build
+    // adds; an inclusion list of the three would lose it silently, out of the count and
+    // out of the listing at once.
+    expect(sqlWith("objectKind = 'function'")).toContain("WHERE f.origin != 'System'");
+    expect(sqlWith("objectKind = 'function'")).not.toContain("SQLUserDefined");
+    await provider.disconnect();
+  });
+
+  test("a dictionary is counted once, not as a table as well", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const counts = await provider.countObjects([OBJECT_DATABASE]);
+
+    expect(counts).toEqual({
+      table: { count: 3 },
+      view: { count: 1 },
+      materialized_view: { count: 2 },
+      dictionary: { count: 1 },
+      function: { count: 1 },
+    });
+    // A dictionary is a row of `system.tables` too, with engine `Dictionary`
+    // (measured), so the kind expression diverts it off the `table` default. `table`
+    // is the default arm because `system.tables.engine` is an OPEN set - 129 distinct
+    // values on a bare server - and an inclusion list would make every engine this
+    // code has never heard of invisible.
+    const counting = sqlWith("objectCount");
+    expect(counting).toContain("t.engine = 'Dictionary', 'dictionary',");
+    expect(counting).toContain("'table')");
+    await provider.disconnect();
+  });
+
+  test("a declared kind the database holds none of badges 0 rather than vanishing", async () => {
+    // Seeded before the read. Building the record from the GROUP BY rows alone would
+    // leave the kind out, and an absent kind means something else and stronger: the
+    // engine has no such concept, so the tree draws no folder at all.
+    replyFor = (sql) =>
+      sql.includes("objectCount") ? jsonReply([{ objectKind: "table", objectCount: "2" }]) : objectReply(sql);
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const counts = await provider.countObjects([OBJECT_DATABASE]);
+
+    expect(counts.table).toEqual({ count: 2 });
+    expect(counts.dictionary).toEqual({ count: 0 });
+    expect(counts.function).toEqual({ count: 0 });
+    await provider.disconnect();
+  });
+
+  test("a refused count carries the server's own sentence, per kind, and is never 0", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+    denyEverything();
+
+    const counts = await provider.countObjects([OBJECT_DATABASE]);
+
+    for (const kind of ["table", "view", "materialized_view", "dictionary", "function"]) {
+      expect(counts[kind]).toHaveProperty("unavailable");
+      // The server's words, not this product's prefix: a refused read is rendered to a
+      // person as the reason a folder has no number.
+      expect((counts[kind] as { unavailable: string }).unavailable).toContain("Not enough privileges");
+    }
+    await provider.disconnect();
+  });
+
+  test("a count row whose kind names a prototype member draws no folder either", async () => {
+    // `Object.hasOwn` and not `in`, which is what makes the declared-kind guard
+    // ABSOLUTE rather than nearly so. `"toString" in counts` is true on any object
+    // literal, so the `in` spelling would write a folder for a kind the provider never
+    // declared, out of a catalog row nobody can see.
+    replyFor = (sql) =>
+      sql.includes("objectCount")
+        ? jsonReply([
+            { objectKind: "table", objectCount: "3" },
+            { objectKind: "toString", objectCount: "9" },
+            { objectKind: "constructor", objectCount: "9" },
+            { objectKind: "__proto__", objectCount: "9" },
+          ])
+        : objectReply(sql);
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const counts = await provider.countObjects([OBJECT_DATABASE]);
+
+    // The control, so this is not a test of an empty read: the declared kind DID take
+    // its count from the same rows.
+    expect(counts.table).toEqual({ count: 3 });
+    expect(Object.keys(counts).sort()).toEqual(["dictionary", "function", "materialized_view", "table", "view"]);
+    await provider.disconnect();
+  });
+
+  test("a count row with no kind or an unreadable number leaves the seeded zero alone", async () => {
+    replyFor = (sql) =>
+      sql.includes("objectCount")
+        ? jsonReply([
+            { objectKind: "", objectCount: "4" },
+            { objectKind: "view", objectCount: "not a number" },
+          ])
+        : objectReply(sql);
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const counts = await provider.countObjects([OBJECT_DATABASE]);
+
+    expect(counts.view).toEqual({ count: 0 });
+    expect(counts.table).toEqual({ count: 0 });
+    await provider.disconnect();
+  });
+
+  test("an unknown row count is ABSENT rather than zero, and a measured one is reported", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const views = await provider.listObjects([OBJECT_DATABASE], "materialized_view");
+
+    // `total_rows`/`total_bytes` are `Nullable(UInt64)` and really are null for a view
+    // and for a materialised view with a `TO` clause (measured). A view reported as 0
+    // rows and 0 bytes is a measurement nobody took.
+    expect(views).toEqual([
+      { path: [OBJECT_DATABASE, "mv_inner"], name: "mv_inner", kind: "materialized_view", rowCount: 2, sizeBytes: 512 },
+      { path: [OBJECT_DATABASE, "mv_to"], name: "mv_to", kind: "materialized_view" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a listing row with no usable name is skipped rather than addressed as empty", async () => {
+    replyFor = (sql) =>
+      sql.includes("objectKind = 'view'")
+        ? jsonReply([{ objectName: "", objectKind: "view", objectRows: null, objectBytes: null }])
+        : objectReply(sql);
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    expect(await provider.listObjects([OBJECT_DATABASE], "view")).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("objects sort by PATH, segment by segment, not by a joined string", async () => {
+    // `JSON.stringify(path)` is the obvious spelling and it is wrong twice: at mixed
+    // depth the deeper path sorts first, because `,` (0x2C) is below `]` (0x5D), and
+    // JSON escapes, so a name holding a backslash or a quote sorts by its escape
+    // sequence. ClickHouse accepts all three in a backquoted identifier.
+    replyFor = (sql) =>
+      sql.includes("objectKind = 'table'")
+        ? jsonReply([
+            { objectName: "bZ", objectKind: "table", objectRows: null, objectBytes: null },
+            { objectName: 'b"q', objectKind: "table", objectRows: null, objectBytes: null },
+            { objectName: "a", objectKind: "table", objectRows: null, objectBytes: null },
+          ])
+        : objectReply(sql);
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const tables = await provider.listObjects([OBJECT_DATABASE], "table");
+
+    // Code points: `"` (0x22) below `Z` (0x5A). `JSON.stringify` escapes the quote to
+    // `\"`, so the comparison lands on `\` (0x5C) against `Z` and reverses the pair.
+    expect(tables.map((object) => object.name)).toEqual(["a", 'b"q', "bZ"]);
+    await provider.disconnect();
+  });
+
+  test("a kind the declaration does not carry is refused by name, in both methods", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await expect(provider.listObjects([OBJECT_DATABASE], "sequence")).rejects.toThrow(
+      /ClickHouse declares no object kind "sequence"/,
+    );
+    await expect(provider.describeObject([OBJECT_DATABASE, "x"], "sequence")).rejects.toThrow(
+      /ClickHouse declares no object kind "sequence"/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a kind that is declared but has no listing statement says so, not that it is undeclared", async () => {
+    // Two questions, and only the declaration answers the first. Deciding "declared"
+    // from whether a statement exists would report "declares no object kind" about a
+    // kind `objectKinds` does declare.
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [...(real.objectKinds ?? []), { id: "projection", role: "config", label: "P", labelPlural: "Ps" }],
+    });
+
+    await expect(provider.listObjects([OBJECT_DATABASE], "projection")).rejects.toThrow(
+      /declares the kind "projection" but has no statement that lists it/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a table's detail is columns and skipping indexes, and never a foreign key", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const detail = await provider.describeObject([OBJECT_DATABASE, "events"], "table");
+
+    expect(detail.path).toEqual([OBJECT_DATABASE, "events"]);
+    expect(detail.columns).toEqual([
+      { name: "id", type: "UInt64", nullable: false, isPrimary: true, defaultValue: undefined },
+      { name: "day", type: "Date", nullable: false, isPrimary: false, defaultValue: undefined },
+      // `LowCardinality(Nullable(String))` is the one combination spelled with the
+      // nullable wrapper INSIDE, so a bare prefix test would call it not nullable.
+      {
+        name: "amount",
+        type: "LowCardinality(Nullable(String))",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: "''",
+      },
+    ]);
+    // A data-skipping index prunes granules and enforces nothing, so no index
+    // ClickHouse reports is unique.
+    expect(detail.indexes).toEqual([{ name: "idx_amount", columns: ["amount"], unique: false }]);
+    // Always empty, and that is the engine: ClickHouse parses REFERENCES and enforces
+    // nothing by it, and `system.*` holds no constraint catalog to read one back from.
+    expect(detail.foreignKeys).toEqual([]);
+    // Neither bind is positional: the database is the segment the DECLARATION assigns
+    // to the `schema` level and the name is the LAST segment.
+    expect(sqlWith("columnName")).toContain(`WHERE c.database = '${OBJECT_DATABASE}' AND c.table = 'events'`);
+    await provider.disconnect();
+  });
+
+  test("a dictionary describes, because it is a table underneath", async () => {
+    // Measured: `system.columns` answers a dictionary's key and attribute columns,
+    // because a DDL dictionary carries engine `Dictionary` in `system.tables`. Keying
+    // the branch on the CATALOG rather than on `role === "relation"` is what makes
+    // that come out right - a dictionary is declared `config`.
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const detail = await provider.describeObject([OBJECT_DATABASE, "dict_users"], "dictionary");
+
+    expect(detail.columns).toHaveLength(3);
+    await provider.disconnect();
+  });
+
+  test("a function answers three empty arrays with no round trip", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const detail = await provider.describeObject([OBJECT_DATABASE, "probe_double"], "function");
+
+    expect(detail).toEqual({ path: [OBJECT_DATABASE, "probe_double"], columns: [], indexes: [], foreignKeys: [] });
+    // The control: no catalog read was issued at all, so the empty arrays are a fact
+    // about the kind rather than a read that returned nothing.
+    expect(sentSql.filter((sql) => sql.includes("columnName"))).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("an object that is not there raises rather than describing itself as empty", async () => {
+    // `CREATE TABLE t ()` is a syntax error on this engine (measured, code 62), so
+    // every table-backed object has at least one column and an empty answer means the
+    // object is not there under that name in this database.
+    replyFor = (sql) => (sql.includes("columnName") ? jsonReply([]) : objectReply(sql));
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await expect(provider.describeObject([OBJECT_DATABASE, "ghost"], "table")).rejects.toThrow(
+      /No ClickHouse table named ghost in analytics/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a refused index read propagates instead of reporting an object with no indexes", async () => {
+    // `system.data_skipping_indices` needs its own grant and answers code 497 without
+    // it. "This object has no skipping index" is a different fact from "you may not
+    // see its indexes", and a detail panel showing the first when the second is true
+    // is a claim nobody measured. `getSchema()` degrades here; this does not.
+    replyFor = (sql) => (sql.includes("indexName") ? DENIED() : objectReply(sql));
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await expect(provider.describeObject([OBJECT_DATABASE, "events"], "table")).rejects.toBeInstanceOf(
+      AuthenticationError,
+    );
+    await provider.disconnect();
+  });
+
+  test("a column or index row with no usable name is skipped", async () => {
+    replyFor = (sql) => {
+      if (sql.includes("columnName")) {
+        return jsonReply([
+          { columnName: "", columnType: "UInt8", isPrimaryKey: 0, defaultKind: "", defaultExpression: "" },
+          { columnName: "kept", columnType: "UInt8", isPrimaryKey: 0, defaultKind: "", defaultExpression: "" },
+        ]);
+      }
+      if (sql.includes("indexName")) {
+        return jsonReply([
+          { indexName: "", indexExpression: "x" },
+          { indexName: "idx_kept", indexExpression: "(lower(b))" },
+        ]);
+      }
+      return objectReply(sql);
+    };
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const detail = await provider.describeObject([OBJECT_DATABASE, "events"], "table");
+
+    expect(detail.columns.map((column) => column.name)).toEqual(["kept"]);
+    expect(detail.indexes).toEqual([{ name: "idx_kept", columns: ["lower(b)"], unique: false }]);
+    await provider.disconnect();
+  });
+
+  test("a path of the wrong length is refused with the shape the DECLARATION describes", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await expect(provider.countObjects([])).rejects.toThrow(/container path is \[database\], received \[\]/);
+    await expect(provider.listObjects([OBJECT_DATABASE, "x"], "table")).rejects.toThrow(
+      /container path is \[database\], received \["analytics","x"\]/,
+    );
+    await expect(provider.describeObject([OBJECT_DATABASE], "table")).rejects.toThrow(
+      /"table" path is \[database, name\], received \["analytics"\]/,
+    );
+    await expect(provider.describeObject([OBJECT_DATABASE, "a", "b"], "table")).rejects.toThrow(
+      /"table" path is \[database, name\], received \["analytics","a","b"\]/,
+    );
+    await provider.disconnect();
+  });
+
+  test("the container depth and the name bind are DERIVED, which a two-level declaration shows", async () => {
+    // Standing ruling 5g. `container.length !== 1`, `path[0]` for the database and
+    // `path[1]` for the object name are all behaviour-identical to the derived forms on
+    // a one-level engine, which is exactly why three spellings of this defect shipped,
+    // each found one review later than the last. Rather than leave that to a two-level
+    // provider, this test hands THIS provider a two-level declaration and asks the same
+    // questions. The declaration is synthetic for ClickHouse; the derivation under test
+    // is the shared one every provider in #789 copies.
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Database", labelPlural: "Databases" },
+      ],
+    });
+
+    // The depth comes from `containerDepth()`, so a one-segment path is now WRONG and
+    // the message names both declared levels. A hardcoded `!== 1` would accept it.
+    await expect(provider.countObjects([OBJECT_DATABASE])).rejects.toThrow(
+      /container path is \[catalog, database\], received \["analytics"\]/,
+    );
+
+    // AND THE BINDS, which is the half a refusal-only test cannot see, and which is how
+    // the third spelling survived two providers and a review round. At this depth
+    // `path[0]` is the CATALOG and `path[1]` is the database, so binding `path[0]` as
+    // the database reads a database that does not exist, and binding `path[1]` as the
+    // name asks for an object called `analytics`.
+    const listed = await provider.listObjects(["warehouse", OBJECT_DATABASE], "table");
+    expect(sqlWith("objectKind = 'table'")).toContain(`WHERE t.database = '${OBJECT_DATABASE}'`);
+    expect(listed[0]?.path).toEqual(["warehouse", OBJECT_DATABASE, ".inner_id.fake"]);
+
+    const detail = await provider.describeObject(["warehouse", OBJECT_DATABASE, "events"], "table");
+    expect(detail.path).toEqual(["warehouse", OBJECT_DATABASE, "events"]);
+    expect(sqlWith("columnName")).toContain(`WHERE c.database = '${OBJECT_DATABASE}' AND c.table = 'events'`);
+    expect(sqlWith("indexName")).toContain(`WHERE i.database = '${OBJECT_DATABASE}' AND i.table = 'events'`);
+    await provider.disconnect();
+  });
+
+  test("a declaration with no database level is refused rather than bound to nothing", async () => {
+    // The other half of the segment guard. A path long enough for the declared depth
+    // still has no `schema` segment when the declaration carries no such level, and
+    // `undefined` must not reach the literal builder, which would quote the string
+    // "undefined" and read a database of that name.
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [{ id: "catalog", label: "Catalog", labelPlural: "Catalogs" }],
+    });
+
+    await expect(provider.countObjects(["warehouse"])).rejects.toThrow(
+      /needs a "schema" container level and a segment for it; the declaration is \[catalog\]/,
+    );
+    await expect(provider.describeObject(["warehouse", "events"], "table")).rejects.toThrow(
+      /needs a "schema" container level and a segment for it/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a name carrying a quote or a backslash is escaped into every statement", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await provider.describeObject([OBJECT_DATABASE, "o'brien\\x"], "table").catch(() => undefined);
+
+    // Both escapes are applied: ClickHouse honours the backslash inside a literal as
+    // well as the doubled quote, so escaping only the quote would leave `\'` as a way
+    // out of the string.
+    expect(sqlWith("columnName")).toContain("AND c.table = 'o''brien\\\\x'");
+    await provider.disconnect();
+  });
+
+  test("every object-surface method needs a connection", async () => {
+    const provider = new ClickHouseProvider(makeConnection({ database: OBJECT_DATABASE }));
+
+    await expect(provider.listContainers()).rejects.toBeInstanceOf(DatabaseConfigError);
+    await expect(provider.countObjects([OBJECT_DATABASE])).rejects.toBeInstanceOf(DatabaseConfigError);
+    await expect(provider.listObjects([OBJECT_DATABASE], "table")).rejects.toBeInstanceOf(DatabaseConfigError);
+    await expect(provider.describeObject([OBJECT_DATABASE, "events"], "table")).rejects.toBeInstanceOf(
+      DatabaseConfigError,
+    );
+  });
+});
+
+describe("comparePaths", () => {
+  // Driven directly, because no ClickHouse path is ever mixed-depth: the engine
+  // declares one container level and no kind declares `attachedTo`, so every path of
+  // every kind is two segments and a test driven through `listObjects` cannot tell the
+  // settled spelling from `JSON.stringify`. Standing ruling 5g names both differences
+  // this function exists for, and both are asserted here rather than left as a claim
+  // in a docblock. The shared rule is the same one every provider in #789 writes; Task
+  // 28 hoists the five copies into `src/lib/db/object-kinds.ts`.
+  test("a prefix sorts ABOVE the longer path it prefixes", () => {
+    expect(comparePaths(["app", "orders"], ["app", "orders", "stamp"])).toBeLessThan(0);
+    expect(comparePaths(["app", "orders", "stamp"], ["app", "orders"])).toBeGreaterThan(0);
+    // `JSON.stringify` reverses exactly this: the separator `,` (0x2C) is below the
+    // terminator `]` (0x5D), so the deeper path would sort first and a nested row would
+    // be drawn above the object it hangs off.
+    expect(JSON.stringify(["app", "orders", "stamp"]) < JSON.stringify(["app", "orders"])).toBe(true);
+  });
+
+  test("segments sort by their own code points, not by a JSON escape sequence", () => {
+    // `"` is 0x22 and `Z` is 0x5A, so the quote sorts first. `JSON.stringify` escapes
+    // the quote to `\"`, and the comparison then lands on `\` (0x5C) against `Z`
+    // (0x5A), which puts the two names the other way round.
+    expect(comparePaths(['b"q'], ["bZ"])).toBeLessThan(0);
+    expect(JSON.stringify(['b"q']) < JSON.stringify(["bZ"])).toBe(false);
+  });
+
+  test("two identical paths compare equal", () => {
+    expect(comparePaths(["app", "orders"], ["app", "orders"])).toBe(0);
   });
 });
