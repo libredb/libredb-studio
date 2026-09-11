@@ -38,7 +38,7 @@
  *    come back alphabetically, so declaration order is not recoverable - the tree
  *    orders partition key, then clustering, then the rest by name, and says so.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { types } from "cassandra-driver";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { CassandraDriverTransport, type CassandraSession } from "@/lib/db/providers/sql/cassandra/driver-transport";
@@ -63,6 +63,14 @@ import {
   cassandraTableListCql,
   cassandraViewListCql,
 } from "@/lib/db/providers/sql/cassandra/introspect";
+import {
+  CASSANDRA_KEYSPACE_LIST_CQL,
+  cassandraObjectColumnsCql,
+  comparePaths,
+  cassandraObjectListCql,
+  cassandraTypeFieldsCql,
+} from "@/lib/db/providers/sql/cassandra/objects";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
 
 const KEYSPACE = "probe";
@@ -1711,5 +1719,483 @@ describe("connect closes what it opened", () => {
 
     expect(provider.isConnected()).toBe(true);
     expect(closed.count).toBe(0);
+  });
+});
+
+// ============================================================================
+// The object surface (issue #789)
+// ============================================================================
+
+/**
+ * Every payload in this section was captured on 2026-09-11 from the live Apache
+ * Cassandra 5.0.9 that `docker/cassandra-init/01-object-fixture.cql` builds, applied
+ * exactly as `docs/providers/cassandra.md` documents. The fixture is committed, so
+ * each of these can be re-measured rather than trusted.
+ *
+ * Five measurements shape what is asserted:
+ *
+ * 1. `CREATE KEYSPACE system_reports` SUCCEEDS, so the system-keyspace exclusion
+ *    cannot be a `system%` prefix rule. The fixture creates that keyspace and the
+ *    container listing must SHOW it.
+ * 2. AN INDEX NAME IS UNIQUE PER KEYSPACE: `CREATE INDEX customers_by_city ON
+ *    probe.events (payload)` answers "Index 'customers_by_city' already exists" while
+ *    the name is taken on `probe.customers`. So an index is addressed
+ *    `[keyspace, index]`.
+ * 3. A TRIGGER NAME IS NOT: `CREATE TRIGGER probe_audit ON probe.orders` SUCCEEDED
+ *    while `probe_audit` already existed on `probe.customers`. So a trigger is
+ *    addressed `[keyspace, table, trigger]`, which is what `attachedTo: "table"` says.
+ * 4. A FUNCTION IS OVERLOADED BY ARGUMENT TYPES: `system_schema.functions` holds two
+ *    `render` rows, `['int']` and `['text']`, so the name alone cannot address one.
+ *    `answer` takes none and its `argument_types` is the empty list.
+ * 5. `system_schema.indexes.kind` carries COMPOSITES and CUSTOM in one keyspace, and
+ *    the provider branches on neither: a vocabulary derived from the kinds one fixture
+ *    happens to hold would lose every other one (standing ruling 5a).
+ */
+
+const KEYSPACE_LIST = result(declare(["keyspace_name", TEXT]), [
+  { keyspace_name: "system_reports" },
+  { keyspace_name: "system_auth" },
+  { keyspace_name: "system_schema" },
+  { keyspace_name: "system_distributed" },
+  { keyspace_name: "system" },
+  { keyspace_name: "system_traces" },
+  { keyspace_name: KEYSPACE },
+]);
+
+const OBJECT_TABLE_LIST = result(declare(["table_name", TEXT]), [
+  { table_name: "customers" },
+  { table_name: "events" },
+  { table_name: "orders" },
+]);
+
+const OBJECT_VIEW_LIST = result(declare(["view_name", TEXT]), [{ view_name: "customers_by_city" }]);
+
+const OBJECT_TYPE_LIST = result(declare(["type_name", TEXT]), [{ type_name: "address" }]);
+
+const LIST_TEXT: ColumnType = { code: 32, info: TEXT };
+const MAP_OPTIONS = MAP_TEXT_TEXT;
+
+/** Three indexes, two COMPOSITES and one CUSTOM (`sai`), all three in one keyspace. */
+const OBJECT_INDEX_LIST = result(declare(["index_name", TEXT], ["table_name", TEXT], ["options", MAP_OPTIONS]), [
+  { index_name: "customers_by_city", table_name: "customers", options: { target: "city" } },
+  { index_name: "customers_by_tag", table_name: "customers", options: { target: "keys(tags)" } },
+  { index_name: "orders_by_amount", table_name: "orders", options: { class_name: "sai", target: "amount" } },
+]);
+
+/** `answer()` takes no argument, and `render` is overloaded on `int` and `text`. */
+const OBJECT_FUNCTION_LIST = result(declare(["function_name", TEXT], ["argument_types", LIST_TEXT]), [
+  { function_name: "answer", argument_types: [] },
+  { function_name: "render", argument_types: ["int"] },
+  { function_name: "render", argument_types: ["text"] },
+  { function_name: "sum_state", argument_types: ["int", "int"] },
+]);
+
+const OBJECT_AGGREGATE_LIST = result(declare(["aggregate_name", TEXT], ["argument_types", LIST_TEXT]), [
+  { aggregate_name: "total", argument_types: ["int"] },
+]);
+
+const OBJECT_TRIGGER_LIST = result(declare(["trigger_name", TEXT], ["table_name", TEXT]), [
+  { trigger_name: "probe_audit", table_name: "customers" },
+]);
+
+/** `probe.customers`, verbatim: `position` is -1 for every regular column. */
+const CUSTOMERS_COLUMN_LIST = result(
+  declare(["column_name", TEXT], ["type", TEXT], ["kind", TEXT], ["position", INT], ["clustering_order", TEXT]),
+  [
+    { column_name: "city", type: "text", kind: "regular", position: -1, clustering_order: "none" },
+    { column_name: "home", type: "frozen<address>", kind: "regular", position: -1, clustering_order: "none" },
+    { column_name: "id", type: "int", kind: "partition_key", position: 0, clustering_order: "none" },
+    { column_name: "name", type: "text", kind: "regular", position: -1, clustering_order: "none" },
+    { column_name: "tags", type: "map<text, text>", kind: "regular", position: -1, clustering_order: "none" },
+  ],
+);
+
+const TYPE_FIELD_LIST = result(declare(["field_names", LIST_TEXT], ["field_types", LIST_TEXT]), [
+  { field_names: ["street", "city", "postcode"], field_types: ["text", "text", "text"] },
+]);
+
+/** The catalog answers a healthy object-surface read gets, on top of `healthyReplies()`. */
+function objectReplies(overrides: Record<string, Reply> = {}): Record<string, Reply> {
+  return {
+    ...healthyReplies(),
+    [CASSANDRA_KEYSPACE_LIST_CQL]: KEYSPACE_LIST,
+    [cassandraObjectListCql(KEYSPACE, "table")!]: OBJECT_TABLE_LIST,
+    [cassandraObjectListCql(KEYSPACE, "materialized_view")!]: OBJECT_VIEW_LIST,
+    [cassandraObjectListCql(KEYSPACE, "type")!]: OBJECT_TYPE_LIST,
+    [cassandraObjectListCql(KEYSPACE, "index")!]: OBJECT_INDEX_LIST,
+    [cassandraObjectListCql(KEYSPACE, "function")!]: OBJECT_FUNCTION_LIST,
+    [cassandraObjectListCql(KEYSPACE, "aggregate")!]: OBJECT_AGGREGATE_LIST,
+    [cassandraObjectListCql(KEYSPACE, "trigger")!]: OBJECT_TRIGGER_LIST,
+    [cassandraObjectColumnsCql(KEYSPACE, "customers")]: CUSTOMERS_COLUMN_LIST,
+    [cassandraTypeFieldsCql(KEYSPACE, "address")]: TYPE_FIELD_LIST,
+    ...overrides,
+  };
+}
+
+describe("the object surface declaration", () => {
+  test("declares one keyspace level and the seven kinds CQL has", () => {
+    const capabilities = new CassandraProvider(makeConnection()).getCapabilities();
+
+    expect(capabilities.containerLevels).toEqual([{ id: "schema", label: "Keyspace", labelPlural: "Keyspaces" }]);
+    expect(capabilities.objectKinds?.map((kind) => [kind.id, kind.role])).toEqual([
+      ["table", "relation"],
+      ["materialized_view", "relation"],
+      ["index", "config"],
+      ["type", "config"],
+      ["function", "routine"],
+      ["aggregate", "routine"],
+      ["trigger", "attached"],
+    ]);
+  });
+
+  test("declares no plain view, because CQL has no CREATE VIEW", () => {
+    const capabilities = new CassandraProvider(makeConnection()).getCapabilities();
+
+    expect(capabilities.objectKinds?.some((kind) => kind.id === "view")).toBe(false);
+  });
+
+  test("only a table takes a row write, and only a trigger hangs off one", () => {
+    const capabilities = new CassandraProvider(makeConnection()).getCapabilities();
+    const kinds = capabilities.objectKinds ?? [];
+
+    expect(kinds.filter((kind) => kind.acceptsRowWrites === true).map((kind) => kind.id)).toEqual(["table"]);
+    expect(kinds.filter((kind) => kind.attachedTo !== undefined).map((kind) => [kind.id, kind.attachedTo])).toEqual([
+      ["trigger", "table"],
+    ]);
+  });
+});
+
+describe("the object surface, against the committed fixture", () => {
+  test("satisfies the shared conformance contract", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    await assertObjectSurface(provider, {
+      containers: [[KEYSPACE], ["system_reports"]],
+      kinds: {
+        table: 3,
+        materialized_view: 1,
+        index: 3,
+        type: 1,
+        function: 4,
+        aggregate: 1,
+        trigger: 1,
+      },
+      sampleObject: { path: [KEYSPACE, "customers"], kind: "table" },
+    });
+  });
+
+  test("lists the user keyspaces and marks the session's own, and does NOT hide system_reports", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    const containers = await provider.listContainers!();
+
+    expect(containers).toEqual([
+      { path: [KEYSPACE], name: KEYSPACE, level: 0, isSessionDefault: true },
+      { path: ["system_reports"], name: "system_reports", level: 0, isSessionDefault: false },
+    ]);
+  });
+
+  test("nothing nests under a keyspace, so a parent answers an empty list", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    expect(await provider.listContainers!([KEYSPACE])).toEqual([]);
+    expect(session.asked).toEqual([]);
+  });
+
+  test("a routine is addressed by its argument types, and displayed by its name", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    const functions = await provider.listObjects!([KEYSPACE], "function");
+
+    expect(functions.map((object) => [object.path, object.name])).toEqual([
+      [[KEYSPACE, "answer()"], "answer"],
+      [[KEYSPACE, "render(int)"], "render"],
+      [[KEYSPACE, "render(text)"], "render"],
+      [[KEYSPACE, "sum_state(int,int)"], "sum_state"],
+    ]);
+  });
+
+  test("an aggregate carries the same disambiguated identity", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    expect((await provider.listObjects!([KEYSPACE], "aggregate")).map((object) => object.path)).toEqual([
+      [KEYSPACE, "total(int)"],
+    ]);
+  });
+
+  test("an index is addressed at keyspace level and a trigger under its table", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    expect((await provider.listObjects!([KEYSPACE], "index")).map((object) => object.path)).toEqual([
+      [KEYSPACE, "customers_by_city"],
+      [KEYSPACE, "customers_by_tag"],
+      [KEYSPACE, "orders_by_amount"],
+    ]);
+    expect((await provider.listObjects!([KEYSPACE], "trigger")).map((object) => object.path)).toEqual([
+      [KEYSPACE, "customers", "probe_audit"],
+    ]);
+  });
+
+  test("describes a table with its columns in key order and its indexes", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    const detail = await provider.describeObject!([KEYSPACE, "customers"], "table");
+
+    expect(detail.columns.map((column) => [column.name, column.type, column.isPrimary])).toEqual([
+      ["id", "int", true],
+      ["city", "text", false],
+      ["home", "frozen<address>", false],
+      ["name", "text", false],
+      ["tags", "map<text, text>", false],
+    ]);
+    expect(detail.indexes).toEqual([
+      { name: "customers_by_city", columns: ["city"], unique: false },
+      { name: "customers_by_tag", columns: ["keys(tags)"], unique: false },
+    ]);
+    expect(detail.foreignKeys).toEqual([]);
+  });
+
+  test("describes a user-defined type as its declared fields", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    const detail = await provider.describeObject!([KEYSPACE, "address"], "type");
+
+    expect(detail.columns).toEqual([
+      { name: "street", type: "text", nullable: true, isPrimary: false },
+      { name: "city", type: "text", nullable: true, isPrimary: false },
+      { name: "postcode", type: "text", nullable: true, isPrimary: false },
+    ]);
+    expect(detail.indexes).toEqual([]);
+  });
+
+  test("describes an index as its own definition, target and all", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    const detail = await provider.describeObject!([KEYSPACE, "orders_by_amount"], "index");
+
+    expect(detail.columns).toEqual([]);
+    expect(detail.indexes).toEqual([{ name: "orders_by_amount", columns: ["amount"], unique: false }]);
+  });
+
+  test("a routine and a trigger describe without a round trip", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    expect(await provider.describeObject!([KEYSPACE, "render(int)"], "function")).toEqual({
+      path: [KEYSPACE, "render(int)"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    expect(await provider.describeObject!([KEYSPACE, "customers", "probe_audit"], "trigger")).toEqual({
+      path: [KEYSPACE, "customers", "probe_audit"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    expect(session.asked).toEqual([]);
+  });
+
+  test("the count and the listing read ONE statement per kind, so they cannot drift", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    await provider.countObjects!([KEYSPACE]);
+    const counting = [...session.asked];
+    session.asked.length = 0;
+    await provider.listObjects!([KEYSPACE], "index");
+
+    expect(counting).toContain(session.asked[0]);
+  });
+
+  test("a refused catalog read reports the server's own sentence against every kind", async () => {
+    const refusal = responseError(8448, "User probe has no SELECT permission on <table system_schema.tables>");
+    const { provider } = await connectedProvider(
+      objectReplies({ [cassandraObjectListCql(KEYSPACE, "table")!]: refusal }),
+    );
+
+    const counts = await provider.countObjects!([KEYSPACE]);
+
+    expect(Object.values(counts).every((count) => "unavailable" in count)).toBe(true);
+    expect(counts.table).toEqual({
+      unavailable: "User probe has no SELECT permission on <table system_schema.tables>",
+    });
+  });
+
+  test("an undeclared kind is refused by name rather than answered empty", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    await expect(provider.listObjects!([KEYSPACE], "sequence")).rejects.toThrow(/declares no object kind "sequence"/);
+    await expect(provider.describeObject!([KEYSPACE, "x"], "sequence")).rejects.toThrow(
+      /declares no object kind "sequence"/,
+    );
+  });
+
+  test("a container path of the wrong length is refused rather than read", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    await expect(provider.countObjects!([])).rejects.toThrow(/container path is \[keyspace\]/);
+    await expect(provider.listObjects!([KEYSPACE, "extra"], "table")).rejects.toThrow(/container path is \[keyspace\]/);
+  });
+
+  test("an object path of the wrong depth is refused, per kind", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    await expect(provider.describeObject!([KEYSPACE], "table")).rejects.toThrow(/"table" path is \[keyspace, name\]/);
+    await expect(provider.describeObject!([KEYSPACE, "probe_audit"], "trigger")).rejects.toThrow(
+      /"trigger" path is \[keyspace, table, name\]/,
+    );
+  });
+});
+
+/**
+ * Standing ruling 5g, pinned on a ONE-LEVEL engine.
+ *
+ * Cassandra declares a single container level, so `container[0]`, `path[0]` and
+ * `container.length !== 1` are all behaviour-identical to the derived spellings here
+ * and this provider's own fixture can never tell them apart. Swapping a TWO-level
+ * declaration in through `getCapabilities` can, and it is driven all the way to a
+ * BOUND VALUE rather than to a refusal: a test that stops at the refusal path is
+ * exactly how the third spelling of this defect survived two providers.
+ */
+describe("the container derivation, under a two-level declaration", () => {
+  const TWO_LEVELS = [
+    { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+    { id: "schema", label: "Keyspace", labelPlural: "Keyspaces" },
+  ] as const;
+
+  function twoLevel(provider: CassandraProvider): void {
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({ ...real, containerLevels: TWO_LEVELS });
+  }
+
+  test("listObjects binds the SCHEMA segment, not the first one", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    twoLevel(provider);
+    session.asked.length = 0;
+
+    const objects = await provider.listObjects!(["ring", KEYSPACE], "table");
+
+    expect(session.asked).toEqual([cassandraObjectListCql(KEYSPACE, "table")!]);
+    expect(objects.map((object) => object.path)).toEqual([
+      ["ring", KEYSPACE, "customers"],
+      ["ring", KEYSPACE, "events"],
+      ["ring", KEYSPACE, "orders"],
+    ]);
+  });
+
+  test("describeObject binds the SCHEMA segment and the LAST segment", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    twoLevel(provider);
+    session.asked.length = 0;
+
+    const detail = await provider.describeObject!(["ring", KEYSPACE, "customers"], "table");
+
+    expect(session.asked).toContain(cassandraObjectColumnsCql(KEYSPACE, "customers"));
+    expect(detail.columns.map((column) => column.name)).toEqual(["id", "city", "home", "name", "tags"]);
+  });
+
+  test("countObjects accepts the two-level path and counts it", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+    twoLevel(provider);
+
+    expect(await provider.countObjects!(["ring", KEYSPACE])).toMatchObject({ table: { count: 3 } });
+  });
+});
+
+describe("the object surface, at its edges", () => {
+  test("an empty keyspace answers zero for every declared kind rather than dropping the folder", async () => {
+    const empty = Object.fromEntries(
+      (new CassandraProvider(makeConnection()).getCapabilities().objectKinds ?? []).map((kind) => [
+        cassandraObjectListCql("system_reports", kind.id)!,
+        result(declare(["keyspace_name", TEXT]), []),
+      ]),
+    );
+    const { provider } = await connectedProvider(objectReplies(empty));
+
+    expect(await provider.countObjects!(["system_reports"])).toEqual({
+      table: { count: 0 },
+      materialized_view: { count: 0 },
+      index: { count: 0 },
+      type: { count: 0 },
+      function: { count: 0 },
+      aggregate: { count: 0 },
+      trigger: { count: 0 },
+    });
+  });
+
+  test("a kind with no catalog is refused by name rather than answered empty", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [...(real.objectKinds ?? []), { id: "sequence", role: "relation", label: "S", labelPlural: "S" }],
+    });
+
+    await expect(provider.listObjects!([KEYSPACE], "sequence")).rejects.toThrow(/has no statement that lists it/);
+    await expect(provider.describeObject!([KEYSPACE, "s"], "sequence")).rejects.toThrow(
+      /has no statement that describes it/,
+    );
+    // It is still ANSWERED FOR, because the conformance contract's first invariant is
+    // that every declared kind appears in `countObjects`. It is answered unavailable
+    // rather than zero: nobody measured a zero here.
+    expect((await provider.countObjects!([KEYSPACE])).sequence).toEqual({
+      unavailable: 'Cassandra has no statement that lists the kind "sequence"',
+    });
+  });
+
+  test("cassandraObjectListCql answers nothing for an inherited property name", () => {
+    expect(cassandraObjectListCql(KEYSPACE, "toString")).toBeUndefined();
+    expect(cassandraObjectListCql(KEYSPACE, "constructor")).toBeUndefined();
+  });
+
+  test("a declaration with no keyspace level is refused, not read as segment zero", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [{ id: "catalog", label: "Catalog", labelPlural: "Catalogs" }],
+    });
+
+    await expect(provider.countObjects!([KEYSPACE])).rejects.toThrow(/needs a "schema" container level/);
+  });
+
+  test("an object that is not there is reported by name rather than as an empty shell", async () => {
+    const { provider } = await connectedProvider(
+      objectReplies({
+        [cassandraObjectColumnsCql(KEYSPACE, "ghost")]: result(declare(["column_name", TEXT]), []),
+        [cassandraTypeFieldsCql(KEYSPACE, "ghost")]: result(declare(["field_names", LIST_TEXT]), []),
+      }),
+    );
+
+    await expect(provider.describeObject!([KEYSPACE, "ghost"], "table")).rejects.toThrow(
+      /No Cassandra table named ghost in probe/,
+    );
+    await expect(provider.describeObject!([KEYSPACE, "ghost"], "type")).rejects.toThrow(
+      /No Cassandra type named ghost in probe/,
+    );
+    await expect(provider.describeObject!([KEYSPACE, "ghost"], "index")).rejects.toThrow(
+      /No Cassandra index named ghost in probe/,
+    );
+  });
+
+  test("comparePaths orders by segment, so a prefix sorts above what nests under it", () => {
+    expect(comparePaths(["probe", "orders"], ["probe", "orders", "stamp"])).toBeLessThan(0);
+    expect(comparePaths(["probe", "orders", "stamp"], ["probe", "orders"])).toBeGreaterThan(0);
+    // The pair `JSON.stringify` gets wrong: `,` (0x2C) is below `]` (0x5D), so a joined
+    // sort puts the deeper path first and a trigger above the table it hangs off.
+    expect(
+      [
+        ["probe", "orders", "a"],
+        ["probe", "orders"],
+      ].sort(comparePaths),
+    ).toEqual([
+      ["probe", "orders"],
+      ["probe", "orders", "a"],
+    ]);
+    expect(comparePaths(["probe", "a"], ["probe", "b"])).toBeLessThan(0);
+    expect(comparePaths(["probe", "b"], ["probe", "a"])).toBeGreaterThan(0);
+    expect(comparePaths(["probe", "a"], ["probe", "a"])).toBe(0);
   });
 });

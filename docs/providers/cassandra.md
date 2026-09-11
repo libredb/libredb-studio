@@ -710,7 +710,168 @@ the view list is empty and the tree shows tables only. That is a property of the
 read — which is why the list is read rather than omitted, and why this paragraph exists rather than a
 "Views" node that is always empty.
 
-### 6.4 `DESCRIBE` works, and is not needed
+### 6.4 The object surface (#789)
+
+`getSchema()` above answers one flat table list. The object surface answers a lazy, per-kind tree
+through four methods: `listContainers`, `countObjects`, `listObjects` and `describeObject(path, kind)`.
+It lives in [`objects.ts`](../../src/lib/db/providers/sql/cassandra/objects.ts) and it reads the
+ordinary queryable `system_schema` keyspace, through the same transport seam everything else here uses.
+
+Everything in this section was measured on 2026-09-11 against a live Apache Cassandra 5.0.9 holding
+the committed fixture, [`docker/cassandra-init/01-object-fixture.cql`](../../docker/cassandra-init/01-object-fixture.cql).
+The recipe that applies it is in [§10](#10-testing), so every claim below can be re-measured.
+
+#### The declaration
+
+One container level, the keyspace, and seven kinds:
+
+| Kind | Role | Catalog | Path |
+|---|---|---|---|
+| `table` | relation, `acceptsRowWrites` | `system_schema.tables` | `[keyspace, table]` |
+| `materialized_view` | relation | `system_schema.views` | `[keyspace, view]` |
+| `index` | config | `system_schema.indexes` | `[keyspace, index]` |
+| `type` | config | `system_schema.types` | `[keyspace, type]` |
+| `function` | routine | `system_schema.functions` | `[keyspace, name(argtypes)]` |
+| `aggregate` | routine | `system_schema.aggregates` | `[keyspace, name(argtypes)]` |
+| `trigger` | attached to `table` | `system_schema.triggers` | `[keyspace, table, trigger]` |
+
+There is **no `view` kind**, because CQL has no `CREATE VIEW`: the only view it has is the
+materialized one. There is no `procedure` kind either, because CQL has no stored procedure. Neither is
+declared and answered zero: a declared kind draws a folder, and a folder for a concept the engine does
+not have is a lie its 0 badge makes look like a fact.
+
+Only `table` takes a row write. A materialized view refuses every one of them (`Cannot directly modify
+a materialized view`), and the other five kinds have no rows at all. The engine-wide
+`supportsInlineRowEdit: false` is a separate fact about the results grid's guessed `WHERE` clause
+([§9](#9-capabilities--labels)) and is deliberately not conjoined with the per-kind one.
+
+#### Why `trigger` IS declared, and what it costs to have one
+
+The reading that would drop it is that a trigger's body is a Java class, which this product cannot
+show. The engine disagrees: `CREATE TRIGGER` is in the grammar, `system_schema.triggers` holds a real
+row per trigger carrying its base table and its class, and the fixture creates one and reads it back.
+
+What is true is that the class must already be **loadable on the node**, so creating one is an
+operator step rather than a statement:
+
+```bash
+# The source is committed beside the fixture; no jar is.
+javac --release 17 -cp apache-cassandra-5.0.9.jar -d classes docker/cassandra-init/NoopTrigger.java
+jar cf noop-trigger.jar -C classes .
+docker cp noop-trigger.jar libredb-cassandra:/etc/cassandra/triggers/
+docker exec libredb-cassandra nodetool reloadtriggers
+docker exec libredb-cassandra cqlsh -e \
+  "CREATE TRIGGER probe_audit ON probe.customers USING 'probe.NoopTrigger';"
+```
+
+`nodetool reloadtriggers` is load-bearing: without it the `CREATE TRIGGER` answers `Trigger class
+'probe.NoopTrigger' couldn't be loaded` (measured, and measured again after the reload, where it
+succeeds). None of that makes a trigger a thing the engine does not have; it makes it a thing an
+operator installs. Withholding the folder would hide an object somebody created. Phase 1 shows names
+rather than bodies anyway, so no kind here declares `hasSource`.
+
+#### An index is addressed by keyspace; a trigger is not
+
+The two kinds look alike in the catalog and are addressed differently, because the **engine** treats
+their names differently. Both measured:
+
+| Statement | Answer |
+|---|---|
+| `CREATE INDEX customers_by_city ON probe.events (payload)` while the name is taken on `probe.customers` | `Index 'customers_by_city' already exists` |
+| `DROP INDEX probe.customers_by_city` | Accepted; it names no table |
+| `CREATE TRIGGER probe_audit ON probe.orders` while `probe_audit` exists on `probe.customers` | Accepted |
+
+So an index name is unique per keyspace and an index is a container-level object, which is why
+Cassandra is one of the three engines in #789 that declares the kind at all. A trigger name is unique
+only per table, so a trigger nests under its base table and declares `attachedTo: "table"`. This
+provider therefore has **mixed path depth** across kinds, which is what `comparePaths` sorts
+segment by segment rather than by a joined string.
+
+#### A routine is addressed by its argument types
+
+`system_schema.functions` is keyed `((keyspace_name), function_name, argument_types)`, and the fixture
+holds two `render` rows, `['int']` and `['text']`. The name alone therefore addresses two objects, and
+the last path segment carries the argument-type list instead: `render(int)`, `render(text)`,
+`sum_state(int,int)` and — for a function taking none — `answer()`. Parameter **names** are
+deliberately not in it: they are in `argument_names`, and a rename would otherwise change an object's
+identity while overload resolution never depends on them. This is the same form PostgreSQL settled on,
+for the same reason. `DatabaseObject.name` stays the bare routine name, so the tree labels it `render`
+and addresses it `render(int)`. `system_schema.aggregates` is keyed identically and gets the same
+treatment.
+
+#### A system keyspace is excluded by exact NAME, never by a prefix
+
+`CREATE KEYSPACE system_reports` **succeeds** (measured), so a `system%` prefix rule would hide a
+keyspace a person created — the invisible absence standing behind #789's worst class of defect. The
+provider carries an exact list: Cassandra 5.0's own five system keyspaces plus the two virtual ones,
+`system_views` and `system_virtual_schema`, which have never appeared in `system_schema.keyspaces`
+(measured: seven rows on the fixture node, neither among them) and cost nothing to carry. The fixture
+creates `system_reports` precisely so the prefix spelling stays refuted rather than merely
+unattractive, and the test asserts that the container listing **shows** it.
+
+The exclusion is applied in TypeScript rather than in the statement, because `keyspace_name` is the
+partition key and CQL has no `NOT IN` over one: filtering server-side would need `ALLOW FILTERING` on
+a catalog read.
+
+`isSessionDefault` compares against the connection's own keyspace. CQL has no `currentKeyspace()` and
+`system.local` carries no session state, so there is no server-side answer to prefer over the one the
+driver was handed.
+
+#### Nothing branches on `system_schema.indexes.kind`
+
+The fixture holds `COMPOSITES` (a plain secondary index, and one over a map's keys) and `CUSTOM` (a
+`sai` Storage Attached Index) in one keyspace. Every row of that catalog is an index, so every row is
+listed. A vocabulary derived from whichever kinds a fixture happened to hold would lose every other
+one, which is exactly how an object becomes invisible in the tree while the badge still agrees with
+the folder.
+
+`options.target` is carried verbatim, so an index over a map's keys reports `keys(tags)` rather than
+`tags`: collapsing it would name a column that is not what the index covers.
+
+#### `countObjects()` and `listObjects()` issue the SAME statement
+
+CQL has no `UNION` and no join, so the count cannot be one kind-tagged subquery the way ClickHouse's
+is. The count is instead the **number of rows the listing returns**, from the same builder and the
+same statement text. There is no second `WHERE` clause for a count and a listing to drift apart in,
+which is the seam Oracle, MySQL and ClickHouse each got wrong on a first pass. The catalogs are a
+handful of rows, so reading them rather than `COUNT(*)` costs nothing worth the risk.
+
+The counts record is built from the **declaration**, not from the rows a catalog returned: the loop is
+over the declared kinds, so every declared kind is written exactly once whatever the catalog answered,
+and a declared-and-empty kind keeps its `{ count: 0 }` badge instead of vanishing. A refused read
+carries the server's own sentence verbatim under `unavailable`, never a zero — measured with a
+least-privilege role, `system_schema` is readable for every table in every keyspace, so a denial there
+is abnormal and an empty keyspace would hide it.
+
+#### `describeObject()` takes the KIND, and the kind decides everything
+
+Nothing reads the name to work out what it is holding.
+
+- a **table** or a **materialized view** reads `system_schema.columns` for its columns, ordered by the
+  rule [§6.1](#61-declaration-order-is-not-recoverable) measured, and `system_schema.indexes` for the
+  indexes that reach it. An index is a first-class object here *and* an attribute of the table it
+  covers, and both are true at once.
+- a **type** reports its declared fields as columns. `field_names` and `field_types` are parallel
+  lists on one row rather than a row per field, so they are zipped in TypeScript; every field is
+  nullable and none is primary, because a UDT declares no key and any field of a stored value may be
+  absent.
+- an **index** reports no columns and one index: its own definition, target and all.
+- a **function**, an **aggregate** and a **trigger** answer three empty arrays **without a round
+  trip**. A routine has no columns and neither has a trigger; that is a true fact about the kind
+  rather than a failed read.
+
+`foreignKeys` is always `[]` for the same reason [§6.2](#62-indexes-and-the-one-thing-they-never-are)
+gives.
+
+#### Paths are derived, never indexed positionally
+
+The keyspace segment comes from the declared `ContainerLevelSpec` whose id is `schema`, the object's
+own name is the last segment, and the expected depth comes from `containerDepth()`. Cassandra declares
+one level, so `path[0]` would be behaviour-identical here and silently wrong on the five two-level
+engines that copy this file. The suite pins it anyway, by swapping a two-level declaration in through
+`getCapabilities` and driving it all the way to a **bound value** rather than to a refusal.
+
+### 6.5 `DESCRIBE` works, and is not needed
 
 `DESCRIBE TABLE`, `DESCRIBE KEYSPACE`, `DESCRIBE KEYSPACES` and `DESCRIBE CLUSTER` all work over the
 native protocol on 5.0 and return a full `create_statement` — the complete DDL including every `WITH`
@@ -924,11 +1085,26 @@ CQL drifts has to fail there, not quietly report no rows.
 docker compose -f database-compose.yml up -d cassandra
 # READINESS TAKES ABOUT 206 SECONDS FROM COLD on this image. Do not write a fixed sleep;
 # wait for the healthcheck (`nodetool status | grep -q '^UN'`).
-docker compose -f database-compose.yml exec cassandra cqlsh -e "
-  CREATE KEYSPACE probe WITH replication = {'class':'SimpleStrategy','replication_factor':1};
-  CREATE TABLE probe.customers (id int PRIMARY KEY, name text, country text);
-  CREATE INDEX customers_country_idx ON probe.customers (country);"
+until docker exec libredb-cassandra nodetool status | grep -q '^UN'; do sleep 5; done
+# THE IMAGE HAS NO INIT-SCRIPT DIRECTORY: its entrypoint runs `cassandra -f` and never scans a
+# mounted folder, and the node is not accepting CQL when the entrypoint starts. The compose
+# service mounts the fixture read-only so this one command can apply it.
+docker exec libredb-cassandra cqlsh -f /docker-entrypoint-initdb.d/01-object-fixture.cql
 ```
+
+That builds keyspace `probe` with three tables, a materialized view, three indexes of two different
+catalog kinds, a user-defined type, four functions including an overloaded pair, an aggregate — and a
+keyspace called `system_reports`, which exists so the "exact name, never a prefix" measurement in
+[§6.4](#64-the-object-surface-789) stays refutable. The **trigger** needs the extra operator step in
+that section, because its class has to be loadable on the node first.
+
+The compose service also rewrites two settings into `cassandra.yaml` before the node starts, and
+without them this recipe measures a configuration rather than an engine: `materialized_views_enabled`
+and `user_defined_functions_enabled` both ship **disabled** in 5.0, so `CREATE MATERIALIZED VIEW`
+answers *"Materialized views are disabled. Enable in cassandra.yaml to use."* and `CREATE FUNCTION`
+answers *"User-defined functions are disabled in cassandra.yaml - set
+user_defined_functions_enabled=true to enable"*. Cassandra logs an experimental warning beside the
+first, which is the engine's own wording rather than a problem with the service.
 
 Then connect with host `localhost`, port `9042`, keyspace `probe`, local data centre `datacenter1`.
 

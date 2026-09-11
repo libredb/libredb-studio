@@ -379,6 +379,15 @@ services:
     environment: *druid-env
     volumes:
       - druid_router_var:/opt/druid/var
+      # The object-surface fixture (#789). Druid's image has no init-script directory
+      # and Druid has no CREATE statement at all, so the fixture is a lookup map plus
+      # three ingestion task specs and a script that applies them:
+      #
+      #   docker exec libredb-druid-router bash /opt/druid-init/apply.sh
+      #
+      # Mounted on the Router because the Router fronts the SQL endpoint AND, through
+      # the management proxy, the Coordinator and Overlord APIs the fixture needs.
+      - ./docker/druid-init:/opt/druid-init:ro
     ports:
       - "8888:8888"
     depends_on:
@@ -596,6 +605,24 @@ services:
     image: cassandra:5.0.9
     container_name: libredb-cassandra
     restart: unless-stopped
+    # TWO SETTINGS THAT SHIP DISABLED, rewritten into cassandra.yaml before the node
+    # starts. Without them this service measures a CONFIGURATION rather than an engine
+    # (issue #789): `CREATE MATERIALIZED VIEW` answers "Materialized views are disabled.
+    # Enable in cassandra.yaml to use." and `CREATE FUNCTION` answers "User-defined
+    # functions are disabled in cassandra.yaml - set user_defined_functions_enabled=true
+    # to enable", so the object fixture would build neither and the tree would show two
+    # empty folders that look like facts about Cassandra.
+    #
+    # A sed rather than a mounted cassandra.yaml: the file is ~2000 lines and version
+    # specific, so a copy pinned here would silently strip whatever 5.0.10 adds. The
+    # image's own entrypoint is still what starts the node. Cassandra 5.0 logs an
+    # experimental warning beside the first setting, which is the engine's own wording
+    # and not a problem with this service.
+    command: >
+      bash -c "sed -i
+      -e 's/^materialized_views_enabled:.*/materialized_views_enabled: true/'
+      -e 's/^user_defined_functions_enabled:.*/user_defined_functions_enabled: true/'
+      /etc/cassandra/cassandra.yaml && exec docker-entrypoint.sh cassandra -f"
     environment:
       CASSANDRA_CLUSTER_NAME: libredb-probe
       # 2G of a 4G limit. The image otherwise sizes the heap from the HOST's memory,
@@ -622,9 +649,25 @@ services:
       timeout: 10s
       retries: 30
       start_period: 60s
-    # No seed sidecar: the provider's live pass creates its own keyspace. The gate-4
-    # probe used `probe` with customers (500 rows), orders (2000), events (10
-    # partitions x 50 clustering rows), a secondary index and a 28-column type matrix.
+    volumes:
+      # THE IMAGE HAS NO INIT-SCRIPT DIRECTORY. Its entrypoint runs `cassandra -f` and
+      # never scans a mounted folder, and the node is not accepting CQL at the moment
+      # the entrypoint starts anyway. The mount puts the fixture INSIDE the container so
+      # it can be applied by hand once `nodetool status` reports UN:
+      #
+      #   docker exec libredb-cassandra cqlsh -f \
+      #     /docker-entrypoint-initdb.d/01-object-fixture.cql
+      #
+      # The full recipe, including the optional trigger step, is in
+      # docs/providers/cassandra.md.
+      - ./docker/cassandra-init:/docker-entrypoint-initdb.d:ro
+    # No seed sidecar, because there is nothing for one to hook into: see the volume
+    # above. The object fixture (issue #789) builds keyspace `probe` with three tables, a
+    # materialized view, three indexes of two different catalog kinds, a user-defined
+    # type, four functions including an overloaded pair, an aggregate and - after the
+    # documented trigger step - one trigger. It also creates a keyspace called
+    # `system_reports`, which exists to keep the "a system keyspace is excluded by exact
+    # name, never by a `system%` prefix" measurement refutable.
 
   # ==========================================================================
   # Wire-compatible engines (issue #424, Phase 0)

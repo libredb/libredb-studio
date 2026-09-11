@@ -451,7 +451,12 @@ function toColumnSchema(row: CassandraRow): ColumnSchema {
   };
 }
 
-function tableColumns(rows: CassandraRow[]): ColumnSchema[] {
+/**
+ * Exported because the object surface describes a table and a materialized view with
+ * the same ordering rule (#789): partition key, then clustering, then the rest by name.
+ * One definition rather than two spellings of a measured rule.
+ */
+export function cassandraTableColumns(rows: CassandraRow[]): ColumnSchema[] {
   return rows
     .slice()
     .sort((left, right) => {
@@ -498,7 +503,7 @@ export async function getSchema(transport: CassandraTransport, keyspace: string)
 
   return names.map((name) => ({
     name,
-    columns: tableColumns(columns.rows.filter((row) => readText(row.table_name) === name)),
+    columns: cassandraTableColumns(columns.rows.filter((row) => readText(row.table_name) === name)),
     indexes: indexes.rows
       .filter((row) => readText(row.table_name) === name)
       .map((row) => ({

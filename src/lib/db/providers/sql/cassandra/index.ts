@@ -54,12 +54,16 @@ import { SQLBaseProvider } from "../sql-base";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import {
   type ActiveSessionDetails,
+  type Container,
   type DatabaseConnection,
+  type DatabaseObject,
   type DatabaseOverview,
   type HealthInfo,
+  type KindCount,
   type IndexStats,
   type MaintenanceResult,
   type MaintenanceType,
+  type ObjectDetail,
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
@@ -91,6 +95,14 @@ import {
   getSlowQueries as readSlowQueries,
   readServerFacts,
 } from "./introspect";
+import {
+  CASSANDRA_CONTAINER_LEVELS,
+  CASSANDRA_OBJECT_KINDS,
+  countObjects as readObjectCounts,
+  describeObject as readObjectDetail,
+  listContainers as readContainers,
+  listObjects as readObjects,
+} from "./objects";
 import { CassandraTransportError, type CassandraTransport } from "./transport";
 
 // ============================================================================
@@ -268,6 +280,11 @@ export class CassandraProvider extends SQLBaseProvider {
       // probe.customers WHERE id = 1;` returns the row, so the `;` the generators
       // already emit is valid CQL.
       schemaRefreshPattern: SCHEMA_REFRESH_PATTERN,
+      // One level and seven kinds, every one of them measured against a live 5.0.9
+      // holding the committed fixture. The declaration and the four methods that read
+      // it live in `objects.ts`, which carries the measurements (issue #789).
+      containerLevels: CASSANDRA_CONTAINER_LEVELS,
+      objectKinds: CASSANDRA_OBJECT_KINDS,
     };
   }
 
@@ -623,6 +640,40 @@ export class CassandraProvider extends SQLBaseProvider {
     const transport = this.requireTransport();
     const keyspace = this.requireKeyspace();
     return this.guarded(() => readSchema(transport, keyspace));
+  }
+
+  // ==========================================================================
+  // Object surface (issue #789)
+  // ==========================================================================
+
+  /**
+   * The four methods are thin on purpose: each one resolves the transport, hands
+   * `objects.ts` the DECLARATION rather than a hardcoded shape, and maps a transport
+   * fault the way every other catalog read here does.
+   *
+   * `getCapabilities()` is called rather than read from a field, so a test that swaps a
+   * two-level declaration in reaches the same derivation the real one does - which is
+   * how standing ruling 5g's positional-index class is pinned on a one-level engine.
+   */
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
+    const transport = this.requireTransport();
+    const keyspace = this.requireKeyspace();
+    return this.guarded(() => readContainers(transport, keyspace, parent));
+  }
+
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    const transport = this.requireTransport();
+    return this.guarded(() => readObjectCounts(transport, this.getCapabilities(), container));
+  }
+
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    const transport = this.requireTransport();
+    return this.guarded(() => readObjects(transport, this.getCapabilities(), container, kind));
+  }
+
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    const transport = this.requireTransport();
+    return this.guarded(() => readObjectDetail(transport, this.getCapabilities(), path, kind));
   }
 
   // ==========================================================================
