@@ -1523,11 +1523,15 @@ describe("SQLiteProvider object surface (#789)", () => {
 
     const orders = await objects.describeObject(["orders"], "table");
 
+    // BY NAME, which is this read's own `ORDER BY` and not `pragma_index_list`'s: measured,
+    // that pragma answers in reverse creation order, so it would put `idx_orders_doubled`
+    // first. The bulk read has to order by the object to group its rows, and two different
+    // orders over one table's indexes is a disagreement between the two surfaces (#789).
     expect(orders.indexes).toEqual([
+      { name: "idx_orders_customer", columns: ["customer_id"], unique: false },
       // The expression index keys `total * 2`, which publishes a null column name, so it
       // carries no columns rather than a fabricated label.
       { name: "idx_orders_doubled", columns: [], unique: false },
-      { name: "idx_orders_customer", columns: ["customer_id"], unique: false },
     ]);
     // The control for the null filter: SQLite really does answer a null name here.
     const keys = (await objects.query("SELECT name FROM pragma_index_info('idx_orders_doubled', 'main')")).rows;
@@ -1823,6 +1827,284 @@ describe("SQLiteProvider object surface (#789)", () => {
     // count from the same rows.
     expect(counts.table).toEqual({ count: 3 });
     expect(Object.keys(counts).sort()).toEqual(["index", "table", "trigger", "view"]);
+  });
+});
+
+describe("SQLiteProvider bulk column read (#789)", () => {
+  let objects: SQLiteProvider;
+
+  afterEach(async () => {
+    if (objects?.isConnected()) await objects.disconnect();
+  });
+
+  /**
+   * Every statement the provider prepared from here on, in order.
+   *
+   * The only way to assert "no round trip at all", which is the claim a kind with no
+   * columns makes, and the only way to assert that the round trips are CONSTANT in the
+   * number of objects rather than one per object - the property this method exists for.
+   * Everything still reaches the real database, so the assertions beside the count are
+   * live answers and not a double's.
+   */
+  function recordPrepares(provider: SQLiteProvider): string[] {
+    const holder = provider as unknown as { db: SQLiteDatabase };
+    const real = holder.db;
+    const seen: string[] = [];
+    holder.db = {
+      exec: (sql: string) => real.exec(sql),
+      close: () => real.close(),
+      prepare: (sql: string) => {
+        seen.push(sql);
+        return real.prepare(sql);
+      },
+    };
+    return seen;
+  }
+
+  test("describes every table in the folder, and each detail is what describeObject answers for the same object", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "table");
+
+    expect(batch.truncated).toBeUndefined();
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["archive"],
+      ["audit_log"],
+      ["customers"],
+      ["notes"],
+      ["orders"],
+      ["sqliteXledger"],
+    ]);
+    // The two readings of the same object, compared whole. One mapper serves both, so a
+    // divergence here is the bulk read spelling a column, an index or a foreign key
+    // differently from the single read of the same table - the defect two mappers cause.
+    for (const detail of batch.details) {
+      expect(detail).toEqual(await objects.describeObject(detail.path, "table"));
+    }
+  });
+
+  test("every described path is one listObjects produced", async () => {
+    objects = await connectedWithObjects();
+
+    const listed = await objects.listObjects([], "table");
+    const batch = await objects.describeObjects([], "table");
+
+    // Both sides come from the provider; nothing here is a path this test typed.
+    expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+  });
+
+  test("a view is described from the same statements a table is", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "view");
+
+    expect(batch.details).toHaveLength(1);
+    expect(batch.details[0]!.path).toEqual(["order_summary"]);
+    expect(batch.details[0]!.columns.map((column) => column.name)).toEqual(["id", "total"]);
+    // Measured: `pragma_index_list` and `pragma_foreign_key_list` both answer zero rows
+    // for a view, so the two reads happen and find nothing rather than being skipped.
+    expect(batch.details[0]!.indexes).toEqual([]);
+    expect(batch.details[0]!.foreignKeys).toEqual([]);
+  });
+
+  test("an index and a trigger answer an empty batch with no round trip at all", async () => {
+    objects = await connectedWithObjects();
+    const prepared = recordPrepares(objects);
+
+    await expect(objects.describeObjects([], "index")).resolves.toEqual({ details: [] });
+    await expect(objects.describeObjects([], "trigger")).resolves.toEqual({ details: [] });
+
+    // Not "no rows came back": no statement was sent. Neither kind has columns on this
+    // engine - measured, `pragma_table_xinfo` answers zero rows for an index name and for
+    // a trigger name - and that is a fact about the KIND, so it is answered from the
+    // declaration and never from the catalog.
+    expect(prepared).toEqual([]);
+    // The control: a kind that DOES have columns still reaches the database.
+    await objects.describeObjects([], "view");
+    expect(prepared.length).toBeGreaterThan(0);
+  });
+
+  test("an undeclared kind raises, naming the engine and the kind", async () => {
+    objects = await connectedWithObjects();
+
+    // Never an empty batch. An undeclared kind is a fact about SQLite and an empty answer
+    // would be a claim about the file.
+    await expect(objects.describeObjects([], "sequence")).rejects.toThrow(/SQLite declares no object kind "sequence"/);
+  });
+
+  test("a container path of the wrong shape raises through the declaration, not a literal depth", async () => {
+    objects = await connectedWithObjects();
+
+    await expect(objects.describeObjects(["main"], "table")).rejects.toThrow(/A SQLite container path is empty/);
+  });
+
+  test("a two-level declaration is accepted and reaches the produced path", async () => {
+    // Standing ruling 5g, driven to a VALUE and not to a refusal. SQLite declares no
+    // container level, so the hardcoded spellings this rule forbids - `container.length
+    // !== 0` here, `[row.name]` in the path builder - are behaviour-identical on the real
+    // engine and only a differently shaped declaration can tell them apart.
+    objects = await connectedWithObjects();
+    spyOn(objects, "getCapabilities").mockReturnValue({
+      ...objects.getCapabilities(),
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+
+    const batch = await objects.describeObjects(["warehouse", "app"], "table");
+
+    // Every path carries both container segments, so the prefix is derived from the
+    // declaration rather than assumed empty.
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["warehouse", "app", "archive"],
+      ["warehouse", "app", "audit_log"],
+      ["warehouse", "app", "customers"],
+      ["warehouse", "app", "notes"],
+      ["warehouse", "app", "orders"],
+      ["warehouse", "app", "sqliteXledger"],
+    ]);
+    // And the shape that WAS valid a moment ago is refused, with the declared level
+    // labels in the sentence.
+    await expect(objects.describeObjects([], "table")).rejects.toThrow(
+      /A SQLite container path is \[catalog, schema\]/,
+    );
+  });
+
+  test("a limit that is not a positive whole number raises rather than clamping", async () => {
+    objects = await connectedWithObjects();
+
+    for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(objects.describeObjects([], "table", limit)).rejects.toThrow(
+        /A SQLite bulk column read limit must be a positive whole number/,
+      );
+    }
+    // Not clamped and not ignored: a 0 would answer nothing while reporting a truncation
+    // the caller never asked for.
+    expect(true).toBe(true);
+  });
+
+  test("a bound that bites reports the caller's own limit, and one that does not never reports", async () => {
+    objects = await connectedWithObjects();
+
+    const bounded = await objects.describeObjects([], "table", 2);
+    expect(bounded.details).toHaveLength(2);
+    expect(bounded.truncated?.limit).toBe(2);
+    expect(bounded.truncated?.reason.length).toBeGreaterThan(0);
+
+    // Exactly as many as the folder holds. `limit + 1` is what the statement carries, so
+    // a saturated read is told from an exact one without a second count.
+    const exact = await objects.describeObjects([], "table", EXPECTED_COUNTS.table);
+    expect(exact.details).toHaveLength(EXPECTED_COUNTS.table);
+    expect(exact.truncated).toBeUndefined();
+
+    const unbounded = await objects.describeObjects([], "table");
+    expect(unbounded.details).toHaveLength(EXPECTED_COUNTS.table);
+    expect(unbounded.truncated).toBeUndefined();
+  });
+
+  test("the bound cuts the engine's own order, and the answer is sorted by path", async () => {
+    objects = await connectedWithObjects();
+
+    const bounded = await objects.describeObjects([], "table", 3);
+
+    // `ORDER BY t.name` in the target, which on SQLite runs under BINARY, the UTF-8 byte
+    // order: measured, `pragma_table_list` answers in no useful order at all without it,
+    // so the bound would otherwise keep an arbitrary three of the six.
+    expect(bounded.details.map((detail) => detail.path)).toEqual([["archive"], ["audit_log"], ["customers"]]);
+    expect(bounded.truncated).toEqual({ limit: 3, reason: bounded.truncated!.reason });
+  });
+
+  test("the engine cuts under BINARY and the answer is sorted by path, and those are two different orders", async () => {
+    // The one probe that can tell the two apart on this engine, and it is a real
+    // disagreement rather than a contrived one. SQLite's `ORDER BY name` runs under
+    // BINARY, the UTF-8 BYTE order, where U+E000 (EE 80 80) sorts below U+1F600
+    // (F0 9F 98 80); JavaScript compares UTF-16 CODE UNITS, where the surrogate 0xD83D
+    // sorts below 0xE000. So the engine's order and `comparePaths`' order are opposite
+    // here, which is why the membership of a bounded cut is the server's and the ORDER of
+    // the answer is ours.
+    const named = new SQLiteProvider(makeSQLiteConfig());
+    await named.connect();
+    try {
+      await named.query('CREATE TABLE "\u{1F600}" (x INTEGER)');
+      await named.query('CREATE TABLE "\uE000" (x INTEGER)');
+
+      const engineOrder = (
+        await named.query(
+          "SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'table'" +
+            " AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name",
+        )
+      ).rows as { name: string }[];
+      expect(engineOrder.map((row) => row.name)).toEqual(["\uE000", "\u{1F600}"]);
+
+      const batch = await named.describeObjects([], "table");
+      expect(batch.details.map((detail) => detail.path)).toEqual([["\u{1F600}"], ["\uE000"]]);
+
+      // And the cut keeps the engine's first, which is the other one.
+      const bounded = await named.describeObjects([], "table", 1);
+      expect(bounded.details.map((detail) => detail.path)).toEqual([["\uE000"]]);
+      expect(bounded.truncated?.limit).toBe(1);
+    } finally {
+      await named.disconnect();
+    }
+  });
+
+  test("the round trips are constant in the number of objects", async () => {
+    objects = await connectedWithObjects();
+    const prepared = recordPrepares(objects);
+
+    const batch = await objects.describeObjects([], "table");
+
+    // Six objects, five statements: the target plus the four detail reads. The whole
+    // reason this method exists is that the caller's alternative was one describeObject
+    // per object, which is 6 x (1 column read + 1 index list + N index reads + 1 foreign
+    // key list) here.
+    expect(batch.details).toHaveLength(6);
+    expect(prepared).toHaveLength(5);
+  });
+
+  test("a generated column survives the bulk read, as it does the single one", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "table");
+    const orders = batch.details.find((detail) => detail.path[0] === "orders")!;
+
+    // `pragma_table_xinfo` and not `pragma_table_info`, which DROPS a generated column in
+    // both spellings. `getSchema()` still reads `table_info` and still loses it; the bulk
+    // read inherits the object model's catalog and not the flat surface's.
+    expect(orders.columns.map((column) => column.name)).toContain("total_with_tax");
+  });
+
+  test("an expression index publishes no fabricated column name", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "table");
+    const orders = batch.details.find((detail) => detail.path[0] === "orders")!;
+
+    // `idx_orders_doubled` keys `total * 2`, whose `index_info` row carries a null name.
+    // A null there is not a column of this object, so it is left out rather than rendered
+    // as a label - and the index itself still appears, with an empty column list.
+    expect(orders.indexes).toEqual([
+      { name: "idx_orders_customer", columns: ["customer_id"], unique: false },
+      { name: "idx_orders_doubled", columns: [], unique: false },
+    ]);
+  });
+
+  test("a foreign key naming no column resolves the parent's primary key", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "table");
+    const orders = batch.details.find((detail) => detail.path[0] === "orders")!;
+
+    // `REFERENCES customers` with no column list answers `to = NULL`, which SQLite reads
+    // as the parent's PRIMARY KEY. `ForeignKeySchema.referencedColumn` is a string, so
+    // the alternative to resolving it is a null in a typed string field.
+    // In `pragma_foreign_key_list`'s own order, which is by its `id` and is the reverse of
+    // the declaration order: both reads carry the same `ORDER BY id, seq`.
+    expect(orders.foreignKeys).toEqual([
+      { columnName: "customer_email", referencedTable: "customers", referencedColumn: "email" },
+      { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
+    ]);
   });
 });
 

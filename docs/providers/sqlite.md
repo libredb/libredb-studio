@@ -465,13 +465,80 @@ For a `table` and a `view`:
 | Foreign keys | `pragma_foreign_key_list(?, ?)` | `referencedTable` is a bare name: SQLite resolves a foreign key's parent inside the same database, so there is no cross-schema case |
 
 `REFERENCES customers` with no column list answers `to = NULL`, which SQLite reads as the parent's
-PRIMARY KEY. `ForeignKeySchema.referencedColumn` is a string, so the parent's key columns are read
-(at most once per parent, and only when some constraint needs them) rather than a null being put in
-a typed string field. A parent with no primary key at all is a schema SQLite accepts and rejects only
-on INSERT (*"foreign key mismatch"*); there is nothing to name, and the field is empty.
+PRIMARY KEY. `ForeignKeySchema.referencedColumn` is a string, so the parent's key column is resolved
+rather than a null being put in a typed string field. It is resolved IN THE SAME STATEMENT, by a
+correlated `(SELECT p.name FROM pragma_table_info(f."table", ?) AS p WHERE p.pk = f.seq + 1)`: `pk` is
+a 1-based rank over the parent's key columns and `seq` is this column's 0-based position inside the
+constraint. The alternative, a read per distinct parent, becomes a second N+1 inside the bulk read
+below, which exists to remove one. A parent with no primary key at all is a schema SQLite accepts and
+rejects only on INSERT (*"foreign key mismatch"*); the subquery answers NULL, there is nothing to
+name, and the field is empty. Measured against `REFERENCES ghost`, a parent that is not there at all
+answers NULL the same way.
+
+Indexes are ordered BY NAME, which is this read's own `ORDER BY` and not `pragma_index_list`'s:
+measured, that pragma answers in reverse creation order. The bulk read has to order by the object to
+group its rows, so leaving this one unordered would have the two surfaces list one table's indexes in
+two different sequences. Creation order is not a fact anything here reads.
 
 Zero columns IS a failed read and raises: SQLite refuses `CREATE TABLE t()`, so every table and every
 view has at least one column and an empty answer means nothing of that name is in `main`.
+
+#### `describeObjects()` describes a whole folder in five statements (#789)
+
+`describeObjects(container, kind, limit?)` answers columns, indexes and foreign keys for EVERY object
+of one kind in `main`, in FIVE round trips whatever the folder holds: the target read plus the four
+detail reads. The single read costs one column read, one index list, one read per index and one
+foreign key list per object, so a folder of 200 tables cost 800. Measured against a 200-table
+`:memory:` database, each table carrying four columns, one index and one foreign key: **3.7 ms for one
+`describeObjects()` against 10.7 ms for 200 `describeObject()` calls**, the same 800 columns, 200
+indexes and 200 foreign keys. The ratio is smaller than on a networked engine for the obvious reason,
+that SQLite is in-process and a round trip here costs a function call rather than a packet.
+
+The five detail statements each join a pragma table-valued function against the same target set, which
+is what makes the count constant rather than per-object: SQLite accepts a TVF argument that references
+a column of the row being joined, so `JOIN pragma_table_xinfo(d.object_name, ?)` runs the pragma once
+per target object inside ONE statement. Measured on `bun:sqlite` 3.53.2.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.** The same pragmas `describeObject()` reads, and the same `PRAGMA table_list` target
+`listObjects()` reads. That matters in one direction: `getSchema()` reads `PRAGMA table_info`, which
+DROPS a generated column, so the flat surface and the object surface really do answer different column
+lists for `orders` and the bulk read inherits the object surface's. MEMBERSHIP comes from the target
+read and never from the column read. Deriving it from the columns would drop an object whose every
+column is hidden, and the folder's listing would then name an object the batch does not carry, which
+is the class of absence standing ruling 5a is about. It is also why the bulk read does not repeat the
+single read's zero-column throw: there an empty answer means nothing of that name is in `main`, here
+the catalog has just said there is.
+
+**Which kinds have no columns.** `index` and `trigger`, which answer `{ details: [] }` with NO round
+trip at all: measured, `pragma_table_xinfo` answers zero rows for an index name and for a trigger
+name. That is the same fact `describeObject()` answers as three empty arrays, and on this engine it
+coincides exactly with `role === "relation"` - which is NOT the general rule, since a MariaDB sequence
+is declared `config` and has eight real columns.
+
+**What bounds the read on the wire.** `LIMIT ?` inside the target CTE, the placeholder BOUND rather
+than interpolated, carrying `limit + 1` so a saturated read is told from an exact one with no second
+count. The extra object is dropped in code and `truncated` carries the CALLER's limit. An unbounded
+call runs a statement with no `LIMIT` clause and can never report truncation. Nothing here caps the
+columns of an object, and nothing invents a bound of its own.
+
+**What orders the cut, and under whose collation.** `ORDER BY t.name` in the target CTE, and it is
+load-bearing twice. Measured: `pragma_table_list` answers in no useful order without it, so a bounded
+read would otherwise keep an arbitrary subset and two calls could keep different ones. And that sort
+runs under BINARY, the UTF-8 BYTE order, which is NOT the order `comparePaths` produces: measured, a
+database holding the two names `U+E000` and `U+1F600` comes back from SQLite as `U+E000, U+1F600`
+(bytes `EE 80 80` below `F0 9F 98 80`) and from a JavaScript sort as `U+1F600, U+E000`, because
+JavaScript compares UTF-16 code units and the surrogate `0xD83D` sorts below `0xE000`. So the
+MEMBERSHIP of a bounded cut is the engine's and the ORDER of the answer is ours, and the two are
+separated deliberately rather than assumed to agree. The four detail statements repeat the same target
+CTE rather than joining a temporary of it, which is safe because a name is unique within a schema, so
+`ORDER BY t.name` is a TOTAL order and all five statements cut the same set.
+
+**Mixed path depth (ruling 5f).** Not in this engine's relation set. `table` and `view` are the kinds
+with columns and both are addressed `[name]` under a zero-level container; `trigger` is the one kind
+here that nests, and it has no columns.
+
 
 #### No `rowCount` and no `sizeBytes` on a listed object
 

@@ -20,6 +20,7 @@ import {
   type IndexSchema,
   type KindCount,
   type ObjectDetail,
+  type ObjectDetailBatch,
   type ObjectKindSpec,
   type TableSchema,
   type QueryResult,
@@ -291,10 +292,17 @@ const OBJECT_COLUMNS_SQL = `
        ORDER BY cid
     `;
 
+// `ORDER BY name`, which `pragma_index_list` does NOT do on its own: measured, it answers
+// in reverse creation order, so `idx_orders_doubled` comes back before
+// `idx_orders_customer`. The bulk read has to order by the object to group its rows, and
+// an order that then differs from this one would make the two surfaces describe the same
+// table's indexes in two different sequences. Creation order is not a fact anybody reads,
+// so both are ordered by name.
 const OBJECT_INDEXES_SQL = `
       SELECT name, "unique"
         FROM pragma_index_list(?, ?)
        WHERE name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+       ORDER BY name
     `;
 
 const OBJECT_INDEX_COLUMNS_SQL = `
@@ -303,21 +311,28 @@ const OBJECT_INDEX_COLUMNS_SQL = `
        ORDER BY seqno
     `;
 
+// The parent's PRIMARY KEY column for a foreign key that names no column, resolved in
+// the same statement. Measured: `REFERENCES customers` (no column list) answers
+// `to = NULL`, which means the parent's primary key, and
+// `ForeignKeySchema.referencedColumn` is a string - so the alternative to resolving it is
+// putting a null in a typed string field.
+//
+// `pk` is a 1-BASED RANK over the parent's key columns and `seq` is the 0-based position
+// of this column inside the constraint, so `p.pk = f.seq + 1` is the parent key column
+// this one references. A correlated subquery rather than a second read per parent,
+// because the same shape then serves the bulk read, where the parents of a whole folder
+// would otherwise be a second N+1 inside the read that exists to remove one. A parent
+// that is not there at all answers NULL, which is the same absence the per-parent read
+// spelled as an out-of-range index (measured against `REFERENCES ghost`).
+//
+// The first placeholder is the SUBQUERY's schema, because SQLite numbers placeholders by
+// the order they APPEAR in the statement text and the select list is written before the
+// FROM clause.
 const OBJECT_FOREIGN_KEYS_SQL = `
-      SELECT id, seq, "table", "from", "to"
-        FROM pragma_foreign_key_list(?, ?)
-       ORDER BY id, seq
-    `;
-
-// The parent's PRIMARY KEY, in declaration order, for a foreign key that names no
-// column. Measured: `REFERENCES customers` (no column list) answers `to = NULL`, which
-// means the parent's primary key, and `ForeignKeySchema.referencedColumn` is a string -
-// so the alternative to resolving it is putting a null in a typed string field.
-const PARENT_KEY_COLUMNS_SQL = `
-      SELECT name
-        FROM pragma_table_info(?, ?)
-       WHERE pk > 0
-       ORDER BY pk
+      SELECT f.id AS id, f.seq AS seq, f."table" AS "table", f."from" AS "from", f."to" AS "to",
+             (SELECT p.name FROM pragma_table_info(f."table", ?) AS p WHERE p.pk = f.seq + 1) AS parent_key
+        FROM pragma_foreign_key_list(?, ?) AS f
+       ORDER BY f.id, f.seq
     `;
 
 /**
@@ -376,13 +391,43 @@ interface ObjectColumnRow {
   pk: number;
 }
 
-/** One foreign key constraint column, as `pragma_foreign_key_list` publishes it. */
+/** One index on an object, as `pragma_index_list` publishes it. */
+interface ObjectIndexRow {
+  name: string;
+  unique: number;
+}
+
+/**
+ * One key column of one index, as `pragma_index_info` publishes it.
+ *
+ * `index_name` is carried on the row rather than held by the caller, so the single read
+ * and the bulk read hand the shared mapper the same shape: the single read reads one
+ * index at a time and tags each row, the bulk read selects the name in SQL.
+ */
+interface ObjectIndexColumnRow {
+  index_name: string;
+  name: string | null;
+}
+
+/**
+ * One foreign key constraint column, as `pragma_foreign_key_list` publishes it, plus the
+ * parent key column `OBJECT_FOREIGN_KEYS_SQL`'s correlated subquery resolved.
+ */
 interface ObjectForeignKeyRow {
   id: number;
   seq: number;
   table: string;
   from: string;
   to: string | null;
+  parent_key: string | null;
+}
+
+/** One object's four row sets, whichever read produced them. */
+interface ObjectDetailRows {
+  readonly columns: readonly ObjectColumnRow[];
+  readonly indexes: readonly ObjectIndexRow[];
+  readonly indexColumns: readonly ObjectIndexColumnRow[];
+  readonly foreignKeys: readonly ObjectForeignKeyRow[];
 }
 
 /**
@@ -466,6 +511,144 @@ function unavailableCounts(ids: readonly string[], error: unknown): Record<strin
   return Object.fromEntries(ids.map((id) => [id, { unavailable: reason } as KindCount]));
 }
 
+/**
+ * The `PRAGMA table_list` types one declared kind covers, and the whole set of kinds the
+ * bulk column read answers for (#789).
+ *
+ * The two `relation` kinds and nothing else. Measured: `pragma_table_xinfo` answers ZERO
+ * rows for an index name and for a trigger name, so those two kinds have no columns at
+ * all on this engine and `describeObjects` answers `{ details: [] }` for them without a
+ * round trip - the same fact `describeObject` answers as three empty arrays.
+ *
+ * The `IN` list is the same vocabulary `LIST_TABLES_SQL` and `LIST_VIEWS_SQL` carry, taken
+ * from SQLite's documentation of `PRAGMA table_list.type` rather than from a fixture
+ * (standing ruling 5a), so the bulk read's target can never be a different population from
+ * the folder's listing.
+ */
+const BULK_RELATION_TYPES: Readonly<Record<string, readonly string[]>> = {
+  table: ["table", "virtual"],
+  view: ["view"],
+};
+
+/** What `ObjectDetailBatch.truncated.reason` says when the caller's bound bites. */
+const BULK_TRUNCATION_REASON = "the caller's limit on one SQLite bulk column read";
+
+/**
+ * The target set of one bulk read: every object of one kind in `main`, in the engine's
+ * own order, optionally cut.
+ *
+ * `ORDER BY t.name` is not decoration. Measured: `pragma_table_list` answers in no useful
+ * order of its own, so without it a bounded read would keep an arbitrary subset and two
+ * calls could keep different ones. The sort runs under BINARY, which is the UTF-8 BYTE
+ * order, and that is NOT the same order `comparePaths` produces: measured, a database
+ * holding the two names U+E000 and U+1F600 comes back from SQLite in that order and from
+ * a JavaScript sort in the other, because JavaScript compares UTF-16 code units. So the
+ * MEMBERSHIP of a bounded cut is the engine's and the ORDER of the answer is ours, and the
+ * two are separated deliberately rather than assumed to agree.
+ *
+ * `LIMIT ?` carries `limit + 1`, so a saturated read is distinguishable from an exact one
+ * without a second count. The bound is bound rather than interpolated, measured accepted
+ * inside a CTE by both drivers.
+ */
+function describedCte(types: readonly string[], bounded: boolean): string {
+  return `WITH described AS (
+        SELECT t.name AS object_name
+          FROM pragma_table_list AS t
+         WHERE t.schema = ?
+           AND t.type IN (${types.map(() => "?").join(", ")})
+           AND t.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+         ORDER BY t.name${bounded ? "\n         LIMIT ?" : ""}
+      )`;
+}
+
+/**
+ * The five statements of one bulk read, which is FIVE round trips for a whole folder
+ * rather than one per object plus one per index.
+ *
+ * Every one of them joins a pragma table-valued function against the SAME `described`
+ * target, which is what makes the count constant: SQLite accepts a TVF argument that
+ * references a column of the row being joined, so `pragma_table_xinfo(d.object_name, ?)`
+ * runs once per target object inside one statement.
+ *
+ * The target read is separate and is what decides MEMBERSHIP. Taking it from the column
+ * read instead would drop an object whose every column is hidden, and the folder's listing
+ * would then name an object the batch does not carry.
+ */
+interface BulkDetailStatements {
+  readonly target: string;
+  readonly columns: string;
+  readonly indexes: string;
+  readonly indexColumns: string;
+  readonly foreignKeys: string;
+  /** How many trailing `MAIN_SCHEMA` binds each statement above takes, in that order. */
+  readonly schemaBinds: readonly [number, number, number, number, number];
+}
+
+function bulkDetailStatements(types: readonly string[], bounded: boolean): BulkDetailStatements {
+  const described = describedCte(types, bounded);
+  return {
+    target: `${described}
+      SELECT d.object_name AS object_name FROM described AS d`,
+    columns: `${described}
+      SELECT d.object_name AS object_name, x.name AS name, x.type AS type,
+             x."notnull" AS "notnull", x.dflt_value AS dflt_value, x.pk AS pk
+        FROM described AS d
+        JOIN pragma_table_xinfo(d.object_name, ?) AS x
+       WHERE x.hidden <> 1
+       ORDER BY d.object_name, x.cid`,
+    indexes: `${described}
+      SELECT d.object_name AS object_name, i.name AS name, i."unique" AS "unique"
+        FROM described AS d
+        JOIN pragma_index_list(d.object_name, ?) AS i
+       WHERE i.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+       ORDER BY d.object_name, i.name`,
+    indexColumns: `${described}, listed AS (
+        SELECT d.object_name AS object_name, i.name AS index_name
+          FROM described AS d
+          JOIN pragma_index_list(d.object_name, ?) AS i
+         WHERE i.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+      )
+      SELECT l.object_name AS object_name, l.index_name AS index_name, c.name AS name
+        FROM listed AS l
+        JOIN pragma_index_info(l.index_name, ?) AS c
+       ORDER BY l.object_name, l.index_name, c.seqno`,
+    foreignKeys: `${described}
+      SELECT d.object_name AS object_name, f.id AS id, f.seq AS seq, f."table" AS "table",
+             f."from" AS "from", f."to" AS "to",
+             (SELECT p.name FROM pragma_table_info(f."table", ?) AS p WHERE p.pk = f.seq + 1) AS parent_key
+        FROM described AS d
+        JOIN pragma_foreign_key_list(d.object_name, ?) AS f
+       ORDER BY d.object_name, f.id, f.seq`,
+    schemaBinds: [0, 1, 1, 2, 2],
+  };
+}
+
+/**
+ * Both forms of all five statements, per kind, built once at module load rather than per
+ * call: the object routes ask for a folder at a time and the text never varies.
+ */
+const BULK_DETAIL_SQL: Readonly<Record<string, BulkDetailStatements>> = Object.fromEntries(
+  Object.entries(BULK_RELATION_TYPES).map(([kind, types]) => [kind, bulkDetailStatements(types, false)]),
+);
+
+const BULK_DETAIL_SQL_BOUNDED: Readonly<Record<string, BulkDetailStatements>> = Object.fromEntries(
+  Object.entries(BULK_RELATION_TYPES).map(([kind, types]) => [kind, bulkDetailStatements(types, true)]),
+);
+
+/** One bulk row, tagged with the object it belongs to. */
+type OfObject<T> = T & { object_name: string };
+
+/** The rows of one bulk read, grouped by the object they describe. */
+function groupByObject<T extends { object_name: string }>(rows: readonly T[]): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const row of rows) {
+    const existing = grouped.get(row.object_name);
+    if (existing === undefined) grouped.set(row.object_name, [row]);
+    else existing.push(row);
+  }
+  return grouped;
+}
+
 /** Which statement lists one kind, and what it binds. */
 const OBJECT_LISTINGS: Readonly<Record<string, { readonly sql: string; readonly params: readonly unknown[] }>> = {
   table: { sql: LIST_TABLES_SQL, params: [MAIN_SCHEMA] },
@@ -518,6 +701,59 @@ export function comparePaths(left: readonly string[], right: readonly string[]):
     if (left[index] > right[index]) return 1;
   }
   return left.length - right.length;
+}
+
+/**
+ * ONE object's detail, from rows, for BOTH the single read and the bulk read (#789).
+ *
+ * One mapper and not two, because two are two chances for `describeObjects` to spell a
+ * column, an index or a foreign key differently from `describeObject` over the same
+ * table, and nothing downstream compares the two answers. Everything this function needs
+ * is on the rows, so the two callers differ only in which statement produced them: the
+ * single read binds one object name, the bulk read joins the same pragmas against a
+ * target set.
+ */
+function objectDetailFromRows(path: readonly string[], rows: ObjectDetailRows): ObjectDetail {
+  const keyColumns = new Map<string, string[]>();
+  for (const row of rows.indexColumns) {
+    // An index on an EXPRESSION publishes a null column name (`cid = -2`), and so does one
+    // that keys the rowid. Those are not columns of this object, so they are left out
+    // rather than rendered as a fabricated label; the index itself still appears, with an
+    // empty column list.
+    if (row.name === null) continue;
+    const existing = keyColumns.get(row.index_name);
+    if (existing === undefined) keyColumns.set(row.index_name, [row.name]);
+    else existing.push(row.name);
+  }
+
+  return {
+    path: [...path],
+    columns: rows.columns.map((row) => ({
+      name: row.name,
+      // `type` is the empty string on a virtual table's columns and on a column declared
+      // with no type at all, which SQLite allows. `getSchema()` spells that absence
+      // "TEXT", which is a guess about affinity; the empty string is what the engine said.
+      type: row.type ?? "",
+      nullable: row.notnull === 0,
+      // `pk` is a 1-BASED RANK and not a flag: a composite primary key answers 1 and 2,
+      // so `=== 1` reports the second key column as ordinary. Measured on
+      // `PRIMARY KEY (region, year)`.
+      isPrimary: row.pk > 0,
+      defaultValue: row.dflt_value ?? undefined,
+    })),
+    indexes: rows.indexes.map((row) => ({
+      name: row.name,
+      columns: keyColumns.get(row.name) ?? [],
+      unique: row.unique === 1,
+    })),
+    foreignKeys: rows.foreignKeys.map((row) => ({
+      columnName: row.from,
+      // A bare name, never qualified: SQLite resolves a foreign key's parent inside the
+      // same database, so there is no cross-schema case to spell.
+      referencedTable: row.table,
+      referencedColumn: row.to ?? row.parent_key ?? "",
+    })),
+  };
 }
 
 // ============================================================================
@@ -1216,24 +1452,12 @@ export class SQLiteProvider extends SQLBaseProvider {
       throw new QueryError(`No SQLite ${kind} named ${binds[0]} in ${MAIN_SCHEMA}`, "sqlite", OBJECT_COLUMNS_SQL);
     }
 
-    return {
-      path: [...path],
-      columns: columnRows.map((row) => ({
-        name: row.name,
-        // `type` is the empty string on a virtual table's columns and on a column declared
-        // with no type at all, which SQLite allows. `getSchema()` spells that absence
-        // "TEXT", which is a guess about affinity; the empty string is what the engine said.
-        type: row.type ?? "",
-        nullable: row.notnull === 0,
-        // `pk` is a 1-BASED RANK and not a flag: a composite primary key answers 1 and 2,
-        // so `=== 1` reports the second key column as ordinary. Measured on
-        // `PRIMARY KEY (region, year)`.
-        isPrimary: row.pk > 0,
-        defaultValue: row.dflt_value ?? undefined,
-      })),
+    return objectDetailFromRows(path, {
+      columns: columnRows,
       indexes: this.readObjectIndexes(binds),
+      indexColumns: this.readObjectIndexColumns(binds),
       foreignKeys: this.readObjectForeignKeys(binds),
-    };
+    });
   }
 
   /**
@@ -1244,18 +1468,26 @@ export class SQLiteProvider extends SQLBaseProvider {
    * serves a UNIQUE or PRIMARY KEY constraint, cannot be dropped, and is not an object a
    * user declared.
    */
-  private readObjectIndexes(binds: readonly unknown[]): IndexSchema[] {
+  private readObjectIndexes(binds: readonly unknown[]): ObjectIndexRow[] {
+    return this.runObjectQuery<ObjectIndexRow>(OBJECT_INDEXES_SQL, binds);
+  }
+
+  /**
+   * The key columns of every index on this object, tagged with the index they belong to.
+   *
+   * One read per index, which is what `pragma_index_info` takes; the tag is added here so
+   * the rows reach `objectDetailFromRows` in the same shape the bulk read's single
+   * statement produces. Null names are kept rather than filtered, because the MAPPER is
+   * the one place that decides what an expression key means.
+   */
+  private readObjectIndexColumns(binds: readonly unknown[]): ObjectIndexColumnRow[] {
     const [, schema] = binds;
-    return this.runObjectQuery<{ name: string; unique: number }>(OBJECT_INDEXES_SQL, binds).map((index) => ({
-      name: index.name,
-      columns: this.runObjectQuery<{ name: string | null }>(OBJECT_INDEX_COLUMNS_SQL, [index.name, schema])
-        // An index on an EXPRESSION publishes a null column name (`cid = -2`), and so does
-        // one that keys the rowid. Those are not columns of this object, so they are left
-        // out rather than rendered as a fabricated label.
-        .filter((column): column is { name: string } => column.name !== null)
-        .map((column) => column.name),
-      unique: index.unique === 1,
-    }));
+    return this.readObjectIndexes(binds).flatMap((index) =>
+      this.runObjectQuery<{ name: string | null }>(OBJECT_INDEX_COLUMNS_SQL, [index.name, schema]).map((column) => ({
+        index_name: index.name,
+        name: column.name,
+      })),
+    );
   }
 
   /**
@@ -1267,24 +1499,101 @@ export class SQLiteProvider extends SQLBaseProvider {
    * put a null in a typed string field. The parent's key columns are read at most once per
    * parent and only when some constraint needs them.
    */
-  private readObjectForeignKeys(binds: readonly unknown[]): ForeignKeySchema[] {
-    const [, schema] = binds;
-    const parentKeys = new Map<string, readonly string[]>();
-    const keyColumn = (parent: string, position: number): string => {
-      const cached = parentKeys.get(parent);
-      const columns =
-        cached ?? this.runObjectQuery<{ name: string }>(PARENT_KEY_COLUMNS_SQL, [parent, schema]).map((r) => r.name);
-      if (cached === undefined) parentKeys.set(parent, columns);
-      return columns[position] ?? "";
-    };
+  private readObjectForeignKeys(binds: readonly unknown[]): ObjectForeignKeyRow[] {
+    const [name, schema] = binds;
+    // The schema first, because it is the SUBQUERY's placeholder and SQLite numbers
+    // placeholders by where they appear in the statement text.
+    return this.runObjectQuery<ObjectForeignKeyRow>(OBJECT_FOREIGN_KEYS_SQL, [schema, name, schema]);
+  }
 
-    return this.runObjectQuery<ObjectForeignKeyRow>(OBJECT_FOREIGN_KEYS_SQL, binds).map((row) => ({
-      columnName: row.from,
-      // A bare name, never qualified: SQLite resolves a foreign key's parent inside the
-      // same database, so there is no cross-schema case to spell.
-      referencedTable: row.table,
-      referencedColumn: row.to ?? keyColumn(row.table, row.seq),
-    }));
+  /**
+   * Columns, indexes and foreign keys for EVERY object of one kind in the file (#789).
+   *
+   * FIVE round trips for a whole folder, constant in the number of objects, which is the
+   * entire reason this method exists: the caller's alternative was one `describeObject`
+   * per object, and each of those is itself a column read, an index list, one read per
+   * index and a foreign key list. The five are the target read plus the four detail reads,
+   * each joining a pragma table-valued function against the same target set.
+   *
+   * The four guards are asked in the same order PostgreSQL asks them, and each one is a
+   * different fact:
+   *   1. a kind this engine does not declare RAISES, naming the engine and the kind. An
+   *      empty batch would be a claim about the file; an undeclared kind is a fact about
+   *      SQLite.
+   *   2. the container path is checked through `assertContainerPath`, the same reader
+   *      `listObjects` uses, so the depth comes from the declaration and never from a
+   *      literal (standing ruling 5g).
+   *   3. a `limit` that is not a positive whole number raises rather than clamping: a 0
+   *      would answer nothing while reporting a truncation nobody asked for, and a
+   *      fraction reaches the driver as a bind it cannot use.
+   *   4. a kind with no columns answers `{ details: [] }` with NO round trip. On SQLite
+   *      that is `index` and `trigger`, measured: `pragma_table_xinfo` answers zero rows
+   *      for either name.
+   *
+   * The bound is the CALLER's and is never invented here. `limit + 1` reaches the target's
+   * `LIMIT`, the extra object is dropped, and `truncated` carries the caller's own limit;
+   * an unbounded call can never report truncation. `getSchema()`'s column list is capped
+   * nowhere in this file and nothing here adds a cap of its own.
+   *
+   * Paths are built by `objectPath`, the rule `listObjects` builds its paths with, and
+   * sorted by `comparePaths`, so the two answers join on path. Membership comes from the
+   * TARGET read and not from the column read: an object whose every column is hidden would
+   * otherwise be listed by the folder and missing from the batch. That is also why this
+   * method does not repeat `describeObject`'s zero-column throw - there the empty answer
+   * means the object is not there under that name, here the catalog has just said it is.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`SQLite declares no object kind "${kind}"`, "sqlite");
+    }
+    assertContainerPath(capabilities, container);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      throw new QueryError(
+        `A SQLite bulk column read limit must be a positive whole number, received ${limit}`,
+        "sqlite",
+      );
+    }
+    if (BULK_RELATION_TYPES[kind] === undefined) return { details: [] };
+
+    const bounded = limit !== undefined;
+    const statements = bounded ? BULK_DETAIL_SQL_BOUNDED[kind]! : BULK_DETAIL_SQL[kind]!;
+    const types = BULK_RELATION_TYPES[kind]!;
+    const head = [MAIN_SCHEMA, ...types, ...(bounded ? [limit + 1] : [])];
+    const params = (schemaBinds: number): unknown[] => [...head, ...Array<string>(schemaBinds).fill(MAIN_SCHEMA)];
+
+    const targets = this.runObjectQuery<{ object_name: string }>(statements.target, params(statements.schemaBinds[0]));
+    const truncated = bounded && targets.length > limit;
+    // The extra object the `limit + 1` bound brought back is dropped here, so its rows in
+    // the four maps below are simply never read.
+    const names = (truncated ? targets.slice(0, limit) : targets).map((row) => row.object_name);
+
+    const columns = groupByObject(
+      this.runObjectQuery<OfObject<ObjectColumnRow>>(statements.columns, params(statements.schemaBinds[1])),
+    );
+    const indexes = groupByObject(
+      this.runObjectQuery<OfObject<ObjectIndexRow>>(statements.indexes, params(statements.schemaBinds[2])),
+    );
+    const indexColumns = groupByObject(
+      this.runObjectQuery<OfObject<ObjectIndexColumnRow>>(statements.indexColumns, params(statements.schemaBinds[3])),
+    );
+    const foreignKeys = groupByObject(
+      this.runObjectQuery<OfObject<ObjectForeignKeyRow>>(statements.foreignKeys, params(statements.schemaBinds[4])),
+    );
+
+    const details = names
+      .map((name) =>
+        objectDetailFromRows(objectPath(container, { name }), {
+          columns: columns.get(name) ?? [],
+          indexes: indexes.get(name) ?? [],
+          indexColumns: indexColumns.get(name) ?? [],
+          foreignKeys: foreignKeys.get(name) ?? [],
+        }),
+      )
+      .sort((left, right) => comparePaths(left.path, right.path));
+
+    return truncated ? { details, truncated: { limit, reason: BULK_TRUNCATION_REASON } } : { details };
   }
 
   // ============================================================================
