@@ -153,3 +153,72 @@ describe("tagObjectKinds", () => {
     expect(tagObjectKinds(entries, [])).toEqual(entries);
   });
 });
+
+/**
+ * The middle segments, which the first join could not see (#789, fix round 2).
+ *
+ * The join's first spelling was written as two passes, the whole path joined by `.` and the
+ * LAST segment alone, and on a one-level engine those are the only two spellings there are.
+ * On a two-level engine they are not: a flat name qualified to the schema sits BETWEEN them
+ * and matches neither pass. The engines below are read from their own code rather than
+ * invented here, and each one is a population the filters above were inert over.
+ */
+describe("tagObjectKinds joins on every suffix, not only the first and the last", () => {
+  const flat = (name: string): DetailedObject => ({ name, columns: [], indexes: [] });
+  const listed = (kind: string, ...path: string[]): DatabaseObject => ({
+    name: path[path.length - 1],
+    kind,
+    path,
+  });
+
+  test("Trino: a schema-qualified flat name joins its catalog-qualified object", () => {
+    // `trino/introspect.ts` spells EVERY flat name `schema.table`, with no default-schema
+    // case, against the `[catalog, schema, table]` path `trino/objects.ts` builds. So the
+    // qualified pass missed `hive.sales.orders` and the last-segment pass missed `orders`,
+    // and not one object on this engine ever joined.
+    const tagged = tagObjectKinds([flat("sales.orders")], [listed("table", "hive", "sales", "orders")]);
+    expect(tagged[0].kind).toBe("table");
+    expect(tagged[0].path).toEqual(["hive", "sales", "orders"]);
+  });
+
+  test("SQL Server: a non-dbo schema qualifies the flat name and the path carries the catalog", () => {
+    // `mssql.ts` strips `dbo.` only, so everything outside the default schema arrives as
+    // `schema.table` against `[catalog, schema, table]`.
+    const tagged = tagObjectKinds([flat("sales.orders")], [listed("table", "shop", "sales", "orders")]);
+    expect(tagged[0].kind).toBe("table");
+  });
+
+  test("DuckDB: a non-main schema does the same", () => {
+    // `duckdb/introspect.ts` strips `main.` only.
+    const tagged = tagObjectKinds([flat("analytics.events")], [listed("table", "memory", "analytics", "events")]);
+    expect(tagged[0].kind).toBe("table");
+  });
+
+  test("Couchbase: a non-default scope qualifies the keyspace name", () => {
+    // `couchbase/keyspace.ts` strips `_default.` only, against a bucket-qualified path.
+    const tagged = tagObjectKinds([flat("inventory.items")], [listed("collection", "travel", "inventory", "items")]);
+    expect(tagged[0].kind).toBe("collection");
+  });
+
+  test("a middle spelling two objects answer to is still left untagged rather than guessed", () => {
+    // The refusal is the half that must survive generalising the match: more spellings mean
+    // more ways for two objects to claim one name, and choosing between them files a row
+    // under a container nobody named.
+    const tagged = tagObjectKinds(
+      [flat("sales.orders")],
+      [listed("table", "hive", "sales", "orders"), listed("view", "iceberg", "sales", "orders")],
+    );
+    expect(tagged[0].kind).toBeUndefined();
+    expect(tagged[0].path).toBeUndefined();
+  });
+
+  test("an exact spelling is taken over one that merely ends the same way", () => {
+    // Most qualified wins OUTRIGHT: a deeper object ending in the same two segments is not
+    // a rival, or every two-level engine holding a three-level namesake would go untagged.
+    const tagged = tagObjectKinds(
+      [flat("sales.orders")],
+      [listed("table", "sales", "orders"), listed("view", "warehouse", "sales", "orders")],
+    );
+    expect(tagged[0].kind).toBe("table");
+  });
+});
