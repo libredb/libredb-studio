@@ -417,6 +417,21 @@ each kind the count did not answer zero for. It runs under the SAME `db.schema.r
 its own fingerprint source, because it is a schema read and an operator denying that descriptor means
 to deny this too.
 
+**It is taken on the provider path only, and the read-only envelope is what decides that.** The object
+surface is reached through the four curated provider methods, and each of them sends its catalog
+statement through `provider.query`: no provider routes those through `queryReadOnly`, so there is no
+read-only transaction for them to arrive inside. On the engines the provider path grounds that costs
+nothing, because their whole grounding is already one curated call under `agent-operations`, the
+profile that exists because `agent-read-only` is refused for a provider with no read-only statement
+path. On PostgreSQL and SQLite it is not free: there the run's posture is that every statement it sends
+arrives inside `BEGIN READ ONLY`, down to the provider declining a bare EXPLAIN-format probe at connect
+to keep that true, and an object read taken there acquired a second provider under `agent-operations`
+and sent the walk's catalog SQL outside that envelope. So those two dialects keep their grounding and
+carry no kinds, which is the same trade a refused object read already makes: a loss of detail, not of
+grounding. Giving them kinds as well needs an object surface that goes through the read-only statement
+path on the providers that have one, and that is an open item of #789 rather than something decided
+here.
+
 What it costs is ONE statement of the run's budget, and that one statement is not one provider call:
 inside it the walk issues `listContainers` per container level, then one `countObjects` per container,
 then one `listObjects` per container-and-kind pair the count did not answer zero for, up to the pair

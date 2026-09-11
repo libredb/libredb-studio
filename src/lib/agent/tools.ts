@@ -2347,6 +2347,16 @@ export type AgentObjectInventoryRead =
  * grouping and a Druid datasource under one word. #414 measured what a model does with
  * that.
  *
+ * TAKEN ON THE PROVIDER GROUNDING PATH ONLY, which is what makes the profile below the right
+ * one (#789 fix round 2). The walk reaches the four curated provider methods, and each sends
+ * its catalog statement through `provider.query`: nothing routes them through `queryReadOnly`,
+ * so no read-only transaction can contain them. That matches the path that grounds through
+ * `readProviderSchemaForGrounding` exactly - there the whole grounding is a curated call under
+ * this same profile - and it does not match a dialect `CATALOG_PLANS` serves, where every
+ * statement of the run arrives inside `BEGIN READ ONLY` and this read would have been the one
+ * that left it. `context-snapshot.ts` is where that decision is written, beside the two paths
+ * it chooses between.
+ *
  * It costs ONE statement out of the run's budget, which is a charge for the READING rather
  * than a measure of its traffic: inside that one statement the walk issues a
  * `listContainers` per container level, a `countObjects` per container and a `listObjects`

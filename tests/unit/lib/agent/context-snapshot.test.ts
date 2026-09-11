@@ -1491,6 +1491,9 @@ describe("captureContextSnapshot — the object surface that says what each entr
     readonly context: AgentToolContext;
     readonly listObjects: ReturnType<typeof mock>;
     readonly countObjects: ReturnType<typeof mock>;
+    readonly listContainers: ReturnType<typeof mock>;
+    /** Every profile an acquisition asked the factory for, in order. */
+    readonly profiles: () => unknown[];
   }
 
   function objectHarness(
@@ -1505,6 +1508,8 @@ describe("captureContextSnapshot — the object surface that says what each entr
       readonly omitObjectSurface?: boolean;
       readonly omitContainerListing?: boolean;
       readonly listThrows?: Error;
+      /** The engine, which decides WHICH grounding reading this capture takes. */
+      readonly type?: DatabaseType;
     } = {},
   ): ObjectHarness {
     const listObjects = mock(async (container: readonly string[], kind: string) => {
@@ -1529,9 +1534,13 @@ describe("captureContextSnapshot — the object surface that says what each entr
 
     const provider = {
       getSchema: mock(async () => (options.schema ?? FLAT).map((table) => ({ ...table }))),
+      // Carried so a catalog dialect can be driven through this harness: the composed
+      // path reads through `queryReadOnly` and never asks for a schema.
+      queryReadOnly: mock(async (sql: string) => answerPostgres(sql)),
       ...(options.omitObjectSurface === true ? {} : { listObjects, countObjects }),
       ...(options.omitContainerListing === true ? {} : { listContainers }),
     } as unknown as DatabaseProvider;
+    const profiles: unknown[] = [];
 
     return {
       context: {
@@ -1540,7 +1549,7 @@ describe("captureContextSnapshot — the object surface that says what each entr
         mode: "agent",
         workflowType: "investigation",
         actor: { sessionId: "session-1", role: "user" },
-        connection: connectionOf("mongodb"),
+        connection: connectionOf(options.type ?? "mongodb"),
         capabilities: {
           ...capabilities,
           objectKinds: options.kinds ?? OBJECT_KINDS,
@@ -1557,11 +1566,16 @@ describe("captureContextSnapshot — the object surface that says what each entr
           frozenClock,
         ),
         repairs: new AgentRepairLedger(),
-        acquireProvider: mock(async () => provider),
+        acquireProvider: mock(async (_connection: DatabaseConnection, profile: unknown) => {
+          profiles.push(profile);
+          return provider;
+        }),
         clock: frozenClock,
       },
       listObjects,
       countObjects,
+      listContainers,
+      profiles: () => profiles,
     };
   }
 
@@ -1978,6 +1992,69 @@ describe("captureContextSnapshot — the object surface that says what each entr
     // One for the provider schema inspection, one for the object inventory. A read that
     // charged nothing would be a path around the budget.
     expect(capture.charged?.statements).toBe(2);
+  });
+
+  /**
+   * WHICH reading may take it, and it is the ENVELOPE that decides (#789 fix round 2).
+   *
+   * The object surface is reached through the four curated provider methods, and those send
+   * their catalog statements through `provider.query` — no provider routes them through
+   * `queryReadOnly`, so there is no envelope for them to arrive inside. On the nine engines
+   * the provider path grounds, that is exactly what the whole grounding already is: one
+   * curated `getSchema()` under `agent-operations`, because `agent-read-only` is refused
+   * outright for a provider with no read-only statement path.
+   *
+   * On a dialect `CATALOG_PLANS` serves it is not. There the ENTIRE run, grounding included,
+   * is composed statements driven through `queryReadOnly` inside `BEGIN READ ONLY`, and
+   * `postgres.ts`'s own connect path states that invariant: a provider opened under the
+   * read-only profile runs every statement inside the envelope, down to declining a bare
+   * EXPLAIN-format probe at connect for it. Taking the object read there acquired a SECOND
+   * provider under `agent-operations` and sent the walk's catalog SQL outside the envelope
+   * the rest of the run is bound by, which `tests/isolated/agent-investigation-e2e.test.ts`
+   * caught as two `listContainers` statements arriving bare.
+   *
+   * So the read is taken by the reading whose profile can serve it, and the two dialects
+   * whose grounding is enveloped keep their grounding and lose the KINDS. That is a loss of
+   * detail rather than of grounding, which is the trade this module already makes for a
+   * refused object read, and it is the only one available without either weakening the
+   * envelope or giving seventeen providers an enveloped object surface.
+   */
+  test("a dialect whose grounding is enveloped never reaches for the object surface", async () => {
+    const harness = objectHarness({ type: "postgres" });
+
+    const capture = await captureContextSnapshot(harness.context);
+
+    expect(capture.kind).toBe("captured");
+    expect(harness.listContainers).not.toHaveBeenCalled();
+    expect(harness.countObjects).not.toHaveBeenCalled();
+    expect(harness.listObjects).not.toHaveBeenCalled();
+  });
+
+  test("and acquires nothing but the read-only profile while it grounds itself", async () => {
+    // The property the isolated e2e asserts about a whole run, pinned here where the
+    // capture is the only thing running: one `agent-operations` acquisition is one
+    // provider whose statements cannot be inside the envelope.
+    const harness = objectHarness({ type: "postgres" });
+
+    await captureContextSnapshot(harness.context);
+
+    expect(harness.profiles().length).toBeGreaterThan(0);
+    expect([...new Set(harness.profiles())]).toEqual(["agent-read-only"]);
+  });
+
+  test("the enveloped dialect is still grounded, and is charged for the one reading it took", async () => {
+    // The cost of the decision is stated rather than implied: the inventory is there, the
+    // columns are there, and no entry claims a kind nothing read.
+    const harness = objectHarness({ type: "postgres" });
+
+    const capture = await captureContextSnapshot(harness.context);
+
+    if (capture.kind !== "captured") throw new Error(`expected a capture, got ${capture.kind}`);
+    expect(capture.snapshot.objects.map((object) => object.name)).toEqual(["public.customers", "public.orders"]);
+    expect(capture.snapshot.objects.every((object) => object.kind === undefined)).toBe(true);
+    expect(capture.snapshot.kinds).toEqual([]);
+    // Three composed catalog reads and no fourth reading.
+    expect(capture.charged?.statements).toBe(3);
   });
 });
 

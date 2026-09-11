@@ -74,6 +74,7 @@
 
 import { createHash } from "node:crypto";
 import type { AgentCatalogKind } from "./composed-sql";
+import { addressKeys } from "./inventory-address";
 import { type AgentInventoryNoun, TABLE_INVENTORY_NOUN } from "./inventory-noun";
 import { parseSqliteIndexDdl, parseSqliteTableDdl } from "./sqlite-ddl";
 import {
@@ -611,7 +612,33 @@ async function readInventory(context: AgentToolContext): Promise<AgentContextCap
     return failure;
   }
 
-  const inventory = await tagWithObjectKinds(context, finalize(plan.build(rows)));
+  /*
+    NO OBJECT-SURFACE READ ON THIS PATH, and it is the ENVELOPE that decides (#789).
+
+    The object surface is reached through the four curated provider methods, and every
+    provider sends their catalog statements through `provider.query`: none routes them
+    through `queryReadOnly`, so there is no read-only transaction for them to arrive
+    inside. On the engines `captureFromProvider` grounds that changes nothing, because the
+    whole of their grounding is already one curated call under `agent-operations` — the
+    profile that exists precisely because `agent-read-only` is refused for a provider with
+    no read-only statement path.
+
+    Here it is different in kind. A dialect `CATALOG_PLANS` serves is one whose provider HAS
+    that path, and the run's posture on it is that every statement it sends arrives inside
+    `BEGIN READ ONLY` — `postgres.ts`'s connect declines even a bare EXPLAIN-format probe to
+    keep that true. An object read taken here acquired a second provider under
+    `agent-operations` and sent the walk's catalog SQL outside the envelope the rest of the
+    run is bound by, which `tests/isolated/agent-investigation-e2e.test.ts` caught as two
+    `listContainers` statements arriving bare.
+
+    So the reading is taken by the grounding path whose profile can serve it, and these two
+    dialects keep their grounding and lose the KINDS. That is the same trade this module
+    already makes when an object read is refused: a loss of detail, not of grounding. The
+    alternative that keeps both is an enveloped object surface on the providers that have a
+    read-only statement path, which is seventeen providers' worth of decision and belongs to
+    the epic rather than to this module.
+  */
+  const inventory: AgentInventory = { objects: finalize(plan.build(rows)), kinds: [] };
   return {
     kind: "captured",
     snapshot: {
@@ -730,6 +757,11 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
  * carried as well rather than dropped. Both halves of that are deliberate, since a
  * silently missing object is the defect #414 measured.
  *
+ * TAKEN ON THIS PATH ONLY. `captureFromCatalog` does not call this function, and the reason is
+ * the read-only envelope rather than a preference: see the block at its call site. So a
+ * PostgreSQL or SQLite run reaches the model with the inventory this module built before the
+ * object surface existed, and with no kinds.
+ *
  * An entry the object read never named keeps NO kind at all. It is not labelled "table":
  * a missing fact filled in with the most common value is exactly how a view came to be
  * handed over under the word table, and the renderers say nothing where they know nothing.
@@ -798,12 +830,14 @@ async function tagWithObjectKinds(
  * identifier, and `joinFlatEntries` tries them a round at a time so that the most
  * qualified spelling always claims its entry first. A path-less object has one key, its
  * own name, which is what the flat readings already produce.
+ *
+ * `addressKeys` is that key set and it is DECLARED ONCE, in `inventory-address.ts`, because
+ * `er-diagram.ts` resolves a foreign key target against exactly the same spellings and the
+ * two came to disagree about what a name means the moment they were written twice: this
+ * join stopped treating a bare `customers` as `public.customers` nowhere, while the diagram
+ * did it everywhere and annotated every same-schema key as pointing outside the inventory.
  */
-function joinKeys(object: AgentInventoryObject): readonly string[] {
-  const path = object.path;
-  if (path === undefined) return [object.name];
-  return path.map((_segment, index) => path.slice(index).join("."));
-}
+const joinKeys = addressKeys;
 
 /**
  * The join itself: object index to the flat entry carrying its columns.
