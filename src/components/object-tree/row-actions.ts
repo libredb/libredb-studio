@@ -26,6 +26,16 @@
  *
  * Never the kind ID and never the database type id. `CLAUDE.md` forbids the second inside
  * `src/lib/db`, and the object model exists so the UI does not need the first.
+ *
+ * ONE gate of the flat menu has no successor here, deliberately, and the next implementer
+ * needs to know which declaration replaces it. `TableItem.tsx` withheld Generate Query and
+ * Profile whenever `capabilities.tablesAreDerivedGroupings` was true, because those rows are
+ * key-prefix groupings this server derived from a bounded scan rather than objects anybody
+ * named, so neither action has a target. Exactly two providers set that flag
+ * (`keyvalue/redis.ts` and `embedded/libredb.ts`) and neither declares `objectKinds` yet, so
+ * nothing is lost today. When they are migrated, a derived grouping must NOT be declared
+ * with `role: "relation"` - that role is what offers both of those actions above - and must
+ * not declare `acceptsRowWrites`. Recorded in standing ruling 4 against #789 Tasks 20 and 23.
  */
 
 import { ChartColumn, Code, Funnel, Plus, Search, Trash2, WandSparkles, type LucideIcon } from "lucide-react";

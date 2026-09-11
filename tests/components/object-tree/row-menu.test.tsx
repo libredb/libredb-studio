@@ -5,6 +5,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ObjectTree } from "@/components/object-tree";
+import { menuPlacement } from "@/components/object-tree/RowMenu";
 import type { TreeRowActionHandlers } from "@/components/object-tree/row-actions";
 import type { DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
@@ -303,6 +304,89 @@ describe("the row menu is reachable without a pointer", () => {
 
     await userEvent.click(document.body);
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  });
+});
+
+/**
+ * The viewport happy-dom renders into, read rather than assumed: every placement expectation
+ * below is arithmetic on these two numbers, so a harness that changed them would change the
+ * expectations rather than silently pass.
+ */
+const VIEWPORT = { width: window.innerWidth, height: window.innerHeight };
+
+describe("the row menu stays inside the viewport", () => {
+  test("a menu with room below opens below its anchor", () => {
+    expect(menuPlacement({ x: 10, top: 100, bottom: 120 }, 4, VIEWPORT)).toEqual({ top: 120, left: 10 });
+  });
+
+  test("a menu with no room below opens ABOVE the anchor, not over it", () => {
+    // The bottom edge of the menu lands on the anchor's TOP, which is why the anchor carries
+    // two edges: on the keyboard path that is the row's top, so the row stays visible.
+    const near = VIEWPORT.height - 10;
+    expect(menuPlacement({ x: 10, top: near, bottom: near + 5 }, 4, VIEWPORT)).toEqual({
+      bottom: VIEWPORT.height - near,
+      left: 10,
+    });
+  });
+
+  test("a menu that fits neither way is pinned to the top edge and scrolls", () => {
+    const tall = Math.ceil(VIEWPORT.height / 28) + 4;
+    expect(menuPlacement({ x: 10, top: 20, bottom: 30 }, tall, VIEWPORT)).toEqual({
+      top: 0,
+      maxHeight: VIEWPORT.height,
+      left: 10,
+    });
+  });
+
+  test("a menu with no room to the right opens leftward from its anchor", () => {
+    const near = VIEWPORT.width - 10;
+    expect(menuPlacement({ x: near, top: 100, bottom: 120 }, 4, VIEWPORT)).toEqual({
+      top: 120,
+      right: VIEWPORT.width - near,
+    });
+  });
+
+  test("a menu with room on neither side is pinned to the left edge", () => {
+    expect(menuPlacement({ x: 10, top: 100, bottom: 120 }, 4, { width: 200, height: VIEWPORT.height })).toEqual({
+      top: 120,
+      left: 0,
+    });
+  });
+
+  test("the keyboard path anchors on the row's BOX, so a flipped menu sits above the row", async () => {
+    // happy-dom measures every element as zero, so the row's box is supplied here rather than
+    // rendered. Without it both edges of the anchor read 0 and the two of them cannot be told
+    // apart, which is exactly the confusion this asserts against: a menu flipped on
+    // `box.bottom` would cover the row it belongs to.
+    await openTree();
+    const target = row(/orders/);
+    const box = { x: 5, y: 700, top: 700, bottom: 728, left: 5, right: 200, width: 195, height: 28 };
+    target.getBoundingClientRect = () => ({ ...box, toJSON: () => box }) as DOMRect;
+    await keyboardToOrders();
+    await userEvent.keyboard("{ContextMenu}");
+
+    const menu = screen.getByRole("menu");
+    expect(menu.style.bottom).toBe(`${VIEWPORT.height - box.top}px`);
+    expect(menu.style.left).toBe(`${box.left}px`);
+  });
+
+  test("the last row in the sidebar gets a menu whose items are all on screen", async () => {
+    // The regression this guards, end to end: the flat explorer's Radix menu flipped, so a
+    // right click on the last table always produced a usable menu. A fixed element that
+    // overflows the viewport cannot be scrolled to, so an item below the fold is unreachable.
+    await openTree();
+    const bottom = VIEWPORT.height - 30;
+    fireEvent.contextMenu(row(/orders/), { clientX: 12, clientY: bottom });
+
+    const menu = screen.getByRole("menu");
+    expect(menu.style.top).toBe("");
+    expect(menu.style.bottom).toBe(`${VIEWPORT.height - bottom}px`);
+
+    // The control, same menu and same fixture, where there IS room below.
+    fireEvent.keyDown(menu, { key: "Escape" });
+    fireEvent.contextMenu(row(/orders/), { clientX: 12, clientY: 40 });
+    expect(screen.getByRole("menu").style.top).toBe("40px");
+    expect(screen.getByRole("menu").style.bottom).toBe("");
   });
 });
 

@@ -17,18 +17,79 @@
  *
  * `position: fixed` at the pointer, because the tree lives in a narrow scrolling sidebar:
  * a menu positioned inside that box would be clipped by its `overflow-auto` at roughly
- * the width of one row.
+ * the width of one row. Fixed means the viewport is the only thing that can clip it, and
+ * `menuPlacement` below is what keeps it from doing so.
  */
 
 import { useCallback, useEffect, useRef } from "react";
 import { TREE_ROW_HEIGHT } from "./TreeRow";
 import type { TreeRowAction } from "./row-actions";
 
+/**
+ * Where the menu was asked for, in viewport coordinates.
+ *
+ * Two edges rather than one point, because the two ways of asking have different shapes: a
+ * pointer is a POINT, so `top` and `bottom` are the same number, while a key press is about
+ * a ROW, and a menu that flips upward there belongs above the row rather than over it.
+ */
+export interface RowMenuAnchor {
+  /** Where the menu's left edge prefers to be. */
+  readonly x: number;
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/** `p-1` top and bottom: what the box adds to the sum of its items. */
+const MENU_PADDING_Y = 8;
+/** `max-w-64`. The widest this menu can be, which is why it can be assumed rather than measured. */
+const MENU_MAX_WIDTH = 256;
+
+/**
+ * The menu's own `top`/`bottom`/`left`/`right`, chosen so no item can land outside the
+ * viewport.
+ *
+ * This is the regression the flat explorer's Radix `ContextMenu` did not have: Radix
+ * measures and flips, and a right click on the last table in the sidebar therefore always
+ * produced a usable menu. A fixed element that overflows the viewport cannot be scrolled
+ * to, so items below the fold are not merely awkward, they are unreachable.
+ *
+ * NOTHING is measured, and that is deliberate rather than a shortcut. The height is exact
+ * arithmetic: every item is `TREE_ROW_HEIGHT` tall because this component sets that height
+ * explicitly, so a label can overflow its button but can never grow one. The width is not
+ * derivable, so it is BOUNDED instead, by `max-w-64` on the box and `MENU_MAX_WIDTH` here,
+ * which makes the horizontal decision conservative: it may flip a menu that would have fit,
+ * and it can never leave one hanging off the edge. The alternative, measuring after mount,
+ * costs a state write inside a layout effect and a frame at the wrong position, and it
+ * cannot be tested here at all: happy-dom measures every element as zero, which is the same
+ * reason `ObjectTree` windows its rows by arithmetic instead of with a virtualiser.
+ *
+ * Three cases per axis, in order: the preferred side, the other side, and neither, where the
+ * menu is pinned to the edge and scrolls inside `max-height`.
+ */
+export function menuPlacement(
+  anchor: RowMenuAnchor,
+  itemCount: number,
+  viewport: { readonly width: number; readonly height: number },
+): React.CSSProperties {
+  const height = itemCount * TREE_ROW_HEIGHT + MENU_PADDING_Y;
+  const vertical =
+    anchor.bottom + height <= viewport.height
+      ? { top: anchor.bottom }
+      : anchor.top >= height
+        ? { bottom: viewport.height - anchor.top }
+        : { top: 0, maxHeight: viewport.height };
+  const horizontal =
+    anchor.x + MENU_MAX_WIDTH <= viewport.width
+      ? { left: anchor.x }
+      : anchor.x >= MENU_MAX_WIDTH
+        ? { right: viewport.width - anchor.x }
+        : { left: 0 };
+  return { ...vertical, ...horizontal };
+}
+
 export interface RowMenuProps {
   readonly actions: readonly TreeRowAction[];
-  /** Viewport coordinates: the pointer, or the top left of the row for the keyboard path. */
-  readonly x: number;
-  readonly y: number;
+  readonly anchor: RowMenuAnchor;
   /** Names the menu after the row it belongs to, since it is not inside that row. */
   readonly label: string;
   /**
@@ -44,7 +105,7 @@ function itemsOf(menu: HTMLElement | null): HTMLElement[] {
   return Array.from(menu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
 }
 
-export function RowMenu({ actions, x, y, label, onClose }: RowMenuProps) {
+export function RowMenu({ actions, anchor, label, onClose }: RowMenuProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   // The first item takes focus on open, which is what makes the menu operable by the
@@ -119,8 +180,11 @@ export function RowMenu({ actions, x, y, label, onClose }: RowMenuProps) {
       tabIndex={-1}
       onKeyDown={onKeyDown}
       onBlur={onBlur}
-      style={{ top: y, left: x }}
-      className="fixed z-50 min-w-48 rounded-md border border-border bg-popover p-1 shadow-md"
+      // Read at render rather than held in state: this component only ever mounts from a
+      // reader's gesture, so there is no server render to guard against, and a resize while
+      // a menu is open closes it through focus long before it could matter.
+      style={menuPlacement(anchor, actions.length, { width: window.innerWidth, height: window.innerHeight })}
+      className="fixed z-50 min-w-48 max-w-64 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-md"
     >
       {actions.map((action) => (
         <button

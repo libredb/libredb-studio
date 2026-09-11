@@ -18,7 +18,7 @@ import { CircleAlert, Database, LoaderCircle, PlugZap } from "lucide-react";
 import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import type { TreeRowModel } from "./flatten";
-import { RowMenu } from "./RowMenu";
+import { RowMenu, type RowMenuAnchor } from "./RowMenu";
 import { rowActions, type TreeRowAction, type TreeRowActionHandlers } from "./row-actions";
 import { TREE_ROW_HEIGHT, TreeRow } from "./TreeRow";
 import { useTreeNodes } from "./use-tree-nodes";
@@ -65,8 +65,7 @@ export interface ObjectTreeProps {
 /** An open menu: which row it belongs to, and where the reader asked for it. */
 interface OpenMenu {
   readonly rowId: string;
-  readonly x: number;
-  readonly y: number;
+  readonly anchor: RowMenuAnchor;
 }
 
 function clamp(value: number, low: number, high: number): number {
@@ -189,22 +188,25 @@ export function ObjectTree({
 
   /** A row with nothing to offer opens nothing, so the gesture is left to the browser. */
   const openMenu = useCallback(
-    (row: TreeRowModel, x: number, y: number): boolean => {
+    (row: TreeRowModel, anchor: RowMenuAnchor): boolean => {
       if (actionsFor(row).length === 0) return false;
       selectRow(row.id);
-      setMenu({ rowId: row.id, x, y });
+      setMenu({ rowId: row.id, anchor });
       return true;
     },
     [actionsFor, selectRow],
   );
 
-  /** The keyboard has no pointer, so the menu opens against the row's own box. */
+  /**
+   * The keyboard has no pointer, so the menu opens against the row's own BOX rather than a
+   * point: a menu that has to flip upward then sits above the row instead of over it.
+   */
   const openMenuOnRow = useCallback(
     (row: TreeRowModel): void => {
       const mounted = Array.from(treeRef.current?.querySelectorAll<HTMLElement>("[data-row-id]") ?? []);
       const element = mounted.find((candidate) => candidate.dataset.rowId === row.id);
       const box = element?.getBoundingClientRect();
-      openMenu(row, box?.left ?? 0, box?.bottom ?? 0);
+      openMenu(row, { x: box?.left ?? 0, top: box?.top ?? 0, bottom: box?.bottom ?? 0 });
     },
     [openMenu],
   );
@@ -300,7 +302,9 @@ export function ObjectTree({
       const row = rowOf(event);
       // The browser's own menu stands where this one has nothing to offer, rather than the
       // page swallowing the gesture and showing nothing.
-      if (row !== undefined && openMenu(row, event.clientX, event.clientY)) event.preventDefault();
+      // A pointer is a point, so both edges of the anchor are where it was pressed.
+      const anchor = { x: event.clientX, top: event.clientY, bottom: event.clientY };
+      if (row !== undefined && openMenu(row, anchor)) event.preventDefault();
     },
     [openMenu, rowOf],
   );
@@ -454,8 +458,7 @@ export function ObjectTree({
       {menu !== null && menuRow !== undefined && (
         <RowMenu
           actions={actionsFor(menuRow)}
-          x={menu.x}
-          y={menu.y}
+          anchor={menu.anchor}
           label={`Actions for ${menuRow.label}`}
           onClose={closeMenu}
         />

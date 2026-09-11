@@ -317,16 +317,20 @@ export function StudioWorkspace({
    * neither destination, and passed `onOpenMaintenance={noop}` and
    * `onCreateTableClick={undefined}` to the flat explorer before any of this. An absent
    * handler is an item the tree does not draw.
+   *
+   * Built inline, the same way `src/components/Studio.tsx` builds its own, so the two shells
+   * do not disagree about one prop. A `useMemo` stood here and held nothing: `useTabManager`
+   * returns a fresh object literal on every render, so `tabMgr` in the dependency list made
+   * the memo recompute every time and the identity it was supposed to preserve changed
+   * anyway. Memoising this for real means memoising what it closes over first, in both
+   * shells, which is a change to those hooks rather than to this line.
    */
-  const objectActions = useMemo<TreeRowActionHandlers>(
-    () => ({
-      onGenerateSelect: (object) => tabMgr.handleGenerateSelect(flatTargetName(object)),
-      onProfileObject: features.codeGenerator ? (object) => setProfilerTable(flatTargetName(object)) : undefined,
-      onGenerateCode: features.codeGenerator ? (object) => setCodeGenTable(flatTargetName(object)) : undefined,
-      onGenerateTestData: features.testDataGenerator ? (object) => setTestDataTable(flatTargetName(object)) : undefined,
-    }),
-    [features.codeGenerator, features.testDataGenerator, tabMgr],
-  );
+  const objectActions: TreeRowActionHandlers = {
+    onGenerateSelect: (object) => tabMgr.handleGenerateSelect(flatTargetName(object)),
+    onProfileObject: features.codeGenerator ? (object) => setProfilerTable(flatTargetName(object)) : undefined,
+    onGenerateCode: features.codeGenerator ? (object) => setCodeGenTable(flatTargetName(object)) : undefined,
+    onGenerateTestData: features.testDataGenerator ? (object) => setTestDataTable(flatTargetName(object)) : undefined,
+  };
 
   // === No-op callbacks for disabled features ===
   /** What the panel group may hold: below the breakpoint, only the body panel. */
