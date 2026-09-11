@@ -25,3 +25,14 @@ export type {
 
 // Also export provider types
 export type { ProviderCapabilities, ProviderLabels, MaintenanceOperationSpec } from "../lib/db/types";
+
+// The container-aware object model (#789)
+export type {
+  ObjectRole,
+  ObjectKindSpec,
+  ContainerLevelSpec,
+  Container,
+  DatabaseObject,
+  KindCount,
+  ObjectDetail,
+} from "../lib/db/types";

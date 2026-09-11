@@ -14,7 +14,16 @@ export type {
   QueryWarning,
 } from "../types";
 
-import type { DatabaseType, DatabaseConnection, TableSchema, TableRelations, QueryResult } from "../types";
+import type {
+  DatabaseType,
+  DatabaseConnection,
+  TableSchema,
+  TableRelations,
+  QueryResult,
+  ColumnSchema,
+  IndexSchema,
+  ForeignKeySchema,
+} from "../types";
 
 // ============================================================================
 // Pool Configuration
@@ -383,6 +392,43 @@ export interface ProviderCapabilities {
    * passes text through untouched - neither of those is this field's business.
    */
   statementTerminator?: "none";
+  /**
+   * The container levels this engine nests its objects in, outermost first (#789).
+   *
+   * Absent or empty means the engine has none, and that is a claim about the engine
+   * rather than a gap in the declaration: SQLite, libSQL, Elasticsearch, OpenSearch and
+   * LibreDB address every object by a bare name, so the tree draws objects directly
+   * under the connection. One level is a database, a keyspace or a bucket; two is a
+   * catalog plus a schema. The per-engine inventory this is declared from is section 10
+   * of `docs/superpowers/specs/2026-09-11-database-object-model-design.md`.
+   *
+   * Read it through `containerDepth()` in `src/lib/db/object-kinds.ts` and never by
+   * length here, so the empty and the absent cases cannot be answered differently by
+   * two callers.
+   *
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`
+   * (`src/exports/types.ts`): a required field added after the fact stops every external
+   * implementer compiling.
+   */
+  containerLevels?: readonly ContainerLevelSpec[];
+  /**
+   * Every object kind this engine has, each declared in full by the provider that has
+   * it (#789).
+   *
+   * Absent means no object kind is declared, so the tree stays empty for this engine
+   * rather than falling back to a table-shaped default. The permissive default is wrong
+   * here for the reason the flat model was replaced: it would claim a concept on an
+   * engine nobody asked, and section 10 of the design doc named above records that
+   * Druid has no view, no materialized view, no routine and no trigger, that Cassandra
+   * has no view, and that MySQL has never had a materialized view.
+   *
+   * A kind that is absent from this list is a different fact from a kind that is
+   * declared and holds nothing, which is what `KindCount` carries. Read this through
+   * `declaredKinds()` in `src/lib/db/object-kinds.ts`.
+   *
+   * Optional for the same published-interface reason as `containerLevels` above.
+   */
+  objectKinds?: readonly ObjectKindSpec[];
   schemaRefreshPattern: string;
 }
 
@@ -966,4 +1012,107 @@ export interface MonitoringOptions {
   sessionLimit?: number;
   /** Schema filter (default: 'public' for PostgreSQL) */
   schemaFilter?: string;
+}
+
+// ============================================================================
+// Object Model
+// ============================================================================
+
+/**
+ * Behaviour the UI may derive from an object. CLOSED on purpose: a new engine adds
+ * kinds, never roles. The UI switches on this and never on `ObjectKindSpec.id`, which
+ * is what keeps `CLAUDE.md`'s "never branch on the type id" rule true one level up.
+ */
+export type ObjectRole =
+  | "relation" // has rows, is selected from
+  | "routine" // is called, has source
+  | "group" // holds routines: an Oracle package
+  | "attached" // belongs to another object: a trigger
+  | "config"; // defined by text or JSON: a dictionary, a lookup, a pipeline
+
+/**
+ * One object kind, declared in full by the provider that has it.
+ *
+ * `id` is an OPEN string, and that is the design rather than a shortcut. DBeaver's
+ * `DBSObjectType`, CloudBeaver's `nodeType`, Azure Data Studio's `nodeType` and
+ * pgAdmin's `node_type` are all open for the same reason, and JDBC's closed model is
+ * the counter-example: it cannot express a trigger, a sequence, a materialized view or
+ * a package at all. A ClickHouse dictionary, a Druid lookup and an Oracle package
+ * therefore reach the tree through a provider-local declaration and no core change.
+ */
+export interface ObjectKindSpec {
+  readonly id: string;
+  readonly role: ObjectRole;
+  /** The engine's own word, singular. Rendered as-is. */
+  readonly label: string;
+  readonly labelPlural: string;
+  /** Phase 2. Absent means this kind has no readable definition, so no Source tab. */
+  readonly hasSource?: boolean;
+  /** Phase 2. The Monaco language id the source renders in. */
+  readonly sourceLanguage?: string;
+  /** Kinds nested under an object of this kind: a package holds procedures. */
+  readonly childKinds?: readonly string[];
+  /** This kind hangs off another object rather than off the container: a trigger. */
+  readonly attachedTo?: string;
+  /**
+   * Whether a row write against an object of this kind is meaningful.
+   *
+   * Absent reads as false, so a kind that declares nothing never appears as an import
+   * or inline-edit target. The permissive default is wrong here: writing rows into a
+   * view is meaningless on most engines and only sometimes possible on PostgreSQL, and
+   * only the provider knows which. The engine-wide `supportsInlineRowEdit` stays and
+   * both must be true.
+   */
+  readonly acceptsRowWrites?: boolean;
+}
+
+/** One container level. Zero, one or two of these; the engine says which. */
+export interface ContainerLevelSpec {
+  /** Structural role, used for ordering only. */
+  readonly id: "catalog" | "schema";
+  /** The engine's own word: Schema, Keyspace, Bucket, Scope, User, Database. */
+  readonly label: string;
+  readonly labelPlural: string;
+}
+
+export interface Container {
+  readonly path: readonly string[];
+  readonly name: string;
+  /** Index into `containerLevels`. */
+  readonly level: number;
+}
+
+/**
+ * One object. `path` is the container path plus the name and is NEVER a joined string:
+ * the old flat model spelled a qualified name `"sales.orders"`, and
+ * `query-generators.ts` split it back on `.`, so a table literally named `a.b` in
+ * `public` generated `"a"."b"`. An array cannot be misread that way.
+ */
+export interface DatabaseObject {
+  readonly path: readonly string[];
+  readonly name: string;
+  readonly kind: string;
+  /** Only where the engine publishes one: Oracle's VALID / INVALID. */
+  readonly status?: string;
+  /** Relations only, and only where the engine counts. */
+  readonly rowCount?: number;
+  readonly sizeBytes?: number;
+}
+
+/**
+ * Three facts, not two.
+ *
+ * A kind that is not declared draws no folder at all: the engine has no such concept.
+ * `{ count: 0 }` is the engine answering none. `{ unavailable }` is a read that was
+ * refused, carrying the engine's own sentence. All three collapsed into an empty array
+ * before this change, and `docs/providers/postgres.md` section 3.1.2 records what that
+ * costs a reader on the monitoring side.
+ */
+export type KindCount = { readonly count: number } | { readonly unavailable: string };
+
+export interface ObjectDetail {
+  readonly path: readonly string[];
+  readonly columns: readonly ColumnSchema[];
+  readonly indexes: readonly IndexSchema[];
+  readonly foreignKeys: readonly ForeignKeySchema[];
 }
