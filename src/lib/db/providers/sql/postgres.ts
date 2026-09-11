@@ -28,7 +28,13 @@ import {
   type TableStats,
   type IndexStats,
   type StorageStats,
+  type Container,
+  type DatabaseObject,
+  type KindCount,
+  type ObjectDetail,
+  type ObjectKindSpec,
 } from "../../types";
+import { declaredKinds } from "../../object-kinds";
 import {
   DatabaseConfigError,
   ConnectionError,
@@ -77,6 +83,31 @@ interface SchemaRow {
 
 type SchemaListRow = Omit<SchemaRow, "indexes" | "foreign_keys">;
 type SchemaRelationRow = Pick<SchemaRow, "table_schema" | "table_name" | "foreign_keys" | "indexes">;
+
+/** One row of `CONTAINERS_SQL`. */
+interface ContainerRow {
+  name: string;
+}
+
+/** One row of `COUNTS_SQL`. `count(*)::int` arrives as a JS number, not a string. */
+interface KindCountRow {
+  kind: string;
+  n: number;
+}
+
+/**
+ * One row of the three listing statements. Only the relation listing selects
+ * `row_count` and `size_bytes`; the routine and trigger listings answer a name alone,
+ * which is why both are optional rather than nullable.
+ */
+interface ObjectRow {
+  name: string;
+  row_count?: string | null;
+  size_bytes?: string | null;
+}
+
+/** The single row `OBJECT_DETAIL_SQL` always returns. */
+type ObjectDetailRow = Pick<SchemaRow, "pk_columns" | "columns" | "indexes" | "foreign_keys">;
 
 // ============================================================================
 // Schema introspection SQL
@@ -486,6 +517,295 @@ function isMissingExtensionCatalogError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
   return message.includes("pg_depend") || message.includes("pg_extension");
+}
+
+// ============================================================================
+// Object surface SQL (#789)
+// ----------------------------------------------------------------------------
+// Hoisted to module scope for the same coverage reason as the schema SQL above.
+// ============================================================================
+
+// The containers this connection has, which on PostgreSQL is one level: schemas.
+// It reads pg_namespace through the same `schemaExclusion()` every other query in this
+// file uses, so a schema the object browser hides here is the same set the schema tree
+// and the overview count hide. Measured on the seeded postgres:18 fixture: `app` and
+// `public`, and nothing else - pg_namespace there holds only those two plus pg_catalog,
+// information_schema and pg_toast, all three of which the fixed list removes.
+const CONTAINERS_SQL = `
+        SELECT n.nspname AS name
+        FROM pg_catalog.pg_namespace n
+        WHERE ${schemaExclusion("n.nspname")}
+        ORDER BY n.nspname ASC`;
+
+// One UNION arm per catalog that answers for a declared kind. Split into consts rather
+// than written twice because `countObjects` needs the same statement with the routine
+// arm removed, and two hand-maintained copies of the relation and trigger arms would
+// drift the moment a relkind is added to one of them.
+const COUNTS_RELATION_ARM = `
+          SELECT CASE c.relkind
+                   WHEN 'r' THEN 'table' WHEN 'p' THEN 'table'
+                   WHEN 'v' THEN 'view'  WHEN 'm' THEN 'materialized_view'
+                   WHEN 'S' THEN 'sequence'
+                 END AS kind
+          FROM pg_catalog.pg_class c
+          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = $1 AND c.relkind IN ('r','p','v','m','S')`;
+
+// `prokind` is a PostgreSQL 11 column. Everything that predates it, and the forks that
+// never grew it, answer 42703 here - which is why this arm is separable at all.
+const COUNTS_ROUTINE_ARM = `
+          SELECT CASE p.prokind WHEN 'f' THEN 'function' WHEN 'p' THEN 'procedure' END
+          FROM pg_catalog.pg_proc p
+          JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = $1`;
+
+// `tgisinternal` excludes the triggers PostgreSQL creates for a foreign key or a
+// deferred unique constraint. A user never wrote them and cannot drop them on their own,
+// so counting them would report a number nobody could reconcile with their own DDL.
+const COUNTS_TRIGGER_ARM = `
+          SELECT 'trigger'
+          FROM pg_catalog.pg_trigger t
+          JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = $1 AND NOT t.tgisinternal`;
+
+// One statement, one GROUP BY, one round trip for the whole folder row. `kind IS NULL`
+// drops the relkinds and prokinds the CASE has no name for (an index, a TOAST table, an
+// aggregate) rather than counting them under a folder that does not exist.
+function countsSql(arms: readonly string[]): string {
+  return `
+        SELECT kind, count(*)::int AS n FROM (${arms.join(`
+          UNION ALL`)}
+        ) s
+        WHERE kind IS NOT NULL
+        GROUP BY kind`;
+}
+
+const COUNTS_SQL = countsSql([COUNTS_RELATION_ARM, COUNTS_ROUTINE_ARM, COUNTS_TRIGGER_ARM]);
+const COUNTS_SQL_WITHOUT_ROUTINES = countsSql([COUNTS_RELATION_ARM, COUNTS_TRIGGER_ARM]);
+
+// A server that has no `pg_proc.prokind` cannot tell a function from a procedure, so the
+// two routine folders are unknowable there - but the relations and the triggers still
+// are. Keyed on the column name as well as the code because 42703 is "undefined column"
+// generally, and re-running without the routine arm repairs nothing if the missing
+// column was in one of the arms that survive.
+function isMissingProkindError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (error as { code?: string }).code === "42703" && error.message.toLowerCase().includes("prokind");
+}
+
+// The relkinds behind each relation-shaped kind id, so `listObjects` never interpolates
+// anything a caller supplied: an id that is not a key here is not a relation, and the
+// lookup returns undefined rather than a fragment.
+const RELKIND_BY_KIND: Record<string, string> = {
+  table: "'r','p'",
+  view: "'v'",
+  materialized_view: "'m'",
+  sequence: "'S'",
+};
+
+// `reltuples` is read here for the same reason `CTE_TABLES_INFO` reads it, and is mapped
+// through the same `estimatedRowCount()`: PostgreSQL 14+ writes -1 for a relation nothing
+// has analysed, and that is an absence rather than an empty relation.
+//
+// No `COALESCE(pg_total_relation_size(c.oid), 0)`, which is what the schema query wraps
+// the same call in. This statement is not run through `queryWithMaterializedFallback()`
+// either, and the two go together. `withoutTotalRelationSizeFn()` repairs an engine
+// without that builtin by replacing the call with a literal 0 - correct for `getSchema`,
+// where the alternative is losing the whole tree, and wrong here, because it would report
+// every relation on CockroachDB and Materialize as 0 bytes. The size column is simply
+// dropped instead (`withSize: false`), so the row carries no `size_bytes` at all and
+// `measuredSizeBytes()` reads absence. Nothing else in this statement is repairable by
+// that chain: it has no `AS MATERIALIZED`, no `json_agg`, no `to_regclass` and no
+// `pg_depend`.
+function listRelationsSql(relkinds: string, withSize: boolean): string {
+  const size = withSize ? ",\n          pg_total_relation_size(c.oid) AS size_bytes" : "";
+  return `
+        SELECT
+          c.relname AS name,
+          c.reltuples::bigint AS row_count${size}
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1 AND c.relkind IN (${relkinds})`;
+}
+
+const LIST_RELATIONS_SQL: Record<string, string> = Object.fromEntries(
+  Object.entries(RELKIND_BY_KIND).map(([kind, relkinds]) => [kind, listRelationsSql(relkinds, true)]),
+);
+
+const LIST_RELATIONS_SQL_WITHOUT_SIZE: Record<string, string> = Object.fromEntries(
+  Object.entries(RELKIND_BY_KIND).map(([kind, relkinds]) => [kind, listRelationsSql(relkinds, false)]),
+);
+
+// The prokind character each routine kind id is spelled with on the wire.
+const PROKIND_BY_KIND: Record<string, string> = { function: "f", procedure: "p" };
+
+// DISTINCT, because PostgreSQL identifies a routine by name AND argument types while
+// `DatabaseObject.path` has room for a name only. Two overloads of `app.order_total`
+// would otherwise be two rows a reader cannot tell apart and no path can address
+// separately, so they collapse to the one entry the path model can carry. The signature
+// is what Phase 2's Source tab has to show.
+const LIST_ROUTINES_SQL = `
+        SELECT DISTINCT p.proname AS name
+        FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = $1 AND p.prokind = $2`;
+
+const LIST_TRIGGERS_SQL = `
+        SELECT t.tgname AS name
+        FROM pg_catalog.pg_trigger t
+        JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1 AND NOT t.tgisinternal`;
+
+// Columns for ONE object, from pg_attribute rather than from `CTE_COLUMNS_INFO`.
+//
+// This is the one place `describeObject` does not reuse the schema query's CTEs, and the
+// reason is measured. `information_schema.columns` is defined over relkinds 'r', 'v',
+// 'f' and 'p' only, so it has no row at all for a materialized view or a sequence:
+// on the seeded postgres:18 fixture it answered 0 columns for `app.revenue_by_month`
+// (relkind 'm') and 0 for `app.invoice_number_seq` ('S') while pg_attribute answered 2
+// and 3. Reusing it would have shipped the object browser's headline new folder - the
+// materialized view #710 is about - with an empty column list.
+//
+// `format_type(a.atttypid, NULL)` is the second argument deliberately: passing
+// `a.atttypmod` yields `character varying(50)` and `numeric(12,2)`, while NULL yields the
+// unqualified base type. NULL is used because that is exactly what
+// `information_schema.columns.data_type` says, so this surface and the flat schema tree
+// name a column's type identically while both are live. Verified column by column on
+// `app.orders`.
+const CTE_OBJECT_COLUMNS = `
+        object_columns AS (
+          SELECT
+            json_agg(
+              json_build_object(
+                'name', a.attname,
+                'type', format_type(a.atttypid, NULL),
+                'nullable', NOT a.attnotnull,
+                'defaultValue', pg_get_expr(ad.adbin, ad.adrelid)
+              ) ORDER BY a.attnum
+            ) AS columns
+          FROM pg_catalog.pg_attribute a
+          JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+          WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped
+        )`;
+
+// One object's columns, primary key, foreign keys and indexes. The last three reuse the
+// schema query's own CTEs, so a fork that needs `withoutForeignKeyCatalog()` or
+// `withoutJsonAggFunctions()` gets the same repair here that `getSchema()` gets.
+//
+// The `AS MATERIALIZED` hints are stripped, which is the opposite of what the schema
+// queries want and for the opposite reason. There, the CTEs are each read by several
+// joins over every relation in the database and materializing them once is the cheap
+// answer. Here there is exactly one target object, and the hint forbids the planner from
+// pushing `$1`/`$2` into the CTEs - so it computes every constraint and every index in
+// the database to answer for one name. Measured on the 10-table seed fixture with
+// EXPLAIN: total plan cost 3416.66 with the hints against 122.99 without, and the gap
+// grows with the database rather than with the object.
+//
+// `object_columns` has no GROUP BY, so its aggregate returns exactly one row even when
+// the object has no columns at all. That is what makes a sequence, a routine and a
+// trigger answer `{ columns: [], indexes: [], foreignKeys: [] }` instead of no row.
+const OBJECT_DETAIL_SQL = withoutMaterializedHint(`
+        WITH ${CTE_OBJECT_COLUMNS},${CTE_PK_INFO},${CTE_FK_INFO},${CTE_INDEX_INFO}
+        SELECT
+          COALESCE(oc.columns, '[]'::json) as columns,
+          COALESCE(pk.pk_columns, ARRAY[]::text[]) as pk_columns,
+          COALESCE(fk.foreign_keys, '[]'::json) as foreign_keys,
+          COALESCE(ii.indexes, '[]'::json) as indexes
+        FROM object_columns oc
+        LEFT JOIN pk_info pk ON pk.table_schema = $1 AND pk.table_name = $2
+        LEFT JOIN fk_info fk ON fk.table_schema = $1 AND fk.table_name = $2
+        LEFT JOIN index_info ii ON ii.table_schema = $1 AND ii.table_name = $2;
+      `);
+
+/**
+ * The one schema a container path names on this engine.
+ *
+ * PostgreSQL declares exactly one container level, so a path of any other length is a
+ * caller that built it from another engine's shape. It raises rather than reading
+ * `path[0]` and carrying on, because `undefined` bound to `$1` would answer an empty
+ * folder that looks exactly like a schema holding nothing.
+ */
+function containerSchema(container: readonly string[]): string {
+  if (container.length !== 1) {
+    throw new QueryError(
+      `A PostgreSQL container path is one schema name, received ${JSON.stringify(container)}`,
+      "postgres",
+    );
+  }
+  return container[0];
+}
+
+/**
+ * Every declared kind seeded at zero, before any row is read.
+ *
+ * Seeding is what makes "this engine has this kind and this schema holds none" render as
+ * a 0 badge. Building the record from the GROUP BY rows alone would leave the kind out
+ * entirely, and an absent kind already means something else and stronger: the engine has
+ * no such concept, so the tree draws no folder at all (`ProviderCapabilities.objectKinds`).
+ */
+function seedZeroCounts(kinds: readonly ObjectKindSpec[]): Record<string, KindCount> {
+  return Object.fromEntries(kinds.map((kind) => [kind.id, { count: 0 } as KindCount]));
+}
+
+/**
+ * The server's own sentence, verbatim, against every kind the failed read covered.
+ *
+ * Deliberately NOT through `mapDatabaseError`. That mapper gives a THROWN error a type
+ * and this product's prefix, and nothing here throws: the sentence is rendered to a
+ * person as the reason a folder has no number, so prefixing it would put our words in
+ * front of the server's. A refused read is never 0 - "permission denied for schema
+ * sales" and "this schema holds no tables" are different facts and `KindCount` is the
+ * type that keeps them apart.
+ */
+function unavailableCounts(ids: readonly string[], error: unknown): Record<string, KindCount> {
+  const reason = error instanceof Error ? error.message : String(error);
+  return Object.fromEntries(ids.map((id) => [id, { unavailable: reason } as KindCount]));
+}
+
+/** Overwrites the seeded zeros with what the GROUP BY actually answered. */
+function applyKindCounts(counts: Record<string, KindCount>, rows: readonly KindCountRow[]): void {
+  for (const row of rows) {
+    counts[row.kind] = { count: row.n };
+  }
+}
+
+/**
+ * Which statement answers for one kind, or nothing when this engine has no such kind.
+ *
+ * `withoutSize` is present only for the relation kinds, and only they can be refused for
+ * a missing `pg_total_relation_size()`.
+ */
+function objectListingStatement(
+  schema: string,
+  kind: string,
+): { sql: string; params: unknown[]; withoutSize?: string } | undefined {
+  const relations = LIST_RELATIONS_SQL[kind];
+  if (relations !== undefined) {
+    return { sql: relations, params: [schema], withoutSize: LIST_RELATIONS_SQL_WITHOUT_SIZE[kind] };
+  }
+  const prokind = PROKIND_BY_KIND[kind];
+  if (prokind !== undefined) return { sql: LIST_ROUTINES_SQL, params: [schema, prokind] };
+  if (kind === "trigger") return { sql: LIST_TRIGGERS_SQL, params: [schema] };
+  return undefined;
+}
+
+/**
+ * What `pg_total_relation_size()` answered, or nothing.
+ *
+ * Absence and 0 are different facts here for the same reason `estimatedRowCount()` keeps
+ * them apart: a NULL means the size was not read - the fallback chain can replace the
+ * call with a literal, and a fork may not have the function at all - while 0 is a real
+ * measurement of a relation with no storage yet. `DatabaseObject.sizeBytes` is optional
+ * so the badge is simply not drawn for the first.
+ */
+function measuredSizeBytes(raw: string | null | undefined): number | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  const parsed = parseInt(raw);
+  return Number.isNaN(parsed) ? undefined : parsed;
 }
 
 // ============================================================================
@@ -979,6 +1299,37 @@ export class PostgresProvider extends SQLBaseProvider {
         reindex: { label: "Reindex Table", perEntity: true, global: true },
         kill: { label: "Terminate Backend", perEntity: false, global: false },
       },
+      // One level. `catalog` is not a second one here: a `pg` pool is opened against one
+      // database and nothing in the product can switch it on a live connection, so
+      // declaring a catalog level would draw a folder with exactly one child forever.
+      containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      // Seven kinds, each with the catalog that answers for it (#789):
+      // table, view, materialized view and sequence from `pg_class.relkind`; function and
+      // procedure from `pg_proc.prokind`; trigger from `pg_trigger`.
+      //
+      // No `index` kind, deliberately. PostgreSQL's own catalog models an index as a
+      // property of the relation it is on - `pg_index` is keyed by `indrelid` and an
+      // index cannot exist without one - so it belongs in `describeObject`'s output,
+      // where it already is, rather than in a container-level folder of its own.
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+        // No `acceptsRowWrites`. PostgreSQL does accept an UPDATE against a simple
+        // updatable view and against any view carrying an INSTEAD OF trigger, and the
+        // provider still declares nothing: whether a given view is one of those is a
+        // per-object fact this declaration is per-kind, so claiming it would offer an
+        // import target that fails on most views in most schemas.
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+        {
+          id: "materialized_view",
+          role: "relation",
+          label: "Materialized View",
+          labelPlural: "Materialized Views",
+        },
+        { id: "sequence", role: "config", label: "Sequence", labelPlural: "Sequences" },
+        { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+        { id: "procedure", role: "routine", label: "Procedure", labelPlural: "Procedures" },
+        { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table" },
+      ],
     };
   }
 
@@ -1439,7 +1790,7 @@ export class PostgresProvider extends SQLBaseProvider {
    * any error no fallback recognizes, or one that survives every applicable
    * fallback, is mapped and rethrown rather than left raw.
    */
-  private async queryWithMaterializedFallback(client: PoolClient, sql: string) {
+  private async queryWithMaterializedFallback(client: PoolClient, sql: string, params?: unknown[]) {
     const remainingFallbacks = [
       { matches: isMaterializedKeywordSyntaxError, apply: withoutMaterializedHint },
       { matches: isMissingTotalRelationSizeError, apply: withoutTotalRelationSizeFn },
@@ -1451,7 +1802,7 @@ export class PostgresProvider extends SQLBaseProvider {
     let currentSql = sql;
     for (;;) {
       try {
-        return await client.query(currentSql);
+        return await client.query(currentSql, params);
       } catch (error) {
         const index = remainingFallbacks.findIndex((fallback) => fallback.matches(error));
         // currentSql, not sql: the chain rewrites the statement as it goes, and quoting
@@ -1585,6 +1936,202 @@ export class PostgresProvider extends SQLBaseProvider {
           })),
         };
       });
+    } finally {
+      client.release();
+    }
+  }
+
+  // ============================================================================
+  // Object surface (#789)
+  // ============================================================================
+
+  /**
+   * The schemas this connection can see. One level, so `parent` can only ever name a
+   * schema, and nothing nests under one here - that answers `[]` rather than raising,
+   * because "this level has no children" is a true statement about PostgreSQL and not a
+   * caller mistake.
+   *
+   * Through the fallback chain, because `schemaExclusion()` carries the `pg_depend` /
+   * `pg_extension` ownership test and an engine without those catalogs would otherwise
+   * lose its whole container list to a clause `withoutExtensionOwnershipTest()` already
+   * knows how to drop.
+   */
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
+    this.ensureConnected();
+    if (parent !== undefined && parent.length > 0) return [];
+
+    const client = await this.pool!.connect();
+    try {
+      const result = await this.queryWithMaterializedFallback(client, CONTAINERS_SQL);
+      return result.rows.map((row: ContainerRow) => ({ path: [row.name], name: row.name, level: 0 }));
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * How many objects of each declared kind one schema holds.
+   *
+   * Three outcomes, and the type keeps all three apart. A kind the GROUP BY answered for
+   * carries its count. A kind it did not carries `{ count: 0 }`, because it was seeded
+   * before the read. A kind whose read was refused carries the server's own sentence, so
+   * the object browser can say why a folder has no number instead of showing a zero
+   * nobody measured.
+   *
+   * The `prokind` retry is the one partial outcome. That column arrived in PostgreSQL 11
+   * and the wire-compatible forks do not all have it, so a server can answer for its
+   * relations and its triggers while being unable to tell a function from a procedure.
+   * Losing the two routine folders is the right cost there; losing the whole container to
+   * one missing column is not.
+   */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    this.ensureConnected();
+    const schema = containerSchema(container);
+    const declared = declaredKinds(this.getCapabilities());
+    const counts = seedZeroCounts(declared);
+
+    const client = await this.pool!.connect();
+    try {
+      try {
+        applyKindCounts(counts, (await client.query(COUNTS_SQL, [schema])).rows);
+      } catch (error) {
+        if (!isMissingProkindError(error)) {
+          return unavailableCounts(
+            declared.map((kind) => kind.id),
+            error,
+          );
+        }
+        const routines = declared.filter((kind) => kind.role === "routine");
+        const rest = declared.filter((kind) => kind.role !== "routine");
+        try {
+          applyKindCounts(counts, (await client.query(COUNTS_SQL_WITHOUT_ROUTINES, [schema])).rows);
+        } catch (retryError) {
+          Object.assign(
+            counts,
+            unavailableCounts(
+              rest.map((kind) => kind.id),
+              retryError,
+            ),
+          );
+        }
+        Object.assign(
+          counts,
+          unavailableCounts(
+            routines.map((kind) => kind.id),
+            error,
+          ),
+        );
+      }
+      return counts;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** One listing read, retried without the size column when the builtin is not there. */
+  private async queryListing(client: PoolClient, statement: { sql: string; params: unknown[]; withoutSize?: string }) {
+    try {
+      return await client.query(statement.sql, statement.params);
+    } catch (error) {
+      if (statement.withoutSize === undefined || !isMissingTotalRelationSizeError(error)) {
+        throw mapDatabaseError(error, "postgres", statement.sql);
+      }
+      return await client.query(statement.withoutSize, statement.params);
+    }
+  }
+
+  /**
+   * The objects of one kind in one schema, names only.
+   *
+   * Ordering is done here rather than with an `ORDER BY`, and that is deliberate. Three
+   * different catalogs answer these listings, so three `ORDER BY` clauses would be three
+   * chances to disagree; and a SQL sort runs under the database's own collation, which is
+   * `C` on the seeded fixture and `en_US.UTF-8` on plenty of real servers, so the same
+   * schema would come back in two different orders on two servers. A code-point sort here
+   * is one rule and the same rule everywhere.
+   *
+   * The one retry drops the size column rather than the listing. CockroachDB and
+   * Materialize have no `pg_total_relation_size()`, and both are reached under the
+   * `postgres` type id, so refusing the whole folder there would be a dead tree; the
+   * shared `withoutTotalRelationSizeFn()` is not used because its literal 0 would claim
+   * every relation on those servers is empty. See `listRelationsSql()`.
+   */
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    this.ensureConnected();
+    const schema = containerSchema(container);
+    const statement = objectListingStatement(schema, kind);
+    if (statement === undefined) {
+      throw new QueryError(`PostgreSQL declares no object kind "${kind}"`, "postgres");
+    }
+
+    const client = await this.pool!.connect();
+    try {
+      const result = await this.queryListing(client, statement);
+      return result.rows
+        .map((row: ObjectRow) => ({
+          path: [schema, row.name],
+          name: row.name,
+          kind,
+          rowCount: estimatedRowCount(row.row_count),
+          sizeBytes: measuredSizeBytes(row.size_bytes),
+        }))
+        .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Columns, indexes and foreign keys for one object, addressed as `[schema, name]`.
+   *
+   * A kind that has none of the three - a sequence, a routine, a trigger - answers three
+   * empty arrays rather than an error, because having no columns is a true fact about
+   * those kinds and not a failed read (`tests/helpers/object-surface-conformance.ts`
+   * states the same rule from the caller's side). A statement that returns no row at all
+   * IS a failed read: `OBJECT_DETAIL_SQL`'s aggregate has no GROUP BY, so on any server
+   * that ran it there is exactly one row, and zero means the fallback chain rewrote it
+   * into something else.
+   */
+  public async describeObject(path: readonly string[]): Promise<ObjectDetail> {
+    this.ensureConnected();
+    if (path.length !== 2) {
+      throw new QueryError(`A PostgreSQL object path is [schema, name], received ${JSON.stringify(path)}`, "postgres");
+    }
+
+    const client = await this.pool!.connect();
+    try {
+      const result = await this.queryWithMaterializedFallback(client, OBJECT_DETAIL_SQL, [path[0], path[1]]);
+      if (result.rows.length === 0) {
+        throw new QueryError(`No detail row for ${path.join(".")}`, "postgres", OBJECT_DETAIL_SQL);
+      }
+      const row = result.rows[0] as ObjectDetailRow;
+      const pkColumns: string[] = row.pk_columns || [];
+
+      return {
+        path: [...path],
+        columns: (row.columns || []).map((col) => ({
+          name: col.name,
+          type: col.type,
+          nullable: col.nullable,
+          isPrimary: pkColumns.includes(col.name),
+          defaultValue: col.defaultValue ?? undefined,
+        })),
+        indexes: (row.indexes || []).map((idx) => ({
+          name: idx.name,
+          columns: Array.isArray(idx.columns) ? idx.columns : [],
+          unique: idx.unique,
+        })),
+        // `referencedTable` is spelled the way `getSchema()` spells it, public-qualified
+        // and joined with a dot, because `ForeignKeySchema` carries one string and both
+        // surfaces are live through Phase 1. The phase that removes `getSchema` is where
+        // that string becomes a path.
+        foreignKeys: (row.foreign_keys || []).map((fk) => ({
+          columnName: fk.columnName,
+          referencedTable:
+            fk.referencedSchema === "public" ? fk.referencedTable : `${fk.referencedSchema}.${fk.referencedTable}`,
+          referencedColumn: fk.referencedColumn,
+        })),
+      };
     } finally {
       client.release();
     }

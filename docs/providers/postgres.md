@@ -255,7 +255,7 @@ catalog would qualify, and without the `pg_` name Cloudberry's restriction would
 flattened into a settled fact the next time its wording contains "does not exist".
 Verified in the browser in both directions on live instances.
 
-### 3.1.1 The system-schema exclusion set
+### 3.1.3 The system-schema exclusion set
 
 `SYSTEM_SCHEMAS` ([postgres.ts](../../src/lib/db/providers/sql/postgres.ts)) is single-sourced and
 interpolated into every `NOT IN (...)` clause in the file, so a query added later cannot filter on a
@@ -311,6 +311,118 @@ document, and are marked as such in the code: Cloudberry's `pg_ext_aux` (the PAX
 which its schema page does not list, and AlloyDB's `google_ml`, which Google's docs never name —
 traced through `pg_depend` to the `google_ml_integration` extension the Omni image enables by
 default.
+
+### 3.1.4 What the object surface declares, and which catalog answers for it
+
+[§3.1.1](#311-what-counts-as-a-table) is the flat model's answer to "what is a table", and it is a
+single yes/no over every relation the database holds.
+The object surface (#789) replaces it with seven named kinds, each declared in
+`getCapabilities().objectKinds` by the provider that has it, and each answered by the catalog that
+knows about it:
+
+| Kind | `role` | Catalog | Test |
+|---|---|---|---|
+| `table` | `relation` | `pg_class.relkind` in `'r'`, `'p'` | `acceptsRowWrites: true` |
+| `view` | `relation` | `pg_class.relkind = 'v'` | not a row-write target |
+| `materialized_view` | `relation` | `pg_class.relkind = 'm'` | not a row-write target |
+| `sequence` | `config` | `pg_class.relkind = 'S'` | |
+| `function` | `routine` | `pg_proc.prokind = 'f'` | |
+| `procedure` | `routine` | `pg_proc.prokind = 'p'` | |
+| `trigger` | `attached` | `pg_trigger` where `NOT tgisinternal` | `attachedTo: 'table'` |
+
+`containerLevels` is one level, `schema`. A `catalog` level is not declared: a `pg` pool is opened
+against one database and nothing in the product can switch it on a live connection, so the level
+would draw a folder with exactly one child forever.
+
+**No `index` kind**, deliberately, and this is the line the fifteen other providers are read
+against. PostgreSQL's own catalog models an index as a property of the relation it is on:
+`pg_index` is keyed by `indrelid` and an index cannot exist apart from one. So it stays where it
+already is, in `describeObject()`'s output beside that object's columns, rather than becoming a
+container-level folder. An `index` kind belongs only where the engine's catalog names indexes as
+first-class objects at container level.
+
+**A view declares no `acceptsRowWrites`.** PostgreSQL does accept an `UPDATE` against a simple
+updatable view, and against any view carrying an `INSTEAD OF` trigger. The declaration is still
+absent, because it is per KIND and that fact is per OBJECT: claiming it would offer an import
+target that fails on most views in most schemas. `kindAcceptsRowWrites()`
+([object-kinds.ts](../../src/lib/db/object-kinds.ts)) reads an absent flag as false, so nothing has
+to be written for that to hold.
+
+**`prokind` costs the routine folders, never the container.** `pg_proc.prokind` arrived in
+PostgreSQL 11, and the wire-compatible forks do not all have it; a server without it answers
+`42703` for the routine arm of the counting statement. `countObjects()` re-runs the statement with
+that arm removed, so the relations and the triggers still carry their counts and only `function`
+and `procedure` carry `{ unavailable }` with the server's own sentence. Losing two folders to a
+missing column is the right cost; losing the whole schema to it is not. The retry is keyed on the
+column name as well as the code, because `42703` is "undefined column" generally and re-running
+without the routine arm repairs nothing when the missing column was in an arm that survives.
+
+**Three facts, not two.** `KindCount` is `{ count }` or `{ unavailable }`, and every declared kind
+is seeded at `{ count: 0 }` before the read. So a folder the engine has and this schema holds none
+of renders a zero badge; a folder whose read was refused renders the reason; and a kind this engine
+does not have at all is simply not in `objectKinds`, so no folder is drawn. The flat model
+collapsed all three into an empty array, which is the same failure
+[§3.1.2](#312-two-kinds-of-absence-and-why-neither-is-an-empty-array) records on the monitoring
+side. The `unavailable` sentence is the server's own, not passed through `mapDatabaseError()`:
+nothing here throws, and the mapper's prefix would put this product's words in front of the
+server's.
+
+**`describeObject()` reads columns from `pg_attribute`, not from `CTE_COLUMNS_INFO`.** This is the
+one place the object surface does not reuse the schema query's CTEs, and the reason is measured.
+`information_schema.columns` is defined over relkinds `'r'`, `'v'`, `'f'` and `'p'` only, so it has
+no row at all for a materialized view or a sequence. On the seeded `postgres:18` fixture it answered
+**0 columns** for `app.revenue_by_month` (relkind `'m'`) and **0** for `app.invoice_number_seq`
+(`'S'`), while `pg_attribute` answered 2 and 3. Reusing it would have shipped the browser's headline
+new folder, the materialized view #710 is about, with an empty column list. The primary key, foreign
+key and index CTEs *are* reused, so a fork that needs `withoutForeignKeyCatalog()` or
+`withoutJsonAggFunctions()` gets the same repair here that `getSchema()` gets.
+
+The type text still matches. `format_type(a.atttypid, NULL)` is passed NULL rather than
+`a.atttypmod` because that is exactly what `information_schema.columns.data_type` says:
+`character varying` and `numeric`, not `character varying(50)` and `numeric(12,2)`. Verified column
+by column on `app.orders`, so the object surface and the flat schema tree name a column's type
+identically while both are live.
+
+`OBJECT_DETAIL_SQL` also strips the `AS MATERIALIZED` hints, which is the opposite of what
+[§3.1](#31-materialized-ctes-for-schema-introspection) wants and for the opposite reason. There the
+CTEs are read by several joins over every relation in the database, and materializing once is
+cheap. Here there is one target object, and the hint forbids the planner from pushing `$1`/`$2` into
+the CTEs, so it computes every constraint and every index in the database to answer for one name.
+Measured on the 10-table seed fixture with `EXPLAIN`: total plan cost **3416.66** with the hints
+against **122.99** without, and the gap grows with the database rather than with the object.
+
+**A size nobody could read is dropped, not zeroed.** `listObjects()` selects
+`pg_total_relation_size(c.oid)` without the `COALESCE(..., 0)` the schema query wraps the same call
+in, and does not go through `queryWithMaterializedFallback()`. CockroachDB and Materialize have no
+such builtin and both are reached under the `postgres` type id, so the listing retries with the
+size column REMOVED: the row then carries no `size_bytes` and `DatabaseObject.sizeBytes` is absent,
+which draws no badge. The shared `withoutTotalRelationSizeFn()` would have answered a literal `0`
+instead, and "0 bytes" is a claim about every relation on those servers that nobody measured, which
+is the distinction [§3.1.0](#310-a-row-count-nobody-counted) draws for row counts. Nothing else in
+the listing statement is repairable by that chain anyway: it has no `AS MATERIALIZED`, no
+`json_agg`, no `to_regclass` and no `pg_depend`. `listContainers()` does go through the chain,
+because `schemaExclusion()` carries the `pg_depend` ownership test and
+`withoutExtensionOwnershipTest()` drops only a filter.
+
+**Listing order is applied in TypeScript, not with an `ORDER BY`.** Three different catalogs answer
+the three listings, so three `ORDER BY` clauses would be three chances to disagree; and a SQL sort
+runs under the database's own collation, which is `C` on the seeded fixture and `en_US.UTF-8` on
+plenty of real servers, so one schema would come back in two orders on two servers. One code-point
+sort here is one rule everywhere.
+
+**Verified against the seed.** `docker/postgres-init/02-sample-data.sql` creates one instance of
+every declared kind in schema `app`, and the provider was run against it end to end:
+
+```
+containers: [{"path":["app"],...},{"path":["public"],...}]
+counts(app): {"table":{"count":10},"view":{"count":4},"materialized_view":{"count":1},
+              "sequence":{"count":11},"function":{"count":2},"procedure":{"count":1},
+              "trigger":{"count":1}}
+describe revenue_by_month: cols=2 idx=0 fk=0 first=month:timestamp with time zone
+```
+
+The four views are `customer_lifetime_value`, `daily_sales`, `order_summary` and
+`product_sales_summary`, which are the ones #710 reported the app never showed.
 
 ### 3.2 Schema SQL hoisted to module scope
 
@@ -700,6 +812,15 @@ Common behaviour:
 - Sizes use `pg_total_relation_size` formatted by `formatBytes()`.
 - Display names follow the public/qualified rule from [§3.4](#34-cross-schema-display-names--fk-references).
 
+Four more methods answer the container-aware object model (#789) and are documented in [§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it):
+
+| Method | SQL const | Returns |
+|--------|-----------|---------|
+| `listContainers()` | `CONTAINERS_SQL` | the schemas, through the same exclusion set as the three above |
+| `countObjects(container)` | `COUNTS_SQL` | one `KindCount` per declared kind, seeded at `{ count: 0 }` |
+| `listObjects(container, kind)` | `LIST_RELATIONS_SQL[kind]`, `LIST_ROUTINES_SQL`, `LIST_TRIGGERS_SQL` | names, plus `reltuples` and size for relations |
+| `describeObject(path)` | `OBJECT_DETAIL_SQL` | columns, indexes and foreign keys for one object |
+
 ---
 
 ## 7. Monitoring & health
@@ -855,6 +976,8 @@ Overrides the SQL base defaults:
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` |
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `5432` |
+| `containerLevels` | one level, `schema` — the connection pins one database and nothing can switch it ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
+| `objectKinds` | `table`, `view`, `materialized_view`, `sequence`, `function`, `procedure`, `trigger` — no `index` kind: `pg_index` is keyed by `indrelid`, so an index is a property of a relation and stays in `describeObject()` ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 
 
@@ -1249,6 +1372,14 @@ await provider.disconnect();
   active queries is available.
 - **WAL size and checkpoint times require elevated privileges** and are silently omitted otherwise.
 - **Column introspection is capped at 100 columns** per table.
+- **A routine's overloads collapse to one entry.** PostgreSQL identifies a routine by name AND
+  argument types, while `DatabaseObject.path` is `[schema, name]` and has room for a name only, so
+  `listObjects()` selects `DISTINCT proname`. Two overloads of one function are one row rather than
+  two a reader cannot tell apart. The signature is what a Source tab would have to carry.
+- **Two triggers with the same name in one schema share a path.** A trigger name is unique per
+  table, not per schema, and the Phase 1 path for an attached object is `[schema, name]` like every
+  other kind. `attachedTo: 'table'` is the declaration that says where a trigger really hangs; the
+  path does not yet carry the table.
 - **`blocked` on active sessions is always `false`** — lock-wait detection (`pg_locks`) is not yet
   wired in.
 - **Cloud SSL auto-detect does not verify the server certificate.** When SSL is enabled by host

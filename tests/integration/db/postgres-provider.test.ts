@@ -9,6 +9,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 // ============================================================================
 // Mock pg BEFORE importing the provider
@@ -3990,6 +3991,361 @@ describe("PostgresProvider EXPLAIN grammar probe", () => {
     await provider.connect();
 
     expect(provider.getCapabilities().explainFormat).toBe("postgres-text");
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The object surface (#789), and the bug it closes (#710).
+ *
+ * `makeProvider()` is local rather than shared with the block above: these tests each
+ * install their own `mockQueryFn` before connecting, so they need a provider built
+ * after that assignment and no `afterEach` that reaches for a shared handle.
+ */
+describe("object surface", () => {
+  function makeProvider() {
+    return new PostgresProvider(makePgConfig());
+  }
+
+  test("declares the kinds PostgreSQL actually has", () => {
+    const provider = makeProvider();
+    const kinds = provider.getCapabilities().objectKinds ?? [];
+    expect(kinds.map((k) => k.id).sort()).toEqual([
+      "function",
+      "materialized_view",
+      "procedure",
+      "sequence",
+      "table",
+      "trigger",
+      "view",
+    ]);
+    expect(kinds.find((k) => k.id === "view")?.role).toBe("relation");
+    expect(kinds.find((k) => k.id === "procedure")?.role).toBe("routine");
+    expect(kinds.find((k) => k.id === "trigger")?.attachedTo).toBe("table");
+    // A view is not an import target even where PostgreSQL would allow the write.
+    expect(kinds.find((k) => k.id === "view")?.acceptsRowWrites).toBeUndefined();
+    expect(kinds.find((k) => k.id === "table")?.acceptsRowWrites).toBe(true);
+  });
+
+  test("satisfies the shared object surface contract", async () => {
+    mockQueryFn = async (sql) => {
+      if (sql.includes("pg_namespace") && sql.includes("ORDER BY")) return { rows: [{ name: "app" }] };
+      if (sql.includes("GROUP BY kind")) {
+        return {
+          rows: [
+            { kind: "table", n: 3 },
+            { kind: "view", n: 4 },
+            { kind: "materialized_view", n: 1 },
+          ],
+        };
+      }
+      if (sql.includes("relkind")) return { rows: [{ name: "order_summary", row_count: null, size_bytes: null }] };
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+    await assertObjectSurface(provider, {
+      containers: [["app"]],
+      kinds: { table: 3, view: 4, materialized_view: 1 },
+      sampleObject: { path: ["app", "order_summary"], kind: "view" },
+    });
+    await provider.disconnect();
+  });
+
+  test("a refused count is reported as unavailable, never as zero", async () => {
+    mockQueryFn = async (sql) => {
+      if (sql.includes("pg_namespace") && sql.includes("ORDER BY")) return { rows: [{ name: "sales" }] };
+      throw Object.assign(new Error("permission denied for schema sales"), { code: "42501" });
+    };
+    const provider = makeProvider();
+    await provider.connect();
+    const counts = await provider.countObjects(["sales"]);
+    expect(counts.table).toEqual({ unavailable: "permission denied for schema sales" });
+    await provider.disconnect();
+  });
+
+  test("falls back when the server has no pg_proc.prokind", async () => {
+    // CockroachDB, YugabyteDB and older forks can answer 42703 here. The tree must lose
+    // the routine folders rather than the whole container.
+    let attempts = 0;
+    mockQueryFn = async (sql) => {
+      if (sql.includes("pg_namespace") && sql.includes("ORDER BY")) return { rows: [{ name: "app" }] };
+      attempts += 1;
+      if (sql.includes("prokind")) {
+        throw Object.assign(new Error('column "prokind" does not exist'), { code: "42703" });
+      }
+      return { rows: [{ kind: "table", n: 2 }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+    const counts = await provider.countObjects(["app"]);
+    expect(attempts).toBeGreaterThan(1);
+    expect(counts.table).toEqual({ count: 2 });
+    expect(counts.function).toEqual({ unavailable: 'column "prokind" does not exist' });
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The rest of the object surface: the three listing catalogs, the detail row, and the
+ * refusals. Kept out of the block above so `-t "object surface"` still runs exactly the
+ * four conformance tests the task brief names.
+ */
+describe("PostgreSQL object listing and detail", () => {
+  function makeProvider() {
+    return new PostgresProvider(makePgConfig());
+  }
+
+  test("a container path that is not one schema is refused, rather than read as empty", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    // Not [] and not a zero count: binding undefined to $1 would answer a schema holding
+    // nothing, which is indistinguishable from a real empty schema.
+    await expect(provider.countObjects([])).rejects.toThrow(QueryError);
+    await expect(provider.listObjects(["catalog", "schema"], "table")).rejects.toThrow(/one schema name/);
+    await provider.disconnect();
+  });
+
+  test("nothing nests under a schema", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect(await provider.listContainers(["app"])).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("a kind this engine does not declare is refused, not answered empty", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.listObjects(["app"], "package")).rejects.toThrow(/declares no object kind "package"/);
+    await provider.disconnect();
+  });
+
+  test("each kind is answered by its own catalog, in one order", async () => {
+    mockQueryFn = async (sql, params) => {
+      if (sql.includes("prokind")) {
+        expect(params).toEqual(["app", "p"]);
+        return { rows: [{ name: "touch_order" }] };
+      }
+      if (sql.includes("tgisinternal")) return { rows: [{ name: "orders_stamp_updated_at" }] };
+      if (sql.includes("relkind")) {
+        return {
+          rows: [
+            { name: "products", row_count: "1200", size_bytes: "8192" },
+            // reltuples -1 is "nothing has analysed this", and a NULL size is a size the
+            // fallback chain replaced. Both are absences, neither is a zero.
+            { name: "audit_log", row_count: "-1", size_bytes: null },
+          ],
+        };
+      }
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect(await provider.listObjects(["app"], "procedure")).toEqual([
+      {
+        path: ["app", "touch_order"],
+        name: "touch_order",
+        kind: "procedure",
+        rowCount: undefined,
+        sizeBytes: undefined,
+      },
+    ]);
+    expect(await provider.listObjects(["app"], "trigger")).toEqual([
+      {
+        path: ["app", "orders_stamp_updated_at"],
+        name: "orders_stamp_updated_at",
+        kind: "trigger",
+        rowCount: undefined,
+        sizeBytes: undefined,
+      },
+    ]);
+    // Sorted here, not by the server: the catalog answered products first.
+    expect(await provider.listObjects(["app"], "table")).toEqual([
+      { path: ["app", "audit_log"], name: "audit_log", kind: "table", rowCount: undefined, sizeBytes: undefined },
+      { path: ["app", "products"], name: "products", kind: "table", rowCount: 1200, sizeBytes: 8192 },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a server without pg_total_relation_size loses the size, not the folder", async () => {
+    // CockroachDB and Materialize are both reached under the `postgres` type id and have
+    // no such builtin. The shared withoutTotalRelationSizeFn() is deliberately NOT used:
+    // its literal 0 would claim every relation there is empty.
+    const asked: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("relkind")) return { rows: [] };
+      asked.push(sql);
+      if (sql.includes("pg_total_relation_size")) {
+        throw new Error("unknown function: pg_total_relation_size()");
+      }
+      return { rows: [{ name: "orders", row_count: "42" }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect(await provider.listObjects(["app"], "table")).toEqual([
+      // A size nobody could read is absent, never 0.
+      { path: ["app", "orders"], name: "orders", kind: "table", rowCount: 42, sizeBytes: undefined },
+    ]);
+    expect(asked).toHaveLength(2);
+    expect(asked[1]).not.toContain("pg_total_relation_size");
+    await provider.disconnect();
+  });
+
+  test("a listing refusal the size retry cannot repair is raised, mapped", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("tgisinternal")) return { rows: [] };
+      throw new Error("permission denied for table pg_trigger");
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.listObjects(["app"], "trigger")).rejects.toThrow(/permission denied for table pg_trigger/);
+    await provider.disconnect();
+  });
+
+  test("an object's detail carries its columns, indexes and foreign keys", async () => {
+    mockQueryFn = async (sql, params) => {
+      if (!sql.includes("object_columns")) return { rows: [] };
+      expect(params).toEqual(["app", "orders"]);
+      return {
+        rows: [
+          {
+            pk_columns: ["id"],
+            columns: [
+              { name: "id", type: "integer", nullable: false, defaultValue: "nextval('app.orders_id_seq'::regclass)" },
+              { name: "notes", type: "text", nullable: true, defaultValue: null },
+            ],
+            indexes: [
+              { name: "orders_pkey", columns: ["id"], unique: true },
+              // An index over an expression alone has no attnums, so the subselect
+              // answers NULL rather than an array.
+              { name: "idx_orders_lower_number", columns: null, unique: false },
+            ],
+            foreign_keys: [
+              {
+                columnName: "customer_id",
+                referencedSchema: "app",
+                referencedTable: "customers",
+                referencedColumn: "id",
+              },
+              { columnName: "owner_id", referencedSchema: "public", referencedTable: "users", referencedColumn: "id" },
+            ],
+          },
+        ],
+      };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const detail = await provider.describeObject(["app", "orders"]);
+    expect(detail.path).toEqual(["app", "orders"]);
+    expect(detail.columns).toEqual([
+      {
+        name: "id",
+        type: "integer",
+        nullable: false,
+        isPrimary: true,
+        defaultValue: "nextval('app.orders_id_seq'::regclass)",
+      },
+      { name: "notes", type: "text", nullable: true, isPrimary: false, defaultValue: undefined },
+    ]);
+    expect(detail.indexes).toEqual([
+      { name: "orders_pkey", columns: ["id"], unique: true },
+      { name: "idx_orders_lower_number", columns: [], unique: false },
+    ]);
+    // Same spelling getSchema() uses: public is implicit, anything else is qualified.
+    expect(detail.foreignKeys).toEqual([
+      { columnName: "customer_id", referencedTable: "app.customers", referencedColumn: "id" },
+      { columnName: "owner_id", referencedTable: "users", referencedColumn: "id" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a kind with no columns describes as three empty lists, not as a failure", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("object_columns")) return { rows: [] };
+      return { rows: [{ pk_columns: null, columns: null, indexes: null, foreign_keys: null }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    // A sequence, a routine and a trigger all land here. Having no columns is a true fact
+    // about those kinds, so it is an answer rather than an error.
+    const detail = await provider.describeObject(["app", "invoice_number_seq"]);
+    expect(detail).toEqual({
+      path: ["app", "invoice_number_seq"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    await provider.disconnect();
+  });
+
+  test("a detail statement that returns no row at all is a failure, not an empty object", async () => {
+    // OBJECT_DETAIL_SQL's aggregate has no GROUP BY, so any server that ran it answers
+    // exactly one row. Zero means the statement that ran was not the one we wrote.
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObject(["app", "orders"])).rejects.toThrow(/No detail row for app\.orders/);
+    await provider.disconnect();
+  });
+
+  test("an object path that is not [schema, name] is refused", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObject(["app"])).rejects.toThrow(/\[schema, name\]/);
+    await provider.disconnect();
+  });
+
+  test("when the routine-free retry fails too, each folder carries the sentence that stopped it", async () => {
+    mockQueryFn = async (sql) => {
+      if (sql.includes("prokind")) {
+        throw Object.assign(new Error('column "prokind" does not exist'), { code: "42703" });
+      }
+      if (sql.includes("GROUP BY kind")) throw new Error('relation "pg_trigger" does not exist');
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const counts = await provider.countObjects(["app"]);
+    // Two different reads failed for two different reasons, and neither reason is
+    // overwritten by the other.
+    expect(counts.function).toEqual({ unavailable: 'column "prokind" does not exist' });
+    expect(counts.procedure).toEqual({ unavailable: 'column "prokind" does not exist' });
+    expect(counts.table).toEqual({ unavailable: 'relation "pg_trigger" does not exist' });
+    expect(counts.trigger).toEqual({ unavailable: 'relation "pg_trigger" does not exist' });
+    await provider.disconnect();
+  });
+
+  test("a 42703 that does not name prokind takes the whole container down", async () => {
+    // The retry repairs nothing when the missing column was in an arm it keeps, so
+    // reporting the routine folders as merely unavailable would be a guess.
+    mockQueryFn = async (sql) => {
+      if (sql.includes("GROUP BY kind")) {
+        throw Object.assign(new Error("column c.relkind does not exist"), { code: "42703" });
+      }
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const counts = await provider.countObjects(["app"]);
+    for (const kind of ["table", "view", "materialized_view", "sequence", "function", "procedure", "trigger"]) {
+      expect(counts[kind]).toEqual({ unavailable: "column c.relkind does not exist" });
+    }
     await provider.disconnect();
   });
 });

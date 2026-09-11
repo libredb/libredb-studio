@@ -583,3 +583,42 @@ SELECT * FROM app.customer_lifetime_value ORDER BY lifetime_value DESC LIMIT 10;
 SELECT * FROM app.daily_sales LIMIT 30;
 SELECT c.name, COUNT(p.id) FROM app.categories c LEFT JOIN app.products p ON c.id = p.category_id GROUP BY c.id, c.name;
 SELECT customer_tier, COUNT(*), SUM(total_amount) FROM app.order_summary GROUP BY customer_tier;
+
+-- ============================================
+-- OBJECT-TREE FIXTURE (#710, #789)
+-- ============================================
+-- One instance of every kind the PostgreSQL provider declares, so the object browser
+-- has something to find under each folder. The four views above already exist and are
+-- the ones #710 reported missing; everything below is here so materialized view,
+-- function, procedure, trigger and sequence are not empty folders in the acceptance run.
+--
+-- `app.orders` has no `total` column: the money column on that table is `total_amount`
+-- DECIMAL(12, 2), which is what the aggregate below reads.
+CREATE MATERIALIZED VIEW IF NOT EXISTS app.revenue_by_month AS
+  SELECT date_trunc('month', o.created_at) AS month, sum(o.total_amount) AS revenue
+  FROM app.orders o GROUP BY 1;
+
+CREATE OR REPLACE FUNCTION app.order_total(order_id integer)
+RETURNS numeric LANGUAGE sql STABLE AS $fn$
+  SELECT coalesce(sum(quantity * unit_price), 0) FROM app.order_items WHERE order_items.order_id = $1;
+$fn$;
+
+CREATE OR REPLACE PROCEDURE app.touch_order(order_id integer)
+LANGUAGE plpgsql AS $pr$
+BEGIN
+  UPDATE app.orders SET updated_at = now() WHERE id = order_id;
+END;
+$pr$;
+
+CREATE OR REPLACE FUNCTION app.stamp_updated_at() RETURNS trigger LANGUAGE plpgsql AS $tg$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$tg$;
+
+DROP TRIGGER IF EXISTS orders_stamp_updated_at ON app.orders;
+CREATE TRIGGER orders_stamp_updated_at BEFORE UPDATE ON app.orders
+  FOR EACH ROW EXECUTE FUNCTION app.stamp_updated_at();
+
+CREATE SEQUENCE IF NOT EXISTS app.invoice_number_seq;
