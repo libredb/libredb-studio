@@ -258,13 +258,36 @@ describe("assertObjectSurface", () => {
     expect(asked).toEqual(["view"]);
   });
 
-  // Uniqueness is across the WHOLE set of kinds, not within one listing: a tree keys its
-  // nodes by path, so two kinds answering one path is two nodes it cannot tell apart.
-  test("rejects the same path answered by two different kinds", async () => {
+  // Uniqueness is WITHIN a kind, not across kinds, and the relaxation is deliberate.
+  // `DatabaseObject.path` promises a segment unique within its PARENT, and a tree row is
+  // identified by path plus kind id, not by path alone - `describeObject` takes the kind
+  // for the same reason. MySQL is expected to be exactly this engine: its stored routines
+  // live in a namespace separate from its tables, so a table and a procedure may share a
+  // name in one schema, and asserting across kinds would report that as a provider defect.
+  test("accepts one path answered by two different kinds", async () => {
     const provider = fakeProvider({
       listObjects: async (_c: readonly string[], kind: string) => [
         { path: ["app", "order_summary"], name: "order_summary", kind },
       ],
+    });
+    await assertObjectSurface(provider as never, {
+      containers: [["app"]],
+      kinds: { table: 2, view: 4 },
+      sampleObject: { path: ["app", "order_summary"], kind: "view" },
+    });
+  });
+
+  // The other direction of the same relaxation: within ONE kind a shared path is still two
+  // rows a tree cannot tell apart, because kind no longer distinguishes them.
+  test("still rejects two objects of the SAME kind sharing a path", async () => {
+    const provider = fakeProvider({
+      listObjects: async (_c: readonly string[], kind: string) =>
+        kind === "table"
+          ? [
+              { path: ["app", "orders"], name: "orders", kind: "table" },
+              { path: ["app", "orders"], name: "orders", kind: "table" },
+            ]
+          : [{ path: ["app", "order_summary"], name: "order_summary", kind }],
     });
     await expect(
       assertObjectSurface(provider as never, {
@@ -272,7 +295,7 @@ describe("assertObjectSurface", () => {
         kinds: { table: 2, view: 4 },
         sampleObject: { path: ["app", "order_summary"], kind: "view" },
       }),
-    ).rejects.toThrow(/kinds "table" and "view" both answer the path \["app","order_summary"\]/);
+    ).rejects.toThrow(/two objects of kind "table" both answer the path \["app","orders"\]/);
   });
 
   test("rejects a listing whose objects carry a kind other than the one requested", async () => {

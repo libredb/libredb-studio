@@ -6,8 +6,18 @@
  *   2. countObjects never answers for a kind the provider did not declare;
  *   3. every kind counted non-empty LISTS something, so no folder opens onto nothing;
  *   4. every object's path starts with its container's path, so the tree can address it;
- *   5. no two objects share a path, ACROSS kinds and not merely within one;
+ *   5. no two objects of ONE kind share a path, so that kind's folder can address each;
  *   6. describeObject accepts a path listObjects ACTUALLY PRODUCED, with its kind.
+ *
+ * **Invariant 5 stops at the kind boundary, and that is a decision rather than an
+ * oversight.** A tree row is identified by path PLUS kind id, not by path alone, which is
+ * also why `describeObject` takes the kind: `DatabaseObject.path` promises a segment
+ * unique within its PARENT, and it never promised uniqueness against a different kind's
+ * namespace. Asserting across kinds is stricter than the type's contract and stricter than
+ * anything downstream needs, and it would fail an engine whose namespaces really are
+ * separate: MySQL keeps stored routines apart from tables, so a table and a procedure may
+ * share a name in one schema and a cross-kind assertion would report that correct engine
+ * as a broken provider. Do not tighten this back.
  *
  * Invariant 6 is exactly that and nothing more: a routine, a trigger and a sequence
  * legitimately have no columns, so an assertion that `columns` is non-empty would fail
@@ -103,7 +113,6 @@ export async function assertObjectSurface(
   // listing are two reads at two instants and a live engine may legitimately disagree
   // between them, so pinning the magnitude would make this helper flaky rather than
   // strict. Non-emptiness is the part that cannot be a timing artefact.
-  const owners = new Map<string, string>();
   let sampleListing: DatabaseObject[] | undefined;
 
   for (const [id, want] of Object.entries(expected.kinds)) {
@@ -112,6 +121,9 @@ export async function assertObjectSurface(
     if (listed.length === 0) {
       throw new Error(`countObjects reported ${want} of kind "${id}" and listObjects returned none`);
     }
+    // Fresh per kind, deliberately. See the note above on why uniqueness stops at the
+    // kind boundary.
+    const seen = new Set<string>();
     for (const object of listed) {
       if (object.kind !== id) {
         throw new Error(`listObjects("${id}") returned an object of kind "${object.kind}": ${pathKey(object.path)}`);
@@ -119,15 +131,11 @@ export async function assertObjectSurface(
       if (!startsWith(object.path, container)) {
         throw new Error(`path ${JSON.stringify(object.path)} is not inside container ${JSON.stringify(container)}`);
       }
-      // Uniqueness spans every kind, not one listing: a tree keys its nodes by path, so
-      // two objects answering one path are two nodes it cannot tell apart.
       const key = pathKey(object.path);
-      const owner = owners.get(key);
-      if (owner !== undefined) {
-        const both = owner === id ? `two objects of kind "${id}"` : `kinds "${owner}" and "${id}"`;
-        throw new Error(`${both} both answer the path ${key}, so neither can be addressed`);
+      if (seen.has(key)) {
+        throw new Error(`two objects of kind "${id}" both answer the path ${key}, so neither can be addressed`);
       }
-      owners.set(key, id);
+      seen.add(key);
     }
     if (id === expected.sampleObject.kind) sampleListing = listed;
   }
