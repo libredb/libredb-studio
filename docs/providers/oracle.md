@@ -1120,6 +1120,91 @@ way `getSchema()` spells it: bare within the same owner, `OWNER.TABLE` outside i
 cross-owner case is not cosmetic, since a bare name there addresses a table in the wrong schema.
 The phase that removes `getSchema()` is where that string becomes a path.
 
+#### `describeObjects()` describes a whole folder in five statements (#789)
+
+`describeObjects(container, kind, limit?)` answers columns, indexes and foreign keys for EVERY object
+of one kind in one owner, in FIVE round trips whatever the folder holds, against four per object for
+the single read.
+On this engine that is also the other half of #765: the same four dictionary views scoped to an owner
+alone answered 910,000 column rows on the reporter's instance.
+
+**The timing is the one in this family that does not simply favour the bulk read, and it is measured
+rather than assumed.**
+On Oracle Database 21c XE against a 202-table owner, three consecutive runs in one connection:
+
+| Run | `describeObjects()` | 202 × `describeObject()` |
+|---|---|---|
+| first | 1025 ms | 447 ms |
+| second | 53 ms | 206 ms |
+| third | 50 ms | 220 ms |
+
+The first call pays a hard parse of five large statements the shared pool has never seen; every call
+after it is about four times faster than the N+1.
+That is why all five carry BINDS rather than interpolated values: a statement whose text changes per
+owner would hard-parse every time and never reach the second row of that table.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.**
+The same four `ALL_*` dictionary views `describeObject()` reads, and not `USER_*`, which answers only
+for the connecting user and is what #765 was about.
+The five statements share one `described` CTE and the four detail reads join it by NAME, which is the
+only key these views carry: none of `ALL_TAB_COLUMNS`, `ALL_CONSTRAINTS`, `ALL_CONS_COLUMNS` or
+`ALL_INDEXES` publishes an `OBJECT_ID`.
+Joining on a name is safe here for a measured reason: tables, views, materialized views, synonyms,
+sequences, packages, procedures and functions share ONE namespace inside an owner, and a second
+`CREATE` of any of them answers ORA-00955.
+
+**Which kinds have no columns.**
+Everything but `table`, `view` and `materialized_view`: a package, a procedure, a function, a synonym,
+a sequence and a trigger answer `{ details: [] }` with no round trip.
+A MATERIALIZED VIEW is NOT one of them, measured on 21c XE: `ALL_TAB_COLUMNS` answers for one, because
+it has a container table underneath, and that container is also why the `table` target has to drop it.
+
+**What bounds the read on the wire.**
+`ORDER BY o.OBJECT_NAME FETCH FIRST :3 ROWS ONLY`, bound at `limit + 1`, and **not `ROWNUM`**: ROWNUM
+is assigned BEFORE the sort, so `WHERE ROWNUM <= n ORDER BY OBJECT_NAME` keeps an arbitrary set and
+then orders it, while `FETCH FIRST` cuts the ordered set.
+The extra object is dropped and `truncated` carries the CALLER's limit; an unbounded call runs a
+statement with no row bound and can never report truncation.
+Nothing here caps a column list.
+
+**What orders the cut, and under whose collation.**
+The target's `ORDER BY OBJECT_NAME`, which runs under the database's own `NLS_SORT` and is therefore
+the SERVER's order rather than ours.
+It decides WHICH objects a bound keeps and nothing else: the answer is re-sorted by path in code, one
+rule everywhere, because callers join the two readings on path rather than on position.
+
+**Mixed path depth (ruling 5f).**
+Not in this engine's relation set.
+`table`, `view` and `materialized_view` are all addressed `[owner, name]`; `trigger` is the kind that
+sits at two depths here - a SCHEMA or DATABASE trigger has no base object - and it has no columns.
+
+**A bind trap worth carrying forward.**
+Each detail statement names the owner a SECOND time, for its own join, and that reference takes the
+next free placeholder (`:3` unbounded, `:4` bounded) with the owner repeated in the bind array.
+A repeated `:1` looks right and is not: measured against a live 21c XE, oracledb maps a bind ARRAY by
+the order the placeholders APPEAR rather than by the number they carry, so a statement naming `:1`
+twice answers `NJS-098: 3 bind placeholders were used in the SQL statement but 2 bind values were
+provided`.
+The unit suite could not see that, because its fake dispatches on statement text and never counted the
+binds, so the arity is asserted from the arguments now.
+
+An empty owner costs ONE round trip rather than five.
+
+Rebuilding the 202-table owner the timings above were measured on, as APP on XEPDB1, so the numbers
+are re-runnable rather than asserted:
+
+```sql
+BEGIN
+  FOR i IN 0 .. 199 LOOP
+    EXECUTE IMMEDIATE 'CREATE TABLE bulk_t' || LPAD(i,3,'0') || ' (id NUMBER PRIMARY KEY, a VARCHAR2(20), b NUMBER)';
+    EXECUTE IMMEDIATE 'CREATE INDEX bulk_ix' || LPAD(i,3,'0') || ' ON bulk_t' || LPAD(i,3,'0') || ' (a)';
+  END LOOP;
+END;
+/
+```
+
 #### The fixture
 
 [`docker/oracle-init/01-object-fixture.sql`](../../docker/oracle-init/01-object-fixture.sql),
