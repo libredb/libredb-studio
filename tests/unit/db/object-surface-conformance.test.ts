@@ -747,6 +747,168 @@ describe("assertObjectSurface and the bulk column read", () => {
     );
   });
 
+  // THE defect this whole invariant exists to catch, and the one the guard could not see
+  // until it was written down (#789): a bulk read that answers for fewer objects than the
+  // folder lists, and says nothing. Every check above walks `batch.details` and asks
+  // whether each one was listed; nothing asked the other way, so dropping an object passed
+  // all of them. After Task 26b deletes the flat surface, an object missing from the bulk
+  // read is an object that exists nowhere in the product.
+  test("rejects a complete bulk read that describes fewer objects than were listed", async () => {
+    const provider = bulkProvider({
+      describeObjects: async (_c: readonly string[], kind: string, limit?: number) => {
+        const all = detailsFor(kind);
+        const kept = kind === "table" ? all.slice(1) : all;
+        if (limit !== undefined && kept.length > limit) {
+          return { details: kept.slice(0, limit), truncated: { limit, reason: callerBoundTruncationReason(limit) } };
+        }
+        return { details: kept };
+      },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /describeObjects\("table"\) reported no truncation and did not describe \["app","orders"\], which listObjects named/,
+    );
+  });
+
+  // The exemption is read from the DECLARATION and not from the answer, so a relation kind
+  // that describes none of its objects is a drop rather than a columnless kind.
+  test("rejects a relation kind whose bulk read describes none of the objects it listed", async () => {
+    const provider = bulkProvider({
+      describeObjects: async (_c: readonly string[], kind: string) =>
+        kind === "table" ? { details: [] } : { details: detailsFor(kind) },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /describeObjects\("table"\) reported no truncation and did not describe \["app","orders"\], \["app","products"\], which listObjects named/,
+    );
+  });
+
+  // A routine has no columns on any engine, so a provider answers `{ details: [] }` for it
+  // with no round trip at all, and holding that kind to completeness would fail every
+  // correct provider in the fleet. The exemption covers an EMPTY batch and nothing wider:
+  // the next test is the same kind describing some of its objects and not the rest.
+  const withRoutine = {
+    getCapabilities: () => ({
+      queryLanguage: "sql",
+      containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+        { id: "procedure", role: "routine", label: "Procedure", labelPlural: "Procedures" },
+      ],
+    }),
+    countObjects: async () => ({ table: { count: 2 }, view: { count: 4 }, procedure: { count: 2 } }),
+  };
+  const routineListed = [
+    { path: ["app", "touch_order"], name: "touch_order", kind: "procedure" },
+    { path: ["app", "archive_order"], name: "archive_order", kind: "procedure" },
+  ];
+  const routineExpectation = {
+    containers: [["app"]],
+    kinds: { table: 2, view: 4, procedure: 2 },
+    sampleObject: { path: ["app", "order_summary"], kind: "view" },
+  };
+
+  test("accepts a columnless kind that describes nothing at all", async () => {
+    const provider = bulkProvider({
+      ...withRoutine,
+      listObjects: async (_c: readonly string[], kind: string) =>
+        kind === "procedure" ? routineListed : (listed[kind] ?? []),
+      describeObjects: async (_c: readonly string[], kind: string, limit?: number) => {
+        if (kind === "procedure") return { details: [] };
+        const all = detailsFor(kind);
+        if (limit !== undefined && all.length > limit) {
+          return { details: all.slice(0, limit), truncated: { limit, reason: callerBoundTruncationReason(limit) } };
+        }
+        return { details: all };
+      },
+    });
+    await assertObjectSurface(provider as never, routineExpectation);
+  });
+
+  test("rejects a columnless kind that describes some of its objects and not the rest", async () => {
+    const provider = bulkProvider({
+      ...withRoutine,
+      listObjects: async (_c: readonly string[], kind: string) =>
+        kind === "procedure" ? routineListed : (listed[kind] ?? []),
+      describeObjects: async (_c: readonly string[], kind: string, limit?: number) => {
+        if (kind === "procedure") {
+          return { details: [{ path: routineListed[0].path, columns: [], indexes: [], foreignKeys: [] }] };
+        }
+        const all = detailsFor(kind);
+        if (limit !== undefined && all.length > limit) {
+          return { details: all.slice(0, limit), truncated: { limit, reason: callerBoundTruncationReason(limit) } };
+        }
+        return { details: all };
+      },
+    });
+    await expect(assertObjectSurface(provider as never, routineExpectation)).rejects.toThrow(
+      /describeObjects\("procedure"\) reported no truncation and did not describe \["app","archive_order"\], which listObjects named/,
+    );
+  });
+
+  // The other half of the same rule. A provider may not buy its way out of completeness by
+  // reporting a bound it was never given: an unbounded call has no caller limit to report,
+  // so a caller-bound sentence on one is a claim about a number nobody passed.
+  test("rejects an unbounded read that reports the caller's bound", async () => {
+    const provider = bulkProvider({
+      describeObjects: async (_c: readonly string[], kind: string) => {
+        const all = detailsFor(kind);
+        return {
+          details: all.slice(1),
+          truncated: { limit: all.length - 1, reason: callerBoundTruncationReason(all.length - 1) },
+        };
+      },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /describeObjects\("table"\) was called with no limit and reported one: "the bulk column read was bounded at 1 object by its caller"/,
+    );
+  });
+
+  // A provider with a bound of its OWN is not the case above and must stay certifiable:
+  // redis and libredb walk a bounded keyspace, so their unbounded read legitimately stops
+  // short and says so in their own words, and the completeness check gives way to the
+  // truncation flag exactly as it does on a bounded read.
+  test("accepts an unbounded read that stops short on a bound of the provider's own", async () => {
+    // Three tables listed and two described, which keeps the fixture bar met: the richest
+    // kind still holds two column sets, so the bounded probe below is not vacuous.
+    const walked = [...listed.table, { path: ["app", "shipments"], name: "shipments", kind: "table" }];
+    const provider = bulkProvider({
+      listObjects: async (_c: readonly string[], kind: string) => (kind === "table" ? walked : (listed[kind] ?? [])),
+      describeObjects: async (_c: readonly string[], kind: string, limit?: number) => {
+        const all = (kind === "table" ? walked : (listed[kind] ?? [])).map((object) => ({
+          path: object.path,
+          columns: [],
+          indexes: [],
+          foreignKeys: [],
+        }));
+        if (limit !== undefined && all.length > limit) {
+          return { details: all.slice(0, limit), truncated: { limit, reason: callerBoundTruncationReason(limit) } };
+        }
+        if (kind !== "table") return { details: all };
+        return {
+          details: all.slice(0, 2),
+          truncated: { limit: 2, reason: "the key walk stopped at the first 1,000 keys of one SCAN walk" },
+        };
+      },
+    });
+    await assertObjectSurface(provider as never, expectation);
+  });
+
+  // A bounded read that reports a limit and returns FEWER than it than the objects it had
+  // is the same silent drop wearing the truncation flag: with two tables and a limit of 1,
+  // one column set is the only complete answer.
+  test("rejects a bounded read that returns fewer column sets than the bound it reports", async () => {
+    const provider = bulkProvider({
+      describeObjects: async (_c: readonly string[], kind: string, limit?: number) => {
+        const all = detailsFor(kind);
+        if (limit === undefined) return { details: all };
+        return { details: [], truncated: { limit, reason: callerBoundTruncationReason(limit) } };
+      },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /describeObjects\("table", limit 1\) returned 0 column sets under a bound of 1 while 2 objects were listed/,
+    );
+  });
+
   // One sentence for one event, across every engine (#789). A non-empty reason was the old
   // bar, and eleven implementers cleared it with three unrelated phrasings, so the same
   // bound read three ways depending on which engine was open. This is the check that makes

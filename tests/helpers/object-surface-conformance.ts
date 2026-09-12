@@ -354,12 +354,18 @@ async function assertFlatReadingJoins(
  * block non-vacuous is that it compares two answers the provider gave, never one the test
  * author typed.
  *
- * Three properties, one per ruling:
+ * Five properties, one per ruling:
  *
  *   1. one round trip per container and kind, which is the SHAPE of the call and is
  *      pinned by the argument assertion in the helper's own suite rather than here;
  *   2. keyed by `path`, so every column set must match an object `listObjects` named, by
- *      path and never by a joined name;
+ *      path and never by a joined name, and - the direction this helper was missing until
+ *      the bulk-read review measured it - every object `listObjects` named must be in a
+ *      complete batch. One-directional, a provider dropping one listed table passed the
+ *      whole contract: `mysql.ts`'s `described.slice(1)` left it at 2 pass 0 fail, and the
+ *      same mutation on clickhouse and duckdb was equally invisible. After Task 26b
+ *      deletes the flat surface, an object missing from a bulk read is an object that
+ *      exists nowhere in the product;
  *   3. truncation is reported, which is checked by bounding a read whose unbounded answer
  *      is already known to be larger - the only probe that can tell a provider that stops
  *      short and says so from one that stops short silently;
@@ -379,9 +385,27 @@ async function assertBulkColumnRead(
   listings: ReadonlyMap<string, DatabaseObject[]>,
 ): Promise<void> {
   const describeObjects = provider.describeObjects;
+  // KEPT rather than removed, and the choice is recorded because the other direction was
+  // considered: `describeObjects` is optional until Task 26 makes the surface required, so
+  // removing this line now reddens every provider that has not landed it yet, including any
+  // being written concurrently. Task 26b owns deleting it, together with the `?` on the
+  // method. Until then a provider is certified for the bulk read only if it declares one,
+  // which is why nothing below is written against a typed expectation.
   if (describeObjects === undefined) return;
+  const relations = new Set(relationKindIds(provider.getCapabilities()));
 
-  function check(kind: string, batch: ObjectDetailBatch, addressable: ReadonlySet<string>): void {
+  /**
+   * `bound` is the limit the call was given, `undefined` for an unbounded one. It is a
+   * parameter rather than a closure because the two cases are checked DIFFERENTLY: only an
+   * unbounded call can be held to completeness, and only an unbounded call must not report
+   * a caller's bound.
+   */
+  function check(
+    kind: string,
+    batch: ObjectDetailBatch,
+    addressable: ReadonlySet<string>,
+    bound: number | undefined,
+  ): void {
     const seen = new Set<string>();
     for (const detail of batch.details) {
       const key = pathKey(detail.path);
@@ -391,7 +415,36 @@ async function assertBulkColumnRead(
       if (seen.has(key)) throw new Error(`describeObjects("${kind}") answered twice for ${key}`);
       seen.add(key);
     }
-    if (batch.truncated === undefined) return;
+    if (batch.truncated === undefined) {
+      // The OTHER direction, and the one this helper was missing: the loop above asks
+      // whether every column set was listed, and nothing asked whether every listed object
+      // was described. A provider that silently drops one satisfies every check above, and
+      // after Task 26b deletes the flat surface a dropped object is an object that exists
+      // nowhere in the product.
+      //
+      // Only an UNBOUNDED and complete answer is held to this. A truncated batch is
+      // legitimately short, and so is a bounded one - a bounded call that returns less and
+      // says nothing is caught by name further down, where the shortfall can be reported
+      // against the unbounded answer instead of against the listing.
+      //
+      // Recorded rather than thrown, so the two vacuity guards below still speak first: a
+      // provider answering `{ details: [] }` for every kind is a vacuous fixture and not
+      // one dropped object, and that distinction is what its own message carries.
+      //
+      // A kind that is not a RELATION is the one case an empty batch is not a drop: a
+      // routine, a trigger and a package legitimately have no columns, and every provider
+      // answers `{ details: [] }` for them without a round trip. That exemption is read
+      // from the provider's own `role` declaration and it is narrow - it covers an empty
+      // batch and nothing else, so a non-relation kind that describes SOME of its objects
+      // is held to all of them. Which kinds those are is a per-engine measurement that the
+      // eleven disagree on correctly: a MariaDB sequence describes and an Oracle one does
+      // not, a ClickHouse dictionary describes and a function does not.
+      if (bound === undefined && (relations.has(kind) || batch.details.length > 0)) {
+        const missing = [...addressable].filter((key) => !seen.has(key));
+        if (missing.length > 0 && incomplete === undefined) incomplete = { kind, missing };
+      }
+      return;
+    }
     if (batch.details.length > batch.truncated.limit) {
       throw new Error(
         `describeObjects("${kind}") reported a limit of ${batch.truncated.limit} and returned ` +
@@ -401,12 +454,23 @@ async function assertBulkColumnRead(
     if (batch.truncated.reason.length === 0) {
       throw new Error(`describeObjects("${kind}") reported truncation with no reason a person can read`);
     }
+    if (bound === undefined && batch.truncated.reason.includes(callerBoundTruncationReason(batch.truncated.limit))) {
+      // The escape hatch the completeness check would otherwise leave open: a provider
+      // could answer short on an unbounded call and wave the truncation flag at it. A bound
+      // of its OWN is legitimate there and stays certifiable - redis and libredb walk a
+      // bounded keyspace and say so on an unbounded read - but the CALLER's bound is not,
+      // because no caller passed one.
+      throw new Error(
+        `describeObjects("${kind}") was called with no limit and reported one: "${batch.truncated.reason}"`,
+      );
+    }
   }
 
+  let incomplete: { kind: string; missing: string[] } | undefined;
   let richest: { kind: string; count: number } | undefined;
   for (const [kind, listed] of listings) {
     const batch = await describeObjects.call(provider, container, kind);
-    check(kind, batch, new Set(listed.map((object) => pathKey(object.path))));
+    check(kind, batch, new Set(listed.map((object) => pathKey(object.path))), undefined);
     if (richest === undefined || batch.details.length > richest.count) {
       richest = { kind, count: batch.details.length };
     }
@@ -414,6 +478,15 @@ async function assertBulkColumnRead(
 
   if (richest === undefined || richest.count === 0) {
     throw new Error("describeObjects answered no column set for any listed kind, so every check of it is vacuous");
+  }
+  // Before the fixture bar below, because a dropped object SHRINKS the richest kind: a
+  // provider that describes one of two tables would otherwise be reported as a fixture
+  // holding one table, which is the wrong diagnosis for the defect this guard exists for.
+  if (incomplete !== undefined) {
+    throw new Error(
+      `describeObjects("${incomplete.kind}") reported no truncation and did not describe ` +
+        `${incomplete.missing.join(", ")}, which listObjects named`,
+    );
   }
   if (richest.count < 2) {
     throw new Error(
@@ -423,7 +496,7 @@ async function assertBulkColumnRead(
   }
 
   const bounded = await describeObjects.call(provider, container, richest.kind, 1);
-  check(richest.kind, bounded, new Set(listings.get(richest.kind)!.map((object) => pathKey(object.path))));
+  check(richest.kind, bounded, new Set(listings.get(richest.kind)!.map((object) => pathKey(object.path))), 1);
   if (bounded.truncated === undefined) {
     throw new Error(
       `describeObjects("${richest.kind}", limit 1) returned ${bounded.details.length} of ${richest.count} ` +
@@ -431,6 +504,14 @@ async function assertBulkColumnRead(
     );
   }
   expect(bounded.truncated.limit).toBe(1);
+  // Short of its own reported bound is the same silent drop wearing the flag: the richest
+  // kind holds at least two objects, so a limit of 1 has exactly one complete answer.
+  if (bounded.details.length !== 1) {
+    throw new Error(
+      `describeObjects("${richest.kind}", limit 1) returned ${bounded.details.length} column sets under a bound ` +
+        `of 1 while ${richest.count} objects were listed`,
+    );
+  }
   const callerSentence = callerBoundTruncationReason(1);
   if (!bounded.truncated.reason.includes(callerSentence)) {
     throw new Error(
