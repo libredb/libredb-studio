@@ -9,7 +9,7 @@ import type { DetailedObject } from "@/lib/db/detailed-object";
 import { quoteLiteral } from "@/lib/sql/values";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
-import { objectSegment, quoteObjectPath } from "@/lib/query-generators";
+import { objectSegment, quoteIdentifier, quoteObjectPath } from "@/lib/query-generators";
 
 interface TestDataGeneratorProps {
   isOpen: boolean;
@@ -232,7 +232,13 @@ export function TestDataGenerator({
     }
 
     // SQL INSERT
-    const colNames = cols.map((c) => `"${c.name}"`).join(", ");
+    // Quoted by the CONNECTED engine's rule, like the target above: a hardcoded `"`
+    // made the two halves of one statement speak different dialects, and MySQL reads
+    // `"email"` as a string literal rather than a column, so the INSERT did not parse.
+    // The fallback is the old spelling, for a caller that has no declaration to read.
+    const colNames = cols
+      .map((c) => (capabilities === undefined ? `"${c.name}"` : quoteIdentifier(c.name, capabilities)))
+      .join(", ");
     const rows = Array.from({ length: rowCount }, (_, i) => {
       const values = cols.map((col) => {
         const gen = FAKE[col.faker.generator as keyof typeof FAKE];

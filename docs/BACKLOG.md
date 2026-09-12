@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D53, U17 · 14
+- [Drivers and connections](#drivers-and-connections) — D1–D55, U17 · 16
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X13, U2–U21 · 7
@@ -569,6 +569,39 @@ semicolon, which is a real trap for anyone reproducing the suite and is currentl
 
 **Done when:** the libSQL fixture is a file applied the way the other sixteen are, or the doc says
 why it cannot be and how to apply it safely.
+
+### D54. The data profiler can only profile columns on PostgreSQL-family engines
+
+`src/app/api/db/profile/route.ts:115-116` casts every column with `${safeCol}::text` to take
+its `MIN` and `MAX`. That is PostgreSQL's cast syntax, and it is written once for every engine:
+SQL Server, Oracle, MySQL, ClickHouse and the rest reject it, so each column comes back as
+"Could not profile this column" while the row count and the column list beside it are correct.
+The failure is per column and the panel still renders, which is why it reads as a data problem
+rather than a dialect one.
+
+Measured in a browser during #789's review, on SQL Server 2022 against `shop.dbo.customers`:
+three columns, three refusals, two rows counted correctly.
+
+Pre-existing and not caused by #789: `git show main:src/app/api/db/profile/route.ts` carries the
+identical two lines. It became visible because the object tree's row menu now offers Profile on
+every relation of every engine, where the flat explorer offered it on the tables it listed.
+
+Closing it is a per-dialect text cast measured on each engine rather than a one-line change:
+Oracle has `TO_CHAR`, SQL Server `CAST(x AS NVARCHAR(MAX))`, MySQL `CAST(x AS CHAR)`, ClickHouse
+`toString`, and `MIN`/`MAX` over a cast do not order the same way everywhere, so what the two
+numbers MEAN needs stating per engine rather than assuming a lexicographic answer is wanted.
+
+**Done when:** a column profiles on every engine whose provider offers the action, or the action
+is not offered where it cannot answer, with the engine's own sentence rather than a generic one.
+
+### D55. The admin Operations table list does not print a row's schema
+
+Two tables with the same label in different schemas render as identical rows, so an operator
+choosing between them has only the deep link's own marking to tell them apart. Found while moving
+the maintenance deep link onto the object path in #789, which now carries the full address; the
+list it lands on still shows a bare name.
+
+**Done when:** a row in that list is identifiable without relying on what marked it.
 
 ## Value interpolation
 

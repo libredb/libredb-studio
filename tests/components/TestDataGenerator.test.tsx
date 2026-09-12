@@ -86,6 +86,46 @@ describe("TestDataGenerator", () => {
     expect(container.textContent).toContain("INSERT INTO employees");
   });
 
+  test("quotes COLUMN names the way the connected engine reads an identifier", () => {
+    // The target moved onto `quoteObjectPath` (#789) while the column list kept a
+    // hardcoded `"`, so the two halves of one statement spoke different dialects.
+    // A column whose name needs quoting is what separates them: MySQL backticks it,
+    // SQL Server brackets it, and `"order date"` is what MySQL reads as a string
+    // literal rather than a column, so the INSERT did not parse at all.
+    const awkward: DetailedObject = {
+      ...schema,
+      columns: [{ name: "order date", type: "VARCHAR(50)", nullable: false, isPrimary: false }],
+    };
+    const render1 = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["shop", "employees"]}
+        tableSchema={awkward}
+        capabilities={capsOf({ defaultPort: 3306 })}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    const mysql = render1.container.textContent ?? "";
+    expect(mysql).toContain("`order date`");
+    expect(mysql).not.toContain('"order date"');
+    cleanup();
+
+    // The control: the same column, a different engine, a different spelling. Without
+    // it the assertion above would pass for a component that quoted nothing at all.
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["shop", "employees"]}
+        tableSchema={awkward}
+        capabilities={mssqlCaps}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    expect(container.textContent ?? "").toContain("[order date]");
+  });
+
   test("quotes a generated value that does not match its column's numeric type", () => {
     // The generator is chosen by column NAME and the quoting by column TYPE, so
     // the two can disagree: `phone BIGINT` produces `+1-555-…`, which used to be
