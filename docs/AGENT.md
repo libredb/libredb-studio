@@ -2598,10 +2598,6 @@ the role's own grants are the whole boundary (A3).
   fix,
   left unmodelled because the user-index reader drops `COLLATE` too and honouring it in one reader
   only would make the inventory disagree with itself.
-- **B77** — a bounded inventory tells a model it "stopped at a limit of N" where N is the number of
-  objects the read produced rather than any limit, on the two engines whose bound is a key walk. The
-  contract beside `truncated.limit` already says a caller must not show that number as a cap; the
-  caller-bounded readings still need it, so the fix is a wording decision rather than a deletion.
 - **B78** — the Redis and LibreDB command generators emit em dashes into text a user reads in the
   editor. Pre-existing house-style debt, recorded rather than swept because its tests pin the exact
   strings.

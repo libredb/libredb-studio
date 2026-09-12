@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B79 · 24
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B79 · 23
 
 ---
 
@@ -1892,30 +1892,6 @@ so), and none of them has been measured.
 
 **Done when:** a resume onto a repointed connection does one stated thing, and the run's own record
 says which.
-
-### B77. A model is told a bounded inventory "stopped at a limit of N" where N is not a limit
-
-`src/lib/db/types.ts:1267` states the contract plainly: `truncated.limit` "is the bound where the
-bound IS an object count", and where it is not - "redis and libredb stop a key walk after a fixed
-number of KEYS" - those two answer `details.length` instead, so a caller must "read `limit` as an
-upper bound on `details.length` that a caller may not read back as a cap somebody set: `reason` is
-the field that says WHICH bound bit, and it is the one to show a person."
-
-`src/lib/agent/context-snapshot.ts:1252` does exactly what that forbids, and the reader it shows it
-to is a model. Measured in `.workflow-data` on a LibreDB store holding 12,000 keys past the 10,000
-scan cap, and again on Redis past its 1,000-key SCAN budget:
-
-    This inventory is incomplete: the reading stopped at a limit of 1 (the key walk stopped at the
-    first 10,000 keys of a bounded key scan), so an object that is not listed below may still exist.
-
-"a limit of 1" is the number of objects the read produced. No such limit was set by anybody, and the
-reason beside it names the real bound. On the caller-bounded readings the same sentence is correct
-and its number is load-bearing (`tests/unit/lib/agent/context-snapshot.test.ts` pins 5000), so the
-fix is not to drop the number: it is to stop presenting it as a cap, which is a wording decision
-about what a model is told and wants stating rather than guessing.
-
-**Done when:** the incompleteness note reads true for both bound shapes, with the caller-bounded
-number still in it, and a test drives the key-walk shape as well as the caller-bounded one.
 
 ### B78. Generated Redis and LibreDB command text carries em dashes
 

@@ -1228,7 +1228,16 @@ function renderColumn(table: AgentInventoryObject, column: ColumnSchema): string
  *
  *  - **Incompleteness.** The bulk read bounds both the listings it issues and the objects
  *    it returns, and an absence the model was not told about is read as an absence in the
- *    database. #414 is that sentence with a run attached to it.
+ *    database. #414 is that sentence with a run attached to it. The note says where the
+ *    reading STOPPED and never that the number was a limit, because on two of the three arms
+ *    it is not one: the pair bound counts listings rather than objects, and a provider whose
+ *    bound is a key walk answers `details.length`, the number the reading produced (B77,
+ *    measured on a LibreDB store past its 10,000-key scan cap, where the note read "stopped
+ *    at a limit of 1"). `reason` is the field that says WHICH bound bit - the contract beside
+ *    `truncated.limit` in `src/lib/db/types.ts` says so in those words - so it carries the
+ *    discrimination and the number is left as the count it actually is. The caller-bounded
+ *    number is still load-bearing and stays in the sentence: a run told 5000 objects were read
+ *    can narrow its selector, and a run told nothing cannot.
  *  - **A sampled kind.** `KindCount`'s fourth state says a number is REAL but BOUNDED:
  *    Redis counts its key groupings from one `SCAN` walk, LibreDB its keyspaces from a
  *    bounded key walk. A floor reported as a total is the same defect one level down, so
@@ -1249,7 +1258,7 @@ function inventoryNotes(inventory: AgentInventory, shown: readonly AgentInventor
   const { truncated } = inventory;
   if (truncated !== undefined) {
     notes.push(
-      `This inventory is incomplete: the reading stopped at a limit of ${truncated.limit} (${truncated.reason}), so an object that is not listed below may still exist. Do not read an absence from this list as an absence in the database.`,
+      `This inventory is incomplete: the reading stopped at a count of ${truncated.limit} (${truncated.reason}), so an object that is not listed below may still exist. Do not read an absence from this list as an absence in the database.`,
     );
   }
   // Each kind note says "the X BELOW are", so it is gated on the kind being in what was

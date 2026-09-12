@@ -2338,15 +2338,48 @@ describe("an inventory that knows what its objects ARE", () => {
    * is #414's finding in one sentence. The route bounds both the listings it issues and
    * the objects it returns, and either bound reaches here as the same marker.
    */
-  test("a truncated inventory says so and names the limit", () => {
+  test("a truncated inventory says so and names the bound", () => {
     const packed = packContextForTask(
       kinded({ truncated: { limit: 5000, reason: "inventory limit reached" } }),
       "summarise the orders",
     );
 
     expect(packed).toContain("This inventory is incomplete");
-    expect(packed).toContain("5000");
+    // The caller-bounded number is load-bearing and stays: 5000 objects were read, so the model
+    // can narrow its selector rather than conclude the database holds 5000 objects.
+    expect(packed).toContain("the reading stopped at a count of 5000");
     expect(packed).toContain("inventory limit reached");
+  });
+
+  /**
+   * `truncated.limit` is an object count only where the bound IS one (B77, and the contract
+   * beside the field in `src/lib/db/types.ts` says it in those words). Redis and LibreDB stop a
+   * key walk after a fixed number of KEYS and answer `details.length` instead, so on that arm the
+   * number is what the reading PRODUCED and no such limit was set by anybody. Measured on a
+   * LibreDB store past its 10,000-key scan cap, the note read "the reading stopped at a limit of
+   * 1", which is a cap the model was told about and nobody ever set.
+   *
+   * The fix is the head of the sentence and not the number: `reason` is the field that says WHICH
+   * bound bit, and it is the one a reader acts on. So the note states where the reading stopped
+   * and lets the reason name the bound, which is true on all three arms this walk can report -
+   * the object bound, the container-and-kind pair bound, and a provider's own key walk.
+   */
+  test("a reading bounded by a key walk is not told its object count was a limit", () => {
+    const walk = "the key walk stopped at the first 10,000 keys of a bounded key scan";
+    const packed = packContextForTask(
+      kinded({
+        objects: [
+          { path: ["0", "user:*"], name: "0.user:*", kind: "keyspace", columns: [], indexes: [], foreignKeys: [] },
+        ],
+        truncated: { limit: 1, reason: walk },
+      }),
+      "count the users",
+    );
+
+    expect(packed).toContain("This inventory is incomplete");
+    expect(packed).toContain(walk);
+    expect(packed).toContain("the reading stopped at a count of 1");
+    expect(packed).not.toContain("a limit of 1");
   });
 
   test("an untruncated inventory makes no claim about completeness it cannot support", () => {
@@ -2468,7 +2501,10 @@ describe("an inventory that knows what its objects ARE", () => {
 
     expect(packed).toContain("(View)");
     expect(packed).toContain("This inventory is incomplete");
-    expect(packed).toContain("1000");
+    // The pair bound counts LISTINGS rather than objects, which is the second arm on which the
+    // number is not an object cap: the reason beside it is what says so.
+    expect(packed).toContain("the reading stopped at a count of 1000");
+    expect(packed).toContain("container and kind pair limit reached");
   });
 });
 
