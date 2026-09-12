@@ -1380,10 +1380,20 @@ export type ObjectSourceOrigin = "stored" | "regenerated" | "rendered";
  *
  * A UNION and not one shape with an optional `text`, for the reason `KindCount` is a union: a
  * refusal and an empty answer are different facts, and a shape carrying `text?: string` makes
- * them the same value at every call site. The refused arm has NO `text` key at all, so there is
- * no path from a refusal to an editor buffer. That composition is what DBeaver gets wrong:
+ * them the same value at every call site. The refused arm declares NO `text`, so a value
+ * narrowed to it cannot reach an editor buffer. That composition is what DBeaver gets wrong:
  * measured in its source, an unreadable definition reaches a WRITABLE editor holding one
  * comment line.
+ *
+ * The union closes that path in ONE DIRECTION ONLY, and saying so here is what stops the next
+ * implementer from trusting it for the other. MEASURED against tsc 6.0.3 with no cast
+ * anywhere: a literal carrying `unavailable` BESIDE `text`, `language`, `form` and `origin`
+ * COMPILES as an `ObjectSourcePart`, because TypeScript's excess-property check on a union
+ * admits any property declared on ANY member of it. Such a part narrows to the refusal arm, so
+ * a provider composing one (spreading a catalog row, or spreading a conditional
+ * `{unavailable}` onto a bounded text) would put a refusal sentence over a definition the
+ * engine really returned. `assertObjectSurface` refuses that part by name for our own
+ * providers, and the client's shape check refuses it for a host's answer.
  *
  * `id` is provider-local. Core reads it as an identity WITHIN ONE DOCUMENT and for nothing
  * else: the part switcher's selection key, and the Source tab's remembered selection. Core

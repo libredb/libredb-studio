@@ -451,8 +451,17 @@ async function assertSourceSurface(
 
   // NAMED rather than counted above zero. A kind the expectation names at zero is an
   // acknowledged absence that the count assertion already pins, and a fixture holding none of
-  // a declared kind is a legitimate state ruling 4 describes. A kind the expectation OMITS is
-  // the silent hole, and it is the one refused here.
+  // a declared kind is a legitimate state. A kind the expectation OMITS is the silent hole,
+  // and it is the one refused here.
+  //
+  // WHAT THIS LEAVES OPEN, stated so no provider task has to discover it: a source-bearing
+  // kind named at ZERO has its `readObjectSource` path driven by NOTHING here, because there
+  // is no object of it to read. Only the OMITTED case is refused. On an engine declaring many
+  // source-bearing kinds, a fixture holding none of one of them therefore drops that kind's
+  // read out of the contract entirely while every assertion stays green. The remedy is the
+  // FIXTURE and not this helper: build one that holds an object of every source-bearing kind
+  // the engine declares. The `longest === undefined` throw below bounds the damage by
+  // requiring at least one readable part from at least one kind, and that is all it does.
   const unexercised = sourceKinds.filter((kind) => !Object.hasOwn(expected.kinds, kind.id)).map((kind) => kind.id);
   if (unexercised.length > 0) {
     throw new Error(
@@ -512,7 +521,17 @@ async function assertSourceSurface(
       throw new Error(`readObjectSource("${longest.kind}", limit ${probe}) returned ${part.text.length} characters`);
     }
     if (part.truncated === undefined) continue;
-    expect(part.truncated.limit).toBe(probe);
+    // The NUMBER and the SENTENCE are two facts and a provider can get one right while the
+    // other is wrong. An explicit throw rather than a bare `expect`, so the test that drives
+    // this can pin the MESSAGE: `.rejects.toThrow()` with no pattern passes for any throw
+    // ahead of it, which is how two doubles in this file were vacuous before.
+    if (part.truncated.limit !== probe) {
+      throw new Error(
+        `readObjectSource("${longest.kind}", limit ${probe}) reported the bound as ${part.truncated.limit}, ` +
+          `which is not the limit it was given (${probe}), and that number is what a reader is shown as ` +
+          "the size of the bound",
+      );
+    }
     const sentence = sourceBoundTruncationReason(probe);
     if (!part.truncated.reason.includes(sentence)) {
       throw new Error(
@@ -560,9 +579,16 @@ async function assertSourceSurface(
 /**
  * One document's own shape.
  *
- * What is NOT checked here, and why: a part carrying BOTH `text` and `unavailable` is a
- * compile error for our own providers, so a check for it here would be a line no test can
- * reach. A HOST can produce one, and the client's shape check is where that is caught.
+ * A part carrying BOTH `text` and `unavailable` IS checked here, and the reason is a
+ * correction of what this docblock claimed first. The claim was that the union makes the
+ * shape a compile error for our own providers. MEASURED against tsc 6.0.3, with NO cast
+ * anywhere: `{ id, label, text, language, form, origin, unavailable }` compiles as an
+ * `ObjectSourcePart`, because TypeScript's excess-property check on a UNION admits any
+ * property declared on ANY member of it, so the refusal key is legal on the readable arm.
+ * `isSourcePartUnavailable` then narrows it to the refusal arm and this walk would continue
+ * past every check below, certifying a well-formed refusal over a definition the engine
+ * really returned. The type closes the path from a refusal to an editor buffer in ONE
+ * direction only, and this throw closes the other.
  */
 function assertSourceDocument(
   document: ObjectSourceDocument,
@@ -578,6 +604,13 @@ function assertSourceDocument(
       throw new Error(`two parts of ${JSON.stringify(object.path)} share the id "${part.id}"`);
     }
     ids.add(part.id);
+    // BEFORE the narrowing, because the refusal branch continues past every check below it.
+    if ("unavailable" in part && "text" in part) {
+      throw new Error(
+        `readObjectSource("${kindId}") answered a part that carries both a refusal and a text; ` +
+          "a refusal and a definition are different facts and a reader must never be shown one over the other",
+      );
+    }
     if (isSourcePartUnavailable(part)) {
       if (part.unavailable.trim() === "") {
         throw new Error(`readObjectSource("${kindId}") answered a refusal with no sentence a person can read`);

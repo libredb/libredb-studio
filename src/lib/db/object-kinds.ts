@@ -197,5 +197,17 @@ export function applySourceBound(
   limit: number | undefined,
 ): { readonly text: string; readonly truncated?: { readonly limit: number; readonly reason: string } } {
   if (limit === undefined || text.length <= limit) return { text };
-  return { text: text.slice(0, limit), truncated: { limit, reason: sourceBoundTruncationReason(limit) } };
+  const cut = text.slice(0, limit);
+  // The bound counts UTF-16 CODE UNITS, so it can land BETWEEN the two halves of a surrogate
+  // pair, and an astral character is exactly that: a PL/pgSQL body or a Lua library holding an
+  // emoji, cut at that offset, would end in an unpaired high surrogate. That is not a
+  // character, JSON serializes it as a lone escape and Monaco draws a replacement glyph, so
+  // the pair is dropped whole. The last unit of the cut can only BE a high surrogate when its
+  // low half sits at `limit` in the original, because this arm runs only when the text is
+  // longer than the bound. `truncated.limit` still names the CALLER's number rather than the
+  // emitted length: the bound is what was asked for, and reporting anything else describes a
+  // bound nobody set.
+  const last = cut.charCodeAt(cut.length - 1);
+  const kept = last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+  return { text: kept, truncated: { limit, reason: sourceBoundTruncationReason(limit) } };
 }

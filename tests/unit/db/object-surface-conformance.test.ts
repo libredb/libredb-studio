@@ -1223,7 +1223,46 @@ describe("assertObjectSurface and the object source read", () => {
         };
       },
     });
-    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow();
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /reported the bound as 11, which is not the limit it was given \(10\)/,
+    );
+  });
+
+  /*
+    The union does NOT make this shape unrepresentable, which is the opposite of what the
+    helper's own docblock claimed until this test was written. MEASURED with tsc 6.0.3 and
+    NO cast anywhere: a part literal carrying `unavailable` beside `text`, `language`, `form`
+    and `origin` compiles as an `ObjectSourcePart`, because TypeScript's excess-property check
+    on a union admits any property declared on ANY member of it. `isSourcePartUnavailable`
+    then narrows it to the refusal arm and the document-shape walk continues past every check
+    below, so a Source pane would render the refusal sentence over a definition the engine
+    really returned. That is the DBeaver shape this contract exists to make impossible,
+    running in the one direction the type does not close.
+  */
+  test("a part carrying both a refusal and a text is refused, because the union does not stop it", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string) => {
+        raiseIfAbsent(path);
+        return {
+          path,
+          kind,
+          parts: [
+            {
+              id: "definition",
+              label: "Definition",
+              text: readable,
+              language: "sql",
+              form: "complete",
+              origin: "regenerated",
+              unavailable: "Encrypted.",
+            },
+          ],
+        };
+      },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /answered a part that carries both a refusal and a text/,
+    );
   });
 
   // A provider with a SECOND bound of its own names both, so the guard asks for CONTAINS

@@ -231,6 +231,32 @@ let functionWithCodeReply: unknown[] = MOCK_FUNCTION_WITHCODE;
  */
 let functionRefusal: string | null = null;
 
+/**
+ * When set, the `FUNCTION` command rejects the way a TRANSPORT failure does rather than the
+ * way a server refusal does.
+ *
+ * MEASURED against ioredis 5.11.1 and redis 8.10.0 from a container created for this
+ * measurement: a server ERROR REPLY arrives as a `redis-errors` `ReplyError`
+ * (`name === "ReplyError"`), while a dropped socket arrives as a PLAIN `Error` named `Error`,
+ * message "Connection is closed." with the offline queue on and "Stream isn't writeable and
+ * enableOfflineQueue options is false" with it off. The two are different facts and the
+ * provider must not present the second as the server refusing this object (#789).
+ */
+let functionTransportFailure: unknown = null;
+
+/**
+ * A server error reply, shaped as ioredis 5.11.1 delivers one.
+ *
+ * `redis-errors` sets `name` to "ReplyError" on the prototype and ioredis re-exports the
+ * class, so the name is what the provider reads: an `instanceof` against the driver's export
+ * would be `instanceof undefined` here, where `mock.module` replaces the whole module.
+ */
+function replyError(message: string): Error {
+  const error = new Error(message);
+  error.name = "ReplyError";
+  return error;
+}
+
 /** When set, `SCAN` rejects with this sentence, whatever database it was opened on. */
 let scanRefusal: string | null = null;
 
@@ -339,7 +365,8 @@ mock.module("ioredis", () => {
       }
       if (cmd === "CONFIG") return databasesReply;
       if (cmd === "FUNCTION") {
-        if (functionRefusal !== null) throw new Error(functionRefusal);
+        if (functionTransportFailure !== null) throw functionTransportFailure;
+        if (functionRefusal !== null) throw replyError(functionRefusal);
         // WITHCODE is the source read and LIST without it is the listing. The two answer
         // different shapes on a real server and the mock has to as well, or a provider
         // reading `library_code` off the listing reply would pass.
@@ -1317,6 +1344,7 @@ describe("RedisProvider", () => {
       functionListReply = MOCK_FUNCTION_LIST;
       functionWithCodeReply = MOCK_FUNCTION_WITHCODE;
       functionRefusal = null;
+      functionTransportFailure = null;
       scanRefusal = null;
       scanOverflows = false;
       scanCalls = 0;
@@ -1419,6 +1447,34 @@ describe("RedisProvider", () => {
         "NOPERM User libredb_nofunction has no permissions to run the 'function|list' command",
       );
       expect("text" in part).toBe(false);
+    });
+
+    /*
+      A REFUSAL is the server answering "no". A TRANSPORT failure is nobody answering at all,
+      and the two must not arrive at the same pane. MEASURED against ioredis 5.11.1 and redis
+      8.10.0: a dropped socket rejects with a PLAIN Error reading "Connection is closed.",
+      while an ACL denial rejects with a `ReplyError`. A bare `catch` around the command turns
+      the first into a Source pane reading "Connection is closed." presented as this object's
+      own refusal, with no raise, no retry affordance and nothing in the document telling it
+      apart from a real NOPERM. It raises instead, and the fifteen providers copying this arm
+      copy the distinction with it.
+    */
+    test("a dropped connection RAISES rather than being presented as the server's refusal", async () => {
+      functionTransportFailure = new Error("Connection is closed.");
+
+      await expect(provider.readObjectSource!(["0", "libredb_probe"], "function")).rejects.toThrow(
+        /Failed to read the Redis function library "libredb_probe": Connection is closed\./,
+      );
+    });
+
+    test("a rejection that is not an Error at all raises too, rather than becoming a refusal sentence", async () => {
+      // A driver is free to reject with something that is not an `Error`, and the class check
+      // must not read that as a server reply by omission.
+      functionTransportFailure = "socket hang up";
+
+      await expect(provider.readObjectSource!(["0", "libredb_probe"], "function")).rejects.toThrow(
+        /Failed to read the Redis function library "libredb_probe": socket hang up/,
+      );
     });
 
     test("a library whose code the server withheld is absence rather than an empty definition", async () => {

@@ -350,7 +350,6 @@ function parseFunctionLibraries(reply: unknown): string[] {
  * One library's `library_code` out of a `FUNCTION LIST ... WITHCODE` reply, selected
  * BYTE-EQUAL (#789 Phase 2).
  *
-
  * The selection is the whole of this function's reason to exist. MEASURED on redis 8.10.0
  * against the committed fixture: the library dictionary is CASE-SENSITIVE, so `libredb_probe`
  * and `LIBREDB_PROBE` coexist, while the `LIBRARYNAME` argument is a CASE-INSENSITIVE glob, so
@@ -363,6 +362,27 @@ function parseFunctionLibraries(reply: unknown): string[] {
  * the nested `functions` value is itself a list of key/value lists, so a parser reading
  * positions takes a field name for a library name the moment the server adds a field.
  */
+/**
+ * Whether a driver rejection is the SERVER's own error reply, rather than a transport
+ * failure (#789 Phase 2).
+ *
+ * MEASURED against ioredis 5.11.1 and redis 8.10.0, from a container created for the
+ * measurement: an ACL denial rejects with a `redis-errors` `ReplyError`
+ * (`constructor.name` and `name` both "ReplyError") carrying "NOPERM User ... has no
+ * permissions to run the 'function|list' command", and so does an unknown command
+ * ("ERR unknown command 'NOSUCHCOMMAND'"). A DROPPED SOCKET rejects with a plain `Error`
+ * named "Error", message "Connection is closed." with the offline queue on and "Stream
+ * isn't writeable and enableOfflineQueue options is false" with it off.
+ *
+ * The NAME and not `instanceof`: ioredis re-exports the class, but the integration suite
+ * replaces the whole module with `mock.module`, so an `instanceof` against the driver's
+ * export would be `instanceof undefined` there. `redis-errors` sets `name` on the
+ * prototype, so the name is the one fact both the real driver and a double can carry.
+ */
+function isServerErrorReply(error: unknown): boolean {
+  return error instanceof Error && error.name === "ReplyError";
+}
+
 function parseFunctionLibraryCode(reply: unknown, name: string): string | undefined {
   for (const entry of Array.isArray(reply) ? reply : []) {
     if (!Array.isArray(entry)) continue;
@@ -1242,6 +1262,11 @@ export class RedisProvider extends BaseDatabaseProvider {
    * `FUNCTION` command at all and each refuses in its own words (all measured 2026-09-11), so
    * this path is reachable on three of the four Redis-wire relatives this type id serves.
    *
+   * A refusal is ONLY the server's own error reply. A TRANSPORT failure RAISES, because it is
+   * nobody answering rather than the server answering "no", and a pane reading "Connection is
+   * closed." as this object's refusal would be a symptom presented as a fact about the
+   * object. `isServerErrorReply` carries the measurement that tells the two apart.
+   *
    * The name is `path[path.length - 1]` and never `path[1]`: standing ruling 5g, and the
    * integration suite pins it by swapping a two-level declaration in.
    */
@@ -1257,6 +1282,18 @@ export class RedisProvider extends BaseDatabaseProvider {
     try {
       reply = await this.callFunctionList(name);
     } catch (error) {
+      // ONLY the server's own error reply is a refusal. A transport failure is nobody
+      // answering at all, and answering a document for it would put "Connection is closed."
+      // in the Source pane as this object's own refusal, with no raise, no retry affordance
+      // and nothing in the document telling it apart from a real NOPERM. The two shapes are
+      // measured on `isServerErrorReply`.
+      if (!isServerErrorReply(error)) {
+        throw new ConnectionError(
+          `Failed to read the Redis function library ${JSON.stringify(name)}: ` +
+            `${error instanceof Error ? error.message : String(error)}`,
+          "redis",
+        );
+      }
       return {
         path: [...path],
         kind,

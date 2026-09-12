@@ -898,8 +898,19 @@ KeyDB, DragonflyDB and Garnet have no `FUNCTION` command at all and each refuses
 table in [§6.1](#61-the-object-surface-789) has them), so this path is reachable on three of the four
 Redis-wire relatives this type id serves.
 
+**Only the server's own error reply is a refusal. A transport failure RAISES.**
+Measured against ioredis 5.11.1 and Redis 8.10.0: an ACL denial and an unknown command both reject with
+a `redis-errors` `ReplyError`, whose `name` is `ReplyError`, while a dropped socket rejects with a plain
+`Error` named `Error`, reading `Connection is closed.` with the offline queue on and
+`Stream isn't writeable and enableOfflineQueue options is false` with it off.
+A read that catches both would show `Connection is closed.` in the Source pane as this object's own
+refusal, with no raise, no retry affordance and nothing in the document telling it apart from a real
+`NOPERM`, so the provider raises a `ConnectionError` naming the library instead.
+
 **A caller's bound** cuts one part's text and reports itself through the one sentence every engine
 uses, `the source read was bounded at <n> characters by its caller`. An exact answer is never marked.
+The bound counts UTF-16 code units, so a bound landing between the two halves of a surrogate pair drops
+the pair rather than emitting a lone surrogate; the mark still names the number the caller asked for.
 
 #### Reads go to the CONTAINER's database, never the session's
 
