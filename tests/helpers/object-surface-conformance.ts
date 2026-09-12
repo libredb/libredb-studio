@@ -113,24 +113,37 @@ export interface ObjectSurfaceExpectation {
   /**
    * WHY a source-bearing kind is expected at ZERO, one sentence per kind id.
    *
-   * Required for every source-bearing kind this expectation counts at 0, and the helper
-   * throws by name without it. A zero is the one count that READS NOTHING: the source loop
+   * Required for every source-bearing kind this expectation counts at 0, or at anything else
+   * that is not positive, and the helper throws by name without it. A zero is the one count that READS NOTHING: the source loop
    * walks the kinds counted above zero, so a kind at zero has its `readObjectSource` path
    * driven by no object at all while every assertion around it stays green. Naming a kind at
    * zero and naming it truthfully are two different acts, and this field is the second one.
    * An expectation that names eight of an engine's nine source-bearing kinds truthfully and
    * the ninth at zero certifies that ninth unread.
    *
-   * A non-zero is deliberately NOT demanded instead, because legitimate zeros exist:
-   * Cassandra ships materialized views and user-defined functions disabled by default, and a
-   * Trino materialized view needs a connector the compose cluster may not get. So the bar is
-   * the repository's own grammar for an absence, the one `KindCount` already uses in its
+   * A non-zero is deliberately NOT demanded instead, because legitimate zeros exist and this
+   * repository already commits three: Trino counts `view` at 0 beside a materialized view at
+   * 1 (`tests/integration/db/trino-provider.test.ts`), and Druid counts `lookup` and
+   * `system_table` at 0 (`tests/integration/db/druid-provider.test.ts`). So the bar is the
+   * repository's own grammar for an absence, the one `KindCount` already uses in its
    * `{ unavailable }` arm: an absence that says WHICH absence it is, in the engine's or the
    * fixture's own words.
    *
-   * Write the FACT, and write it for someone reading a red build who has never seen this
-   * engine. "the Cassandra image ships with materialized views disabled" is a fact.
-   * "not applicable", "none" and "TODO" are not, and a blank one is refused outright.
+   * Write the FACT, for someone reading a red build who has never seen this engine, and write
+   * it about THE CONTAINER THIS REPOSITORY STARTS rather than about the engine's defaults,
+   * because the two differ and the compose service is what decides. Cassandra is the worked
+   * example of getting that wrong: the 5.0 image does ship `materialized_views_enabled` and
+   * `user_defined_functions_enabled` disabled, so "the Cassandra image ships materialized
+   * views disabled" reads like a fact and is FALSE here, because the compose service rewrites
+   * both into `cassandra.yaml` precisely so the fixture measures an engine and not a
+   * configuration, and the committed expectation counts `materialized_view` at 1 and
+   * `function` at 4 (`tests/integration/db/cassandra-provider.test.ts`,
+   * `docs/providers/cassandra.md`). Check the fixture, then write the sentence.
+   *
+   * "not applicable", "n/a", "none" and "TODO" are verdicts rather than facts, and all four
+   * are refused by name, as is a blank one. The helper also asks `listObjects` for the kind,
+   * so a reason over a kind this fixture demonstrably holds is refused rather than reviewed:
+   * the half of the sentence that is machine-decidable is decided.
    *
    * Say which of the two absences it is, because they are different facts and only the
    * sentence can tell them apart: the FIXTURE holds none of this kind today, which whoever
@@ -187,7 +200,21 @@ export async function assertObjectSurface(
   for (const [id, want] of Object.entries(expected.kinds)) {
     if (!(id in counts)) throw new Error(`countObjects returned nothing for expected kind "${id}"`);
     const got = counts[id];
-    if (isCountUnavailable(got)) throw new Error(`kind "${id}" was unavailable: ${got.unavailable}`);
+    if (isCountUnavailable(got)) {
+      // A kind that declares `hasSource` and answers the unavailable arm STRUCTURALLY has no
+      // expectation a task can write: naming it throws here, and omitting it throws as
+      // unexercised in the source check below. Two providers answer it that way already, so
+      // the diagnostic names the dead end rather than leaving a wave-4 task to conclude that
+      // dropping the declaration is the repair. The grammar for it is an open ruling (#789).
+      const cannotBeWritten = findKind(capabilities, id)?.hasSource === true;
+      throw new Error(
+        `kind "${id}" was unavailable: ${got.unavailable}` +
+          (cannotBeWritten
+            ? `; and "${id}" declares hasSource, which this expectation shape cannot express, because naming the ` +
+              "kind throws here and omitting it is refused as unexercised (#789)"
+            : ""),
+      );
+    }
     expect(got.count).toBe(want);
   }
 
@@ -253,7 +280,7 @@ export async function assertObjectSurface(
   expect(detail.path).toEqual([...sample.path]);
 
   await assertBulkColumnRead(provider, container, listings);
-  await assertSourceSurface(provider, expected, listings);
+  await assertSourceSurface(provider, expected, container, listings);
 }
 
 /**
@@ -434,6 +461,38 @@ async function assertBulkColumnRead(
 }
 
 /**
+ * The strings a reason may NOT be, refused by name rather than only described.
+ *
+ * A docblock that enumerates forbidden words while the code accepts them is the weaker half
+ * of a rule: a task under gate pressure writes `none`, clears every check, and the guard that
+ * exists to turn a silence into a sentence has produced a different silence. Trimmed and
+ * case-folded before the lookup, because `  None ` is the same non-answer.
+ *
+ * It is a NAMED list and not a test of meaning: a verdict spelled another way still passes,
+ * and review is what catches that. What this closes is the four spellings a hurried author
+ * actually reaches for.
+ */
+const NOT_A_REASON: ReadonlySet<string> = new Set(["not applicable", "n/a", "none", "todo"]);
+
+/**
+ * A reason may not outlive the absence it was written about.
+ *
+ * Runs in BOTH arms of the source check, including the one that returns early for a provider
+ * implementing no source read at all, because a reason left behind when a `hasSource`
+ * declaration is dropped is exactly the sentence a reader would still trust.
+ */
+function assertNoStaleReason(reasons: Readonly<Record<string, string>>, zeroed: readonly string[]): void {
+  for (const id of Object.keys(reasons)) {
+    if (!zeroed.includes(id)) {
+      throw new Error(
+        `emptyKinds names "${id}", which is not a source-bearing kind this expectation counts at zero, so its ` +
+          "reason describes nothing",
+      );
+    }
+  }
+}
+
+/**
  * The optional sixth method, checked against the provider's OWN listing (#789 Phase 2).
  *
  * Every path driven here is one the PROVIDER produced, for the reason `assertBulkColumnRead`
@@ -452,9 +511,13 @@ async function assertBulkColumnRead(
  *   - a source-bearing kind the expectation never NAMES is refused by name, one notch narrower
  *     than "named none". Oracle declares nine of them and an expectation naming one would
  *     silence a "none" guard while eight kinds went unread;
- *   - a source-bearing kind the expectation counts at ZERO is exercised by nothing at all, so
- *     it must carry a reason in `emptyKinds` saying which absence it is, which is the closest
- *     a helper can come to reading a kind no object exists for;
+ *   - a source-bearing kind the expectation counts at ZERO, or at anything else that is not
+ *     positive, is exercised by nothing at all, so it must carry a reason in `emptyKinds`
+ *     saying which absence it is, which is the closest a helper can come to reading a kind no
+ *     object exists for. The one half of that sentence a machine can decide IS decided:
+ *     `listObjects` is asked, and a reason over a kind the fixture actually holds is refused;
+ *   - a reason is refused in the other direction too, and BEFORE the early return for a
+ *     provider bearing no source, so a sentence cannot outlive the absence it describes;
  *   - a document of nothing but refusals answers no readable part, so the bound probe below
  *     would never run and every bound assertion would be vacuous;
  *   - a definition under two characters cannot be bounded distinguishably, which is the same
@@ -463,6 +526,7 @@ async function assertBulkColumnRead(
 async function assertSourceSurface(
   provider: DatabaseProvider,
   expected: ObjectSurfaceExpectation,
+  container: readonly string[],
   listings: ReadonlyMap<string, DatabaseObject[]>,
 ): Promise<void> {
   const capabilities = provider.getCapabilities();
@@ -477,7 +541,15 @@ async function assertSourceSurface(
         `${typeof read === "function" ? "implements readObjectSource" : "does not implement readObjectSource"}`,
     );
   }
-  if (read === undefined) return;
+  // BEFORE the early return, which is where this guard was wrong: a provider bearing no
+  // source at all left every reason unread, so a task that dropped a `hasSource` declaration
+  // and kept the sentence was not refused. `sourceKinds` is empty here by the pairing above,
+  // so every reason is stale by construction.
+  const reasons = expected.emptyKinds ?? {};
+  if (read === undefined) {
+    assertNoStaleReason(reasons, []);
+    return;
+  }
 
   const absent = expected.absentSource;
   if (absent === undefined) {
@@ -498,7 +570,10 @@ async function assertSourceSurface(
   // FIXTURE and not this helper: build one that holds an object of every source-bearing kind
   // the engine declares. What the helper CAN do, and does immediately below, is refuse a zero
   // that does not say which absence it is, so a kind dropping out of the contract is a
-  // sentence a reviewer reads rather than a silence. The `longest === undefined` throw
+  // sentence a reviewer reads rather than a silence, and ask `listObjects` whether that
+  // sentence is true, which is the one half of it a machine can settle. The half it cannot is
+  // a fixture author's honest sentence against a convenient one about a kind the fixture
+  // really is empty of, and that stays a REVIEW obligation. The `longest === undefined` throw
   // further down bounds the damage by requiring at least one readable part from at least one
   // kind, and that is all it does.
   const unexercised = sourceKinds.filter((kind) => !Object.hasOwn(expected.kinds, kind.id)).map((kind) => kind.id);
@@ -516,31 +591,46 @@ async function assertSourceSurface(
   // fixtures, so what is required is the reason, in the same grammar `KindCount` uses for an
   // absence. What the reason must say is on `emptyKinds` above, and that docblock is the
   // instruction every provider task reads.
-  const reasons = expected.emptyKinds ?? {};
-  const zeroed = sourceKinds.filter((kind) => expected.kinds[kind.id] === 0).map((kind) => kind.id);
+  //
+  // NOT `=== 0`: the predicate is the exact complement of `wanted` below, because a count
+  // that is neither zero nor positive is read by nothing either and a `=== 0` test let it
+  // through both guards unexplained. `unexercised` above has already refused every
+  // source-bearing kind the expectation does not name, so every id reaching here is named.
+  const zeroed = sourceKinds.filter((kind) => !(expected.kinds[kind.id] > 0)).map((kind) => kind.id);
   for (const id of zeroed) {
     if (!Object.hasOwn(reasons, id)) {
       throw new Error(
-        `${provider.type} expects zero of the source-bearing kind "${id}", which reads nothing, and emptyKinds ` +
-          `carries no reason for it; say in emptyKinds["${id}"] whether this fixture holds none of it yet or this ` +
-          "deployment cannot hold one at all",
+        `${provider.type} counts the source-bearing kind "${id}" at ${expected.kinds[id]}, which reads nothing, ` +
+          `and emptyKinds carries no reason for it; say in emptyKinds["${id}"] whether this fixture holds none of ` +
+          "it yet or this deployment cannot hold one at all",
       );
     }
-    if (reasons[id].trim() === "") {
+    const reason = reasons[id].trim();
+    if (reason === "") {
       throw new Error(`emptyKinds["${id}"] carries no sentence a person can read, which is not a reason`);
     }
-  }
-  // The other direction, so a sentence cannot outlive the absence it was written about: a
-  // kind that grew an object, or that never bore source at all, keeps a reason that now
-  // explains nothing, and a reader trusts it.
-  for (const id of Object.keys(reasons)) {
-    if (!zeroed.includes(id)) {
+    if (NOT_A_REASON.has(reason.toLowerCase())) {
       throw new Error(
-        `emptyKinds names "${id}", which is not a source-bearing kind this expectation counts at zero, so its ` +
-          "reason describes nothing",
+        `emptyKinds["${id}"] is the verdict "${reason}", which states no fact; write what is absent and why, in ` +
+          "the fixture's or the engine's own words",
+      );
+    }
+    // The half of the sentence's truthfulness a machine CAN decide. The listing loop skips a
+    // kind counted at zero, so nothing else here ever asks the provider whether the fixture
+    // really holds none of it, and a count and a listing that disagree for one kind (which
+    // this helper tolerates in MAGNITUDE on purpose, two reads at two instants) would let a
+    // written claim of absence stand over an object the fixture demonstrably holds. Zero
+    // against non-empty is not a magnitude.
+    const listed = await provider.listObjects!(container, id);
+    if (listed.length > 0) {
+      throw new Error(
+        `emptyKinds["${id}"] explains an absence (${JSON.stringify(reason)}) while listObjects("${id}") returned ` +
+          `${listed.length} object(s), the first at ${JSON.stringify(listed[0].path)}, so the fixture holds the ` +
+          "kind the reason says it does not",
       );
     }
   }
+  assertNoStaleReason(reasons, zeroed);
 
   const wanted = new Set(sourceKinds.filter((kind) => (expected.kinds[kind.id] ?? 0) > 0).map((kind) => kind.id));
   const entered = new Set<string>();

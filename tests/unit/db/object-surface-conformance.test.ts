@@ -985,14 +985,16 @@ describe("assertObjectSurface and the object source read", () => {
   /**
    * The zero, which is the one expectation that READS NOTHING (Task 1b, #789).
    *
-   * The four tests below are the whole of it. A source-bearing kind counted above zero is
+   * The eight tests below are the whole of it. A source-bearing kind counted above zero is
    * read by the loop; a source-bearing kind the expectation OMITS is refused by the test
    * above; and between those two sits a kind the expectation NAMES AT ZERO, which is
    * exercised by nothing and passed in silence. Oracle declares nine source-bearing kinds,
    * so an expectation naming eight truthfully and the ninth at zero certified that ninth
-   * unread. Requiring a non-zero instead would be wrong, because Cassandra ships
-   * materialized views and UDFs disabled and a Trino materialized view needs a connector the
-   * compose cluster may not get, so what is required is the REASON.
+   * unread. Requiring a non-zero instead would be wrong, because legitimate zeros are already
+   * committed here: Trino counts `view` at 0 and Druid counts `lookup` and `system_table` at
+   * 0. So what is required is the REASON, and the reason is held to four bars: it exists, it
+   * is not blank, it is not one of four named verdicts, and `listObjects` agrees the fixture
+   * really holds none of the kind.
    *
    * `view` is source-bearing and empty in every double here, so the kind under test is
    * genuinely at zero rather than made zero by the expectation alone.
@@ -1026,7 +1028,7 @@ describe("assertObjectSurface and the object source read", () => {
 
   test("a source-bearing kind expected at zero with no reason is refused by name", async () => {
     await expect(assertObjectSurface(emptyViewProvider() as never, emptyViewExpectation)).rejects.toThrow(
-      /expects zero of the source-bearing kind "view", which reads nothing, and emptyKinds carries no reason for it/,
+      /counts the source-bearing kind "view" at 0, which reads nothing, and emptyKinds carries no reason for it/,
     );
   });
 
@@ -1049,6 +1051,88 @@ describe("assertObjectSurface and the object source read", () => {
       }),
     ).rejects.toThrow(
       /emptyKinds names "function", which is not a source-bearing kind this expectation counts at zero/,
+    );
+  });
+
+  // Fix round 1, finding 3: the one half of the reason's truthfulness a machine CAN decide.
+  // The listing loop skips a kind counted at zero, so a count and a listing that disagree
+  // for that kind let a sentence saying the fixture holds none of it stand beside a listing
+  // that holds one. The helper tolerates count/listing disagreement in magnitude on purpose
+  // (two reads at two instants), but zero against non-empty is not a magnitude.
+  test("a reason for a kind listObjects actually returns objects for is refused", async () => {
+    await expect(
+      assertObjectSurface(
+        emptyViewProvider({
+          listObjects: async (_c: readonly string[], kind: string) =>
+            kind === "view" ? [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }] : listed[kind],
+        }) as never,
+        { ...emptyViewExpectation, emptyKinds: { view: "the fixture defines no view yet" } },
+      ),
+    ).rejects.toThrow(/while listObjects\("view"\) returned 1 object\(s\), the first at \["app","order_summary"\]/);
+  });
+
+  // Fix round 1, finding 5: the docblock named three strings as not-reasons and the helper
+  // refused none of them, so a task under gate pressure could write `none` and turn a
+  // silence into a different silence. Trimmed and case-folded, because `  None ` is the
+  // same non-answer.
+  test("a verdict rather than a fact is refused for a kind expected at zero", async () => {
+    for (const verdict of ["none", "  N/A ", "Not Applicable", "TODO"]) {
+      await expect(
+        assertObjectSurface(emptyViewProvider() as never, { ...emptyViewExpectation, emptyKinds: { view: verdict } }),
+      ).rejects.toThrow(/states no fact; write what is absent and why/);
+    }
+  });
+
+  // Fix round 1, finding 6: the stale-reason guard sat AFTER the `readObjectSource === undefined`
+  // return, so a reason on a provider bearing no source at all was ignored rather than refused.
+  // That is the exact state a provider task reaches by dropping a `hasSource` declaration and
+  // leaving the sentence behind.
+  test("a reason on a provider that bears no source at all is refused, not ignored", async () => {
+    const noSource = sourceProvider({
+      getCapabilities: () => capabilities({ hasSource: undefined, sourceLanguage: undefined }),
+      readObjectSource: undefined,
+    });
+    await expect(
+      assertObjectSurface(noSource as never, {
+        ...expectation,
+        emptyKinds: { view: "a sentence about a kind that bears no source" },
+      }),
+    ).rejects.toThrow(/emptyKinds names "view", which is not a source-bearing kind this expectation counts at zero/);
+  });
+
+  // Fix round 1, finding 7: `zeroed` tested `=== 0` while `wanted` tested `> 0`, so a count
+  // that is neither left a source-bearing kind unread AND unexplained. The two predicates are
+  // exact complements now, and the message carries the count rather than the word zero.
+  test("a source-bearing kind counted below zero is held to the same reason", async () => {
+    // Listing an object for `view` is the reviewer's own probe shape: with an empty listing
+    // the loop above refuses the negative count first, and it is the pair that reached the
+    // source half unread.
+    const negative = emptyViewProvider({
+      countObjects: async () => ({ table: { count: 2 }, view: { count: -1 }, function: { count: 2 } }),
+      listObjects: async (_c: readonly string[], kind: string) =>
+        kind === "view" ? [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }] : listed[kind],
+    });
+    await expect(
+      assertObjectSurface(negative as never, { ...emptyViewExpectation, kinds: { table: 2, view: -1, function: 2 } }),
+    ).rejects.toThrow(/counts the source-bearing kind "view" at -1, which reads nothing/);
+  });
+
+  // Fix round 1, finding 8, escalated to the orchestrator in the report and given a
+  // diagnostic here so a wave-4 task meets a named gap rather than a puzzle. A kind that
+  // declares `hasSource` and whose count is the `{ unavailable }` arm (cassandra/objects.ts
+  // and trino/index.ts both answer it structurally) can be neither NAMED, which throws in the
+  // count loop, nor OMITTED, which throws as unexercised, so the expectation is
+  // unsatisfiable and the cheap repair under gate pressure is to drop the declaration.
+  test("a source-bearing kind whose count is unavailable says why the expectation cannot be written", async () => {
+    const unavailable = sourceProvider({
+      countObjects: async () => ({
+        table: { count: 2 },
+        view: { count: 1 },
+        function: { unavailable: 'Cassandra has no statement that lists the kind "function"' },
+      }),
+    });
+    await expect(assertObjectSurface(unavailable as never, expectation)).rejects.toThrow(
+      /declares hasSource, which this expectation shape cannot express/,
     );
   });
 
