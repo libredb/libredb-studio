@@ -188,6 +188,8 @@ import type { ProviderCapabilities } from "@/lib/db/types";
 const schemaNoFK: DetailedObject[] = [
   {
     name: "users",
+    kind: "table",
+    path: ["users"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "name", type: "varchar(255)", nullable: false, isPrimary: false },
@@ -198,6 +200,8 @@ const schemaNoFK: DetailedObject[] = [
   },
   {
     name: "posts",
+    kind: "table",
+    path: ["posts"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "title", type: "text", nullable: false, isPrimary: false },
@@ -212,6 +216,8 @@ const schemaNoFK: DetailedObject[] = [
 const schemaHeuristic: DetailedObject[] = [
   {
     name: "users",
+    kind: "table",
+    path: ["users"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "email", type: "varchar", nullable: true, isPrimary: false },
@@ -222,6 +228,8 @@ const schemaHeuristic: DetailedObject[] = [
   },
   {
     name: "comments",
+    kind: "table",
+    path: ["comments"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "user_id", type: "integer", nullable: false, isPrimary: false },
@@ -237,6 +245,8 @@ const schemaHeuristic: DetailedObject[] = [
 const schemaHeuristicSingular: DetailedObject[] = [
   {
     name: "author",
+    kind: "table",
+    path: ["author"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "name", type: "varchar(255)", nullable: false, isPrimary: false },
@@ -247,6 +257,8 @@ const schemaHeuristicSingular: DetailedObject[] = [
   },
   {
     name: "books",
+    kind: "table",
+    path: ["books"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "author_id", type: "integer", nullable: false, isPrimary: false },
@@ -262,6 +274,8 @@ const schemaHeuristicSingular: DetailedObject[] = [
 const schemaUndefinedFK: DetailedObject[] = [
   {
     name: "items",
+    kind: "table",
+    path: ["items"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "label", type: "text", nullable: true, isPrimary: false },
@@ -275,6 +289,8 @@ const schemaUndefinedFK: DetailedObject[] = [
 const schemaMultiFK: DetailedObject[] = [
   {
     name: "users",
+    kind: "table",
+    path: ["users"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "name", type: "varchar(255)", nullable: false, isPrimary: false },
@@ -285,6 +301,8 @@ const schemaMultiFK: DetailedObject[] = [
   },
   {
     name: "orders",
+    kind: "table",
+    path: ["orders"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "user_id", type: "integer", nullable: false, isPrimary: false },
@@ -296,6 +314,8 @@ const schemaMultiFK: DetailedObject[] = [
   },
   {
     name: "items",
+    kind: "table",
+    path: ["items"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "order_id", type: "integer", nullable: false, isPrimary: false },
@@ -311,6 +331,8 @@ const schemaMultiFK: DetailedObject[] = [
 const singleTableFixture: DetailedObject[] = [
   {
     name: "settings",
+    kind: "table",
+    path: ["settings"],
     columns: [
       { name: "key", type: "text", nullable: false, isPrimary: true },
       { name: "value", type: "text", nullable: true, isPrimary: false },
@@ -644,6 +666,8 @@ describe("SchemaDiagram", () => {
     const unusableFk: DetailedObject[] = [
       {
         name: "customer",
+        kind: "table",
+        path: ["customer"],
         columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
         indexes: [],
         foreignKeys: [],
@@ -651,6 +675,8 @@ describe("SchemaDiagram", () => {
       },
       {
         name: "invoices",
+        kind: "table",
+        path: ["invoices"],
         columns: [
           { name: "id", type: "integer", nullable: false, isPrimary: true },
           { name: "customer_id", type: "integer", nullable: false, isPrimary: false },
@@ -789,6 +815,8 @@ describe("SchemaDiagram", () => {
   test("schema with many tables renders correct count", () => {
     const manyTables: DetailedObject[] = Array.from({ length: 10 }, (_, i) => ({
       name: `table_${i}`,
+      kind: "table",
+      path: [`table_${i}`],
       columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
       indexes: [],
       foreignKeys: [],
@@ -1496,6 +1524,8 @@ describe("SchemaDiagram", () => {
   describe("Large schemas", () => {
     const bigSchema: DetailedObject[] = Array.from({ length: 150 }, (_, i) => ({
       name: `table_${i}`,
+      kind: "table",
+      path: [`table_${i}`],
       columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
       indexes: [],
       foreignKeys: [],
@@ -1611,6 +1641,8 @@ describe("SchemaDiagram", () => {
     const wideTable: DetailedObject[] = [
       {
         name: "wide",
+        kind: "table",
+        path: ["wide"],
         columns: Array.from({ length: 30 }, (_, i) => ({
           name: `col_${i}`,
           type: "integer",
@@ -1736,6 +1768,8 @@ describe("SchemaDiagram", () => {
     const wideTable: DetailedObject[] = [
       {
         name: "wide",
+        kind: "table",
+        path: ["wide"],
         columns: Array.from({ length: 30 }, (_, i) => ({
           name: `col_${i}`,
           type: "integer",
@@ -1892,6 +1926,7 @@ describe("SchemaDiagram kind filtering", () => {
   const inventory: DetailedObject[] = [
     {
       name: "orders",
+      path: ["orders"],
       kind: "table",
       columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
       indexes: [],
@@ -1899,6 +1934,7 @@ describe("SchemaDiagram kind filtering", () => {
     },
     {
       name: "order_summary",
+      path: ["order_summary"],
       kind: "view",
       columns: [{ name: "total", type: "numeric", nullable: true, isPrimary: false }],
       indexes: [],
@@ -1906,6 +1942,7 @@ describe("SchemaDiagram kind filtering", () => {
     },
     {
       name: "order_total",
+      path: ["order_total"],
       kind: "function",
       columns: [{ name: "result", type: "numeric", nullable: true, isPrimary: false }],
       indexes: [],

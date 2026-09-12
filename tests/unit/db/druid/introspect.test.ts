@@ -45,7 +45,6 @@ import {
   getIndexStats,
   getOverview,
   getPerformanceMetrics,
-  getSchema,
   getSlowQueries,
   getStorageStats,
   getTableStats,
@@ -221,17 +220,6 @@ function storageRow(overrides: Partial<DruidRow> = {}): DruidRow {
 // ============================================================================
 
 describe("the datasource filter", () => {
-  test.each<[Surface]>([["tableList"], ["columnList"]])(
-    "restricts the %s read to the druid schema",
-    async (surface) => {
-      const { runner, calls } = createRunner();
-
-      await getSchema(runner);
-
-      expect(sqlFor(calls, surface)).toContain(`TABLE_SCHEMA = '${DRUID_SCHEMA_NAME}'`);
-    },
-  );
-
   // Live-verified: INFORMATION_SCHEMA.TABLES also lists the four
   // INFORMATION_SCHEMA views and the six sys tables, all as SYSTEM_TABLE, and a
   // cluster with lookups or views carries a `lookup` / `view` schema too. The
@@ -249,25 +237,6 @@ describe("the datasource filter", () => {
     expect(DRUID_TABLE_LIST_SQL).toContain("INFORMATION_SCHEMA.TABLES");
     expect(DRUID_COLUMN_LIST_SQL).toContain("INFORMATION_SCHEMA.COLUMNS");
   });
-
-  test("bounds both catalog reads with a deadline on each half of the exchange", async () => {
-    const { runner, calls } = createRunner();
-
-    await getSchema(runner);
-
-    expect(calls).toHaveLength(2);
-    for (const call of calls) {
-      expect(call.opts).toEqual({
-        timeoutMs: DRUID_SYSTEM_READ_TIMEOUT_MS,
-        // Strictly LATER than the server deadline. Equal deadlines are a race the
-        // client wins - the server's 504 still has to travel back - and winning it
-        // replaces Druid's classified TIMEOUT envelope with a bare abort that says
-        // nothing useful. The provider follows the same rule for user queries.
-        clientDeadlineMs: DRUID_SYSTEM_READ_TIMEOUT_MS + DRUID_CLIENT_DEADLINE_GRACE_MS,
-      });
-      expect(call.opts?.clientDeadlineMs).toBeGreaterThan(call.opts?.timeoutMs as number);
-    }
-  });
 });
 
 // ============================================================================
@@ -275,215 +244,11 @@ describe("the datasource filter", () => {
 // ============================================================================
 
 describe("getSchema", () => {
-  test("names a datasource by its bare name", async () => {
-    const { runner } = createRunner({ rows: { tableList: [tableRow(), tableRow({ tableName: "libredb_rollup" })] } });
-
-    const schema = await getSchema(runner);
-
-    expect(schema.map((table) => table.name)).toEqual(["libredb_demo", "libredb_rollup"]);
-  });
-
-  test("carries the columns of each datasource in the order the server declared", async () => {
-    const { runner } = createRunner({
-      rows: {
-        tableList: [tableRow()],
-        columnList: [
-          timeColumnRow(),
-          columnRow({ columnName: "snowflake_id" }),
-          columnRow({ columnName: "region", dataType: "VARCHAR" }),
-        ],
-      },
-    });
-
-    const [demo] = await getSchema(runner);
-
-    expect(demo.columns.map((column) => column.name)).toEqual([DRUID_TIME_COLUMN, "snowflake_id", "region"]);
-  });
-
   // The projection leaves ORDINAL_POSITION out and orders by it instead: it IS
   // the declared column order, so it has no separate value to carry.
   test("orders the column read by ordinal position", () => {
     expect(DRUID_COLUMN_LIST_SQL).toContain("ORDER BY TABLE_NAME, ORDINAL_POSITION");
     expect(DRUID_COLUMN_LIST_SQL).not.toContain('AS "ordinalPosition"');
-  });
-
-  test("takes the column type from DATA_TYPE, which is the SQL type", async () => {
-    const { runner } = createRunner({
-      rows: { tableList: [tableRow()], columnList: [columnRow({ dataType: "DOUBLE" })] },
-    });
-
-    const [demo] = await getSchema(runner);
-
-    expect(demo.columns[0]?.type).toBe("DOUBLE");
-    expect(DRUID_COLUMN_LIST_SQL).toContain("DATA_TYPE");
-  });
-
-  // Never observed empty, so this is the defensive branch - and OTHER is Druid's
-  // own token for a type its SQL layer cannot name, so the fallback stays inside
-  // the vocabulary the rest of the column list uses.
-  test("falls back to Druid's own OTHER type when DATA_TYPE says nothing", async () => {
-    const { runner } = createRunner({
-      rows: { tableList: [tableRow()], columnList: [columnRow({ dataType: "" }), columnRow({ dataType: null })] },
-    });
-
-    const [demo] = await getSchema(runner);
-
-    expect(demo.columns.map((column) => column.type)).toEqual(["OTHER", "OTHER"]);
-  });
-
-  // Nothing in a Druid datasource is a primary key, `__time` included. It is
-  // mandatory, it is the partition and sort key, and it is the only column Druid
-  // reports NOT NULL - but it is not UNIQUE, and `isPrimary` is read as PRIMARY KEY by
-  // autocomplete ("(PK)"), by the AI schema context (", PK") and by the schema differ
-  // ("Primary key changed"). Live-verified on the fixture datasource: 50 rows carry 30
-  // distinct `__time` values.
-  test("marks no column as primary, not even __time", async () => {
-    const { runner } = createRunner({
-      rows: {
-        tableList: [tableRow()],
-        columnList: [timeColumnRow(), columnRow(), columnRow({ columnName: "region" })],
-      },
-    });
-
-    const [demo] = await getSchema(runner);
-
-    expect(demo.columns.filter((column) => column.isPrimary)).toEqual([]);
-    // The time column is still recognisable by name and by being the one NOT NULL
-    // column, which is the honest way to find it.
-    expect(demo.columns.find((column) => column.name === DRUID_TIME_COLUMN)?.nullable).toBe(false);
-  });
-
-  // isPrimary is keyed on the NAME, not on IS_NULLABLE = 'NO'. Today __time is
-  // the only column Druid reports as NOT NULL, but that is a consequence of it
-  // being mandatory rather than the definition of the key - so a Druid that ever
-  // marks a second column NOT NULL must not grow a second primary column.
-  test("does not promote a NOT NULL column to primary either", async () => {
-    const { runner } = createRunner({
-      rows: {
-        tableList: [tableRow()],
-        columnList: [timeColumnRow(), columnRow({ columnName: "id", isNullable: "NO" })],
-      },
-    });
-
-    const [demo] = await getSchema(runner);
-
-    expect(demo.columns.map((column) => [column.name, column.isPrimary, column.nullable])).toEqual([
-      [DRUID_TIME_COLUMN, false, false],
-      ["id", false, false],
-    ]);
-  });
-
-  test.each<[string, unknown, boolean]>([
-    ["YES", "YES", true],
-    ["NO", "NO", false],
-  ])("reads IS_NULLABLE %s as nullable=%p", async (_label, value, expected) => {
-    const { runner } = createRunner({
-      rows: { tableList: [tableRow()], columnList: [columnRow({ isNullable: value })] },
-    });
-
-    const [demo] = await getSchema(runner);
-
-    expect(demo.columns[0]?.nullable).toBe(expected);
-  });
-
-  // Nullable is the safe reading of an unreadable flag: claiming NOT NULL would
-  // put a mandatory marker on a column that may well accept nulls, and Druid
-  // marks all but one column YES.
-  test.each<[string, unknown]>([
-    ["an absent flag", undefined],
-    ["a null flag", null],
-    ["an unexpected word", "MAYBE"],
-  ])("treats %s as nullable", async (_label, value) => {
-    const { runner } = createRunner({
-      rows: { tableList: [tableRow()], columnList: [columnRow({ isNullable: value })] },
-    });
-
-    const [demo] = await getSchema(runner);
-
-    expect(demo.columns[0]?.nullable).toBe(true);
-  });
-
-  // Druid has no user-defined indexes - every dimension is indexed by
-  // construction - and no foreign keys anywhere. Both lists are a fact about the
-  // engine, not a load that failed.
-  test("reports no indexes and no foreign keys", async () => {
-    const { runner } = createRunner({ rows: { tableList: [tableRow()], columnList: [timeColumnRow()] } });
-
-    const [demo] = await getSchema(runner);
-
-    expect(demo.indexes).toEqual([]);
-    expect(demo.foreignKeys).toEqual([]);
-  });
-
-  // getSchema reads INFORMATION_SCHEMA only. A row count would have to come from
-  // sys.segments, which is separately permission-gated, so asking for it would
-  // make the whole sidebar fail on a cluster that only denies `sys` - and the
-  // per-datasource counts are already in getTableStats.
-  test("leaves the row count and size unset rather than reading sys.segments", async () => {
-    const { runner, calls } = createRunner({ rows: { tableList: [tableRow()] } });
-
-    const [demo] = await getSchema(runner);
-
-    expect(demo.rowCount).toBeUndefined();
-    expect(demo.size).toBeUndefined();
-    expect(calls.map((call) => surfaceOf(call.sql)).sort()).toEqual(["columnList", "tableList"]);
-  });
-
-  test("gives a datasource with no column rows an empty column list", async () => {
-    const { runner } = createRunner({
-      rows: { tableList: [tableRow(), tableRow({ tableName: "libredb_rollup" })], columnList: [columnRow()] },
-    });
-
-    const [, rollup] = await getSchema(runner);
-
-    expect(rollup.columns).toEqual([]);
-  });
-
-  test("drops a column row belonging to no listed datasource", async () => {
-    const { runner } = createRunner({
-      rows: { tableList: [tableRow()], columnList: [columnRow({ tableName: "gone" }), columnRow()] },
-    });
-
-    const schema = await getSchema(runner);
-
-    expect(schema).toHaveLength(1);
-    expect(schema[0]?.columns.map((column) => column.name)).toEqual(["id"]);
-  });
-
-  test.each<[string, unknown]>([
-    ["an absent name", undefined],
-    ["a null name", null],
-    ["an empty name", ""],
-    ["a non-string name", 7],
-  ])("drops a datasource row carrying %s", async (_label, value) => {
-    const { runner } = createRunner({ rows: { tableList: [tableRow({ tableName: value }), tableRow()] } });
-
-    const schema = await getSchema(runner);
-
-    expect(schema.map((table) => table.name)).toEqual(["libredb_demo"]);
-  });
-
-  test.each<[string, "tableName" | "columnName"]>([
-    ["an unusable table name", "tableName"],
-    ["an unusable column name", "columnName"],
-  ])("drops a column row carrying %s", async (_label, field) => {
-    const { runner } = createRunner({
-      rows: { tableList: [tableRow()], columnList: [columnRow({ [field]: "" }), columnRow()] },
-    });
-
-    const [demo] = await getSchema(runner);
-
-    expect(demo.columns.map((column) => column.name)).toEqual(["id"]);
-  });
-
-  // A datasource whose segments are all unused disappears from
-  // INFORMATION_SCHEMA.TABLES entirely (live-verified with the Coordinator's
-  // markUnused), so an empty catalog means "no datasources", never "a datasource
-  // with nothing in it".
-  test("returns nothing when the catalog lists no datasource", async () => {
-    const { runner } = createRunner();
-
-    expect(await getSchema(runner)).toEqual([]);
   });
 });
 
@@ -510,7 +275,6 @@ function transportError(category: DruidErrorCategory): DruidTransportError {
 
 /** Each read, the surface it depends on, and what it must answer with that surface gone. */
 const READS: [name: string, surface: Surface, run: (runner: DruidQueryRunner) => Promise<unknown>][] = [
-  ["getSchema", "tableList", (runner) => getSchema(runner)],
   ["getActiveSessions", "activeTasks", (runner) => getActiveSessions(runner)],
   ["getTableStats", "datasourceStats", (runner) => getTableStats(runner)],
   ["getStorageStats", "historicalStorage", (runner) => getStorageStats(runner)],
@@ -542,18 +306,6 @@ describe("degradation", () => {
     const { runner } = createRunner({ failures: { [surface]: new Error("socket hang up") } });
 
     await expect(run(runner)).rejects.toThrow("socket hang up");
-  });
-
-  test("keeps the columns of a schema whose column read is denied", async () => {
-    const { runner } = createRunner({
-      rows: { tableList: [tableRow()] },
-      failures: { columnList: transportError("FORBIDDEN") },
-    });
-
-    const [demo] = await getSchema(runner);
-
-    expect(demo.name).toBe("libredb_demo");
-    expect(demo.columns).toEqual([]);
   });
 
   // Each overview read is separate for exactly this reason: `sys` permissions are

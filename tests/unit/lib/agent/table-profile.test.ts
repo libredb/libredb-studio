@@ -10,7 +10,8 @@ import {
   readTableProfile,
 } from "@/lib/agent/table-profile";
 import { inspectAgentStatement } from "@/lib/db/operations/statement-guard";
-import type { ColumnSchema, TableSchema } from "@/lib/types";
+import type { ColumnSchema } from "@/lib/types";
+import type { AgentInventoryObject } from "@/lib/agent/types";
 
 /**
  * Bounded per-table profiling (#330 T3).
@@ -294,7 +295,7 @@ describe("the findings, derived from the numbers", () => {
 });
 
 describe("foreign keys with no covering index", () => {
-  const table = (overrides: Partial<TableSchema>): TableSchema => ({
+  const table = (overrides: Partial<AgentInventoryObject>): AgentInventoryObject => ({
     name: "orders",
     columns: [column("id", "integer"), column("customer_id", "integer")],
     indexes: [],
@@ -425,7 +426,7 @@ describe("a foreign key covered by a constraint-created index (#502)", () => {
    * `CREATE TABLE` — and the control table proves the finding still fires when
    * there really is no index.
    */
-  const inventory = (statements: readonly string[], name: string): TableSchema => {
+  const inventory = (statements: readonly string[], name: string): AgentInventoryObject => {
     const database = new Database(":memory:");
     try {
       for (const statement of statements) database.run(statement);

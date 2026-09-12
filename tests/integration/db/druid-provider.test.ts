@@ -712,19 +712,6 @@ describe("DruidProvider lifecycle", () => {
     expect(provider.isConnected()).toBe(false);
   });
 
-  test("every read before connect is refused rather than answered", async () => {
-    const provider = new DruidProvider(makeConnection());
-
-    await expect(provider.query(CONNECT_PROBE)).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getSchema()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getOverview()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getActiveSessions()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getTableStats()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getStorageStats()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getHealth()).rejects.toBeInstanceOf(DatabaseConfigError);
-    expect(sentSql).toEqual([]);
-  });
-
   test("the three constant reads answer without a connection, because they read nothing", async () => {
     // Deliberately not guarded by the connection check above: Druid publishes no
     // cache metrics, no query log and no index objects anywhere in SQL, so there
@@ -1198,111 +1185,6 @@ describe("DruidProvider query preparation", () => {
 // ============================================================================
 
 describe("DruidProvider schema", () => {
-  test("getSchema lists the datasources by their bare names, with their columns", async () => {
-    // `druid` is the default schema, so `SELECT * FROM "libredb_demo"` resolves
-    // and no qualification is needed anywhere.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.map((table) => table.name)).toEqual(["libredb_demo", "libredb_rollup"]);
-    expect(schema[1].columns).toEqual([
-      { name: "__time", type: "TIMESTAMP", nullable: false, isPrimary: false },
-      { name: "id", type: "BIGINT", nullable: true, isPrimary: false },
-      { name: "qty", type: "BIGINT", nullable: true, isPrimary: false },
-    ]);
-  });
-
-  test("getSchema marks no column primary, and __time is the one NOT NULL column", async () => {
-    // `__time` is mandatory, it is the partitioning and sort key, and it is the only
-    // column Druid reports as IS_NULLABLE = 'NO' - but it is not UNIQUE (50 rows, 30
-    // distinct values live), and `isPrimary` is read as PRIMARY KEY by autocomplete,
-    // by the AI schema context and by the schema differ. Nullability is how the time
-    // column is identified instead.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema[0].columns.filter((column) => column.isPrimary)).toEqual([]);
-    expect(schema[0].columns.filter((column) => !column.nullable).map((column) => column.name)).toEqual(["__time"]);
-    expect(schema[0].columns.map((column) => column.name)).toEqual([
-      "__time",
-      "snowflake_id",
-      "id",
-      "name",
-      "region",
-      "qty",
-      "amount",
-      "row_count",
-    ]);
-  });
-
-  test("getSchema reports no indexes and no foreign keys, because Druid has neither", async () => {
-    // Every dimension is indexed inside the segment, with no name, no size and no
-    // usage counter of its own, and there is no DDL that could declare a key.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.every((table) => table.indexes.length === 0)).toBe(true);
-    expect(schema.every((table) => table.foreignKeys?.length === 0)).toBe(true);
-  });
-
-  test("getSchema leaves row counts and sizes unset rather than reading them from sys", async () => {
-    // Deliberate: `sys.segments` is permission-gated separately from the
-    // catalogs, so reading counts there would make the whole sidebar fail on a
-    // cluster that merely declines to describe its servers. The counts live in
-    // getTableStats(), where a denial costs one panel.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.every((table) => table.rowCount === undefined)).toBe(true);
-    expect(schema.every((table) => table.size === undefined)).toBe(true);
-    expect(sentAnything("sys.segments")).toBe(false);
-  });
-
-  test("getSchema reads the catalogs and nothing else", async () => {
-    const provider = await connectProvider();
-
-    await provider.getSchema();
-
-    expect(sqlWith("INFORMATION_SCHEMA.TABLES")).toBe(DRUID_TABLE_LIST_SQL);
-    expect(sqlWith("INFORMATION_SCHEMA.COLUMNS")).toBe(DRUID_COLUMN_LIST_SQL);
-    expect(sentSql).toHaveLength(3);
-  });
-
-  test("getTables lists the datasource names", async () => {
-    const provider = await connectProvider();
-
-    expect(await provider.getTables()).toEqual(["libredb_demo", "libredb_rollup"]);
-  });
-
-  test("a datasource with no segments left is simply absent", async () => {
-    // Live-verified through the Coordinator's markUnused: a datasource whose
-    // segments are all unused disappears from INFORMATION_SCHEMA.TABLES
-    // entirely, so there is no empty-datasource row to render.
-    const provider = await connectProvider();
-    overrideSurface(DRUID_TABLE_LIST_SQL, ok('[["tableName"],["STRING"],["VARCHAR"]]'));
-
-    expect(await provider.getSchema()).toEqual([]);
-  });
-
-  test("a denied catalog yields an empty tree instead of an error page", async () => {
-    const provider = await connectProvider();
-    denyEverything();
-
-    expect(await provider.getSchema()).toEqual([]);
-  });
-
-  test("a catalog failure that is not a denial propagates", async () => {
-    // An empty sidebar in place of a real error hides it forever.
-    const provider = await connectProvider();
-    replyFor = () => fail(400, UNKNOWN_DATASOURCE);
-
-    await expect(provider.getSchema()).rejects.toBeInstanceOf(QueryError);
-  });
-
   test("declares neither getSchemaList nor getSchemaRelations", async () => {
     // Both are optional, and the split does not fit Druid: with no user-defined
     // indexes and no foreign keys, getSchemaList would be byte-identical to

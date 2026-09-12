@@ -29,7 +29,6 @@ import {
   getIndexStats,
   getOverview,
   getPerformanceMetrics,
-  getSchema,
   getSlowQueries,
   getStorageStats,
   getTableStats,
@@ -435,88 +434,7 @@ describe("Trino introspection statements", () => {
 // Schema
 // ============================================================================
 
-describe("Trino getSchema", () => {
-  test("names every table schema-qualified, regardless of the connection session schema", async () => {
-    const { runner } = fakeRunner();
-    const schema = await getSchema(runner, CATALOG);
-
-    expect(schema.map((table) => table.name)).toEqual(["tiny.nation", "tiny.region", "sf1.customer"]);
-  });
-
-  test("places each column against its own table, keyed by schema and name together", async () => {
-    const { runner } = fakeRunner();
-    const schema = await getSchema(runner, CATALOG);
-
-    expect(schema[0]?.columns).toEqual([
-      { name: "nationkey", type: "bigint", nullable: false, isPrimary: false },
-      { name: "name", type: "varchar(25)", nullable: false, isPrimary: false },
-    ]);
-    expect(schema[1]?.columns.map((column) => column.name)).toEqual(["regionkey", "comment"]);
-  });
-
-  test("reads IS_NULLABLE, and treats anything but NO as nullable", async () => {
-    const { runner } = fakeRunner();
-    const schema = await getSchema(runner, CATALOG);
-
-    expect(schema[1]?.columns[1]?.nullable).toBe(true);
-  });
-
-  test("carries a column default when the connector published one", async () => {
-    const { runner } = fakeRunner({
-      rows: {
-        columnList: [
-          {
-            schemaName: "tiny",
-            tableName: "nation",
-            columnName: "n",
-            dataType: "integer",
-            isNullable: "YES",
-            columnDefault: "42",
-          },
-        ],
-      },
-    });
-    const schema = await getSchema(runner, CATALOG);
-
-    expect(schema[0]?.columns[0]?.defaultValue).toBe("42");
-  });
-
-  test("declares no index and no foreign key, because Trino publishes neither anywhere", async () => {
-    const { runner } = fakeRunner();
-    const schema = await getSchema(runner, CATALOG);
-
-    expect(schema.every((table) => table.indexes.length === 0)).toBe(true);
-    expect(schema.every((table) => table.foreignKeys?.length === 0)).toBe(true);
-    expect(schema.every((table) => table.columns.every((column) => !column.isPrimary))).toBe(true);
-  });
-
-  test("a table with no column rows is still listed, with no columns", async () => {
-    const { runner } = fakeRunner({ rows: { columnList: [] } });
-    const schema = await getSchema(runner, CATALOG);
-
-    expect(schema).toHaveLength(3);
-    expect(schema[0]?.columns).toEqual([]);
-  });
-
-  test("drops a row it cannot place rather than failing the whole tree", async () => {
-    const { runner } = fakeRunner({
-      rows: {
-        tableList: [{ schemaName: "tiny", tableName: null }, ...TABLE_ROWS],
-        columnList: [{ schemaName: "tiny", tableName: "nation", columnName: "" }, ...COLUMN_ROWS],
-      },
-    });
-    const schema = await getSchema(runner, CATALOG);
-
-    expect(schema).toHaveLength(3);
-    expect(schema[0]?.columns).toHaveLength(2);
-  });
-
-  test("propagates a failure rather than showing an empty tree", async () => {
-    const { runner } = fakeRunner({ failures: { tableList: unavailable("unknown-object") } });
-
-    await expect(getSchema(runner, CATALOG)).rejects.toThrow("Catalog 'jmx' not found");
-  });
-});
+describe("Trino getSchema", () => {});
 
 // ============================================================================
 // Overview

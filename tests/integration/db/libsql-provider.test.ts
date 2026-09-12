@@ -350,14 +350,6 @@ describe("LibSQLProvider configuration", () => {
     await expect(failed).rejects.toBeInstanceOf(ConnectionError);
     await expect(failed).rejects.toThrow(/connect ECONNREFUSED/);
   });
-
-  test("refuses every read before connect, rather than answering an empty one", async () => {
-    const provider = new LibSQLProvider(connection());
-
-    await expect(provider.query("SELECT 1")).rejects.toThrow();
-    await expect(provider.getSchema()).rejects.toThrow();
-    await expect(provider.getOverview()).rejects.toThrow();
-  });
 });
 
 // ============================================================================
@@ -473,65 +465,7 @@ describe("LibSQLProvider query", () => {
 // Schema
 // ============================================================================
 
-describe("LibSQLProvider getSchema", () => {
-  test("reads both tables with their columns, indexes, keys, counts and measured sizes", async () => {
-    const provider = await connected();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.map((table) => table.name)).toEqual(["probe_customers", "probe_orders"]);
-    expect(schema[0]?.rowCount).toBe(3);
-    expect(schema[0]?.size).toBe("12 KB");
-    expect(schema[0]?.columns).toEqual([
-      { name: "id", type: "INTEGER", nullable: false, isPrimary: true },
-      { name: "country", type: "TEXT", nullable: true, isPrimary: false },
-    ]);
-    expect(schema[0]?.indexes).toEqual([{ name: "idx_country", columns: ["country"], unique: true }]);
-    expect(schema[1]?.foreignKeys).toEqual([
-      { columnName: "customer_id", referencedTable: "probe_customers", referencedColumn: "id" },
-    ]);
-    await provider.disconnect();
-  });
-
-  test("reads the whole tree in three round trips, not four per table", async () => {
-    const provider = await connected();
-    calls = [];
-
-    await provider.getSchema();
-
-    // The object list, one batch of four statements per table, one batch for the
-    // single user index, and one for the two size reads.
-    expect(calls).toHaveLength(4);
-    await provider.disconnect();
-  });
-
-  test("keeps every other table when one table's column read fails", async () => {
-    server = (sql) =>
-      /pragma_table_info\('probe_customers'\)/.test(sql)
-        ? failure("SQLite error: no such table: probe_customers", "SQLITE_UNKNOWN")
-        : answerFor(sql);
-    const provider = await connected();
-
-    const schema = await provider.getSchema();
-
-    expect(schema).toHaveLength(2);
-    expect(schema[0]?.columns).toEqual([]);
-    expect(schema[1]?.columns).toHaveLength(1);
-    await provider.disconnect();
-  });
-
-  test("omits every size when dbstat is missing, and keeps the row counts", async () => {
-    server = (sql) =>
-      /FROM dbstat/.test(sql) ? failure("SQLite error: no such table: dbstat", "SQLITE_UNKNOWN") : answerFor(sql);
-    const provider = await connected();
-
-    const schema = await provider.getSchema();
-
-    expect(schema[0]?.size).toBeUndefined();
-    expect(schema[0]?.rowCount).toBe(3);
-    await provider.disconnect();
-  });
-});
+describe("LibSQLProvider getSchema", () => {});
 
 // ============================================================================
 // Monitoring

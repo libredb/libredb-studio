@@ -20,6 +20,8 @@ const makeWorkspaceConnection = (overrides: Partial<WorkspaceConnection> = {}): 
 const makeSchema = (): DetailedObject[] => [
   {
     name: "users",
+    kind: "table",
+    path: ["users"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "email", type: "varchar", nullable: false, isPrimary: false },
@@ -29,6 +31,8 @@ const makeSchema = (): DetailedObject[] => [
   },
   {
     name: "orders",
+    kind: "table",
+    path: ["orders"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "user_id", type: "integer", nullable: false, isPrimary: false },

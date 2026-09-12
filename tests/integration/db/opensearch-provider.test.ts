@@ -1041,77 +1041,7 @@ describe("OpenSearchProvider query", () => {
 // Schema
 // ============================================================================
 
-describe("OpenSearchProvider schema", () => {
-  test("hides both kinds of engine bookkeeping this product ships", async () => {
-    // Two of the four visible indices on this cluster are the engine's own, and
-    // only one of them is dot-prefixed: `top_queries-2026.08.18-74305` carries no
-    // dot at all and is recognisable by name SHAPE. A stock Elasticsearch node
-    // ships neither, so this is the case that makes the second rule necessary.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.map((table) => table.name)).toEqual(["probe_orders", "probe_shapes"]);
-  });
-
-  test("reports the string counts as numbers and the string bytes as a size", async () => {
-    const provider = await connectProvider();
-
-    const [orders] = await provider.getSchema();
-
-    // `"docs.count":"1"` and `"pri.store.size":"4807"` - quoted even under
-    // `bytes=b`, on both products.
-    expect(orders.rowCount).toBe(1);
-    expect(orders.size).toBe("4.69 KB");
-  });
-
-  test("omits containers as columns even though this product can project them, and omits multi-fields it cannot", async () => {
-    // Two portability decisions, pulling in OPPOSITE directions, and neither branches
-    // on the dialect - which is the point.
-    //
-    // Containers: `SELECT address, items FROM probe_shapes` is HTTP 200 here (the
-    // object comes back as a sub-document, the nested field as an array) and HTTP 400
-    // on Elasticsearch. So this product can do MORE, and the leaves are the columns on
-    // both anyway, because a starter query enumerating every declared column has to run
-    // on both.
-    //
-    // Multi-fields: this product can do LESS. `SELECT note.keyword` is
-    // `SemanticCheckException`, "can't resolve Symbol(namespace=FIELD_NAME,
-    // name=note.keyword) in type env", in every spelling, while Elasticsearch selects
-    // it fine - and dynamic mapping gives every text field such a child, so listing
-    // them would break the starter query on nearly every index here. Dropped on both,
-    // for the same reason the container's leaves are kept on both.
-    const provider = await connectProvider();
-
-    const shapes = (await provider.getSchema())[1];
-
-    expect(shapes.columns.map((column) => column.name)).toEqual(["address.city", "items.sku", "note"]);
-    // Every field is nullable and none is a key: a mapping cannot require a field,
-    // and nothing it declares is unique. `_id` is - measured, and this product's
-    // SQL even returns it while Elasticsearch's answers "Unknown column [_id]" -
-    // but it is metadata rather than a mapped field, so it is not a column here and
-    // no column claims to be a key.
-    expect(shapes.columns.every((column) => column.nullable && !column.isPrimary)).toBe(true);
-    expect(shapes.columns.map((column) => column.type)).toEqual(["keyword", "keyword", "text"]);
-  });
-
-  test("costs one index its columns when its mapping answers the snake_case 404", async () => {
-    // The listing is a snapshot, so an index deleted between the listing and its
-    // mapping read is a race on a live cluster rather than a fault - and the fault
-    // name that arrives is the CORE layer's snake_case one, which the SQL fault
-    // table alone would not have recognised. Recognising it is what keeps the whole
-    // sidebar from failing over one index.
-    replyFor = (path, body) =>
-      path === "/probe_shapes/_mapping" ? { status: 404, body: MAPPING_NOT_FOUND_BODY } : defaultReply(path, body);
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.map((table) => table.name)).toEqual(["probe_orders", "probe_shapes"]);
-    expect(schema[0].columns).toHaveLength(3);
-    expect(schema[1].columns).toEqual([]);
-  });
-});
+describe("OpenSearchProvider schema", () => {});
 
 // ============================================================================
 // Monitoring

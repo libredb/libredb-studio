@@ -59,10 +59,8 @@
  * which names neither the kind nor the expectation.
  */
 import { expect } from "bun:test";
-import type { Container, DatabaseObject, DatabaseProvider, KindCount, ObjectDetailBatch } from "@/lib/db/types";
+import type { DatabaseObject, DatabaseProvider, KindCount, ObjectDetailBatch } from "@/lib/db/types";
 import { callerBoundTruncationReason, declaredKinds, isCountUnavailable, relationKindIds } from "@/lib/db/object-kinds";
-import { resolveObjectAddress } from "@/lib/db/object-address";
-import { enumerateContainers } from "@/lib/db/container-walk";
 
 export interface ObjectSurfaceExpectation {
   readonly containers: readonly (readonly string[])[];
@@ -194,155 +192,6 @@ export async function assertObjectSurface(
   expect(detail.path).toEqual([...sample.path]);
 
   await assertBulkColumnRead(provider, container, listings);
-  await assertFlatReadingJoins(provider, listings, containers, container);
-}
-
-/**
- * The FLAT reading's names must resolve against the OBJECT reading's paths, by the shared
- * rule (#789).
- *
- * Nothing executable tied the two together. `tagObjectKinds` had one unit test file of
- * hand-written fixtures and no integration caller, so a provider whose flat spelling and
- * object path cannot be joined looked healthy from both sides: the flat suite asserted the
- * names, the object suite asserted the paths, and the JOIN between them, which is what the
- * object browser actually renders, was asserted by nobody. That is how Trino came to join
- * nothing at all while every one of its tests passed.
- *
- * It is written to be the SAME JOIN the app performs and not a re-derivation of it:
- * `resolveObjectAddress` is the production rule, `relationKindIds` is the production kind
- * filter (`use-connection-manager.ts` asks the inventory for relation kinds only, because
- * the flat readings hold relations and nothing else and every other kind can only contest),
- * and the preferred container comes from `enumerateContainers` in
- * `src/lib/db/container-walk.ts`, the same walk `/api/db/objects/inventory` reads the
- * session default off. A guard that re-implemented
- * any of the three would pass while the app failed, and dropping the third is not a
- * simplification: it was measured, and DuckDB and Couchbase go red without it, because a
- * two-level engine listed at its catalog answers objects from every schema under it and a
- * bare flat name ties across them exactly as it does in the browser.
- *
- * THE SUBJECT IS DERIVED FROM WHAT THE PROVIDER ANSWERED, never chosen by the fixture and
- * never taken by index: an entry is in the subject when the flat reading's last segment and
- * a listed object's last path segment are the same string, which is a fact about the two
- * ANSWERS. A sample the test author picked would certify the one spelling they thought of.
- *
- * **TWO THINGS CLOSE THE HOLE THIS GUARD WAS MEASURED TO HAVE.** As first written it ran
- * against the objects of ONE container, and on a single-container fixture a bare flat name
- * is a valid suffix of every address, so it always resolved: the guard proved the join
- * returned SOMETHING, not that it returned the right object. Respelling PostgreSQL's `app`
- * rows as if they sat in `public`, which is exactly the dropped qualifier the rule exists to
- * catch, still passed.
- *
- *   1. The candidate pool is EVERY container `listContainers` answered. That is the pool the
- *      browser resolves against, and it is what lets two objects in different containers
- *      contest one name, which is the only shape in which the preferred-container
- *      tie-breaker does any work. The other containers contribute candidates only: nothing
- *      is counted, listed or described there.
- *   2. The join must be INJECTIVE. Two flat rows landing on one object is the doubled header
- *      this join exists to prevent, and it is what a dropped qualifier produces: each row
- *      still resolves on its own, so no per-row check can see it.
- *
- * `docker/postgres-init/03-object-fixture.sql` puts that case in a real fixture: an `orders`
- * in `app` and another in `public`, where the flat reading qualifies one and not the other.
- * Both halves are mutated in this helper's own suite, and dropping the qualifier in
- * `postgres.ts` turns the PostgreSQL contract red by name.
- *
- * **THIS GUARD IS EXPECTED TO TURN SOME PROVIDERS RED, and that is its purpose.** A red
- * here is a provider whose two readings cannot be joined, which is a real defect the app
- * shows as rows with no kind. Do not weaken it to make a provider pass.
- *
- * IT RETIRES IN TASK 26b, with the flat reading it guards: once `getSchema` is gone the
- * object surface is the only reading and there is no join left to protect.
- */
-async function assertFlatReadingJoins(
-  provider: DatabaseProvider,
-  listings: ReadonlyMap<string, DatabaseObject[]>,
-  answered: readonly Container[],
-  contract: readonly string[],
-): Promise<void> {
-  const relations = new Set(relationKindIds(provider.getCapabilities()));
-  const contractObjects = [...listings].filter(([kind]) => relations.has(kind)).flatMap(([, listed]) => listed);
-  if (contractObjects.length === 0) {
-    throw new Error(
-      "no listing above is of a relation kind, so nothing the flat reading can name was listed and this join is vacuous",
-    );
-  }
-
-  // EVERY container the provider answered, not just the contract's. The browser resolves a
-  // flat name against the whole inventory, so a pool holding one container's objects can
-  // only ever be asked a question with one possible answer, and the tie-breaker below is
-  // then decided by there being nothing to break. The other containers contribute
-  // CANDIDATES only: nothing is counted, listed-non-empty or described there, because those
-  // are the contract's assertions about the container the expectation named.
-  const objects = [...contractObjects];
-  for (const other of answered) {
-    if (pathKey(other.path) === pathKey(contract)) continue;
-    for (const kind of relations) objects.push(...(await provider.listObjects!(other.path, kind)));
-  }
-
-  const { defaultContainer } = await enumerateContainers(provider, () => provider.listContainers!.bind(provider));
-  const flat = await provider.getSchema();
-
-  // The last segment on each side, which is the one thing both readings must agree on
-  // whatever either prefixes it with. Never split a flat name to build a path from it: a
-  // table literally called `a.b` is why the address rule resolves rather than splits. This
-  // is the SUBJECT derivation and not the assertion, so a wrong guess here costs a subject
-  // and can never invent a passing one.
-  const lastSegment = (name: string): string => name.split(".")[name.split(".").length - 1];
-  const listedNames = new Set(objects.map((object) => object.path[object.path.length - 1]));
-  const subject = flat.filter((entry) => listedNames.has(lastSegment(entry.name)));
-
-  // Two vacuity cases, reported apart, because they send a maintainer to different places.
-  // An EMPTY flat reading is a provider, or a test double, that did not answer `getSchema`
-  // for this fixture at all, so there is no spelling to join; a NON-EMPTY one sharing no
-  // name with the listing is two reads of two different populations, which is a fixture
-  // that never put one object in front of both surfaces.
-  if (flat.length === 0) {
-    throw new Error(
-      "getSchema answered no objects, so the flat reading this join protects is empty and every check below is " +
-        `vacuous; the object reading listed ${[...listedNames].join(", ")}`,
-    );
-  }
-  if (subject.length === 0) {
-    throw new Error(
-      `the flat reading (${flat.map((entry) => entry.name).join(", ")}) and the listed relation objects ` +
-        `(${[...listedNames].join(", ")}) name no object in common, so this join is vacuous`,
-    );
-  }
-
-  // INJECTIVITY, which is the half of the join a suffix match cannot check on its own.
-  // A resolution says the spelling reaches SOME object; only the whole subject read
-  // together says it reaches the RIGHT one. Two flat rows landing on one object is the
-  // doubled header `tagObjectKinds` exists to prevent, and it is what a provider that drops
-  // a qualifier produces: with an `orders` in two containers and both rows spelled bare,
-  // each row still resolves, to the same object, and every per-row check passes.
-  const claimed = new Map<DatabaseObject, string>();
-
-  for (const entry of subject) {
-    const resolution = resolveObjectAddress(objects, (object) => object.path, entry.name, defaultContainer);
-    if (resolution.kind === "resolved") {
-      const already = claimed.get(resolution.object);
-      if (already !== undefined) {
-        throw new Error(
-          `the flat reading spells two objects "${already}" and "${entry.name}" and both join onto the same ` +
-            `listed object ${pathKey(resolution.object.path)}, so one of them is spelled too loosely to say ` +
-            "which object it means",
-        );
-      }
-      claimed.set(resolution.object, entry.name);
-      continue;
-    }
-    const detail =
-      resolution.kind === "ambiguous"
-        ? `${resolution.candidates.length} listed objects answer to it: ${resolution.candidates
-            .map((candidate) => pathKey(candidate.path))
-            .join(", ")}`
-        : `no listed object's address ends with it; the listed addresses are ${objects
-            .map((object) => pathKey(object.path))
-            .join(", ")}`;
-    throw new Error(
-      `the flat reading spells an object "${entry.name}" and the object reading cannot be joined on it: ${detail}`,
-    );
-  }
 }
 
 /**
@@ -384,14 +233,7 @@ async function assertBulkColumnRead(
   container: readonly string[],
   listings: ReadonlyMap<string, DatabaseObject[]>,
 ): Promise<void> {
-  const describeObjects = provider.describeObjects;
-  // KEPT rather than removed, and the choice is recorded because the other direction was
-  // considered: `describeObjects` is optional until Task 26 makes the surface required, so
-  // removing this line now reddens every provider that has not landed it yet, including any
-  // being written concurrently. Task 26b owns deleting it, together with the `?` on the
-  // method. Until then a provider is certified for the bulk read only if it declares one,
-  // which is why nothing below is written against a typed expectation.
-  if (describeObjects === undefined) return;
+  const describeObjects = provider.describeObjects.bind(provider);
   const relations = new Set(relationKindIds(provider.getCapabilities()));
 
   /**

@@ -31,7 +31,14 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { KEY_PATTERN_LABELS, SEARCH_INDEX_LABELS, TABLE_LABELS } from "../fixtures/provider-labels";
 import { LLMAuthError, LLMStreamError } from "@/lib/llm/types";
-import type { ColumnSchema, DatabaseConnection, DatabaseType, QueryResult, TableSchema } from "@/lib/types";
+import type {
+  ColumnSchema,
+  DatabaseConnection,
+  DatabaseType,
+  ForeignKeySchema,
+  IndexSchema,
+  QueryResult,
+} from "@/lib/types";
 import {
   type Turn,
   answersProse,
@@ -94,6 +101,27 @@ const CAPABILITIES: ProviderCapabilities = {
   schemaRefreshPattern: "manual",
 };
 
+/** One object as a grounding fixture declares it, before the walk addresses it. */
+interface GroundedObject {
+  readonly name: string;
+  readonly columns: readonly ColumnSchema[];
+  readonly indexes: readonly IndexSchema[];
+  readonly foreignKeys?: readonly ForeignKeySchema[];
+}
+
+/**
+ * The capabilities a run grounded through the OBJECT surface needs.
+ *
+ * A kind has to be DECLARED before anything can be listed under it (standing ruling 4), so
+ * a fixture that declares none is an engine with nothing to read and the walk says so.
+ * Kept apart from `CAPABILITIES` rather than folded into it: the composed catalog path
+ * reads declared kinds too, and every dialect it serves would start composing them.
+ */
+const OBJECT_CAPABILITIES: ProviderCapabilities = {
+  ...CAPABILITIES,
+  objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+};
+
 const OBJECTIVE = "Why is the orders report slow?";
 
 function queryResult(overrides: Partial<QueryResult> = {}): QueryResult {
@@ -135,25 +163,42 @@ interface BootOptions {
   /**
    * What the provider says when asked to describe its own schema (#414).
    *
-   * Absent means a `getSchema()` that REJECTS, which is the shape a provider that
-   * cannot describe this database really has: `getSchema` is a required member of
-   * `DatabaseProvider`, so no provider reaching this path is missing it, and the
+   * Absent means an object read that REJECTS, which is the shape a provider that cannot
+   * describe this database really has: the five object methods are required members of
+   * `DatabaseProvider`, so no provider reaching this path is missing them, and the
    * reachable failure is a rejection. Supplying one is how a run on a dialect with no
    * catalog plan becomes GROUNDED, which is the case #414 exists for.
+   *
+   * One container and one kind, which is what a zero-level engine has: the walk reads the
+   * empty container path, asks for the kinds `OBJECT_CAPABILITIES` declares, and joins the
+   * bulk column read onto the listing by path.
    */
-  readonly describesSchema?: () => Promise<readonly TableSchema[]>;
+  readonly describesSchema?: () => Promise<readonly GroundedObject[]>;
 }
 
 function boot(dataDir: string, options: BootOptions = {}): Boot {
   const answer = options.answer ?? (async () => queryResult());
   const queryReadOnly = mock((sql: string) => answer(sql));
+  const describes =
+    options.describesSchema ??
+    ((): Promise<readonly GroundedObject[]> => {
+      throw new QueryError("this database refused to describe its own objects");
+    });
   const provider = {
     queryReadOnly,
-    getSchema:
-      options.describesSchema ??
-      (async (): Promise<readonly TableSchema[]> => {
-        throw new QueryError("this database refused to describe its own schema");
-      }),
+    listContainers: async () => [],
+    countObjects: async () => ({ table: { count: (await describes()).length } }),
+    listObjects: async () =>
+      (await describes()).map((object) => ({ path: [object.name], name: object.name, kind: "table" })),
+    describeObject: async (path: readonly string[]) => ({ path, columns: [], indexes: [], foreignKeys: [] }),
+    describeObjects: async () => ({
+      details: (await describes()).map((object) => ({
+        path: [object.name],
+        columns: object.columns,
+        indexes: object.indexes,
+        foreignKeys: object.foreignKeys ?? [],
+      })),
+    }),
   } as unknown as DatabaseProvider;
   const acquireProvider = mock(async () => {
     const failure = options.acquireFails?.();
@@ -1357,7 +1402,7 @@ describe("planning mode runs no statement of the user's", () => {
     */
     describe("a plan run grounded through the engine's own schema inspection", () => {
       const column = (name: string): ColumnSchema => ({ name, type: "string", nullable: true, isPrimary: false });
-      const PROVIDER_INVENTORY: readonly TableSchema[] = [
+      const PROVIDER_INVENTORY: readonly GroundedObject[] = [
         { name: "orders", columns: [column("customerId")], indexes: [], foreignKeys: [] },
         { name: "customers", columns: [column("name")], indexes: [], foreignKeys: [] },
       ];
@@ -1376,7 +1421,7 @@ describe("planning mode runs no statement of the user's", () => {
           resources: {
             ...b.resources,
             connection: { ...CONNECTION, type: "mongodb" },
-            capabilities: { ...CAPABILITIES, queryLanguage: language, declaresForeignKeys: false },
+            capabilities: { ...OBJECT_CAPABILITIES, queryLanguage: language, declaresForeignKeys: false },
             ...(labels === undefined ? {} : { labels }),
           },
         });
@@ -1620,7 +1665,7 @@ describe("planning mode runs no statement of the user's", () => {
       that these rows are this product's own summary of a bounded reading.
     */
     describe("a plan run on an engine whose inventory rows are groupings this server derived", () => {
-      const KEY_PREFIXES: readonly TableSchema[] = [
+      const KEY_PREFIXES: readonly GroundedObject[] = [
         { name: "user:*", columns: [], indexes: [], foreignKeys: [] },
         { name: "order:*", columns: [], indexes: [], foreignKeys: [] },
       ];
@@ -1647,7 +1692,7 @@ describe("planning mode runs no statement of the user's", () => {
             ...b.resources,
             connection: { ...CONNECTION, type: "redis" },
             capabilities: {
-              ...CAPABILITIES,
+              ...OBJECT_CAPABILITIES,
               queryLanguage: "json",
               declaresForeignKeys: false,
               tablesAreDerivedGroupings: true,
@@ -4999,7 +5044,7 @@ describe("agent mode is no wider than it was, on an engine grounding now reaches
         resources: {
           ...b.resources,
           connection: { ...CONNECTION, type: "mongodb" },
-          capabilities: { ...CAPABILITIES, queryLanguage: "json", declaresForeignKeys: false },
+          capabilities: { ...OBJECT_CAPABILITIES, queryLanguage: "json", declaresForeignKeys: false },
         },
       }),
     ).rejects.toThrow(ExecutionProfileError);

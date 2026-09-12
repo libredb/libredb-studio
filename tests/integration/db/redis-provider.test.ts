@@ -665,13 +665,6 @@ describe("RedisProvider", () => {
       );
     });
 
-    test("the generated Scan Keys command runs against this provider (#427)", async () => {
-      const schema = await provider.getSchema();
-      const generated = generateTableQuery(schema[0].name, provider.getCapabilities(), schema[0].columns);
-      const result = await provider.query(generated);
-      expect(result.rows).toBeArray();
-    });
-
     test("every command line the cheatsheet generates is accepted (#427)", async () => {
       for (const sample of ["string", "hash", "list", "set", "zset"]) {
         const columns = [
@@ -923,25 +916,6 @@ describe("RedisProvider", () => {
   describe("getSchema()", () => {
     beforeEach(async () => {
       await provider.connect();
-    });
-
-    test("returns key patterns as tables from SCAN", async () => {
-      const schemas = await provider.getSchema();
-      expect(schemas).toBeArray();
-      expect(schemas.length).toBeGreaterThan(0);
-
-      // user:1 and user:2 -> "user:*" pattern; session:abc -> "session:*"
-      const userPattern = schemas.find((s) => s.name === "user:*");
-      expect(userPattern).toBeDefined();
-      expect(userPattern!.rowCount).toBe(2);
-
-      const sessionPattern = schemas.find((s) => s.name === "session:*");
-      expect(sessionPattern).toBeDefined();
-      expect(sessionPattern!.rowCount).toBe(1);
-
-      // Columns should include key, value, type
-      expect(userPattern!.columns.length).toBe(3);
-      expect(userPattern!.columns[0].name).toBe("key");
     });
   });
 

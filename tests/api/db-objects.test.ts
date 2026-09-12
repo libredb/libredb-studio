@@ -332,22 +332,6 @@ describe("POST /api/db/objects/containers", () => {
       '"parent" must be an array of path segments',
     );
   });
-
-  test("answers 501 naming the method and the engine when the provider has no object surface", async () => {
-    activeProvider = objectProvider({ type: "mysql" });
-
-    const response = await containersRoute.POST(
-      createMockRequest("/api/db/objects/containers", { method: "POST", body: { connection } }) as never,
-    );
-
-    expect(response.status).toBe(501);
-    const body = await parseResponseJSON<{ error: string; code: string; statusCode: number }>(response);
-    expect(body.error).toContain("listContainers");
-    expect(body.error).toContain("mysql");
-    // A code, so the tree can render "not migrated yet" as its own state without keying on 501.
-    expect(body.code).toBe(ApiErrorCode.OBJECT_SURFACE_UNIMPLEMENTED);
-    expect(body.statusCode).toBe(501);
-  });
 });
 
 // ============================================================================
@@ -426,22 +410,6 @@ describe("POST /api/db/objects/counts", () => {
     expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
       '"container" must be an array of path segments',
     );
-  });
-
-  test("answers 501 when the provider does not implement countObjects", async () => {
-    activeProvider = objectProvider({ type: "redis" });
-
-    const response = await countsRoute.POST(
-      createMockRequest("/api/db/objects/counts", {
-        method: "POST",
-        body: { connection, container: ["app"] },
-      }) as never,
-    );
-
-    expect(response.status).toBe(501);
-    const { error } = await parseResponseJSON<{ error: string }>(response);
-    expect(error).toContain("countObjects");
-    expect(error).toContain("redis");
   });
 });
 
@@ -525,22 +493,6 @@ describe("POST /api/db/objects/list", () => {
 
     expect(listObjects).toHaveBeenCalledWith(["app"], "table");
   });
-
-  test("answers 501 when the provider does not implement listObjects", async () => {
-    activeProvider = objectProvider({ type: "oracle" });
-
-    const response = await listRoute.POST(
-      createMockRequest("/api/db/objects/list", {
-        method: "POST",
-        body: { connection, container: ["app"], kind: "table" },
-      }) as never,
-    );
-
-    expect(response.status).toBe(501);
-    const { error } = await parseResponseJSON<{ error: string }>(response);
-    expect(error).toContain("listObjects");
-    expect(error).toContain("oracle");
-  });
 });
 
 // ============================================================================
@@ -598,22 +550,6 @@ describe("POST /api/db/objects/describe", () => {
 
     expect(response.status).toBe(400);
     expect((await parseResponseJSON<{ error: string }>(response)).error).toContain("kind");
-  });
-
-  test("answers 501 when the provider does not implement describeObject", async () => {
-    activeProvider = objectProvider({ type: "clickhouse" });
-
-    const response = await describeRoute.POST(
-      createMockRequest("/api/db/objects/describe", {
-        method: "POST",
-        body: { connection, path: ["app", "orders"], kind: "table" },
-      }) as never,
-    );
-
-    expect(response.status).toBe(501);
-    const { error } = await parseResponseJSON<{ error: string }>(response);
-    expect(error).toContain("describeObject");
-    expect(error).toContain("clickhouse");
   });
 });
 
@@ -702,22 +638,6 @@ describe("POST /api/db/objects/search", () => {
 
     expect(response.status).toBe(400);
     expect((await parseResponseJSON<{ error: string }>(response)).error).toContain("kinds");
-  });
-
-  test("answers 501 when the provider cannot list objects", async () => {
-    activeProvider = objectProvider({
-      type: "druid",
-      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
-    });
-
-    const response = await searchRoute.POST(
-      createMockRequest("/api/db/objects/search", { method: "POST", body: { connection, term: "order" } }) as never,
-    );
-
-    expect(response.status).toBe(501);
-    const { error } = await parseResponseJSON<{ error: string }>(response);
-    expect(error).toContain("listObjects");
-    expect(error).toContain("druid");
   });
 
   test("searches an engine with no containers at all", async () => {
@@ -985,19 +905,6 @@ describe("POST /api/db/objects/inventory", () => {
     expect(response.status).toBe(400);
     expect((await parseResponseJSON<{ error: string }>(response)).error).toContain("containers");
     expect(listObjects).toHaveBeenCalledTimes(0);
-  });
-
-  test("answers 501 when the provider has no object surface", async () => {
-    activeProvider = objectProvider({ type: "couchbase" });
-
-    const response = await inventoryRoute.POST(
-      createMockRequest("/api/db/objects/inventory", { method: "POST", body: { connection } }) as never,
-    );
-
-    expect(response.status).toBe(501);
-    const { error } = await parseResponseJSON<{ error: string }>(response);
-    expect(error).toContain("listContainers");
-    expect(error).toContain("couchbase");
   });
 
   /*

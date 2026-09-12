@@ -40,7 +40,24 @@ import type {
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
-import type { DatabaseConnection, DatabaseType, QueryResult, TableSchema } from "@/lib/types";
+import type {
+  ColumnSchema,
+  DatabaseConnection,
+  DatabaseType,
+  ForeignKeySchema,
+  IndexSchema,
+  QueryResult,
+} from "@/lib/types";
+
+/** One object as a grounding fixture declares it, before the walk addresses it. */
+interface GroundedObject {
+  readonly name: string;
+  readonly columns: readonly ColumnSchema[];
+  readonly indexes: readonly IndexSchema[];
+  readonly foreignKeys?: readonly ForeignKeySchema[];
+  readonly rowCount?: number;
+  readonly size?: string;
+}
 
 /**
  * The run's context snapshot and its packing (#329 T8).
@@ -70,6 +87,19 @@ const capabilities: ProviderCapabilities = {
   supportsConnectionString: true,
   defaultPort: 5432,
   schemaRefreshPattern: "manual",
+};
+
+/**
+ * The same capabilities with one relation kind DECLARED.
+ *
+ * A kind has to be declared before anything can be listed under it (standing ruling 4), so
+ * a provider-grounded fixture that declares none is an engine with nothing to read and the
+ * walk says so. Kept apart from `capabilities` above because the composed catalog path
+ * reads declared kinds too, and every dialect it serves would start composing them.
+ */
+const objectCapabilities: ProviderCapabilities = {
+  ...capabilities,
+  objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
 };
 
 function connectionOf(type: DatabaseType): DatabaseConnection {
@@ -960,7 +990,7 @@ describe("captureContextSnapshot — what the reading charged", () => {
  */
 describe("captureContextSnapshot — the provider's own inventory", () => {
   /** As MongoDB answers it: a row estimate and a size, which a snapshot must drop. */
-  const MONGO_TABLES: TableSchema[] = [
+  const MONGO_TABLES: GroundedObject[] = [
     {
       name: "orders",
       columns: [
@@ -983,13 +1013,14 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
 
   interface ProviderHarness {
     readonly context: AgentToolContext;
-    readonly getSchema: ReturnType<typeof mock>;
+    /** The bulk column read, which is where an inventory's columns now come from. */
+    readonly describeObjects: ReturnType<typeof mock>;
     readonly profiles: () => unknown[];
   }
 
   function providerHarness(
     options: {
-      readonly schema?: () => Promise<TableSchema[]>;
+      readonly schema?: () => Promise<GroundedObject[]>;
       readonly runDeadlineMs?: number;
       /** What the acquisition throws, for the failures raised before any reading leaves. */
       readonly acquireThrows?: Error;
@@ -997,11 +1028,33 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
       readonly registry?: OperationRegistry;
     } = {},
   ): ProviderHarness {
-    const getSchema = mock(options.schema ?? (async () => MONGO_TABLES.map((table) => ({ ...table }))));
-    // Always present: `getSchema` is a REQUIRED member of `DatabaseProvider`, so a
-    // provider without one is a shape no acquisition can return and a fixture carrying
-    // it would test a state that cannot occur.
-    const provider = { getSchema } as unknown as DatabaseProvider;
+    const read = options.schema ?? (async () => MONGO_TABLES.map((table) => ({ ...table })));
+    // Always present: the five object methods are REQUIRED members of `DatabaseProvider`,
+    // so a provider without them is a shape no acquisition can return and a fixture
+    // carrying that absence would test a state that cannot occur. One kind and one
+    // container, which is what a zero-level engine has.
+    const describeObjects = mock(async () => ({
+      details: (await read()).map((object) => ({
+        path: [object.name],
+        columns: object.columns,
+        indexes: object.indexes,
+        foreignKeys: object.foreignKeys ?? [],
+      })),
+    }));
+    const provider = {
+      listContainers: mock(async () => []),
+      countObjects: mock(async () => ({ table: { count: (await read()).length } })),
+      listObjects: mock(async () =>
+        (await read()).map((object) => ({ path: [object.name], name: object.name, kind: "table" })),
+      ),
+      describeObject: mock(async (path: readonly string[]) => ({
+        path,
+        columns: [],
+        indexes: [],
+        foreignKeys: [],
+      })),
+      describeObjects,
+    } as unknown as DatabaseProvider;
     // The profile is recorded here rather than read off the spy's call list, because
     // it is the ARGUMENT that is under test: acquiring `agent-read-only` would throw
     // PROFILE_UNSUPPORTED_BY_PROVIDER on every engine this path exists to reach.
@@ -1020,7 +1073,7 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
         workflowType: "investigation",
         actor: { sessionId: "session-1", role: "user" },
         connection: connectionOf("mongodb"),
-        capabilities,
+        capabilities: objectCapabilities,
         labels: TABLE_LABELS,
         registry: options.registry ?? createCanonicalOperationRegistry(),
         scope: createTargetScope("conn-1"),
@@ -1034,7 +1087,7 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
         acquireProvider,
         clock: frozenClock,
       },
-      getSchema,
+      describeObjects,
       profiles: () => profiles,
     };
   }
@@ -1059,7 +1112,7 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
     if (capture.kind !== "captured") throw new Error("unreachable");
     expect(capture.snapshot.readVia).toBe("provider-inventory");
     expect(capture.snapshot.objects.map((table) => table.name)).toEqual(["customers", "orders"]);
-    expect(h.getSchema).toHaveBeenCalledTimes(1);
+    expect(h.describeObjects).toHaveBeenCalledTimes(1);
   });
 
   test("a search engine is grounded the same way, which is what makes plan mode work there", async () => {
@@ -1171,7 +1224,7 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
     expect(capture.detail).toContain("UNKNOWN_OPERATION");
     // Not the timeout's wording, and not an engine's error text: nothing was asked.
     expect(capture.detail).not.toContain("this run granted");
-    expect(h.getSchema).not.toHaveBeenCalled();
+    expect(h.describeObjects).not.toHaveBeenCalled();
   });
 
   /*
@@ -1228,7 +1281,7 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
   test("a reading that overruns the time it was granted loses the whole snapshot, under its own code", async () => {
     // 250ms is `AGENT_MINIMUM_CALL_MS`, the smallest call this deadline will admit,
     // so the granted timeout is the whole of what the run has left.
-    const h = providerHarness({ runDeadlineMs: 250, schema: () => new Promise<TableSchema[]>(() => {}) });
+    const h = providerHarness({ runDeadlineMs: 250, schema: () => new Promise<GroundedObject[]>(() => {}) });
 
     const capture = await captureContextSnapshot(h.context);
 
@@ -1483,7 +1536,7 @@ describe("captureContextSnapshot — the object surface that says what each entr
     { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
   ];
 
-  const FLAT: TableSchema[] = [
+  const COLUMNS: GroundedObject[] = [
     {
       name: "public.orders",
       columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
@@ -1512,7 +1565,7 @@ describe("captureContextSnapshot — the object surface that says what each entr
       readonly kinds?: readonly ObjectKindSpec[];
       readonly containerLevels?: ProviderCapabilities["containerLevels"];
       readonly derivedGroupings?: boolean;
-      readonly schema?: readonly TableSchema[];
+      readonly schema?: readonly GroundedObject[];
       readonly counts?: (container: readonly string[]) => Record<string, KindCount>;
       readonly objects?: (container: readonly string[], kind: string) => readonly DatabaseObject[];
       readonly containers?: (parent?: readonly string[]) => readonly Container[];
@@ -1544,9 +1597,18 @@ describe("captureContextSnapshot — the object surface that says what each entr
     );
 
     const provider = {
-      getSchema: mock(async () => (options.schema ?? FLAT).map((table) => ({ ...table }))),
+      describeObjects: mock(async (container: readonly string[], kind: string) => ({
+        details: (options.schema ?? COLUMNS)
+          .filter((object) => (kind === "table" ? object.name.endsWith("orders") : object.name.endsWith("summary")))
+          .map((object) => ({
+            path: [...container, object.name.split(".")[object.name.split(".").length - 1]],
+            columns: object.columns,
+            indexes: object.indexes,
+            foreignKeys: object.foreignKeys ?? [],
+          })),
+      })),
       // Carried so a catalog dialect can be driven through this harness: the composed
-      // path reads through `queryReadOnly` and never asks for a schema.
+      // path reads through `queryReadOnly` and never asks the object surface.
       queryReadOnly: mock(async (sql: string) => answerPostgres(sql)),
       ...(options.omitObjectSurface === true ? {} : { listObjects, countObjects }),
       ...(options.omitContainerListing === true ? {} : { listContainers }),
@@ -1682,37 +1744,6 @@ describe("captureContextSnapshot — the object surface that says what each entr
     ]);
   });
 
-  test("an object the flat reading never named still reaches the model, with no columns invented", async () => {
-    const snapshot = await inventoryOf(
-      objectHarness({
-        schema: [],
-        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
-      }),
-    );
-
-    expect(snapshot.objects).toHaveLength(1);
-    expect(snapshot.objects[0]?.columns).toEqual([]);
-    expect(snapshot.objects[0]?.kind).toBe("table");
-  });
-
-  /**
-   * The other direction, and the one that must not silently drop anything: an entry the
-   * object read did not name is carried with NO kind rather than labelled a table. A
-   * missing fact filled in with the commonest value is the defect this whole task closes.
-   */
-  test("a flat entry the object read never named is carried, and is labelled nothing at all", async () => {
-    const snapshot = await inventoryOf(
-      objectHarness({
-        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
-      }),
-    );
-
-    const unmatched = snapshot.objects.find((object) => object.name === "public.order_summary");
-    expect(unmatched).toBeDefined();
-    expect(unmatched?.kind).toBeUndefined();
-    expect(packContextForTask(snapshot, "orders")).not.toContain("public.order_summary (");
-  });
-
   /**
    * Ruling 5g, in this module: the walk down to the containers is derived from
    * `containerDepth()` and never from a hardcoded level count. A two-level engine has to
@@ -1755,28 +1786,6 @@ describe("captureContextSnapshot — the object surface that says what each entr
     expect(snapshot.objects.find((object) => object.kind === "table")?.path).toEqual(["orders"]);
   });
 
-  test("more objects than the read may carry is reported as truncated, naming the limit", async () => {
-    const snapshot = await inventoryOf(
-      objectHarness({
-        counts: () => ({ table: { count: 6_000 }, view: { count: 0 }, function: { count: 0 } }),
-        objects: (container, kind) =>
-          kind === "table"
-            ? Array.from({ length: 6_000 }, (_unused, index) => ({
-                path: [...container, `t_${index}`],
-                name: `t_${index}`,
-                kind,
-              }))
-            : [],
-      }),
-    );
-
-    // The two entries the flat reading held and the object read never named are carried
-    // as well: a truncated read is a reason to say less, never to drop what was read.
-    expect(snapshot.objects.filter((object) => object.kind !== undefined)).toHaveLength(5_000);
-    expect(snapshot.truncated).toEqual({ limit: 5_000, reason: "inventory limit reached" });
-    expect(packContextForTask(snapshot, "orders")).toContain("This inventory is incomplete");
-  });
-
   test("more container and kind pairs than the read may issue is reported as truncated too", async () => {
     const snapshot = await inventoryOf(
       objectHarness({
@@ -1793,126 +1802,40 @@ describe("captureContextSnapshot — the object surface that says what each entr
   });
 
   /**
-   * A read that could not happen costs the run DETAIL and not its grounding. Refusing to
-   * ground a run at all because an engine would not enumerate its kinds would trade a
-   * label for a real regression, and the renderers already say nothing where they know
-   * nothing.
+   * An engine that declares no kind has nothing to list, and on this path that is the WHOLE
+   * inventory rather than a missing label (#789).
+   *
+   * It was a loss of DETAIL while a second, flat reading carried the objects and this one
+   * only tagged them. That reading is gone, so a kind nobody declared is a folder that does
+   * not exist, and an engine with no folders is an engine this server can enumerate nothing
+   * from. The run is told so in the server's own voice and keeps running ungrounded, which
+   * is what plan mode promises; it is never handed an empty inventory as if the database
+   * held nothing.
    */
-  test("an engine that declares no kinds is grounded exactly as it was, and is charged nothing for it", async () => {
+  test("an engine that declares no kinds has no inventory to read, and is told so rather than shown an empty one", async () => {
     const harness = objectHarness({ kinds: [] });
 
-    const snapshot = await inventoryOf(harness);
+    const capture = await captureContextSnapshot(harness.context);
 
-    expect(snapshot.objects.map((object) => object.name)).toEqual(["public.order_summary", "public.orders"]);
-    expect(snapshot.objects.every((object) => object.kind === undefined)).toBe(true);
-    expect(snapshot.kinds).toEqual([]);
+    expect(capture.kind).toBe("unavailable");
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    expect(capture.detail).toContain("declares no object kinds");
     expect(harness.listObjects).not.toHaveBeenCalled();
-    // One statement, not two: the read that cannot exist is never admitted.
-    expect(harness.context.tracker.usage("run-1").executedStatements).toBe(1);
+    // Nothing was asked, so nothing is charged: a read that cannot exist is never admitted.
+    expect(harness.context.tracker.usage("run-1").executedStatements).toBe(0);
   });
 
-  test("a provider that declares kinds and cannot list them grounds the run without them", async () => {
-    const snapshot = await inventoryOf(objectHarness({ omitObjectSurface: true }));
-
-    expect(snapshot.objects.map((object) => object.name)).toEqual(["public.order_summary", "public.orders"]);
-    expect(snapshot.objects.every((object) => object.kind === undefined)).toBe(true);
-  });
-
-  test("a provider with container levels and no container listing yields no objects rather than guessing one", async () => {
-    const harness = objectHarness({ omitContainerListing: true });
-
-    const snapshot = await inventoryOf(harness);
-
-    expect(harness.listObjects).not.toHaveBeenCalled();
-    expect(snapshot.objects.map((object) => object.name)).toEqual(["public.order_summary", "public.orders"]);
-  });
-
-  test("a listing the engine rejected loses the kinds and not the inventory", async () => {
-    const snapshot = await inventoryOf(
-      objectHarness({ listThrows: new QueryError("relation does not exist", "mongodb") }),
+  test("a listing the engine rejected loses the whole snapshot rather than half of one", async () => {
+    // All-or-nothing, exactly as the composed path is: a partial inventory presented as
+    // complete is the failure this module exists to avoid.
+    const capture = await captureContextSnapshot(
+      objectHarness({ listThrows: new QueryError("relation does not exist", "mongodb") }).context,
     );
 
-    expect(snapshot.objects.map((object) => object.name)).toEqual(["public.order_summary", "public.orders"]);
-    expect(snapshot.objects.every((object) => object.kind === undefined)).toBe(true);
-  });
-
-  /**
-   * The join key, on the engines whose flat reading is NOT the composed form (#789 fix
-   * round). `getSchema()` names a MySQL table BARE (`mysql.ts`, the `table_name` row is
-   * pushed as `name`) while its object path is `[database, table]`, and SQL Server strips
-   * `dbo.` from a flat name (`mssql.ts`) while its object path is three segments. Keying
-   * the join on the composed name alone therefore matched NOTHING on either engine, and
-   * both halves were then carried into the prompt: a kinded row with no columns beside a
-   * kindless row with the real ones, doubling the header count and spending the character
-   * bound on saying everything twice.
-   */
-  test("a flat reading that names a table the way MySQL does joins the object that addresses it", async () => {
-    const snapshot = await inventoryOf(
-      objectHarness({
-        containers: () => [{ path: ["app"], name: "app", level: 0 }],
-        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
-        objects: (container, kind) =>
-          kind === "table" ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
-        schema: [
-          {
-            name: "orders",
-            columns: [{ name: "id", type: "int", nullable: false, isPrimary: true }],
-            indexes: [{ name: "PRIMARY", columns: ["id"], unique: true }],
-            foreignKeys: [],
-          },
-        ],
-      }),
-    );
-
-    expect(snapshot.objects).toHaveLength(1);
-    expect(snapshot.objects[0]?.kind).toBe("table");
-    expect(snapshot.objects[0]?.columns).toEqual([{ name: "id", type: "int", nullable: false, isPrimary: true }]);
-  });
-
-  /**
-   * SQL Server's spelling, and the reason the key is tried from the MOST qualified form
-   * down: `dbo.orders` reaches the flat reading as `orders` and `sales.orders` keeps its
-   * schema, against three-segment paths. A bare key claimed first would have given the
-   * `dbo` table the `sales` table's columns.
-   */
-  test("a flat reading that strips the default schema joins each object to its own columns", async () => {
-    const snapshot = await inventoryOf(
-      objectHarness({
-        containerLevels: [
-          { id: "catalog", label: "Database", labelPlural: "Databases" },
-          { id: "schema", label: "Schema", labelPlural: "Schemas" },
-        ],
-        containers: (parent) =>
-          parent === undefined
-            ? [{ path: ["shop"], name: "shop", level: 0 }]
-            : [
-                { path: [...parent, "dbo"], name: "dbo", level: 1 },
-                { path: [...parent, "sales"], name: "sales", level: 1 },
-              ],
-        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
-        objects: (container, kind) =>
-          kind === "table" ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
-        schema: [
-          {
-            name: "orders",
-            columns: [{ name: "dbo_id", type: "int", nullable: false, isPrimary: true }],
-            indexes: [],
-            foreignKeys: [],
-          },
-          {
-            name: "sales.orders",
-            columns: [{ name: "sales_id", type: "int", nullable: false, isPrimary: true }],
-            indexes: [],
-            foreignKeys: [],
-          },
-        ],
-      }),
-    );
-
-    expect(snapshot.objects.map((object) => [object.name, object.columns[0]?.name])).toEqual([
-      ["shop.dbo.orders", "dbo_id"],
-      ["shop.sales.orders", "sales_id"],
-    ]);
+    expect(capture.kind).toBe("unavailable");
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
   });
 
   /**
@@ -1931,42 +1854,6 @@ describe("captureContextSnapshot — the object surface that says what each entr
       ["public.orders", "table"],
     ]);
     expect(snapshot.objects.map((object) => object.label)).toEqual(["order_summary", "orders"]);
-  });
-
-  /**
-   * The suffix key is tried against a flat reading that may not span the whole engine:
-   * MySQL's `getSchema()` reads one database, so two databases holding `orders` both end
-   * at the bare key while only one of them is what the flat entry describes. Neither takes
-   * it. Costing a column list is the failure this join already accepts; handing a model
-   * another object's columns is not.
-   */
-  test("two objects that can only be spelled the same way are both left without columns", async () => {
-    const snapshot = await inventoryOf(
-      objectHarness({
-        containers: () => [
-          { path: ["app"], name: "app", level: 0 },
-          { path: ["archive"], name: "archive", level: 0 },
-        ],
-        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
-        objects: (container, kind) =>
-          kind === "table" ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
-        schema: [
-          {
-            name: "orders",
-            columns: [{ name: "id", type: "int", nullable: false, isPrimary: true }],
-            indexes: [],
-            foreignKeys: [],
-          },
-        ],
-      }),
-    );
-
-    expect(snapshot.objects.map((object) => [object.name, object.columns.length])).toEqual([
-      ["app.orders", 0],
-      ["archive.orders", 0],
-      // The entry nothing could claim is still carried rather than dropped.
-      ["orders", 1],
-    ]);
   });
 
   /**
@@ -2006,138 +1893,6 @@ describe("captureContextSnapshot — the object surface that says what each entr
   });
 
   /**
-   * A tie that does not break is FINAL, and nothing may claim the entry in a later round
-   * (#789 bulk-read review, Important 2).
-   *
-   * The round order is what makes the preference safe: a candidate is only compared with
-   * others that reached the same key in the same round, which is the same rank. But an
-   * unbroken tie used to leave the entry in `unmatched`, so a candidate with a LONGER key
-   * set reached that same string one round later and took what two better-ranked
-   * candidates had been refused. `resolveObjectAddress`, given the same three objects and
-   * the same bare name, answers `ambiguous` and refuses. Two consumers of one rule
-   * disagreeing is the failure `object-address.ts`'s own header says the file exists to
-   * prevent.
-   *
-   * Ruling 5f is what makes the key sets differ in length: a kind may carry mixed path
-   * depth, and an object attached to another sits one segment deeper than its siblings.
-   */
-  test("a tie that cannot be broken is not reopened for a candidate that reaches the key later", async () => {
-    const snapshot = await inventoryOf(
-      objectHarness({
-        // No container is the session default, so nothing can break the tie below.
-        containers: () => [
-          { path: ["app"], name: "app", level: 0 },
-          { path: ["sales"], name: "sales", level: 0 },
-          { path: ["cat"], name: "cat", level: 0 },
-        ],
-        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
-        objects: (container, kind) =>
-          kind !== "table"
-            ? []
-            : container[0] === "cat"
-              ? // One segment deeper than its siblings, which ruling 5f allows: its key set
-                // is ["cat.sch.orders", "sch.orders", "orders"], so it reaches the bare key
-                // in round 3 while the other two tied on it in round 2.
-                [{ path: ["cat", "sch", "orders"], name: "orders", kind }]
-              : [{ path: [...container, "orders"], name: "orders", kind }],
-        schema: [
-          {
-            name: "orders",
-            columns: [{ name: "id", type: "int", nullable: false, isPrimary: true }],
-            indexes: [],
-            foreignKeys: [],
-          },
-        ],
-      }),
-    );
-
-    expect(snapshot.objects.map((object) => [object.name, object.columns.length])).toEqual([
-      ["app.orders", 0],
-      ["cat.sch.orders", 0],
-      // Still carried, and still the only thing holding the columns: a refusal costs a
-      // column list and never hands them to the wrong object.
-      ["orders", 1],
-      ["sales.orders", 0],
-    ]);
-  });
-
-  /**
-   * The tie-breaker, on the agent's own join (#789).
-   *
-   * The same two readings the object browser joins, tied the same way, and until this
-   * round the agent was the one consumer that resolved them by rank alone. The spelling
-   * is MySQL's: `getSchema()` reads ONE database and names its tables bare, while the
-   * object surface walks every database the server holds, so a bare `orders` ties across
-   * `app` and `app_test` on any server that holds both. Refusing there handed the model a
-   * kind-tagged row with no columns beside a kindless row carrying the real ones.
-   *
-   * What breaks it is the fact the walk already read and threw away: exactly one
-   * deepest-level container answers `isSessionDefault`, and it is the container the flat
-   * reading is a reading OF.
-   */
-  test("the session default the walk already read breaks a tie the flat reading cannot", async () => {
-    const snapshot = await inventoryOf(
-      objectHarness({
-        containers: () => [
-          { path: ["app"], name: "app", level: 0, isSessionDefault: true },
-          { path: ["app_test"], name: "app_test", level: 0 },
-        ],
-        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
-        objects: (container, kind) =>
-          kind === "table" ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
-        schema: [
-          {
-            name: "orders",
-            columns: [{ name: "id", type: "int", nullable: false, isPrimary: true }],
-            indexes: [],
-            foreignKeys: [],
-          },
-        ],
-      }),
-    );
-
-    expect(snapshot.objects.map((object) => [object.name, object.columns.length])).toEqual([
-      ["app.orders", 1],
-      ["app_test.orders", 0],
-    ]);
-    // The flat entry was CONSUMED, so the kindless duplicate that used to reach the
-    // prompt beside the kinded row is gone.
-    expect(snapshot.objects.every((object) => object.kind !== undefined)).toBe(true);
-  });
-
-  /**
-   * The direction the preference must never move in: it breaks a TIE and never promotes.
-   * `app` is the session default and `app_test.orders` is spelled in full, so the more
-   * qualified match wins outright and the default container decides nothing.
-   */
-  test("the session default never promotes a worse-ranked match over a fully spelled one", async () => {
-    const snapshot = await inventoryOf(
-      objectHarness({
-        containers: () => [
-          { path: ["app"], name: "app", level: 0, isSessionDefault: true },
-          { path: ["app_test"], name: "app_test", level: 0 },
-        ],
-        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
-        objects: (container, kind) =>
-          kind === "table" ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
-        schema: [
-          {
-            name: "app_test.orders",
-            columns: [{ name: "id", type: "int", nullable: false, isPrimary: true }],
-            indexes: [],
-            foreignKeys: [],
-          },
-        ],
-      }),
-    );
-
-    expect(snapshot.objects.map((object) => [object.name, object.columns.length])).toEqual([
-      ["app.orders", 0],
-      ["app_test.orders", 1],
-    ]);
-  });
-
-  /**
    * Standing ruling 3, measured on MySQL 26.7.0: a table and a procedure called `foo`
    * coexist in one database. The join key ignores role, so the procedure would have taken
    * the table's columns and reached the model as a routine with a column list.
@@ -2164,13 +1919,14 @@ describe("captureContextSnapshot — the object surface that says what each entr
     expect(snapshot.objects.find((object) => object.kind === "table")?.columns).toHaveLength(1);
   });
 
-  test("the reading is charged and audited like every other reach, as a second statement", async () => {
+  test("the reading is charged and audited like every other reach, as one statement", async () => {
     const harness = objectHarness();
     const capture = await captureContextSnapshot(harness.context);
 
-    // One for the provider schema inspection, one for the object inventory. A read that
-    // charged nothing would be a path around the budget.
-    expect(capture.charged?.statements).toBe(2);
+    // ONE, where it used to be two: the flat reading that supplied the columns is gone and
+    // the walk reads them itself. A read that charged nothing would be a path around the
+    // budget; a read that charged twice would bill the run for a reading nobody took.
+    expect(capture.charged?.statements).toBe(1);
   });
 
   /**

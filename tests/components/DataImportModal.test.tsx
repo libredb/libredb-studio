@@ -28,8 +28,20 @@ function setExecCommand(execCommand: ((command: string) => boolean) | undefined)
 const noop = mock(() => {});
 
 const sampleTables: DetailedObject[] = [
-  { name: "users", columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }], indexes: [] },
-  { name: "orders", columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }], indexes: [] },
+  {
+    name: "users",
+    kind: "table",
+    path: ["users"],
+    columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+    indexes: [],
+  },
+  {
+    name: "orders",
+    kind: "table",
+    path: ["orders"],
+    columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+    indexes: [],
+  },
 ];
 
 /**
@@ -1020,9 +1032,9 @@ describe("DataImportModal target filtering", () => {
   } as unknown as ProviderCapabilities;
 
   const inventory: DetailedObject[] = [
-    { name: "orders", kind: "table", columns: [], indexes: [] },
-    { name: "order_summary", kind: "view", columns: [], indexes: [] },
-    { name: "order_total", kind: "function", columns: [], indexes: [] },
+    { name: "orders", kind: "table", path: ["orders"], columns: [], indexes: [] },
+    { name: "order_summary", kind: "view", path: ["order_summary"], columns: [], indexes: [] },
+    { name: "order_total", kind: "function", path: ["order_total"], columns: [], indexes: [] },
   ];
 
   function targetNames(capabilitiesProp?: ProviderCapabilities): string[] {

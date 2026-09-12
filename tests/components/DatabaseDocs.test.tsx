@@ -13,6 +13,8 @@ import type { ProviderCapabilities } from "@/lib/db/types";
 const schema: DetailedObject[] = [
   {
     name: "users",
+    kind: "table",
+    path: ["users"],
     rowCount: 100,
     indexes: [],
     columns: [
@@ -22,6 +24,8 @@ const schema: DetailedObject[] = [
   },
   {
     name: "orders",
+    kind: "table",
+    path: ["orders"],
     rowCount: 500,
     indexes: [],
     columns: [
@@ -398,8 +402,8 @@ describe("DatabaseDocs object filtering", () => {
   } as unknown as ProviderCapabilities;
 
   const inventory: DetailedObject[] = [
-    { name: "users", kind: "table", columns: [], indexes: [], rowCount: 100 },
-    { name: "recalculate_totals", kind: "procedure", columns: [], indexes: [] },
+    { name: "users", kind: "table", path: ["users"], columns: [], indexes: [], rowCount: 100 },
+    { name: "recalculate_totals", kind: "procedure", path: ["recalculate_totals"], columns: [], indexes: [] },
   ];
 
   test("a routine is neither counted nor documented", () => {

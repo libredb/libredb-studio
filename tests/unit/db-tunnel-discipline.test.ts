@@ -170,14 +170,18 @@ describe("SSH tunnel discipline (#457)", () => {
     expect(violations.map((v) => `${v.file}: ${v.reason}`)).toEqual([]);
   });
 
-  test("the rule actually reaches the two routes it exists for", () => {
+  test("the rule actually reaches the route it exists for", () => {
     // Guards against the scan silently covering nothing - a rename, a moved route or a
     // changed import specifier would otherwise leave this suite green and blind.
+    //
+    // ONE route, where there were two: `/api/db/schema-snapshot` built its own provider
+    // outside both caches and so had to open its own tunnel, and it is deleted with the
+    // flat schema reading it read (#789). Its consumer reads `/api/db/objects/inventory`,
+    // which goes through `getOrCreateProvider` and is tunnelled by the factory.
     const scanned = walk(SRC).map((full) => path.relative(process.cwd(), full));
     expect(scanned).toContain("src/app/api/db/test-connection/route.ts");
-    expect(scanned).toContain("src/app/api/db/schema-snapshot/route.ts");
 
-    for (const route of ["src/app/api/db/test-connection/route.ts", "src/app/api/db/schema-snapshot/route.ts"]) {
+    for (const route of ["src/app/api/db/test-connection/route.ts"]) {
       const source = fs.readFileSync(path.join(process.cwd(), route), "utf8");
       // Compliant today, and provably in scope: strip the scope and the rule bites.
       expect(analyseTunnelDiscipline(route, source)).toBeNull();

@@ -639,53 +639,7 @@ describe("CouchbaseProvider error mapping", () => {
 // Schema
 // ============================================================================
 
-describe("CouchbaseProvider schema", () => {
-  test("getSchemaList flattens scopes and infers columns", async () => {
-    const provider = await connectProvider();
-
-    const tables = await provider.getSchemaList();
-
-    expect(tables.map((table) => table.name)).toEqual(["airline", "inventory.hotel"]);
-    expect(tables[0].columns.map((column) => column.name)).toEqual(["__id", "city"]);
-    expect(tables[0].indexes).toEqual([]);
-  });
-
-  test("getSchemaRelations lists indexes and never invents foreign keys", async () => {
-    const provider = await connectProvider();
-
-    const relations = await provider.getSchemaRelations();
-
-    expect(relations.map((relation) => relation.name)).toEqual(["airline", "inventory.hotel"]);
-    expect(relations[0].indexes[0]).toEqual({ name: "#primary", columns: ["META().id"], unique: true });
-    expect(relations[0].foreignKeys).toEqual([]);
-  });
-
-  test("getSchema merges indexes into the inferred columns", async () => {
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.map((table) => table.name)).toEqual(["airline", "inventory.hotel"]);
-    expect(schema[1].indexes.map((index) => index.name)).toEqual(["idx_hotel_city"]);
-    expect(schema[1].columns.length).toBeGreaterThan(0);
-  });
-
-  test("getTables lists collections without paying for INFER", async () => {
-    const provider = await connectProvider();
-
-    const tables = await provider.getTables();
-
-    expect(tables).toEqual(["airline", "inventory.hotel"]);
-    expect(queryBodies.some((body) => String(body.statement).startsWith("INFER"))).toBe(false);
-  });
-
-  test("a denied catalog read surfaces as an AuthenticationError", async () => {
-    const provider = await connectProvider();
-    queryHandler = () => errorPayload(13014, "User does not have credentials to run queries");
-
-    await expect(provider.getSchemaRelations()).rejects.toBeInstanceOf(AuthenticationError);
-  });
-});
+describe("CouchbaseProvider schema", () => {});
 
 // ============================================================================
 // Monitoring

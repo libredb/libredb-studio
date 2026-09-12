@@ -24,6 +24,8 @@ function setExecCommand(execCommand: ((command: string) => boolean) | undefined)
 
 const schema: DetailedObject = {
   name: "users",
+  kind: "table",
+  path: ["users"],
   indexes: [],
   columns: [
     { name: "id", type: "SERIAL", nullable: false, isPrimary: true },

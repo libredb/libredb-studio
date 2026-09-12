@@ -7,6 +7,8 @@ import type { DetailedObject } from "@/lib/db/detailed-object";
 function table(columns: string[], indexColumns: string[], unique = false): DetailedObject {
   return {
     name: "items",
+    kind: "table",
+    path: ["items"],
     columns: columns.map((name) => ({ name, type: "INTEGER", nullable: true, isPrimary: false })),
     indexes: [{ name: "idx_items", columns: indexColumns, unique }],
     foreignKeys: [],

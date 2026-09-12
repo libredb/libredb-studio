@@ -7,6 +7,8 @@ import type { DetailedObject } from "@/lib/db/detailed-object";
 const schema: DetailedObject[] = [
   {
     name: "users",
+    kind: "table",
+    path: ["users"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "email", type: "varchar", nullable: false, isPrimary: false },
@@ -17,6 +19,8 @@ const schema: DetailedObject[] = [
   },
   {
     name: "orders",
+    kind: "table",
+    path: ["orders"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "user_id", type: "integer", nullable: false, isPrimary: false },

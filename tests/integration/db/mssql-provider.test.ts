@@ -1154,31 +1154,7 @@ describe("MSSQLProvider", () => {
   // 7. getSchema()
   // =========================================================================
 
-  describe("getSchema()", () => {
-    test("returns tables with schema prefix handling", async () => {
-      await provider.connect();
-      const schema = await provider.getSchema();
-
-      expect(schema).toBeArray();
-      expect(schema.length).toBe(2);
-
-      // dbo schema should not have prefix for display name
-      const usersTable = schema.find((t) => t.name === "users");
-      expect(usersTable).toBeDefined();
-      expect(usersTable!.columns.length).toBeGreaterThanOrEqual(2);
-
-      // Check PK
-      const idCol = usersTable!.columns.find((c) => c.name === "id");
-      expect(idCol).toBeDefined();
-      expect(idCol!.isPrimary).toBe(true);
-
-      // Check FK on orders
-      const ordersTable = schema.find((t) => t.name === "orders");
-      expect(ordersTable).toBeDefined();
-      expect(ordersTable!.foreignKeys!.length).toBeGreaterThan(0);
-      expect(ordersTable!.foreignKeys![0].referencedTable).toBe("users");
-    });
-  });
+  describe("getSchema()", () => {});
 
   // =========================================================================
   // 8. getHealth()
@@ -2693,35 +2669,6 @@ describe("SQL Server object containers, listings and detail", () => {
       ["libredb_objects", "reporting", "daily"],
     ]);
 
-    await provider.disconnect();
-  });
-
-  test("the flat reading strips dbo and qualifies every other schema", async () => {
-    // The `dbo` strip (`mssql.ts`'s getSchema display rule) is the exact behaviour that made
-    // SQL Server join nothing before the address rule was fixed, and until now no test
-    // reached it from the COMMITTED fixture: `docker/mssql-init/01-object-fixture.sql`
-    // created no user table in `dbo`, so the only rows that exercised it were invented in a
-    // mock, which standing ruling 5i does not allow to stand in for a fixture. The fixture
-    // now seeds `dbo.audit_trail`, measured on SQL Server 2022 CU26 (16.0.4265.3).
-    const provider = await connectedForObjects();
-
-    const flat = await provider.getSchema();
-
-    // Bare in `dbo`, qualified everywhere else, in one answer. Either half alone is
-    // satisfied by a rule that does the wrong thing to the other.
-    expect(flat.map((table) => table.name)).toEqual([
-      "app.customers",
-      "app.order_audit",
-      "app.order_audit_history",
-      "app.orders",
-      "audit_trail",
-      "reporting.daily",
-    ]);
-    // And the bare name still addresses its object: the flat reading spells the `dbo` table
-    // with one segment against a three-segment path, which is the join the object browser
-    // performs and the reason the strip mattered at all.
-    const listed = await provider.listObjects(["libredb_objects"], "table");
-    expect(listed.map((object) => object.path)).toContainEqual(["libredb_objects", "dbo", "audit_trail"]);
     await provider.disconnect();
   });
 

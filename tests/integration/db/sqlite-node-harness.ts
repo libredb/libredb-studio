@@ -67,15 +67,19 @@ async function main(): Promise<void> {
   const del = await provider.query("DELETE FROM users WHERE id = ?", [2]);
   report.deleteRowCount = del.rowCount;
 
-  // Schema introspection
-  const schema = await provider.getSchema();
-  report.schema = schema.map((table) => ({
-    name: table.name,
-    rowCount: table.rowCount,
-    columns: table.columns.map((c) => ({ name: c.name, isPrimary: c.isPrimary, nullable: c.nullable })),
-    indexes: table.indexes.map((i) => i.name),
-    foreignKeys: table.foreignKeys,
-  }));
+  // Object introspection, through the one surface that reads a SQLite file's objects.
+  const listed = await provider.listObjects([], "table");
+  const { details } = await provider.describeObjects([], "table");
+  const detailOf = (name: string) => details.find((detail) => detail.path[detail.path.length - 1] === name);
+  report.schema = listed.map((object) => {
+    const detail = detailOf(object.path[object.path.length - 1]);
+    return {
+      name: object.name,
+      columns: (detail?.columns ?? []).map((c) => ({ name: c.name, isPrimary: c.isPrimary, nullable: c.nullable })),
+      indexes: (detail?.indexes ?? []).map((i) => i.name),
+      foreignKeys: detail?.foreignKeys ?? [],
+    };
+  });
 
   // Maintenance
   const check = await provider.runMaintenance("check");

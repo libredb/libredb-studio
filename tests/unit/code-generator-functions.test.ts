@@ -151,6 +151,8 @@ describe("mapSqlTypeToJava", () => {
 
 const testSchema: DetailedObject = {
   name: "order_items",
+  kind: "table",
+  path: ["order_items"],
   indexes: [],
   columns: [
     { name: "id", type: "SERIAL", nullable: false, isPrimary: true },
@@ -227,6 +229,8 @@ describe("generateCode", () => {
   test("Go struct without time import when no date columns", () => {
     const schema: DetailedObject = {
       name: "tags",
+      kind: "table",
+      path: ["tags"],
       indexes: [],
       columns: [
         { name: "id", type: "INTEGER", nullable: false, isPrimary: true },
@@ -240,6 +244,8 @@ describe("generateCode", () => {
   test("Python dataclass without optional/datetime when not needed", () => {
     const schema: DetailedObject = {
       name: "flags",
+      kind: "table",
+      path: ["flags"],
       indexes: [],
       columns: [
         { name: "id", type: "INTEGER", nullable: false, isPrimary: true },
@@ -254,6 +260,8 @@ describe("generateCode", () => {
   test("Java POJO without LocalDateTime import when not needed", () => {
     const schema: DetailedObject = {
       name: "tags",
+      kind: "table",
+      path: ["tags"],
       indexes: [],
       columns: [{ name: "id", type: "INTEGER", nullable: false, isPrimary: true }],
     };
@@ -262,7 +270,7 @@ describe("generateCode", () => {
   });
 
   test("empty columns produces empty body", () => {
-    const schema: DetailedObject = { name: "empty", indexes: [], columns: [] };
+    const schema: DetailedObject = { name: "empty", kind: "table", path: ["empty"], indexes: [], columns: [] };
     const code = generateCode("typescript", schema);
     expect(code).toContain("export interface Empty");
     expect(code).toContain("{\n\n}");
@@ -302,6 +310,8 @@ describe("toIdentifier", () => {
 describe("generateCode — non-identifier table names (#427)", () => {
   const redisSchema: DetailedObject = {
     name: "user:*",
+    kind: "table",
+    path: ["user:*"],
     indexes: [],
     columns: [
       { name: "key", type: "string", nullable: false, isPrimary: true },
@@ -349,6 +359,8 @@ describe("generateCode — non-identifier table names (#427)", () => {
   // non-ASCII table name must survive intact in all six outputs (#427).
   const unicodeSchema: DetailedObject = {
     name: "m\u00fc\u015fteri",
+    kind: "table",
+    path: ["m\u00fc\u015fteri"],
     indexes: [],
     columns: [{ name: "id", type: "INT", nullable: false, isPrimary: true }],
   };

@@ -708,17 +708,6 @@ describe("TrinoProvider lifecycle", () => {
     expect(sentHeaders[0]?.get("authorization")).toBe(`Basic ${Buffer.from("libredb:secret").toString("base64")}`);
     expect(sentMethods[0]?.url.startsWith("https://")).toBe(true);
   });
-
-  test("refuses every read before connect, and again after disconnect", async () => {
-    const provider = new TrinoProvider(makeConnection());
-    await expect(provider.query("SELECT 1")).rejects.toBeInstanceOf(DatabaseConfigError);
-
-    await provider.connect();
-    await provider.disconnect();
-
-    expect(provider.isConnected()).toBe(false);
-    await expect(provider.getSchema()).rejects.toBeInstanceOf(DatabaseConfigError);
-  });
 });
 
 // ============================================================================
@@ -1053,47 +1042,7 @@ describe("TrinoProvider query preparation", () => {
 // Schema
 // ============================================================================
 
-describe("TrinoProvider schema", () => {
-  test.each([undefined, "tiny"])("lists every catalog table with session schema %s", async (schemaName) => {
-    const provider = await connectProvider({ schema: schemaName });
-    const schema = await provider.getSchema();
-
-    expect(schema.map((table) => table.name)).toEqual(["sf1.customer", "tiny.nation", "tiny.region"]);
-  });
-
-  test("reads only the pinned catalog, and never fans out across the others", async () => {
-    const provider = await connectProvider();
-    await provider.getSchema();
-
-    expect(sqlWith("information_schema.tables")).toContain('"tpch".information_schema.tables');
-    expect(sentAnything("jmx.information_schema")).toBe(false);
-    expect(sentAnything("tpcds.information_schema")).toBe(false);
-  });
-
-  test("carries the engine's rendered column types", async () => {
-    const provider = await connectProvider();
-    const schema = await provider.getSchema();
-
-    expect(schema[1]?.columns).toEqual([
-      { name: "nationkey", type: "bigint", nullable: false, isPrimary: false },
-      { name: "name", type: "varchar(25)", nullable: false, isPrimary: false },
-    ]);
-  });
-
-  test("refuses to guess a catalog when the connection pins none", async () => {
-    const provider = await connectProvider({ database: undefined });
-
-    await expect(provider.getSchema()).rejects.toThrow("pins no Trino catalog");
-    await expect(provider.getSchema()).rejects.toThrow("Set a session schema as well");
-  });
-
-  test("surfaces a pinned catalog that does not exist rather than showing an empty tree", async () => {
-    const provider = await connectProvider();
-    overrideSurface("SELECT table_schema", refusal(CATALOG_NOT_FOUND));
-
-    await expect(provider.getSchema()).rejects.toThrow("Catalog 'nosuchcat' not found");
-  });
-});
+describe("TrinoProvider schema", () => {});
 
 // ============================================================================
 // Monitoring

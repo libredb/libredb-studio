@@ -8,7 +8,7 @@ import { ApiErrorCode } from "@/lib/api/error-codes";
  * MAGNITUDE. A magnitude is the wrong thing to assert: adding a code fails the gate
  * with "expected 18, received 19", which says nothing about what was added, and the
  * only way through is to edit the digit - so the guard taught everybody to edit it
- * rather than to think. #789 added `OBJECT_SURFACE_UNIMPLEMENTED` and hit exactly that.
+ * rather than to think. #789 added a code and then removed it again, hitting that twice.
  *
  * What the count was actually FOR is exhaustiveness: a code added to the source and
  * named by none of the group tests below was invisible, so the groups could drift into
@@ -30,7 +30,6 @@ const GROUPS = {
   ],
   llm: ["LLM_SAFETY", "LLM_AUTH", "LLM_RATE_LIMIT", "LLM_CONFIG", "LLM_UNCONFIGURED", "LLM_STREAM", "LLM_ERROR"],
   rateLimit: ["RATE_LIMITED"],
-  objectSurface: ["OBJECT_SURFACE_UNIMPLEMENTED"],
   generic: ["INTERNAL_ERROR", "NETWORK_ERROR"],
 } as const;
 
@@ -61,14 +60,5 @@ describe("ApiErrorCode", () => {
 
   test("contains the application rate-limit error code", () => {
     expect(ApiErrorCode.RATE_LIMITED).toBe("RATE_LIMITED");
-  });
-
-  /**
-   * #789: distinct from an empty result and from a 400. Through Phase 1 the four object
-   * methods are optional, so an unmigrated engine has to be tellable apart from an
-   * engine that holds nothing.
-   */
-  test("contains the object surface error code", () => {
-    expect(ApiErrorCode.OBJECT_SURFACE_UNIMPLEMENTED).toBe("OBJECT_SURFACE_UNIMPLEMENTED");
   });
 });

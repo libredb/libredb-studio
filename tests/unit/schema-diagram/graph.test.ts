@@ -15,6 +15,8 @@ import type { DetailedObject } from "@/lib/db/detailed-object";
 function makeTable(name: string, columns: Partial<ColumnSchema>[], foreignKeys: DetailedObject["foreignKeys"] = []) {
   return {
     name,
+    kind: "table",
+    path: [name],
     columns: columns.map((c, i) => ({
       name: c.name ?? `col_${i}`,
       type: c.type ?? "integer",

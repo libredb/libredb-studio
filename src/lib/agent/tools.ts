@@ -2467,7 +2467,11 @@ async function walkObjectInventory(
           columns: detail?.columns ?? [],
           indexes: detail?.indexes ?? [],
           foreignKeys: detail?.foreignKeys ?? [],
-          ...(object.rowCount === undefined ? {} : { rowCount: object.rowCount }),
+          // `rowCount` and `sizeBytes` are deliberately NOT carried, and the reason is the
+          // fingerprint: a snapshot's identity is over the schema, so a row estimate on it
+          // would change identity every time somebody inserted a row, and a resumed run
+          // could no longer tell whether it was looking at the schema its earlier claims
+          // were made about. Each engine means something different by the number anyway.
         });
       }
       if (truncated !== undefined) break;
@@ -2512,8 +2516,7 @@ async function enumerateGroundingContainers(
 ): Promise<ContainerEnumeration> {
   const depth = containerDepth(capabilities);
   if (depth === 0) return { containers: [[]], defaultContainer: [] };
-  const listContainers = provider.listContainers?.bind(provider);
-  if (listContainers === undefined) return { containers: [] };
+  const listContainers = provider.listContainers.bind(provider);
 
   let level = await listContainers();
   for (let below = 1; below < depth; below += 1) {

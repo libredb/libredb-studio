@@ -63,6 +63,8 @@ const defaultMetadata: ProviderMetadata = {
 const testSchema: DetailedObject[] = [
   {
     name: "users",
+    kind: "table",
+    path: ["users"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "name", type: "varchar", nullable: true, isPrimary: false },
@@ -777,6 +779,8 @@ describe("useTabManager — Redis dialect", () => {
   const redisSchema: DetailedObject[] = [
     {
       name: "session:*",
+      kind: "table",
+      path: ["session:*"],
       columns: [
         { name: "key", type: "string", nullable: false, isPrimary: true },
         { name: "type", type: "hash", nullable: false, isPrimary: false },
@@ -786,6 +790,8 @@ describe("useTabManager — Redis dialect", () => {
     },
     {
       name: "counter",
+      kind: "table",
+      path: ["counter"],
       columns: [
         { name: "key", type: "string", nullable: false, isPrimary: true },
         { name: "type", type: "hash", nullable: false, isPrimary: false },

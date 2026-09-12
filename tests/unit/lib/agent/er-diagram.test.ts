@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MAX_ER_CHARS, erDetailForWorkflow, renderErDiagram } from "@/lib/agent/er-diagram";
 import type { AgentContextSnapshot, AgentInventoryObject } from "@/lib/agent/types";
-import type { TableSchema } from "@/lib/types";
 
 /**
  * The text ER artifact (#330 T3).
@@ -12,7 +11,7 @@ import type { TableSchema } from "@/lib/types";
  * that reads as a relation nobody has.
  */
 
-const table = (name: string, overrides: Partial<TableSchema> = {}): TableSchema => ({
+const table = (name: string, overrides: Partial<AgentInventoryObject> = {}): AgentInventoryObject => ({
   name,
   columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
   indexes: [],
@@ -20,12 +19,11 @@ const table = (name: string, overrides: Partial<TableSchema> = {}): TableSchema 
 });
 
 /**
- * The inventory a run actually carries, which is NOT `TableSchema[]`.
+ * The inventory a run actually carries.
  *
- * `AgentContextSnapshot.objects` is `AgentInventoryObject[]`: every field readonly, and
- * `path` and `kind` beside the flat reading's fields. Typing this helper as `TableSchema[]`
- * was harmless only while every fixture here was a bare flat table; a fixture carrying the
- * address segments a real object read supplies does not assign to it.
+ * `AgentContextSnapshot.objects` is `AgentInventoryObject[]`: every field readonly, with
+ * `path` and `kind` beside the columns. A fixture carrying the address segments a real
+ * object read supplies has to be typed as that and not as a looser shape.
  */
 const snapshot = (tables: readonly AgentInventoryObject[]): AgentContextSnapshot => ({
   connectionId: "conn_1",

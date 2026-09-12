@@ -24,6 +24,8 @@ function setExecCommand(execCommand: ((command: string) => boolean) | undefined)
 
 const schema: DetailedObject = {
   name: "employees",
+  kind: "table",
+  path: ["employees"],
   indexes: [],
   columns: [
     { name: "id", type: "SERIAL", nullable: false, isPrimary: true },
@@ -79,6 +81,8 @@ describe("TestDataGenerator", () => {
     // rather than an injection, because the vocabulary is the generator's own.
     const mismatched: DetailedObject = {
       name: "contacts",
+      kind: "table",
+      path: ["contacts"],
       indexes: [],
       columns: [{ name: "phone", type: "BIGINT", nullable: false, isPrimary: false }],
     };
@@ -141,6 +145,8 @@ describe("TestDataGenerator", () => {
         tableName="users"
         tableSchema={{
           name: "users",
+          kind: "table",
+          path: ["users"],
           indexes: [],
           columns: [{ name: "email", type: "VARCHAR(255)", nullable: false, isPrimary: false }],
         }}
@@ -162,6 +168,8 @@ describe("TestDataGenerator", () => {
         tableName="contacts"
         tableSchema={{
           name: "contacts",
+          kind: "table",
+          path: ["contacts"],
           indexes: [],
           columns: [{ name: "phone", type: "VARCHAR(20)", nullable: true, isPrimary: false }],
         }}
@@ -205,6 +213,8 @@ describe("TestDataGenerator", () => {
         tableName="users"
         tableSchema={{
           name: "users",
+          kind: "table",
+          path: ["users"],
           indexes: [],
           columns: [
             { name: "name", type: "VARCHAR(100)", nullable: false, isPrimary: false },
@@ -396,6 +406,8 @@ describe("TestDataGenerator", () => {
   test("numeric types are not quoted in SQL output", () => {
     const numericSchema: DetailedObject = {
       name: "metrics",
+      kind: "table",
+      path: ["metrics"],
       indexes: [],
       columns: [
         { name: "score", type: "INTEGER", nullable: false, isPrimary: false },
@@ -437,6 +449,8 @@ describe("TestDataGenerator", () => {
   test("string types are quoted with single quotes in SQL output", () => {
     const stringSchema: DetailedObject = {
       name: "people",
+      kind: "table",
+      path: ["people"],
       indexes: [],
       columns: [
         { name: "name", type: "VARCHAR(100)", nullable: false, isPrimary: false },
@@ -478,6 +492,8 @@ describe("TestDataGenerator", () => {
   test("maps location and content columns to their fake generators", () => {
     const richSchema: DetailedObject = {
       name: "profiles",
+      kind: "table",
+      path: ["profiles"],
       indexes: [],
       columns: [
         { name: "shipping_address", type: "VARCHAR(255)", nullable: true, isPrimary: false },
@@ -563,6 +579,8 @@ describe("TestDataGenerator", () => {
   test("maps date, timestamp, uuid, json, and unmatched columns to their fake generators", () => {
     const typedSchema: DetailedObject = {
       name: "events",
+      kind: "table",
+      path: ["events"],
       indexes: [],
       columns: [
         { name: "birth_date", type: "DATE", nullable: true, isPrimary: false },

@@ -134,6 +134,8 @@ const labelsFor = (partial: Partial<Labels>): Labels =>
 
 const largeTable: DetailedObject = {
   name: "users",
+  kind: "table",
+  path: ["users"],
   rowCount: 1500,
   indexes: [{ name: "idx_users_email", columns: ["email"], unique: true }],
   columns: [
@@ -144,6 +146,8 @@ const largeTable: DetailedObject = {
 
 const smallTable: DetailedObject = {
   name: "settings",
+  kind: "table",
+  path: ["settings"],
   rowCount: 42,
   indexes: [],
   columns: [
@@ -154,6 +158,8 @@ const smallTable: DetailedObject = {
 
 const noRowCountTable: DetailedObject = {
   name: "logs",
+  kind: "table",
+  path: ["logs"],
   indexes: [],
   columns: [{ name: "id", type: "SERIAL", nullable: false, isPrimary: true }],
 };

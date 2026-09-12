@@ -1,12 +1,12 @@
 import { describe, test, expect } from "bun:test";
 import { diffSchemas } from "@/lib/schema-diff/diff-engine";
-import type { DetailedObject } from "@/lib/db/detailed-object";
+import type { StoredObject } from "@/lib/db/detailed-object";
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
-function makeTable(overrides: Partial<DetailedObject> & { name: string }): DetailedObject {
+function makeTable(overrides: Partial<StoredObject> & { name: string }): StoredObject {
   return {
     columns: [],
     indexes: [],
@@ -21,7 +21,7 @@ function makeTable(overrides: Partial<DetailedObject> & { name: string }): Detai
 
 describe("diffSchemas: basic", () => {
   test("identical schemas produce no changes", () => {
-    const schema: DetailedObject[] = [
+    const schema: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
@@ -47,7 +47,7 @@ describe("diffSchemas: basic", () => {
 
 describe("diffSchemas: added tables", () => {
   test("table in target but not source is marked added", () => {
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "orders",
         columns: [
@@ -67,7 +67,7 @@ describe("diffSchemas: added tables", () => {
   });
 
   test("added table includes indexes as added", () => {
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "orders",
         columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
@@ -80,7 +80,7 @@ describe("diffSchemas: added tables", () => {
   });
 
   test("added table includes foreign keys as added", () => {
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "orders",
         columns: [{ name: "user_id", type: "integer", nullable: false, isPrimary: false }],
@@ -99,7 +99,7 @@ describe("diffSchemas: added tables", () => {
 
 describe("diffSchemas: removed tables", () => {
   test("table in source but not target is marked removed", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({
         name: "legacy",
         columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
@@ -120,13 +120,13 @@ describe("diffSchemas: removed tables", () => {
 
 describe("diffSchemas: modified columns", () => {
   test("column added to existing table", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
       }),
     ];
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [
@@ -144,7 +144,7 @@ describe("diffSchemas: modified columns", () => {
   });
 
   test("column removed from existing table", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [
@@ -153,7 +153,7 @@ describe("diffSchemas: modified columns", () => {
         ],
       }),
     ];
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
@@ -166,13 +166,13 @@ describe("diffSchemas: modified columns", () => {
   });
 
   test("column type changed", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "name", type: "varchar(100)", nullable: false, isPrimary: false }],
       }),
     ];
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "name", type: "text", nullable: false, isPrimary: false }],
@@ -186,13 +186,13 @@ describe("diffSchemas: modified columns", () => {
   });
 
   test("column nullable changed", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "email", type: "varchar(255)", nullable: true, isPrimary: false }],
       }),
     ];
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "email", type: "varchar(255)", nullable: false, isPrimary: false }],
@@ -205,13 +205,13 @@ describe("diffSchemas: modified columns", () => {
   });
 
   test("column primary key changed", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "uuid", type: "uuid", nullable: false, isPrimary: false }],
       }),
     ];
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "uuid", type: "uuid", nullable: false, isPrimary: true }],
@@ -224,13 +224,13 @@ describe("diffSchemas: modified columns", () => {
   });
 
   test("column default changed", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "status", type: "varchar(50)", nullable: false, isPrimary: false, defaultValue: "'active'" }],
       }),
     ];
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [
@@ -251,14 +251,14 @@ describe("diffSchemas: modified columns", () => {
 
 describe("diffSchemas: indexes", () => {
   test("index added", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "email", type: "varchar(255)", nullable: false, isPrimary: false }],
         indexes: [],
       }),
     ];
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "email", type: "varchar(255)", nullable: false, isPrimary: false }],
@@ -273,14 +273,14 @@ describe("diffSchemas: indexes", () => {
   });
 
   test("index removed", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "email", type: "varchar(255)", nullable: false, isPrimary: false }],
         indexes: [{ name: "idx_email", columns: ["email"], unique: true }],
       }),
     ];
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "email", type: "varchar(255)", nullable: false, isPrimary: false }],
@@ -293,14 +293,14 @@ describe("diffSchemas: indexes", () => {
   });
 
   test("index columns changed is detected as modified", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "email", type: "varchar", nullable: false, isPrimary: false }],
         indexes: [{ name: "idx_users", columns: ["email"], unique: false }],
       }),
     ];
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "email", type: "varchar", nullable: false, isPrimary: false }],
@@ -314,14 +314,14 @@ describe("diffSchemas: indexes", () => {
   });
 
   test("index uniqueness changed is detected as modified", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "email", type: "varchar", nullable: false, isPrimary: false }],
         indexes: [{ name: "idx_email", columns: ["email"], unique: false }],
       }),
     ];
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "users",
         columns: [{ name: "email", type: "varchar", nullable: false, isPrimary: false }],
@@ -341,14 +341,14 @@ describe("diffSchemas: indexes", () => {
 
 describe("diffSchemas: foreign keys", () => {
   test("foreign key added", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({
         name: "orders",
         columns: [{ name: "user_id", type: "integer", nullable: false, isPrimary: false }],
         foreignKeys: [],
       }),
     ];
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "orders",
         columns: [{ name: "user_id", type: "integer", nullable: false, isPrimary: false }],
@@ -360,14 +360,14 @@ describe("diffSchemas: foreign keys", () => {
   });
 
   test("foreign key removed", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({
         name: "orders",
         columns: [{ name: "user_id", type: "integer", nullable: false, isPrimary: false }],
         foreignKeys: [{ columnName: "user_id", referencedTable: "users", referencedColumn: "id" }],
       }),
     ];
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "orders",
         columns: [{ name: "user_id", type: "integer", nullable: false, isPrimary: false }],
@@ -385,11 +385,11 @@ describe("diffSchemas: foreign keys", () => {
 
 describe("diffSchemas: summary", () => {
   test("summary counts are correct with mixed changes", () => {
-    const source: DetailedObject[] = [
+    const source: StoredObject[] = [
       makeTable({ name: "to_remove", columns: [{ name: "id", type: "int", nullable: false, isPrimary: true }] }),
       makeTable({ name: "to_modify", columns: [{ name: "id", type: "int", nullable: false, isPrimary: true }] }),
     ];
-    const target: DetailedObject[] = [
+    const target: StoredObject[] = [
       makeTable({
         name: "to_modify",
         columns: [
@@ -417,7 +417,7 @@ describe("diffSchemas: the object model", () => {
     // The shape the two hooks now produce. Before this migration the engine took
     // `TableSchema`, whose arrays are mutable, so `SchemaDiff.tsx` copied every array of
     // every object on every render to call it. This is the assertion that the copy is gone.
-    const source: readonly DetailedObject[] = [
+    const source: readonly StoredObject[] = [
       {
         name: "public.users",
         kind: "table",
@@ -427,7 +427,7 @@ describe("diffSchemas: the object model", () => {
         foreignKeys: [],
       },
     ];
-    const target: readonly DetailedObject[] = [
+    const target: readonly StoredObject[] = [
       {
         name: "public.users",
         kind: "view",
@@ -452,8 +452,8 @@ describe("diffSchemas: the object model", () => {
     // on them would report every object in a pre-#789 snapshot as removed and re-added,
     // which is the one thing a schema diff must never invent. The consequence, stated so it
     // is not read as an oversight: this diff cannot say a table became a view.
-    const flat: readonly DetailedObject[] = [{ name: "users", columns: [], indexes: [] }];
-    const kinded: readonly DetailedObject[] = [
+    const flat: readonly StoredObject[] = [{ name: "users", columns: [], indexes: [] }];
+    const kinded: readonly StoredObject[] = [
       { name: "users", kind: "view", path: ["public", "users"], columns: [], indexes: [] },
     ];
 

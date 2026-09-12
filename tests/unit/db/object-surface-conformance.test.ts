@@ -2,8 +2,8 @@ import { describe, test, expect } from "bun:test";
 import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
-function fakeProvider(overrides: Record<string, unknown> = {}) {
-  return {
+function fakeProvider(overrides: Record<string, any> = {}) {
+  const base = {
     getCapabilities: () => ({
       queryLanguage: "sql",
       containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
@@ -14,18 +14,37 @@ function fakeProvider(overrides: Record<string, unknown> = {}) {
     }),
     listContainers: async () => [{ path: ["app"], name: "app", level: 0 }],
     countObjects: async () => ({ table: { count: 2 }, view: { count: 4 } }),
+    // Two tables and one view, because the bulk-read guard needs a kind holding TWO objects:
+    // a limit of 1 against a kind holding one returns the whole answer, and a provider that
+    // stops short silently could not then be told from one that reports its bound.
     listObjects: async (_c: readonly string[], kind: string) =>
       kind === "view"
         ? [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }]
-        : [{ path: ["app", "orders"], name: "orders", kind }],
+        : [
+            { path: ["app", "orders"], name: "orders", kind },
+            { path: ["app", "customers"], name: "customers", kind },
+          ],
     describeObject: async (path: readonly string[]) => ({ path, columns: [], indexes: [], foreignKeys: [] }),
-    // The FLAT reading, spelled the way an engine's display rule spells it: the default
-    // container is dropped, which is exactly the spelling the join has to resolve.
-    getSchema: async () => [
-      { name: "orders", columns: [], indexes: [] },
-      { name: "order_summary", columns: [], indexes: [] },
-    ],
     ...overrides,
+  };
+  // DERIVED from whatever `listObjects` this fake ended up with, rather than written out
+  // beside it: every test that overrides the listing would otherwise have to override the
+  // bulk read in step, and a double whose two halves disagree fails the guard for a reason
+  // that has nothing to do with what the test is about.
+  return {
+    ...base,
+    describeObjects:
+      overrides.describeObjects ??
+      (async (container: readonly string[], kind: string, limit?: number) => {
+        const listed = (await base.listObjects(container, kind)) as { path: readonly string[] }[];
+        const kept = limit === undefined ? listed : listed.slice(0, limit);
+        return {
+          details: kept.map((object) => ({ path: object.path, columns: [], indexes: [], foreignKeys: [] })),
+          ...(kept.length < listed.length
+            ? { truncated: { limit: limit as number, reason: callerBoundTruncationReason(limit as number) } }
+            : {}),
+        };
+      }),
   };
 }
 
@@ -70,7 +89,10 @@ describe("assertObjectSurface", () => {
         container[0] === "app"
           ? kind === "view"
             ? [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }]
-            : [{ path: ["app", "orders"], name: "orders", kind }]
+            : [
+                { path: ["app", "orders"], name: "orders", kind },
+                { path: ["app", "customers"], name: "customers", kind },
+              ]
           : [{ path: ["INFORMATION_SCHEMA", `columns_${kind}`], name: `columns_${kind}`, kind }],
     });
     await assertObjectSurface(provider as never, {
@@ -140,14 +162,16 @@ describe("assertObjectSurface", () => {
       listContainers: async () => [],
       countObjects: async (container: readonly string[]) => {
         expect(container).toEqual([]);
-        return { table: { count: 1 } };
+        return { table: { count: 2 } };
       },
-      listObjects: async () => [{ path: ["users"], name: "users", kind: "table" }],
-      getSchema: async () => [{ name: "users", columns: [], indexes: [] }],
+      listObjects: async () => [
+        { path: ["users"], name: "users", kind: "table" },
+        { path: ["orders"], name: "orders", kind: "table" },
+      ],
     });
     await assertObjectSurface(provider as never, {
       containers: [],
-      kinds: { table: 1 },
+      kinds: { table: 2 },
       sampleObject: { path: ["users"], kind: "table" },
     });
   });
@@ -309,7 +333,12 @@ describe("assertObjectSurface", () => {
       countObjects: async () => ({ table: { count: 0 }, view: { count: 4 } }),
       listObjects: async (_c: readonly string[], kind: string) => {
         asked.push(kind);
-        return kind === "view" ? [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }] : [];
+        return kind === "view"
+          ? [
+              { path: ["app", "order_summary"], name: "order_summary", kind: "view" },
+              { path: ["app", "order_totals"], name: "order_totals", kind: "view" },
+            ]
+          : [];
       },
     });
     await assertObjectSurface(provider as never, {
@@ -317,7 +346,10 @@ describe("assertObjectSurface", () => {
       kinds: { table: 0, view: 4 },
       sampleObject: { path: ["app", "order_summary"], kind: "view" },
     });
-    expect(asked).toEqual(["view"]);
+    // Deduplicated because the bulk read in this double is DERIVED from the listing, so a
+    // kind that is listed at all is listed twice. The property under test is unaffected: a
+    // kind counted as zero appears here not at all.
+    expect([...new Set(asked)]).toEqual(["view"]);
   });
 
   // Uniqueness is WITHIN a kind, not across kinds, and the relaxation is deliberate.
@@ -344,8 +376,8 @@ describe("assertObjectSurface", () => {
       countObjects: async () => ({ table: { count: 2 }, procedure: { count: 4 } }),
       listObjects: async (_c: readonly string[], kind: string) => [
         { path: ["app", "order_summary"], name: "order_summary", kind },
+        { path: ["app", "order_total"], name: "order_total", kind },
       ],
-      getSchema: async () => [{ name: "order_summary", columns: [], indexes: [] }],
     });
     await assertObjectSurface(provider as never, {
       containers: [["app"]],
@@ -397,7 +429,10 @@ describe("assertObjectSurface", () => {
         asked.push(kind);
         return kind === "view"
           ? [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }]
-          : [{ path: ["app", "orders"], name: "orders", kind }];
+          : [
+              { path: ["app", "orders"], name: "orders", kind },
+              { path: ["app", "customers"], name: "customers", kind },
+            ];
       },
     });
     await assertObjectSurface(provider as never, {
@@ -405,7 +440,7 @@ describe("assertObjectSurface", () => {
       kinds: { table: 2 },
       sampleObject: { path: ["app", "order_summary"], kind: "view" },
     });
-    expect(asked).toEqual(["table", "view"]);
+    expect([...new Set(asked)]).toEqual(["table", "view"]);
   });
 
   // One level up, and the same defect: with nothing declared, both kind loops iterate
@@ -449,197 +484,6 @@ describe("assertObjectSurface", () => {
         sampleObject: { path: ["app", "order_summary"], kind: "view" },
       }),
     ).rejects.toThrow(/countObjects returned nothing for expected kind "materialized_view"/);
-  });
-});
-
-/**
- * The fifth method (#789). A provider that does not declare `describeObjects` is skipped
- * entirely, which is why every test above still describes a four-method fake: sixteen
- * providers are in that state while the bulk read lands one family at a time.
- */
-/**
- * The invariant that ties a provider's FLAT spelling to its object path (#789).
- *
- * `tagObjectKinds` had one unit test file of hand-written fixtures and no integration
- * caller, so the join the object browser actually renders was asserted by nobody and a
- * provider whose two readings cannot be joined looked healthy from both sides. These are
- * the helper's own tests, which are the only thing that guards the helper's strictness: a
- * correct provider passes a weak check, so a green provider suite says nothing about this.
- */
-describe("assertObjectSurface ties the flat reading to the object paths", () => {
-  const expectation = {
-    containers: [["app"]],
-    kinds: { table: 2, view: 4 },
-    sampleObject: { path: ["app", "order_summary"], kind: "view" },
-  };
-
-  test("rejects a flat name no listed object's address ends with", async () => {
-    // Trino's defect, in the small: every flat name spelled against paths it is not a
-    // suffix of, so not one object joined while both readings looked complete.
-    const provider = fakeProvider({
-      getSchema: async () => [{ name: "warehouse.orders", columns: [], indexes: [] }],
-      listObjects: async (_c: readonly string[], kind: string) => [{ path: ["app", "orders"], name: "orders", kind }],
-    });
-    await expect(
-      assertObjectSurface(provider as never, {
-        ...expectation,
-        sampleObject: { path: ["app", "orders"], kind: "view" },
-      }),
-    ).rejects.toThrow(/spells an object "warehouse.orders" and the object reading cannot be joined on it/);
-  });
-
-  test("rejects a flat name two listed objects answer to", async () => {
-    const provider = fakeProvider({
-      getSchema: async () => [{ name: "orders", columns: [], indexes: [] }],
-      listObjects: async (_c: readonly string[], kind: string) =>
-        kind === "view"
-          ? [{ path: ["app", "sales", "orders"], name: "orders", kind }]
-          : [{ path: ["app", "ops", "orders"], name: "orders", kind }],
-    });
-    await expect(
-      assertObjectSurface(provider as never, {
-        ...expectation,
-        sampleObject: { path: ["app", "sales", "orders"], kind: "view" },
-      }),
-    ).rejects.toThrow(/2 listed objects answer to it/);
-  });
-
-  test("rejects a provider whose flat reading is empty, rather than certifying a vacuous join", async () => {
-    // The zero-iteration case: with no flat entries the loop below never runs and every
-    // provider passes. This helper has been vacuous three times in this epic already.
-    const provider = fakeProvider({ getSchema: async () => [] });
-    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(/getSchema answered no objects/);
-  });
-
-  test("rejects two readings of two different populations", async () => {
-    // Non-empty on both sides and sharing nothing, which is a fixture that never put one
-    // object in front of both surfaces. It certifies nothing and it must not look green.
-    const provider = fakeProvider({ getSchema: async () => [{ name: "elsewhere", columns: [], indexes: [] }] });
-    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
-      /name no object in common, so this join is vacuous/,
-    );
-  });
-
-  test("rejects a provider that listed nothing of a relation kind", async () => {
-    const provider = fakeProvider({
-      getCapabilities: () => ({
-        queryLanguage: "sql",
-        containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
-        objectKinds: [{ id: "sequence", role: "config", label: "Sequence", labelPlural: "Sequences" }],
-      }),
-      countObjects: async () => ({ sequence: { count: 1 } }),
-      listObjects: async () => [{ path: ["app", "order_seq"], name: "order_seq", kind: "sequence" }],
-    });
-    await expect(
-      assertObjectSurface(provider as never, {
-        containers: [["app"]],
-        kinds: { sequence: 1 },
-        sampleObject: { path: ["app", "order_seq"], kind: "sequence" },
-      }),
-    ).rejects.toThrow(/no listing above is of a relation kind/);
-  });
-
-  test("the session default container breaks a tie, exactly as the app's join does", async () => {
-    // Not a re-derivation of the rule: the preferred container comes from
-    // `enumerateContainers`, the same walk `/api/db/objects/inventory` reads the default
-    // off, so a provider that marks `isSessionDefault` is joined here the way it is in the
-    // browser. TWO LEVELS, because that is the only shape where this arm is reachable: a
-    // two-level engine listed at its CATALOG answers objects from every schema under it, so
-    // a bare flat name really does tie across containers. Measured: DuckDB and Couchbase
-    // both go red the moment the container stops being passed.
-    const provider = fakeProvider({
-      getCapabilities: () => ({
-        queryLanguage: "sql",
-        containerLevels: [
-          { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
-          { id: "schema", label: "Schema", labelPlural: "Schemas" },
-        ],
-        objectKinds: [
-          { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
-          { id: "view", role: "relation", label: "View", labelPlural: "Views" },
-        ],
-      }),
-      listContainers: async (parent?: readonly string[]) =>
-        parent === undefined
-          ? [{ path: ["main"], name: "main", level: 0, isSessionDefault: true }]
-          : [
-              { path: [...parent, "app"], name: "app", level: 1, isSessionDefault: true },
-              { path: [...parent, "archive"], name: "archive", level: 1 },
-            ],
-      countObjects: async () => ({ table: { count: 2 }, view: { count: 4 } }),
-      listObjects: async (_c: readonly string[], kind: string) =>
-        kind === "view"
-          ? [{ path: ["main", "archive", "orders"], name: "orders", kind }]
-          : [{ path: ["main", "app", "orders"], name: "orders", kind }],
-      getSchema: async () => [{ name: "orders", columns: [], indexes: [] }],
-    });
-
-    await assertObjectSurface(provider as never, {
-      containers: [["main"]],
-      kinds: { table: 2, view: 4 },
-      sampleObject: { path: ["main", "app", "orders"], kind: "table" },
-    });
-  });
-
-  /**
-   * The two tests below are one pair, and they are what closes the hole the wave that added
-   * this join MEASURED in it (#789).
-   *
-   * The hole: on a fixture with ONE container a bare flat name is a valid suffix of every
-   * address, so it always resolves and the guard proved the join returns SOMETHING rather
-   * than the right object. Respelling PostgreSQL's `app` rows as if they sat in `public`,
-   * which drops the qualifier the engine really emits, still passed.
-   *
-   * What closes it is that the pool is now every container `listContainers` ANSWERED, not
-   * just the contract's, plus INJECTIVITY: two flat rows landing on one object is the
-   * doubled header the join exists to prevent, and it is precisely what a dropped qualifier
-   * produces. The first test is the correct provider, where the tie-breaker is the thing
-   * doing the work; the second is the same provider with the qualifier dropped.
-   */
-  const twoSchemas = {
-    listContainers: async () => [
-      { path: ["app"], name: "app", level: 0, isSessionDefault: false },
-      { path: ["public"], name: "public", level: 0, isSessionDefault: true },
-    ],
-    countObjects: async () => ({ table: { count: 1 }, view: { count: 0 } }),
-    listObjects: async (container: readonly string[], kind: string) =>
-      kind === "table" ? [{ path: [container[0], "orders"], name: "orders", kind }] : [],
-  };
-  const twoSchemasExpectation = {
-    containers: [["app"], ["public"]],
-    kinds: { table: 1, view: 0 },
-    sampleObject: { path: ["app", "orders"], kind: "table" },
-  };
-
-  test("joins a flat name against every container the provider answered, and the default decides the bare one", async () => {
-    const provider = fakeProvider({
-      ...twoSchemas,
-      // The engine's own spelling: the session default container is dropped and every other
-      // one is kept, which is what postgres.ts does with `public`.
-      getSchema: async () => [
-        { name: "app.orders", columns: [], indexes: [] },
-        { name: "orders", columns: [], indexes: [] },
-      ],
-    });
-
-    await assertObjectSurface(provider as never, twoSchemasExpectation);
-  });
-
-  test("rejects two flat names that both join onto one object", async () => {
-    const provider = fakeProvider({
-      ...twoSchemas,
-      // The defect: the qualifier is dropped for BOTH schemas, so the two rows are one
-      // string twice. Each resolves on its own - a bare name is a suffix of both addresses
-      // and the default breaks the tie - and the pair cannot address two objects.
-      getSchema: async () => [
-        { name: "orders", columns: [], indexes: [] },
-        { name: "orders", columns: [], indexes: [] },
-      ],
-    });
-
-    await expect(assertObjectSurface(provider as never, twoSchemasExpectation)).rejects.toThrow(
-      /both join onto the same listed object \["public","orders"\]/,
-    );
   });
 });
 

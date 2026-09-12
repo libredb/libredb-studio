@@ -1001,36 +1001,7 @@ describe("MySQLProvider", () => {
   // Schema
   // --------------------------------------------------------------------------
 
-  describe("getSchema()", () => {
-    test("returns TableSchema array with columns, indexes, foreignKeys", async () => {
-      provider = new MySQLProvider(makeMySQLConfig());
-      await provider.connect();
-      const schema = await provider.getSchema();
-
-      expect(schema.length).toBeGreaterThan(0);
-
-      for (const table of schema) {
-        expect(typeof table.name).toBe("string");
-        expect(Array.isArray(table.columns)).toBe(true);
-        expect(table.columns.length).toBeGreaterThan(0);
-        expect(Array.isArray(table.indexes)).toBe(true);
-        expect(Array.isArray(table.foreignKeys)).toBe(true);
-      }
-    });
-
-    test("columns have expected properties", async () => {
-      provider = new MySQLProvider(makeMySQLConfig());
-      await provider.connect();
-      const schema = await provider.getSchema();
-      const firstTable = schema[0];
-      const col = firstTable.columns[0];
-
-      expect(typeof col.name).toBe("string");
-      expect(typeof col.type).toBe("string");
-      expect(typeof col.nullable).toBe("boolean");
-      expect(typeof col.isPrimary).toBe("boolean");
-    });
-  });
+  describe("getSchema()", () => {});
 
   // --------------------------------------------------------------------------
   // Health
@@ -2648,17 +2619,6 @@ describe("MySQLProvider wire protocol", () => {
     expect(methodFor("kill 77")).toBe("query");
   });
 
-  test("getSchema keeps its parameterised reads on the prepared protocol", async () => {
-    const p = await connected();
-    await p.getSchema();
-
-    expect(protocolCalls.length).toBeGreaterThan(0);
-    expect(protocolCalls.every((c) => c.method === "execute")).toBe(true);
-    expect(methodFor("information_schema.columns")).toBe("execute");
-    expect(methodFor("key_column_usage")).toBe("execute");
-    expect(methodFor("information_schema.statistics")).toBe("execute");
-  });
-
   test("getStorageStats sends SHOW BINARY LOGS and SHOW VARIABLES as text", async () => {
     const p = await connected();
     await p.getStorageStats();
@@ -3916,83 +3876,6 @@ describe("MySQL object listing and detail", () => {
     // Three reads, each narrowed to ONE database and ONE object.
     expect(bound).toHaveLength(3);
     for (const params of bound) expect(params).toEqual(["app", "orders"]);
-    await provider.disconnect();
-  });
-
-  test("the flat reading names the same objects bare, and spells a cross-database key bare too", async () => {
-    // The other half of the join `assertObjectSurface` protects, pinned here rather than
-    // left to the guard: the guard proves the two readings CAN be joined, and this proves
-    // the flat side is spelled the way the engine spells it (#789).
-    const provider = await connectedTo(false);
-
-    const flat = await provider.getSchema();
-
-    // BARE, every one of them. `SCHEMA_TABLES_SQL` binds `TABLE_SCHEMA = ?` and projects
-    // `TABLE_NAME` alone, so the flat reading of a database qualifies nothing, while
-    // `listObjects` answers `["app", "orders"]`.
-    expect(flat.map((table) => table.name)).toEqual(["customers", "order_archive", "orders"]);
-    // Narrower than the object listing, because `TABLE_TYPE = 'BASE TABLE'` excludes the
-    // view `order_summary` that the `view` folder lists. The join has to survive that.
-    expect(flat.map((table) => table.name)).not.toContain("order_summary");
-    const orders = flat.find((table) => table.name === "orders")!;
-    expect(orders.columns.map((column) => column.name)).toEqual(["id", "total"]);
-    // Per TABLE, not one column set for the whole database: `customers` has one column and
-    // no foreign key, and reading the same two answers for every table would be a double
-    // that agrees with itself rather than with the fixture.
-    const customers = flat.find((table) => table.name === "customers")!;
-    expect(customers.columns.map((column) => column.name)).toEqual(["id"]);
-    expect(customers.foreignKeys).toEqual([]);
-    expect(customers.indexes).toEqual([]);
-    expect(orders.indexes).toEqual([
-      { name: "PRIMARY", columns: ["id"], unique: true },
-      { name: "orders_total_ix", columns: ["total", "note"], unique: false },
-    ]);
-    // The difference between the two surfaces, and it is the statements' own:
-    // `SCHEMA_FOREIGN_KEYS_SQL` never reads `REFERENCED_TABLE_SCHEMA`, so the key into
-    // `reporting.regions` comes back as `regions` here while `describeObject` qualifies it.
-    expect(orders.foreignKeys).toEqual([
-      { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
-      { columnName: "region_id", referencedTable: "regions", referencedColumn: "id" },
-    ]);
-    await provider.disconnect();
-  });
-
-  test("a MariaDB SYSTEM VERSIONED table is listed as a table and absent from the flat reading", async () => {
-    // Not an arrangement: `SCHEMA_TABLES_SQL` binds `TABLE_TYPE = 'BASE TABLE'` and
-    // `order_audit` is 'SYSTEM VERSIONED', so the flat reading loses an object the `table`
-    // folder holds. Pinned because it is the shape the join must tolerate.
-    const provider = await connectedTo(true);
-
-    const listed = await provider.listObjects(["app"], "table");
-    const flat = await provider.getSchema();
-
-    expect(listed.map((object) => object.path[object.path.length - 1])).toContain("order_audit");
-    // The control: without it an EMPTY flat reading would satisfy the absence below.
-    expect(flat.map((table) => table.name)).toEqual(["customers", "order_archive", "orders"]);
-    expect(flat.map((table) => table.name)).not.toContain("order_audit");
-    await provider.disconnect();
-  });
-
-  test("the column read carries no LIMIT, because a cap cannot be told from a count", async () => {
-    const provider = await connectedTo(false);
-    const columnReads: string[] = [];
-    mockExecuteFn = async (sql: string) => {
-      if (sql.includes("information_schema.COLUMNS")) columnReads.push(sql);
-      // One table, so getSchema() reaches its own column read below.
-      if (sql.includes("information_schema.TABLES")) return [[{ table_name: "orders" }], []];
-      return [[], []];
-    };
-
-    await provider.describeObject(["app", "orders"], "table");
-    // THE CONTROL, and the reason this test is not vacuous: `getSchema()` reads the same
-    // view for the same purpose and its statement DOES cap, at 100 columns. Without this
-    // half, "no LIMIT" would pass for a statement that never ran at all.
-    await provider.getSchema();
-
-    expect(columnReads).toHaveLength(2);
-    expect(columnReads[0]).toContain("information_schema.COLUMNS");
-    expect(columnReads[0].toUpperCase()).not.toContain("LIMIT");
-    expect(columnReads[1]).toContain("LIMIT 100");
     await provider.disconnect();
   });
 

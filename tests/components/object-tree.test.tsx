@@ -7,7 +7,6 @@ import userEvent from "@testing-library/user-event";
 import { ObjectTree } from "@/components/object-tree";
 import { treeWindow } from "@/components/object-tree/ObjectTree";
 import { useTreeNodes } from "@/components/object-tree/use-tree-nodes";
-import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -91,18 +90,6 @@ function installFetch(handlers: Handlers): FetchCall[] {
     return Response.json(answer);
   }) as never;
   return calls;
-}
-
-/** The 501 sixteen of seventeen engines answer today. */
-function unimplemented(method: string): Response {
-  return Response.json(
-    {
-      error: `The mysql provider does not implement ${method} yet (#789). That is a gap in the provider, not an empty database.`,
-      code: ApiErrorCode.OBJECT_SURFACE_UNIMPLEMENTED,
-      statusCode: 501,
-    },
-    { status: 501 },
-  );
 }
 
 const appSchema = [{ path: ["app"], name: "app", level: 0 }];
@@ -315,23 +302,11 @@ describe("ObjectTree absence states", () => {
 });
 
 describe("ObjectTree engine gaps", () => {
-  test("a 501 reads as an unmigrated engine, names the engine's sentence and offers no retry", async () => {
-    const calls = installFetch({ containers: () => unimplemented("listContainers") });
-    render(<ObjectTree connection={connectionOf("my")} capabilities={oneLevel} />);
-
-    const panel = await screen.findByTestId("tree-unimplemented");
-    expect(panel.textContent).toContain("does not implement listContainers yet");
-    expect(screen.queryByTestId("tree-retry")).toBeNull();
-    expect(screen.queryByTestId("tree-empty")).toBeNull();
-    expect(calls).toHaveLength(1);
-  });
-
   test("an engine that answers nothing reads as empty, which is not the same panel", async () => {
     installFetch({ containers: () => [] });
     render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
 
     expect(await screen.findByTestId("tree-empty")).toBeTruthy();
-    expect(screen.queryByTestId("tree-unimplemented")).toBeNull();
   });
 
   test("any other failure shows the engine's message and a retry that reads again", async () => {
@@ -386,25 +361,6 @@ describe("ObjectTree engine gaps", () => {
     render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
 
     expect((await screen.findByTestId("tree-failure")).textContent).toContain("502");
-  });
-
-  test("a 501 on ONE read marks that row as unmigrated rather than as a failure", async () => {
-    // The state every provider task passes through: `listContainers` and `countObjects` are
-    // implemented and `listObjects` is not yet.
-    installFetch({
-      containers: () => appSchema,
-      counts: () => ({ table: { count: 2 }, view: { count: 0 } }),
-      list: () => unimplemented("listObjects"),
-    });
-    render(<ObjectTree connection={connectionOf("my")} capabilities={oneLevel} />);
-    await expandApp();
-
-    await userEvent.click(row(/Tables/));
-    await waitFor(() => expect(within(row(/Tables/)).getByTestId("tree-row-unimplemented")).toBeTruthy());
-    expect(within(row(/Tables/)).getByTestId("tree-row-unimplemented").textContent).toContain(
-      "does not implement listObjects yet",
-    );
-    expect(within(row(/Tables/)).queryByTestId("tree-row-failure")).toBeNull();
   });
 
   test("a folder read that fails shows on the folder, and reopening it reads again", async () => {

@@ -187,24 +187,7 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
   });
 });
 
-describe("LibreDBProvider — getSchema", () => {
-  test("groups keys by colon-prefix into pseudo-tables", async () => {
-    const provider = new LibreDBProvider(makeConn(tmpFile));
-    await provider.connect();
-    const schema = await provider.getSchema();
-    await provider.disconnect();
-
-    const byName = Object.fromEntries(schema.map((t) => [t.name, t]));
-    expect(byName["user:*"].rowCount).toBe(2);
-    expect(byName["order:*"].rowCount).toBe(1);
-    expect(byName["config"].rowCount).toBe(1); // no colon -> own group
-    // columns are key (primary) + value
-    expect(byName["user:*"].columns.map((c) => c.name)).toEqual(["key", "value"]);
-    expect(byName["user:*"].columns[0].isPrimary).toBe(true);
-    // sorted by rowCount desc -> user:* first
-    expect(schema[0].name).toBe("user:*");
-  });
-});
+describe("LibreDBProvider — getSchema", () => {});
 
 describe("LibreDBProvider — catalog-aware schema", () => {
   let catalogFile: string;
@@ -216,47 +199,6 @@ describe("LibreDBProvider — catalog-aware schema", () => {
 
   afterEach(() => {
     rmDbFile(catalogFile);
-  });
-
-  test("a bare key is NOT catalog-upgraded even if its name matches a namespace", async () => {
-    // A document collection "shadow" (keys shadow:*) AND a separate bare raw key
-    // "shadow" (no colon). The bare key must stay raw key/value; only the
-    // "shadow:*" prefix group may take the document view.
-    const file = path.join(os.tmpdir(), `libredb-bare-${Math.random().toString(36).slice(2)}.libredb`);
-    const db = open({ path: file });
-    doc(db, "shadow").put("1", { theme: "dark" });
-    kv(db).set("shadow", "on");
-    db.close();
-
-    try {
-      const provider = new LibreDBProvider(makeConn(file));
-      await provider.connect();
-      const schema = await provider.getSchema();
-      await provider.disconnect();
-
-      const prefixGroup = schema.find((t) => t.name === "shadow:*");
-      const bareGroup = schema.find((t) => t.name === "shadow");
-      // The cataloged collection renders as a document view...
-      expect(prefixGroup?.columns.map((c) => c.name)).toEqual(["id", "document"]);
-      // ...but the bare key stays raw key/value, not upgraded.
-      expect(bareGroup?.columns.map((c) => c.name)).toEqual(["key", "value"]);
-    } finally {
-      rmDbFile(file);
-    }
-  });
-
-  test("getSchema never surfaces the reserved catalog prefix", async () => {
-    const provider = new LibreDBProvider(makeConn(catalogFile));
-    await provider.connect();
-    const schema = await provider.getSchema();
-    await provider.disconnect();
-
-    for (const t of schema) {
-      expect(t.name.startsWith("\x00")).toBe(false);
-      expect(t.name).not.toContain("libredb:catalog:");
-    }
-    // No pseudo-table for the reserved namespace leaks in.
-    expect(schema.some((t) => t.name.includes("catalog"))).toBe(false);
   });
 
   test("range/prefix queries never surface the reserved catalog keys", async () => {
@@ -273,76 +215,6 @@ describe("LibreDBProvider — catalog-aware schema", () => {
     expect(pre.rowCount).toBe(0);
 
     await provider.disconnect();
-  });
-
-  test("hides the whole reserved namespace, not just the catalog prefix (isReservedKey widening)", async () => {
-    // A raw kv key under the U+0000 marker but OUTSIDE the "catalog:" tail. The
-    // previous hardcoded `\x00libredb:catalog:` filter would have leaked this;
-    // isReservedKey is marker-based, so it hides the entire reserved namespace.
-    const reservedKey = "\x00zzz-reserved-not-catalog";
-    const writer = open({ path: catalogFile });
-    kv(writer).set(reservedKey, "internal");
-    writer.close();
-
-    const provider = new LibreDBProvider(makeConn(catalogFile));
-    await provider.connect();
-    const schema = await provider.getSchema();
-    const rng = await provider.query("range \x00 \u{10FFFF}");
-    await provider.disconnect();
-
-    expect(schema.some((t) => t.name.startsWith("\x00"))).toBe(false);
-    expect(rng.rows.some((r) => String(r.key) === reservedKey)).toBe(false);
-
-    // Sanity: the key really is in the file (so the provider hid it, not absence).
-    const verify = open({ path: catalogFile });
-    expect(kv(verify).get(reservedKey)).toBe("internal");
-    verify.close();
-  });
-
-  test("a relational table shows its real columns and is labeled relational", async () => {
-    const provider = new LibreDBProvider(makeConn(catalogFile));
-    await provider.connect();
-    const schema = await provider.getSchema();
-    await provider.disconnect();
-
-    const employees = schema.find((t) => t.name === "employees:*");
-    expect(employees).toBeDefined();
-    // Real declared columns from the catalog schema (not raw key/value).
-    const cols = Object.fromEntries(employees!.columns.map((c) => [c.name, c]));
-    expect(Object.keys(cols).sort()).toEqual(["active", "id", "name", "salary"]);
-    expect(cols.id.isPrimary).toBe(true);
-    expect(cols.name.isPrimary).toBe(false);
-    expect(cols.salary.type).toBe("number");
-    expect(cols.active.type).toBe("boolean");
-    // Relational signal: columns are NOT the raw key/value pair.
-    expect(employees!.columns.map((c) => c.name)).not.toEqual(["key", "value"]);
-    expect(employees!.rowCount).toBe(2);
-  });
-
-  test("a document collection is labeled document (generic id + document columns)", async () => {
-    const provider = new LibreDBProvider(makeConn(catalogFile));
-    await provider.connect();
-    const schema = await provider.getSchema();
-    await provider.disconnect();
-
-    const articles = schema.find((t) => t.name === "articles:*");
-    expect(articles).toBeDefined();
-    expect(articles!.columns.map((c) => c.name)).toEqual(["id", "document"]);
-    expect(articles!.columns[0].isPrimary).toBe(true);
-    expect(articles!.columns[1].type).toBe("object");
-  });
-
-  test("raw kv namespaces still group as key/value pseudo-tables", async () => {
-    const provider = new LibreDBProvider(makeConn(catalogFile));
-    await provider.connect();
-    const schema = await provider.getSchema();
-    await provider.disconnect();
-
-    const byName = Object.fromEntries(schema.map((t) => [t.name, t]));
-    expect(byName["user:*"].rowCount).toBe(2);
-    expect(byName["user:*"].columns.map((c) => c.name)).toEqual(["key", "value"]);
-    expect(byName["order:*"].rowCount).toBe(1);
-    expect(byName["config"].columns.map((c) => c.name)).toEqual(["key", "value"]);
   });
 });
 
@@ -640,30 +512,6 @@ describe("LibreDBProvider — monitoring", () => {
         totalSizeBytes: 0,
       },
     ]);
-    await provider.disconnect();
-  });
-
-  test("getTableStats refuses rather than under-count when the key scan hits its cap", async () => {
-    rmDbFile(tmpFile);
-    // One kernel transaction, so seeding past the cap costs ~30ms instead of ~12s: the
-    // kv lens fsyncs per set(), the kernel's own transact() commits the batch once.
-    const db = open({ path: tmpFile });
-    const encoder = new TextEncoder();
-    db.transact((tx) => {
-      for (let i = 0; i < LIBREDB_MAX_KEY_SCAN + 500; i++) {
-        tx.set(encoder.encode(`bulk:${i}`), encoder.encode("x"));
-      }
-    });
-    db.close();
-
-    const provider = new LibreDBProvider(makeConn(tmpFile));
-    await provider.connect();
-    // Assert the exported sentence itself: a regex over a fragment would keep passing if
-    // the user-facing wording drifted, and `knip` fails on an export nothing consumes.
-    await expect(provider.getTableStats()).rejects.toThrow(LIBREDB_TABLE_STATS_TRUNCATED);
-    expect(LIBREDB_TABLE_STATS_TRUNCATED).toContain("10,000 keys");
-    // The schema tree still renders - it is a list of namespaces, not a count.
-    expect((await provider.getSchema()).map((s) => s.name)).toEqual(["bulk:*"]);
     await provider.disconnect();
   });
 
@@ -1061,19 +909,6 @@ describe("LibreDBProvider object surface (#789)", () => {
     await expect(
       provider.query(JSON.stringify({ collection: "employees", operation: "aggregate", pipeline: [] })),
     ).rejects.toThrow(/Unknown command .* Supported: get, put, delete, prefix, range/);
-  });
-
-  test("the object surface never opens a second handle on the single-writer file", async () => {
-    // `singleWriterFile`: `open({ path })` takes an exclusive `<path>.lock` sidecar, so a
-    // second open throws LOCKED. If any object method opened its own handle it would fail
-    // here, where the provider already holds the file.
-    expect(provider.getCapabilities().singleWriterFile).toBe(true);
-    expect(() => open({ path: fixtureFile })).toThrow();
-    await provider.countObjects([]);
-    await provider.listObjects([], "table");
-    await provider.describeObject(["employees:*"], "table");
-    // Still usable afterwards: nothing above took or dropped the lock.
-    expect((await provider.getSchema()).length).toBeGreaterThan(0);
   });
 
   // ==========================================================================

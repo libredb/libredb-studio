@@ -784,16 +784,6 @@ describe("OracleProvider", () => {
         await provider.rollbackTransaction();
       });
 
-      // The handler is deliberately per-call rather than the process-wide
-      // `oracledb.fetchAsString` / `fetchAsBuffer` globals, so the reads that never
-      // select a LOB are left exactly as they were. `getSchema` is the one that
-      // would notice: it reads ALL_TAB_COLUMNS.DATA_DEFAULT, a LONG.
-      test("getSchema() is left alone", async () => {
-        await provider.connect();
-        await provider.getSchema();
-        expect(lastExecuteOpts.fetchTypeHandler).toBeUndefined();
-      });
-
       // What the fetched values then are, end to end: a CLOB is a plain string and
       // a BLOB is a Buffer, so a BLOB joins the shared byte contract that the grid,
       // the row detail sheet and the CSV all read a binary cell through
@@ -1209,33 +1199,7 @@ describe("OracleProvider", () => {
   // 7. getSchema()
   // =========================================================================
 
-  describe("getSchema()", () => {
-    test("returns tables with columns, indexes, PKs, and FKs", async () => {
-      await provider.connect();
-      const schema = await provider.getSchema();
-
-      expect(schema).toBeArray();
-      expect(schema.length).toBe(2);
-
-      const usersTable = schema.find((t) => t.name === "USERS");
-      expect(usersTable).toBeDefined();
-      expect(usersTable!.columns.length).toBeGreaterThanOrEqual(2);
-
-      // Check primary key
-      const idCol = usersTable!.columns.find((c) => c.name === "ID");
-      expect(idCol).toBeDefined();
-      expect(idCol!.isPrimary).toBe(true);
-
-      // Check indexes exist
-      expect(usersTable!.indexes).toBeArray();
-
-      // Check foreign keys on ORDERS
-      const ordersTable = schema.find((t) => t.name === "ORDERS");
-      expect(ordersTable).toBeDefined();
-      expect(ordersTable!.foreignKeys!.length).toBeGreaterThan(0);
-      expect(ordersTable!.foreignKeys![0].referencedTable).toBe("USERS");
-    });
-  });
+  describe("getSchema()", () => {});
 
   // =========================================================================
   // 8. getHealth()
