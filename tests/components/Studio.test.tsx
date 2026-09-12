@@ -27,6 +27,11 @@ let capturedConnectionsListProps: Record<string, unknown> = {};
 let capturedQueryEditorProps: Record<string, unknown> = {};
 let capturedMobileNavProps: Record<string, unknown> = {};
 let capturedAgentRailProps: Record<string, unknown> = {};
+// The three modals the row menu opens. What they were HANDED is the whole of Task 35: the
+// shell used to hand them a label and resolve it with a find-by-name (#789).
+let capturedProfilerProps: Record<string, unknown> = {};
+let capturedCodeGenProps: Record<string, unknown> = {};
+let capturedTestDataProps: Record<string, unknown> = {};
 let originalFetch: typeof globalThis.fetch;
 let originalMatchMedia: typeof window.matchMedia;
 
@@ -368,6 +373,7 @@ mock.module("@/components/DataProfiler", () => ({
   DataProfiler: (props: { isOpen?: boolean }) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    capturedProfilerProps = props;
     return props.isOpen ? React.createElement("div", { "data-testid": "dataprofiler" }, "DataProfiler") : null;
   },
 }));
@@ -376,6 +382,7 @@ mock.module("@/components/CodeGenerator", () => ({
   CodeGenerator: (props: { isOpen?: boolean }) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    capturedCodeGenProps = props;
     return props.isOpen ? React.createElement("div", { "data-testid": "codegenerator" }, "CodeGenerator") : null;
   },
 }));
@@ -384,6 +391,7 @@ mock.module("@/components/TestDataGenerator", () => ({
   TestDataGenerator: (props: { isOpen?: boolean }) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    capturedTestDataProps = props;
     return props.isOpen
       ? React.createElement("div", { "data-testid": "testdatagenerator" }, "TestDataGenerator")
       : null;
@@ -518,6 +526,9 @@ describe("Studio", () => {
     capturedQueryEditorProps = {};
     capturedMobileNavProps = {};
     capturedAgentRailProps = {};
+    capturedProfilerProps = {};
+    capturedCodeGenProps = {};
+    capturedTestDataProps = {};
 
     // Reset overrides
     connMgrOverride = {};
@@ -725,15 +736,16 @@ describe("Studio", () => {
     expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations");
   });
 
-  // The Explorer's row items call this with the row's name; it rides the admin
-  // route's query string so the Operations tab lands on that row (#459).
-  test("openMaintenance carries the named row to the operations tab", () => {
+  // The Explorer's row items call this with the row's ADDRESS; it rides the admin route's
+  // query string, one `path` parameter per segment, so the Operations tab lands on that row
+  // (#459) and a segment with a space, a dot or a slash survives the trip (#789).
+  test("openMaintenance carries the named row's address to the operations tab", () => {
     connMgrOverride = { activeConnection: pgConn };
     render(<Studio />);
     openSchemaTab();
-    const fn = capturedSchemaExplorerProps.onOpenMaintenance as (tab?: string, table?: string) => void;
-    act(() => fn("tables", "order items"));
-    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?table=order%20items");
+    const fn = capturedSchemaExplorerProps.onOpenMaintenance as (tab?: string, path?: readonly string[]) => void;
+    act(() => fn("tables", ["sales.2026", "order items"]));
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?path=sales.2026&path=order+items");
   });
 
   test("openMaintenance navigates to monitoring when not admin", () => {
@@ -901,7 +913,7 @@ describe("Studio", () => {
     expect(queryByTestId("testdatagenerator")).not.toBeNull();
 
     act(() => actions.onOpenMaintenance?.(usersObject));
-    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?table=users");
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?path=app&path=users");
 
     act(() => actions.onCreateObject?.());
     expect(queryByTestId("createtablemodal")).not.toBeNull();
@@ -917,13 +929,71 @@ describe("Studio", () => {
     expect(sidebarActions().onProfileObject).toBeDefined();
   });
 
-  test("the consumers that still look a target up by name are handed the NAME", () => {
-    // The two differ wherever an engine disambiguates its addresses: a PostgreSQL routine
-    // is addressed `order_total(integer)` and labelled `order_total` (standing ruling 2).
-    // The profiler, the code generator, the test-data generator and the maintenance deep
-    // link all look their target up in the flat schema list BY NAME, so the name is the
-    // half that crosses for them. The two query generators no longer do - they take the
-    // path - and the test above pins that, so this pins the seam that is left (#789).
+  /**
+   * The collision, which is the defect (#789, Task 35).
+   *
+   * Two objects share the label `customers` in two different containers - measured live on
+   * SQL Server, where `libredb_objects.app.customers` and `shop.dbo.customers` both exist -
+   * and the action is taken on the SECOND. The shell used to hand each modal `object.name`
+   * and resolve it with `schema.find((t) => t.name === label)`, which answers the FIRST: the
+   * operator profiled a table they did not click, with no error. A fixture holding ONE
+   * object cannot see this, which is why it shipped.
+   */
+  const firstCustomers = {
+    name: "customers",
+    kind: "table",
+    path: ["libredb_objects", "app", "customers"],
+    columns: [{ name: "customer_id", type: "int", nullable: false }],
+    indexes: [],
+  };
+  const secondCustomers = {
+    name: "customers",
+    kind: "table",
+    path: ["shop", "dbo", "customers"],
+    columns: [{ name: "shop_customer_id", type: "int", nullable: false }],
+    indexes: [],
+  };
+  const collisionSchema = [firstCustomers, secondCustomers];
+
+  test("each modal opens on the object that was CLICKED, where two containers share one label", () => {
+    connMgrOverride = { activeConnection: pgConn, schema: collisionSchema };
+    render(<Studio />);
+    const actions = sidebarActions();
+    const clicked: DatabaseObject = { path: ["shop", "dbo", "customers"], name: "customers", kind: "table" };
+
+    act(() => actions.onProfileObject?.(clicked));
+    expect(capturedProfilerProps.tablePath).toEqual(["shop", "dbo", "customers"]);
+    expect(capturedProfilerProps.tableSchema).toBe(secondCustomers);
+    expect(capturedProfilerProps.tableSchema).not.toBe(firstCustomers);
+
+    act(() => actions.onGenerateCode?.(clicked));
+    expect(capturedCodeGenProps.tablePath).toEqual(["shop", "dbo", "customers"]);
+    expect(capturedCodeGenProps.tableSchema).toBe(secondCustomers);
+
+    act(() => actions.onGenerateTestData?.(clicked));
+    expect(capturedTestDataProps.tablePath).toEqual(["shop", "dbo", "customers"]);
+    expect(capturedTestDataProps.tableSchema).toBe(secondCustomers);
+
+    act(() => actions.onOpenMaintenance?.(clicked));
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?path=shop&path=dbo&path=customers");
+  });
+
+  test("the other object in the collision is still reachable, so the address is what decides", () => {
+    connMgrOverride = { activeConnection: pgConn, schema: collisionSchema };
+    render(<Studio />);
+    act(() =>
+      sidebarActions().onProfileObject?.({
+        path: ["libredb_objects", "app", "customers"],
+        name: "customers",
+        kind: "table",
+      }),
+    );
+    expect(capturedProfilerProps.tableSchema).toBe(firstCustomers);
+  });
+
+  test("a modal is handed the ADDRESS, which is not the label wherever an engine disambiguates", () => {
+    // A PostgreSQL routine is addressed `order_total(integer)` and labelled `order_total`
+    // (standing ruling 2), so the two are different strings even without a collision.
     connMgrOverride = { activeConnection: pgConn };
     render(<Studio />);
     act(() =>
@@ -933,7 +1003,7 @@ describe("Studio", () => {
         kind: "table",
       }),
     );
-    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?table=order_total");
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?path=app&path=order_total%28integer%29");
   });
 
   // #765: the connection owns the answer, so both halves reach the tree from the hook
@@ -1574,8 +1644,8 @@ describe("Studio", () => {
     const { queryByTestId } = render(<Studio />);
     expect(queryByTestId("dataprofiler")).toBeNull();
     act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
-    const fn = capturedSchemaExplorerProps.onProfileTable as (name: string) => void;
-    act(() => fn("users"));
+    const fn = capturedSchemaExplorerProps.onProfileTable as (path: readonly string[]) => void;
+    act(() => fn(["app", "users"]));
     expect(queryByTestId("dataprofiler")).not.toBeNull();
   });
 
@@ -1584,8 +1654,8 @@ describe("Studio", () => {
     const { queryByTestId } = render(<Studio />);
     expect(queryByTestId("codegenerator")).toBeNull();
     act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
-    const fn = capturedSchemaExplorerProps.onGenerateCode as (name: string) => void;
-    act(() => fn("users"));
+    const fn = capturedSchemaExplorerProps.onGenerateCode as (path: readonly string[]) => void;
+    act(() => fn(["app", "users"]));
     expect(queryByTestId("codegenerator")).not.toBeNull();
   });
 
@@ -1594,8 +1664,8 @@ describe("Studio", () => {
     const { queryByTestId } = render(<Studio />);
     expect(queryByTestId("testdatagenerator")).toBeNull();
     act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
-    const fn = capturedSchemaExplorerProps.onGenerateTestData as (name: string) => void;
-    act(() => fn("users"));
+    const fn = capturedSchemaExplorerProps.onGenerateTestData as (path: readonly string[]) => void;
+    act(() => fn(["app", "users"]));
     expect(queryByTestId("testdatagenerator")).not.toBeNull();
   });
 
@@ -1816,11 +1886,11 @@ describe("Studio", () => {
     act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
     act(() => (capturedSchemaExplorerProps.onCreateTableClick as () => void)());
     expect(queryByTestId("createtablemodal")).not.toBeNull();
-    act(() => (capturedSchemaExplorerProps.onProfileTable as (n: string) => void)("users"));
+    act(() => (capturedSchemaExplorerProps.onProfileTable as (p: readonly string[]) => void)(["app", "users"]));
     expect(queryByTestId("dataprofiler")).not.toBeNull();
-    act(() => (capturedSchemaExplorerProps.onGenerateCode as (n: string) => void)("users"));
+    act(() => (capturedSchemaExplorerProps.onGenerateCode as (p: readonly string[]) => void)(["app", "users"]));
     expect(queryByTestId("codegenerator")).not.toBeNull();
-    act(() => (capturedSchemaExplorerProps.onGenerateTestData as (n: string) => void)("users"));
+    act(() => (capturedSchemaExplorerProps.onGenerateTestData as (p: readonly string[]) => void)(["app", "users"]));
     expect(queryByTestId("testdatagenerator")).not.toBeNull();
     act(() => (capturedSchemaExplorerProps.onOpenMaintenance as () => void)());
     expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations");

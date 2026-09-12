@@ -5,7 +5,9 @@ import type { CsvDelimiter } from "@/lib/export/csv";
 import { appFetch } from "@/lib/config/base-path";
 import React, { useState, useEffect, useRef } from "react";
 import { Sidebar, ConnectionsList } from "@/components/sidebar";
-import { flatTargetName, type TreeRowActionHandlers } from "@/components/object-tree";
+import { type TreeRowActionHandlers } from "@/components/object-tree";
+import { objectAtPath } from "@/lib/db/detailed-object";
+import { objectPathQuery } from "@/lib/db/object-path";
 import { MobileNav } from "@/components/MobileNav";
 import { SchemaExplorer } from "@/components/schema-explorer";
 import { ConnectionModal } from "@/components/ConnectionModal";
@@ -221,9 +223,12 @@ export default function Studio() {
   /** What the panel group may hold: below the breakpoint, only the body panel. */
   const isMobile = useIsMobile();
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [profilerTable, setProfilerTable] = useState<string | null>(null);
-  const [codeGenTable, setCodeGenTable] = useState<string | null>(null);
-  const [testDataTable, setTestDataTable] = useState<string | null>(null);
+  // The three modal targets are ADDRESSES, not labels (#789, Task 35). A label is not
+  // unique - two containers hold one `customers` on the SQL Server this was measured on -
+  // so a target spelled as a name opened whichever object the flat list held first.
+  const [profilerPath, setProfilerPath] = useState<readonly string[] | null>(null);
+  const [codeGenPath, setCodeGenPath] = useState<readonly string[] | null>(null);
+  const [testDataPath, setTestDataPath] = useState<readonly string[] | null>(null);
 
   // === Agent rail (#329 T10a) ===
   // Server-side flag, discovered at runtime the way the storage mode is: the pages
@@ -345,13 +350,21 @@ export default function Studio() {
   const effectiveMasking = shouldMask(user?.role, maskingConfig);
   const userCanToggle = canToggleMasking(user?.role, maskingConfig);
 
-  // The Explorer's per-row items call this with the row's name; without carrying it
-  // the tab opened with nothing selected (#459). The name rides the query string —
-  // the admin section is routed, so a param is what a section page can read. The
-  // non-admin /monitoring route has no such reader, so it keeps the bare path.
-  const openMaintenance = (_tab?: "global" | "tables" | "sessions", table?: string) => {
+  /*
+    The Explorer's per-row items call this with the row's ADDRESS; without carrying it the
+    tab opened with nothing selected (#459). The address rides the query string - the admin
+    section is routed, so a param is what a section page can read - as one `path` parameter
+    per SEGMENT (`objectPathQuery`), which is the shape that survives the round trip: the URL
+    grammar escapes each segment, so a dot, a space or a `/` inside a name reaches the
+    destination as itself, and the depth is the parameter count rather than a separator the
+    reader has to guess at. `?table=<label>` did none of that and named a label two objects
+    can share (#789, Task 35).
+
+    The non-admin /monitoring route has no such reader, so it keeps the bare path.
+  */
+  const openMaintenance = (_tab?: "global" | "tables" | "sessions", path?: readonly string[]) => {
     if (isAdmin) {
-      router.push(table ? `/admin/operations?table=${encodeURIComponent(table)}` : "/admin/operations");
+      router.push(path === undefined ? "/admin/operations" : `/admin/operations?${objectPathQuery(path)}`);
     } else {
       router.push("/monitoring");
     }
@@ -449,17 +462,21 @@ export default function Studio() {
    * declaration for that row's kind - so this object is only the list of what the shell can
    * do at all.
    *
-   * `flatTargetName` is the narrowing to the old flat model, called here rather than inside
-   * the tree so that the tree stays in object-model terms and Task 25 has one name to grep.
+   * Every one of them carries `object.path`. An object is TARGETED by its address and
+   * RESOLVED by its address (#789, Task 35): the narrowing to `object.name` that used to
+   * stand here handed a label on, and the modals resolved it with a find-by-name that
+   * answers the first object carrying that label, so Profile on one `customers` opened the
+   * other one's columns with no error.
+   *
    * Maintenance is withheld from a non-admin because the page it opens is the admin one; the
    * other five are the same for every role, exactly as the flat explorer had them.
    */
   const objectActions: TreeRowActionHandlers = {
     onGenerateSelect: (object) => tabMgr.handleGenerateSelect(object.path),
-    onProfileObject: (object) => setProfilerTable(flatTargetName(object)),
-    onGenerateCode: (object) => setCodeGenTable(flatTargetName(object)),
-    onGenerateTestData: (object) => setTestDataTable(flatTargetName(object)),
-    onOpenMaintenance: isAdmin ? (object) => openMaintenance("tables", flatTargetName(object)) : undefined,
+    onProfileObject: (object) => setProfilerPath(object.path),
+    onGenerateCode: (object) => setCodeGenPath(object.path),
+    onGenerateTestData: (object) => setTestDataPath(object.path),
+    onOpenMaintenance: isAdmin ? (object) => openMaintenance("tables", object.path) : undefined,
     onCreateObject: () => setIsCreateTableModalOpen(true),
   };
 
@@ -696,9 +713,9 @@ export default function Studio() {
                       onOpenMaintenance={openMaintenance}
                       databaseType={conn.activeConnection?.type}
                       metadata={metadata}
-                      onProfileTable={(name) => setProfilerTable(name)}
-                      onGenerateCode={(name) => setCodeGenTable(name)}
-                      onGenerateTestData={(name) => setTestDataTable(name)}
+                      onProfileTable={(path) => setProfilerPath(path)}
+                      onGenerateCode={(path) => setCodeGenPath(path)}
+                      onGenerateTestData={(path) => setTestDataPath(path)}
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center h-full text-fg-muted">
@@ -883,28 +900,28 @@ export default function Studio() {
         }}
       />
       <DataProfiler
-        isOpen={!!profilerTable}
-        onClose={() => setProfilerTable(null)}
-        tableName={profilerTable || ""}
-        tableSchema={conn.schema.find((t) => t.name === profilerTable) || null}
+        isOpen={profilerPath !== null}
+        onClose={() => setProfilerPath(null)}
+        tablePath={profilerPath ?? []}
+        tableSchema={objectAtPath(conn.schema, profilerPath)}
         connection={conn.activeConnection}
         schemaContext={conn.schemaContext}
         databaseType={conn.activeConnection?.type}
       />
       <CodeGenerator
-        isOpen={!!codeGenTable}
-        onClose={() => setCodeGenTable(null)}
-        tableName={codeGenTable || ""}
-        tableSchema={conn.schema.find((t) => t.name === codeGenTable) || null}
+        isOpen={codeGenPath !== null}
+        onClose={() => setCodeGenPath(null)}
+        tablePath={codeGenPath ?? []}
+        tableSchema={objectAtPath(conn.schema, codeGenPath)}
         databaseType={conn.activeConnection?.type}
       />
       <TestDataGenerator
-        isOpen={!!testDataTable}
-        onClose={() => setTestDataTable(null)}
-        tableName={testDataTable || ""}
-        tableSchema={conn.schema.find((t) => t.name === testDataTable) || null}
+        isOpen={testDataPath !== null}
+        onClose={() => setTestDataPath(null)}
+        tablePath={testDataPath ?? []}
+        tableSchema={objectAtPath(conn.schema, testDataPath)}
         databaseType={conn.activeConnection?.type}
-        queryLanguage={metadata?.capabilities.queryLanguage}
+        capabilities={metadata?.capabilities}
         onExecuteQuery={(q) => queryExec.executeQuery(q)}
       />
 

@@ -4,7 +4,8 @@ import type { CsvDelimiter } from "@/lib/export/csv";
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Sidebar } from "@/components/sidebar";
-import { flatTargetName, type TreeRowActionHandlers } from "@/components/object-tree";
+import { type TreeRowActionHandlers } from "@/components/object-tree";
+import { objectAtPath } from "@/lib/db/detailed-object";
 // MobileNav and mobile tab panels excluded in embedded mode — platform provides its own navigation
 import { QueryEditor, QueryEditorRef } from "@/components/QueryEditor";
 import { DataImportModal } from "@/components/DataImportModal";
@@ -230,9 +231,11 @@ export function StudioWorkspace({
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
   const [savedKey, setSavedKey] = useState(0);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [profilerTable, setProfilerTable] = useState<string | null>(null);
-  const [codeGenTable, setCodeGenTable] = useState<string | null>(null);
-  const [testDataTable, setTestDataTable] = useState<string | null>(null);
+  // ADDRESSES, not labels, for the reason `src/components/Studio.tsx` gives at the same
+  // three lines: a label is not unique within a connection (#789, Task 35).
+  const [profilerPath, setProfilerPath] = useState<readonly string[] | null>(null);
+  const [codeGenPath, setCodeGenPath] = useState<readonly string[] | null>(null);
+  const [testDataPath, setTestDataPath] = useState<readonly string[] | null>(null);
 
   // === Save query handler ===
   const handleSaveQuery = useCallback(
@@ -330,9 +333,9 @@ export function StudioWorkspace({
    */
   const objectActions: TreeRowActionHandlers = {
     onGenerateSelect: (object) => tabMgr.handleGenerateSelect(object.path),
-    onProfileObject: features.codeGenerator ? (object) => setProfilerTable(flatTargetName(object)) : undefined,
-    onGenerateCode: features.codeGenerator ? (object) => setCodeGenTable(flatTargetName(object)) : undefined,
-    onGenerateTestData: features.testDataGenerator ? (object) => setTestDataTable(flatTargetName(object)) : undefined,
+    onProfileObject: features.codeGenerator ? (object) => setProfilerPath(object.path) : undefined,
+    onGenerateCode: features.codeGenerator ? (object) => setCodeGenPath(object.path) : undefined,
+    onGenerateTestData: features.testDataGenerator ? (object) => setTestDataPath(object.path) : undefined,
   };
 
   // === No-op callbacks for disabled features ===
@@ -561,10 +564,10 @@ export function StudioWorkspace({
       {/* Data Profiler */}
       {features.codeGenerator && (
         <DataProfiler
-          isOpen={!!profilerTable}
-          onClose={() => setProfilerTable(null)}
-          tableName={profilerTable || ""}
-          tableSchema={conn.schema.find((t) => t.name === profilerTable) || null}
+          isOpen={profilerPath !== null}
+          onClose={() => setProfilerPath(null)}
+          tablePath={profilerPath ?? []}
+          tableSchema={objectAtPath(conn.schema, profilerPath)}
           connection={conn.activeConnection}
           schemaContext={conn.schemaContext}
           databaseType={conn.activeConnection?.type}
@@ -574,10 +577,10 @@ export function StudioWorkspace({
       {/* Code Generator */}
       {features.codeGenerator && (
         <CodeGenerator
-          isOpen={!!codeGenTable}
-          onClose={() => setCodeGenTable(null)}
-          tableName={codeGenTable || ""}
-          tableSchema={conn.schema.find((t) => t.name === codeGenTable) || null}
+          isOpen={codeGenPath !== null}
+          onClose={() => setCodeGenPath(null)}
+          tablePath={codeGenPath ?? []}
+          tableSchema={objectAtPath(conn.schema, codeGenPath)}
           databaseType={conn.activeConnection?.type}
         />
       )}
@@ -585,12 +588,12 @@ export function StudioWorkspace({
       {/* Test Data Generator */}
       {features.testDataGenerator && (
         <TestDataGenerator
-          isOpen={!!testDataTable}
-          onClose={() => setTestDataTable(null)}
-          tableName={testDataTable || ""}
-          tableSchema={conn.schema.find((t) => t.name === testDataTable) || null}
+          isOpen={testDataPath !== null}
+          onClose={() => setTestDataPath(null)}
+          tablePath={testDataPath ?? []}
+          tableSchema={objectAtPath(conn.schema, testDataPath)}
           databaseType={conn.activeConnection?.type}
-          queryLanguage={undefined}
+          capabilities={conn.metadata?.capabilities}
           onExecuteQuery={(q) => queryExec.executeQuery(q)}
         />
       )}

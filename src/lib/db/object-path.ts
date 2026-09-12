@@ -85,3 +85,50 @@ export function comparePaths(left: readonly string[], right: readonly string[]):
   }
   return left.length - right.length;
 }
+
+/**
+ * The query parameter an object ADDRESS travels under, repeated once per segment.
+ *
+ * Module-private on purpose: the writer (`objectPathQuery`, called by the maintenance deep
+ * link) and the reader (`readObjectPathParam`, called by the admin Operations page) are both
+ * below, so no caller outside this file ever spells the name - two spellings of a parameter
+ * name is the same class of disagreement as two spellings of a path (#789).
+ */
+const OBJECT_PATH_PARAM = "path";
+
+/**
+ * An address as a query string, one `path=` parameter per SEGMENT.
+ *
+ * There is no separator, deliberately, and that is the whole of the design. Every
+ * defect this epic has paid for came from a reader splitting a string back into segments by
+ * a character the writer never escaped: a table named `a.b` read as `a`.`b`. Here the URL
+ * grammar does the escaping - `URLSearchParams` percent-encodes each value - so a segment
+ * containing a dot, a space, a `/`, an `&` or a `#` survives byte for byte, the ORDER and the
+ * COUNT of the segments come from the parameter list rather than from a scheme of our own,
+ * and an empty segment stays a segment. A JSON array in one parameter would also round-trip,
+ * and was refused for the reason standing ruling 5g refuses `JSON.stringify` as a path key:
+ * it introduces a second escaping rule that a reader can implement differently.
+ */
+export function objectPathQuery(path: readonly string[]): string {
+  const params = new URLSearchParams();
+  for (const segment of path) params.append(OBJECT_PATH_PARAM, segment);
+  return params.toString();
+}
+
+/**
+ * The same address read back. `null` is a link that named no object, which is a different
+ * fact from a link that named one: the destination says so rather than filtering by nothing.
+ */
+export function readObjectPathParam(params: Pick<URLSearchParams, "getAll">): readonly string[] | null {
+  const segments = params.getAll(OBJECT_PATH_PARAM);
+  return segments.length === 0 ? null : segments;
+}
+
+/**
+ * An address for a HUMAN to read, and never for a machine to split again: the dotted
+ * spelling every engine here accepts, so a modal header names the object the operator
+ * clicked rather than a label two objects can share. `pathKey` is the machine's spelling.
+ */
+export function objectPathLabel(path: readonly string[]): string {
+  return path.join(".");
+}

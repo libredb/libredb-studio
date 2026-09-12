@@ -137,3 +137,24 @@ export function detailedObjects(
     };
   });
 }
+
+/**
+ * The object at an ADDRESS, out of the list the shell holds (#789, Task 35).
+ *
+ * This replaces `schema.find((t) => t.name === label)` at every consumer that opens a modal
+ * on an object. `name` is a label and is not unique: the live SQL Server holds a `customers`
+ * in `libredb_objects.app` and another in `shop.dbo`, so the name lookup profiled the first
+ * one whichever the operator clicked - no error, wrong answer. The join key is `pathKey`,
+ * the same one `detailedObjects` above joins an inventory to its details on, so the shell and
+ * the provider agree about what addresses an object.
+ *
+ * A null path is the closed modal, and a path nothing holds is null rather than a near miss.
+ */
+export function objectAtPath(
+  objects: readonly DetailedObject[],
+  path: readonly string[] | null,
+): DetailedObject | null {
+  if (path === null) return null;
+  const key = pathKey(path);
+  return objects.find((object) => pathKey(object.path) === key) ?? null;
+}

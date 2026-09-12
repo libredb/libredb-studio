@@ -144,20 +144,6 @@ export function quoteObjectPath(path: readonly string[], capabilities: ProviderC
 }
 
 /**
- * The same rule for a caller that holds the FLAT spelling and nothing better: a dotted
- * string, split on `.` and then quoted per segment.
- *
- * One caller, `src/app/api/db/profile/route.ts`, whose request body carries a table NAME
- * over the wire and no segments. It is a wrapper rather than a second implementation so
- * that the two cannot disagree about what a name means, which is a bill this epic has
- * already paid twice. Everything reached by CLICKING an object goes through
- * `quoteObjectPath` with the path the object surface answered, where no guess is made.
- */
-export function quoteQualifiedName(name: string, capabilities: ProviderCapabilities): string {
-  return quoteObjectPath(name.split("."), capabilities);
-}
-
-/**
  * The object's own segment, which is the LAST one and is never read by index 0 (standing
  * ruling 5g): at container depth 2 the object is `path[2]`, and a positional read there
  * addresses a container instead.

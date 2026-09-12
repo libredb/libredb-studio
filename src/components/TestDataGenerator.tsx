@@ -7,14 +7,27 @@ import { CopyButton } from "@/components/copy-button";
 import { DatabaseType } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import { quoteLiteral } from "@/lib/sql/values";
+import type { ProviderCapabilities } from "@/lib/db/types";
+import { objectPathLabel, pathKey } from "@/lib/db/object-path";
+import { objectSegment, quoteObjectPath } from "@/lib/query-generators";
 
 interface TestDataGeneratorProps {
   isOpen: boolean;
   onClose: () => void;
-  tableName: string;
+  /**
+   * The object's ADDRESS, one element per segment (#789, Task 35). The generated INSERT is
+   * a statement this modal can RUN, so the target it names has to be the object the operator
+   * clicked: a bare label addressed whichever `customers` the connection defaulted to.
+   */
+  tablePath: readonly string[];
   tableSchema: DetailedObject | null;
   databaseType?: string;
-  queryLanguage?: string;
+  /**
+   * The connected provider's declaration. It replaced a bare `queryLanguage` string because
+   * the statement now needs the dialect's QUOTING as well as its language, and both come
+   * from the same declaration rather than from two props that can disagree.
+   */
+  capabilities?: ProviderCapabilities;
   onExecuteQuery: (query: string) => void;
 }
 
@@ -162,12 +175,26 @@ const FAKE = {
 export function TestDataGenerator({
   isOpen,
   onClose,
-  tableName,
+  tablePath,
   tableSchema,
   databaseType,
-  queryLanguage,
+  capabilities,
   onExecuteQuery,
 }: TestDataGeneratorProps) {
+  const queryLanguage = capabilities?.queryLanguage;
+  const tableName = objectPathLabel(tablePath);
+  // The comparable spelling of the address, for the memo's dependency list: an array prop is
+  // a new identity on every render and would defeat the memo.
+  const tablePathKey = pathKey(tablePath);
+  /*
+    What the statement names. With a declaration it is the address quoted per segment, the
+    same rule and the same function the query generators use, so a name containing a dot
+    cannot become a qualifier. Without one - `provider-meta` has not answered yet - it is the
+    dotted spelling, which is what `useTabManager` writes in the same position for the same
+    reason: a qualified address is valid wherever the bare label is, and a bare label here
+    would write rows into another container's table.
+  */
+  const target = capabilities === undefined ? objectPathLabel(tablePath) : quoteObjectPath(tablePath, capabilities);
   const [rowCount, setRowCount] = useState(10);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -195,7 +222,13 @@ export function TestDataGenerator({
         }
         return doc;
       });
-      return JSON.stringify({ collection: tableName, operation: "insertMany", documents: docs }, null, 2);
+      // The collection's own segment: its path is [database, collection] and the driver is
+      // connected to the database already (standing ruling 2).
+      return JSON.stringify(
+        { collection: objectSegment(tablePath), operation: "insertMany", documents: docs },
+        null,
+        2,
+      );
     }
 
     // SQL INSERT
@@ -230,9 +263,9 @@ export function TestDataGenerator({
       return `(${values.join(", ")})`;
     });
 
-    return `INSERT INTO ${tableName} (${colNames})\nVALUES\n  ${rows.join(",\n  ")};`;
+    return `INSERT INTO ${target} (${colNames})\nVALUES\n  ${rows.join(",\n  ")};`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tableSchema, columnConfigs, rowCount, queryLanguage, tableName, databaseType, refreshKey]);
+  }, [tableSchema, columnConfigs, rowCount, queryLanguage, target, tablePathKey, databaseType, refreshKey]);
 
   if (!isOpen) return null;
 

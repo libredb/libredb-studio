@@ -47,10 +47,12 @@ interface TableItemProps {
   isAdmin: boolean;
   onTableClick?: (path: readonly string[]) => void;
   onGenerateSelect?: (path: readonly string[]) => void;
-  onProfileTable?: (tableName: string) => void;
-  onGenerateCode?: (tableName: string) => void;
-  onGenerateTestData?: (tableName: string) => void;
-  onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", table?: string) => void;
+  // ADDRESSES, one element per segment, the same shape `onTableClick` above already takes:
+  // the shell resolves the object by path, because a label is not unique (#789, Task 35).
+  onProfileTable?: (path: readonly string[]) => void;
+  onGenerateCode?: (path: readonly string[]) => void;
+  onGenerateTestData?: (path: readonly string[]) => void;
+  onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", path?: readonly string[]) => void;
 }
 
 type TableItemCallbacks = Pick<
@@ -123,23 +125,23 @@ function renderMenuItems({
           address it — so this separator is unconditional (#427). */}
       <Separator />
       {rowsAreAddressable && (
-        <Item onClick={() => callbacks.onProfileTable?.(table.name)}>
+        <Item onClick={() => callbacks.onProfileTable?.(table.path)}>
           <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-cyan" />
           {"Profile Table"}
         </Item>
       )}
-      <Item onClick={() => callbacks.onGenerateCode?.(table.name)}>
+      <Item onClick={() => callbacks.onGenerateCode?.(table.path)}>
         <Code strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-purple" />
         {"Generate Code"}
       </Item>
       {rowsAreAddressable && (
-        <Item onClick={() => callbacks.onGenerateTestData?.(table.name)}>
+        <Item onClick={() => callbacks.onGenerateTestData?.(table.path)}>
           <WandSparkles strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-amber" />
           {"Generate Test Data"}
         </Item>
       )}
       {/* A PER-ROW maintenance action needs an addressable row AND an engine with
-          maintenance to run: both items call `onOpenMaintenance("tables", table.name)`,
+          maintenance to run: both items call `onOpenMaintenance("tables", table.path)`,
           and for a derived grouping there is no such object to name — which is exactly
           the dead end #427 reported for Redis "Key Info".
 
@@ -172,13 +174,13 @@ function renderMenuItems({
         <>
           <Separator />
           {analyzeControl.offered && (
-            <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>
+            <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.path)}>
               <Search strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-amber" />
               {analyzeControl.label ?? labels?.analyzeAction ?? "Analyze Table"}
             </Item>
           )}
           {vacuumControl.offered && (
-            <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>
+            <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.path)}>
               <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
               {vacuumControl.label ?? labels?.vacuumAction ?? "Vacuum Table"}
             </Item>

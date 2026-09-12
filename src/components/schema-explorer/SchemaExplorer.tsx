@@ -22,12 +22,12 @@ interface SchemaExplorerProps {
   onGenerateSelect?: (path: readonly string[]) => void;
   onCreateTableClick?: () => void;
   isAdmin?: boolean;
-  onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", table?: string) => void;
+  onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", path?: readonly string[]) => void;
   databaseType?: string;
   metadata?: ProviderMetadata | null;
-  onProfileTable?: (tableName: string) => void;
-  onGenerateCode?: (tableName: string) => void;
-  onGenerateTestData?: (tableName: string) => void;
+  onProfileTable?: (path: readonly string[]) => void;
+  onGenerateCode?: (path: readonly string[]) => void;
+  onGenerateTestData?: (path: readonly string[]) => void;
 }
 
 export function SchemaExplorer({

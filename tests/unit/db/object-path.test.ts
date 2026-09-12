@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { comparePaths, pathKey } from "@/lib/db/object-path";
+import { comparePaths, objectPathLabel, objectPathQuery, pathKey, readObjectPathParam } from "@/lib/db/object-path";
 
 /**
  * The hoisted comparator, and the arms sixteen provider-local copies never had a test for.
@@ -88,5 +88,62 @@ describe("pathKey", () => {
     // built here and a key built by another reader would only agree on ordinary names.
     expect(pathKey(['a"b'])).toBe('a"b');
     expect(pathKey([])).toBe("");
+  });
+});
+
+/**
+ * How an ADDRESS travels in a URL (#789, Task 35).
+ *
+ * The maintenance deep link is the one consumer that has to put a path through a string, and
+ * the defect this epic keeps paying for is a reader splitting a string back into segments by
+ * a separator the writer never escaped. So there is no separator: one repeated query
+ * parameter per segment, and the URL grammar's own percent-encoding carries whatever the
+ * segment contains. Every case below is a character that would break a hand-rolled scheme.
+ */
+describe("objectPathQuery and readObjectPathParam", () => {
+  function roundTrip(path: readonly string[]): readonly string[] | null {
+    return readObjectPathParam(new URLSearchParams(objectPathQuery(path)));
+  }
+
+  test("a path round-trips segment for segment", () => {
+    expect(roundTrip(["libredb_objects", "app", "customers"])).toEqual(["libredb_objects", "app", "customers"]);
+  });
+
+  test("a segment containing a dot, a space or a slash survives", () => {
+    // The three the brief names, plus the two the query string itself is built from: an
+    // `&` or an `=` inside a segment would end the parameter in any unescaped scheme.
+    expect(roundTrip(["demo", ".inner_id.fake"])).toEqual(["demo", ".inner_id.fake"]);
+    expect(roundTrip(["app", "order items"])).toEqual(["app", "order items"]);
+    expect(roundTrip(["app", "a/b"])).toEqual(["app", "a/b"]);
+    expect(roundTrip(["app", "a&b=c"])).toEqual(["app", "a&b=c"]);
+    expect(roundTrip(["app", "a#b?c"])).toEqual(["app", "a#b?c"]);
+    expect(roundTrip(["app", "yeni müşteri"])).toEqual(["app", "yeni müşteri"]);
+  });
+
+  test("the DEPTH survives too: a dotted name is not the two-segment path that spells it", () => {
+    expect(roundTrip(["demo", "a.b"])).toEqual(["demo", "a.b"]);
+    expect(roundTrip(["demo", "a", "b"])).toEqual(["demo", "a", "b"]);
+    expect(objectPathQuery(["demo", "a.b"])).not.toBe(objectPathQuery(["demo", "a", "b"]));
+  });
+
+  test("an absent parameter is null, which is a link that named no object", () => {
+    expect(readObjectPathParam(new URLSearchParams(""))).toBeNull();
+    expect(readObjectPathParam(new URLSearchParams("tab=global"))).toBeNull();
+  });
+
+  test("an empty segment is a segment, not an absence", () => {
+    expect(roundTrip([""])).toEqual([""]);
+  });
+});
+
+describe("objectPathLabel", () => {
+  test("reads as the qualified address the engines themselves accept", () => {
+    expect(objectPathLabel(["libredb_objects", "app", "customers"])).toBe("libredb_objects.app.customers");
+  });
+
+  test("is DISPLAY only, and the two same-labelled objects read differently", () => {
+    expect(objectPathLabel(["shop", "dbo", "customers"])).not.toBe(
+      objectPathLabel(["libredb_objects", "app", "customers"]),
+    );
   });
 });

@@ -102,38 +102,6 @@ export interface TreeRowActionContext {
   readonly handlers: TreeRowActionHandlers;
 }
 
-/**
- * The one place the object model is still narrowed to the old flat model.
- *
- * `DataProfiler`, `CodeGenerator`, `TestDataGenerator` and the maintenance deep link take
- * a table NAME and look it up by `name` in the list the shell holds, down to
- * `conn.schema.find((t) => t.name === profilerTable)`. Those consumers now take
- * `DetailedObject` rather than the flat shape (#789), and the LOOKUP is still by name, so
- * `name` is the half that can cross this seam for them.
- *
- * THE TWO QUERY GENERATORS NO LONGER GO THROUGH HERE. `onGenerateSelect` and the row click
- * hand over `object.path`, because a generated statement is the one consumer that does not
- * look anything up: it writes an address, and `path` is the address (standing ruling 2).
- * An earlier version of this note recorded the miss that followed from spelling it `name`
- * - an object outside the session default container generated a bare identifier, which
- * three engines answered with an error - and deferred it to the task that removes the flat
- * reading. Task 30 closed it for the generators, in `src/lib/query-generators.ts`, which
- * quotes per segment; what stays here is the four lookups above.
- *
- * Qualifying the NAME from `path` at this seam is still refused, and the measurement that
- * refused it still holds: the flat spelling elides the DEFAULT container, which container
- * that is, is a per-engine literal inside each engine's own flat reader, and no capability
- * declares it. That reasoning is about matching a flat LIST lookup. Generating a query is
- * the opposite case - full qualification is valid everywhere the bare name is - which is
- * why the generators could move and these four could not.
- *
- * Exported, and called at the SHELL rather than inside the tree, so that the tree stays in
- * object-model terms and every site left to migrate is one grep for this name.
- */
-export function flatTargetName(object: DatabaseObject): string {
-  return object.name;
-}
-
 export function rowActions({
   row,
   object,

@@ -1,5 +1,11 @@
 import { describe, test, expect } from "bun:test";
-import { detailedObjects, relationObjects, rowWritableObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import {
+  detailedObjects,
+  objectAtPath,
+  relationObjects,
+  rowWritableObjects,
+  type DetailedObject,
+} from "@/lib/db/detailed-object";
 import type { DatabaseObject, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
 
 /**
@@ -129,5 +135,60 @@ describe("detailedObjects", () => {
     expect(counted.size).toBe("2 KB");
     expect("rowCount" in silent).toBe(false);
     expect("size" in silent).toBe(false);
+  });
+});
+
+/**
+ * The resolver that replaced `find((t) => t.name === label)` (#789, Task 35).
+ *
+ * The fixture is the DEFECT: two objects that share the label `customers` in two different
+ * containers, which is what the live SQL Server holds and what a name lookup cannot tell
+ * apart. Every assertion here asks for the SECOND and refuses the first, so a resolver that
+ * answers the first match passes none of them.
+ */
+describe("objectAtPath", () => {
+  const first: DetailedObject = {
+    name: "customers",
+    kind: "table",
+    path: ["libredb_objects", "app", "customers"],
+    columns: [{ name: "customer_id", type: "int", nullable: false, isPrimary: true }],
+    indexes: [],
+  };
+  const second: DetailedObject = {
+    name: "customers",
+    kind: "table",
+    path: ["shop", "dbo", "customers"],
+    columns: [{ name: "shop_customer_id", type: "int", nullable: false, isPrimary: true }],
+    indexes: [],
+  };
+  const collision: readonly DetailedObject[] = [first, second];
+
+  test("resolves the object whose ADDRESS was asked for, not the first with that label", () => {
+    const resolved = objectAtPath(collision, ["shop", "dbo", "customers"]);
+    expect(resolved).toBe(second);
+    expect(resolved).not.toBe(first);
+    // The columns are what every consumer of this reads, and they are the other object's.
+    expect(resolved?.columns.map((c) => c.name)).toEqual(["shop_customer_id"]);
+  });
+
+  test("the first is still reachable, so the test above is about the address and not the order", () => {
+    expect(objectAtPath(collision, ["libredb_objects", "app", "customers"])).toBe(first);
+  });
+
+  test("a path no object holds is null rather than the nearest label match", () => {
+    expect(objectAtPath(collision, ["warehouse", "dbo", "customers"])).toBeNull();
+    // A prefix is not a match: `pathKey` compares whole segments.
+    expect(objectAtPath(collision, ["shop", "dbo"])).toBeNull();
+  });
+
+  test("no target at all is null, which is the closed modal's state", () => {
+    expect(objectAtPath(collision, null)).toBeNull();
+  });
+
+  test("a segment containing a dot does not collide with the two-segment path spelling it", () => {
+    const dotted: DetailedObject = { name: "a.b", kind: "table", path: ["demo", "a.b"], columns: [], indexes: [] };
+    const nested: DetailedObject = { name: "b", kind: "table", path: ["demo", "a", "b"], columns: [], indexes: [] };
+    expect(objectAtPath([dotted, nested], ["demo", "a", "b"])).toBe(nested);
+    expect(objectAtPath([dotted, nested], ["demo", "a.b"])).toBe(dotted);
   });
 });

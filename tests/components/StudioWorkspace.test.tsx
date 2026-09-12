@@ -76,7 +76,17 @@ const baseTab = {
   type: "sql" as const,
 };
 
-const usersTable = { name: "users", columns: [{ name: "id", type: "integer" }] };
+const usersTable = { name: "users", path: ["app", "users"], columns: [{ name: "id", type: "integer" }] };
+/**
+ * The same LABEL in another container, which is what the live SQL Server holds and what a
+ * find-by-name cannot tell apart (#789, Task 35). It is listed FIRST below, so a shell that
+ * still resolves by name answers this one for every click.
+ */
+const otherUsersTable = {
+  name: "users",
+  path: ["shop", "dbo", "users"],
+  columns: [{ name: "shop_id", type: "integer" }],
+};
 
 // ---- Mock the workspace adapter hooks ----
 
@@ -810,6 +820,33 @@ describe("StudioWorkspace", () => {
 
     act(() => sidebarActions().onGenerateTestData?.(usersObject));
     expect(queryByTestId("testdatagenerator")).not.toBeNull();
+  });
+
+  test("each modal opens on the object that was CLICKED, where two containers share one label", () => {
+    connAdapterOverride = { schema: [otherUsersTable, usersTable] };
+    renderWorkspace();
+
+    act(() => sidebarActions().onProfileObject?.(usersObject));
+    expect(capturedDataProfilerProps.tablePath).toEqual(["app", "users"]);
+    expect(capturedDataProfilerProps.tableSchema).toBe(usersTable);
+
+    act(() => sidebarActions().onGenerateCode?.(usersObject));
+    expect(capturedCodeGeneratorProps.tableSchema).toBe(usersTable);
+
+    act(() => sidebarActions().onGenerateTestData?.(usersObject));
+    expect(capturedTestDataGeneratorProps.tableSchema).toBe(usersTable);
+  });
+
+  test("the host's declaration reaches the test-data generator, which writes a runnable statement", () => {
+    // It was passed `queryLanguage={undefined}` here, so this shell could never produce a
+    // MongoDB insertMany and its INSERT named a bare label. Both come from the connection's
+    // own metadata now, the same source the tree and the generators read.
+    const capabilities = { queryLanguage: "json" };
+    connAdapterOverride = { metadata: { capabilities } };
+    renderWorkspace();
+
+    act(() => sidebarActions().onGenerateTestData?.(usersObject));
+    expect(capturedTestDataGeneratorProps.capabilities).toBe(capabilities);
   });
 
   test("the two this shell has no destination for are not handed over", () => {

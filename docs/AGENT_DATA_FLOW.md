@@ -633,10 +633,10 @@ fences what it sends:
 | Visual EXPLAIN's AI explanation | `POST /api/ai/explain` | `query`, `explainPlan`, `schemaContext`, `databaseType` | `src/components/VisualExplain.tsx:486-497` |
 | Query safety dialog | `POST /api/ai/query-safety` | `query`, a filtered `schemaContext`, `databaseType` | `src/components/QuerySafetyDialog.tsx:167-171` |
 | Database documentation | `POST /api/ai/describe-schema` | A schema string built from table names, row counts and column definitions | `src/components/DatabaseDocs.tsx:61-68` |
-| Data Profiler's AI summary | `POST /api/ai/describe-schema` | Per column: null percent, distinct count, **`min=` and `max=`** | `src/components/DataProfiler.tsx:148-173` |
+| Data Profiler's AI summary | `POST /api/ai/describe-schema` | Per column: null percent, distinct count, **`min=` and `max=`** | `src/components/DataProfiler.tsx:84-107` |
 
 **That last row is the one to read carefully.** `/api/db/profile` computes `MIN(col::text)` and
-`MAX(col::text)` per column (`src/app/api/db/profile/route.ts:96-97`), and the Data Profiler puts
+`MAX(col::text)` per column (`src/app/api/db/profile/route.ts:115-116`), and the Data Profiler puts
 both into the context it sends for an AI summary. Those are **real values out of your columns** —
 the lexicographic first and last of each profiled column. It is the sharpest difference between the
 two profiling surfaces in this product: the agent's `profile_table` was built so that no value can

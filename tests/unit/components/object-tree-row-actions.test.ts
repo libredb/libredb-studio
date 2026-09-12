@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { flatTargetName, rowActions, type TreeRowActionHandlers } from "@/components/object-tree/row-actions";
+import { rowActions, type TreeRowActionHandlers } from "@/components/object-tree/row-actions";
 import type { TreeRowModel } from "@/components/object-tree/flatten";
 import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 
@@ -345,18 +345,6 @@ describe("running an action", () => {
     });
     actions[0].run();
     expect(calls).toBe(1);
-  });
-});
-
-describe("flatTargetName", () => {
-  test("the NAME is what the old flat consumers are given, never the last path segment", () => {
-    // Standing ruling 2: `path`'s last segment addresses the object and `name` labels it, and
-    // they differ where an engine disambiguates. Every consumer this boundary feeds looks its
-    // target up in the flat `TableSchema` list by `name` (`conn.schema.find(t => t.name ===
-    // ...)`), which is the same string `onObjectClick` already hands `handleTableClick`.
-    expect(flatTargetName({ path: ["app", "order_total(integer)"], name: "order_total", kind: "function" })).toBe(
-      "order_total",
-    );
   });
 });
 

@@ -5,11 +5,13 @@ import { Code, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/copy-button";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import { objectPathLabel } from "@/lib/db/object-path";
 
 interface CodeGeneratorProps {
   isOpen: boolean;
   onClose: () => void;
-  tableName: string;
+  /** The object's ADDRESS, one element per segment (#789, Task 35), never its label. */
+  tablePath: readonly string[];
   tableSchema: DetailedObject | null;
   databaseType?: string;
 }
@@ -248,7 +250,10 @@ export function generateCode(lang: Language, table: DetailedObject): string {
   }
 }
 
-export function CodeGenerator({ isOpen, onClose, tableName, tableSchema, databaseType }: CodeGeneratorProps) {
+export function CodeGenerator({ isOpen, onClose, tablePath, tableSchema, databaseType }: CodeGeneratorProps) {
+  // Display only, and the qualified spelling rather than the last segment: two objects can
+  // carry one label, so a header reading `customers` cannot say which one this is.
+  const tableName = objectPathLabel(tablePath);
   const [language, setLanguage] = useState<Language>("typescript");
   const [showLangDropdown, setShowLangDropdown] = useState(false);
 

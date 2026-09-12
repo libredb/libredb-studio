@@ -4,9 +4,10 @@ import {
   generateSelectQuery,
   shouldRefreshSchema,
   quoteIdentifier,
-  quoteQualifiedName,
   quoteObjectPath,
 } from "@/lib/query-generators";
+// The whole module, for the one assertion that is about what it does NOT export.
+import * as generators from "@/lib/query-generators";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 
@@ -342,8 +343,8 @@ describe("Couchbase (SQL++) generation", () => {
     expect(quoteIdentifier("we`ird", couchbaseCaps)).toBe("`we``ird`");
   });
 
-  test("quoteQualifiedName quotes each segment independently", () => {
-    expect(quoteQualifiedName("inventory.hotel", couchbaseCaps)).toBe("`inventory`.`hotel`");
+  test("quoteObjectPath quotes each segment independently", () => {
+    expect(quoteObjectPath(["inventory", "hotel"], couchbaseCaps)).toBe("`inventory`.`hotel`");
   });
 });
 
@@ -390,9 +391,9 @@ describe("ClickHouse (8123) generation", () => {
     expect(quoteIdentifier('we"ird', clickhouseCaps)).toBe('"we""ird"');
   });
 
-  test("quoteQualifiedName keeps the database separator intact", () => {
-    expect(quoteQualifiedName("demo.regtest", clickhouseCaps)).toBe("demo.regtest");
-    expect(quoteQualifiedName("demo.Events", clickhouseCaps)).toBe('demo."Events"');
+  test("quoteObjectPath keeps the database separator intact", () => {
+    expect(quoteObjectPath(["demo", "regtest"], clickhouseCaps)).toBe("demo.regtest");
+    expect(quoteObjectPath(["demo", "Events"], clickhouseCaps)).toBe('demo."Events"');
   });
 });
 
@@ -482,11 +483,11 @@ describe("Druid (8888) generation", () => {
     expect(quoteIdentifier('we"ird', druidCaps)).toBe('"we""ird"');
   });
 
-  test("quoteQualifiedName quotes each segment and keeps the schema separator intact", () => {
+  test("quoteObjectPath quotes each segment and keeps the schema separator intact", () => {
     // Druid's single catalog exposes one user schema, `druid`, and both the bare and
     // the schema-qualified form resolve, so the dot must stay a separator:
     // `SELECT * FROM "druid"."libredb_demo" LIMIT 1` -> HTTP 200.
-    expect(quoteQualifiedName("druid.libredb_demo", druidCaps)).toBe('"druid"."libredb_demo"');
+    expect(quoteObjectPath(["druid", "libredb_demo"], druidCaps)).toBe('"druid"."libredb_demo"');
   });
 
   test("generateSelectQuery with no columns falls back to a bare star, not a quoted one", () => {
@@ -541,11 +542,11 @@ describe("Trino (declared capabilities, port 8080) generation", () => {
     expect(quoteIdentifier('a"b', trinoCaps)).toBe('"a""b"');
   });
 
-  test("quoteQualifiedName keeps the catalog.schema.table separators intact", () => {
+  test("quoteObjectPath keeps the catalog.schema.table separators intact", () => {
     // Three levels rather than two, which is what a catalog adds: measured,
     // `SELECT * FROM tpch.sf1.nation LIMIT 50` resolves fully qualified.
-    expect(quoteQualifiedName("tpch.sf1.nation", trinoCaps)).toBe("tpch.sf1.nation");
-    expect(quoteQualifiedName("tpch.sf1.Nation", trinoCaps)).toBe('tpch.sf1."Nation"');
+    expect(quoteObjectPath(["tpch", "sf1", "nation"], trinoCaps)).toBe("tpch.sf1.nation");
+    expect(quoteObjectPath(["tpch", "sf1", "Nation"], trinoCaps)).toBe('tpch.sf1."Nation"');
   });
 
   test("a backtick is never emitted for this dialect", () => {
@@ -577,7 +578,7 @@ describe("Apache Cassandra (port 9042) generation", () => {
   });
 
   test("a keyspace-qualified name keeps its separator", () => {
-    expect(quoteQualifiedName("probe.customers", cassandraCaps)).toBe("probe.customers");
+    expect(quoteObjectPath(["probe", "customers"], cassandraCaps)).toBe("probe.customers");
   });
 
   test("names are double-quoted only when they would not round-trip bare", () => {
@@ -653,11 +654,11 @@ describe("quoteIdentifier", () => {
 
   test("schema-qualified names are quoted per-segment, not as one identifier", () => {
     // lowercase schema.table → no quotes (Postgres)
-    expect(quoteQualifiedName("employees.department", makeCaps({ defaultPort: 5432 }))).toBe("employees.department");
+    expect(quoteObjectPath(["employees", "department"], makeCaps({ defaultPort: 5432 }))).toBe("employees.department");
     // mixed-case table in a schema → only the table segment is quoted
-    expect(quoteQualifiedName("public.Order", makeCaps({ defaultPort: 5432 }))).toBe('public."Order"');
-    // bare name (no dot) is unchanged
-    expect(quoteQualifiedName("Customer", makeCaps({ defaultPort: 5432 }))).toBe('"Customer"');
+    expect(quoteObjectPath(["public", "Order"], makeCaps({ defaultPort: 5432 }))).toBe('public."Order"');
+    // a one-segment address is unchanged
+    expect(quoteObjectPath(["Customer"], makeCaps({ defaultPort: 5432 }))).toBe('"Customer"');
   });
 
   test("generateTableQuery on a schema-qualified table does NOT wrap the dot (regression)", () => {
@@ -1105,13 +1106,12 @@ describe("the generated statement addresses an object by its path", () => {
     expect(generateTableQuery([".inner_id.fake"], clickhouseCaps)).toBe('SELECT * FROM ".inner_id.fake" LIMIT 50;');
   });
 
-  test("the flat string wrapper still splits, because a dotted name is all it has", () => {
-    // `quoteQualifiedName` survives for `POST /api/db/profile`, whose request body carries
-    // a NAME and no segments. It is the same rule applied to a guess, not a second rule.
-    expect(quoteQualifiedName("demo.regtest", clickhouseCaps)).toBe("demo.regtest");
-    expect(quoteQualifiedName("demo.regtest", clickhouseCaps)).toBe(
-      quoteObjectPath(["demo", "regtest"], clickhouseCaps),
-    );
+  test("no string-splitting spelling of a name survives anywhere in the module", () => {
+    // `quoteQualifiedName` was kept alive in Task 30 for ONE caller, `POST /api/db/profile`,
+    // whose body carried a dotted name and no segments. Task 35 gave that route segments, so
+    // the wrapper had no caller and was deleted: a name helper that splits on `.`, left in
+    // the module with nobody calling it, is how this defect comes back (#789).
+    expect(Object.keys(generators)).not.toContain("quoteQualifiedName");
   });
 
   // --- C. the Oracle terminator (pre-existing, not a PR regression) ---------

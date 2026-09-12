@@ -5,6 +5,7 @@ import { useState, useEffect, useMemo } from "react";
 import { LoaderCircle, ChartColumn, X, Hash, CircleAlert, Sparkles, Lock, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DatabaseConnection } from "@/lib/types";
+import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import { detectSensitiveColumns, maskValue } from "@/lib/data-masking";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
@@ -21,13 +22,18 @@ import {
 interface DataProfilerProps {
   isOpen: boolean;
   onClose: () => void;
-  tableName: string;
+  /**
+   * The object's ADDRESS, one element per segment (#789, Task 35). Not a name: two
+   * containers can hold one label, and the profiler used to be handed the label and
+   * profile whichever object the schema list held first.
+   */
+  tablePath: readonly string[];
   tableSchema: DetailedObject | null;
   connection: DatabaseConnection | null;
   schemaContext?: string;
   databaseType?: string;
   /** Optional API adapter: when provided, bypasses the built-in /api/db/profile fetch. */
-  onProfile?: (params: { connectionId: string; tableName: string }) => Promise<ProfileData>;
+  onProfile?: (params: { connectionId: string; tablePath: readonly string[] }) => Promise<ProfileData>;
   /** Optional API adapter: when provided, bypasses the built-in /api/ai/describe-schema fetch. */
   onDescribeSchema?: (params: { tableName: string; schemaContext: string }) => Promise<string>;
 }
@@ -35,7 +41,7 @@ interface DataProfilerProps {
 export function DataProfiler({
   isOpen,
   onClose,
-  tableName,
+  tablePath,
   tableSchema,
   connection,
   schemaContext,
@@ -48,6 +54,11 @@ export function DataProfiler({
   const [aiSummary, setAiSummary] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The address as one string, for the header and for the AI prompt. `pathKey` is the
+  // comparable spelling and is what the effect below depends on: an array prop is a new
+  // identity on every render, so depending on it directly would re-fetch forever.
+  const tableName = objectPathLabel(tablePath);
+  const tableKey = pathKey(tablePath);
 
   // Detect sensitive columns for masking sample values in profiler
   const sensitiveColumnNames = useMemo(() => {
@@ -128,7 +139,7 @@ export function DataProfiler({
 
       if (onProfile) {
         // Platform adapter: use callback instead of fetch
-        data = await onProfile({ connectionId: connection.id, tableName });
+        data = await onProfile({ connectionId: connection.id, tablePath });
       } else {
         // Default: existing fetch behavior
         const columns = tableSchema.columns?.map((c) => c.name) || [];
@@ -138,7 +149,7 @@ export function DataProfiler({
           // The seed id for a managed connection: the browser's copy has had its
           // password and connection string stripped, so the object cannot be
           // resolved to a database from a cold provider cache.
-          body: JSON.stringify({ ...buildConnectionPayload(connection), tableName, columns }),
+          body: JSON.stringify({ ...buildConnectionPayload(connection), tablePath, columns }),
         });
 
         if (!response.ok) {
@@ -161,7 +172,7 @@ export function DataProfiler({
   };
 
   useEffect(() => {
-    if (isOpen && tableName && connection) {
+    if (isOpen && tablePath.length > 0 && connection) {
       fetchProfile();
     }
     return () => {
@@ -170,7 +181,7 @@ export function DataProfiler({
       setError(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, tableName]);
+  }, [isOpen, tableKey]);
 
   /*
     Escape closes the modal.
