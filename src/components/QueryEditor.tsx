@@ -493,10 +493,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     // SQL completion provider
     useEffect(() => {
       if (monaco && language === "sql") {
-        const disposable = registerSQLCompletionProvider(monaco, schemaCompletionCache);
+        const disposable = registerSQLCompletionProvider(monaco, schemaCompletionCache, databaseType);
         return () => disposable.dispose();
       }
-    }, [monaco, language, schemaCompletionCache]);
+    }, [monaco, language, schemaCompletionCache, databaseType]);
 
     // MongoDB JSON completion provider
     useEffect(() => {
