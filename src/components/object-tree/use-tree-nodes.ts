@@ -184,9 +184,19 @@ function mergeContainers(
  * then the kind counts of the one container the session is already in. The fact comes
  * from the ENGINE through `Container.isSessionDefault`, so nothing here knows that Oracle
  * means the connecting user and MySQL means `DATABASE()`, and an engine that publishes no
- * such container simply opens nothing. PostgreSQL is that case deliberately: a
- * `search_path` names several schemas and none of them owns the session, and guessing
- * `public` would be a per-engine rule in a consumer.
+ * such container simply opens nothing, which is a real case rather than a hypothetical
+ * one: measured on SQL Server 2022, `listContainers(["libredb_objects_two"])` marks none
+ * of `db_owner`, `dbo`, `guest` or `warehouse`, because the session is in a different
+ * database and the flag is about the connected one (#789).
+ *
+ * PostgreSQL is NOT that case, and an earlier version of this comment said it was.
+ * Measured in the browser on PostgreSQL 18.4: `CONTAINERS_SQL` marks
+ * `n.nspname = current_schema()`, so a default `search_path` opens `public` on first
+ * paint while `app` stays closed. The reading the comment was reaching for still holds
+ * and is the reason nothing here branches on the type id: `current_schema()` is
+ * PostgreSQL's answer to "which container is the session in", the same question Oracle
+ * answers with the connecting user and MySQL with `DATABASE()`, and this consumer only
+ * ever reads the flag.
  *
  * `expanded` is keyed by row id, so the id comes from `containerRowId` in `flatten.ts`
  * rather than from a second copy of that rule here.

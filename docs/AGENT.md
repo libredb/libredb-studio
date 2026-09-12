@@ -2598,6 +2598,22 @@ the role's own grants are the whole boundary (A3).
   fix,
   left unmodelled because the user-index reader drops `COLLATE` too and honouring it in one reader
   only would make the inventory disagree with itself.
+- **B76** — the npm package surface mounts the same object tree and cannot read any catalog with it:
+  the embedded adapter builds a connection carrying no database and `WorkspaceConnection` has no
+  field a host could put one in, so every read answers the provider's own "requires a host" sentence.
+  The flat list it replaced was fed by the host through `onSchemaFetch`; the tree has no such seam,
+  and which seam it should get is the undecided part.
+- **B77** — a bounded inventory tells a model it "stopped at a limit of N" where N is the number of
+  objects the read produced rather than any limit, on the two engines whose bound is a key walk. The
+  contract beside `truncated.limit` already says a caller must not show that number as a cap; the
+  caller-bounded readings still need it, so the fix is a wording decision rather than a deletion.
+- **B78** — the Redis and LibreDB command generators emit em dashes into text a user reads in the
+  editor. Pre-existing house-style debt, recorded rather than swept because its tests pin the exact
+  strings.
+- **B79** — switching between two connections of different container depth issues one read for the
+  new connection under the old engine's declaration, which answers 400 and is then re-read
+  correctly. A one-commit prop skew rather than a tree defect: the metadata hook clears itself in an
+  effect, and a child's effects run before its parent's.
 - **B59** — per-model WORDING has nowhere to go. A sentence is a measured value here (twice a shared
   change won cells and lost others, and had to be reverted whole), and the per-model override is
   gone: the document refuses wording and nothing else can populate it. Refusing unsigned prompt text

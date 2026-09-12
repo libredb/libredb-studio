@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B75 · 21
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B79 · 25
 
 ---
 
@@ -1892,3 +1892,95 @@ so), and none of them has been measured.
 
 **Done when:** a resume onto a repointed connection does one stated thing, and the run's own record
 says which.
+
+### B76. The npm package surface's object tree cannot read any catalog
+
+Measured in a real browser during task 28b, both engines tried, both failing the same way:
+`StudioWorkspace` mounts the same `Sidebar` and the same `ObjectTree` as the standalone shell, and
+that tree calls `/api/db/objects/*` through `buildConnectionPayload`. In the embedded shell that
+payload can never carry a database: `useConnectionAdapter` builds its `DatabaseConnection` from a
+hand-written field list (`id`, `name`, `type`, `createdAt`, `managed: true`, `skipObjectScan`) and
+never sets `seedId`, so `buildConnectionPayload` takes its `{ connection: conn }` branch and posts an
+object with no host, port, user or file path. `WorkspaceConnection` has no fields for any of those,
+so a host cannot supply them either.
+
+What a user of `@libredb/studio` sees is the tree's failure state on every connection: "The object
+list could not be read", over the provider's own sentence ("ClickHouse requires a host or a
+connection string", "Database file path is required for SQLite"), plus a Try again that fails
+identically.
+
+This is the seam the flat schema list used to cross and the tree does not: the old list was fed by
+the host through `onSchemaFetch`, which is still a required prop and still implemented by hosts. The
+tree has no equivalent, and `dist/workspace.js` ships it (grep `tree-row-badge`).
+
+Three plausible answers and none of them measured, which is why this is an entry rather than a fix:
+give the embedded contract its own object-surface seam (`onObjectsFetch`, mirroring `onSchemaFetch`);
+have the adapter set `seedId` so a host whose ids ARE this server's seed ids works and every other
+host still does not; or render the tree from what `onSchemaFetch` already returns and accept that an
+embedded tree has no lazy reads.
+
+**Done when:** the embedded shell lists objects for a connection its host declared, and a test drives
+that path through `StudioWorkspace` rather than through `ObjectTree` directly.
+
+### B77. A model is told a bounded inventory "stopped at a limit of N" where N is not a limit
+
+`src/lib/db/types.ts:1267` states the contract plainly: `truncated.limit` "is the bound where the
+bound IS an object count", and where it is not - "redis and libredb stop a key walk after a fixed
+number of KEYS" - those two answer `details.length` instead, so a caller must "read `limit` as an
+upper bound on `details.length` that a caller may not read back as a cap somebody set: `reason` is
+the field that says WHICH bound bit, and it is the one to show a person."
+
+`src/lib/agent/context-snapshot.ts:1252` does exactly what that forbids, and the reader it shows it
+to is a model. Measured in `.workflow-data` on a LibreDB store holding 12,000 keys past the 10,000
+scan cap, and again on Redis past its 1,000-key SCAN budget:
+
+    This inventory is incomplete: the reading stopped at a limit of 1 (the key walk stopped at the
+    first 10,000 keys of a bounded key scan), so an object that is not listed below may still exist.
+
+"a limit of 1" is the number of objects the read produced. No such limit was set by anybody, and the
+reason beside it names the real bound. On the caller-bounded readings the same sentence is correct
+and its number is load-bearing (`tests/unit/lib/agent/context-snapshot.test.ts` pins 5000), so the
+fix is not to drop the number: it is to stop presenting it as a cap, which is a wording decision
+about what a model is told and wants stating rather than guessing.
+
+**Done when:** the incompleteness note reads true for both bound shapes, with the caller-bounded
+number still in it, and a test drives the key-walk shape as well as the caller-bounded one.
+
+### B78. Generated Redis and LibreDB command text carries em dashes
+
+House style forbids em and en dashes in anything that lands in the repo or in front of a user.
+`src/lib/query-generators.ts` emits five of them into text a user reads in the editor, reproduced in
+the browser on a live Redis 8 during task 28b by pressing Generate Command on a key-prefix row:
+
+    # Redis commands for "bulk:*" — select a line and Run Selected.
+    # List keys under this prefix — ONE scan iteration, not the whole set.
+    # Create or update it — this overwrites an existing value
+
+plus `:229` for the hash variant and `:411` for the LibreDB header. Eleven more sit in that file's
+doc comments. Pre-existing rather than #789's, and named here because task 27 found it and it would
+otherwise disappear: it is not one edit but a small sweep, and
+`tests/unit/lib/query-generators.test.ts` pins the exact strings.
+
+**Done when:** no emitted line in that file carries an em or en dash, and its tests assert the new
+wording.
+
+### B79. A connection switch reads the new connection with the old engine's container depth
+
+Reproducible in a browser in one click. Select a depth-0 connection (SQLite), then a depth-2 one
+(DuckDB): the first request the tree issues is `POST /api/db/objects/counts` with
+`{"connectionId":"seed:t28b-duckdb","container":[]}`, which answers HTTP 400 "A DuckDB container
+path is [database] or [database, schema], received []". The tree then re-reads correctly and the
+final paint is right, so nothing is visible to the user; the 400 is in the server log on every such
+switch.
+
+The cause is a one-commit prop skew rather than anything in the tree: `Sidebar` renders `ObjectTree`
+with `activeConnection` and `metadata`, `useProviderMetadata` clears its metadata in an EFFECT, and a
+child's effects run before its parent's - so the tree's reconciler fires once with the new connection
+and the previous engine's `capabilities`. `Sidebar`'s own comment reasons about metadata being
+ABSENT ("Nothing is drawn while the declaration is missing") and not about it being STALE.
+
+Pre-existing in shape and newly consequential: while the sidebar only listed tables, a stale
+capability object cost nothing, and now the request SHAPE is derived from it.
+
+**Done when:** no read is issued for a connection whose declaration has not arrived, proven by a test
+that switches between two engines of different depth and asserts what was posted.
