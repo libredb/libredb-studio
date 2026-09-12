@@ -14,8 +14,8 @@
  * The guard is a parser, not a grep, and the vocabulary is sorted into classes
  * because the classes need different treatment. What forces that here is sharper
  * than in Couchbase (#262) or Druid (#265): the NEUTRAL seam deliberately reuses the
- * wire's own English. `SearchQueryResult.rows`, `columnTypes`, `TableSchema.size`,
- * `getSchema`, `options.schema` and `SEARCH_CONTAINER_TYPES = ["object", "nested"]`
+ * wire's own English. `SearchQueryResult.rows`, `columnTypes`, `DatabaseObject.sizeBytes`,
+ * the object reads, `options.schema` and `SEARCH_CONTAINER_TYPES = ["object", "nested"]`
  * are all legitimate, and `rows` / `schema` / `size` are simultaneously envelope
  * keys on the wire (`{columns,rows}` on Elasticsearch against
  * `{schema,datarows,total,size}` on OpenSearch, measured). So those words are

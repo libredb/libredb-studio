@@ -186,13 +186,17 @@ export interface StudioWorkspaceProps {
   /**
    * The host's reading of one connection's objects (#789).
    *
-   * `DetailedObject` rather than the flat `TableSchema` this took before: an entry may now
-   * carry the `kind` its engine declared and the `path` its segments make up, and every
-   * consumer filter in the workspace reads that kind. Both fields are OPTIONAL, so a host
-   * that answers exactly what it answered before still satisfies this and its objects reach
-   * every consumer unfiltered, which is what a declaration nobody made has to mean. A host
-   * that knows its kinds makes the filters live: a view is no longer offered as an import
-   * target, and a routine is not drawn in the diagram.
+   * `DetailedObject`, which carries the `kind` its engine declared and the `path` its segments
+   * make up beside the columns. Every consumer filter in the workspace reads that kind: a view
+   * is not offered as an import target, and a routine is not drawn in the diagram.
+   *
+   * BOTH FIELDS ARE REQUIRED as of the major that deleted `TableSchema` (#789). They were
+   * optional while a flat reading with nowhere to put them was still live, and a host that
+   * answered without them had its objects reach every consumer unfiltered, because a
+   * declaration nobody made cannot narrow anything. There is no such reading left, so a host
+   * says what each object IS and where it lives rather than handing over a qualified name for
+   * this package to split - which it may not do, since a table literally called `a.b` is
+   * indistinguishable from `b` in `a` once either side is one string.
    *
    * This shell has no object routes of its own, so nothing here can fill the fields in on
    * the host's behalf: the standalone app reads `/api/db/objects/inventory` and this one

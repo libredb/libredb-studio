@@ -1358,7 +1358,14 @@ describe("planning mode runs no statement of the user's", () => {
       await runInvestigation(run.runId, {
         service: b.service,
         model: await modelOver(script.fetch),
-        resources: { ...b.resources, connection: { ...CONNECTION, type: "mongodb" } },
+        // `OBJECT_CAPABILITIES` so the walk REACHES the provider and is refused by it. With no
+        // kind declared it would be refused one step earlier, by this server, and the run would
+        // be told something true about the declaration instead of about the database.
+        resources: {
+          ...b.resources,
+          connection: { ...CONNECTION, type: "mongodb" },
+          capabilities: OBJECT_CAPABILITIES,
+        },
       });
 
       const rules = rulesOf(script.turns[0] as Turn);
@@ -1377,9 +1384,9 @@ describe("planning mode runs no statement of the user's", () => {
       // dialect only decides which of two readings is taken, and what this run is told
       // is the thing that actually stopped it — the same forwarding `operations` has
       // done since #411, for the reason #411 recorded. What stopped it is a
-      // `getSchema()` that rejected, which is the only shape "this provider cannot
-      // describe the database" has: the method is required on `DatabaseProvider`.
-      expect(script.turns[0]?.transcript).toContain("this database refused to describe its own schema");
+      // an object read that rejected, which is the only shape "this provider cannot describe
+      // the database" has: the five object methods are required on `DatabaseProvider`.
+      expect(script.turns[0]?.transcript).toContain("this database refused to describe its own objects");
       expect(script.turns[0]?.transcript).not.toContain("inspect_schema");
       // Since #414 the capture DOES acquire a provider here, under the operations
       // profile, and asks it to describe itself; this fixture's provider carries only
@@ -2206,7 +2213,11 @@ describe("planning mode runs no statement of the user's", () => {
       await runInvestigation(run.runId, {
         service: b.service,
         model: await modelOver(script.fetch),
-        resources: { ...b.resources, connection: { ...CONNECTION, type: "mongodb" } },
+        resources: {
+          ...b.resources,
+          connection: { ...CONNECTION, type: "mongodb" },
+          capabilities: OBJECT_CAPABILITIES,
+        },
       });
 
       const rules = rulesOfTurn(script.turns[0] as Turn);
@@ -2217,7 +2228,7 @@ describe("planning mode runs no statement of the user's", () => {
       // thing that knows WHY. Until #414 what it knew here was the DIALECT; now the
       // dialect only decides which of the two readings is taken, and what it knows is
       // that this connection's provider rejected the request to describe the database.
-      expect(script.turns[0]?.transcript).toContain("this database refused to describe its own schema");
+      expect(script.turns[0]?.transcript).toContain("this database refused to describe its own objects");
       // And never the capture's own ADVICE, which sends a model to a tool no operations
       // run holds in either mode (#350).
       expect(script.turns[0]?.transcript).not.toContain("Use inspect_schema");
@@ -2395,6 +2406,7 @@ describe("planning mode runs no statement of the user's", () => {
       const operationsPlanRulesOn = async (
         type: DatabaseType,
         options: BootOptions = {},
+        capabilities: ProviderCapabilities = CAPABILITIES,
       ): Promise<{ readonly rules: string; readonly transcript: string }> => {
         const b = boot(freshDataDir(), options);
         const run = await startRun(b, "planning", "operations");
@@ -2403,7 +2415,7 @@ describe("planning mode runs no statement of the user's", () => {
         await runInvestigation(run.runId, {
           service: b.service,
           model: await modelOver(script.fetch),
-          resources: { ...b.resources, connection: { ...CONNECTION, type } },
+          resources: { ...b.resources, connection: { ...CONNECTION, type }, capabilities },
         });
 
         const turn = script.turns[0] as Turn;
@@ -2445,7 +2457,9 @@ describe("planning mode runs no statement of the user's", () => {
         specific about, so everything it can be specific about is the mechanism it names.
       */
       test("an ungrounded operations plan on Redis is told the engine as well as that it saw nothing", async () => {
-        const { rules, transcript } = await operationsPlanRulesOn("redis");
+        // `OBJECT_CAPABILITIES` so the walk reaches this fixture's provider and is refused BY
+        // IT, which is what "this server cannot ground this engine" means here.
+        const { rules, transcript } = await operationsPlanRulesOn("redis", {}, OBJECT_CAPABILITIES);
 
         expect(rules).toContain("No schema inventory is available to this run");
         expect(rules).toContain("This database is redis and nothing else");
@@ -2453,8 +2467,8 @@ describe("planning mode runs no statement of the user's", () => {
         expect(rules).not.toContain("inspect_operations");
         // The capture's own diagnosis still reaches the model, unchanged by this rule.
         // It names the reading rather than the dialect since #414: Redis takes the
-        // provider path now, and this fixture's `getSchema()` rejects.
-        expect(transcript).toContain("this database refused to describe its own schema");
+        // provider path now, and this fixture's object reads reject.
+        expect(transcript).toContain("this database refused to describe its own objects");
       });
 
       /*
