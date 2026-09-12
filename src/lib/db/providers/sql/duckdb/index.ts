@@ -42,14 +42,11 @@
 import { SQLBaseProvider } from "../sql-base";
 import {
   type ActiveSessionDetails,
-  type ColumnSchema,
   type Container,
   type DatabaseConnection,
   type DatabaseObject,
   type DatabaseOverview,
-  type ForeignKeySchema,
   type HealthInfo,
-  type IndexSchema,
   type IndexStats,
   type KindCount,
   type MaintenanceResult,
@@ -65,7 +62,6 @@ import {
   type ReadOnlyStatementBudget,
   type SlowQueryStats,
   type StorageStats,
-  type TableSchema,
   type TableStats,
 } from "../../../types";
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../../object-kinds";
@@ -84,12 +80,10 @@ import { findCodeWord } from "@/lib/sql/words";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
 import { type DuckDBClient, describeOpenFailure, openDuckDBClient } from "./client";
 import {
-  displayName,
   readActiveSessions,
   readHealth,
   readIndexStats,
   readOverview,
-  readSchema,
   readSlowQueries,
   readStorageStats,
   readTableStats,
@@ -717,11 +711,6 @@ export class DuckDBProvider extends SQLBaseProvider {
   // ==========================================================================
   // Schema
   // ==========================================================================
-
-  public async getSchema(): Promise<TableSchema[]> {
-    this.ensureConnected();
-    return readSchema(this.client!);
-  }
 
   // ==========================================================================
   // The object surface (#789)

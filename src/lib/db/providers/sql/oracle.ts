@@ -8,7 +8,6 @@ import { SQLBaseProvider } from "./sql-base";
 import { oracleColumnTypes } from "./column-types";
 import {
   type DatabaseConnection,
-  type TableSchema,
   type QueryResult,
   type HealthInfo,
   type MaintenanceType,
@@ -58,31 +57,6 @@ import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from
 // ============================================================================
 // Multi-line SQL is hoisted to module scope so per-line coverage attribution
 // stays stable (repo pattern, see the SCHEMA_*_SQL consts in mssql.ts).
-
-const SCHEMA_COLUMNS_SQL = `SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_DEFAULT, COLUMN_ID
-         FROM ALL_TAB_COLUMNS WHERE OWNER = :1
-         ORDER BY TABLE_NAME, COLUMN_ID`;
-
-const SCHEMA_PRIMARY_KEYS_SQL = `SELECT ac.TABLE_NAME, acc.COLUMN_NAME
-         FROM ALL_CONSTRAINTS ac
-         JOIN ALL_CONS_COLUMNS acc ON ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME AND ac.OWNER = acc.OWNER
-         WHERE ac.OWNER = :1 AND ac.CONSTRAINT_TYPE = 'P'`;
-
-const SCHEMA_FOREIGN_KEYS_SQL = `SELECT ac.TABLE_NAME,
-                acc.COLUMN_NAME,
-                rc.TABLE_NAME AS REF_TABLE,
-                rcc.COLUMN_NAME AS REF_COLUMN
-         FROM ALL_CONSTRAINTS ac
-         JOIN ALL_CONS_COLUMNS acc ON ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME AND ac.OWNER = acc.OWNER
-         JOIN ALL_CONSTRAINTS rc ON ac.R_CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND ac.R_OWNER = rc.OWNER
-         JOIN ALL_CONS_COLUMNS rcc ON rc.CONSTRAINT_NAME = rcc.CONSTRAINT_NAME AND rc.OWNER = rcc.OWNER
-         WHERE ac.OWNER = :1 AND ac.CONSTRAINT_TYPE = 'R'`;
-
-const SCHEMA_INDEXES_SQL = `SELECT ai.TABLE_NAME, ai.INDEX_NAME, ai.UNIQUENESS, aic.COLUMN_NAME, aic.COLUMN_POSITION
-         FROM ALL_INDEXES ai
-         JOIN ALL_IND_COLUMNS aic ON ai.INDEX_NAME = aic.INDEX_NAME AND ai.OWNER = aic.INDEX_OWNER
-         WHERE ai.OWNER = :1
-         ORDER BY ai.TABLE_NAME, ai.INDEX_NAME, aic.COLUMN_POSITION`;
 
 // Shared by getHealth() and getPerformanceMetrics().
 const CACHE_HIT_RATIO_SQL = `SELECT ROUND(
@@ -1496,113 +1470,6 @@ export class OracleProvider extends SQLBaseProvider {
   // ============================================================================
   // Schema Operations
   // ============================================================================
-
-  public async getSchema(): Promise<TableSchema[]> {
-    this.ensureConnected();
-
-    let conn: oracledb.Connection | undefined;
-    try {
-      conn = await this.pool!.getConnection();
-      const owner = this.config.user?.toUpperCase() || "";
-
-      // Get tables
-      const tablesRes = await conn.execute(
-        `SELECT TABLE_NAME, NUM_ROWS FROM ALL_TABLES WHERE OWNER = :1 ORDER BY TABLE_NAME`,
-        [owner],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
-      );
-      const tables = (tablesRes.rows || []) as Record<string, unknown>[];
-
-      // Get columns
-      const colsRes = await conn.execute(SCHEMA_COLUMNS_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT });
-      const allCols = (colsRes.rows || []) as Record<string, unknown>[];
-
-      // Get primary keys
-      const pkRes = await conn.execute(SCHEMA_PRIMARY_KEYS_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT });
-      const pkRows = (pkRes.rows || []) as Record<string, unknown>[];
-      const pkMap = new Map<string, Set<string>>();
-      for (const row of pkRows) {
-        const tbl = String(row.TABLE_NAME || "");
-        const col = String(row.COLUMN_NAME || "");
-        if (!pkMap.has(tbl)) pkMap.set(tbl, new Set());
-        pkMap.get(tbl)!.add(col);
-      }
-
-      // Get foreign keys
-      const fkRes = await conn.execute(SCHEMA_FOREIGN_KEYS_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT });
-      const fkRows = (fkRes.rows || []) as Record<string, unknown>[];
-
-      // Get indexes
-      const idxRes = await conn.execute(SCHEMA_INDEXES_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT });
-      const idxRows = (idxRes.rows || []) as Record<string, unknown>[];
-
-      // Group columns, indexes, foreign keys by table
-      const colsByTable = new Map<string, Record<string, unknown>[]>();
-      for (const c of allCols) {
-        const tbl = String(c.TABLE_NAME || "");
-        if (!colsByTable.has(tbl)) colsByTable.set(tbl, []);
-        colsByTable.get(tbl)!.push(c);
-      }
-
-      const fksByTable = new Map<string, Record<string, unknown>[]>();
-      for (const fk of fkRows) {
-        const tbl = String(fk.TABLE_NAME || "");
-        if (!fksByTable.has(tbl)) fksByTable.set(tbl, []);
-        fksByTable.get(tbl)!.push(fk);
-      }
-
-      const idxByTable = new Map<string, Map<string, { unique: boolean; columns: string[] }>>();
-      for (const idx of idxRows) {
-        const tbl = String(idx.TABLE_NAME || "");
-        const idxName = String(idx.INDEX_NAME || "");
-        if (!idxByTable.has(tbl)) idxByTable.set(tbl, new Map());
-        const tableIdxs = idxByTable.get(tbl)!;
-        if (!tableIdxs.has(idxName)) {
-          tableIdxs.set(idxName, {
-            unique: String(idx.UNIQUENESS || "") === "UNIQUE",
-            columns: [],
-          });
-        }
-        tableIdxs.get(idxName)!.columns.push(String(idx.COLUMN_NAME || ""));
-      }
-
-      return tables.map((t) => {
-        const tableName = String(t.TABLE_NAME || "");
-        const pks = pkMap.get(tableName) || new Set();
-
-        const columns = (colsByTable.get(tableName) || []).map((c) => ({
-          name: String(c.COLUMN_NAME || ""),
-          type: String(c.DATA_TYPE || ""),
-          nullable: String(c.NULLABLE || "") === "Y",
-          isPrimary: pks.has(String(c.COLUMN_NAME || "")),
-          defaultValue: c.DATA_DEFAULT ? String(c.DATA_DEFAULT).trim() : undefined,
-        }));
-
-        const foreignKeys = (fksByTable.get(tableName) || []).map((fk) => ({
-          columnName: String(fk.COLUMN_NAME || ""),
-          referencedTable: String(fk.REF_TABLE || ""),
-          referencedColumn: String(fk.REF_COLUMN || ""),
-        }));
-
-        const tableIdxs = idxByTable.get(tableName) || new Map();
-        const indexes = Array.from(tableIdxs.entries()).map(([name, info]) => ({
-          name,
-          columns: info.columns,
-          unique: info.unique,
-        }));
-
-        return {
-          name: tableName,
-          rowCount: Number(t.NUM_ROWS || 0),
-          columns,
-          indexes,
-          foreignKeys,
-        };
-      });
-    } finally {
-      if (conn) await conn.close();
-    }
-  }
 
   // ============================================================================
   // Object surface (#789)

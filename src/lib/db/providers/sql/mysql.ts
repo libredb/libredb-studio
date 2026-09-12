@@ -18,7 +18,6 @@ import {
   type ObjectDetail,
   type ObjectDetailBatch,
   type ObjectKindSpec,
-  type TableSchema,
   type QueryResult,
   type HealthInfo,
   type MaintenanceType,
@@ -270,53 +269,6 @@ function statusValue(rows: RowDataPacket[], name: string): unknown {
 // ============================================================================
 // Multi-line SQL is hoisted to module scope so per-line coverage attribution
 // stays stable (repo pattern, see the SCHEMA_*_SQL consts in mssql.ts).
-
-const SCHEMA_TABLES_SQL = `
-        SELECT
-          TABLE_NAME as table_name,
-          TABLE_ROWS as row_count,
-          DATA_LENGTH + INDEX_LENGTH as total_size
-        FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = ?
-        AND TABLE_TYPE = 'BASE TABLE'
-        ORDER BY TABLE_NAME ASC;
-      `;
-
-const SCHEMA_COLUMNS_SQL = `
-          SELECT
-            COLUMN_NAME as column_name,
-            DATA_TYPE as data_type,
-            IS_NULLABLE as is_nullable,
-            COLUMN_DEFAULT as column_default,
-            COLUMN_KEY as column_key
-          FROM information_schema.COLUMNS
-          WHERE TABLE_SCHEMA = ?
-          AND TABLE_NAME = ?
-          ORDER BY ORDINAL_POSITION
-          LIMIT 100;
-        `;
-
-const SCHEMA_FOREIGN_KEYS_SQL = `
-          SELECT
-            COLUMN_NAME as column_name,
-            REFERENCED_TABLE_NAME as referenced_table,
-            REFERENCED_COLUMN_NAME as referenced_column
-          FROM information_schema.KEY_COLUMN_USAGE
-          WHERE TABLE_SCHEMA = ?
-          AND TABLE_NAME = ?
-          AND REFERENCED_TABLE_NAME IS NOT NULL;
-        `;
-
-const SCHEMA_INDEXES_SQL = `
-          SELECT
-            INDEX_NAME as index_name,
-            GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) as columns,
-            NOT NON_UNIQUE as is_unique
-          FROM information_schema.STATISTICS
-          WHERE TABLE_SCHEMA = ?
-          AND TABLE_NAME = ?
-          GROUP BY INDEX_NAME, NON_UNIQUE;
-        `;
 
 const DATABASE_SIZE_MB_SQL = `
         SELECT
@@ -1909,56 +1861,6 @@ export class MySQLProvider extends SQLBaseProvider {
   // ============================================================================
   // Schema Operations
   // ============================================================================
-
-  public async getSchema(): Promise<TableSchema[]> {
-    this.ensureConnected();
-
-    const conn = await this.pool!.getConnection();
-    try {
-      const [tablesRows] = await runStatement(conn, SCHEMA_TABLES_SQL, [this.config.database]);
-
-      const schemas: TableSchema[] = [];
-
-      for (const row of tablesRows) {
-        const tableName = row.table_name;
-        const rowCount = parseInt(row.row_count || "0");
-        const sizeBytes = parseInt(row.total_size || "0");
-
-        const [columnsRows] = await runStatement(conn, SCHEMA_COLUMNS_SQL, [this.config.database, tableName]);
-
-        const [fkRows] = await runStatement(conn, SCHEMA_FOREIGN_KEYS_SQL, [this.config.database, tableName]);
-
-        const [indexRows] = await runStatement(conn, SCHEMA_INDEXES_SQL, [this.config.database, tableName]);
-
-        schemas.push({
-          name: tableName,
-          rowCount,
-          size: formatBytes(sizeBytes),
-          columns: columnsRows.map((col) => ({
-            name: col.column_name,
-            type: col.data_type,
-            nullable: col.is_nullable === "YES",
-            isPrimary: col.column_key === "PRI",
-            defaultValue: col.column_default ?? undefined,
-          })),
-          indexes: indexRows.map((idx) => ({
-            name: idx.index_name,
-            columns: idx.columns?.split(",") ?? [],
-            unique: Boolean(idx.is_unique),
-          })),
-          foreignKeys: fkRows.map((fk) => ({
-            columnName: fk.column_name,
-            referencedTable: fk.referenced_table,
-            referencedColumn: fk.referenced_column,
-          })),
-        });
-      }
-
-      return schemas;
-    } finally {
-      conn.release();
-    }
-  }
 
   // ============================================================================
   // Object surface (#789)

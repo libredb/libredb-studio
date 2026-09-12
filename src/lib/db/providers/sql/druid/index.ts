@@ -63,7 +63,6 @@ import {
   type QueryWarning,
   type SlowQueryStats,
   type StorageStats,
-  type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
@@ -74,7 +73,6 @@ import {
   getIndexStats as readIndexStats,
   getOverview as readOverview,
   getPerformanceMetrics as readPerformanceMetrics,
-  getSchema as readSchema,
   getSlowQueries as readSlowQueries,
   getStorageStats as readStorageStats,
   getTableStats as readTableStats,
@@ -472,21 +470,6 @@ export class DruidProvider extends SQLBaseProvider {
   // ==========================================================================
   // Schema
   // ==========================================================================
-
-  /**
-   * The datasources and their columns, from `INFORMATION_SCHEMA` alone.
-   *
-   * `getSchemaList` and `getSchemaRelations` are deliberately NOT implemented.
-   * Both are optional and the client falls back to this method, and the split
-   * exists to keep a slow relationship read from blocking the table list - which
-   * Druid has neither half of: there are no user-defined indexes and no foreign
-   * keys, so a list would be byte-identical to this and a relations read would
-   * spend a round trip to answer two empty arrays per datasource.
-   */
-  public async getSchema(): Promise<TableSchema[]> {
-    const transport = this.requireTransport();
-    return this.guarded(() => readSchema(transport));
-  }
 
   // ==========================================================================
   // Monitoring

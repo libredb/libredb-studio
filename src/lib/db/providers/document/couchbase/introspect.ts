@@ -24,7 +24,7 @@
  *    is what keeps the cost of schema loading in hand.
  */
 
-import type { ColumnSchema, IndexSchema, TableRelations, TableSchema } from "@/lib/types";
+import type { ColumnSchema } from "@/lib/types";
 import { COUCHBASE_DEFAULT_SCOPE, keyspaceDisplayName, keyspacePath } from "./keyspace";
 import type { CouchbaseRow, CouchbaseTransport, Keyspace } from "./transport";
 
@@ -43,9 +43,6 @@ const META_PROPERTY = "~meta";
 
 /** Type reported for a property whose INFER entry names none. */
 const UNKNOWN_TYPE = "unknown";
-
-/** Name for an index row that carries none, mirroring the MongoDB provider. */
-const UNKNOWN_INDEX_NAME = "unknown";
 
 /** How SQL++ addresses the document key a primary index is built on. */
 export const DOCUMENT_KEY_EXPRESSION = "META().id";
@@ -82,15 +79,6 @@ const COLLECTION_LIST_SQL = [
   "LEFT JOIN system:scopes AS s ON k.`bucket` = s.`bucket` AND k.`scope` = s.name",
   "WHERE k.`bucket` = $1 OR (k.`bucket` IS MISSING AND k.name = $1)",
   "ORDER BY scope_name, collection_name",
-].join(" ");
-
-/** Indexes of the pinned bucket, aliased onto the same row shape as above. */
-const INDEX_LIST_SQL = [
-  "SELECT i.name AS index_name, i.bucket_id AS bucket_name, i.scope_id AS scope_name,",
-  "i.keyspace_id AS collection_name, i.index_key AS index_key, i.is_primary AS is_primary",
-  "FROM system:indexes AS i",
-  "WHERE i.bucket_id = $1 OR (i.bucket_id IS MISSING AND i.keyspace_id = $1)",
-  "ORDER BY scope_name, collection_name, index_name",
 ].join(" ");
 
 /** A single backtick-quoted identifier, with embedded backticks doubled. */
@@ -223,21 +211,6 @@ export function unquoteIndexKey(key: string): string {
   return match ? match[1].replaceAll("``", "`") : key;
 }
 
-function toIndexSchema(row: CouchbaseRow): IndexSchema {
-  const isPrimary = row.is_primary === true;
-  const keys = Array.isArray(row.index_key)
-    ? row.index_key.filter((key): key is string => typeof key === "string").map(unquoteIndexKey)
-    : [];
-
-  return {
-    name: typeof row.index_name === "string" ? row.index_name : UNKNOWN_INDEX_NAME,
-    // A primary index carries no index_key: it keys the document key itself.
-    columns: isPrimary && keys.length === 0 ? [DOCUMENT_KEY_EXPRESSION] : keys,
-    // No secondary GSI enforces uniqueness; only the document key is unique.
-    unique: isPrimary,
-  };
-}
-
 /**
  * Run `worker` over `items`, at most `limit` at a time, preserving order.
  * Results are written by index, so no item is dropped and none is reordered.
@@ -317,46 +290,4 @@ export async function inferColumnsEach(
   keyspaces: readonly Keyspace[],
 ): Promise<ColumnSchema[][]> {
   return await mapWithConcurrency([...keyspaces], INFER_CONCURRENCY, (keyspace) => inferColumns(transport, keyspace));
-}
-
-/**
- * Fast structural schema: every collection of the bucket, with inferred
- * columns. Indexes are left to getSchemaRelations() so their cost never blocks
- * the tree, exactly as in the SQL providers.
- */
-export async function getSchemaList(transport: CouchbaseTransport, bucket: string): Promise<TableSchema[]> {
-  const collections = await listCollections(transport, bucket);
-  const columns = await mapWithConcurrency(collections, INFER_CONCURRENCY, (collection) =>
-    inferColumns(transport, collection.keyspace),
-  );
-
-  return collections.map((collection, index) => ({
-    name: collection.displayName,
-    columns: columns[index],
-    indexes: [],
-    foreignKeys: [],
-  }));
-}
-
-/**
- * Index lists keyed by display name.
- *
- * Failure propagates on purpose. An empty index list is the signal that a
- * collection has no usable index (decision 6), so degrading a failed catalog
- * read to empty would fabricate that signal for the whole bucket.
- */
-export async function getSchemaRelations(transport: CouchbaseTransport, bucket: string): Promise<TableRelations[]> {
-  const result = await transport.query(INDEX_LIST_SQL, { args: [bucket], timeoutMs: CATALOG_TIMEOUT_MS });
-
-  const byCollection = new Map<string, IndexSchema[]>();
-  for (const row of result.rows) {
-    const keyspace = resolveKeyspace(bucket, row);
-    if (!keyspace) continue;
-    const displayName = keyspaceDisplayName(keyspace.scope, keyspace.collection);
-    const indexes = byCollection.get(displayName) ?? [];
-    indexes.push(toIndexSchema(row));
-    byCollection.set(displayName, indexes);
-  }
-
-  return [...byCollection.entries()].map(([name, indexes]) => ({ name, foreignKeys: [], indexes }));
 }

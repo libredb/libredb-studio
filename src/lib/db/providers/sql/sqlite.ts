@@ -16,13 +16,10 @@ import {
   type ContainerLevelSpec,
   type DatabaseObject,
   type DatabaseConnection,
-  type ForeignKeySchema,
-  type IndexSchema,
   type KindCount,
   type ObjectDetail,
   type ObjectDetailBatch,
   type ObjectKindSpec,
-  type TableSchema,
   type QueryResult,
   type HealthInfo,
   type MaintenanceType,
@@ -59,30 +56,6 @@ import * as path from "path";
 // Type Definitions
 // ============================================================================
 
-// Row shapes returned by the PRAGMA introspection statements below.
-interface SQLiteColumnInfoRow {
-  cid: number;
-  name: string;
-  type: string;
-  notnull: number;
-  dflt_value: string | null;
-  pk: number;
-}
-
-interface SQLiteForeignKeyRow {
-  id: number;
-  seq: number;
-  table: string;
-  from: string;
-  to: string;
-}
-
-interface SQLiteIndexListRow {
-  seq: number;
-  name: string;
-  unique: number;
-}
-
 // ============================================================================
 // Introspection SQL
 // ----------------------------------------------------------------------------
@@ -94,18 +67,6 @@ interface SQLiteIndexListRow {
 // module load, these consts are reported as covered everywhere, so coverage
 // stays accurate (same pattern as postgres.ts).
 // ============================================================================
-
-const SCHEMA_TABLES_SQL = `
-      SELECT name FROM sqlite_master
-      WHERE type = 'table'
-      AND name NOT LIKE 'sqlite_%'
-      ORDER BY name;
-    `;
-
-const DB_PAGE_SIZE_SQL = `
-          SELECT (SELECT page_count FROM pragma_page_count()) *
-                 (SELECT page_size FROM pragma_page_size()) as size
-        `;
 
 // Size of a :memory: database (no file to stat).
 const MEMORY_DB_SIZE_SQL = `
@@ -1215,74 +1176,6 @@ export class SQLiteProvider extends SQLBaseProvider {
   // ============================================================================
   // Schema Operations
   // ============================================================================
-
-  public async getSchema(): Promise<TableSchema[]> {
-    this.ensureConnected();
-
-    const tablesStmt = this.db!.prepare(SCHEMA_TABLES_SQL);
-    const tables = tablesStmt.all() as { name: string }[];
-
-    const schemas: TableSchema[] = [];
-
-    for (const { name: tableName } of tables) {
-      const countStmt = this.db!.prepare(`SELECT COUNT(*) as count FROM "${tableName}"`);
-      const countResult = countStmt.get() as { count: number };
-      const rowCount = countResult?.count || 0;
-
-      const columnsStmt = this.db!.prepare(`PRAGMA table_info("${tableName}")`);
-      const columns = columnsStmt.all() as SQLiteColumnInfoRow[];
-
-      const fkStmt = this.db!.prepare(`PRAGMA foreign_key_list("${tableName}")`);
-      const foreignKeys = fkStmt.all() as SQLiteForeignKeyRow[];
-
-      const indexStmt = this.db!.prepare(`PRAGMA index_list("${tableName}")`);
-      const indexList = indexStmt.all() as SQLiteIndexListRow[];
-
-      const indexes = [];
-      for (const idx of indexList) {
-        if (idx.name.startsWith("sqlite_")) continue;
-
-        const indexInfoStmt = this.db!.prepare(`PRAGMA index_info("${idx.name}")`);
-        const indexCols = indexInfoStmt.all() as Array<{ seqno: number; cid: number; name: string }>;
-
-        indexes.push({
-          name: idx.name,
-          columns: indexCols.map((c) => c.name),
-          unique: idx.unique === 1,
-        });
-      }
-
-      let sizeBytes = 0;
-      try {
-        const pageCountStmt = this.db!.prepare(DB_PAGE_SIZE_SQL);
-        const sizeResult = pageCountStmt.get() as { size: number };
-        sizeBytes = sizeResult?.size || 0;
-      } catch {
-        // Ignore size calculation errors
-      }
-
-      schemas.push({
-        name: tableName,
-        rowCount,
-        size: formatBytes(sizeBytes),
-        columns: columns.map((col) => ({
-          name: col.name,
-          type: col.type || "TEXT",
-          nullable: col.notnull === 0,
-          isPrimary: col.pk === 1,
-          defaultValue: col.dflt_value ?? undefined,
-        })),
-        indexes,
-        foreignKeys: foreignKeys.map((fk) => ({
-          columnName: fk.from,
-          referencedTable: fk.table,
-          referencedColumn: fk.to,
-        })),
-      });
-    }
-
-    return schemas;
-  }
 
   // ============================================================================
   // Object surface (#789)

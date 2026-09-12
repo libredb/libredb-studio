@@ -19,7 +19,6 @@ import { BaseDatabaseProvider } from "../../base-provider";
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
 import {
   type DatabaseConnection,
-  type TableSchema,
   type QueryResult,
   type HealthInfo,
   type MaintenanceType,
@@ -851,32 +850,6 @@ export class RedisProvider extends BaseDatabaseProvider {
   // ============================================================================
   // Schema Operations (Key patterns as "tables")
   // ============================================================================
-
-  public async getSchema(): Promise<TableSchema[]> {
-    this.ensureConnected();
-
-    try {
-      const { groups: keyPatterns } = await RedisProvider.scanKeyGroups(this.client!);
-
-      // Convert patterns to TableSchema
-      const schemas: TableSchema[] = [];
-      for (const [pattern, info] of keyPatterns) {
-        schemas.push({
-          name: pattern,
-          columns: keyGroupColumns(info.types),
-          indexes: [],
-          rowCount: info.count,
-        });
-      }
-
-      return schemas.sort((a, b) => (b.rowCount || 0) - (a.rowCount || 0));
-    } catch (error) {
-      throw new QueryError(
-        `Failed to scan Redis keys: ${error instanceof Error ? error.message : String(error)}`,
-        "redis",
-      );
-    }
-  }
 
   /**
    * One bounded `SCAN` walk of ONE database, collapsed to one entry per key grouping.

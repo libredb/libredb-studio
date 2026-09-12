@@ -8,7 +8,6 @@ import { SQLBaseProvider } from "./sql-base";
 import { mssqlColumnTypes } from "./column-types";
 import {
   type DatabaseConnection,
-  type TableSchema,
   type QueryResult,
   type HealthInfo,
   type MaintenanceType,
@@ -47,9 +46,6 @@ import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
-
-// Row shape used to group foreign keys per table in getSchema().
-type ForeignKeyInfo = { columnName: string; referencedTable: string; referencedColumn: string };
 
 /**
  * `SELECT ... ` with `TOP n` spliced in where T-SQL wants it, or `null` when this
@@ -136,68 +132,6 @@ const TSQL_ROW_BOUND_MENTION = /\b(?:OFFSET|FETCH)\b/i;
 // ============================================================================
 // Multi-line SQL is hoisted to module scope so per-line coverage attribution
 // stays stable (repo pattern, see the SCHEMA_*_SQL consts in postgres.ts).
-
-const SCHEMA_TABLES_SQL = `
-        SELECT
-          s.name AS schema_name,
-          t.name AS table_name,
-          SUM(p.rows) AS row_count
-        FROM sys.tables t
-        JOIN sys.schemas s ON t.schema_id = s.schema_id
-        LEFT JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0, 1)
-        WHERE t.type = 'U'
-        GROUP BY s.name, t.name
-        ORDER BY s.name, t.name
-      `;
-
-const SCHEMA_COLUMNS_SQL = `
-        SELECT
-          TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE,
-          IS_NULLABLE, COLUMN_DEFAULT, ORDINAL_POSITION
-        FROM INFORMATION_SCHEMA.COLUMNS
-        ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
-      `;
-
-const SCHEMA_PRIMARY_KEYS_SQL = `
-        SELECT
-          s.name AS schema_name,
-          t.name AS table_name,
-          c.name AS column_name
-        FROM sys.indexes i
-        JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
-        JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-        JOIN sys.tables t ON i.object_id = t.object_id
-        JOIN sys.schemas s ON t.schema_id = s.schema_id
-        WHERE i.is_primary_key = 1
-      `;
-
-const SCHEMA_FOREIGN_KEYS_SQL = `
-        SELECT
-          OBJECT_SCHEMA_NAME(fk.parent_object_id) AS schema_name,
-          OBJECT_NAME(fk.parent_object_id) AS table_name,
-          COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS column_name,
-          OBJECT_NAME(fk.referenced_object_id) AS ref_table,
-          COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS ref_column
-        FROM sys.foreign_keys fk
-        JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-      `;
-
-const SCHEMA_INDEXES_SQL = `
-        SELECT
-          s.name AS schema_name,
-          t.name AS table_name,
-          i.name AS index_name,
-          i.is_unique,
-          c.name AS column_name,
-          ic.key_ordinal
-        FROM sys.indexes i
-        JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
-        JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-        JOIN sys.tables t ON i.object_id = t.object_id
-        JOIN sys.schemas s ON t.schema_id = s.schema_id
-        WHERE i.name IS NOT NULL AND i.is_primary_key = 0
-        ORDER BY s.name, t.name, i.name, ic.key_ordinal
-      `;
 
 const DATABASE_SIZE_MB_SQL = `
           SELECT
@@ -1727,99 +1661,6 @@ export class MSSQLProvider extends SQLBaseProvider {
   // ============================================================================
   // Schema Operations
   // ============================================================================
-
-  public async getSchema(): Promise<TableSchema[]> {
-    this.ensureConnected();
-
-    try {
-      // Get tables
-      const tablesRes = await this.pool!.request().query(SCHEMA_TABLES_SQL);
-      const tables = tablesRes.recordset || [];
-
-      // Get columns
-      const colsRes = await this.pool!.request().query(SCHEMA_COLUMNS_SQL);
-      const allCols = colsRes.recordset || [];
-
-      // Get primary keys
-      const pkRes = await this.pool!.request().query(SCHEMA_PRIMARY_KEYS_SQL);
-      const pkMap = new Map<string, Set<string>>();
-      for (const row of pkRes.recordset || []) {
-        const key = `${row.schema_name}.${row.table_name}`;
-        if (!pkMap.has(key)) pkMap.set(key, new Set());
-        pkMap.get(key)!.add(row.column_name);
-      }
-
-      // Get foreign keys
-      const fkRes = await this.pool!.request().query(SCHEMA_FOREIGN_KEYS_SQL);
-      const fksByTable = new Map<string, ForeignKeyInfo[]>();
-      for (const row of fkRes.recordset || []) {
-        const key = `${row.schema_name}.${row.table_name}`;
-        if (!fksByTable.has(key)) fksByTable.set(key, []);
-        fksByTable.get(key)!.push({
-          columnName: row.column_name,
-          referencedTable: row.ref_table,
-          referencedColumn: row.ref_column,
-        });
-      }
-
-      // Get indexes
-      const idxRes = await this.pool!.request().query(SCHEMA_INDEXES_SQL);
-
-      const idxByTable = new Map<string, Map<string, { unique: boolean; columns: string[] }>>();
-      for (const row of idxRes.recordset || []) {
-        const key = `${row.schema_name}.${row.table_name}`;
-        if (!idxByTable.has(key)) idxByTable.set(key, new Map());
-        const tableIdxs = idxByTable.get(key)!;
-        if (!tableIdxs.has(row.index_name)) {
-          tableIdxs.set(row.index_name, { unique: row.is_unique, columns: [] });
-        }
-        tableIdxs.get(row.index_name)!.columns.push(row.column_name);
-      }
-
-      // Group columns by table
-      const colsByTable = new Map<string, typeof allCols>();
-      for (const c of allCols) {
-        const key = `${c.TABLE_SCHEMA}.${c.TABLE_NAME}`;
-        if (!colsByTable.has(key)) colsByTable.set(key, []);
-        colsByTable.get(key)!.push(c);
-      }
-
-      return tables.map((t: Record<string, unknown>) => {
-        const schemaName = String(t.schema_name || "dbo");
-        const tableName = String(t.table_name || "");
-        const key = `${schemaName}.${tableName}`;
-        const displayName = schemaName === "dbo" ? tableName : `${schemaName}.${tableName}`;
-        const pks = pkMap.get(key) || new Set();
-
-        const columns = (colsByTable.get(key) || []).map((c: Record<string, unknown>) => ({
-          name: String(c.COLUMN_NAME || ""),
-          type: String(c.DATA_TYPE || ""),
-          nullable: String(c.IS_NULLABLE || "") === "YES",
-          isPrimary: pks.has(String(c.COLUMN_NAME || "")),
-          defaultValue: c.COLUMN_DEFAULT ? String(c.COLUMN_DEFAULT) : undefined,
-        }));
-
-        const foreignKeys = fksByTable.get(key) || [];
-
-        const tableIdxs = idxByTable.get(key) || new Map();
-        const indexes = Array.from(tableIdxs.entries()).map(([name, info]) => ({
-          name,
-          columns: info.columns,
-          unique: info.unique,
-        }));
-
-        return {
-          name: displayName,
-          rowCount: Number(t.row_count || 0),
-          columns,
-          indexes,
-          foreignKeys,
-        };
-      });
-    } catch (error) {
-      throw mapDatabaseError(error, "mssql");
-    }
-  }
 
   // ============================================================================
   // Object surface (#789)

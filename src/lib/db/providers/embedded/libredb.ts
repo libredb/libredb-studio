@@ -24,7 +24,6 @@
 import { BaseDatabaseProvider } from "../../base-provider";
 import {
   type DatabaseConnection,
-  type TableSchema,
   type QueryResult,
   type HealthInfo,
   type MaintenanceType,
@@ -43,6 +42,7 @@ import {
   type ContainerLevelSpec,
   type DatabaseObject,
   type KindCount,
+  type ColumnSchema,
   type ObjectDetail,
   type ObjectDetailBatch,
   type ObjectKindSpec,
@@ -305,7 +305,7 @@ interface LibreDBEnumeratedObject {
   /** The scanned key-prefix group it owns: `employees:*` for the table `employees`. */
   readonly groupName: string;
   /** The keys the bounded walk saw under it. Carried so `describeObject` can rebuild the
-   * SAME `TableSchema` the flat model builds, rather than a second shape with a 0 in it. */
+   * SAME columns every other surface answers, rather than a second shape with a 0 in it. */
   readonly rowCount: number;
 }
 
@@ -505,21 +505,6 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   // Schema & query (filled in Tasks 3-4)
   // --------------------------------------------------------------------------
 
-  public async getSchema(): Promise<TableSchema[]> {
-    this.ensureConnected();
-    const lib = await loadLibreDB();
-    // The catalog (since 0.0.2) tells us which namespaces are real document
-    // collections / relational tables and, for tables, their column schema. Raw
-    // kv keys are not cataloged, so anything outside the catalog falls back to
-    // key-prefix grouping below.
-    const registry: LibreCatalogRegistry = lib.catalog(this.db!);
-    const { groups } = this.scanGroups(registry);
-
-    return groups
-      .map(({ name, rowCount, entry }) => this.schemaForGroup(name, rowCount, entry))
-      .sort((a, b) => (b.rowCount ?? 0) - (a.rowCount ?? 0));
-  }
-
   /**
    * The one keyspace scan behind BOTH the schema tree and the Tables panel.
    *
@@ -573,7 +558,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     // tree with the badge agreeing with the folder, which is the worst shape this epic has.
     // `objectKindFor` is total, but a total mapping is worth nothing behind a filter that
     // decides which entries reach it, so the filter is gone and the mapping decides. An
-    // unmodelled entry lands on the derived `keyspace` grouping and `schemaForGroup` gives
+    // unmodelled entry lands on the derived `keyspace` grouping and `columnsForGroup` gives
     // it the raw key/value columns, so nothing is "upgraded" to relational or document
     // columns it does not have (#789).
     for (const [catalogName, entry] of registry) {
@@ -629,48 +614,37 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * Build the TableSchema for a group, made catalog-aware:
+   * The columns of one group, made catalog-aware:
    * - relational: the table's real columns + types (primary key marked), so the
    *   view reflects the declared schema rather than raw key/value.
    * - document: a generic id + document column pair (documents are schemaless).
    * - uncataloged (raw kv): the historical key (primary) + value columns.
    *
-   * Studio's TableSchema has no dedicated "kind" field, so the kind is signalled
-   * by the columns themselves (real columns => relational; id/document =>
-   * document; key/value => raw kv).
+   * The kind is signalled by the columns themselves (real columns => relational; id and
+   * document => document; key and value => raw kv), which is what the object surface's
+   * declared kinds now say outright.
    */
-  private schemaForGroup(name: string, rowCount: number, entry: LibreCatalogEntry | undefined): TableSchema {
+  private columnsForGroup(entry: LibreCatalogEntry | undefined): ColumnSchema[] {
     if (entry?.kind === "relational" && entry.schema) {
       const { primaryKey, columns } = entry.schema;
-      const cols = Object.entries(columns).map(([colName, colType]) => ({
+      return Object.entries(columns).map(([colName, colType]) => ({
         name: colName,
         type: colType, // string | number | boolean | object (database ColumnType)
         nullable: false, // v1 relational columns are all required
         isPrimary: colName === primaryKey,
       }));
-      return { name, columns: cols, indexes: [], rowCount };
     }
     if (entry?.kind === "document") {
-      return {
-        name,
-        columns: [
-          { name: "id", type: "string", nullable: false, isPrimary: true },
-          { name: "document", type: "object", nullable: true, isPrimary: false },
-        ],
-        indexes: [],
-        rowCount,
-      };
+      return [
+        { name: "id", type: "string", nullable: false, isPrimary: true },
+        { name: "document", type: "object", nullable: true, isPrimary: false },
+      ];
     }
     // Uncataloged raw kv namespace — keep the historical key/value view.
-    return {
-      name,
-      columns: [
-        { name: "key", type: "string", nullable: false, isPrimary: true },
-        { name: "value", type: "string", nullable: true, isPrimary: false },
-      ],
-      indexes: [],
-      rowCount,
-    };
+    return [
+      { name: "key", type: "string", nullable: false, isPrimary: true },
+      { name: "value", type: "string", nullable: true, isPrimary: false },
+    ];
   }
 
   public async query(input: string): Promise<QueryResult> {
@@ -1042,9 +1016,8 @@ export class LibreDBProvider extends BaseDatabaseProvider {
    *
    * One function because a caller joins the two answers together: two copies of this
    * mapping would be two chances for the bulk read to spell a cataloged table's columns
-   * differently from the single read of the same table. It goes through `schemaForGroup`,
-   * which is also what `getSchema()` builds its rows from, so all three surfaces describe
-   * one group one way while the flat one is still live.
+   * differently from the single read of the same table. It goes through
+   * `columnsForGroup`, so both surfaces describe one group one way.
    *
    * `indexes` and `foreignKeys` are empty for every kind, and both are facts about the
    * engine rather than unread fields: the kernel is one ordered keyspace where a key's own
@@ -1054,7 +1027,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   private objectDetailOf(path: readonly string[], enumerated: LibreDBEnumeratedObject): ObjectDetail {
     return {
       path: [...path],
-      columns: this.schemaForGroup(enumerated.groupName, enumerated.rowCount, enumerated.entry).columns,
+      columns: this.columnsForGroup(enumerated.entry),
       indexes: [],
       foreignKeys: [],
     };
@@ -1073,7 +1046,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
    * NO KIND ON THIS ENGINE ANSWERS AN EMPTY BATCH FOR WANT OF COLUMNS, and that is a
    * measurement rather than an omission. The reference's fourth guard covers a routine, a
    * trigger or a sequence, and this store has none: all three declared kinds are
-   * `role: "relation"` and `schemaForGroup` answers real columns for each of them - a
+   * `role: "relation"` and `columnsForGroup` answers real columns for each of them - a
    * cataloged table's declared schema, a collection's id/document pair, and a raw
    * grouping's key/value pair. So there is no early return to write, and writing one would
    * be a branch nothing can reach.
@@ -1182,7 +1155,11 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       maxConnections: 1,
       databaseSize: this.fileSizeHuman(),
       databaseSizeBytes: this.fileSizeBytes(),
-      tableCount: (await this.getSchema()).length,
+      // Counted from the same key walk every other surface on this engine reads, rather
+      // than from a second enumeration: `scanGroups` is what `listObjects` and
+      // `countObjects` walk, so the Overview card and the object tree cannot disagree
+      // about how many groups this file holds.
+      tableCount: this.scanGroups(libredbModule!.catalog(this.db!)).groups.length,
       // Not a placeholder: there is no index object in this engine to count, which is
       // the same fact `getIndexStats()` refuses the Indexes panel with. Zero is the
       // measurement here, so the Overview card states it.

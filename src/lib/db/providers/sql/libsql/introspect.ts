@@ -34,7 +34,6 @@ import type {
   IndexStats,
   SlowQueryStats,
   StorageStats,
-  TableSchema,
   TableStats,
 } from "@/lib/db/types";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
@@ -241,51 +240,33 @@ interface IndexDescriptor {
 interface CollectedTable {
   name: string;
   rowCount: number | undefined;
-  columns: TableSchema["columns"];
-  foreignKeys: NonNullable<TableSchema["foreignKeys"]>;
   indexes: IndexDescriptor[];
 }
 
-/** The four questions asked of every table, in the order the outcomes are read. */
+/**
+ * The two questions asked of every table, in the order the outcomes are read.
+ *
+ * It asked FOUR while the flat schema reading existed, adding `pragma_table_info` for
+ * columns and `pragma_foreign_key_list` for keys. Both belong to the object surface now,
+ * which reads columns through `pragma_table_xinfo` because `table_info` DROPS a generated
+ * column, and the stats tabs this collector serves need neither. So the batch is half the
+ * statements it was, per table (#789).
+ */
 function tableStatements(tableName: string): { sql: string }[] {
   return [
     { sql: `SELECT COUNT(*) AS row_count FROM ${identifier(tableName)}` },
-    // `"notnull"` is QUOTED because it is a SQLite keyword - the postfix `x NOTNULL`
-    // operator - and projecting it bare is a parse error, not a column: measured on
-    // sqld 0.24.33, `SELECT cid, name, type, notnull, ... FROM pragma_table_info(...)`
-    // answers "near NOTNULL: syntax error" while the same statement with the name
-    // quoted returns the rows. Nothing above the transport could see that failure -
-    // it costs the COLUMNS of every table and leaves the tree otherwise intact - so
-    // this is a live-probe finding rather than a test one.
-    { sql: `SELECT cid, name, type, "notnull", dflt_value, pk FROM pragma_table_info(${literal(tableName)})` },
     { sql: `SELECT seq, name, "unique", origin FROM pragma_index_list(${literal(tableName)})` },
-    { sql: `SELECT id, seq, "table", "from", "to" FROM pragma_foreign_key_list(${literal(tableName)})` },
   ];
 }
 
 function collectTable(tableName: string, outcomes: LibSQLBatchOutcome[]): CollectedTable {
-  const [count, columns, indexes, foreignKeys] = outcomes;
+  const [count, indexes] = outcomes;
 
   return {
     name: tableName,
     // Absent rather than 0 when the count was refused: a table reported as empty
     // is a reading, and this one failed.
     rowCount: readNumber(firstRow(count)?.row_count),
-    columns: (rowsOf(columns) ?? []).map((row) => ({
-      name: readText(row.name) ?? "",
-      // SQLite allows a column with no declared type at all (it is then a BLOB
-      // affinity column). TEXT is what the SQLite provider substitutes, and the
-      // same substitution is kept here so the two read alike.
-      type: readText(row.type) ?? "TEXT",
-      nullable: readNumber(row.notnull) !== 1,
-      isPrimary: readNumber(row.pk) === 1,
-      ...(row.dflt_value === null || row.dflt_value === undefined ? {} : { defaultValue: String(row.dflt_value) }),
-    })),
-    foreignKeys: (rowsOf(foreignKeys) ?? []).map((row) => ({
-      columnName: readText(row.from) ?? "",
-      referencedTable: readText(row.table) ?? "",
-      referencedColumn: readText(row.to) ?? "",
-    })),
     indexes: (rowsOf(indexes) ?? [])
       .map((row) => ({
         tableName,
@@ -298,13 +279,11 @@ function collectTable(tableName: string, outcomes: LibSQLBatchOutcome[]): Collec
 }
 
 /**
- * Every table with its columns, indexes and foreign keys, in as few round trips as
- * the questions allow.
+ * Every table with its row count and its indexes, in as few round trips as the questions
+ * allow.
  *
- * Three round trips regardless of table count: the object list, one batch carrying
- * four statements per table, and one batch carrying an `index_info` per user index.
- * The SQLite provider issues the same questions one at a time, which is free on a
- * file and is four network round trips per table here.
+ * Three round trips regardless of table count: the object list, one batch carrying two
+ * statements per table, and one batch carrying an `index_info` per user index.
  */
 async function collectTables(
   transport: LibSQLTransport,
@@ -317,7 +296,7 @@ async function collectTables(
 
   const outcomes = await transport.executeBatch(tableNames.flatMap(tableStatements));
   const tables = tableNames.map((tableName, index) =>
-    collectTable(tableName, outcomes.slice(index * 4, index * 4 + 4)),
+    collectTable(tableName, outcomes.slice(index * 2, index * 2 + 2)),
   );
 
   const indexNames = tables.flatMap((table) => table.indexes.map((index) => index.name));
@@ -335,33 +314,6 @@ async function collectTables(
   }
 
   return { tables, columnsByIndex };
-}
-
-export async function readSchema(transport: LibSQLTransport): Promise<TableSchema[]> {
-  const { tables, columnsByIndex } = await collectTables(transport);
-  if (tables.length === 0) return [];
-
-  const sizes = await readSizes(transport);
-
-  return tables.map((table) => {
-    const size = sizes?.byTable.get(table.name);
-
-    return {
-      name: table.name,
-      ...(table.rowCount === undefined ? {} : { rowCount: table.rowCount }),
-      // Omitted, not "0 B", when this build has no dbstat: the object tree draws
-      // nothing for an absent size and draws "0 B" for a present zero, and one of
-      // those two is a claim about the table.
-      ...(size === undefined ? {} : { size: formatBytes(size.tableSizeBytes + size.indexSizeBytes) }),
-      columns: table.columns,
-      indexes: table.indexes.map((index) => ({
-        name: index.name,
-        columns: columnsByIndex.get(index.name) ?? [],
-        unique: index.unique,
-      })),
-      foreignKeys: table.foreignKeys,
-    };
-  });
 }
 
 // ============================================================================

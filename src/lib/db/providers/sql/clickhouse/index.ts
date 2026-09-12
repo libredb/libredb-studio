@@ -65,8 +65,6 @@ import {
   type SlowQuery,
   type SlowQueryStats,
   type StorageStats,
-  type TableRelations,
-  type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
@@ -74,12 +72,7 @@ import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { ClickHouseHttpTransport } from "./http-transport";
-import {
-  CLICKHOUSE_SYSTEM_DATABASES,
-  getSchema as introspectSchema,
-  getSchemaList as introspectSchemaList,
-  getSchemaRelations as introspectSchemaRelations,
-} from "./introspect";
+import { CLICKHOUSE_SYSTEM_DATABASES } from "./introspect";
 import {
   CLICKHOUSE_CONTAINER_LEVELS,
   CLICKHOUSE_OBJECT_KINDS,
@@ -776,21 +769,6 @@ export class ClickHouseProvider extends SQLBaseProvider {
   // ==========================================================================
   // Schema
   // ==========================================================================
-
-  public async getSchema(): Promise<TableSchema[]> {
-    const transport = this.requireTransport();
-    return this.guarded(() => introspectSchema(transport, this.pinnedDatabase));
-  }
-
-  public async getSchemaList(): Promise<TableSchema[]> {
-    const transport = this.requireTransport();
-    return this.guarded(() => introspectSchemaList(transport, this.pinnedDatabase));
-  }
-
-  public async getSchemaRelations(): Promise<TableRelations[]> {
-    const transport = this.requireTransport();
-    return this.guarded(() => introspectSchemaRelations(transport, this.pinnedDatabase));
-  }
 
   // ==========================================================================
   // Object surface (#789)

@@ -59,15 +59,8 @@
  * reads perfectly well.
  */
 
-import type { ColumnSchema, TableSchema } from "@/lib/types";
-import { formatBytes } from "../../../utils/pool-manager";
-import {
-  type SearchErrorCategory,
-  type SearchIndexInfo,
-  type SearchMappingField,
-  type SearchTransport,
-  SearchTransportError,
-} from "./transport";
+import type { ColumnSchema } from "@/lib/types";
+import { type SearchIndexInfo, type SearchMappingField } from "./transport";
 
 // ============================================================================
 // Constants
@@ -108,23 +101,6 @@ export const SEARCH_CONTAINER_TYPES: readonly string[] = Object.freeze(["object"
  */
 export const SEARCH_MAPPING_CONCURRENCY = 4;
 
-/**
- * The two per-index failures that cost one index's columns instead of the tree.
- *
- * `auth` because a security plugin grants index privileges PER INDEX, so a role
- * that lists twenty indices and may describe nineteen is an ordinary
- * configuration - and failing the whole sidebar over the twentieth would punish a
- * perfectly usable connection. `unknown-object` because the listing is a snapshot:
- * an index deleted between the listing and its mapping read is a race that happens
- * on a live cluster, not a fault.
- *
- * Everything else propagates on purpose. An unreachable cluster or an expired
- * deadline would otherwise render every index with zero columns, which reads as
- * "these indices have no fields" - a fabricated schema, and the failure mode that
- * hides the real error forever.
- */
-const DEGRADABLE_MAPPING_FAILURES: readonly SearchErrorCategory[] = Object.freeze(["auth", "unknown-object"]);
-
 // ============================================================================
 // Options
 // ============================================================================
@@ -162,21 +138,6 @@ export interface SearchSchemaOptions {
  */
 export function isSystemIndex(index: SearchIndexInfo): boolean {
   return index.isSystem;
-}
-
-/**
- * The indices to describe.
- *
- * Closed indices are KEPT. Measured: a closed index still answers `_mapping` in
- * full, and its `_cat` row reports a null document count and a null size - so it
- * can be described completely and honestly, with the counts absent rather than
- * zero. Dropping it would tell the user their index is gone when it is merely
- * closed, and a query against it gets the engine's own refusal, which says exactly
- * what happened.
- */
-function selectIndices(indices: SearchIndexInfo[], options: SearchSchemaOptions): SearchIndexInfo[] {
-  if (options.includeSystemIndices === true) return indices;
-  return indices.filter((index) => !isSystemIndex(index));
 }
 
 // ============================================================================
@@ -281,117 +242,10 @@ export function toColumns(fields: SearchMappingField[]): ColumnSchema[] {
 // Reads
 // ============================================================================
 
-/**
- * Run `worker` over `items`, at most `limit` at a time, preserving order.
- * Results are written by index, so no item is dropped and none is reordered.
- */
-async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
-  const mapped = new Array<R>(items.length);
-  let cursor = 0;
-
-  const runner = async (): Promise<void> => {
-    while (cursor < items.length) {
-      const index = cursor;
-      cursor += 1;
-      mapped[index] = await worker(items[index]);
-    }
-  };
-
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runner));
-  return mapped;
-}
-
-/**
- * The columns of one index, degrading only for the failures that are about THAT
- * index (see {@link DEGRADABLE_MAPPING_FAILURES}).
- *
- * An index with no mapping yet answers an empty list from the seam, which is a fact
- * about the index rather than an error - a brand-new index really has no fields -
- * so an empty column list is a statement this function is allowed to make.
- */
-async function readColumns(
-  transport: SearchTransport,
-  index: SearchIndexInfo,
-  signal?: AbortSignal,
-): Promise<ColumnSchema[]> {
-  try {
-    return toColumns(await transport.mapping(index.name, signal));
-  } catch (error) {
-    if (error instanceof SearchTransportError && DEGRADABLE_MAPPING_FAILURES.includes(error.category)) return [];
-    throw error;
-  }
-}
-
 // ============================================================================
 // Assembly
 // ============================================================================
 
-/**
- * One index as a table.
- *
- * `indexes` is empty BY CONSTRUCTION, not by omission, and the collision of words
- * is worth stating plainly: an Elasticsearch index is the TABLE here, not an
- * `IndexSchema`. There is no secondary-index object to report - every mapped field
- * is inverted-indexed by the engine as a property of being mapped, so there is
- * nothing a user declared, nothing to name, and no DDL that could create one.
- * Synthesizing an entry per field would report the same fact twice, once as a
- * column and once as an index.
- *
- * `foreignKeys` is empty for the same kind of reason: the engine has no such
- * constraint in its model - denormalization is the modelling advice, and `nested` /
- * `join` are containment rather than reference - so no reading of any kind could
- * ever return one. That distinction is invisible in an empty array, which is why
- * the provider must also declare `declaresForeignKeys: false` in its capabilities:
- * a consumer that hedges "either this schema declares none, or the role cannot see
- * them" is wrong in both branches here.
- *
- * `rowCount` is the document count, which is what a row IS on this surface, and
- * stays UNDEFINED when the cluster did not report one - measured on a closed index,
- * where the count and the size both arrive null. Undefined is "unknown"; zero would
- * claim an empty index.
- */
-function toTableSchema(index: SearchIndexInfo, columns: ColumnSchema[]): TableSchema {
-  return {
-    // The index name verbatim. It may be a name SQL needs quoted - measured,
-    // OpenSearch's own `top_queries-2026.08.18-74305` carries hyphens and dots -
-    // and quoting belongs to whoever builds a statement, not to the inventory.
-    name: index.name,
-    columns,
-    indexes: [],
-    foreignKeys: [],
-    ...(index.docCount === null ? {} : { rowCount: index.docCount }),
-    ...(index.sizeBytes === null ? {} : { size: formatBytes(index.sizeBytes) }),
-  };
-}
-
 // ============================================================================
 // Introspection
 // ============================================================================
-
-/**
- * Every index the credentials can see, with its mapped fields as columns.
- *
- * One listing plus one mapping read per index. There is deliberately no
- * `getSchemaList`/`getSchemaRelations` split: that pair exists so a slow index or
- * relationship read cannot block the table list, and here both are empty by
- * construction, so there is nothing to defer and a second pass would re-read every
- * mapping to return the same empty arrays.
- *
- * Aliases and data streams are absent HERE, deliberately: this function answers the
- * SCHEMA tree, which describes indices. They are declared object kinds since #789 and
- * are read from their own endpoints by the provider's object surface, so a queryable
- * alias does appear in the object tree - and `toColumns` below is shared with it, so
- * an alias, an index and a data stream get one column rule rather than two.
- */
-export async function getSchema(
-  transport: SearchTransport,
-  options: SearchSchemaOptions = {},
-  signal?: AbortSignal,
-): Promise<TableSchema[]> {
-  const indices = selectIndices(await transport.indices(signal), options);
-  const columns = await mapWithConcurrency(indices, SEARCH_MAPPING_CONCURRENCY, (index) =>
-    readColumns(transport, index, signal),
-  );
-
-  return indices.map((index, position) => toTableSchema(index, columns[position]));
-}

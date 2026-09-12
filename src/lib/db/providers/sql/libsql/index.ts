@@ -51,7 +51,6 @@ import {
   type QueryResult,
   type SlowQueryStats,
   type StorageStats,
-  type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
@@ -61,7 +60,6 @@ import {
   readHealth,
   readIndexStats,
   readOverview,
-  readSchema,
   readSlowQueries,
   readStorageStats,
   readTableStats,
@@ -304,15 +302,6 @@ export class LibSQLProvider extends SQLBaseProvider {
   // ==========================================================================
   // Schema
   // ==========================================================================
-
-  public async getSchema(): Promise<TableSchema[]> {
-    const transport = this.requireTransport();
-    try {
-      return await readSchema(transport);
-    } catch (error) {
-      throw this.mapLibSQLError(error);
-    }
-  }
 
   // ==========================================================================
   // Object surface (#789)

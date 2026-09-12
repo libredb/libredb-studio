@@ -108,13 +108,12 @@ import {
   type QueryResult,
   type SlowQueryStats,
   type StorageStats,
-  type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { SearchHttpTransport } from "./http-transport";
-import { getSchema as readSchema, isSystemIndex, toColumns } from "./introspect";
+import { isSystemIndex, toColumns } from "./introspect";
 import {
   type SearchClusterHealth,
   type SearchDialectId,
@@ -662,7 +661,7 @@ abstract class SearchProvider extends SQLBaseProvider {
    * "Indices" rather than "Indexes" because that is the plural both products use in
    * their own APIs and documentation - and because "indexes" is the word this
    * product already uses for the secondary-index objects an index does NOT have
-   * (`TableSchema.indexes`, empty by construction here).
+   * (the index list is empty by construction here).
    *
    * The two maintenance actions are named even though `supportsMaintenance` is
    * false, because they are still RENDERED: the schema tree offers both entries to
@@ -933,21 +932,6 @@ abstract class SearchProvider extends SQLBaseProvider {
   // ==========================================================================
   // Schema
   // ==========================================================================
-
-  /**
-   * Every index the credentials can see, with its mapped fields as columns.
-   *
-   * `getSchemaList` and `getSchemaRelations` are deliberately NOT implemented. Both
-   * are optional and the client falls back to this method, and the split exists so a
-   * slow relationship read cannot block the table list - which this engine has
-   * neither half of: there are no secondary-index objects and no foreign keys, so a
-   * list would be byte-identical to this and a relations pass would re-read every
-   * mapping to answer two empty arrays per index.
-   */
-  public async getSchema(): Promise<TableSchema[]> {
-    const transport = this.requireTransport();
-    return this.guarded(() => readSchema(transport, {}, this.deadline()));
-  }
 
   // ==========================================================================
   // Object surface (#789)

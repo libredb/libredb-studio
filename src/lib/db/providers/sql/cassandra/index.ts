@@ -74,7 +74,6 @@ import {
   type QueryResult,
   type SlowQueryStats,
   type StorageStats,
-  type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
@@ -92,7 +91,6 @@ import {
   getHealth as readHealth,
   getOverview as readOverview,
   getPerformanceMetrics as readPerformanceMetrics,
-  getSchema as readSchema,
   getSlowQueries as readSlowQueries,
   readServerFacts,
 } from "./introspect";
@@ -633,21 +631,6 @@ export class CassandraProvider extends SQLBaseProvider {
   // ==========================================================================
   // Schema
   // ==========================================================================
-
-  /**
-   * The tables and materialized views of the pinned keyspace.
-   *
-   * `getSchemaList` and `getSchemaRelations` are deliberately NOT implemented. The
-   * split exists so a slow relationship read cannot block the table list, and here
-   * the relationships come from the same three-statement read as the columns: there
-   * are no foreign keys to fetch, and the secondary-index list is one row per index
-   * in the whole keyspace.
-   */
-  public async getSchema(): Promise<TableSchema[]> {
-    const transport = this.requireTransport();
-    const keyspace = this.requireKeyspace();
-    return this.guarded(() => readSchema(transport, keyspace));
-  }
 
   // ==========================================================================
   // Object surface (issue #789)

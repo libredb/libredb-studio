@@ -7,8 +7,6 @@ import { Pool, type PoolClient, type PoolConfig as PgPoolConfig, type QueryConfi
 import { SQLBaseProvider } from "./sql-base";
 import {
   type DatabaseConnection,
-  type TableSchema,
-  type TableRelations,
   type QueryResult,
   type HealthInfo,
   type MaintenanceType,
@@ -82,9 +80,6 @@ interface SchemaRow {
     referencedColumn: string;
   }>;
 }
-
-type SchemaListRow = Omit<SchemaRow, "indexes" | "foreign_keys">;
-type SchemaRelationRow = Pick<SchemaRow, "table_schema" | "table_name" | "foreign_keys" | "indexes">;
 
 /** One row of `CONTAINERS_SQL`. */
 interface ContainerRow {
@@ -187,7 +182,7 @@ const SYSTEM_SCHEMAS = [
  * It is an estimate, and PostgreSQL 14+ writes **-1** for a relation nothing has
  * vacuumed or analysed yet: "I have not counted this", which is not "this has no rows".
  * NULL arrives the same way when the pg_class join matched nothing at all. Both become
- * absence, and `TableSchema.rowCount` is optional so the badge simply is not drawn -
+ * absence, and the row count is optional so the badge simply is not drawn -
  * the object browser already gates on that.
  *
  * Measured on stock PostgreSQL 18.4: two tables holding 5000 and 1200 rows both read -1
@@ -235,47 +230,6 @@ const USER_TABLE_TYPES = "'BASE TABLE', 'MATERIALIZED VIEW'";
 function schemaExclusion(column: string): string {
   return `${column} NOT IN (${SYSTEM_SCHEMA_LIST}) AND ${column} NOT IN (${EXTENSION_OWNED_SCHEMAS_SQL})`;
 }
-
-// Reusable CTE fragments (no trailing comma). Composed into the queries below;
-// kept single-sourced so the shared CTEs aren't duplicated across queries.
-// The table_type filter is a positive list, not "anything that is not a view".
-// `MATERIALIZED VIEW` is on it for Materialize, which reports its materialized views
-// through information_schema.tables under that type and whose users work with them
-// rather than with base tables - listing only BASE TABLE hid the product itself.
-// Measured no-op everywhere else: PostgreSQL leaves materialized views out of
-// information_schema.tables altogether (its table_type is only BASE TABLE, VIEW,
-// FOREIGN or LOCAL TEMPORARY), and TimescaleDB, YugabyteDB, Cloudberry, AlloyDB Omni
-// and CockroachDB were each checked on a live instance and emit no such row.
-const CTE_TABLES_INFO = `
-        tables_info AS MATERIALIZED (
-          SELECT
-            t.table_schema,
-            t.table_name,
-            c.reltuples::bigint as row_count,
-            COALESCE(pg_total_relation_size(c.oid), 0) as total_size
-          FROM information_schema.tables t
-          LEFT JOIN pg_class c ON c.oid = to_regclass(quote_ident(t.table_schema) || '.' || quote_ident(t.table_name))
-          WHERE ${schemaExclusion("t.table_schema")}
-          AND t.table_type IN (${USER_TABLE_TYPES})
-        )`;
-
-const CTE_COLUMNS_INFO = `
-        columns_info AS MATERIALIZED (
-          SELECT
-            c.table_schema,
-            c.table_name,
-            json_agg(
-              json_build_object(
-                'name', c.column_name,
-                'type', c.data_type,
-                'nullable', c.is_nullable = 'YES',
-                'defaultValue', c.column_default
-              ) ORDER BY c.ordinal_position
-            ) FILTER (WHERE c.ordinal_position <= 100) as columns
-          FROM information_schema.columns c
-          WHERE ${schemaExclusion("c.table_schema")}
-          GROUP BY c.table_schema, c.table_name
-        )`;
 
 const CTE_PK_INFO = `
         pk_info AS MATERIALIZED (
@@ -340,55 +294,6 @@ const CTE_INDEX_INFO = `
           WHERE ${schemaExclusion("n.nspname")}
           GROUP BY n.nspname, t.relname
         )`;
-
-// Full schema: tables + columns + PKs + foreign keys + indexes in one query.
-const SCHEMA_FULL_SQL = `
-        WITH ${CTE_TABLES_INFO},${CTE_COLUMNS_INFO},${CTE_PK_INFO},${CTE_FK_INFO},${CTE_INDEX_INFO}
-        SELECT
-          ti.table_schema,
-          ti.table_name,
-          ti.row_count,
-          ti.total_size,
-          COALESCE(ci.columns, '[]'::json) as columns,
-          COALESCE(pk.pk_columns, ARRAY[]::text[]) as pk_columns,
-          COALESCE(fk.foreign_keys, '[]'::json) as foreign_keys,
-          COALESCE(ii.indexes, '[]'::json) as indexes
-        FROM tables_info ti
-        LEFT JOIN columns_info ci ON ci.table_schema = ti.table_schema AND ci.table_name = ti.table_name
-        LEFT JOIN pk_info pk ON pk.table_schema = ti.table_schema AND pk.table_name = ti.table_name
-        LEFT JOIN fk_info fk ON fk.table_schema = ti.table_schema AND fk.table_name = ti.table_name
-        LEFT JOIN index_info ii ON ii.table_schema = ti.table_schema AND ii.table_name = ti.table_name
-        ORDER BY ti.table_schema, ti.table_name ASC;
-      `;
-
-// Fast structural list: tables + columns + PKs only (no FK/index joins).
-const SCHEMA_LIST_SQL = `
-        WITH ${CTE_TABLES_INFO},${CTE_COLUMNS_INFO},${CTE_PK_INFO}
-        SELECT
-          ti.table_schema,
-          ti.table_name,
-          ti.row_count,
-          ti.total_size,
-          COALESCE(ci.columns, '[]'::json) as columns,
-          COALESCE(pk.pk_columns, ARRAY[]::text[]) as pk_columns
-        FROM tables_info ti
-        LEFT JOIN columns_info ci ON ci.table_schema = ti.table_schema AND ci.table_name = ti.table_name
-        LEFT JOIN pk_info pk ON pk.table_schema = ti.table_schema AND pk.table_name = ti.table_name
-        ORDER BY ti.table_schema, ti.table_name ASC;
-      `;
-
-// Heavy relationship/index introspection (foreign keys + indexes).
-const SCHEMA_RELATIONS_SQL = `
-        WITH ${CTE_FK_INFO},${CTE_INDEX_INFO}
-        SELECT
-          COALESCE(fk.table_schema, ii.table_schema) as table_schema,
-          COALESCE(fk.table_name, ii.table_name) as table_name,
-          COALESCE(fk.foreign_keys, '[]'::json) as foreign_keys,
-          COALESCE(ii.indexes, '[]'::json) as indexes
-        FROM fk_info fk
-        FULL OUTER JOIN index_info ii
-          ON ii.table_schema = fk.table_schema AND ii.table_name = fk.table_name;
-      `;
 
 // Materialize and RisingWave reserve MATERIALIZED as a keyword (it's part of
 // their own CREATE MATERIALIZED VIEW grammar), so they reject the CTE modifier
@@ -2055,133 +1960,6 @@ export class PostgresProvider extends SQLBaseProvider {
         currentSql = remainingFallbacks[index].apply(currentSql);
         remainingFallbacks.splice(index, 1);
       }
-    }
-  }
-
-  public async getSchema(): Promise<TableSchema[]> {
-    this.ensureConnected();
-
-    const client = await this.pool!.connect();
-    try {
-      // Single MATERIALIZED query (see SCHEMA_FULL_SQL) replacing the old
-      // N+1 pattern (1 + N*4 queries) with one round-trip.
-      const result = await this.queryWithMaterializedFallback(client, SCHEMA_FULL_SQL);
-
-      return result.rows.map((row: SchemaRow) => {
-        const schemaName = row.table_schema;
-        const tableName = row.table_name;
-        const displayName = schemaName === "public" ? tableName : `${schemaName}.${tableName}`;
-        const rowCount = estimatedRowCount(row.row_count);
-        const sizeBytes = parseInt(row.total_size || "0");
-        const pkColumns: string[] = row.pk_columns || [];
-
-        // Parse columns and add isPrimary flag
-        const columns = (row.columns || []).map((col) => ({
-          name: col.name,
-          type: col.type,
-          nullable: col.nullable,
-          isPrimary: pkColumns.includes(col.name),
-          defaultValue: col.defaultValue ?? undefined,
-        }));
-
-        // Parse indexes
-        const indexes = (row.indexes || []).map((idx) => ({
-          name: idx.name,
-          columns: Array.isArray(idx.columns) ? idx.columns : [],
-          unique: idx.unique,
-        }));
-
-        // Parse foreign keys
-        const foreignKeys = (row.foreign_keys || []).map((fk) => ({
-          columnName: fk.columnName,
-          referencedTable:
-            fk.referencedSchema === "public" ? fk.referencedTable : `${fk.referencedSchema}.${fk.referencedTable}`,
-          referencedColumn: fk.referencedColumn,
-        }));
-
-        return {
-          name: displayName,
-          rowCount,
-          size: formatBytes(sizeBytes),
-          columns,
-          indexes,
-          foreignKeys,
-        };
-      });
-    } finally {
-      client.release();
-    }
-  }
-
-  /**
-   * Fast structural schema: tables + columns + primary keys + row counts/sizes.
-   * Deliberately EXCLUDES foreign keys and indexes (the expensive
-   * information_schema joins) so the schema tree renders immediately.
-   * Relationships/indexes are loaded separately via getSchemaRelations()
-   * and merged in asynchronously by the client, so a slow/failing stats
-   * query never blocks the table list.
-   */
-  public async getSchemaList(): Promise<TableSchema[]> {
-    this.ensureConnected();
-    const client = await this.pool!.connect();
-    try {
-      const result = await this.queryWithMaterializedFallback(client, SCHEMA_LIST_SQL);
-
-      return result.rows.map((row: SchemaListRow) => {
-        const displayName = row.table_schema === "public" ? row.table_name : `${row.table_schema}.${row.table_name}`;
-        const pkColumns: string[] = row.pk_columns || [];
-        const columns = (row.columns || []).map((col) => ({
-          name: col.name,
-          type: col.type,
-          nullable: col.nullable,
-          isPrimary: pkColumns.includes(col.name),
-          defaultValue: col.defaultValue ?? undefined,
-        }));
-        return {
-          name: displayName,
-          rowCount: estimatedRowCount(row.row_count),
-          size: formatBytes(parseInt(row.total_size || "0")),
-          columns,
-          indexes: [],
-          foreignKeys: [],
-        };
-      });
-    } finally {
-      client.release();
-    }
-  }
-
-  /**
-   * Heavy relationship/index introspection (foreign keys + indexes), keyed by
-   * table display name so the client can merge it into the result of
-   * getSchemaList(). Kept separate so its cost never blocks the table list.
-   * CTEs are MATERIALIZED (see getSchema for the rationale).
-   */
-  public async getSchemaRelations(): Promise<TableRelations[]> {
-    this.ensureConnected();
-    const client = await this.pool!.connect();
-    try {
-      const result = await this.queryWithMaterializedFallback(client, SCHEMA_RELATIONS_SQL);
-
-      return result.rows.map((row: SchemaRelationRow) => {
-        const displayName = row.table_schema === "public" ? row.table_name : `${row.table_schema}.${row.table_name}`;
-        return {
-          name: displayName,
-          foreignKeys: (row.foreign_keys || []).map((fk) => ({
-            columnName: fk.columnName,
-            referencedTable:
-              fk.referencedSchema === "public" ? fk.referencedTable : `${fk.referencedSchema}.${fk.referencedTable}`,
-            referencedColumn: fk.referencedColumn,
-          })),
-          indexes: (row.indexes || []).map((idx) => ({
-            name: idx.name,
-            columns: Array.isArray(idx.columns) ? idx.columns : [],
-            unique: idx.unique,
-          })),
-        };
-      });
-    } finally {
-      client.release();
     }
   }
 

@@ -57,7 +57,6 @@ import {
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import {
   type ActiveSessionDetails,
-  type ColumnSchema,
   type Container,
   type DatabaseConnection,
   type DatabaseObject,
@@ -79,19 +78,16 @@ import {
   type QueryWarning,
   type SlowQueryStats,
   type StorageStats,
-  type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
 import { TrinoHttpTransport } from "./http-transport";
 import {
   TRINO_CATALOG_LIST_SQL,
-  TRINO_UNKNOWN_TEXT,
   getActiveSessions as readActiveSessions,
   getHealth as readHealth,
   getIndexStats as readIndexStats,
   getOverview as readOverview,
   getPerformanceMetrics as readPerformanceMetrics,
-  getSchema as readSchema,
   getSlowQueries as readSlowQueries,
   getStorageStats as readStorageStats,
   getTableStats as readTableStats,
@@ -670,21 +666,6 @@ export class TrinoProvider extends SQLBaseProvider {
   // ==========================================================================
   // Schema
   // ==========================================================================
-
-  /**
-   * The tables of the pinned catalog, from `information_schema` alone.
-   *
-   * `getSchemaList` and `getSchemaRelations` are deliberately NOT implemented. The
-   * split exists so a slow relationship read cannot block the table list, and Trino
-   * has no relationship read at all: there are no indexes and no foreign keys in the
-   * model, so a list would be byte-identical to this and a relations read would spend
-   * a round trip to answer two empty arrays per table.
-   */
-  public async getSchema(): Promise<TableSchema[]> {
-    const transport = this.requireTransport();
-    const catalog = this.requireCatalog();
-    return this.guarded(() => readSchema(transport, catalog));
-  }
 
   // ==========================================================================
   // The object surface (#789)

@@ -32,7 +32,6 @@ import {
   type DatabaseObject,
   type DatabaseOverview,
   type HealthInfo,
-  type IndexSchema,
   type IndexStats,
   type KindCount,
   type MaintenanceResult,
@@ -49,22 +48,13 @@ import {
   type SlowQuery,
   type SlowQueryStats,
   type StorageStats,
-  type TableRelations,
-  type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { applyQueryLimit, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
 import { CouchbaseHttpTransport } from "./http-transport";
-import {
-  CATALOG_TIMEOUT_MS,
-  getSchemaList as introspectSchemaList,
-  getSchemaRelations as introspectSchemaRelations,
-  inferColumns,
-  inferColumnsEach,
-  listCollections,
-} from "./introspect";
+import { CATALOG_TIMEOUT_MS, inferColumns, inferColumnsEach } from "./introspect";
 import { COUCHBASE_DEFAULT_SCOPE, keyspaceFromDisplayName, keyspacePath, quoteIdentifier } from "./keyspace";
 import {
   BUCKETS_SQL,
@@ -588,39 +578,6 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     } catch (error) {
       throw this.mapCouchbaseError(error);
     }
-  }
-
-  // ==========================================================================
-  // Schema
-  // ==========================================================================
-
-  public async getSchemaList(): Promise<TableSchema[]> {
-    const transport = this.requireTransport();
-    return this.guarded(() => introspectSchemaList(transport, this.bucket));
-  }
-
-  public async getSchemaRelations(): Promise<TableRelations[]> {
-    const transport = this.requireTransport();
-    return this.guarded(() => introspectSchemaRelations(transport, this.bucket));
-  }
-
-  public async getSchema(): Promise<TableSchema[]> {
-    const [tables, relations] = await Promise.all([this.getSchemaList(), this.getSchemaRelations()]);
-    const indexes = new Map(relations.map((relation) => [relation.name, relation.indexes]));
-
-    return tables.map((table) => ({
-      name: table.name,
-      columns: table.columns,
-      indexes: indexes.get(table.name) ?? [],
-      // Couchbase has no foreign keys and none are invented.
-      foreignKeys: [],
-    }));
-  }
-
-  public override async getTables(): Promise<string[]> {
-    const transport = this.requireTransport();
-    const collections = await this.guarded(() => listCollections(transport, this.bucket));
-    return collections.map((collection) => collection.displayName);
   }
 
   // ==========================================================================
