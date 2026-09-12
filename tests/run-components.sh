@@ -30,7 +30,7 @@ FAIL=0
 # green summary line reported a group count no run had.
 # Drifted again before this line was touched: it read 30 while 32 `run_group` calls
 # existed, so every green run reported a group count no run had. 33 is the grep below.
-TOTAL_GROUPS=39
+TOTAL_GROUPS=40
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -358,6 +358,14 @@ run_group "Group 26: Embedded workspace object tree" \
 # It also installs a global ResizeObserver, which Radix mounts on the viewport.
 run_group "Group 21: ui/scroll-area" \
   tests/components/ui/scroll-area.test.tsx
+
+# Group 27: The read-only object source viewer (#789). Its own group: it replaces
+# @monaco-editor/react with mock.module, which is process-wide, and Group 15 holds
+# QueryEditor.test.tsx, which installs a DIFFERENT double of that same module - sharing a
+# process would hand one of the two suites the other's editor. It also asserts against
+# globalThis.fetch for the default-reader case.
+run_group "Group 27: Object source viewer" \
+  tests/components/object-source/ObjectSourceView.test.tsx
 
 # Summary
 echo ""
