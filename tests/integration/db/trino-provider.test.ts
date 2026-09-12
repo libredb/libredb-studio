@@ -50,8 +50,11 @@ import {
   trinoTableStatsSql,
 } from "@/lib/db/providers/sql/trino/introspect";
 import {
+  TRINO_MATERIALIZED_VIEW_KIND,
   comparePaths,
+  trinoBulkColumnsSql,
   trinoFunctionListSql,
+  trinoObjectTargetSql,
   trinoMaterializedViewListSql,
   trinoObjectColumnsSql,
   trinoObjectCountsSql,
@@ -1380,6 +1383,15 @@ const OBJECT_COLUMN_COLUMNS: Column[] = [
   { name: "isNullable", type: "varchar" },
 ];
 
+/** The bulk column read's projection: the object's address, then the column (#789). */
+const BULK_COLUMN_COLUMNS: Column[] = [
+  { name: "schemaName", type: "varchar" },
+  { name: "objectName", type: "varchar" },
+  { name: "columnName", type: "varchar" },
+  { name: "dataType", type: "varchar" },
+  { name: "isNullable", type: "varchar" },
+];
+
 /** `SHOW FUNCTIONS` output, verbatim: six columns, two of whose names carry a space. */
 const FUNCTION_COLUMNS: Column[] = [
   { name: "Function", type: "varchar" },
@@ -1479,6 +1491,118 @@ function serveObjectSurface(): void {
     rows(OBJECT_COLUMN_COLUMNS, [["name", "varchar", "YES"]]),
   );
   serveInstead(trinoObjectColumnsSql("memory", "app", "gone"), rows(OBJECT_COLUMN_COLUMNS, []));
+
+  // The FLAT reading, over the SAME objects the object reading publishes (#789).
+  //
+  // Without these two the double does not serve `getSchema()` for the object fixture's
+  // catalog AT ALL, so the conformance helper's join guard has nothing to join and can only
+  // report the two readings as two populations. The flat reading spells a table
+  // `schema.table` against a three-segment object path, which is the exact shape that made
+  // Trino join nothing before the address rule was fixed, so this is the join worth guarding
+  // rather than a formality.
+  //
+  // One row is deliberately NOT the object reading's: `warehouse.order_totals` is a
+  // MATERIALIZED VIEW, and `information_schema.tables` reports it as a BASE TABLE (measured
+  // on 476), which is why the object surface anti-joins `system.metadata.materialized_views`
+  // and the flat surface does not.
+  serveInstead(
+    trinoTableListSql("iceberg"),
+    rows(TABLE_LIST_COLUMNS, [
+      ["system", "iceberg_tables"],
+      ["warehouse", "order_totals"],
+      ["warehouse", "orders"],
+    ]),
+  );
+  serveInstead(
+    trinoColumnListSql("iceberg"),
+    rows(COLUMN_LIST_COLUMNS, [
+      ["system", "iceberg_tables", "table_name", "varchar", "YES", null],
+      ["warehouse", "order_totals", "id", "bigint", "YES", null],
+      ["warehouse", "order_totals", "total", "double", "YES", null],
+      ["warehouse", "orders", "id", "bigint", "YES", null],
+      ["warehouse", "orders", "total", "double", "YES", null],
+    ]),
+  );
+
+  // The BULK column read (#789), keyed on the exported statement each read sends, over the
+  // same objects the listings above publish.
+  serveInstead(
+    trinoObjectTargetSql(ICEBERG, "table"),
+    rows(OBJECT_NAME_COLUMNS, [
+      ["system", "iceberg_tables"],
+      ["warehouse", "orders"],
+    ]),
+  );
+  // `LIMIT 2` is what a caller's limit of 1 sends, and the catalog holds two tables, so it
+  // comes back saturated - which is the whole point of asking for one more than the bound.
+  serveInstead(
+    trinoObjectTargetSql(ICEBERG, "table", 2),
+    rows(OBJECT_NAME_COLUMNS, [
+      ["system", "iceberg_tables"],
+      ["warehouse", "orders"],
+    ]),
+  );
+  serveInstead(
+    trinoObjectTargetSql(ICEBERG, "table", 3),
+    rows(OBJECT_NAME_COLUMNS, [
+      ["system", "iceberg_tables"],
+      ["warehouse", "orders"],
+    ]),
+  );
+  serveInstead(trinoObjectTargetSql(ICEBERG, "view"), rows(OBJECT_NAME_COLUMNS, []));
+  serveInstead(
+    trinoObjectTargetSql(ICEBERG, TRINO_MATERIALIZED_VIEW_KIND),
+    rows(OBJECT_NAME_COLUMNS, [["warehouse", "order_totals"]]),
+  );
+  serveInstead(
+    trinoObjectTargetSql(MEMORY_APP, "table"),
+    rows(OBJECT_NAME_COLUMNS, [
+      ["app", "customers"],
+      ["app", "orders"],
+    ]),
+  );
+  serveInstead(
+    trinoBulkColumnsSql(ICEBERG, "table"),
+    rows(BULK_COLUMN_COLUMNS, [
+      ["system", "iceberg_tables", "table_name", "varchar", "YES"],
+      ["warehouse", "orders", "id", "bigint", "YES"],
+      ["warehouse", "orders", "total", "double", "YES"],
+    ]),
+  );
+  serveInstead(
+    trinoBulkColumnsSql(ICEBERG, "table", 2),
+    rows(BULK_COLUMN_COLUMNS, [
+      ["system", "iceberg_tables", "table_name", "varchar", "YES"],
+      ["warehouse", "orders", "id", "bigint", "YES"],
+      ["warehouse", "orders", "total", "double", "YES"],
+    ]),
+  );
+  serveInstead(
+    trinoBulkColumnsSql(ICEBERG, "table", 3),
+    rows(BULK_COLUMN_COLUMNS, [
+      ["system", "iceberg_tables", "table_name", "varchar", "YES"],
+      ["warehouse", "orders", "id", "bigint", "YES"],
+      ["warehouse", "orders", "total", "double", "YES"],
+    ]),
+  );
+  serveInstead(trinoBulkColumnsSql(ICEBERG, "view"), rows(BULK_COLUMN_COLUMNS, []));
+  serveInstead(
+    trinoBulkColumnsSql(ICEBERG, TRINO_MATERIALIZED_VIEW_KIND),
+    rows(BULK_COLUMN_COLUMNS, [
+      ["warehouse", "order_totals", "id", "bigint", "YES"],
+      ["warehouse", "order_totals", "total", "double", "YES"],
+    ]),
+  );
+  serveInstead(
+    trinoBulkColumnsSql(MEMORY_APP, "table"),
+    rows(BULK_COLUMN_COLUMNS, [
+      ["app", "customers", "id", "bigint", "YES"],
+      ["app", "customers", "name", "varchar", "YES"],
+      ["app", "orders", "id", "bigint", "YES"],
+      ["app", "orders", "customer_id", "bigint", "YES"],
+      ["app", "orders", "total", "double", "YES"],
+    ]),
+  );
 }
 
 /** A provider pinned at the catalog AND the schema the fixture's objects live in. */
@@ -1906,6 +2030,228 @@ describe("Trino object containers, listings and detail", () => {
  * `alpha.beta.pin` and `beta.alpha.pin`, with different columns - and the assertions read
  * the column names back.
  */
+/**
+ * The bulk column read (#789).
+ *
+ * The double answers the exported statement each read sends, over the SAME objects the
+ * listings publish, so every "the two readings agree" assertion compares two answers the
+ * provider produced. What a double keyed on statement text cannot see is a rewrite of that
+ * text (standing ruling 5b), so the whole method was also run against a live Trino 476
+ * holding `docker/trino-init/01-object-fixture.sql`; what that measured is in
+ * docs/providers/trino.md.
+ */
+describe("Trino bulk column read", () => {
+  test("describes every table in a CATALOG, across both its schemas, and each detail is the single read's", async () => {
+    const provider = await objectProvider();
+
+    const batch = await provider.describeObjects(["iceberg"], "table");
+
+    expect(batch.truncated).toBeUndefined();
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["iceberg", "system", "iceberg_tables"],
+      ["iceberg", "warehouse", "orders"],
+    ]);
+    // One mapper serves both reads, so a divergence here is the bulk read spelling a column
+    // differently from the single read of the same object.
+    expect(batch.details[1]!.columns).toEqual([
+      { name: "id", type: "bigint", nullable: true, isPrimary: false },
+      { name: "total", type: "double", nullable: true, isPrimary: false },
+    ]);
+    expect(batch.details[1]).toEqual(await provider.describeObject(["iceberg", "warehouse", "orders"], "table"));
+    // No index and no foreign key anywhere, in any catalog of any connector: Trino's
+    // `information_schema` holds eight views and neither `table_constraints` nor
+    // `key_column_usage` is among them.
+    expect(batch.details.every((detail) => detail.indexes.length === 0 && detail.foreignKeys.length === 0)).toBe(true);
+  });
+
+  test("every described path is one listObjects produced, for both relation sources", async () => {
+    const provider = await objectProvider();
+
+    for (const kind of ["table", TRINO_MATERIALIZED_VIEW_KIND]) {
+      const listed = await provider.listObjects(["iceberg"], kind);
+      const batch = await provider.describeObjects(["iceberg"], kind);
+      expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+    }
+  });
+
+  test("a materialized view describes from information_schema.columns, addressed by the OTHER catalog's listing", async () => {
+    // The two sources really are different catalogs: the target comes from
+    // `system.metadata.materialized_views`, which is the only place a materialized view is
+    // published as one, and the columns come from `information_schema.columns`, which
+    // answers for it (measured on 476) while calling it a BASE TABLE.
+    const provider = await objectProvider();
+
+    const batch = await provider.describeObjects(["iceberg"], TRINO_MATERIALIZED_VIEW_KIND);
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([["iceberg", "warehouse", "order_totals"]]);
+    expect(batch.details[0]!.columns.map((column) => column.name)).toEqual(["id", "total"]);
+  });
+
+  test("a whole folder costs two statements, whatever it holds", async () => {
+    const provider = await objectProvider();
+    sentSql = [];
+
+    const batch = await provider.describeObjects(["iceberg"], "table");
+
+    // The target read and the column read. The single read is one statement PER OBJECT, so
+    // the alternative for these two objects was two - and for a 200-table catalog, 200.
+    expect(batch.details).toHaveLength(2);
+    expect(sentSql).toHaveLength(2);
+  });
+
+  test("a function answers an empty batch with no round trip at all, at either container depth", async () => {
+    const provider = await objectProvider();
+    sentSql = [];
+
+    await expect(provider.describeObjects(["iceberg", "warehouse"], "function")).resolves.toEqual({ details: [] });
+    // And at CATALOG level too, where `listObjects` refuses: the refusal is about the
+    // fan-out `SHOW FUNCTIONS` would need, and there is no fan-out here because a routine
+    // has no columns to read in the first place.
+    await expect(provider.describeObjects(["iceberg"], "function")).resolves.toEqual({ details: [] });
+
+    expect(sentSql).toEqual([]);
+    // The control: a kind that DOES have columns still reaches the cluster.
+    await provider.describeObjects(["iceberg"], "table");
+    expect(sentSql.length).toBeGreaterThan(0);
+  });
+
+  test("an undeclared kind raises, naming the engine and the kind", async () => {
+    const provider = await objectProvider();
+
+    await expect(provider.describeObjects(["iceberg"], "sequence")).rejects.toThrow(
+      /Trino declares no object kind "sequence"/,
+    );
+  });
+
+  test("a container path of the wrong shape raises through the declaration, not a literal depth", async () => {
+    const provider = await objectProvider();
+
+    await expect(provider.describeObjects([], "table")).rejects.toThrow(/A Trino container path is/);
+    await expect(provider.describeObjects(["iceberg", "warehouse", "orders"], "table")).rejects.toThrow(
+      /A Trino container path is/,
+    );
+  });
+
+  test("the container segments are read BY LEVEL, which a SCHEMA-level read shows", async () => {
+    // Standing ruling 5g, driven to a BOUND VALUE. `container[0]` is the CATALOG and
+    // `container[1]` the SCHEMA, and the two reach different parts of the statement: the
+    // catalog is a three-part name prefix and the schema is a quoted literal in a predicate.
+    const provider = await objectProvider();
+
+    const batch = await provider.describeObjects(["memory", "app"], "table");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["memory", "app", "customers"],
+      ["memory", "app", "orders"],
+    ]);
+    expect(batch.details[1]!.columns.map((column) => column.name)).toEqual(["id", "customer_id", "total"]);
+    expect(sqlWith("JOIN (SELECT t.table_schema")).toContain('"memory".information_schema.columns');
+    expect(sqlWith("JOIN (SELECT t.table_schema")).toContain("t.table_schema = 'app'");
+  });
+
+  test("a limit that is not a positive whole number raises rather than clamping", async () => {
+    const provider = await objectProvider();
+    sentSql = [];
+
+    for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(provider.describeObjects(["iceberg"], "table", limit)).rejects.toThrow(
+        /A Trino bulk column read limit must be a positive whole number/,
+      );
+    }
+    // Nothing was sent for any of them: the guard is before the read, and the value is
+    // interpolated into a `LIMIT` clause, so a fraction would be a syntax error rather than
+    // a bound.
+    expect(sentSql).toEqual([]);
+  });
+
+  test("a bound that bites reports the caller's own limit, and one that does not never reports", async () => {
+    const provider = await objectProvider();
+
+    const bounded = await provider.describeObjects(["iceberg"], "table", 1);
+    expect(bounded.details.map((detail) => detail.path)).toEqual([["iceberg", "system", "iceberg_tables"]]);
+    expect(bounded.truncated?.limit).toBe(1);
+    expect(bounded.truncated?.reason.length).toBeGreaterThan(0);
+    // The bound cuts OBJECTS and never columns.
+    expect(bounded.details[0]!.columns.map((column) => column.name)).toEqual(["table_name"]);
+    // `limit + 1` is what the statement carries, so a saturated read is told from an exact
+    // one with no second count: a limit of 1 sent `LIMIT 2`.
+    expect(sqlWith("LIMIT 2")).toContain('ORDER BY "schemaName", "objectName" LIMIT 2');
+
+    const exact = await provider.describeObjects(["iceberg"], "table", 2);
+    expect(exact.details).toHaveLength(2);
+    expect(exact.truncated).toBeUndefined();
+
+    const unbounded = await provider.describeObjects(["iceberg"], "table");
+    expect(unbounded.details).toHaveLength(2);
+    expect(unbounded.truncated).toBeUndefined();
+  });
+
+  test("an empty folder answers an empty batch rather than raising", async () => {
+    const provider = await objectProvider();
+
+    // The iceberg catalog holds no view at all, and "this container holds none" is a true
+    // answer rather than the single read's "no column row", which means the object is not
+    // there under the name it was asked for.
+    await expect(provider.describeObjects(["iceberg"], "view")).resolves.toEqual({ details: [] });
+  });
+
+  test("a row with no usable address or column name is skipped, as it is in the single read", async () => {
+    const provider = await objectProvider();
+    // `serveInstead` and not `overrideSurface`: this has to compose with the object surface
+    // already registered, and a substring override would replace all of it.
+    serveInstead(
+      trinoBulkColumnsSql(ICEBERG, "table"),
+      rows(BULK_COLUMN_COLUMNS, [
+        [null, "orders", "dropped", "bigint", "YES"],
+        ["warehouse", null, "dropped", "bigint", "YES"],
+        ["warehouse", "orders", null, "bigint", "YES"],
+        ["warehouse", "orders", "kept", "bigint", "NO"],
+      ]),
+    );
+
+    const batch = await provider.describeObjects(["iceberg"], "table");
+    const orders = batch.details.find((detail) => detail.path[2] === "orders")!;
+
+    expect(orders.columns).toEqual([{ name: "kept", type: "bigint", nullable: false, isPrimary: false }]);
+    // The object with no address contributed nothing, and the object that WAS listed still
+    // came back: membership is the target read's answer and never the column read's.
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["iceberg", "system", "iceberg_tables"],
+      ["iceberg", "warehouse", "orders"],
+    ]);
+  });
+
+  test("the answer is sorted by path, which is not the order the cluster cut by", async () => {
+    // The two orders are separated deliberately. Trino's `ORDER BY` compares varchars as
+    // UTF-8 BYTES - measured on 476, `U&'\+00E000' < U&'\+01F600'` is true, bytes
+    // `ee 80 80` below `f0 9f 98 80` - while `comparePaths` compares UTF-16 code units,
+    // where the surrogate `0xD83D` sorts below `0xE000`. So the MEMBERSHIP of a bounded cut
+    // is the cluster's and the ORDER of the answer is ours.
+    const provider = await objectProvider();
+    serveInstead(
+      trinoObjectTargetSql(ICEBERG, "table"),
+      rows(OBJECT_NAME_COLUMNS, [
+        ["warehouse", ""],
+        ["warehouse", "\u{1F600}"],
+      ]),
+    );
+    serveInstead(
+      trinoBulkColumnsSql(ICEBERG, "table"),
+      rows(BULK_COLUMN_COLUMNS, [
+        ["warehouse", "", "a", "bigint", "YES"],
+        ["warehouse", "\u{1F600}", "b", "bigint", "YES"],
+      ]),
+    );
+
+    const batch = await provider.describeObjects(["iceberg"], "table");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["iceberg", "warehouse", "\u{1F600}"],
+      ["iceberg", "warehouse", ""],
+    ]);
+  });
+});
+
 describe("Trino object paths are derived from the declaration, never from a position", () => {
   const CROSSED = [
     ["alpha", "beta", "from_alpha_beta"],

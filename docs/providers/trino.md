@@ -781,6 +781,66 @@ the catalog reports. Phase 1 only ever lists and describes it, and neither `acce
 inline editor is offered on a view of any kind, so nothing here can attempt a write. A Phase 2 Source
 tab is where the distinction starts to matter.
 
+#### `describeObjects()` describes a whole folder in two statements (#789)
+
+`describeObjects(container, kind, limit?)` answers the columns of EVERY object of one kind in one
+container, in TWO round trips whatever the folder holds: the target read plus the column read. The
+single read is one statement per object. Measured against a live Trino 476 over a 200-table schema of
+the `memory` connector: **165 ms for one `describeObjects()` against 5,160 ms for 200
+`describeObject()` calls**, the same 600 columns. On this engine the gap is the largest of the five in
+this wave, because every statement is a full HTTP exchange with a coordinator that plans it.
+
+The column read is `trinoObjectColumnsSql()` with the schema-and-name equality replaced by a join
+against the target, and nothing else changed.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.** The same two the folder already reads. The TARGET is the listing statement itself,
+from whichever of the two catalogs publishes that kind: `information_schema.tables` for a table and a
+view, `system.metadata.materialized_views` for a materialized view. The COLUMNS always come from
+`information_schema.columns`, including for a materialized view, which answers there while being
+reported as a `BASE TABLE` (measured on 476) - which is also why the relation target keeps its
+anti-join. It is not `getSchema()`'s reading: that one spans the pinned catalog with no anti-join at
+all, so it counts a materialized view as a table. MEMBERSHIP comes from the target read and never from
+the column read, so an object the column read answered nothing for comes back with an empty column list
+rather than missing, and this read does not repeat the single read's zero-column throw - there an empty
+answer means the object is not there under that name, here the listing has just said it is.
+
+**Which kinds have no columns.** `function` alone, the one non-relation kind, which answers
+`{ details: [] }` with NO round trip - and it answers so at EITHER container depth. That is worth
+stating, because `listObjects` REFUSES a catalog-level function read: `SHOW FUNCTIONS` is per schema and
+the fan-out would be one HTTP exchange per schema, unbounded on a Hive or Iceberg catalog. There is no
+fan-out here because a routine has no columns to read in the first place, so the bulk read answers the
+same empty batch at both depths rather than inheriting a refusal it has no reason for.
+
+**What bounds the read on the wire.** `LIMIT n` appended to the target, carrying `limit + 1` so a
+saturated read is told from an exact one with no second count. The value is INTERPOLATED rather than
+bound, because this transport sends a statement as text and has no parameter channel at all; it is safe
+by construction, since the caller's value is refused unless it is a positive whole number. That guard
+therefore protects the STATEMENT as well as the answer. The extra object is dropped in code and
+`truncated` carries the CALLER's limit.
+
+**What orders the cut, and under whose collation.** `ORDER BY "schemaName", "objectName"`, added by the
+target and carried by neither listing: the listings deliberately have no `ORDER BY`, because four kinds
+are read from three sources that cannot share one sort clause, and the ordering is done over the
+produced PATH instead. A BOUND needs one all the same, or two calls could keep different subsets.
+`schemaName` leads because a CATALOG-level container spans every schema under it. That sort runs under
+the cluster's own varchar comparison, which is the UTF-8 BYTE order: measured on 476,
+`U&'\+00E000' < U&'\+01F600'` is true, bytes `ee 80 80` below `f0 9f 98 80`, where a JavaScript sort
+puts the surrogate `0xD83D` first. So the MEMBERSHIP of a bounded cut is the cluster's and the ORDER of
+the answer is ours.
+
+**Mixed path depth (ruling 5f).** Not in this engine's relation set. `objectRead()` refuses a kind
+declaring `attachedTo`, there is no trigger anywhere in Trino's model, and every object of every
+declared kind is addressed `[catalog, schema, name]` at either container depth.
+
+The join is on BOTH the schema and the name, never on the name alone: a catalog-level container spans
+every schema under it, and two schemas holding a table of one name is the ordinary case. A JOIN and not
+a `(schema, name) IN (...)` tuple test, and both were measured accepted on 476; the join is the one
+whose output order is the coordinator's rather than a semi-join's. The grouping key joins the two
+segments with a NUL, which no Trino identifier can carry, so a schema called `a.b` holding `c` cannot
+collide with a schema called `a` holding `b.c`.
+
 #### Container shapes and the derivations behind them
 
 Both depths are accepted by all four methods: a catalog alone answers "how many tables does this whole

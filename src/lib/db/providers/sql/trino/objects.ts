@@ -66,13 +66,16 @@
 import { QueryError } from "@/lib/db/errors";
 import { containerDepth } from "@/lib/db/object-kinds";
 import type {
+  ColumnSchema,
   ContainerLevelSpec,
   DatabaseObject,
   KindCount,
+  ObjectDetail,
   ObjectKindSpec,
   ProviderCapabilities,
 } from "@/lib/db/types";
-import { TRINO_METADATA_SCHEMA } from "./introspect";
+import { TRINO_METADATA_SCHEMA, TRINO_UNKNOWN_TEXT } from "./introspect";
+import type { TrinoRow } from "./transport";
 
 /** The canonical type-id, for the errors raised here. */
 const TYPE_ID = "trino";
@@ -275,6 +278,106 @@ export function trinoMaterializedViewListSql(container: TrinoContainer): string 
 export function trinoFunctionListSql(catalog: string, schema: string): string {
   return `SHOW FUNCTIONS FROM ${quoteIdentifier(catalog)}.${quoteIdentifier(schema)}`;
 }
+
+/**
+ * The target set of one bulk read: every object of one kind in one container, in the
+ * cluster's own order, optionally cut (#789).
+ *
+ * The same listing statement the folder reads, from whichever of the two catalogs publishes
+ * that kind, with an `ORDER BY` and an optional `LIMIT` added. The listings deliberately
+ * carry no `ORDER BY` of their own, because four kinds are read from three sources that
+ * cannot share one sort clause and the ordering is done over the produced PATH instead; a
+ * BOUND needs one all the same, or two calls could keep different subsets.
+ *
+ * That sort runs under the cluster's own varchar comparison, which is the UTF-8 BYTE order:
+ * measured on 476, `U&'\+00E000' < U&'\+01F600'` is true, bytes `ee 80 80` below
+ * `f0 9f 98 80`, where a JavaScript sort puts the surrogate `0xD83D` first. So the
+ * MEMBERSHIP of a bounded cut is the cluster's and the ORDER of the answer is ours.
+ *
+ * The limit is INTERPOLATED rather than bound, because this transport sends a statement as
+ * text and has no parameter channel at all; it is safe by construction, since the caller's
+ * value is refused unless it is a positive whole number.
+ */
+export function trinoObjectTargetSql(container: TrinoContainer, kind: string, limit?: number): string {
+  const listing =
+    kind === TRINO_MATERIALIZED_VIEW_KIND
+      ? trinoMaterializedViewListSql(container)
+      : trinoRelationListSql(container, kind);
+  return `${listing} ORDER BY "schemaName", "objectName"${limit === undefined ? "" : ` LIMIT ${limit}`}`;
+}
+
+/**
+ * Every target object's columns in ONE statement, which is {@link trinoObjectColumnsSql}
+ * with the schema-and-name equality replaced by a join against the target set.
+ *
+ * A JOIN and not a `(schema, name) IN (...)` tuple test: both are accepted on 476
+ * (measured), and the join is the one whose output order is the coordinator's rather than
+ * the semi-join's. The join is on BOTH segments, never on the name alone, because a
+ * CATALOG-level container spans every schema under it and two schemas holding a table of
+ * one name is the ordinary case.
+ *
+ * The columns come from `information_schema.columns` for a MATERIALIZED VIEW too, while the
+ * target for that kind comes from `system.metadata.materialized_views`: the two catalogs are
+ * genuinely different, and only the second publishes a materialized view as one.
+ */
+export function trinoBulkColumnsSql(container: TrinoContainer, kind: string, limit?: number): string {
+  return [
+    'SELECT c.table_schema AS "schemaName", c.table_name AS "objectName", c.column_name AS "columnName",',
+    'c.data_type AS "dataType", c.is_nullable AS "isNullable"',
+    `FROM ${quoteIdentifier(container.catalog)}.information_schema.columns c`,
+    `JOIN (${trinoObjectTargetSql(container, kind, limit)}) tgt`,
+    'ON tgt."schemaName" = c.table_schema AND tgt."objectName" = c.table_name',
+    "ORDER BY c.table_schema, c.table_name, c.ordinal_position",
+  ].join(" ");
+}
+
+/**
+ * ONE object's detail, from `information_schema.columns` rows, for BOTH reads (#789).
+ *
+ * One mapper and not two, because two are two chances for `describeObjects` to spell a
+ * column differently from `describeObject` over the same object, and nothing downstream
+ * compares the two answers.
+ *
+ * There are NO indexes and NO foreign keys to read, in any catalog of any connector: Trino's
+ * `information_schema` holds eight views and neither `table_constraints` nor
+ * `key_column_usage` is among them, which is the same measurement `declaresForeignKeys:
+ * false` rests on (#414). Both arrays are therefore empty by construction rather than by
+ * omission.
+ */
+export function objectDetailFromRows(path: readonly string[], rows: readonly TrinoRow[]): ObjectDetail {
+  const columns: ColumnSchema[] = rows.flatMap((row) => {
+    const name = readIdentifier(row.columnName);
+    if (name === null) return [];
+    return [
+      {
+        name,
+        type: readIdentifier(row.dataType) ?? TRINO_UNKNOWN_TEXT,
+        // `information_schema.is_nullable` is the ANSI varchar 'YES'/'NO' here rather than a
+        // boolean, measured on 476.
+        nullable: row.isNullable === "YES",
+        // Trino declares no key of any sort, so no column is ever primary. A `false` here is
+        // the engine's answer and not a default this file chose (#414).
+        isPrimary: false,
+      },
+    ];
+  });
+
+  return { path: [...path], columns, indexes: [], foreignKeys: [] };
+}
+
+/**
+ * One comparable spelling of an object's address INSIDE a catalog.
+ *
+ * A NUL separator, which no Trino identifier can carry: a printable one would let a schema
+ * called `a.b` holding `c` collide with a schema called `a` holding `b.c`, and a bulk read
+ * grouped by a colliding key answers one object another object's columns.
+ */
+export function objectKey(schema: string, name: string): string {
+  return `${schema}\u0000${name}`;
+}
+
+/** What `ObjectDetailBatch.truncated.reason` says when the caller's bound bites. */
+export const TRINO_BULK_TRUNCATION_REASON = "the caller's limit on one Trino bulk column read";
 
 /** One relation's columns, in declared order. A materialized view answers here too (measured). */
 export function trinoObjectColumnsSql(catalog: string, schema: string, name: string): string {

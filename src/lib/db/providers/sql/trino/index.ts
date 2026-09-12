@@ -68,6 +68,7 @@ import {
   type MaintenanceResult,
   type MaintenanceType,
   type ObjectDetail,
+  type ObjectDetailBatch,
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
@@ -103,7 +104,12 @@ import {
   type KindCountRow,
   type TrinoContainer,
   applyKindCounts,
+  TRINO_BULK_TRUNCATION_REASON,
   comparePaths,
+  objectDetailFromRows,
+  objectKey,
+  trinoBulkColumnsSql,
+  trinoObjectTargetSql,
   containerRead,
   functionSegment,
   listedObject,
@@ -944,24 +950,98 @@ export class TrinoProvider extends SQLBaseProvider {
       throw new QueryError(`No column row for ${path.join(".")}`, this.type, sql);
     }
 
-    const columns: ColumnSchema[] = rows.flatMap((row) => {
-      const name = readObjectIdentifier(row.columnName);
-      if (name === null) return [];
-      return [
-        {
-          name,
-          type: readObjectIdentifier(row.dataType) ?? TRINO_UNKNOWN_TEXT,
-          // `information_schema.is_nullable` is the ANSI varchar 'YES'/'NO' here rather
-          // than a boolean, measured on 476.
-          nullable: row.isNullable === "YES",
-          // Trino declares no key of any sort, so no column is ever primary. A `false` here
-          // is the engine's answer and not a default this file chose (#414).
-          isPrimary: false,
-        },
-      ];
-    });
+    return objectDetailFromRows(path, rows);
+  }
 
-    return { path: [...path], columns, indexes: [], foreignKeys: [] };
+  /**
+   * Columns for EVERY object of one kind in one container (#789).
+   *
+   * TWO round trips for a whole folder, constant in the number of objects: the target read
+   * plus the column read, which is `describeObject()`'s own statement with the
+   * schema-and-name equality replaced by a join against the target. The caller's alternative
+   * was one `describeObject` per object, which is one statement each.
+   *
+   * The four guards are asked in the same order the reference implementation asks them:
+   *   1. a kind Trino does not declare RAISES, naming the engine and the kind. An empty
+   *      batch would be a claim about the container; an undeclared kind is a fact about the
+   *      engine.
+   *   2. the container path goes through `containerRead`, the same reader `listObjects`
+   *      uses, so the depth and the segment-to-level mapping come from the declaration and
+   *      never from a position (standing ruling 5g).
+   *   3. a `limit` that is not a positive whole number raises rather than clamping. Here that
+   *      guard also protects the STATEMENT: the value is interpolated into a `LIMIT` clause,
+   *      because this transport sends text and has no parameter channel at all.
+   *   4. a kind with no columns answers `{ details: [] }` with NO round trip. On this engine
+   *      that is `function` alone, the one non-relation kind, and it answers so at EITHER
+   *      container depth - `listObjects` refuses a catalog-level function read because
+   *      `SHOW FUNCTIONS` would have to be fanned out per schema, and there is no fan-out
+   *      here because a routine has no columns to read.
+   *
+   * The bound is the CALLER's. `limit + 1` reaches the target's `LIMIT`, the extra object is
+   * dropped and `truncated` carries the caller's own limit; an unbounded call can never
+   * report truncation, and nothing here caps the columns of an object.
+   *
+   * MEMBERSHIP comes from the target read and never from the column read, which is what lets
+   * an object the column read answered nothing for come back with an empty list rather than
+   * missing. It is also why this read does not repeat the single read's zero-column throw:
+   * there an empty answer means the object is not there under that name, here the listing
+   * has just said it is.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`${this.dialect.displayName} declares no object kind "${kind}"`, this.type);
+    }
+    const read = containerRead(capabilities, container);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      throw new QueryError(
+        `A Trino bulk column read limit must be a positive whole number, received ${limit}`,
+        this.type,
+      );
+    }
+    if (spec.role !== "relation") return { details: [] };
+
+    // One row more than the bound, so the read itself says whether it stopped short.
+    const bound = limit === undefined ? undefined : limit + 1;
+    const targetRows = await this.runObjectRows(trinoObjectTargetSql(read, kind, bound));
+    const targets = targetRows.flatMap((row) => {
+      const schema = readObjectIdentifier(row.schemaName);
+      const name = readObjectIdentifier(row.objectName);
+      return schema === null || name === null ? [] : [{ schema, name }];
+    });
+    const truncated = limit !== undefined && targets.length > limit;
+    // The extra object the `limit + 1` bound brought back is dropped here, so its rows in
+    // the grouping below are simply never read.
+    const described = truncated ? targets.slice(0, limit) : targets;
+
+    const columnRows = await this.runObjectRows(trinoBulkColumnsSql(read, kind, bound));
+    const grouped = new Map<string, TrinoRow[]>();
+    for (const row of columnRows) {
+      // A column row with no usable address is not guarded away, it is keyed away: the empty
+      // string is a key no TARGET can produce, because a target is only kept when both its
+      // segments read as non-empty identifiers. So such a row lands in a group nothing asks
+      // for, and the alternative - an explicit `continue` - would be a line no data can
+      // reach while raw lcov reports it as covered (standing ruling 5b).
+      const key = objectKey(readObjectIdentifier(row.schemaName) ?? "", readObjectIdentifier(row.objectName) ?? "");
+      const existing = grouped.get(key);
+      if (existing === undefined) grouped.set(key, [row]);
+      else existing.push(row);
+    }
+
+    const details = described
+      .map((target) =>
+        objectDetailFromRows(
+          listedObject(capabilities, read.catalog, kind, target.schema, target.name, target.name).path,
+          grouped.get(objectKey(target.schema, target.name)) ?? [],
+        ),
+      )
+      // Sorted by PATH, which is what every caller joins the two answers on, and not by the
+      // name the statement ordered by: that order is the cluster's and decides only which
+      // objects a bound keeps.
+      .sort((left, right) => comparePaths(left.path, right.path));
+
+    return truncated ? { details, truncated: { limit, reason: TRINO_BULK_TRUNCATION_REASON } } : { details };
   }
 
   // ==========================================================================
