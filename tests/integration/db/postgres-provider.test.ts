@@ -3632,6 +3632,28 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.disconnect();
   });
 
+  /**
+   * Standing ruling 5g's other named sweep item, on this file (#789, Task 28a).
+   *
+   * `listObjects` sorted by `JSON.stringify(path)`, and JSON ESCAPING reorders exotic names
+   * by rewriting the characters being compared. A quoted identifier may hold a double quote
+   * on this engine (`CREATE TABLE "a""b"` is valid), and the escape turns its first byte
+   * into a backslash: raw, `"` (0x22) is below `Z` (0x5A), and escaped, `\` (0x5C) is above
+   * it. So the two orders are the REVERSE of each other over this pair, and the address
+   * order is the one every caller joins on.
+   */
+  test("the listing is ordered by the ADDRESS, which a name JSON would escape reverses", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("relkind")) return { rows: [] };
+      return { rows: [{ name: "aZb" }, { name: 'a"b' }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect((await provider.listObjects(["app"], "table")).map((object) => object.name)).toEqual(['a"b', "aZb"]);
+    await provider.disconnect();
+  });
+
   test("a server without pg_total_relation_size loses the size, not the folder", async () => {
     // CockroachDB and Materialize are both reached under the `postgres` type id and have
     // no such builtin. The shared withoutTotalRelationSizeFn() is deliberately NOT used:
@@ -3711,9 +3733,11 @@ describe("PostgreSQL object listing and detail", () => {
    */
   test("the container depth and the schema bind are DERIVED, which a two-level declaration shows", async () => {
     const bound: unknown[][] = [];
-    mockQueryFn = async (_sql, params) => {
+    mockQueryFn = async (sql, params) => {
       bound.push(params ?? []);
-      return { rows: [] };
+      // One described row, so the ADDRESS assertion below is over an object that exists.
+      // An empty batch asserts nothing about what `objectPath()` builds.
+      return { rows: sql.includes("relkind") ? [{ name: "orders", columns: [] }] : [] };
     };
     const provider = makeProvider();
     await provider.connect();
@@ -3728,7 +3752,11 @@ describe("PostgreSQL object listing and detail", () => {
 
     const batch = await provider.describeObjects(["shop", "app"], "table");
 
-    expect(batch.details).toEqual([]);
+    // The ADDRESS carries the WHOLE container, not its last segment. `objectPath()` used to
+    // build `[schema, name]` from the schema segment alone, so at depth 2 both this reading
+    // and `listObjects` lost the catalog together and still agreed with each other, which is
+    // what the shared-rule assertion elsewhere in this file cannot see (Task 28a, minor 6).
+    expect(batch.details.map((detail) => detail.path)).toEqual([["shop", "app", "orders"]]);
     // The SCHEMA segment, which is the second one under this declaration. `container[0]`
     // would bind "shop" and narrow every read to a schema that does not exist. Every
     // statement that binds anything is asserted, rather than a count of them: the number of

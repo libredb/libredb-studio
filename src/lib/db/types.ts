@@ -427,6 +427,20 @@ export interface ProviderCapabilities {
    * `declaredKinds()` in `src/lib/db/object-kinds.ts`.
    *
    * Optional for the same published-interface reason as `containerLevels` above.
+   *
+   * WHAT AN EMPTY DECLARATION COSTS, said here because the type is what an external
+   * implementer of this interface reads. Since the flat schema reading was deleted, this
+   * list is the ONLY thing that grounds a database: a provider declaring no kind draws no
+   * folder in the object browser, and its agent runs are ungrounded. That is refused
+   * LOUDLY rather than silently - `readObjectInventoryForGrounding()` answers
+   * `unsupported` before it spends a statement, and the run is told
+   * "the provider declares no object kinds, so there is nothing to list" as a
+   * `CATALOG_READ_REFUSED` capture - so a run is never handed an empty inventory as
+   * though it were an empty database. It is deliberately not a construction-time throw:
+   * every one of the seventeen shipped type ids declares kinds, so the shape is
+   * unreachable here, and refusing to CONNECT over it would take a connection away from
+   * an implementer whose query editor works perfectly well while their catalog reading is
+   * still being written (#789).
    */
   objectKinds?: readonly ObjectKindSpec[];
   schemaRefreshPattern: string;

@@ -35,6 +35,7 @@ import {
   type ContainerLevelSpec,
 } from "../../types";
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import { comparePaths } from "../../object-path";
 import {
   DatabaseConfigError,
   ConnectionError,
@@ -874,9 +875,17 @@ function objectListingStatement(
  * unique within its parent, and `name` is only the label - so a trigger is
  * `[schema, table, trigger]` and an overloaded routine's last segment carries its
  * signature while its name does not.
+ *
+ * It takes the WHOLE CONTAINER and not the schema segment. This used to be
+ * `objectPath(container, row)` opening with `[schema]`, which is behaviour-identical on this
+ * one-level engine and silently wrong the moment the declaration grows a level: the listing
+ * and the bulk read both build their paths here, so at depth 2 they would have agreed with
+ * each other on an address that had lost its outer segment. `containerSchema()` has already
+ * refused any container that is not exactly the declared depth, so what arrives here is the
+ * container the declaration describes (standing ruling 5g, #789).
  */
-function objectPath(schema: string, row: ObjectRow): string[] {
-  const segments = [schema];
+function objectPath(container: readonly string[], row: ObjectRow): string[] {
+  const segments = [...container];
   if (row.parent !== undefined) segments.push(row.parent);
   segments.push(row.identity ?? row.name);
   return segments;
@@ -903,28 +912,6 @@ function objectPath(schema: string, row: ObjectRow): string[] {
  * live through Phase 1. The phase that removes `getSchema` is where that string becomes a
  * path.
  */
-/**
- * Two paths ordered SEGMENT BY SEGMENT, shorter first where one is a prefix of the other.
- *
- * Never `JSON.stringify`, which standing ruling 5g (#789) rules out as a path key: at
- * mixed depth the serialised deeper path can sort before its own prefix, because `,` is
- * below `]`, and JSON escaping reorders exotic names by rewriting the characters being
- * compared. The relation kinds this sorts are all `[schema, name]`, so the two spellings
- * agree here today; the settled form is written anyway, because `listObjects` above still
- * carries the older one and a second copy of a known defect is not a thing to add.
- *
- * This is the FIFTH copy of this function in `src/lib/db/providers` and it is not hoisted
- * here on purpose: standing ruling 5h gives that to the epic's final sweep, so five copies
- * become one definition beside `containerDepth()` rather than three implementers colliding
- * over the same move.
- */
-function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index++) {
-    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
-  }
-  return left.length - right.length;
-}
 
 function objectDetailFromRow(path: readonly string[], row: ObjectDetailRow): ObjectDetail {
   const pkColumns: string[] = row.pk_columns || [];
@@ -2108,22 +2095,23 @@ export class PostgresProvider extends SQLBaseProvider {
     const client = await this.pool!.connect();
     try {
       const result = await this.queryListing(client, statement);
-      return result.rows
-        .map((row: ObjectRow) => ({
-          path: objectPath(schema, row),
-          name: row.name,
-          kind,
-          rowCount: estimatedRowCount(row.row_count),
-          sizeBytes: measuredSizeBytes(row.size_bytes),
-        }))
-        .sort((left, right) => {
-          // By PATH, not by name: two overloads of one routine share a name, so a
-          // name sort leaves their order up to whatever the catalog happened to
-          // answer. Sorting by the address also groups a table's triggers together.
-          const leftKey = JSON.stringify(left.path);
-          const rightKey = JSON.stringify(right.path);
-          return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-        });
+      return (
+        result.rows
+          .map((row: ObjectRow) => ({
+            path: objectPath(container, row),
+            name: row.name,
+            kind,
+            rowCount: estimatedRowCount(row.row_count),
+            sizeBytes: measuredSizeBytes(row.size_bytes),
+          }))
+          // By PATH, not by name: two overloads of one routine share a name, so a name sort
+          // leaves their order up to whatever the catalog happened to answer. Sorting by the
+          // address also groups a table's triggers together. Segment by segment and never
+          // `JSON.stringify(path)`, which standing ruling 5g refuses: the escape rewrites the
+          // characters being compared, so a quoted name holding a double quote sorted by its
+          // escape sequence instead of by itself.
+          .sort((left, right) => comparePaths(left.path, right.path))
+      );
     } finally {
       client.release();
     }
@@ -2245,7 +2233,7 @@ export class PostgresProvider extends SQLBaseProvider {
       const rows = result.rows as BulkDetailRow[];
       const truncated = bounded && rows.length > limit;
       const details = (truncated ? rows.slice(0, limit) : rows)
-        .map((row) => objectDetailFromRow(objectPath(schema, row), row))
+        .map((row) => objectDetailFromRow(objectPath(container, row), row))
         .sort((left, right) => comparePaths(left.path, right.path));
       return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
     } finally {

@@ -143,6 +143,18 @@ const MAPPING_SUFFIX = "/_mapping";
  *
  * A BYTE budget and not a count of names, because index names vary: both products cap a
  * name at 255 bytes, so one name always fits on its own line and every list can be split.
+ *
+ * That is an INVARIANT and not a guard, deliberately, and Task 28a's sweep re-examined it
+ * rather than leaving the question in a comment (#789). A chunk is over budget only if ONE
+ * name is, and the names are not a caller's: they are the cluster's own, read back from
+ * `_cat/indices` on the same connection the mapping request goes out on. So the server that
+ * would refuse the long request line is the same server that enforces the 255-byte cap on
+ * every name it could have listed, and it enforces it at creation time. The headroom is
+ * large enough to be checked by hand: 255 bytes percent-encode to at most 765 characters,
+ * every one of them ASCII, which is four and a half times under this budget. A guard here
+ * would be a branch no fixture built from a real cluster can reach, and an unreachable
+ * branch is a line the 100 percent gate then has to be satisfied about by a fake that
+ * asserts the guard exists rather than that it is needed.
  */
 const MAPPING_TARGETS_MAX_BYTES = 3500;
 

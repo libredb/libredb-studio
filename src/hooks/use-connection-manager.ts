@@ -149,8 +149,9 @@ export function useConnectionManager(storageReady = false) {
         if (!isCurrent()) return;
         // A saturated inventory leaves its tail out of the list entirely, and an object nobody
         // was shown reads as an object the database does not hold. Stating it in the log is the
-        // weaker half of the answer; a surface a READER can see belongs to Phase 2, and is
-        // carried in `docs/superpowers/works/00-QA-ACCEPTANCE.md` rather than left implicit.
+        // weaker half of the answer: a surface a READER can see is still owed and is tracked on
+        // issue #789, which is what this cites now. The path it used to cite is git-ignored, so
+        // the citation reached every clone and the published package pointing at nothing.
         if (truncated !== undefined) {
           logger.warn("Object inventory truncated; objects beyond the limit are not listed", {
             route: "use-connection-manager",

@@ -4,6 +4,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import { INVENTORY_LIMIT, INVENTORY_PAIR_LIMIT, PAIR_TRUNCATION_REASON } from "@/lib/db/inventory-bounds";
 import type {
   DatabaseConnection,
   DatabaseObject,
@@ -208,26 +209,15 @@ export function resolveKinds(provider: DatabaseProvider, requested?: readonly st
   });
 }
 
-/** The hard ceiling on the objects one inventory read returns. Never a caller parameter (#789). */
-export const INVENTORY_LIMIT = 5000;
-export const INVENTORY_TRUNCATION_REASON = "inventory limit reached";
-
-/**
- * The hard ceiling on the LISTINGS one inventory read issues, one per container and kind.
- *
- * `INVENTORY_LIMIT` bounds what comes back and does not bound the work done to get it: a body
- * naming fifty thousand container paths buys fifty thousand sequential round trips, each taking a
- * pool client, under a single rate-limit token, and every one of them may legitimately answer zero
- * objects so the object budget never advances. Nothing else in this app limits a request body, so
- * this is the only bound in that path.
- *
- * 1000, which is 142 containers at the seven kinds PostgreSQL declares. It only ever bites on a
- * fan-out of near-empty containers: at any real object density `INVENTORY_LIMIT` is reached first,
- * because 142 containers holding an average of 36 objects already saturates it. That is the
- * amplification this bounds, rather than a claim about how many schemas a database may have.
- */
-export const INVENTORY_PAIR_LIMIT = 1000;
-export const PAIR_TRUNCATION_REASON = "container and kind pair limit reached";
+// The four inventory bounds are `src/lib/db/inventory-bounds.ts`'s, and they are re-exported
+// here because this route and the agent's grounding walk have to bound one read the same way.
+// They were declared in both modules until Task 28a gave them one owner (#789).
+export {
+  INVENTORY_LIMIT,
+  INVENTORY_PAIR_LIMIT,
+  INVENTORY_TRUNCATION_REASON,
+  PAIR_TRUNCATION_REASON,
+} from "@/lib/db/inventory-bounds";
 
 /**
  * Whether one inventory read also carries columns, indexes and foreign keys.

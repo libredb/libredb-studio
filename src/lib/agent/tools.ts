@@ -86,6 +86,18 @@ import type {
 import type { ContainerEnumeration } from "@/lib/db/container-walk";
 import { sessionDefaultContainer } from "@/lib/db/container-walk";
 import { containerDepth, declaredKinds, isCountSampled, isCountUnavailable } from "@/lib/db/object-kinds";
+import { pathKey } from "@/lib/db/object-path";
+// The inventory route's bounds, and now nobody's second copy of them: one owner, so the
+// agent's grounding walk and `POST /api/db/objects/inventory` cannot come to disagree about
+// how much of a database an inventory is. They used to be declared again here, because
+// `object-route.ts` imports `next/server` at its top level and the agent tree must not
+// (#789). Both are stated again in `docs/AGENT.md`.
+import {
+  INVENTORY_LIMIT,
+  INVENTORY_PAIR_LIMIT,
+  INVENTORY_TRUNCATION_REASON,
+  PAIR_TRUNCATION_REASON,
+} from "@/lib/db/inventory-bounds";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
 import { connectionIdentity, heldSnapshotForConnection } from "./context-snapshot";
@@ -2211,35 +2223,6 @@ class AgentSchemaReadTimeout extends Error {
 }
 
 /**
- * How much of an object inventory one grounding read may take, and why the two bounds
- * are the route's own numbers (#789).
- *
- * They are deliberately the same values `src/lib/api/object-route.ts` bounds
- * `POST /api/db/objects/inventory` with, so the agent and the route cannot come to
- * disagree about how much of a database an inventory is. They are declared here rather
- * than imported because that module imports `next/server` at its top level, and pulling
- * the request layer into the agent tree to read two integers is a dependency nobody
- * wants; Task 28's sweep is where a shared home for them belongs, alongside the four
- * copies of `comparePaths`. Both are stated again in `docs/AGENT.md`.
- */
-const AGENT_INVENTORY_OBJECT_LIMIT = 5000;
-
-/**
- * The separator that turns a path into a map key for the columns join.
- *
- * A control character, because it cannot occur inside an identifier on any engine here, so two
- * different paths cannot collide on one key. `JSON.stringify` is deliberately not used: standing
- * ruling 5g records that JSON escaping reorders exotic names, and a key built one way here and
- * another way in the object browser is how two joins came to disagree before.
- */
-const OBJECT_PATH_KEY_SEPARATOR = String.fromCharCode(31);
-const AGENT_INVENTORY_PAIR_LIMIT = 1000;
-
-/** The object limit's sentence, and the pair limit's. Phrased as the route phrases them. */
-const AGENT_INVENTORY_TRUNCATION_REASON = "inventory limit reached";
-const AGENT_INVENTORY_PAIR_TRUNCATION_REASON = "container and kind pair limit reached";
-
-/**
  * The inventory an object-surface read produced: what was listed, what the kinds MEAN,
  * and whether it is all of it.
  *
@@ -2424,17 +2407,17 @@ async function walkObjectInventory(
       const count = Object.hasOwn(counts, spec.id) ? counts[spec.id] : undefined;
       if (count !== undefined && !isCountUnavailable(count) && count.count === 0) continue;
       if (count !== undefined && isCountSampled(count)) sampledFrom.set(spec.id, count.sampledFrom);
-      if (pairs >= AGENT_INVENTORY_PAIR_LIMIT) {
-        truncated = { limit: AGENT_INVENTORY_PAIR_LIMIT, reason: AGENT_INVENTORY_PAIR_TRUNCATION_REASON };
+      if (pairs >= INVENTORY_PAIR_LIMIT) {
+        truncated = { limit: INVENTORY_PAIR_LIMIT, reason: PAIR_TRUNCATION_REASON };
         break;
       }
       pairs += 1;
       const listed: DatabaseObject[] = [];
       for (const object of await listObjects(container, spec.id)) {
-        if (objects.length + listed.length >= AGENT_INVENTORY_OBJECT_LIMIT) {
+        if (objects.length + listed.length >= INVENTORY_LIMIT) {
           // Overwrites a pair-limit reason where both bit, the same way the route resolves
           // it: the object limit is the one a reader can see reflected in what they hold.
-          truncated = { limit: AGENT_INVENTORY_OBJECT_LIMIT, reason: AGENT_INVENTORY_TRUNCATION_REASON };
+          truncated = { limit: INVENTORY_LIMIT, reason: INVENTORY_TRUNCATION_REASON };
           break;
         }
         listed.push(object);
@@ -2452,9 +2435,9 @@ async function walkObjectInventory(
         // incomplete reading, and a model told otherwise reads a missing column as an absent one.
         if (batch.truncated !== undefined) truncated = batch.truncated;
       }
-      const byPath = new Map(details.map((detail) => [detail.path.join(OBJECT_PATH_KEY_SEPARATOR), detail]));
+      const byPath = new Map(details.map((detail) => [pathKey(detail.path), detail]));
       for (const object of listed) {
-        const detail = byPath.get(object.path.join(OBJECT_PATH_KEY_SEPARATOR));
+        const detail = byPath.get(pathKey(object.path));
         objects.push({
           path: object.path,
           name: object.name,

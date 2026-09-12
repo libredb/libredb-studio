@@ -4404,11 +4404,16 @@ describe("MySQL bulk column read", () => {
     expect(protocolCalls[0].params).toEqual(["app", "BASE TABLE", "SYSTEM VERSIONED"]);
     expect(protocolCalls[1].params).toEqual(["app", "BASE TABLE", "SYSTEM VERSIONED", "app"]);
     // And the two answers still agree about the address, because `objectPath()` builds both.
-    // It builds a container-level path from the SCHEMA segment alone, which is this file's
-    // shape for a one-level engine and is what a two-level engine copying it has to widen;
-    // the invariant asserted here is that the bulk read never invents a second rule.
     const listed = await provider.listObjects(["cluster", "app"], "table");
     expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+    // The address carries the WHOLE container, not its last segment. `objectPath()` used to
+    // build `[schema, name]` from the schema segment alone, so under a two-level declaration
+    // both readings agreed on a path that had lost its catalog: agreeing with each other is
+    // not the same as being right, and the assertion above passes either way. Task 28a's
+    // minor 6 is this line.
+    expect(listed.map((object) => object.path)).toEqual(
+      listed.map((object) => ["cluster", "app", object.path[object.path.length - 1]]),
+    );
     await provider.disconnect();
   });
 });

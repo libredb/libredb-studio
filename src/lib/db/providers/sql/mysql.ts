@@ -38,6 +38,7 @@ import {
 } from "../../types";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import { comparePaths } from "../../object-path";
 import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
@@ -1299,34 +1300,19 @@ function objectListingStatement(schema: string, kind: string): { sql: string; pa
  * ER_TRG_ALREADY_EXISTS), so `[database, trigger]` addresses it. No measured server puts a
  * NULL there - `information_schema.TRIGGERS` has no row without a base table - which is why
  * this is one expression and not two shapes.
+ *
+ * It takes the WHOLE CONTAINER and not the schema segment. This used to be
+ * `objectPath(container, row)` building `[schema, name]`, which is behaviour-identical on this
+ * one-level engine and silently wrong the moment a declaration grows a level: both readings
+ * then agreed on an address that had lost its outer segment, and agreeing with each other is
+ * not the same as being right. The caller has already had the container refused by
+ * `containerSchema()` unless it is exactly the declared depth, so what arrives here is the
+ * container the declaration describes, whatever depth that becomes (standing ruling 5g, #789).
  */
-function objectPath(schema: string, row: ObjectRow): string[] {
+function objectPath(container: readonly string[], row: ObjectRow): string[] {
   const parent = row.parent;
-  if (parent === undefined || parent === null) return [schema, row.name];
-  return [schema, parent, row.name];
-}
-
-/**
- * Two paths compared SEGMENT BY SEGMENT, so a sort is over the address and never over one
- * joined string.
- *
- * `JSON.stringify(path)` is the obvious spelling and it is wrong twice. At MIXED DEPTH the
- * deeper path sorts first, because the separator `,` (0x2C) is below the terminator `]`
- * (0x5D): `["app","orders","orders_stamp"]` would sort above `["app","orders"]`, putting a
- * trigger above the row it hangs off. And JSON ESCAPES, so a name holding a quote, a
- * backslash or a control character sorts by its escape sequence rather than by its own code
- * points, which a docblock claiming a code-point sort of the segments would be lying about.
- *
- * A shorter path that is a prefix of a longer one sorts first, which is the ordering the
- * tree wants: a container-level row above the rows nested under its name.
- */
-function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index += 1) {
-    if (left[index] < right[index]) return -1;
-    if (left[index] > right[index]) return 1;
-  }
-  return left.length - right.length;
+  if (parent === undefined || parent === null) return [...container, row.name];
+  return [...container, parent, row.name];
 }
 
 /** One row of the column read, single or bulk. `object_name` is present only in the bulk one. */
@@ -1985,7 +1971,7 @@ export class MySQLProvider extends SQLBaseProvider {
       const rows = await this.runObjectQuery<ObjectRow[]>(conn, statement.sql, statement.params);
       return rows
         .map((row) => ({
-          path: objectPath(schema, row),
+          path: objectPath(container, row),
           name: row.name,
           kind,
           // Absent for every kind but a relation, and absent for a VIEW too: measured,
@@ -2159,7 +2145,7 @@ export class MySQLProvider extends SQLBaseProvider {
 
       const details = described
         .map((row) =>
-          objectDetailFromRows(objectPath(schema, row), schema, {
+          objectDetailFromRows(objectPath(container, row), schema, {
             columns: columns.get(row.name) ?? [],
             foreignKeys: foreignKeys.get(row.name) ?? [],
             indexes: indexes.get(row.name) ?? [],

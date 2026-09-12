@@ -38,6 +38,7 @@ import {
   type ForeignKeySchema,
 } from "../../types";
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import { comparePaths } from "../../object-path";
 import {
   DatabaseConfigError,
   ConnectionError,
@@ -719,12 +720,12 @@ function objectListingStatement(owner: string, kind: string): { sql: string; par
  * dropped out from under it), and a specification usually exists with no body while it is
  * being written.
  */
-function collapsePackages(owner: string, rows: readonly ObjectRow[]): DatabaseObject[] {
+function collapsePackages(container: readonly string[], rows: readonly ObjectRow[]): DatabaseObject[] {
   const byName = new Map<string, DatabaseObject>();
   for (const row of rows) {
     const seen = byName.get(row.NAME);
     const status = seen?.status === "INVALID" ? "INVALID" : row.STATUS;
-    byName.set(row.NAME, { path: [owner, row.NAME], name: row.NAME, kind: "package", status });
+    byName.set(row.NAME, { path: [...container, row.NAME], name: row.NAME, kind: "package", status });
   }
   return [...byName.values()];
 }
@@ -743,40 +744,19 @@ function collapsePackages(owner: string, rows: readonly ObjectRow[]): DatabaseOb
  *
  * A NULL parent is a real trigger and not a missing value: a SCHEMA or DATABASE trigger
  * has no base object, so it hangs off the container itself.
+ *
+ * It takes the WHOLE CONTAINER and not the owner segment. This used to be
+ * `objectPath(container, row)` building `[owner, name]`, which is behaviour-identical on this
+ * one-level engine and silently wrong the moment the declaration grows a level: the listing
+ * and the bulk read would then have agreed with each other on an address that had lost its
+ * outer segment, which is the shape standing ruling 5g warns about. The caller has already
+ * had the container refused by `containerOwner()` unless it is exactly the declared depth,
+ * so what arrives here is the container the declaration describes (#789).
  */
-function objectPath(owner: string, row: ObjectRow): string[] {
+function objectPath(container: readonly string[], row: ObjectRow): string[] {
   const parent = row.PARENT;
-  if (parent === null || parent === undefined) return [owner, row.NAME];
-  return [owner, parent, row.NAME];
-}
-
-/** One comparable spelling of a path, so a sort compares addresses and never labels. */
-function pathKey(path: readonly string[]): string {
-  return JSON.stringify(path);
-}
-
-/**
- * Two paths ordered SEGMENT BY SEGMENT, shorter first where one is a prefix of the other.
- *
- * Never `JSON.stringify`, which standing ruling 5g (#789) rules out as a path key for two
- * reasons: at mixed depth the serialised deeper path sorts before its own prefix, because
- * `,` (0x2C) is below `]` (0x5D), and JSON escaping reorders exotic names by rewriting the
- * characters being compared. `pathKey()` above is the older spelling and `listObjects` still
- * sorts with it; that line is standing ruling 5g's named sweep item and is left for the
- * sweep rather than changed under a task that is meant to be additive. New code writes the
- * settled form, which is what this is.
- *
- * This is the SIXTH copy of this function in `src/lib/db/providers` and it is not hoisted
- * here on purpose: standing ruling 5h gives that move to the epic's final sweep, so six
- * copies become one definition beside `containerDepth()` rather than three implementers
- * colliding over it mid-wave.
- */
-function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index++) {
-    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
-  }
-  return left.length - right.length;
+  if (parent === null || parent === undefined) return [...container, row.NAME];
+  return [...container, parent, row.NAME];
 }
 
 /** One row of a bulk read, with the object it is about. The single read's rows carry no name. */
@@ -1590,13 +1570,13 @@ export class OracleProvider extends SQLBaseProvider {
       const rows = (result.rows ?? []) as ObjectRow[];
       const objects =
         kind === "package"
-          ? collapsePackages(owner, rows)
-          : rows.map((row) => ({ path: objectPath(owner, row), name: row.NAME, kind, status: row.STATUS }));
-      return objects.sort((left, right) => {
-        const leftKey = pathKey(left.path);
-        const rightKey = pathKey(right.path);
-        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-      });
+          ? collapsePackages(container, rows)
+          : rows.map((row) => ({ path: objectPath(container, row), name: row.NAME, kind, status: row.STATUS }));
+      // Sorted by ADDRESS, segment by segment. This used to key on `JSON.stringify(path)`,
+      // which standing ruling 5g refuses for two reasons that both bite on this engine: at the
+      // MIXED DEPTH ruling 5f gives Oracle's triggers the serialised deeper path sorts above
+      // its own prefix, and JSON escaping reorders a quoted name by its escape sequence.
+      return objects.sort((left, right) => comparePaths(left.path, right.path));
     } finally {
       await conn.close();
     }
@@ -1768,7 +1748,7 @@ export class OracleProvider extends SQLBaseProvider {
 
       const details = described
         .map((row) =>
-          objectDetailFromRows(objectPath(owner, row), owner, {
+          objectDetailFromRows(objectPath(container, row), owner, {
             columns: columns.get(row.NAME) ?? [],
             primaryKey: primaryKey.get(row.NAME) ?? [],
             foreignKeys: foreignKeys.get(row.NAME) ?? [],

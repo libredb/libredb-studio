@@ -3038,6 +3038,39 @@ describe("Oracle object listing and detail", () => {
     await provider.disconnect();
   });
 
+  /**
+   * Standing ruling 5g's second sweep item, and the one shape that can tell the two orders
+   * apart on this engine.
+   *
+   * `listObjects` used to sort by `pathKey()`, which was `JSON.stringify(path)`, and at MIXED
+   * DEPTH that is the reverse of the address order: the serialised deeper path sorts FIRST,
+   * because the separator `,` (0x2C) is below the terminator `]` (0x5D). Oracle is where the
+   * mixed depth is real (ruling 5f) - a schema-level trigger takes `[owner, trigger]` while a
+   * table-level one takes `[owner, table, trigger]` - and a trigger lives in its own namespace,
+   * so a schema trigger `AUDIT` may sit beside a table `AUDIT` that carries triggers of its own.
+   * That pair is the fixture below, and under the old sort the table's trigger came out above
+   * the schema trigger it hangs beside.
+   */
+  test("a mixed-depth trigger listing is ordered by ADDRESS, not by a stringified path", async () => {
+    mockExecuteFn = async (sql: string) => {
+      if (!sql.includes("ALL_TRIGGERS")) return { rows: [] };
+      return {
+        rows: [
+          { NAME: "AUDIT_ROW_TRG", PARENT: "AUDIT", STATUS: "VALID" },
+          { NAME: "AUDIT", PARENT: null, STATUS: "VALID" },
+        ],
+      };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    expect(await provider.listObjects(["APP"], "trigger")).toEqual([
+      { path: ["APP", "AUDIT"], name: "AUDIT", kind: "trigger", status: "VALID" },
+      { path: ["APP", "AUDIT", "AUDIT_ROW_TRG"], name: "AUDIT_ROW_TRG", kind: "trigger", status: "VALID" },
+    ]);
+    await provider.disconnect();
+  });
+
   test("the trigger count and the trigger listing read one catalog, so the badge cannot outrun the folder", async () => {
     // Standing ruling 5f: the listing must contain exactly what the count counted. The
     // count reads ALL_OBJECTS, and ALL_TRIGGERS is exposed by BASE-TABLE accessibility
@@ -3666,8 +3699,11 @@ describe("Oracle bulk column read", () => {
     // two-level declaration is what makes the derivation mutatable on a one-level engine.
     const issued: Array<{ sql: string; params: unknown[] }> = [];
     mockExecuteFn = async (sql: string, params?: unknown[]) => {
-      if (sql.includes("WITH described AS")) issued.push({ sql, params: params ?? [] });
-      return { rows: [] };
+      if (!sql.includes("WITH described AS")) return { rows: [] };
+      issued.push({ sql, params: params ?? [] });
+      // One described object, so the path assertion below is over a row that exists: an
+      // empty batch would make it pass whatever `objectPath()` builds.
+      return { rows: sql.includes("SELECT d.NAME FROM described d") ? [{ NAME: "APP_ORDERS" }] : [] };
     };
     const provider = makeProvider({ user: "app" });
     await provider.connect();
@@ -3679,9 +3715,14 @@ describe("Oracle bulk column read", () => {
       ],
     });
 
-    await provider.describeObjects(["XEPDB1", "APP"], "table");
+    const batch = await provider.describeObjects(["XEPDB1", "APP"], "table");
 
     expect(issued[0].params[0]).toBe("APP");
+    // And the ADDRESS carries the whole container, not its last segment. `objectPath()` used
+    // to build `[owner, name]` from the owner alone, which is behaviour-identical at depth 1
+    // and loses the outer segment at depth 2 in BOTH readings at once, so the listing and the
+    // bulk read still agreed with each other while both were wrong (Task 28a, minor 6).
+    expect(batch.details.map((detail) => detail.path)).toEqual([["XEPDB1", "APP", "APP_ORDERS"]]);
     await provider.disconnect();
   });
 
