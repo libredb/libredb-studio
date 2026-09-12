@@ -21,6 +21,8 @@
  * - `FORMAT`/`SETTINGS` are TRAILING clauses, so appending `LIMIT n` after one
  *   is a hard syntax error.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import {
   callerBoundTruncationReason,
@@ -2993,10 +2995,29 @@ const OBJECT_SOURCE_BY_NAME: Readonly<Record<string, string>> = {
 const FUNCTION_SOURCE_ROWS: Readonly<Record<string, { objectOrigin: string; objectSource: string }>> = {
   probe_double: { objectOrigin: "SQLUserDefined", objectSource: "CREATE FUNCTION probe_double AS x -> (x * 2)" },
   probe_exec: { objectOrigin: "ExecutableUserDefined", objectSource: "" },
+  // Not a live shape either: `origin` is an Enum8 and always carries one of its four names.
+  // Same reason as the blank dictionary origin above, and the same measurement: replacing the
+  // provider's no-origin arm with a marker string left the suite at 201 pass 0 fail.
+  probe_blank_origin: { objectOrigin: "", objectSource: "" },
 };
 
-/** `system.dictionaries.origin` for a config-file dictionary: the file it is declared in. */
-const CONFIG_DICTIONARY_ORIGIN = "/etc/clickhouse-server/regions_dictionary.xml";
+/**
+ * `system.dictionaries.origin` for a config-file dictionary: the file it is declared in.
+ *
+ * The SECOND row is not a live shape and says so: every config-file dictionary measured on
+ * 26.7.1.1315 reports the XML file it came from. It is here because the provider's refusal
+ * sentence has an arm for an origin the server does NOT report, and an arm no test drives is
+ * dead however many hits lcov attributes to its line (standing ruling 5b, #789). Measured
+ * before this row existed: replacing that arm with a marker string left the suite at
+ * 201 pass 0 fail.
+ */
+const CONFIG_DICTIONARY_ORIGINS: Readonly<Record<string, string>> = {
+  dict_regions_config: "/etc/clickhouse-server/regions_dictionary.xml",
+  dict_origin_blank: "",
+};
+
+/** The file the fixture's own config-file dictionary is declared in. */
+const CONFIG_DICTIONARY_ORIGIN = CONFIG_DICTIONARY_ORIGINS.dict_regions_config;
 
 /**
  * The three source statements, answered off the fixtures above.
@@ -3021,7 +3042,8 @@ function sourceReply(sql: string): Reply | null {
   if (sql.includes("AS objectOrigin") && sql.includes("FROM system.dictionaries AS d")) {
     // Only the CONFIG-FILE flavour, which is what `d.database = ''` asks for.
     const name = literalFor(sql, "d.name") ?? "";
-    return jsonReply(name === "dict_regions_config" ? [{ objectOrigin: CONFIG_DICTIONARY_ORIGIN }] : []);
+    if (!Object.hasOwn(CONFIG_DICTIONARY_ORIGINS, name)) return jsonReply([]);
+    return jsonReply([{ objectOrigin: CONFIG_DICTIONARY_ORIGINS[name] }]);
   }
   return null;
 }
@@ -3082,6 +3104,40 @@ function readablePart(document: ObjectSourceDocument): {
   if (isSourcePartUnavailable(part)) throw new Error(`expected a text and got a refusal: ${part.unavailable}`);
   return part;
 }
+
+/** The committed fixture, which is where the two adversarial objects below come from. */
+const CLICKHOUSE_FIXTURE_FILE = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "..",
+  "docker",
+  "clickhouse-init",
+  "01-object-fixture.sql",
+);
+
+/**
+ * The names the escaping argument rests on, with the statement text each must produce.
+ *
+ * `fixtureLine` marks the two that the committed fixture CREATES, so the same name can be
+ * read back against a real server (standing ruling 5i). `bs_one\` is the one probe 11
+ * actually found: a TERMINAL backslash is the only shape that swallows the closing quote,
+ * and a name with a character after the backslash does not reproduce it.
+ *
+ * The other three need no fixture object, because the statement is the whole assertion: the
+ * read answers no row for them and raises, and what is being pinned is what went out.
+ */
+const ADVERSARIAL_NAMES: readonly {
+  readonly name: string;
+  readonly sent: string;
+  readonly fixtureLine?: string;
+}[] = [
+  { name: "bs_one\\", sent: "'bs_one\\\\'", fixtureLine: "CREATE TABLE demo.`bs_one\\\\`" },
+  { name: 'dq"two', sent: "'dq\"two'", fixtureLine: 'CREATE TABLE demo.`dq"two`' },
+  { name: "o'brien\\x", sent: "'o''brien\\\\x'" },
+  { name: "x\\' OR 1=1 --", sent: "'x\\\\'' OR 1=1 --'" },
+  { name: "a' UNION ALL SELECT 'pwn", sent: "'a'' UNION ALL SELECT ''pwn'" },
+];
 
 describe("object source", () => {
   test("reads the definition of every source-bearing kind, pinning the statement AND the text", async () => {
@@ -3175,6 +3231,52 @@ describe("object source", () => {
     // is: `ExecutableUserDefined` and `WasmUserDefined` have no SQL text at all, and the
     // sentence would be a guess without it.
     expect(part.unavailable).toContain("ExecutableUserDefined");
+    await provider.disconnect();
+  });
+
+  test("a dictionary whose origin the server does not report says THAT, not a sentence with a hole in it", async () => {
+    // The arm this drives was DEAD while raw lcov reported its line as hit: the fallback is
+    // on the same physical line as the truthy branch, so the `,0` record a zero-hit line
+    // would carry never appeared (standing ruling 5b, #789). Replacing the arm with a marker
+    // string left the suite at 201 pass 0 fail. It is user-visible prose rather than a
+    // formality: a reader is shown this sentence as the engine's own fact about the object.
+    replyFor = (sql) => sourceReply(sql) ?? objectReply(sql);
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const document = await provider.readObjectSource([OBJECT_DATABASE, "dict_origin_blank"], "dictionary");
+
+    const [part] = document.parts;
+    expect(Object.hasOwn(part, "text")).toBe(false);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    // The WHOLE sentence, because what is wrong with a fallback nobody drove is the prose.
+    expect(part.unavailable).toBe(
+      "ClickHouse publishes no CREATE DICTIONARY statement for this dictionary: it is declared outside SQL " +
+        "and system.dictionaries reports no origin for it, so it has no system.tables row to read one from. " +
+        "SHOW CREATE DICTIONARY answers that the table does not exist for it, which is a false claim about a " +
+        "dictionary this server is serving.",
+    );
+    expect(part.unavailable).not.toContain("configuration file");
+    await provider.disconnect();
+  });
+
+  test("a function whose origin the server does not report says THAT rather than trailing off", async () => {
+    // The second half of the same dead-arm class: `origin === null` produced the EMPTY
+    // string, so the sentence simply lost the clause that says which absence it is, and no
+    // assertion could see the difference. Same measurement: a marker string in that arm left
+    // the suite at 201 pass 0 fail.
+    replyFor = (sql) => sourceReply(sql) ?? objectReply(sql);
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const document = await provider.readObjectSource([OBJECT_DATABASE, "probe_blank_origin"], "function");
+
+    const [part] = document.parts;
+    expect(Object.hasOwn(part, "text")).toBe(false);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.unavailable).toBe(
+      "ClickHouse publishes no SQL text for this function: system.functions.create_query is empty and " +
+        "system.functions reports no origin for it. A function whose body is an external program or a WASM " +
+        "module has no SQL definition to read.",
+    );
     await provider.disconnect();
   });
 
@@ -3396,20 +3498,50 @@ describe("object source", () => {
     // statement runs on into whatever follows; the shared `SQLBaseProvider.escapeIdentifier`
     // doubles only the quote and is therefore unsafe here. Every caller-supplied name in
     // this read reaches a statement through `literal()` instead, in a VALUE position, where
-    // the same hazard exists and both escapes answer it. Measured against the live server
-    // with the fixture's own `bs_one\` table: the escaped form reads the object back and
-    // the naive one fails with code 62, `Single quoted string is not closed`, at the
-    // position of the FORMAT clause ten characters later.
+    // the same hazard exists and both escapes answer it.
+    //
+    // THE TERMINAL BACKSLASH IS THE WHOLE POINT, and driving a name whose backslash has a
+    // character after it does not test it: measured on this suite, an escaper written as
+    // `value.replace(/\\(?=[\s\S])/g, "\\\\")`, which escapes a backslash only when
+    // something follows, read `bs_one\` back as `'bs_one\'`, swallowed the closing quote and
+    // still left the whole suite at 201 pass 0 fail, because no assertion drove a name that
+    // ENDED in one. That is why `demo.`bs_one\`` is in the committed fixture and why it is
+    // driven here.
     replyFor = (sql) => sourceReply(sql) ?? objectReply(sql);
     const provider = await connectProvider({ database: OBJECT_DATABASE });
+    const fixture = readFileSync(CLICKHOUSE_FIXTURE_FILE, "utf8");
 
-    sentSql.length = 0;
-    await provider.readObjectSource([OBJECT_DATABASE, "o'brien\\x"], "table").catch(() => undefined);
+    // Non-vacuity first, in both directions: a loop over an empty table certifies nothing,
+    // and a table whose adversarial names are no longer in the fixture certifies a
+    // measurement nobody can re-run (standing ruling 5i).
+    if (ADVERSARIAL_NAMES.length === 0) {
+      throw new Error("no adversarial name is driven, so this escaping test certifies nothing");
+    }
+    const drove: string[] = [];
+    const checkedAgainstFixture: string[] = [];
+    for (const entry of ADVERSARIAL_NAMES) {
+      if (entry.fixtureLine !== undefined) {
+        if (!fixture.includes(entry.fixtureLine)) {
+          throw new Error(
+            `docker/clickhouse-init/01-object-fixture.sql no longer creates ${entry.name}, so the live half of this measurement cannot be re-run`,
+          );
+        }
+        checkedAgainstFixture.push(entry.name);
+      }
+      sentSql.length = 0;
+      await provider.readObjectSource([OBJECT_DATABASE, entry.name], "table").catch(() => undefined);
 
-    expect(sentSql).toEqual([
-      "SELECT formatQuery(t.create_table_query) AS objectSource FROM system.tables AS t " +
-        "WHERE t.database = 'analytics' AND t.name = 'o''brien\\\\x'",
-    ]);
+      expect(sentSql).toEqual([
+        "SELECT formatQuery(t.create_table_query) AS objectSource FROM system.tables AS t " +
+          `WHERE t.database = 'analytics' AND t.name = ${entry.sent}`,
+      ]);
+      drove.push(entry.name);
+    }
+    // The loop's did-not-skip case, and the two facts a row could quietly lose: that a name
+    // ending in a backslash was driven at all, and that the fixture-backed ones were checked.
+    expect(drove).toEqual(ADVERSARIAL_NAMES.map((entry) => entry.name));
+    expect(drove.filter((name) => name.endsWith("\\"))).toEqual(["bs_one\\"]);
+    expect(checkedAgainstFixture).toEqual(["bs_one\\", 'dq"two']);
     await provider.disconnect();
   });
 

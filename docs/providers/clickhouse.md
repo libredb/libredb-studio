@@ -1128,10 +1128,18 @@ absence it is.
 and an `ExecutableUserDefined` or `WasmUserDefined` function's body is an external program or a
 WASM module rather than SQL, so its `create_query` is empty. The refusal carries the ORIGIN the
 server reported, because that column is the only thing that can say WHICH absence an empty text
-is. DISCLOSED: neither origin exists on this server and neither is in the fixture, because both
-need a server-side configuration file and a script directory that `database-compose.yml` does
-not mount, and that file is owned by another task for the whole of #789. The arm is driven in
-the suite by a server that answers an empty `create_query`, and the live half stays UNMEASURED.
+is. DISCLOSED: neither origin exists on this server and neither is in the fixture, because an
+executable or WASM function is declared by a `*_function.xml` in the server configuration
+directory beside the script it runs, and `database-compose.yml` mounts neither, so this origin
+cannot be created on the shipped fixture. The arm is driven in the suite by a server that
+answers an empty `create_query`, and the live half stays UNMEASURED.
+
+Both refusal sentences also have an arm for an origin the server does not report, which no
+ClickHouse build produces: `system.dictionaries.origin` names the XML file and
+`system.functions.origin` is an `Enum8`. It exists because a blank column would otherwise put a
+hole in a sentence a reader is shown as the engine's own fact, and it is DRIVEN in the suite
+rather than left to line coverage, which reported the line as hit while the arm was dead
+(#789).
 
 **A privilege denial.** It arrives as HTTP 500 with exception code 497 and never as 403
 (section 3.3), and the sentence is the server's own, VERBATIM and unprefixed, never through the

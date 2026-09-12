@@ -1232,7 +1232,12 @@ async function readFunctionSource(transport: ClickHouseTransport, name: string):
       outcome: "refused",
       unavailable:
         "ClickHouse publishes no SQL text for this function: system.functions.create_query is empty" +
-        (origin === null ? "" : ` and its origin is ${origin}`) +
+        // The no-origin arm names the second absence rather than dropping the clause. It is
+        // not a live shape - `origin` is an Enum8 and always carries one of its four names -
+        // but an arm that produced the EMPTY string was DEAD while raw lcov reported this
+        // line as hit, because the truthy arm is on the same physical line (standing ruling
+        // 5b, #789). It is driven in the suite by a server answering a blank origin.
+        (origin === null ? " and system.functions reports no origin for it" : ` and its origin is ${origin}`) +
         ". A function whose body is an external program or a WASM module has no SQL definition to read.",
     };
   }
@@ -1264,10 +1269,18 @@ async function readDictionarySource(
   return {
     outcome: "refused",
     unavailable:
-      "ClickHouse publishes no CREATE DICTIONARY statement for this dictionary: it is declared in the " +
-      `configuration file ${origin ?? "system.dictionaries reports no origin for"}, not in SQL, so it has no ` +
-      "system.tables row to read one from. SHOW CREATE DICTIONARY answers that the table does not exist for it, " +
-      "which is a false claim about a dictionary this server is serving.",
+      "ClickHouse publishes no CREATE DICTIONARY statement for this dictionary: " +
+      // Two WHOLE clauses rather than a name interpolated into one sentence. The earlier
+      // spelling put the fallback inside the phrase "the configuration file X", so a server
+      // reporting no origin produced "the configuration file system.dictionaries reports no
+      // origin for, not in SQL", which is broken prose shown to a reader as the engine's own
+      // fact. That arm was DEAD while raw lcov reported the line as hit (standing ruling 5b,
+      // #789); both arms are driven in the suite now.
+      (origin === null
+        ? "it is declared outside SQL and system.dictionaries reports no origin for it"
+        : `it is declared in the configuration file ${origin}, not in SQL`) +
+      ", so it has no system.tables row to read one from. SHOW CREATE DICTIONARY answers that the table does " +
+      "not exist for it, which is a false claim about a dictionary this server is serving.",
   };
 }
 
