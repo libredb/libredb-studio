@@ -45,6 +45,26 @@ let mockListCollectionsError: Record<string, Error> = {};
 let mockDocumentsByNs: Record<string, Record<string, unknown>[]> = {};
 /** Every database name `MongoClient.db()` was opened with, in order. */
 let mongoOpenedDatabases: string[] = [];
+/**
+ * Every aggregate pipeline the bulk sample chain sent, in order.
+ *
+ * The bulk column read's claim is that a folder costs ONE aggregate per chunk rather than
+ * one read per object, and nothing about the RESULT can distinguish the two. So the
+ * pipelines themselves are captured, and the tests assert how many there were and which
+ * collections each one named (#789).
+ */
+let mongoAggregatePipelines: Record<string, unknown>[][] = [];
+/** Every `<database>.<collection>` whose indexes were read, in order. */
+let mongoIndexReads: string[] = [];
+/** Every `<database>.<collection>` a `find()` cursor was opened on, in order. */
+let mongoFoundCollections: string[] = [];
+
+/** The collections one captured sample pipeline names, first arm included. */
+function pipelineNamespaces(pipeline: Record<string, unknown>[]): string[] {
+  const first = (pipeline[1] as { $project?: { __ks?: { $literal?: string } } })?.$project?.__ks?.$literal;
+  const rest = pipeline.slice(2).map((stage) => (stage as { $unionWith?: { coll?: string } }).$unionWith?.coll ?? "");
+  return [String(first), ...rest];
+}
 /** The `listDatabases` command document the driver received, verbatim. */
 let lastListDatabasesCommand: Record<string, unknown> = {};
 // The URI `buildConnectionString()` composed, as the driver received it. The only
@@ -85,11 +105,71 @@ const mockCollectionInfos = (dbName: string): { name: string; type: string }[] =
 const isMockView = (name: string, dbName: string): boolean =>
   mockCollectionInfos(dbName).some((c) => c.name === name && c.type === "view");
 
+/**
+ * The bulk sample pipeline, INTERPRETED rather than ignored (standing ruling 5b).
+ *
+ * `describeObjects` reads every object's documents in one `$unionWith` chain, and a fake
+ * that answered one canned array whatever the pipeline said could not see a rewrite of it:
+ * the collection names, the per-collection `$limit` and the `__ks` tag would all be
+ * unasserted. So this walks the exact stage shape the provider builds and refuses anything
+ * else by name, which is what makes a mutation of that construction fail here rather than
+ * only against a live server (#789).
+ *
+ * Anything that is not that shape falls through to the canned array, because `query()`
+ * sends arbitrary user pipelines through the same method and has always been answered that
+ * way.
+ */
+function runMockAggregate(
+  name: string,
+  dbName: string,
+  pipeline: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  const project = pipeline[1] as { $project?: { __ks?: { $literal?: string } } } | undefined;
+  if (project?.$project?.__ks === undefined) return mockCollectionData;
+
+  const readLimit = (stage: unknown): number => {
+    const limit = (stage as { $limit?: unknown } | undefined)?.$limit;
+    if (typeof limit !== "number") throw new Error("the bulk sample pipeline must start each arm with $limit");
+    return limit;
+  };
+  // The SAME fallback `find()` takes for a namespace no test named, so the fake models one
+  // server for both reads: an asymmetry here would show up as the bulk read and the single
+  // read disagreeing about a collection, which is a defect this suite exists to catch.
+  const sample = (coll: string, limit: number): Record<string, unknown>[] =>
+    (mockDocumentsByNs[`${dbName}.${coll}`] ?? mockCollectionData)
+      .slice(0, limit)
+      .map((document) => ({ __ks: coll, d: document }));
+
+  if (project.$project.__ks.$literal !== name) {
+    throw new Error(`the bulk sample pipeline tagged ${name} as ${String(project.$project.__ks.$literal)}`);
+  }
+  const rows = sample(name, readLimit(pipeline[0]));
+  for (const stage of pipeline.slice(2)) {
+    const union = (stage as { $unionWith?: { coll?: string; pipeline?: Record<string, unknown>[] } }).$unionWith;
+    if (union?.coll === undefined || union.pipeline === undefined) {
+      throw new Error("the bulk sample pipeline may only carry $unionWith after its first two stages");
+    }
+    const tag = (union.pipeline[1] as { $project?: { __ks?: { $literal?: string } } })?.$project?.__ks?.$literal;
+    if (tag !== union.coll) throw new Error(`a $unionWith arm on ${union.coll} tagged its rows ${String(tag)}`);
+    rows.push(...sample(union.coll, readLimit(union.pipeline[0])));
+  }
+  return rows;
+}
+
 const createMockCollection = (name = "users", dbName = "testdb") => ({
-  find: () => createMockCursor(mockDocumentsByNs[`${dbName}.${name}`] ?? mockCollectionData),
+  find: () => {
+    mongoFoundCollections.push(`${dbName}.${name}`);
+    return createMockCursor(mockDocumentsByNs[`${dbName}.${name}`] ?? mockCollectionData);
+  },
   findOne: async () => mockCollectionData[0] || null,
-  aggregate: () => ({
-    toArray: async () => mockCollectionData,
+  aggregate: (pipeline?: Record<string, unknown>[]) => ({
+    toArray: async () => {
+      const stages = pipeline ?? [];
+      if ((stages[1] as { $project?: { __ks?: unknown } })?.$project?.__ks !== undefined) {
+        mongoAggregatePipelines.push(stages);
+      }
+      return runMockAggregate(name, dbName, stages);
+    },
   }),
   countDocuments: async () => mockCollectionData.length,
   distinct: async (field: string) => mockCollectionData.map((d) => d[field]),
@@ -116,6 +196,7 @@ const createMockCollection = (name = "users", dbName = "testdb") => ({
     return 42;
   },
   indexes: async () => {
+    mongoIndexReads.push(`${dbName}.${name}`);
     if (isMockView(name, dbName)) throw commandNotSupportedOnView("listIndexes", name);
     return [
       { name: "_id_", key: { _id: 1 }, unique: true },
@@ -349,6 +430,9 @@ function resetObjectSurfaceMocks(): void {
   mockListCollectionsError = {};
   mockDocumentsByNs = {};
   mongoOpenedDatabases = [];
+  mongoAggregatePipelines = [];
+  mongoIndexReads = [];
+  mongoFoundCollections = [];
   lastListDatabasesCommand = {};
 }
 
@@ -1856,5 +1940,204 @@ describe("object surface", () => {
     await expect(objectProvider.countObjects(["cluster0"])).rejects.toThrow(
       /needs a "schema" container level and a segment for it/,
     );
+  });
+
+  // --------------------------------------------------------------------------
+  // describeObjects, the bulk column read (#789)
+  // --------------------------------------------------------------------------
+
+  test("samples every collection in a folder in ONE aggregate, not one find each", async () => {
+    const batch = await objectProvider.describeObjects!(["app"], "collection");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["app", "customers"],
+      ["app", "orders"],
+      ["app", "readings"],
+      ["app", "systemetrics"],
+    ]);
+    // ONE aggregate for the four collections, and no `find` at all: the sample chain is
+    // what replaces the per-object read. `system.views` and `system.buckets.readings` are
+    // absent because the classifier drops them, so the union names four arms and not six.
+    expect(mongoAggregatePipelines.length).toBe(1);
+    expect(pipelineNamespaces(mongoAggregatePipelines[0])).toEqual(["customers", "orders", "readings", "systemetrics"]);
+    expect(mongoFoundCollections).toEqual([]);
+  });
+
+  test("the sample chain is chunked, so a wide folder cannot outgrow the pipeline limit", async () => {
+    const many = Array.from({ length: 250 }, (_, index) => ({
+      name: `c${String(index).padStart(3, "0")}`,
+      type: "collection",
+    }));
+    mockCollectionsByDb = { wide: many };
+    mockDocumentsByNs = Object.fromEntries(many.map((info) => [`wide.${info.name}`, [{ _id: 1, v: "x" }]]));
+
+    const batch = await objectProvider.describeObjects!(["wide"], "collection");
+
+    expect(batch.details.length).toBe(250);
+    // Three aggregates of at most 100 arms each, and not 250 reads: the count grows with
+    // the folder divided by the chunk, which is what keeps a 5,000-collection database off
+    // both the N+1 and MongoDB's own 1,000-stage pipeline ceiling.
+    expect(mongoAggregatePipelines.length).toBe(3);
+    expect(mongoAggregatePipelines.map((pipeline) => pipelineNamespaces(pipeline).length)).toEqual([100, 100, 50]);
+    // Every collection is described exactly once, in path order, across the chunks.
+    expect(batch.details[0].path).toEqual(["wide", "c000"]);
+    expect(batch.details[249].path).toEqual(["wide", "c249"]);
+  });
+
+  test("each arm carries its OWN documents, so no collection is described with another's fields", async () => {
+    mockDocumentsByNs = {
+      "app.customers": [{ _id: 1, name: "Ada" }],
+      "app.orders": [{ _id: 2, total: 10 }],
+      "app.readings": [{ _id: 3, sensor: "s1" }],
+      "app.systemetrics": [{ _id: 4, gauge: 1 }],
+    };
+    const batch = await objectProvider.describeObjects!(["app"], "collection");
+
+    expect(batch.details.map((detail) => detail.columns.map((column) => column.name))).toEqual([
+      ["_id", "name"],
+      ["_id", "total"],
+      ["_id", "sensor"],
+      ["_id", "gauge"],
+    ]);
+  });
+
+  test("a collection carries its own indexes and a view carries none, with no view read attempted", async () => {
+    const collections = await objectProvider.describeObjects!(["app"], "collection");
+    expect(collections.details[0].indexes).toEqual([
+      { name: "_id_", columns: ["_id"], unique: true },
+      { name: "email_1", columns: ["email"], unique: false },
+    ]);
+    expect(collections.details.every((detail) => detail.foreignKeys.length === 0)).toBe(true);
+
+    mongoIndexReads = [];
+    const views = await objectProvider.describeObjects!(["app"], "view");
+    expect(views.details.map((detail) => detail.path)).toEqual([["app", "active_customers"]]);
+    expect(views.details[0].indexes).toEqual([]);
+    // `listIndexes` on a view is refused with code 166, so a bulk read that asked would
+    // fail the whole folder on the one object that cannot answer. Nothing asks.
+    expect(mongoIndexReads).toEqual([]);
+  });
+
+  test("the bulk read spells an object exactly as the single read does", async () => {
+    for (const kind of ["collection", "view"] as const) {
+      const batch = await objectProvider.describeObjects!(["app"], kind);
+      const listed = await objectProvider.listObjects(["app"], kind);
+      expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+      for (const detail of batch.details) {
+        expect(detail).toEqual(await objectProvider.describeObject(detail.path, kind));
+      }
+    }
+  });
+
+  test("the caller's bound cuts the sorted objects and reports the caller's own limit", async () => {
+    const batch = await objectProvider.describeObjects!(["app"], "collection", 2);
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["app", "customers"],
+      ["app", "orders"],
+    ]);
+    expect(batch.truncated).toEqual({
+      limit: 2,
+      reason: "the bulk column read was bounded at 2 objects by its caller",
+    });
+    // The bound reaches the EXPENSIVE half: only the two objects that will be returned are
+    // sampled and only their indexes are read. A cut applied after the detail reads would
+    // answer the same rows for four times the work.
+    expect(pipelineNamespaces(mongoAggregatePipelines[0])).toEqual(["customers", "orders"]);
+    expect(mongoIndexReads).toEqual(["app.customers", "app.orders"]);
+  });
+
+  test("a bound the folder fits inside reports nothing, on either side of the boundary", async () => {
+    expect((await objectProvider.describeObjects!(["app"], "collection", 4)).truncated).toBeUndefined();
+    expect((await objectProvider.describeObjects!(["app"], "collection", 5)).truncated).toBeUndefined();
+  });
+
+  test("an empty folder answers an empty batch and sends no detail read at all", async () => {
+    mockCollectionsByDb = { app: [{ name: "only_a_view", type: "view", options: { viewOn: "x" } }] };
+    const batch = await objectProvider.describeObjects!(["app"], "collection");
+
+    expect(batch).toEqual({ details: [] });
+    expect(mongoAggregatePipelines).toEqual([]);
+    expect(mongoIndexReads).toEqual([]);
+  });
+
+  test("the bulk read opens the database the CONTAINER names, not the one the session is in", async () => {
+    mongoOpenedDatabases = [];
+    await objectProvider.describeObjects!(["configstore"], "collection");
+    expect(new Set(mongoOpenedDatabases)).toEqual(new Set(["configstore"]));
+  });
+
+  test("orders the cut by path segments, not by a JSON rendering of the path", async () => {
+    // `x"a` and `x\a` are escaped by `JSON.stringify` and `x-a` is not, so the two orders
+    // disagree: by code point the names are `x"a`, `x-a`, `x\a`, and the server answered
+    // them in the JSON order. A bounded read is where that becomes a MEMBERSHIP difference
+    // rather than only a display one.
+    mockDocumentsByNs = {
+      'oddnames.x"a': [{ _id: 1, quote: true }],
+      "oddnames.x-a": [{ _id: 2, hyphen: true }],
+      "oddnames.x\\a": [{ _id: 3, backslash: true }],
+    };
+    const batch = await objectProvider.describeObjects!(["oddnames"], "collection", 2);
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["oddnames", 'x"a'],
+      ["oddnames", "x-a"],
+    ]);
+    expect(batch.details[0].columns.map((column) => column.name)).toEqual(["_id", "quote"]);
+  });
+
+  test("an undeclared kind is refused by the DECLARATION, naming the engine and the kind", async () => {
+    await expect(objectProvider.describeObjects!(["app"], "index")).rejects.toThrow(
+      /MongoDB declares no object kind "index"/,
+    );
+  });
+
+  test("a container path of the wrong shape is refused before anything is read", async () => {
+    await expect(objectProvider.describeObjects!([], "collection")).rejects.toThrow(/container path is \[database\]/);
+    await expect(objectProvider.describeObjects!(["app", "x"], "collection")).rejects.toThrow(
+      /container path is \[database\]/,
+    );
+  });
+
+  test("a limit that is not a positive whole number is refused, never clamped", async () => {
+    for (const limit of [0, -1, 1.5, Number.NaN]) {
+      await expect(objectProvider.describeObjects!(["app"], "collection", limit)).rejects.toThrow(
+        /bulk column read limit must be a positive whole number/,
+      );
+    }
+    // Guard ORDER: the declaration first, then the container, then the limit.
+    await expect(objectProvider.describeObjects!(["app"], "index", 0)).rejects.toThrow(/declares no object kind/);
+    await expect(objectProvider.describeObjects!([], "collection", 0)).rejects.toThrow(
+      /container path is \[database\]/,
+    );
+  });
+
+  test("a refused catalog read raises rather than answering an empty folder", async () => {
+    mockListCollectionsError = {
+      app: new Error("not authorized on app to execute command { listCollections: 1 }"),
+    };
+    await expect(objectProvider.describeObjects!(["app"], "collection")).rejects.toThrow(/not authorized on app/);
+  });
+
+  /**
+   * Standing ruling 5g on the fifth method: a two-level declaration driven all the way to
+   * the BOUND VALUE - the database name the driver was opened with - and not to a refusal.
+   */
+  test("the bulk read follows a two-level declaration to the database it opens", async () => {
+    const capabilities = objectProvider.getCapabilities();
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      containerLevels: [
+        { id: "catalog", label: "Cluster", labelPlural: "Clusters" },
+        { id: "schema", label: "Database", labelPlural: "Databases" },
+      ],
+    });
+
+    mongoOpenedDatabases = [];
+    const batch = await objectProvider.describeObjects!(["cluster0", "app"], "collection", 1);
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([["cluster0", "app", "customers"]]);
+    expect(batch.details[0].columns.map((column) => column.name)).toEqual(["_id", "city", "name"]);
+    expect(new Set(mongoOpenedDatabases)).toEqual(new Set(["app"]));
   });
 });

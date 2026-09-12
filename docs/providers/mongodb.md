@@ -448,6 +448,87 @@ object's detail is paid for.
 A view's `options.viewOn` and `options.pipeline` arrive on the same `listCollections` call that
 classified it, so Phase 2's Source tab needs no second read. Phase 1 renders neither.
 
+#### What `describeObjects` answers, and the one half this engine cannot bulk-read
+
+`describeObjects(container, kind, limit?)` is the bulk column read (#789): columns and indexes for
+every object of one kind in one database. **The two halves of an `ObjectDetail` do not have the
+same answer here**, and both answers are measurements, re-measured for this section on a
+container this task created and removed, `mongo:latest`, which reports version 8.2.12.
+
+**The columns can be bulk-read, in one aggregate per chunk.** There is no catalog of fields to
+read, so the single read samples documents; `$unionWith` samples every collection in ONE pipeline,
+one arm each, each arm bounded by the same 100-document limit the single read uses and tagging its
+rows with the collection they came from (the chain answers one flat stream, so an untagged arm
+would be unattributable). It works on a **view** and on a **time series collection** as readily as
+on an ordinary one, measured against the committed fixture.
+
+The chain is **chunked at 100 collections**, because one arm is one pipeline stage and MongoDB
+bounds a pipeline's stage count (`internalPipelineLengthLimit`, 1,000 by default): a 5,000-
+collection folder would be refused outright as one chain. Round trips grow as the folder divided by
+the chunk. The number is measured rather than picked - over a 200-collection database, one 200-arm
+aggregate took 81 ms, two 100-arm ones 67 ms and four 50-arm ones 55 ms - and 100 keeps a tenfold
+margin under the server's own ceiling.
+
+**The indexes cannot be bulk-read at all, and three separate measurements say so.**
+
+1. `$listCatalog` is the only server-side bulk index listing, and its collectionless form must run
+   against `admin` with `{aggregate: 1}`. A role holding `read` on one database - which
+   `listCollections`, `listIndexes` and every other read in this surface accept - is refused it:
+   `not authorized on admin to execute command { aggregate: 1, pipeline: [ { $listCatalog: {} } ... ] }`.
+   Using it would make this one method need a cluster privilege the other four do not.
+2. `$listCatalog` also answers the **wrong** indexes for a time series collection. It reports two
+   entries for `readings`: `app.readings`, the namespace a person addresses, carrying **no indexes
+   at all**, and `app.system.buckets.readings`, carrying `sensor_1_ts_1` under the bucket
+   collection's rewritten keys (`meta`, `control.min.ts`, `control.max.ts`). `listIndexes` on the
+   collection itself answers the index a person created, `sensor_1_ts_1` over `sensor` and `ts`.
+   The single read answers that one, so the bulk read must too.
+3. `$indexStats` needs a privilege this surface does not have. It CAN be folded into a `$unionWith`
+   sub-pipeline - measured, the server accepts it and answers the arm's index rows, which refutes
+   the `$indexStats is only valid as the first stage in a pipeline` reading of it - but a role
+   holding `read` on one database is refused it both directly and inside the chain: `not authorized
+   on app to execute command { aggregate: "customers", pipeline: [ { $indexStats: {} } ] }`. The
+   same role runs `listIndexes` on the same collection without complaint.
+
+So the index reads are **one per described object**, issued in parallel and bounded by the caller's
+`limit`. This is the one place in the seventeen providers where a per-object read survives, and it
+is still not the N+1 the inventory route removed: that was up to 5,000 **sequential** round trips
+over a whole listing. Measured over 200 collections:
+
+| Shape | Round trips | Time |
+| --- | --- | --- |
+| Sequential fan-out (a loop over `describeObject`) | 400 | 171 ms |
+| Parallel fan-out | 400 | 67 ms |
+| `$unionWith` samples plus parallel `listIndexes` (this) | 202 | 63 ms |
+
+Through the provider itself against a `bench` database of 200 collections holding 120 documents
+each: **108 ms for one `describeObjects` against 422 ms for the 200 `describeObject` calls it
+replaces.**
+
+A **view** folder pays none of the index half: a view has no indexes of its own, `listIndexes` on
+one is refused with code 166, and nothing is sent. So a view folder's bulk read really is constant
+per folder.
+
+**No kind here answers an empty batch for want of columns.** The reference implementation's fourth
+guard covers a routine, a trigger or a sequence, and MongoDB declares none. An empty folder still
+sends nothing, and no guard is written for it: with no names there are no chunks and no index
+reads, so an early return would be a branch no data can reach - a mutation deleting it failed
+nothing, which is what dead means.
+
+**One mapper, shared with the single read.** `objectDetailFrom()` builds both. Verified live: for
+every object of every kind in `app`, `oddnames` and `configstore`, the bulk read's detail is
+byte-identical to `describeObject()` for the same path.
+
+**The bound is the caller's, and there is no `limit + 1`.** That extra row exists to tell a
+saturated read from an exact one without a second count, and it is unnecessary here:
+`listCollections` answers the whole catalog in one command, so the target set is COMPLETE before
+anything is cut and the comparison is exact. The driver's cursor could not be bounded anyway -
+`listCollections` takes no limit - so the cut is applied in code after the shared sort, which makes
+a bounded read's membership `comparePaths`' rather than the server's. The bound reaches the
+expensive half: only the objects that will be returned are sampled and only their indexes are read.
+
+`getSchema()`'s silent `.slice(0, 200)` is **not** carried here. That is the reference's first "do
+not copy": an unreported bound is the defect `truncated` exists to prevent.
+
 #### Paths are derived, never indexed positionally
 
 The database segment comes from the declared `ContainerLevelSpec` whose id is `schema`, the object's
