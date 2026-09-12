@@ -52,6 +52,7 @@ import { useTransactionControl } from "@/hooks/use-transaction-control";
 import { useQueryExecution } from "@/hooks/use-query-execution";
 import { useInlineEditing } from "@/hooks/use-inline-editing";
 import { useStorageSync } from "@/hooks/use-storage-sync";
+import { useFavoriteConnections } from "@/hooks/use-favorite-connections";
 import { storage } from "@/lib/storage";
 import {
   type MaskingConfig,
@@ -103,6 +104,7 @@ export default function Studio() {
   // 2. Connection Manager + Provider Metadata
   const conn = useConnectionManager(storageReady);
   const { metadata } = useProviderMetadata(conn.activeConnection);
+  const { favoriteIds, toggleFavorite } = useFavoriteConnections(storageReady);
 
   // 3. Tab Manager
   const tabMgr = useTabManager({
@@ -512,6 +514,8 @@ export default function Studio() {
                   setIsConnectionModalOpen(true);
                 }}
                 onDuplicateConnection={handleDuplicateConnection}
+                favoriteConnectionIds={favoriteIds}
+                onToggleFavoriteConnection={toggleFavorite}
                 onAddConnection={() => setIsConnectionModalOpen(true)}
                 onTableClick={onTableClick}
                 onGenerateSelect={tabMgr.handleGenerateSelect}
@@ -627,6 +631,8 @@ export default function Studio() {
                     }}
                     onDeleteConnection={requestDeleteConnection}
                     onDuplicateConnection={handleDuplicateConnection}
+                    favoriteConnectionIds={favoriteIds}
+                    onToggleFavoriteConnection={toggleFavorite}
                     onAddConnection={() => setIsConnectionModalOpen(true)}
                   />
                 </div>

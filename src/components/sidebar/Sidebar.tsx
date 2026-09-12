@@ -22,6 +22,9 @@ interface SidebarProps {
   onDeleteConnection: (id: string) => void;
   onEditConnection?: (conn: DatabaseConnection) => void;
   onDuplicateConnection?: (conn: DatabaseConnection) => void;
+  /** Connection ids the user has starred. Renders as a "Favorites" group above the rest. */
+  favoriteConnectionIds?: Set<string>;
+  onToggleFavoriteConnection?: (id: string) => void;
   onAddConnection: () => void;
   onTableClick?: (tableName: string) => void;
   onGenerateSelect?: (tableName: string) => void;
@@ -46,6 +49,8 @@ export function Sidebar({
   onDeleteConnection,
   onEditConnection,
   onDuplicateConnection,
+  favoriteConnectionIds,
+  onToggleFavoriteConnection,
   onAddConnection,
   onTableClick,
   onGenerateSelect,
@@ -100,6 +105,8 @@ export function Sidebar({
             onDeleteConnection={onDeleteConnection}
             onEditConnection={onEditConnection}
             onDuplicateConnection={onDuplicateConnection}
+            favoriteConnectionIds={favoriteConnectionIds}
+            onToggleFavoriteConnection={onToggleFavoriteConnection}
             onAddConnection={onAddConnection}
           />
 

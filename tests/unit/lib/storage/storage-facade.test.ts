@@ -186,3 +186,50 @@ describe("storage facade: threshold config", () => {
     expect(result[0].metric).toBe("custom");
   });
 });
+
+// ── Favorite connections ─────────────────────────────────────────────────────
+
+describe("storage facade: favorite connections", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("getFavoriteConnectionIds returns an empty array when nothing stored", () => {
+    expect(storage.getFavoriteConnectionIds()).toEqual([]);
+  });
+
+  test("toggleFavoriteConnection adds an id not already favorited", () => {
+    const result = storage.toggleFavoriteConnection("conn-1");
+    expect(result).toEqual(["conn-1"]);
+    expect(storage.getFavoriteConnectionIds()).toEqual(["conn-1"]);
+  });
+
+  test("toggleFavoriteConnection removes an id already favorited", () => {
+    storage.toggleFavoriteConnection("conn-1");
+    const result = storage.toggleFavoriteConnection("conn-1");
+    expect(result).toEqual([]);
+    expect(storage.getFavoriteConnectionIds()).toEqual([]);
+  });
+
+  test("toggleFavoriteConnection preserves other favorited ids", () => {
+    storage.toggleFavoriteConnection("conn-1");
+    storage.toggleFavoriteConnection("conn-2");
+    const result = storage.toggleFavoriteConnection("conn-1");
+    expect(result).toEqual(["conn-2"]);
+  });
+
+  test("toggleFavoriteConnection dispatches libredb-storage-change with collection favorite_connections", () => {
+    let captured: CustomEvent | null = null;
+    const handler = (e: Event) => {
+      captured = e as CustomEvent;
+    };
+    window.addEventListener("libredb-storage-change", handler);
+
+    storage.toggleFavoriteConnection("conn-1");
+
+    window.removeEventListener("libredb-storage-change", handler);
+    expect(captured).not.toBeNull();
+    expect((captured as unknown as CustomEvent).detail.collection).toBe("favorite_connections");
+    expect((captured as unknown as CustomEvent).detail.data).toEqual(["conn-1"]);
+  });
+});

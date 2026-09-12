@@ -83,6 +83,19 @@ export const storage = {
     dispatchChange("connections", filtered);
   },
 
+  getFavoriteConnectionIds: (): string[] => {
+    return readJSON<string[]>("favorite_connections") ?? [];
+  },
+
+  /** Flips the connection's favorite state and returns the updated id list. */
+  toggleFavoriteConnection: (id: string): string[] => {
+    const current = storage.getFavoriteConnectionIds();
+    const next = current.includes(id) ? current.filter((favId) => favId !== id) : [...current, id];
+    writeJSON("favorite_connections", next);
+    dispatchChange("favorite_connections", next);
+    return next;
+  },
+
   // ═══════════════════════════════════════════════════════════════════════════
   // History
   // ═══════════════════════════════════════════════════════════════════════════
