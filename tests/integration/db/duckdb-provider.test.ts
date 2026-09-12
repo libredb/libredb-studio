@@ -39,6 +39,11 @@ import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { comparePaths } from "@/lib/db/object-path";
+import {
+  WAREHOUSE_PLACEHOLDER,
+  readFixtureStatements,
+  warehouseSibling,
+} from "../../../docker/duckdb-init/build-fixture";
 
 // ============================================================================
 // Helpers
@@ -1093,6 +1098,12 @@ describe("the read-only denylist against duckdb_functions()", () => {
 /**
  * The object-surface fixture, built in a real engine rather than mocked.
  *
+ * THE DDL IS `docker/duckdb-init/01-object-fixture.sql` and is replayed from there (#789).
+ * It used to be written inline here, which made every measurement in this file
+ * un-reproducible outside a test run - the shape standing ruling 5i forbids. The same file
+ * builds a database FILE a person can point Studio at:
+ * `bun docker/duckdb-init/build-fixture.ts`.
+ *
  * DuckDB is embedded, so every row below is the ENGINE's answer and not a canned
  * recordset: `ATTACH ':memory:' AS warehouse` gives a second real catalog in the same
  * process, which is what makes this the only provider in #789 whose two container levels
@@ -1109,49 +1120,58 @@ describe("the read-only denylist against duckdb_functions()", () => {
 async function seededObjectProvider(): Promise<DuckDBProvider> {
   const provider = new DuckDBProvider(makeConfig());
   await provider.connect();
-
-  await provider.query("CREATE SCHEMA analytics");
-  await provider.query(
-    "CREATE TABLE main.customers (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, note VARCHAR DEFAULT 'none')",
-  );
-  await provider.query(
-    "CREATE TABLE main.orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES main.customers(id), total DECIMAL(12,2))",
-  );
-  await provider.query("CREATE INDEX ix_orders_customer ON main.orders(customer_id)");
-  await provider.query("CREATE TABLE analytics.events (id BIGINT, payload VARCHAR)");
-  // Two SAME-NAMED tables in two schemas, with different columns and an index each. This
-  // is what a detail read's schema filter is for: without it `main.customers` and
-  // `analytics.customers` merge, and the merged answer is a table with columns it does
-  // not have rather than an error anybody would notice.
-  await provider.query("CREATE TABLE analytics.customers (event_id BIGINT)");
-  await provider.query("CREATE TABLE analytics.orders (id INTEGER)");
-  await provider.query("CREATE INDEX ix_orders_customer ON analytics.orders(id)");
-  await provider.query("CREATE VIEW main.customer_names AS SELECT name FROM main.customers");
-  await provider.query("CREATE VIEW analytics.event_days AS SELECT id FROM analytics.events");
-  await provider.query("CREATE MACRO main.add_one(x) AS x + 1");
-  await provider.query("CREATE MACRO analytics.recent_events(n) AS TABLE SELECT * FROM analytics.events LIMIT n");
-  await provider.query("CREATE SEQUENCE main.customer_seq START 1");
-  await provider.query("CREATE SEQUENCE analytics.event_seq START 100");
-
-  // One name, three kinds, in one schema. Measured, not assumed - see the docblock.
-  await provider.query("CREATE TABLE main.overlap (id INTEGER)");
-  await provider.query("CREATE SEQUENCE main.overlap");
-  await provider.query("CREATE MACRO main.overlap(x) AS x");
-
-  // A second real catalog, with a schema set of its own and no routine or sequence, so a
-  // declared-and-empty folder has somewhere to be measured.
-  await provider.query("ATTACH ':memory:' AS warehouse");
-  await provider.query("CREATE SCHEMA warehouse.stock");
-  await provider.query("CREATE TABLE warehouse.main.ledger (id INTEGER)");
-  // Same SCHEMA name, same TABLE name, different CATALOG. This is the two-level engine's
-  // characteristic case and the only thing that can show the catalog filter working: a
-  // detail read that dropped `database_name = $1` would merge `memory.main.customers`
-  // with this one and report a table with columns from both.
-  await provider.query("CREATE TABLE warehouse.main.customers (sku VARCHAR)");
-  await provider.query("CREATE TABLE warehouse.stock.items (sku VARCHAR)");
-
+  // Replayed from the committed fixture rather than written here, which is standing ruling
+  // 5i (#789): the DDL these assertions reason about has to be something a person outside
+  // this test run can apply. `:memory:` for the second catalog, because this provider's own
+  // database is in-process too and a file would outlive the test.
+  for (const statement of readFixtureStatements(":memory:")) await provider.query(statement);
   return provider;
 }
+
+/**
+ * The fixture READER's own guards, which every assertion in this file rests on (#789).
+ *
+ * `readFixtureStatements` is the only thing standing between this suite and a silently
+ * empty database, and each of its three throws guards a ZERO that would otherwise pass:
+ * zero statements builds an empty database and every count below then reads zero against
+ * zero; zero substitutions sends DuckDB the literal string `{{warehouse}}` as a file PATH,
+ * which v1.5.5 accepts, creating a file of that name in the working directory while the
+ * suite still sees two catalogs; and a blank target is the same shape one step further
+ * along. None of the three is an error the engine reports, which is why they are asserted
+ * here rather than left to a failing read.
+ */
+describe("the committed DuckDB fixture", () => {
+  test("reads as statements, substitutes the second catalog, and names it in the ATTACH", () => {
+    const statements = readFixtureStatements("/tmp/warehouse-under-test.duckdb");
+
+    expect(statements.length).toBeGreaterThan(15);
+    // No statement carries a trailing semicolon and none is blank: the reader strips the
+    // terminator, and a blank statement is what a stray `;` line would produce.
+    expect(statements.filter((statement) => statement.endsWith(";") || statement.trim() === "")).toEqual([]);
+    // No comment line survives, in either position.
+    expect(statements.filter((statement) => statement.includes("--"))).toEqual([]);
+    expect(statements.filter((statement) => statement.includes(WAREHOUSE_PLACEHOLDER))).toEqual([]);
+    expect(statements).toContain("ATTACH '/tmp/warehouse-under-test.duckdb' AS warehouse");
+  });
+
+  test("a fixture file carrying no placeholder, a blank target and an empty file each raise by name", () => {
+    const empty = join(workDir, "empty-fixture-task11.sql");
+    writeFileSync(empty, "-- nothing but a comment\n");
+    const placeholderless = join(workDir, "placeholderless-fixture-task11.sql");
+    writeFileSync(placeholderless, "CREATE TABLE t (id INTEGER);\n");
+
+    expect(() => readFixtureStatements("")).toThrow(/the warehouse target is blank/);
+    expect(() => readFixtureStatements("   ")).toThrow(/the warehouse target is blank/);
+    expect(() => readFixtureStatements(":memory:", empty)).toThrow(/yielded no statement/);
+    expect(() => readFixtureStatements(":memory:", placeholderless)).toThrow(
+      /carries no \{\{warehouse\}\} to substitute/,
+    );
+  });
+
+  test("the warehouse sibling is derived from the target, so a file build holds both catalogs", () => {
+    expect(warehouseSibling("/tmp/demo.duckdb")).toBe("/tmp/demo.duckdb.warehouse.duckdb");
+  });
+});
 
 /** Every catalog the fixture above answers `listContainers()` with, in order. */
 const FIXTURE_CATALOGS = [["memory"], ["warehouse"]];
