@@ -65,6 +65,7 @@
 
 import { QueryError } from "@/lib/db/errors";
 import { containerDepth } from "@/lib/db/object-kinds";
+import { comparePaths } from "@/lib/db/object-path";
 import type {
   ColumnSchema,
   ContainerLevelSpec,
@@ -664,25 +665,4 @@ export function listedObject(
  */
 export function functionSegment(name: string, argumentTypes: string): string {
   return `${name}(${argumentTypes})`;
-}
-
-/**
- * Two paths ordered SEGMENT BY SEGMENT, shorter first where one is a prefix of the other.
- *
- * Never `JSON.stringify`, which standing ruling 5g (#789) rules out as a path key: JSON
- * escaping reorders exotic names by rewriting the very characters being compared, and at
- * mixed depth a serialised deeper path sorts before its own prefix because `,` is below
- * `]`. Neither is hypothetical on Trino - a double quote is legal inside a quoted
- * identifier here, doubled - and JSON rewrites it as `\"`.
- *
- * This is the fifth copy in the fleet (#789). Task 28's sweep hoists it beside
- * `containerDepth` in `src/lib/db/object-kinds.ts`; hoisting it here would collide with the
- * other implementers holding this checkout.
- */
-export function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index++) {
-    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
-  }
-  return left.length - right.length;
 }

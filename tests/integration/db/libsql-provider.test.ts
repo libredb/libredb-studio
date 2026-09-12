@@ -28,8 +28,9 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, DatabaseError, QueryError } from "@/lib/db/errors";
 import { containerDepth, isCountUnavailable } from "@/lib/db/object-kinds";
 import { LibSQLProvider } from "@/lib/db/providers/sql/libsql";
-import { comparePaths, countLibSQLObjects, type LibSQLObjectReader } from "@/lib/db/providers/sql/libsql/objects";
+import { countLibSQLObjects, type LibSQLObjectReader } from "@/lib/db/providers/sql/libsql/objects";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { comparePaths } from "@/lib/db/object-path";
 
 // ============================================================================
 // Harness

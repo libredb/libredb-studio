@@ -1687,7 +1687,7 @@ describe("CouchbaseProvider object surface (#789)", () => {
   });
 
   test("orders paths segment by segment, shorter first where one is a prefix of the other", async () => {
-    const { comparePaths } = await import("@/lib/db/providers/document/couchbase/objects");
+    const { comparePaths } = await import("@/lib/db/object-path");
 
     // The MIXED-DEPTH arm. Standing ruling 5f blesses a kind whose rows sit at two depths,
     // and `JSON.stringify` orders those backwards: `,` (0x2C) is below `]` (0x5D), so a

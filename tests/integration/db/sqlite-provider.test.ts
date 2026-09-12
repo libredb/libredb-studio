@@ -16,7 +16,6 @@ import {
   SQLiteProvider,
   assertQueryOnlyEnabled,
   buildTableStats,
-  comparePaths,
   readDbstatSizes,
 } from "@/lib/db/providers/sql/sqlite";
 import { resolveSQLiteDriverName } from "@/lib/db/providers/sql/sqlite-driver";
@@ -35,6 +34,7 @@ import {
   QueryError,
 } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
+import { comparePaths } from "@/lib/db/object-path";
 
 // ============================================================================
 // Helpers

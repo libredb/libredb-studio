@@ -42,6 +42,7 @@ import type {
 } from "@/lib/db/types";
 import { QueryError } from "@/lib/db/errors";
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import { comparePaths } from "@/lib/db/object-path";
 import { readNumber, readText } from "./introspect";
 import type { LibSQLBatchOutcome, LibSQLRow, LibSQLStatement, LibSQLTransport } from "./transport";
 
@@ -466,32 +467,6 @@ const OBJECT_LISTINGS: Readonly<Record<string, { readonly sql: string; readonly 
  */
 function objectPath(container: readonly string[], name: string, parent: string | undefined): string[] {
   return parent === undefined ? [...container, name] : [...container, parent, name];
-}
-
-/**
- * Two paths compared SEGMENT BY SEGMENT, so a sort is over the address and never over one
- * joined string.
- *
- * Exported because the two cases that separate this from `JSON.stringify` cannot arise
- * inside ONE kind on this engine, where every path of a kind is the same length, so a test
- * driven through `listObjects` could not tell the two spellings apart.
- *
- * `JSON.stringify(path)` is the obvious spelling and it is wrong twice. At MIXED DEPTH the
- * deeper path sorts first, because the separator `,` (0x2C) is below the terminator `]`
- * (0x5D), which would put a trigger above the object it hangs off. And JSON ESCAPES, so a
- * name holding a quote, a backslash or a control character sorts by its escape sequence
- * rather than by its own code points.
- *
- * This is the fifth copy in the repo (#789 hoists them all in one sweep at the end rather
- * than each task hoisting it into a shared module and colliding with the others).
- */
-export function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index += 1) {
-    if (left[index] < right[index]) return -1;
-    if (left[index] > right[index]) return 1;
-  }
-  return left.length - right.length;
 }
 
 // ============================================================================

@@ -52,7 +52,6 @@ import {
 } from "@/lib/db/providers/sql/trino/introspect";
 import {
   TRINO_MATERIALIZED_VIEW_KIND,
-  comparePaths,
   trinoBulkColumnsSql,
   trinoFunctionListSql,
   trinoObjectTargetSql,
@@ -66,6 +65,7 @@ import { TrinoProvider } from "@/lib/db/providers/sql/trino/index";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
+import { comparePaths } from "@/lib/db/object-path";
 
 const CATALOG = "tpch";
 const ORIGIN = "http://trino.test:8080";

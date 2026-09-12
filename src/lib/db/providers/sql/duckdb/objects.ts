@@ -38,6 +38,7 @@
 
 import { QueryError } from "../../../errors";
 import { containerDepth } from "../../../object-kinds";
+import { comparePaths } from "../../../object-path";
 import { displayName } from "./introspect";
 import type {
   ContainerLevelSpec,
@@ -826,21 +827,4 @@ export function objectDetailFromRows(path: readonly string[], schema: string, ro
       unique: row.is_unique,
     })),
   };
-}
-
-/**
- * Two paths ordered SEGMENT BY SEGMENT, shorter first where one is a prefix of the other.
- *
- * Never `JSON.stringify`, which standing ruling 5g (#789) rules out as a path key: JSON
- * escaping reorders exotic names by rewriting the very characters being compared, and at
- * mixed depth a serialised deeper path sorts before its own prefix because `,` is below
- * `]`. Neither is hypothetical on DuckDB - a double quote is legal in an identifier here
- * (`CREATE TABLE "a""b"` succeeds, measured) and JSON rewrites it as `\"`.
- */
-export function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index++) {
-    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
-  }
-  return left.length - right.length;
 }

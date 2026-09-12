@@ -66,7 +66,6 @@ import {
 import {
   CASSANDRA_KEYSPACE_LIST_CQL,
   cassandraObjectColumnsCql,
-  comparePaths,
   cassandraObjectListCql,
   cassandraTypeFieldsCql,
   cassandraKeyspaceColumnsCql,
@@ -75,6 +74,7 @@ import {
 import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
+import { comparePaths } from "@/lib/db/object-path";
 
 const KEYSPACE = "probe";
 

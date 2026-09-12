@@ -38,6 +38,7 @@ import {
   type ContainerLevelSpec,
 } from "../../types";
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import { comparePaths } from "../../object-path";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
@@ -1186,24 +1187,6 @@ function byObjectId<T extends BulkRow>(rows: readonly T[]): Map<number, T[]> {
     else held.push(row);
   }
   return grouped;
-}
-
-/**
- * Two paths ordered SEGMENT BY SEGMENT, shorter first where one is a prefix of the other.
- *
- * Never `JSON.stringify`, which standing ruling 5g (#789) rules out as a path key for two
- * reasons this engine actually meets: at mixed depth the serialised deeper path can sort
- * before its own prefix, and JSON escaping reorders exotic names by rewriting the very
- * characters being compared. A trigger folder here holds `[db, name]` and
- * `[db, schema, table, name]` rows together, so mixed depth is the normal case and not a
- * corner.
- */
-function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index++) {
-    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
-  }
-  return left.length - right.length;
 }
 
 // ============================================================================

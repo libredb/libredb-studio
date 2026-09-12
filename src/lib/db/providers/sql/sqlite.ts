@@ -48,6 +48,7 @@ import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 import { loadSQLiteDriver, type SQLiteDatabase } from "./sqlite-driver";
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import { comparePaths } from "../../object-path";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
 import * as path from "path";
@@ -635,30 +636,6 @@ function objectPath(container: readonly string[], row: ObjectRow): string[] {
   const parent = row.parent;
   if (parent === undefined || parent === null) return [...container, row.name];
   return [...container, parent, row.name];
-}
-
-/**
- * Two paths compared SEGMENT BY SEGMENT, so a sort is over the address and never over one
- * joined string.
- *
- * Exported for the same reason `readDbstatSizes` is: the two cases that separate this
- * from `JSON.stringify` cannot arise inside ONE kind on this engine, where every path of a
- * kind is the same length, so a test driven through `listObjects` could not tell the two
- * spellings apart. The rule is shared with every other provider in #789.
- *
- * `JSON.stringify(path)` is the obvious spelling and it is wrong twice. At MIXED DEPTH the
- * deeper path sorts first, because the separator `,` (0x2C) is below the terminator `]`
- * (0x5D), which would put a trigger above the object it hangs off. And JSON ESCAPES, so a
- * name holding a quote, a backslash or a control character sorts by its escape sequence
- * rather than by its own code points.
- */
-export function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index += 1) {
-    if (left[index] < right[index]) return -1;
-    if (left[index] > right[index]) return 1;
-  }
-  return left.length - right.length;
 }
 
 /**

@@ -25,11 +25,7 @@ import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { ClickHouseProvider } from "@/lib/db/providers/sql/clickhouse";
-import {
-  CLICKHOUSE_CONTAINER_LEVELS,
-  CLICKHOUSE_OBJECT_KINDS,
-  comparePaths,
-} from "@/lib/db/providers/sql/clickhouse/objects";
+import { CLICKHOUSE_CONTAINER_LEVELS, CLICKHOUSE_OBJECT_KINDS } from "@/lib/db/providers/sql/clickhouse/objects";
 import { maintenanceControl } from "@/lib/db/types";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import {
@@ -40,6 +36,7 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { comparePaths } from "@/lib/db/object-path";
 
 // ============================================================================
 // Connection

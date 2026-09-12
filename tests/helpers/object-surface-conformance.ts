@@ -61,6 +61,9 @@
 import { expect } from "bun:test";
 import type { DatabaseObject, DatabaseProvider, KindCount, ObjectDetailBatch } from "@/lib/db/types";
 import { callerBoundTruncationReason, declaredKinds, isCountUnavailable, relationKindIds } from "@/lib/db/object-kinds";
+// The SAME key the providers and the joins use. A helper keying paths its own way could
+// certify a provider whose own reader disagrees with it about what one path is.
+import { pathKey } from "@/lib/db/object-path";
 
 export interface ObjectSurfaceExpectation {
   readonly containers: readonly (readonly string[])[];
@@ -87,11 +90,6 @@ function startsWith(path: readonly string[], prefix: readonly string[]): boolean
   return prefix.every((segment, index) => path[index] === segment);
 }
 
-/** One comparable spelling of a path. Only ever compared against another of these. */
-function pathKey(path: readonly string[]): string {
-  return JSON.stringify(path);
-}
-
 export async function assertObjectSurface(
   provider: DatabaseProvider,
   expected: ObjectSurfaceExpectation,
@@ -115,7 +113,7 @@ export async function assertObjectSurface(
     !containers.some((answered) => pathKey(answered.path) === pathKey(container))
   ) {
     throw new Error(
-      `the expectation names the container ${pathKey(container)}, which listContainers did not answer; ` +
+      `the expectation names the container ${JSON.stringify(container)}, which listContainers did not answer; ` +
         `it answered ${JSON.stringify(containers.map((answered) => answered.path))}`,
     );
   }
@@ -156,14 +154,18 @@ export async function assertObjectSurface(
     const seen = new Set<string>();
     for (const object of listed) {
       if (object.kind !== id) {
-        throw new Error(`listObjects("${id}") returned an object of kind "${object.kind}": ${pathKey(object.path)}`);
+        throw new Error(
+          `listObjects("${id}") returned an object of kind "${object.kind}": ${JSON.stringify(object.path)}`,
+        );
       }
       if (!startsWith(object.path, container)) {
         throw new Error(`path ${JSON.stringify(object.path)} is not inside container ${JSON.stringify(container)}`);
       }
       const key = pathKey(object.path);
       if (seen.has(key)) {
-        throw new Error(`two objects of kind "${id}" both answer the path ${key}, so neither can be addressed`);
+        throw new Error(
+          `two objects of kind "${id}" both answer the path ${JSON.stringify(object.path)}, so neither can be addressed`,
+        );
       }
       seen.add(key);
     }
@@ -181,7 +183,7 @@ export async function assertObjectSurface(
   if (sample === undefined) {
     throw new Error(
       `listObjects for kind "${expected.sampleObject.kind}" did not return the expected sample ` +
-        `${pathKey(expected.sampleObject.path)}; it returned ${JSON.stringify(objects.map((o) => o.path))}`,
+        `${JSON.stringify(expected.sampleObject.path)}; it returned ${JSON.stringify(objects.map((o) => o.path))}`,
     );
   }
 
@@ -245,16 +247,19 @@ async function assertBulkColumnRead(
   function check(
     kind: string,
     batch: ObjectDetailBatch,
-    addressable: ReadonlySet<string>,
+    addressable: ReadonlyMap<string, readonly string[]>,
     bound: number | undefined,
   ): void {
     const seen = new Set<string>();
     for (const detail of batch.details) {
       const key = pathKey(detail.path);
       if (!addressable.has(key)) {
-        throw new Error(`describeObjects("${kind}") answered for ${key}, which listObjects did not name`);
+        throw new Error(
+          `describeObjects("${kind}") answered for ${JSON.stringify(detail.path)}, which listObjects did not name`,
+        );
       }
-      if (seen.has(key)) throw new Error(`describeObjects("${kind}") answered twice for ${key}`);
+      if (seen.has(key))
+        throw new Error(`describeObjects("${kind}") answered twice for ${JSON.stringify(detail.path)}`);
       seen.add(key);
     }
     if (batch.truncated === undefined) {
@@ -282,7 +287,7 @@ async function assertBulkColumnRead(
       // eleven disagree on correctly: a MariaDB sequence describes and an Oracle one does
       // not, a ClickHouse dictionary describes and a function does not.
       if (bound === undefined && (relations.has(kind) || batch.details.length > 0)) {
-        const missing = [...addressable].filter((key) => !seen.has(key));
+        const missing = [...addressable].filter(([key]) => !seen.has(key)).map(([, path]) => JSON.stringify(path));
         if (missing.length > 0 && incomplete === undefined) incomplete = { kind, missing };
       }
       return;
@@ -312,7 +317,7 @@ async function assertBulkColumnRead(
   let richest: { kind: string; count: number } | undefined;
   for (const [kind, listed] of listings) {
     const batch = await describeObjects.call(provider, container, kind);
-    check(kind, batch, new Set(listed.map((object) => pathKey(object.path))), undefined);
+    check(kind, batch, new Map(listed.map((object) => [pathKey(object.path), object.path])), undefined);
     if (richest === undefined || batch.details.length > richest.count) {
       richest = { kind, count: batch.details.length };
     }
@@ -338,7 +343,12 @@ async function assertBulkColumnRead(
   }
 
   const bounded = await describeObjects.call(provider, container, richest.kind, 1);
-  check(richest.kind, bounded, new Set(listings.get(richest.kind)!.map((object) => pathKey(object.path))), 1);
+  check(
+    richest.kind,
+    bounded,
+    new Map(listings.get(richest.kind)!.map((object) => [pathKey(object.path), object.path])),
+    1,
+  );
   if (bounded.truncated === undefined) {
     throw new Error(
       `describeObjects("${richest.kind}", limit 1) returned ${bounded.details.length} of ${richest.count} ` +

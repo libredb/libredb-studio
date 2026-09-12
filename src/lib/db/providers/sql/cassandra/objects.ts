@@ -82,6 +82,7 @@
 
 import { QueryError } from "@/lib/db/errors";
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import { comparePaths } from "@/lib/db/object-path";
 import type {
   ColumnSchema,
   Container,
@@ -434,30 +435,6 @@ function containerKeyspace(capabilities: ProviderCapabilities, container: readon
  */
 function refusalReason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * Two paths compared SEGMENT BY SEGMENT, so a sort is over the address and never over
- * one joined string.
- *
- * `JSON.stringify(path)` is the obvious spelling and it is wrong twice. At MIXED DEPTH
- * the deeper path sorts first, because the separator `,` (0x2C) is below the terminator
- * `]` (0x5D) - and this provider really does have mixed depth, since a trigger nests
- * under its table while every other kind sits at keyspace level. And JSON ESCAPES, so a
- * name holding a quote or a backslash sorts by its escape sequence rather than by its
- * own code points, and CQL accepts both inside a double-quoted identifier.
- *
- * This is the sixth copy of this function in the repo. Standing ruling 5h: Task 28
- * hoists it beside `containerDepth` in `src/lib/db/object-kinds.ts` once, rather than
- * each provider task hoisting it and colliding with the others.
- */
-export function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index += 1) {
-    if (left[index] < right[index]) return -1;
-    if (left[index] > right[index]) return 1;
-  }
-  return left.length - right.length;
 }
 
 // ============================================================================

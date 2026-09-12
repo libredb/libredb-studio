@@ -62,6 +62,7 @@
 
 import { QueryError } from "@/lib/db/errors";
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import { comparePaths } from "@/lib/db/object-path";
 import type {
   Container,
   ContainerLevelSpec,
@@ -397,29 +398,6 @@ function applyKindCounts(counts: Record<string, KindCount>, rows: readonly Druid
 function unavailableCounts(ids: readonly string[], error: unknown): Record<string, KindCount> {
   const reason = error instanceof Error ? error.message : String(error);
   return Object.fromEntries(ids.map((id) => [id, { unavailable: reason } as KindCount]));
-}
-
-/**
- * Two paths compared SEGMENT BY SEGMENT, so a sort is over the address and never over
- * one joined string.
- *
- * `JSON.stringify(path)` is the obvious spelling and it is wrong twice. At MIXED DEPTH
- * the deeper path sorts first, because the separator `,` (0x2C) is below the terminator
- * `]` (0x5D). And JSON ESCAPES, so a name holding a quote or a backslash sorts by its
- * escape sequence rather than by its own code points, and a Druid datasource name may
- * hold both: `libredb_o'brien` is in the fixture.
- *
- * This is the sixth copy of this function in the repo. Standing ruling 5h: Task 28
- * hoists it beside `containerDepth` in `src/lib/db/object-kinds.ts` once, rather than
- * each provider task hoisting it and colliding with the others.
- */
-export function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index += 1) {
-    if (left[index] < right[index]) return -1;
-    if (left[index] > right[index]) return 1;
-  }
-  return left.length - right.length;
 }
 
 /**

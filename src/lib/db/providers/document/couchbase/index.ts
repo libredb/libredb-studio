@@ -64,7 +64,6 @@ import {
   COUCHBASE_KIND_FUNCTION,
   COUCHBASE_KIND_INDEX,
   COUCHBASE_OBJECT_KINDS,
-  comparePaths,
   containerRead,
   type ContainerNameRow,
   type CouchbaseFunctionRow,
@@ -81,6 +80,7 @@ import {
   resolveKeyspaceOf,
   SCOPES_SQL,
 } from "./objects";
+import { comparePaths } from "@/lib/db/object-path";
 import { CouchbaseError, type CouchbaseQueryResult, type CouchbaseRow, type CouchbaseTransport } from "./transport";
 
 // ============================================================================

@@ -31,7 +31,6 @@ import {
   OBJECT_COLUMNS_SQL,
   applyKindCounts,
   bulkTargetSql,
-  comparePaths,
   countsSql,
   listObjectsSql,
   seedZeroCounts,
@@ -39,6 +38,7 @@ import {
 import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
+import { comparePaths } from "@/lib/db/object-path";
 
 // ============================================================================
 // Helpers

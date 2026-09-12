@@ -104,7 +104,6 @@ import {
   SCHEMAS_SQL,
   type SchemaNameRow,
   applyKindCounts,
-  comparePaths,
   bulkColumnsSql,
   bulkForeignKeysSql,
   bulkIndexesSql,
@@ -120,6 +119,7 @@ import {
   objectRead,
   seedZeroCounts,
 } from "./objects";
+import { comparePaths } from "@/lib/db/object-path";
 import { readCount, toQueryResult } from "./values";
 import * as fs from "fs";
 import * as path from "path";

@@ -48,6 +48,7 @@ import {
   type ObjectKindSpec,
 } from "../../types";
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import { comparePaths } from "../../object-path";
 import { DatabaseConfigError, ConnectionError, QueryError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
@@ -278,23 +279,6 @@ function assertContainerPath(capabilities: ProviderCapabilities, container: read
   if (container.length === levels.length) return;
   const shape = levels.length === 0 ? "empty" : `[${levels.map((level) => level.label.toLowerCase()).join(", ")}]`;
   throw new QueryError(`A LibreDB container path is ${shape}, received ${JSON.stringify(container)}`, "libredb");
-}
-
-/**
- * Order two paths segment by segment.
- *
- * Never `JSON.stringify(path)`: at mixed depth the deeper path sorts first, because `,`
- * is below `]`, and JSON escaping reorders exotic names. This is the fourth-plus copy in
- * the repo and Task 28's sweep hoists them all into `object-kinds.ts`; it is written the
- * settled way here so that sweep is a deletion (standing ruling 5h).
- */
-function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index += 1) {
-    if (left[index] < right[index]) return -1;
-    if (left[index] > right[index]) return 1;
-  }
-  return left.length - right.length;
 }
 
 /** One enumerated object, with the two things `describeObject` needs to describe it. */

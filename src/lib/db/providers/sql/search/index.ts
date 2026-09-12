@@ -84,6 +84,7 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import { comparePaths } from "@/lib/db/object-path";
 import {
   type ActiveSessionDetails,
   type ColumnSchema,
@@ -405,22 +406,6 @@ const SEARCH_MAPPED_KINDS: readonly string[] = Object.freeze([
   SEARCH_KIND_ALIAS,
   SEARCH_KIND_STREAM,
 ]);
-
-/**
- * Two paths ordered segment by segment, by code unit.
- *
- * Never `JSON.stringify`: at mixed depth the deeper path sorts first because `,` is
- * below `]`, and JSON escaping reorders exotic names. This is the fifth copy in the
- * repo and standing ruling 5h (#789) assigns the hoist into `object-kinds.ts` to the
- * sweep rather than to this task, so it is written the settled way and left here.
- */
-function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index += 1) {
-    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
-  }
-  return left.length - right.length;
-}
 
 // ============================================================================
 // Pure helpers

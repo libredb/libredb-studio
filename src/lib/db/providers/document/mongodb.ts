@@ -41,6 +41,7 @@ import {
   findKind,
   isCountUnavailable,
 } from "@/lib/db/object-kinds";
+import { comparePaths } from "@/lib/db/object-path";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
@@ -291,7 +292,16 @@ const MONGODB_LIST_DATABASES_COMMAND: Document = Object.freeze({
   authorizedDatabases: true,
 });
 
-/** How many documents one object is sampled for, the same bound `getSchema()` uses. */
+/**
+ * How many documents one object is sampled for.
+ *
+ * It is the bound the DELETED flat schema reading sampled with (`find({}).limit(100)` per
+ * collection), kept unchanged when that reading went, so a column list inferred through the
+ * object surface is the same reading it always was. The constant now has two readers and no
+ * third: `describeObject` samples one collection with it, and `sampleByCollection`'s
+ * `$unionWith` chain gives every arm the same `$limit`, so the single read and the bulk read
+ * cannot infer one collection's fields from different amounts of evidence (#789).
+ */
 const OBJECT_SAMPLE_SIZE = 100;
 
 /**
@@ -425,29 +435,6 @@ function refusalReason(error: unknown): string {
 }
 
 /**
- * Two paths compared SEGMENT BY SEGMENT, so a sort is over the address and never over
- * one joined string.
- *
- * `JSON.stringify(path)` is the obvious spelling and it is wrong twice. At MIXED DEPTH
- * the deeper path sorts first, because the separator `,` (0x2C) is below the terminator
- * `]` (0x5D). And JSON ESCAPES, so a name holding a quote or a backslash sorts by its
- * escape sequence rather than by its own code points - and a MongoDB collection name may
- * hold both, since the only characters it forbids are the null byte and `$`.
- *
- * This is the seventh copy of this function in the repo. Standing ruling 5h: Task 28
- * hoists it beside `containerDepth` in `src/lib/db/object-kinds.ts` once, rather than
- * each provider task hoisting it and colliding with the others.
- */
-function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index += 1) {
-    if (left[index] < right[index]) return -1;
-    if (left[index] > right[index]) return 1;
-  }
-  return left.length - right.length;
-}
-
-/**
  * WHICH KIND one `listCollections` row is, or `undefined` for a namespace the server
  * owns.
  *
@@ -518,8 +505,8 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       supportsInlineRowEdit: false,
       // Multi-document transactions need a client session this provider does not hold.
       supportsTransactions: false,
-      // MongoDB has no foreign key constraint at all, so `getSchema()`'s empty
-      // `foreignKeys` is the engine's model rather than this database's shape. A
+      // MongoDB has no foreign key constraint at all, so the empty `foreignKeys` every
+      // reading here answers is the engine's model rather than this database's shape. A
       // reader told only "none were found" would hedge over causes that do not apply
       // here (#414).
       declaresForeignKeys: false,
@@ -969,7 +956,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     // the field every generated statement addresses, always survives. The bound
     // exists because nesting multiplies: a document with 60 subdocuments of 10 fields
     // each is 661 rows in the schema tree and 661 lines in a model's context window,
-    // for one collection. Same reason `getSchema` already stops at 200 collections.
+    // for one collection.
     return columns.slice(0, MAX_INFERRED_FIELDS);
   }
 
@@ -1669,9 +1656,9 @@ export class MongoDBProvider extends BaseDatabaseProvider {
    * for a view by the name of a collection is a miss rather than a collection described
    * as a view.
    *
-   * Fields are INFERRED from a document sample, the same way `getSchema()` infers them
-   * and with the same bound, because MongoDB stores no schema to read: a collection has
-   * whatever fields its documents happen to carry. That works on a view exactly as it
+   * Fields are INFERRED from a document sample, bounded by `OBJECT_SAMPLE_SIZE`, because
+   * MongoDB stores no schema to read: a collection has whatever fields its documents
+   * happen to carry. That works on a view exactly as it
    * works on a collection, which is why a view is worth listing at all.
    *
    * A VIEW is given no indexes, and that is measured rather than defensive: `listIndexes`
@@ -1854,8 +1841,8 @@ export class MongoDBProvider extends BaseDatabaseProvider {
    * COMPLETE before anything is cut and the comparison is exact. The driver's cursor cannot
    * be bounded anyway - `listCollections` takes no limit - so the cut is applied in code,
    * after `objectsFrom`'s sort, and a bounded read's membership on this engine is
-   * `comparePaths`' rather than the server's. `getSchema()`'s silent `.slice(0, 200)` is not
-   * carried here.
+   * `comparePaths`' rather than the server's. The deleted flat reading's silent
+   * `.slice(0, 200)` over the collection list is not carried here.
    */
   public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
     this.ensureConnected();
@@ -1897,8 +1884,8 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     // The bound reported here is the CALLER's and there is no other on this engine:
     // `listCollections` answers the whole catalog in one command, so the target set is
     // complete before anything is cut, and no cap of this provider's own reaches the
-    // answer. `getSchema()`'s silent `.slice(0, 200)` is NOT carried here, which is the
-    // reference's first "do not copy": an unreported bound is the defect `truncated`
+    // answer. The deleted flat reading's silent `.slice(0, 200)` is NOT carried here, which
+    // is the reference's first "do not copy": an unreported bound is the defect `truncated`
     // exists to prevent. The sentence itself is shared (#789), so one event reads one way
     // on every engine.
     return bounded ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };

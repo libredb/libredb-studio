@@ -108,6 +108,7 @@
 
 import { QueryError } from "@/lib/db/errors";
 import { containerDepth } from "@/lib/db/object-kinds";
+import { comparePaths } from "@/lib/db/object-path";
 import type {
   ColumnSchema,
   ContainerLevelSpec,
@@ -525,29 +526,6 @@ export function objectPath(capabilities: ProviderCapabilities, keyspace: Keyspac
     schema: keyspace.scope,
   };
   return [...declaredLevels(capabilities).map((level) => segments[level.id]), ...tail];
-}
-
-/**
- * Two paths ordered SEGMENT BY SEGMENT, shorter first where one is a prefix of the other.
- *
- * Never `JSON.stringify`, which standing ruling 5g rules out as a path key: at mixed depth
- * a serialised deeper path sorts before its own prefix because `,` (0x2C) is below `]`
- * (0x5D), and JSON escaping reorders names by rewriting the very characters being
- * compared. Neither is hypothetical here - this provider's own kinds sit at three and four
- * segments, and a Couchbase identifier may hold a backtick, which `keyspace.ts` escapes by
- * doubling.
- *
- * This is the eighth copy of this function in the repo. Standing ruling 5h: Task 28 hoists
- * it beside `containerDepth` in `src/lib/db/object-kinds.ts` once, rather than each
- * provider task hoisting it and colliding with the others.
- */
-export function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index += 1) {
-    if (left[index] < right[index]) return -1;
-    if (left[index] > right[index]) return 1;
-  }
-  return left.length - right.length;
 }
 
 /**

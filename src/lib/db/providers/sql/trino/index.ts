@@ -100,7 +100,6 @@ import {
   type KindCountRow,
   type TrinoContainer,
   applyKindCounts,
-  comparePaths,
   objectDetailFromRows,
   objectKey,
   trinoBulkColumnsSql,
@@ -118,6 +117,7 @@ import {
   trinoRelationListSql,
   trinoSchemaListSql,
 } from "./objects";
+import { comparePaths } from "@/lib/db/object-path";
 import {
   TRINO_DIALECTS,
   type TrinoDialect,

@@ -17,6 +17,7 @@
 import Redis, { type RedisOptions } from "ioredis";
 import { BaseDatabaseProvider } from "../../base-provider";
 import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import { comparePaths } from "../../object-path";
 import {
   type DatabaseConnection,
   type QueryResult,
@@ -249,25 +250,6 @@ function containerDatabase(capabilities: ProviderCapabilities, container: readon
     throw new QueryError(`A Redis database is a number, received ${JSON.stringify(segment)}`, "redis");
   }
   return Number(segment);
-}
-
-/**
- * Two paths compared SEGMENT BY SEGMENT, so a sort is over the address and never over one
- * joined string.
- *
- * `JSON.stringify(path)` is the obvious spelling and is wrong twice: at mixed depth the
- * deeper path sorts first, because `,` (0x2C) is below `]` (0x5D), and JSON escaping
- * reorders a name holding a quote or a control character - which on Redis is a live case,
- * since a key name is an arbitrary binary string. Standing ruling 5h: written the settled
- * way here, and hoisted beside `containerDepth` by the sweep rather than by this task.
- */
-function comparePaths(left: readonly string[], right: readonly string[]): number {
-  const shared = Math.min(left.length, right.length);
-  for (let index = 0; index < shared; index += 1) {
-    if (left[index] < right[index]) return -1;
-    if (left[index] > right[index]) return 1;
-  }
-  return left.length - right.length;
 }
 
 /**

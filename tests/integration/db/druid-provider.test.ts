@@ -51,11 +51,12 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { comparePaths, DRUID_CONTAINER_LEVELS, DRUID_OBJECT_KINDS } from "@/lib/db/providers/sql/druid/objects";
+import { DRUID_CONTAINER_LEVELS, DRUID_OBJECT_KINDS } from "@/lib/db/providers/sql/druid/objects";
 import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import { getExplainStrategy } from "@/lib/explain";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { ExplainTreeNode } from "@/lib/explain/types";
+import { comparePaths } from "@/lib/db/object-path";
 
 // ============================================================================
 // Connection

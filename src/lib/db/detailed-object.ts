@@ -17,6 +17,7 @@
  * is persisted data rather than a reading.
  */
 import { findKind, kindAcceptsRowWrites } from "@/lib/db/object-kinds";
+import { pathKey } from "@/lib/db/object-path";
 import type { DatabaseObject, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import type { ColumnSchema, ForeignKeySchema, IndexSchema } from "@/lib/types";
@@ -136,17 +137,3 @@ export function detailedObjects(
     };
   });
 }
-
-/**
- * A path as one comparable string.
- *
- * `JSON.stringify` is deliberately NOT used, for the reason standing ruling 5g gives about
- * sorting: JSON escaping reorders exotic names and a deeper path collides differently. The
- * separator is a control character no engine here allows inside an identifier, so two different
- * paths cannot produce one key.
- */
-function pathKey(path: readonly string[]): string {
-  return path.join(SEGMENT_SEPARATOR);
-}
-
-const SEGMENT_SEPARATOR = String.fromCharCode(31);
