@@ -65,6 +65,7 @@ import {
   type MaintenanceType,
   type ObjectDetail,
   type ObjectDetailBatch,
+  type ObjectSourceDocument,
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
@@ -100,6 +101,7 @@ import {
   countObjects as readObjectCounts,
   describeObject as readObjectDetail,
   describeObjects as readObjectDetails,
+  readObjectSource as readSource,
   listContainers as readContainers,
   listObjects as readObjects,
 } from "./objects";
@@ -676,6 +678,21 @@ export class CassandraProvider extends SQLBaseProvider {
   public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
     const transport = this.requireTransport();
     return this.guarded(() => readObjectDetails(transport, this.getCapabilities(), container, kind, limit));
+  }
+
+  /**
+   * One object's definition text, through the server's own `DESCRIBE` (#789).
+   *
+   * Guarded exactly like the five above, and that is load-bearing here rather than uniform:
+   * an absence on this engine is the SERVER refusing the statement, so the raise a caller
+   * sees is `mapCassandraError`'s `invalid` arm carrying Cassandra's own sentence unprefixed
+   * ("Table 'no_such_table' not found in keyspace 'probe'", measured). Inventing a sentence
+   * here would replace a message that names both the object and the kind it was looked for
+   * under with one that names less.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    const transport = this.requireTransport();
+    return this.guarded(() => readSource(transport, this.getCapabilities(), path, kind, limit));
   }
 
   // ==========================================================================

@@ -81,7 +81,13 @@
  */
 
 import { QueryError } from "@/lib/db/errors";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+} from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import type {
   ColumnSchema,
@@ -94,11 +100,13 @@ import type {
   ObjectDetail,
   ObjectDetailBatch,
   ObjectKindSpec,
+  ObjectSourceDocument,
+  ObjectSourcePart,
   ProviderCapabilities,
 } from "@/lib/db/types";
 import { quoteLiteral } from "@/lib/sql/values";
 import { cassandraTableColumns } from "./introspect";
-import type { CassandraRow, CassandraTransport } from "./transport";
+import { CassandraTransportError, type CassandraRow, type CassandraTransport } from "./transport";
 
 const PROVIDER = "cassandra" as const;
 
@@ -116,18 +124,75 @@ export const CASSANDRA_CONTAINER_LEVELS: ContainerLevels = Object.freeze([
   { id: "schema", label: "Keyspace", labelPlural: "Keyspaces" },
 ] as const);
 
+/**
+ * The Monaco id every readable kind here renders under, and the reason it is a compromise.
+ *
+ * `cql` IS NOT A MONACO LANGUAGE ID. Measured against the installed monaco-editor 0.56.0
+ * bundle in this epic: it registers 89 ids and `cql` is not one of them, and an unregistered
+ * id degrades to plain text with no throw and nothing observable. `sql` is the closest
+ * registered dialect, so a `CREATE TABLE` renders correctly and CQL-only spellings
+ * (`PRIMARY KEY ((a), b)`, `frozen<address>`, a `$$ ... $$` function body) are highlighted as
+ * whatever the SQL tokenizer makes of them. `docs/providers/cassandra.md` says so as a
+ * limitation rather than implying the text is highlighted as CQL.
+ */
+const CASSANDRA_SOURCE_LANGUAGE = "sql" as const;
+
 export const CASSANDRA_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
-  { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+  {
+    id: "table",
+    role: "relation",
+    label: "Table",
+    labelPlural: "Tables",
+    acceptsRowWrites: true,
+    hasSource: true,
+    sourceLanguage: CASSANDRA_SOURCE_LANGUAGE,
+  },
   {
     id: "materialized_view",
     role: "relation",
     label: "Materialized View",
     labelPlural: "Materialized Views",
+    hasSource: true,
+    sourceLanguage: CASSANDRA_SOURCE_LANGUAGE,
   },
-  { id: "index", role: "config", label: "Index", labelPlural: "Indexes" },
-  { id: "type", role: "config", label: "Type", labelPlural: "Types" },
-  { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
-  { id: "aggregate", role: "routine", label: "Aggregate", labelPlural: "Aggregates" },
+  {
+    id: "index",
+    role: "config",
+    label: "Index",
+    labelPlural: "Indexes",
+    hasSource: true,
+    sourceLanguage: CASSANDRA_SOURCE_LANGUAGE,
+  },
+  {
+    id: "type",
+    role: "config",
+    label: "Type",
+    labelPlural: "Types",
+    hasSource: true,
+    sourceLanguage: CASSANDRA_SOURCE_LANGUAGE,
+  },
+  {
+    id: "function",
+    role: "routine",
+    label: "Function",
+    labelPlural: "Functions",
+    hasSource: true,
+    sourceLanguage: CASSANDRA_SOURCE_LANGUAGE,
+  },
+  {
+    id: "aggregate",
+    role: "routine",
+    label: "Aggregate",
+    labelPlural: "Aggregates",
+    hasSource: true,
+    sourceLanguage: CASSANDRA_SOURCE_LANGUAGE,
+  },
+  // NO `hasSource`, and it is a RESULT rather than a gap. `DescribeStatement` has no `TRIGGER`
+  // target at all - measured on 5.0.9, `DESCRIBE TRIGGER probe.probe_audit` is
+  // "line 1:17 no viable alternative at input 'probe'" - and `system_schema.triggers` carries
+  // only the trigger's name, its base table and the CLASS an operator installed. That class is
+  // a compiled Java file in every node's trigger directory, so the definition is not in the
+  // database in ANY form and there is nothing this product declines to reach.
   { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table" },
 ] as const);
 
@@ -167,6 +232,33 @@ const CASSANDRA_SYSTEM_KEYSPACES: readonly string[] = Object.freeze([
  */
 function literal(value: string): string {
   return quoteLiteral(value, PROVIDER);
+}
+
+/**
+ * A keyspace or object name as a QUOTED CQL identifier (#789).
+ *
+ * Quoting is NOT optional and the measurement says why: `system_schema` stores a name as it
+ * was written, and an unquoted identifier is lowercased by the parser, so
+ * `DESCRIBE TABLE t14scratch.MixedCase` against a table created as `"MixedCase"` answers
+ * "Table 'mixedcase' not found in keyspace 't14scratch'" (measured on 5.0.9). Every name that
+ * reaches here came out of a catalog row, so every one of them is already in its stored
+ * spelling and every one of them is quoted.
+ *
+ * DOUBLING THE QUOTE IS THE WHOLE ESCAPE, and this is the one place the ClickHouse hazard
+ * (probe 11 of this epic, where a backslash inside a quoted identifier IS an escape and
+ * swallows the closing quote) is measurably ABSENT. Measured on 5.0.9 with a function named
+ * `back\slash`: `DESCRIBE FUNCTION t14scratch."back\slash"` RESOLVES it, and the
+ * backslash-doubled `"back\\slash"` is "User defined function 'back\\slash' not found",
+ * so CQL reads a backslash inside a quoted identifier as DATA. A name holding a `"` is
+ * reachable too: `qu"ote` was created as a function name and
+ * `DESCRIBE FUNCTION t14scratch."qu""ote"` resolves it.
+ *
+ * Not `SQLBaseProvider.escapeIdentifier`: that is a protected method on the class which
+ * branches on `this.type`, and this module is the free-function half of the provider. The rule
+ * it would apply for a non-mysql, non-mssql dialect is the same one written here.
+ */
+function identifier(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
 }
 
 /**
@@ -211,15 +303,46 @@ interface ObjectCatalogSpec {
    * listing statement the count and the folder already share.
    */
   readonly orderColumn: string;
+  /**
+   * The `DESCRIBE` target keywords for this kind, or undefined where the statement has none.
+   *
+   * `DESCRIBE` is a REAL SERVER-SIDE STATEMENT here, unlike every SQL engine in #789 that
+   * SELECTs a definition out of a catalog table: the server executes it and answers the
+   * columns `keyspace_name, type, name, create_statement` (measured on 5.0.9). So the target
+   * is part of the statement's GRAMMAR and there is no column list to project.
+   *
+   * `trigger` has no entry, and that is the grammar rather than an omission: measured,
+   * `DESCRIBE TRIGGER probe.probe_audit` is "line 1:17 no viable alternative at input 'probe'".
+   */
+  readonly describeTarget?: string;
+  /**
+   * The value the reply's own `type` column carries for a row of this kind.
+   *
+   * It exists because `DESCRIBE TABLE` DOES NOT ANSWER ONE ROW. Measured on 5.0.9,
+   * `DESCRIBE TABLE probe.customers` answers FOUR: the table, its two indexes and the
+   * materialized view over it, each typed by this column. Every one of those is its own
+   * addressable object in this tree with its own Source, so the read selects the row the
+   * CALLER asked for and the others are reached under their own paths.
+   */
+  readonly describeType?: string;
 }
 
 const CASSANDRA_OBJECT_CATALOGS: Readonly<Record<string, ObjectCatalogSpec>> = Object.freeze({
-  table: { table: "tables", nameColumn: "table_name", projection: ["table_name"], orderColumn: "table_name" },
+  table: {
+    table: "tables",
+    nameColumn: "table_name",
+    projection: ["table_name"],
+    orderColumn: "table_name",
+    describeTarget: "TABLE",
+    describeType: "table",
+  },
   materialized_view: {
     table: "views",
     nameColumn: "view_name",
     projection: ["view_name"],
     orderColumn: "view_name",
+    describeTarget: "MATERIALIZED VIEW",
+    describeType: "materialized_view",
   },
   index: {
     table: "indexes",
@@ -231,14 +354,25 @@ const CASSANDRA_OBJECT_CATALOGS: Readonly<Record<string, ObjectCatalogSpec>> = O
     // NOT `index_name`: this catalog clusters on `(table_name, index_name)` and ordering
     // by the second clustering column alone is a server error (measured).
     orderColumn: "table_name",
+    describeTarget: "INDEX",
+    describeType: "index",
   },
-  type: { table: "types", nameColumn: "type_name", projection: ["type_name"], orderColumn: "type_name" },
+  type: {
+    table: "types",
+    nameColumn: "type_name",
+    projection: ["type_name"],
+    orderColumn: "type_name",
+    describeTarget: "TYPE",
+    describeType: "type",
+  },
   function: {
     table: "functions",
     nameColumn: "function_name",
     projection: ["function_name", "argument_types"],
     overloaded: true,
     orderColumn: "function_name",
+    describeTarget: "FUNCTION",
+    describeType: "function",
   },
   aggregate: {
     table: "aggregates",
@@ -246,6 +380,8 @@ const CASSANDRA_OBJECT_CATALOGS: Readonly<Record<string, ObjectCatalogSpec>> = O
     projection: ["aggregate_name", "argument_types"],
     overloaded: true,
     orderColumn: "aggregate_name",
+    describeTarget: "AGGREGATE",
+    describeType: "aggregate",
   },
   trigger: {
     table: "triggers",
@@ -290,6 +426,31 @@ export function cassandraObjectListCql(keyspace: string, kind: string, limit?: n
   if (spec === undefined) return undefined;
   const base = `SELECT ${spec.projection.join(", ")} FROM system_schema.${spec.table} WHERE keyspace_name = ${literal(keyspace)}`;
   return limit === undefined ? base : `${base} ORDER BY ${spec.orderColumn} ASC LIMIT ${limit}`;
+}
+
+/**
+ * The server-side `DESCRIBE` for one object of one kind, or undefined for a kind whose
+ * grammar has no target (#789).
+ *
+ * This is the statement that makes Cassandra unlike every SQL engine in #789: the definition
+ * is not in a catalog COLUMN anybody can select, it is produced by a statement the SERVER
+ * executes, and the answer arrives as ordinary rows carrying a `create_statement`.
+ *
+ * The target takes an IDENTIFIER and no bind, which is not this provider choosing to
+ * interpolate: `DESCRIBE` accepts no `?` at all, and this provider sends every catalog
+ * statement one-shot with `prepare: false` anyway. Both segments go through `identifier()`,
+ * which is the whole escape (see that function for the two measurements).
+ *
+ * A ROUTINE'S TARGET IS ITS BARE NAME AND NEVER ITS IDENTITY. Measured on 5.0.9,
+ * `DESCRIBE FUNCTION probe.render(int)` is the SYNTAX error "line 1:30 mismatched input '('
+ * expecting EOF", so the argument list cannot be sent, and `DESCRIBE FUNCTION probe.render`
+ * answers BOTH overloads as two rows. The caller's overload is chosen from the reply, which
+ * is what `describeSignature()` is for.
+ */
+export function cassandraDescribeCql(keyspace: string, kind: string, name: string): string | undefined {
+  const spec = objectCatalog(kind);
+  if (spec?.describeTarget === undefined) return undefined;
+  return `DESCRIBE ${spec.describeTarget} ${identifier(keyspace)}.${identifier(name)}`;
 }
 
 /**
@@ -422,6 +583,31 @@ function containerKeyspace(capabilities: ProviderCapabilities, container: readon
     );
   }
   return containerSegment(capabilities, container, "schema");
+}
+
+/**
+ * How many segments a path of one KIND has, checked against the declaration (#789).
+ *
+ * ONE writer for two readers: `describeObject` and `readObjectSource` ask the same question
+ * about the same path, and two copies of this derivation are two chances for the detail pane
+ * and the Source tab to disagree about what an object's address is.
+ *
+ * Derived, not counted. One segment per declared container level plus the name, and a nesting
+ * segment for a kind that declares `attachedTo` - which is the ONLY thing that changes the
+ * depth, so both shapes come from the declaration rather than from a kind id written out here.
+ */
+function assertObjectPathShape(
+  capabilities: ProviderCapabilities,
+  spec: ObjectKindSpec,
+  path: readonly string[],
+): void {
+  const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
+  const shape = spec.attachedTo === undefined ? [...levels, "name"] : [...levels, spec.attachedTo, "name"];
+  if (path.length === shape.length) return;
+  throw new QueryError(
+    `A Cassandra "${spec.id}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`,
+    PROVIDER,
+  );
 }
 
 /**
@@ -792,18 +978,7 @@ export async function describeObject(
     throw new QueryError(`Cassandra declares no object kind "${kind}"`, PROVIDER);
   }
 
-  // Derived, not counted. One segment per declared container level plus the name, and a
-  // nesting segment for a kind that declares `attachedTo` - which is the ONLY thing
-  // that changes the depth, so the two shapes come from the declaration rather than
-  // from a kind id written out here.
-  const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  const shape = spec.attachedTo === undefined ? [...levels, "name"] : [...levels, spec.attachedTo, "name"];
-  if (path.length !== shape.length) {
-    throw new QueryError(
-      `A Cassandra "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`,
-      PROVIDER,
-    );
-  }
+  assertObjectPathShape(capabilities, spec, path);
 
   const catalog = objectCatalog(kind);
   if (catalog === undefined) {
@@ -1007,4 +1182,256 @@ async function describeRelationBatch(
     const name = readText(row[spec.nameColumn]);
     return relationDetail(objectPath(container, spec, row), name, byOwner.get(name) ?? [], indexes.rows);
   });
+}
+
+// ============================================================================
+// The object source read (issue #789)
+// ============================================================================
+
+/** The one part id and label this engine emits: one object, one statement, one text. */
+const SOURCE_PART_ID = "definition";
+const SOURCE_PART_LABEL = "Definition";
+
+/**
+ * The server's own sentence when a `DESCRIBE` result is invalidated between pages.
+ *
+ * MEASURED on 5.0.9 and REPRODUCED rather than quoted: `DESCRIBE TABLE probe.customers` with
+ * `fetchSize: 1`, a `CREATE TABLE` in another keyspace, then a fetch of the second page with
+ * the first page's `pageState`, answers protocol code 8704 with exactly this text. It is the
+ * server telling the client to ASK AGAIN, not a refusal about the object, so reporting it as
+ * an `unavailable` part would put a transient instruction in the Source pane as if it were a
+ * fact about the definition.
+ *
+ * THIS IS THE ONE PLACE THIS PROVIDER READS A SERVER SENTENCE TO DECIDE ANYTHING, and the
+ * trade is the opposite way round from the one `transport.ts` records for the monitoring
+ * degradation. There the sentence was the only discriminator for five panels and a rephrase
+ * would have silently disabled all five, so the discriminator moved to a property of the
+ * server. Here 8704 alone cannot be the discriminator - an absent object carries it too - and
+ * a rephrase costs exactly one thing: the retry stops firing and the error propagates as a
+ * raise, which is what this code does anyway when the retry does not help. A degradation to
+ * the documented fallback is an acceptable dependency on a sentence; a silent disappearance
+ * is not.
+ */
+const SCHEMA_CHANGED_MID_PAGE = "The schema has changed since the previous page of the DESCRIBE statement result.";
+
+/** The protocol's `Invalid query` code, which both the retry and every absence arrive under. */
+const CQL_INVALID_CODE = 8704;
+
+/**
+ * One `DESCRIBE`, retried ONCE if the schema moved under a paged result.
+ *
+ * The retry is bounded at one attempt on purpose: a cluster whose schema is changing faster
+ * than a catalog read completes will not be fixed by a third try, and an unbounded retry would
+ * turn a busy cluster into a hang the Source pane can never leave.
+ *
+ * REACHABILITY, stated rather than implied: this provider sends no `fetchSize`, so the
+ * driver's own default of 5000 rows applies, and a single-object `DESCRIBE` answers one row
+ * plus, for a table, one per index and materialized view over it. So the paging this error
+ * needs is out of reach for every shape the fixture holds, and the arm is driven in the suite
+ * rather than by a cluster. It is written because the bound is the DRIVER's default and not a
+ * guarantee of the statement.
+ */
+async function describeRows(transport: CassandraTransport, cql: string): Promise<CassandraRow[]> {
+  try {
+    return (await transport.execute(cql)).rows;
+  } catch (error) {
+    if (!isSchemaChangedMidPage(error)) throw error;
+    return (await transport.execute(cql)).rows;
+  }
+}
+
+/** Whether a failure is the server asking for the DESCRIBE to be sent again. */
+function isSchemaChangedMidPage(error: unknown): boolean {
+  return (
+    error instanceof CassandraTransportError &&
+    error.code === CQL_INVALID_CODE &&
+    error.message.includes(SCHEMA_CHANGED_MID_PAGE)
+  );
+}
+
+/**
+ * A routine signature with every space removed, which is what makes two spellings of one
+ * signature comparable.
+ *
+ * MEASURED on 5.0.9, and it is why an equality against the reply's `name` column would never
+ * match: the server writes `sum_state(int, int)` with a SPACE after the comma while this
+ * provider's identity segment is `sum_state(int,int)`, and a `map` argument is
+ * `map<text, text>` in `system_schema.functions.argument_types` itself. Stripping whitespace
+ * makes both spellings one value and changes nothing else: a CQL type name holds no
+ * significant space.
+ */
+function normalizeSignature(signature: string): string {
+  return signature.replace(/\s+/g, "");
+}
+
+/**
+ * The argument list the reply's `name` column carries, without the routine's own name.
+ *
+ * NOT a comparison against the whole `name`, and the measurement is the reason. The reply's
+ * `name` is not a usable identity: for a quoted table it is `"MixedCase"` WITH the quotes, and
+ * for a function named `Fn(x` - which the server ACCEPTS, unlike a table name, measured - it
+ * is the unusable `"Fn"(x(int)`. What IS reliable in every one of those is the trailing
+ * parenthesized argument list, because a CQL type name is built from angle brackets and holds
+ * no parenthesis, so the LAST `(` opens the signature.
+ */
+function describeSignature(name: string): string | undefined {
+  const open = name.lastIndexOf("(");
+  if (open < 0 || !name.endsWith(")")) return undefined;
+  return normalizeSignature(name.slice(open + 1, -1));
+}
+
+/**
+ * The catalog row an OVERLOADED kind's path segment addresses, or undefined for none.
+ *
+ * The identity is resolved through `objectIdentity()`, THE SAME FUNCTION that built the
+ * segment in `listObjects`, so the resolution can never drift from the listing: a change to
+ * how a routine is addressed moves both sides at once. Nothing here re-parses the segment,
+ * which is the alternative and is wrong on this engine - a function name may itself contain a
+ * `(` (measured: `Fn(x` was created and sits in `system_schema.functions`).
+ *
+ * It is the same statement `countObjects` and `listObjects` send, which is the pattern
+ * `describeIndex` above already follows for the same reason.
+ */
+async function resolveOverloadedRow(
+  transport: CassandraTransport,
+  keyspace: string,
+  kind: string,
+  spec: ObjectCatalogSpec,
+  segment: string,
+): Promise<CassandraRow | undefined> {
+  const rows = (await transport.execute(cassandraObjectListCql(keyspace, kind)!)).rows;
+  return rows.find((row) => objectIdentity(spec, row) === segment);
+}
+
+/**
+ * One object's definition, as the server regenerates it (#789).
+ *
+ * `form: "complete"` and `origin: "regenerated"`, both measured rather than assumed. The text
+ * is a whole `CREATE` statement ending in a semicolon, and it is a RECONSTRUCTION and not the
+ * author's bytes: the fixture writes `CREATE TABLE probe.customers (id, name, city, home,
+ * tags)` and the server answers the partition key first and then the other columns
+ * alphabetically, with all twenty table options spelled out. Nothing in this product stores
+ * the original.
+ *
+ * A FUNCTION'S BODY IS NOT CQL and the part does not pretend otherwise. `DESCRIBE FUNCTION`
+ * answers a CQL envelope wrapping a body verbatim in `$$ ... $$`, whose language comes from
+ * the catalog (`java` on 5.0). The part's `language` is the kind's declared `sql` because the
+ * part IS the envelope, and `docs/providers/cassandra.md` says that plainly rather than
+ * implying the body is highlighted correctly.
+ *
+ * ABSENCE RAISES AND IT IS THE SERVER'S OWN SENTENCE. Measured on 5.0.9, `DESCRIBE` NAMES THE
+ * KIND IT LOOKED FOR in every one of them - "Table 'no_such_table' not found in keyspace
+ * 'probe'", "Materialized view 'x' not found in 'probe'", "User defined function 'x' not found
+ * in 'probe'" - so a WRONG-KIND ask is the same fact as a missing object and is told apart by
+ * the sentence rather than by a code: `DESCRIBE TABLE probe.customers_by_city` against the
+ * fixture's materialized view answers "Table 'customers_by_city' not found in keyspace
+ * 'probe'". Both are absences and both raise, which is what the non-empty `parts` tuple
+ * requires: there is no empty document for an absence to be confused with.
+ *
+ * THERE IS NO PRIVILEGE-DRIVEN REFUSAL ON THIS ENGINE, measured rather than assumed, and it is
+ * the same shape probe 1 of this epic found for PostgreSQL's `pg_get_*` family. On a 5.0.9
+ * node running `PasswordAuthenticator` with `CassandraAuthorizer`, a role created with a login
+ * and NO GRANT OF ANY KIND read the complete `DESCRIBE TABLE` and `DESCRIBE FUNCTION` text for
+ * the fixture's objects, in the same session where `SELECT` on `system_schema.tables` returned
+ * nothing. So the `unavailable` arm below has exactly ONE producer: a `create_statement` that
+ * is empty or whitespace only, which no build in this epic's measurements has ever answered
+ * and which is refused anyway, because an empty definition is not a definition and an empty
+ * editor over one is the failure this whole phase exists to stop.
+ */
+export async function readObjectSource(
+  transport: CassandraTransport,
+  capabilities: ProviderCapabilities,
+  path: readonly string[],
+  kind: string,
+  limit?: number,
+): Promise<ObjectSourceDocument> {
+  const spec = findKind(capabilities, kind);
+  if (spec === undefined) {
+    throw new QueryError(`Cassandra declares no object kind "${kind}"`, PROVIDER);
+  }
+  if (spec.hasSource !== true) {
+    throw new QueryError(`Cassandra publishes no definition text for the kind "${kind}"`, PROVIDER);
+  }
+  if (spec.sourceLanguage === undefined) {
+    // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
+    // observable, so a kind that declared source and forgot its language would ship a Source
+    // tab that silently stopped highlighting. The declaration is the only source of the
+    // language and there is no literal here to fall back to.
+    throw new QueryError(
+      `Cassandra declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
+      PROVIDER,
+    );
+  }
+  assertObjectPathShape(capabilities, spec, path);
+  const catalog = objectCatalog(kind);
+  if (catalog?.describeTarget === undefined || catalog.describeType === undefined) {
+    throw new QueryError(
+      `Cassandra declares readable source for the kind "${kind}" but DESCRIBE has no target for it`,
+      PROVIDER,
+    );
+  }
+
+  // Neither read is positional. The keyspace comes from the segment the DECLARATION assigns to
+  // the `schema` level, and the object's own name is the LAST segment, which is right at both
+  // depths this provider produces.
+  const keyspace = containerSegment(capabilities, path, "schema");
+  const segment = path[path.length - 1];
+
+  let name = segment;
+  let signature: string | undefined;
+  if (catalog.overloaded === true) {
+    const row = await resolveOverloadedRow(transport, keyspace, kind, catalog, segment);
+    if (row === undefined) {
+      throw new QueryError(`No Cassandra ${kind} named ${segment} in ${keyspace}`, PROVIDER);
+    }
+    name = readText(row[catalog.nameColumn]);
+    signature = normalizeSignature(readTextList(row.argument_types).join(","));
+  }
+
+  const cql = cassandraDescribeCql(keyspace, kind, name)!;
+  const rows = await describeRows(transport, cql);
+  const row = rows.find(
+    (candidate) =>
+      readText(candidate.type) === catalog.describeType &&
+      (signature === undefined || describeSignature(readText(candidate.name)) === signature),
+  );
+  if (row === undefined) {
+    // Defensive rather than observed: for every kind the server raises instead of answering a
+    // reply with no row of the target's own type, and an overload the catalog did not hold was
+    // already refused above. A short answer is still an absence and never a refusal part.
+    throw new QueryError(`No Cassandra ${kind} named ${segment} in ${keyspace}`, PROVIDER, cql);
+  }
+
+  // An array LITERAL, which is what satisfies the non-empty tuple. `rows.map(...)` does not,
+  // and casting past it would defeat the invariant the tuple exists for.
+  const parts: [ObjectSourcePart] = [sourcePart(readText(row.create_statement), spec.sourceLanguage, limit)];
+  return { path: [...path], kind, parts };
+}
+
+/**
+ * One `create_statement` as a part, or the refusal an empty one is.
+ *
+ * The refusal sentence is OURS and says so, which is a declared deviation from "the engine's
+ * own sentence, unprefixed": there is no engine sentence to carry, because the read SUCCEEDED
+ * and the server simply put nothing in the column. `docs/providers/cassandra.md` records both
+ * halves - that this is our wording, and that no measured build has produced it.
+ */
+function sourcePart(text: string, language: string, limit: number | undefined): ObjectSourcePart {
+  if (text.trim() === "") {
+    return {
+      id: SOURCE_PART_ID,
+      label: SOURCE_PART_LABEL,
+      unavailable: "Cassandra answered this DESCRIBE with an empty create_statement.",
+    };
+  }
+  const bounded = applySourceBound(text, limit);
+  return {
+    id: SOURCE_PART_ID,
+    label: SOURCE_PART_LABEL,
+    text: bounded.text,
+    language,
+    form: "complete",
+    origin: "regenerated",
+    ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+  };
 }

@@ -65,13 +65,18 @@ import {
 } from "@/lib/db/providers/sql/cassandra/introspect";
 import {
   CASSANDRA_KEYSPACE_LIST_CQL,
+  cassandraDescribeCql,
   cassandraObjectColumnsCql,
   cassandraObjectListCql,
   cassandraTypeFieldsCql,
   cassandraKeyspaceColumnsCql,
   cassandraKeyspaceTypesCql,
 } from "@/lib/db/providers/sql/cassandra/objects";
-import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import {
+  callerBoundTruncationReason,
+  isSourcePartUnavailable,
+  sourceBoundTruncationReason,
+} from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
 import { comparePaths } from "@/lib/db/object-path";
@@ -1892,6 +1897,122 @@ function singleColumnReplies(): Record<string, Reply> {
   );
 }
 
+// ============================================================================
+// `DESCRIBE` payloads (issue #789), captured from Apache Cassandra 5.0.9
+// ============================================================================
+
+/**
+ * Every row below was captured on 2026-09-13 through `cassandra-driver` 4.9.0 from a live
+ * `cassandra:5.0.9` node holding `docker/cassandra-init/01-object-fixture.cql`, applied through
+ * the mount and with the trigger installed by the recipe that file carries.
+ *
+ * `DESCRIBE` IS A STATEMENT THE SERVER EXECUTES, not a catalog table anybody selects from, and
+ * these four columns are what it declares. Two of the shapes here are the measurements that
+ * decide the read, and neither was in the design:
+ *
+ * - `DESCRIBE TABLE "probe"."customers"` answers FOUR rows, the table plus its two indexes plus
+ *   the materialized view over it, each typed by the `type` column. The provider takes the row
+ *   whose `type` names the kind asked for; the other three are their own objects in the tree
+ *   with their own Source.
+ * - `DESCRIBE FUNCTION "probe"."render"` answers BOTH overloads, because
+ *   `DESCRIBE FUNCTION probe.render(int)` is a SYNTAX error and the argument list cannot be
+ *   sent. Note `sum_state(int, int)`: the server writes a SPACE after the comma where this
+ *   provider's identity segment writes none, which is why the overload is chosen by a
+ *   whitespace-normalized signature and never by an equality against this `name`.
+ */
+const DESCRIBE_DECL = declare(["keyspace_name", TEXT], ["type", TEXT], ["name", TEXT], ["create_statement", TEXT]);
+
+function describeResult(rows: { type: string; name: string; create_statement: string }[]) {
+  return result(
+    DESCRIBE_DECL,
+    rows.map((row) => ({ keyspace_name: KEYSPACE, ...row })),
+  );
+}
+
+const DESCRIBE_TABLE_CUSTOMERS = describeResult([
+  {
+    type: "table",
+    name: "customers",
+    create_statement:
+      "CREATE TABLE probe.customers (\n    id int PRIMARY KEY,\n    city text,\n    home frozen<address>,\n    name text,\n    tags map<text, text>\n) WITH additional_write_policy = '99p'\n    AND allow_auto_snapshot = true\n    AND bloom_filter_fp_chance = 0.01\n    AND caching = {'keys': 'ALL', 'rows_per_partition': 'NONE'}\n    AND cdc = false\n    AND comment = ''\n    AND compaction = {'class': 'org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy', 'max_threshold': '32', 'min_threshold': '4'}\n    AND compression = {'chunk_length_in_kb': '16', 'class': 'org.apache.cassandra.io.compress.LZ4Compressor'}\n    AND memtable = 'default'\n    AND crc_check_chance = 1.0\n    AND default_time_to_live = 0\n    AND extensions = {}\n    AND gc_grace_seconds = 864000\n    AND incremental_backups = true\n    AND max_index_interval = 2048\n    AND memtable_flush_period_in_ms = 0\n    AND min_index_interval = 128\n    AND read_repair = 'BLOCKING'\n    AND speculative_retry = '99p';",
+  },
+  {
+    type: "index",
+    name: "customers_by_city",
+    create_statement: "CREATE INDEX customers_by_city ON probe.customers (city);",
+  },
+  {
+    type: "index",
+    name: "customers_by_tag",
+    create_statement: "CREATE INDEX customers_by_tag ON probe.customers (keys(tags));",
+  },
+  {
+    type: "materialized_view",
+    name: "customers_by_city",
+    create_statement:
+      "CREATE MATERIALIZED VIEW probe.customers_by_city AS\n    SELECT city, id, name\n    FROM probe.customers\n    WHERE city IS NOT NULL AND id IS NOT NULL\n    PRIMARY KEY (city, id)\n WITH CLUSTERING ORDER BY (id ASC)\n    AND additional_write_policy = '99p'\n    AND allow_auto_snapshot = true\n    AND bloom_filter_fp_chance = 0.01\n    AND caching = {'keys': 'ALL', 'rows_per_partition': 'NONE'}\n    AND cdc = false\n    AND comment = ''\n    AND compaction = {'class': 'org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy', 'max_threshold': '32', 'min_threshold': '4'}\n    AND compression = {'chunk_length_in_kb': '16', 'class': 'org.apache.cassandra.io.compress.LZ4Compressor'}\n    AND memtable = 'default'\n    AND crc_check_chance = 1.0\n    AND extensions = {}\n    AND gc_grace_seconds = 864000\n    AND incremental_backups = true\n    AND max_index_interval = 2048\n    AND memtable_flush_period_in_ms = 0\n    AND min_index_interval = 128\n    AND read_repair = 'BLOCKING'\n    AND speculative_retry = '99p';",
+  },
+]);
+const DESCRIBE_VIEW_CUSTOMERS_BY_CITY = describeResult([
+  {
+    type: "materialized_view",
+    name: "customers_by_city",
+    create_statement:
+      "CREATE MATERIALIZED VIEW probe.customers_by_city AS\n    SELECT city, id, name\n    FROM probe.customers\n    WHERE city IS NOT NULL AND id IS NOT NULL\n    PRIMARY KEY (city, id)\n WITH CLUSTERING ORDER BY (id ASC)\n    AND additional_write_policy = '99p'\n    AND allow_auto_snapshot = true\n    AND bloom_filter_fp_chance = 0.01\n    AND caching = {'keys': 'ALL', 'rows_per_partition': 'NONE'}\n    AND cdc = false\n    AND comment = ''\n    AND compaction = {'class': 'org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy', 'max_threshold': '32', 'min_threshold': '4'}\n    AND compression = {'chunk_length_in_kb': '16', 'class': 'org.apache.cassandra.io.compress.LZ4Compressor'}\n    AND memtable = 'default'\n    AND crc_check_chance = 1.0\n    AND extensions = {}\n    AND gc_grace_seconds = 864000\n    AND incremental_backups = true\n    AND max_index_interval = 2048\n    AND memtable_flush_period_in_ms = 0\n    AND min_index_interval = 128\n    AND read_repair = 'BLOCKING'\n    AND speculative_retry = '99p';",
+  },
+]);
+const DESCRIBE_INDEX_CUSTOMERS_BY_CITY = describeResult([
+  {
+    type: "index",
+    name: "customers_by_city",
+    create_statement: "CREATE INDEX customers_by_city ON probe.customers (city);",
+  },
+]);
+const DESCRIBE_TYPE_ADDRESS = describeResult([
+  {
+    type: "type",
+    name: "address",
+    create_statement: "CREATE TYPE probe.address (\n    street text,\n    city text,\n    postcode text\n);",
+  },
+]);
+const DESCRIBE_FUNCTION_ANSWER = describeResult([
+  {
+    type: "function",
+    name: "answer()",
+    create_statement:
+      "CREATE FUNCTION probe.answer()\n    CALLED ON NULL INPUT\n    RETURNS int\n    LANGUAGE java\n    AS $$return 42;$$;",
+  },
+]);
+const DESCRIBE_FUNCTION_RENDER = describeResult([
+  {
+    type: "function",
+    name: "render(int)",
+    create_statement:
+      'CREATE FUNCTION probe.render(value int)\n    CALLED ON NULL INPUT\n    RETURNS text\n    LANGUAGE java\n    AS $$return value == null ? "null" : value.toString();$$;',
+  },
+  {
+    type: "function",
+    name: "render(text)",
+    create_statement:
+      'CREATE FUNCTION probe.render(value text)\n    CALLED ON NULL INPUT\n    RETURNS text\n    LANGUAGE java\n    AS $$return value == null ? "null" : value;$$;',
+  },
+]);
+const DESCRIBE_FUNCTION_SUM_STATE = describeResult([
+  {
+    type: "function",
+    name: "sum_state(int, int)",
+    create_statement:
+      "CREATE FUNCTION probe.sum_state(state int, value int)\n    CALLED ON NULL INPUT\n    RETURNS int\n    LANGUAGE java\n    AS $$return (state == null ? 0 : state) + (value == null ? 0 : value);$$;",
+  },
+]);
+const DESCRIBE_AGGREGATE_TOTAL = describeResult([
+  {
+    type: "aggregate",
+    name: "total(int)",
+    create_statement: "CREATE AGGREGATE probe.total(int)\n    SFUNC sum_state\n    STYPE int\n    INITCOND 0;",
+  },
+]);
+
 /** The catalog answers a healthy object-surface read gets, on top of `healthyReplies()`. */
 function objectReplies(overrides: Record<string, Reply> = {}): Record<string, Reply> {
   return {
@@ -1937,6 +2058,24 @@ function objectReplies(overrides: Record<string, Reply> = {}): Record<string, Re
       ],
     ),
     ...singleColumnReplies(),
+    // The source read's statements (#789). Keyed by calling `cassandraDescribeCql`, the same
+    // builder the provider calls, which is the fake-dispatch blind spot standing ruling 5b
+    // names - the literal pins in "the object-source statement text" below are what bound it.
+    [cassandraDescribeCql(KEYSPACE, "table", "customers")!]: DESCRIBE_TABLE_CUSTOMERS,
+    [cassandraDescribeCql(KEYSPACE, "materialized_view", "customers_by_city")!]: DESCRIBE_VIEW_CUSTOMERS_BY_CITY,
+    [cassandraDescribeCql(KEYSPACE, "index", "customers_by_city")!]: DESCRIBE_INDEX_CUSTOMERS_BY_CITY,
+    [cassandraDescribeCql(KEYSPACE, "type", "address")!]: DESCRIBE_TYPE_ADDRESS,
+    [cassandraDescribeCql(KEYSPACE, "function", "answer")!]: DESCRIBE_FUNCTION_ANSWER,
+    [cassandraDescribeCql(KEYSPACE, "function", "render")!]: DESCRIBE_FUNCTION_RENDER,
+    [cassandraDescribeCql(KEYSPACE, "function", "sum_state")!]: DESCRIBE_FUNCTION_SUM_STATE,
+    [cassandraDescribeCql(KEYSPACE, "aggregate", "total")!]: DESCRIBE_AGGREGATE_TOTAL,
+    // The absence the conformance expectation drives, as the SERVER answers it. A plain
+    // "unexpected statement" from the fake would also be a throw naming the segment, so it
+    // would satisfy the helper's absence assertion while proving nothing about Cassandra.
+    [cassandraDescribeCql(KEYSPACE, "table", "no_such_table")!]: responseError(
+      8704,
+      "Table 'no_such_table' not found in keyspace 'probe'",
+    ),
     ...overrides,
   };
 }
@@ -1961,6 +2100,43 @@ describe("the object surface declaration", () => {
     const capabilities = new CassandraProvider(makeConnection()).getCapabilities();
 
     expect(capabilities.objectKinds?.some((kind) => kind.id === "view")).toBe(false);
+  });
+
+  /**
+   * The source declaration, both directions (#789).
+   *
+   * `sql` and NOT `cql` on every one of the six. MEASURED in this epic's Monaco census: the
+   * installed monaco-editor 0.56.0 bundle registers 89 language ids and `cql` is not among
+   * them, and an unregistered id degrades to plain text with no throw and nothing observable.
+   * `docs/providers/cassandra.md` states that as a limitation rather than hiding it.
+   *
+   * The second expectation is the other direction, so a kind added later cannot quietly gain a
+   * Source tab, and it is the one that pins `trigger`: `DescribeStatement` has NO `TRIGGER`
+   * target (measured on 5.0.9, "line 1:17 no viable alternative at input") and a trigger's body
+   * is a Java class file an operator loads onto the node, so the definition is not in the
+   * database in any form.
+   */
+  test("declares source on exactly the kinds DESCRIBE answers for", () => {
+    const kinds = new CassandraProvider(makeConnection()).getCapabilities().objectKinds ?? [];
+
+    const declared = kinds
+      .filter((kind) => kind.hasSource === true)
+      .map((kind) => [kind.id, kind.sourceLanguage] as const)
+      .sort();
+    expect(declared).toEqual([
+      ["aggregate", "sql"],
+      ["function", "sql"],
+      ["index", "sql"],
+      ["materialized_view", "sql"],
+      ["table", "sql"],
+      ["type", "sql"],
+    ]);
+    expect(
+      kinds
+        .filter((kind) => kind.hasSource !== true)
+        .map((kind) => kind.id)
+        .sort(),
+    ).toEqual(["trigger"]);
   });
 
   test("only a table takes a row write, and only a trigger hangs off one", () => {
@@ -2068,6 +2244,14 @@ describe("the object surface, against the committed fixture", () => {
         trigger: 1,
       },
       sampleObject: { path: [KEYSPACE, "customers"], kind: "table" },
+      // The source absence (#789). No `emptyKinds` entry belongs here and the helper would
+      // refuse one: all six source-bearing kinds are counted above zero, because the compose
+      // service enables `materialized_views_enabled` and `user_defined_functions_enabled`
+      // before the node starts and the fixture then builds one materialized view and four
+      // functions. On a STOCK 5.0 node both ship disabled and this expectation would be the
+      // wrong shape for that deployment; `docs/providers/cassandra.md` records which node this
+      // suite describes.
+      absentSource: { path: [KEYSPACE, "no_such_table"], kind: "table" },
     });
   });
 
@@ -2289,6 +2473,570 @@ describe("the object surface, against the committed fixture", () => {
  * BOUND VALUE rather than to a refusal: a test that stops at the refusal path is
  * exactly how the third spelling of this defect survived two providers.
  */
+
+/**
+ * The object source read (issue #789).
+ *
+ * The population of the per-kind read comes from the DECLARATION and never from a list typed
+ * here, which is recipe rule 6 and the thing that makes the block non-vacuous: a test that
+ * counts kinds cannot notice a kind that quietly became a refusal, and on this engine a wrong
+ * reply column would read as `undefined` and turn every kind into one at once.
+ */
+describe("the object source read, against the committed fixture", () => {
+  /** The one object of each source-bearing kind the fixture holds, and the text it answers. */
+  const READS: Readonly<Record<string, { path: readonly string[]; head: string; length: number }>> = {
+    table: {
+      path: [KEYSPACE, "customers"],
+      head: "CREATE TABLE probe.customers (\n    id int PRIMARY KEY,",
+      length: 966,
+    },
+    materialized_view: {
+      path: [KEYSPACE, "customers_by_city"],
+      head: "CREATE MATERIALIZED VIEW probe.customers_by_city AS",
+      length: 1009,
+    },
+    index: {
+      path: [KEYSPACE, "customers_by_city"],
+      head: "CREATE INDEX customers_by_city ON probe.customers (city);",
+      length: 57,
+    },
+    type: { path: [KEYSPACE, "address"], head: "CREATE TYPE probe.address (\n    street text,", length: 80 },
+    function: {
+      path: [KEYSPACE, "answer()"],
+      head: "CREATE FUNCTION probe.answer()\n    CALLED ON NULL INPUT",
+      length: 112,
+    },
+    aggregate: {
+      path: [KEYSPACE, "total(int)"],
+      head: "CREATE AGGREGATE probe.total(int)\n    SFUNC sum_state",
+      length: 83,
+    },
+  };
+
+  test("reads every kind the DECLARATION says has source, and no kind is silently a refusal", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+    const kinds = (provider.getCapabilities().objectKinds ?? []).filter((kind) => kind.hasSource === true);
+    // The zero-iteration case of the loop below certifies nothing, so it is refused by name.
+    expect(kinds.length).toBeGreaterThan(0);
+
+    for (const kind of kinds) {
+      const expectation = READS[kind.id];
+      if (expectation === undefined) {
+        throw new Error(`the declaration gained the source-bearing kind "${kind.id}" and this block reads none`);
+      }
+      const document = await provider.readObjectSource!(expectation.path, kind.id);
+
+      expect(document.path).toEqual([...expectation.path]);
+      expect(document.kind).toBe(kind.id);
+      expect(document.parts).toHaveLength(1);
+      const [part] = document.parts;
+      // BEFORE the narrowing. A part carrying both keys narrows to the refusal arm and would
+      // satisfy every assertion below it (recipe rule 5).
+      expect(Object.hasOwn(part, "unavailable")).toBe(false);
+      if (isSourcePartUnavailable(part)) throw new Error(`"${kind.id}" answered a refusal: ${part.unavailable}`);
+      expect(part.id).toBe("definition");
+      expect(part.label).toBe("Definition");
+      // The TEXT itself, per kind, which is what a whole-statement pin cannot see.
+      expect(part.text.startsWith(expectation.head)).toBe(true);
+      expect(part.text.length).toBe(expectation.length);
+      expect(part.text.endsWith(";")).toBe(true);
+      expect(part.language).toBe("sql");
+      expect(part.form).toBe("complete");
+      expect(part.origin).toBe("regenerated");
+      expect(part.truncated).toBeUndefined();
+    }
+  });
+
+  /**
+   * The four extra rows `DESCRIBE TABLE` answers, which the design did not predict.
+   *
+   * Each of the three is its own object in this tree with its own path, so the table's
+   * document carries the table's own statement and nothing else. Without this the Source tab
+   * for `customers` would show its indexes and its view concatenated under one part.
+   */
+  test("a table's document is the table's own statement, not the four rows DESCRIBE answered", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    const document = await provider.readObjectSource!([KEYSPACE, "customers"], "table");
+
+    expect(session.asked).toEqual(['DESCRIBE TABLE "probe"."customers"']);
+    expect(DESCRIBE_TABLE_CUSTOMERS.rows).toHaveLength(4);
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.text).toContain("CREATE TABLE probe.customers");
+    expect(part.text).not.toContain("CREATE INDEX");
+    expect(part.text).not.toContain("CREATE MATERIALIZED VIEW");
+  });
+
+  /**
+   * ROW ORDER IS NOT A CONTRACT, so the row is chosen by its `type` and never by its position.
+   *
+   * The payload here is the captured four-row reply with its rows REVERSED, which is the one
+   * legitimate way to drive this: the server put the table first in every capture, so the
+   * positional spelling `rows[0]` is behaviour-identical against every reply it ever sent, and
+   * nothing in the protocol promises that order. Reversing the same rows asks the provider the
+   * question the server has not yet asked it.
+   */
+  test("the row is chosen by its type, so a reply in another order still answers the table", async () => {
+    const { provider } = await connectedProvider(
+      objectReplies({
+        [cassandraDescribeCql(KEYSPACE, "table", "customers")!]: result(
+          DESCRIBE_DECL,
+          [...DESCRIBE_TABLE_CUSTOMERS.rows].reverse(),
+        ),
+      }),
+    );
+
+    const document = await provider.readObjectSource!([KEYSPACE, "customers"], "table");
+
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.text.startsWith("CREATE TABLE probe.customers")).toBe(true);
+  });
+
+  /**
+   * The index and the materialized view in the fixture SHARE the name `customers_by_city`, and
+   * the two rows are told apart by the reply's `type` column and by nothing else. A read that
+   * matched on the name would answer whichever row came first.
+   */
+  test("an index and a materialized view sharing one name answer their own statements", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    const index = await provider.readObjectSource!([KEYSPACE, "customers_by_city"], "index");
+    const view = await provider.readObjectSource!([KEYSPACE, "customers_by_city"], "materialized_view");
+
+    const [indexPart] = index.parts;
+    const [viewPart] = view.parts;
+    if (isSourcePartUnavailable(indexPart) || isSourcePartUnavailable(viewPart)) throw new Error("narrowing");
+    expect(indexPart.text).toBe("CREATE INDEX customers_by_city ON probe.customers (city);");
+    expect(viewPart.text.startsWith("CREATE MATERIALIZED VIEW")).toBe(true);
+  });
+
+  /**
+   * The overload selection, which is the one place a byte equality would have been wrong.
+   *
+   * `DESCRIBE FUNCTION probe.render` answers both rows; the caller asked for one. And
+   * `sum_state(int,int)` is the control the epic's "pair every negative with a control" rule
+   * owes: the server writes `sum_state(int, int)` with a space, so a provider comparing the
+   * reply's `name` against the path segment would answer an absence for an object that exists.
+   */
+  test("an overloaded routine answers ITS overload, chosen by signature and not by name", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    const int = await provider.readObjectSource!([KEYSPACE, "render(int)"], "function");
+    const text = await provider.readObjectSource!([KEYSPACE, "render(text)"], "function");
+    const spaced = await provider.readObjectSource!([KEYSPACE, "sum_state(int,int)"], "function");
+
+    const [intPart] = int.parts;
+    const [textPart] = text.parts;
+    const [spacedPart] = spaced.parts;
+    if (isSourcePartUnavailable(intPart) || isSourcePartUnavailable(textPart) || isSourcePartUnavailable(spacedPart)) {
+      throw new Error("narrowing");
+    }
+    expect(intPart.text).toContain("probe.render(value int)");
+    expect(textPart.text).toContain("probe.render(value text)");
+    expect(spacedPart.text).toContain("probe.sum_state(state int, value int)");
+    // The server's own spelling, so the space is a measurement and not a belief.
+    expect(DESCRIBE_FUNCTION_SUM_STATE.rows[0]!.name).toBe("sum_state(int, int)");
+  });
+
+  test("an overload the catalog does not hold raises, naming the segment asked for", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    await expect(provider.readObjectSource!([KEYSPACE, "render(bigint)"], "function")).rejects.toThrow(
+      "No Cassandra function named render(bigint) in probe",
+    );
+  });
+
+  /**
+   * The absence is attempted ONCE, which is the half of the retry guard the retry tests cannot
+   * see. Without the `isSchemaChangedMidPage` check the read would send every failing DESCRIBE
+   * twice, so every wrong path in the product would cost two round trips and the second answer
+   * would be the one reported.
+   */
+  test("a failure that is NOT the schema-change retry is sent once", async () => {
+    const cql = cassandraDescribeCql(KEYSPACE, "table", "no_such_table")!;
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    await expect(provider.readObjectSource!([KEYSPACE, "no_such_table"], "table")).rejects.toThrow(
+      "Table 'no_such_table' not found in keyspace 'probe'",
+    );
+
+    expect(session.asked.filter((statement) => statement === cql)).toHaveLength(1);
+  });
+
+  /**
+   * A ROUTINE NAME MAY ITSELF CONTAIN A `(`, which is why the overload's signature is taken from
+   * the LAST parenthesis of the reply's `name` and never from the first.
+   *
+   * MEASURED on 5.0.9, and it is a fact about functions alone: a TABLE name is refused unless it
+   * is alphanumeric-plus-underscore ("Table name must not be empty or not contain
+   * non-alphanumeric-underscore characters", measured for `pa(ren`), while
+   * `CREATE FUNCTION t14scratch."Fn(x"(a int) ...` SUCCEEDS and `system_schema.functions` then
+   * holds `function_name = 'Fn(x'`. `DESCRIBE FUNCTION t14scratch."Fn(x"` answers the reply row
+   * whose `name` is the verbatim string below, which is not usable as an identity but whose
+   * trailing argument list still is.
+   *
+   * This object is NOT in the committed fixture, and that is a disclosed trade rather than an
+   * omission: adding a fifth function would move the `function` count that this suite, the
+   * provider doc and `database-compose.yml`'s own comment all carry, and that last file belongs
+   * to another task in this phase. `docs/providers/cassandra.md` carries the exact commands that
+   * recreate it.
+   */
+  test("a routine whose NAME holds a parenthesis is still matched by its argument list", async () => {
+    const { provider } = await connectedProvider(
+      objectReplies({
+        [cassandraObjectListCql(KEYSPACE, "function")!]: result(
+          declare(["function_name", TEXT], ["argument_types", LIST_TEXT]),
+          [{ function_name: "Fn(x", argument_types: ["int"] }],
+        ),
+        [cassandraDescribeCql(KEYSPACE, "function", "Fn(x")!]: describeResult([
+          {
+            type: "function",
+            name: '"Fn"(x(int)',
+            create_statement:
+              'CREATE FUNCTION probe."Fn(x"(a int)\n    CALLED ON NULL INPUT\n    RETURNS int\n' +
+              "    LANGUAGE java\n    AS $$return a;$$;",
+          },
+        ]),
+      }),
+    );
+
+    const document = await provider.readObjectSource!([KEYSPACE, "Fn(x(int)"], "function");
+
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.text).toContain('CREATE FUNCTION probe."Fn(x"(a int)');
+  });
+
+  test("the caller's bound cuts the text and reports the number and the sentence it was given", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    const document = await provider.readObjectSource!([KEYSPACE, "address"], "type", 20);
+
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.text).toBe("CREATE TYPE probe.ad");
+    expect(part.truncated).toEqual({ limit: 20, reason: sourceBoundTruncationReason(20) });
+  });
+
+  /**
+   * The one refusal this engine's read can produce, and the disclosure that goes with it.
+   *
+   * There is NO privilege-driven refusal here, measured: on a 5.0.9 node running
+   * `PasswordAuthenticator` with `CassandraAuthorizer`, a role holding no grant of any kind
+   * read the complete `DESCRIBE TABLE` and `DESCRIBE FUNCTION` text in the same session where
+   * `SELECT` on `system_schema.tables` returned nothing. So an empty `create_statement` is the
+   * only producer, no measured build has ever answered one, and the arm exists because an
+   * empty definition is not a definition.
+   *
+   * `Object.hasOwn(part, "text") === false` is recipe rule 8: a part carrying BOTH keys
+   * narrows to the refusal arm and satisfies the sentence assertion too.
+   */
+  test("an empty create_statement is a refusal and never an empty editor", async () => {
+    const { provider } = await connectedProvider(
+      objectReplies({
+        [cassandraDescribeCql(KEYSPACE, "type", "address")!]: describeResult([
+          { type: "type", name: "address", create_statement: "   \n  " },
+        ]),
+      }),
+    );
+
+    const document = await provider.readObjectSource!([KEYSPACE, "address"], "type");
+
+    const [part] = document.parts;
+    expect(Object.hasOwn(part, "text")).toBe(false);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.unavailable).toBe("Cassandra answered this DESCRIBE with an empty create_statement.");
+  });
+
+  /**
+   * The schema-change-mid-paging error is a RETRY and never a refusal (#789).
+   *
+   * REPRODUCED on 5.0.9 rather than quoted from documentation: `DESCRIBE TABLE probe.customers`
+   * with `fetchSize: 1`, a `CREATE TABLE` between pages, then a fetch of page two with page
+   * one's `pageState`, answers protocol code 8704 with this exact sentence.
+   */
+  test("the schema-change-mid-paging error is retried once and the second answer is the document", async () => {
+    const cql = cassandraDescribeCql(KEYSPACE, "type", "address")!;
+    let attempts = 0;
+    const replies = objectReplies();
+    const session = fakeSession(replies);
+    const inner = session.execute;
+    session.execute = async (statement: string, options?: unknown) => {
+      if (statement === cql && attempts++ === 0) {
+        throw responseError(
+          8704,
+          "The schema has changed since the previous page of the DESCRIBE statement result. " +
+            "Please retry the DESCRIBE statement.",
+        );
+      }
+      return inner(statement, options as never);
+    };
+    const config = makeConnection();
+    const provider = new CassandraProvider(config, {}, new CassandraDriverTransport(config, 60_000, session));
+    await provider.connect();
+
+    const document = await provider.readObjectSource!([KEYSPACE, "address"], "type");
+
+    expect(attempts).toBe(2);
+    const [part] = document.parts;
+    expect(Object.hasOwn(part, "unavailable")).toBe(false);
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.text).toContain("CREATE TYPE probe.address");
+  });
+
+  test("a SECOND schema change on the retry raises, because a third try fixes nothing", async () => {
+    const cql = cassandraDescribeCql(KEYSPACE, "type", "address")!;
+    let attempts = 0;
+    const session = fakeSession(objectReplies());
+    const inner = session.execute;
+    session.execute = async (statement: string, options?: unknown) => {
+      if (statement === cql) {
+        attempts++;
+        throw responseError(
+          8704,
+          "The schema has changed since the previous page of the DESCRIBE statement result. " +
+            "Please retry the DESCRIBE statement.",
+        );
+      }
+      return inner(statement, options as never);
+    };
+    const config = makeConnection();
+    const provider = new CassandraProvider(config, {}, new CassandraDriverTransport(config, 60_000, session));
+    await provider.connect();
+
+    await expect(provider.readObjectSource!([KEYSPACE, "address"], "type")).rejects.toThrow(
+      "The schema has changed since the previous page",
+    );
+    expect(attempts).toBe(2);
+  });
+
+  /**
+   * An absence and a WRONG-KIND ask are the same fact here and the sentence is what tells them
+   * apart, because `DESCRIBE` names the kind it looked for in every message. Both raise, and
+   * the raise carries Cassandra's own sentence unprefixed through `mapCassandraError`'s
+   * `invalid` arm.
+   */
+  test("a wrong-kind ask raises with the server's own sentence naming the kind it looked for", async () => {
+    const { provider } = await connectedProvider(
+      objectReplies({
+        [cassandraDescribeCql(KEYSPACE, "table", "customers_by_city")!]: responseError(
+          8704,
+          "Table 'customers_by_city' not found in keyspace 'probe'",
+        ),
+      }),
+    );
+
+    await expect(provider.readObjectSource!([KEYSPACE, "customers_by_city"], "table")).rejects.toThrow(
+      "Table 'customers_by_city' not found in keyspace 'probe'",
+    );
+  });
+
+  test("the kind that declares no source refuses by DECLARATION, before any statement is sent", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    await expect(provider.readObjectSource!([KEYSPACE, "customers", "probe_audit"], "trigger")).rejects.toThrow(
+      'Cassandra publishes no definition text for the kind "trigger"',
+    );
+    await expect(provider.readObjectSource!([KEYSPACE, "nothing"], "sequence")).rejects.toThrow(
+      'Cassandra declares no object kind "sequence"',
+    );
+    expect(session.asked).toEqual([]);
+  });
+
+  /**
+   * Three declaration defects that would each ship a broken Source tab, driven through a swapped
+   * `getCapabilities` because no shipped declaration can produce them.
+   *
+   * They are not defensive lines nobody can execute: `ObjectKindSpec` lets a kind declare
+   * `hasSource` with no `sourceLanguage`, and the `trigger` kind is one `hasSource: true` away
+   * from declaring a source `DESCRIBE` has no target for. An unregistered or absent Monaco id
+   * degrades to plain text with no throw and nothing observable, which is why the first of them
+   * has to raise rather than fall back to a literal.
+   */
+  test("a kind declaring source with no sourceLanguage raises rather than rendering plain text", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+    const real = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: (real.objectKinds ?? []).map((kind) =>
+        kind.id === "table" ? { ...kind, sourceLanguage: undefined } : kind,
+      ),
+    });
+    try {
+      await expect(provider.readObjectSource!([KEYSPACE, "customers"], "table")).rejects.toThrow(
+        'Cassandra declares readable source for the kind "table" and no sourceLanguage to render it with',
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a kind declaring source that DESCRIBE has no target for raises", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+    const real = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: (real.objectKinds ?? []).map((kind) =>
+        kind.id === "trigger" ? { ...kind, hasSource: true, sourceLanguage: "sql" } : kind,
+      ),
+    });
+    try {
+      await expect(provider.readObjectSource!([KEYSPACE, "customers", "probe_audit"], "trigger")).rejects.toThrow(
+        'Cassandra declares readable source for the kind "trigger" but DESCRIBE has no target for it',
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  /**
+   * A reply carrying no row of the target's own type is an ABSENCE and never a refusal part.
+   * Every measured build raises instead of answering one, so this is the arm that keeps a
+   * future build's short answer from becoming an empty document.
+   */
+  test("a reply with no row of the kind asked for raises, naming the segment", async () => {
+    const { provider } = await connectedProvider(
+      objectReplies({
+        [cassandraDescribeCql(KEYSPACE, "type", "address")!]: describeResult([]),
+      }),
+    );
+
+    await expect(provider.readObjectSource!([KEYSPACE, "address"], "type")).rejects.toThrow(
+      "No Cassandra type named address in probe",
+    );
+  });
+
+  test("a path of the wrong length raises against the declared shape, before any statement is sent", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    await expect(provider.readObjectSource!([KEYSPACE], "table")).rejects.toThrow(
+      'A Cassandra "table" path is [keyspace, name], received ["probe"]',
+    );
+    expect(session.asked).toEqual([]);
+  });
+});
+
+/**
+ * The source statement text itself, pinned by LITERAL.
+ *
+ * `objectReplies()` keys every `DESCRIBE` reply by calling `cassandraDescribeCql`, the same
+ * builder the provider calls, so the fake dispatches on a statement the test itself built -
+ * standing ruling 5b's blind spot. These literals are the statements measured against Apache
+ * Cassandra 5.0.9 and they are written out by hand, so the builder has one reader that does not
+ * move with it.
+ */
+describe("the object-source statement text, pinned by literal", () => {
+  test("every source-bearing kind's DESCRIBE is the target keywords and two quoted identifiers", () => {
+    expect(cassandraDescribeCql(KEYSPACE, "table", "customers")).toBe('DESCRIBE TABLE "probe"."customers"');
+    expect(cassandraDescribeCql(KEYSPACE, "materialized_view", "customers_by_city")).toBe(
+      'DESCRIBE MATERIALIZED VIEW "probe"."customers_by_city"',
+    );
+    expect(cassandraDescribeCql(KEYSPACE, "index", "customers_by_city")).toBe(
+      'DESCRIBE INDEX "probe"."customers_by_city"',
+    );
+    expect(cassandraDescribeCql(KEYSPACE, "type", "address")).toBe('DESCRIBE TYPE "probe"."address"');
+    expect(cassandraDescribeCql(KEYSPACE, "function", "render")).toBe('DESCRIBE FUNCTION "probe"."render"');
+    expect(cassandraDescribeCql(KEYSPACE, "aggregate", "total")).toBe('DESCRIBE AGGREGATE "probe"."total"');
+  });
+
+  test("the kind DESCRIBE has no target for builds no statement at all", () => {
+    expect(cassandraDescribeCql(KEYSPACE, "trigger", "probe_audit")).toBeUndefined();
+    expect(cassandraDescribeCql(KEYSPACE, "sequence", "s")).toBeUndefined();
+  });
+
+  /**
+   * The escaper, both halves, and the second half is the control.
+   *
+   * MEASURED on 5.0.9: a doubled `""` is the escape inside a quoted CQL identifier
+   * (`DESCRIBE FUNCTION t14scratch."qu""ote"` resolves a function named `qu"ote`), and a
+   * BACKSLASH is DATA rather than an escape - `"back\slash"` resolves the name `back\slash`
+   * while the backslash-doubled `"back\\slash"` is "not found". That is the opposite of this
+   * epic's ClickHouse probe 11, where a backslash inside a quoted identifier IS an escape, and
+   * it is why this engine needs no backslash rule at all.
+   */
+  test("a name holding a quote is doubled into the identifier, and a backslash is left alone", () => {
+    expect(cassandraDescribeCql(KEYSPACE, "function", 'qu"ote')).toBe('DESCRIBE FUNCTION "probe"."qu""ote"');
+    expect(cassandraDescribeCql(KEYSPACE, "function", "back\\slash")).toBe('DESCRIBE FUNCTION "probe"."back\\slash"');
+    expect(cassandraDescribeCql('o"brien', "table", "customers")).toBe('DESCRIBE TABLE "o""brien"."customers"');
+  });
+
+  /**
+   * The quoting is not decoration. MEASURED on 5.0.9: a table created as `"MixedCase"` is
+   * stored under that spelling, and `DESCRIBE TABLE t14scratch.MixedCase` unquoted answers
+   * "Table 'mixedcase' not found in keyspace 't14scratch'", because the parser lowercases an
+   * unquoted identifier. Every name that reaches this builder came out of a catalog row.
+   */
+  test("a mixed-case name keeps its case, which is the reason the identifier is quoted at all", () => {
+    expect(cassandraDescribeCql(KEYSPACE, "table", "MixedCase")).toBe('DESCRIBE TABLE "probe"."MixedCase"');
+  });
+});
+
+/**
+ * Standing ruling 5g, for `readObjectSource`, driven to a BOUND VALUE (#789).
+ *
+ * Cassandra declares ONE container level, so every positional spelling of the keyspace and the
+ * object name is behaviour-identical against its own fixture - which is exactly why three of
+ * them shipped across earlier providers in this epic, each found one review later than the
+ * last. A two-level declaration swapped in through `getCapabilities` is what tells a derivation
+ * from a constant, and it is driven all the way to the STATEMENT rather than to a refusal:
+ * a two-level test that only reaches the refusal path never reaches the bind.
+ */
+describe("the source read's container derivation, under a two-level declaration", () => {
+  test("takes the keyspace from the level the DECLARATION names and the name from the last segment", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    const real = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Cluster", labelPlural: "Clusters" },
+        { id: "schema", label: "Keyspace", labelPlural: "Keyspaces" },
+      ],
+    });
+    try {
+      session.asked.length = 0;
+      await provider.readObjectSource!(["cluster1", KEYSPACE, "customers"], "table").catch(() => undefined);
+
+      // `probe` is the SECOND segment under this declaration and `customers` is the last, so a
+      // provider reading `path[0]` for the keyspace would have sent "cluster1" here.
+      expect(session.asked).toEqual(['DESCRIBE TABLE "probe"."customers"']);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  /**
+   * The SWAPPED declaration, which is recipe rule 9 and the half the test above cannot cover.
+   * Cassandra's own declaration is one-level, so the test above already refutes a hardcoded
+   * `path[0]`; this one refutes a hardcoded ORDER by putting the keyspace level FIRST and
+   * feeding the path in that order, where the same two values must still reach the server.
+   */
+  test("the keyspace follows its level when the two levels are swapped over", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    const real = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "schema", label: "Keyspace", labelPlural: "Keyspaces" },
+        { id: "catalog", label: "Cluster", labelPlural: "Clusters" },
+      ],
+    });
+    try {
+      session.asked.length = 0;
+      await provider.readObjectSource!([KEYSPACE, "cluster1", "customers"], "table").catch(() => undefined);
+
+      expect(session.asked).toEqual(['DESCRIBE TABLE "probe"."customers"']);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("the container derivation, under a two-level declaration", () => {
   const TWO_LEVELS = [
     { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },

@@ -1411,3 +1411,257 @@ two counts against Cassandra's full set, and `full` in this table means every su
 every surface returned. Not `query-only` either, because the object browser, the column metadata and
 the index metadata all work — which is what separates this from Materialize and RisingWave, which have
 none of it.
+
+---
+
+## 12. Object source (#789)
+
+This is the one engine in the object-source fleet whose definition text is **not in a catalog column
+anybody can select**. `DESCRIBE` is a real server-side statement: the server executes it and answers
+ordinary rows carrying `keyspace_name`, `type`, `name` and `create_statement`. Everything below was
+measured on 2026-09-13 against a live `cassandra:5.0.9` through `cassandra-driver` 4.9.0, holding
+[`docker/cassandra-init/01-object-fixture.cql`](../../docker/cassandra-init/01-object-fixture.cql)
+applied through the mount with the trigger step that file documents.
+
+### 12.1 Which kinds declare source, and what the text is
+
+| Kind | Statement | `form` | `origin` | Monaco id |
+|---|---|---|---|---|
+| `table` | `DESCRIBE TABLE "<ks>"."<name>"` | `complete` | `regenerated` | `sql` |
+| `materialized_view` | `DESCRIBE MATERIALIZED VIEW "<ks>"."<name>"` | `complete` | `regenerated` | `sql` |
+| `index` | `DESCRIBE INDEX "<ks>"."<name>"` | `complete` | `regenerated` | `sql` |
+| `type` | `DESCRIBE TYPE "<ks>"."<name>"` | `complete` | `regenerated` | `sql` |
+| `function` | `DESCRIBE FUNCTION "<ks>"."<bare name>"` | `complete` | `regenerated` | `sql` |
+| `aggregate` | `DESCRIBE AGGREGATE "<ks>"."<bare name>"` | `complete` | `regenerated` | `sql` |
+| `trigger` | **none** | | | |
+
+`origin` is `regenerated` and not `stored`, measured rather than assumed: the fixture writes
+`CREATE TABLE probe.customers (id, name, city, home, tags)` and the server answers the partition key
+first and then the remaining columns alphabetically, with all twenty table options spelled out.
+Nothing in the database holds the author's own bytes.
+
+**`cql` IS NOT A MONACO LANGUAGE ID**, and every row above says `sql` because of it. The installed
+monaco-editor 0.56.0 bundle registers 89 ids and `cql` is not among them; an unregistered id degrades
+to plain text with no throw and nothing observable. `sql` is the closest registered dialect, so a
+`CREATE TABLE` renders correctly and the CQL-only spellings (`PRIMARY KEY ((a), b)`,
+`frozen<address>`, a `$$ ... $$` function body) are highlighted as whatever the SQL tokenizer makes
+of them. This is a limitation and not a claim that the text is highlighted as CQL.
+
+**A function's body is not CQL and the part does not pretend otherwise.** `DESCRIBE FUNCTION` answers
+a CQL envelope wrapping the body verbatim between `$$` markers, and the body's language comes from
+the catalog (`java` on 5.0). The part's `language` is the kind's declared `sql` because the part **is
+the envelope**, not the body. A Java body inside it is highlighted as SQL, which is wrong, and there
+is no second part to put it in without claiming a split the engine does not make.
+
+### 12.2 `trigger` declares nothing, and it is a result rather than a gap
+
+Of the two facts a kind declaring nothing can carry, the engine publishes no such text at all, or it
+publishes it somewhere this product does not reach, a Cassandra trigger is squarely **the first**.
+
+`DescribeStatement` has no `TRIGGER` target. Measured:
+
+```
+DESCRIBE TRIGGER probe.probe_audit
+  -> line 1:17 no viable alternative at input 'probe' (DESCRIBE [TRIGGER] probe...)
+```
+
+And there is nothing behind that absence to reach. `system_schema.triggers` carries a trigger's name,
+its base table and the `class` an operator installed, and that class is a compiled Java file sitting
+in every node's trigger directory. The definition is not in the database in any form, so a `trigger`
+row offers no Source action at all and nothing is being withheld.
+
+### 12.3 `DESCRIBE TABLE` does not answer one row
+
+The design predicted one row per read. Measured, `DESCRIBE TABLE "probe"."customers"` answers **four**:
+the table, its two indexes and the materialized view over it, each typed by the reply's own `type`
+column. Every one of those three is its own addressable object in the tree with its own Source, so the
+read takes the row whose `type` names the kind that was asked for and the others are reached under
+their own paths. Without that the Source tab for `customers` would show its indexes and its view
+concatenated into one part.
+
+The `type` values are `table`, `index`, `materialized_view`, `type`, `function` and `aggregate`, which
+happen to be this provider's own kind ids. They are still declared per kind on the catalog table
+rather than inferred from the id, because an id and a wire value agreeing today is not a contract.
+
+The row is chosen by `type` and **never by position**. The server put the target first in every reply
+captured here, so `rows[0]` would be behaviour-identical against every reply it has ever sent, and
+nothing in the protocol promises that order.
+
+### 12.4 A routine's target is its bare name, and the overload is chosen from the reply
+
+`DESCRIBE` takes an identifier and no argument list. Measured:
+
+```
+DESCRIBE FUNCTION probe.render(int)
+  -> line 1:30 mismatched input '(' expecting EOF
+DESCRIBE FUNCTION probe.render
+  -> two rows, name 'render(int)' and name 'render(text)'
+```
+
+So a routine read is two statements. The first is the listing statement the folder and the badge
+already share, and the path segment is resolved through the **same identity builder** that produced
+it (`function_name` plus the `argument_types` list), which is what keeps the resolution from drifting
+from the listing. The second is the `DESCRIBE`, and the caller's overload is picked out of the reply.
+
+It is picked by the **argument list**, normalized for whitespace, and never by the reply's `name`.
+Two measurements say why:
+
+| Measured | Reply `name` |
+|---|---|
+| `probe.sum_state(state int, value int)` | `sum_state(int, int)`, a SPACE after the comma, where this provider's identity segment writes none |
+| a table created as `"MixedCase"` | `"MixedCase"`, **with** the quotes |
+| a function created as `"Fn(x"` | `"Fn"(x(int)`, not a spelling anything can round-trip |
+
+What survives all three is the trailing parenthesized argument list, because a CQL type name is built
+from angle brackets and holds no parenthesis, so the **last** `(` opens the signature.
+
+That last row is also the reason the split is taken from the last parenthesis rather than the first.
+A **table** name must be alphanumeric-plus-underscore even when quoted, but a **function** name need
+not be. Measured, and these objects are deliberately not in the committed fixture, because a fifth
+function would move the `function` count this document, the suite and `database-compose.yml` all
+carry, and that last file belongs to another task. The commands that recreate them:
+
+```bash
+docker exec libredb-cassandra cqlsh -e "
+CREATE KEYSPACE t14scratch WITH replication = {'class':'SimpleStrategy','replication_factor':1};
+CREATE TABLE t14scratch.\"pa(ren\" (id int PRIMARY KEY);
+  -- ConfigurationException: Table name must not be empty or not contain
+  -- non-alphanumeric-underscore characters (got \"pa(ren\")
+CREATE TABLE t14scratch.\"MixedCase\" (id int PRIMARY KEY);            -- accepted
+CREATE FUNCTION t14scratch.\"Fn(x\"(a int) CALLED ON NULL INPUT RETURNS int
+  LANGUAGE java AS 'return a;';                                       -- accepted
+CREATE FUNCTION t14scratch.\"qu\"\"ote\"(a int) CALLED ON NULL INPUT RETURNS int
+  LANGUAGE java AS 'return a;';                                       -- accepted
+"
+```
+
+### 12.5 The escaper: quote the identifier, double the quote, leave the backslash alone
+
+Both segments are wrapped in double quotes and an embedded `"` is doubled. Neither half is decoration.
+
+Quoting is required because `system_schema` stores a name as it was written and the parser lowercases
+an unquoted identifier:
+
+```
+DESCRIBE TABLE t14scratch.MixedCase
+  -> Table 'mixedcase' not found in keyspace 't14scratch'
+DESCRIBE TABLE t14scratch."MixedCase"
+  -> the CREATE TABLE
+```
+
+Doubling is the whole escape, and the control is what makes that a measurement rather than a habit.
+This epic's ClickHouse probe found that a backslash inside a quoted identifier **is** an escape there
+and swallows the closing quote. CQL is the opposite:
+
+```
+DESCRIBE FUNCTION t14scratch."back\slash"    -> resolves the function named back\slash
+DESCRIBE FUNCTION t14scratch."back\\slash"   -> User defined function 'back\\slash' not found
+DESCRIBE FUNCTION t14scratch."qu""ote"       -> resolves the function named qu"ote
+```
+
+So a backslash inside a quoted CQL identifier is data, and this engine needs no backslash rule at all.
+
+### 12.6 Absence raises, and `DESCRIBE` names the kind it looked for
+
+An object the read cannot find raises, carrying Cassandra's own sentence unprefixed. Every one of
+those sentences **names the kind**, so a wrong-kind ask and a missing object are told apart by the
+sentence rather than by a code: both are absences and both raise:
+
+| Sent | Server |
+|---|---|
+| `DESCRIBE TABLE probe.no_such_table` | `Table 'no_such_table' not found in keyspace 'probe'` |
+| `DESCRIBE TABLE probe.customers_by_city` (a materialized view) | `Table 'customers_by_city' not found in keyspace 'probe'` |
+| `DESCRIBE MATERIALIZED VIEW probe.customers` (a table) | `Materialized view 'customers' not found in 'probe'` |
+| `DESCRIBE INDEX probe.no_such_index` | `Table for existing index 'no_such_index' not found in 'probe'` |
+| `DESCRIBE TYPE probe.customers` | `User defined type 'customers' not found in 'probe'` |
+| `DESCRIBE FUNCTION probe.total` (an aggregate) | `User defined function 'total' not found in 'probe'` |
+| `DESCRIBE AGGREGATE probe.render` (a function) | `User defined aggregate 'render' not found in 'probe'` |
+| `DESCRIBE TABLE no_such_ks.customers` | `'no_such_ks' not found in keyspaces` |
+
+All eight arrive as protocol code 8704, which the transport categorises `invalid` and the provider
+maps to a `QueryError` carrying the message verbatim.
+
+### 12.7 The schema-change-mid-paging error is a RETRY and never a refusal
+
+It was reproduced rather than quoted: `DESCRIBE TABLE probe.customers` with `fetchSize: 1`, a
+`CREATE TABLE` in another keyspace between pages, then a fetch of the second page with the first
+page's `pageState`:
+
+```
+code 8704: The schema has changed since the previous page of the DESCRIBE statement result.
+           Please retry the DESCRIBE statement.
+```
+
+The server is telling the client to ask again, so reporting it as an `unavailable` part would put a
+transient instruction in the Source pane as a fact about the definition. The read retries **once** and
+then raises: a cluster whose schema moves faster than a catalog read completes is not fixed by a third
+attempt, and an unbounded retry would turn a busy cluster into a pane that never resolves.
+
+Two things about its reach, stated rather than implied. This provider sends no `fetchSize`, so the
+driver's own default of 5000 rows applies and a single-object `DESCRIBE` answers one row plus, for a
+table, one per index and materialized view over it, so the paging this error needs is out of reach
+for every shape the fixture holds, and the arm is driven in the suite rather than by a cluster. And
+this is **the one place this provider reads a server sentence to decide anything**: 8704 alone cannot
+discriminate, because an absent object carries it too. The trade is the opposite way round from the
+monitoring degradation recorded in
+[`src/lib/db/providers/sql/cassandra/transport.ts`](../../src/lib/db/providers/sql/cassandra/transport.ts),
+where a rephrase would have silently disabled five panels. Here a rephrase costs exactly one thing:
+the retry stops firing and the error propagates as a raise, which is what happens anyway when the
+retry does not help.
+
+### 12.8 There is no privilege-driven refusal, measured
+
+`DESCRIBE` applies **no permission check** for a single named object, which is the same shape this
+epic measured for PostgreSQL's `pg_get_*` family. On a 5.0.9 node started with
+`authenticator: PasswordAuthenticator` and `authorizer: CassandraAuthorizer`, a role created with a
+login and **no grant of any kind** read the complete `DESCRIBE TABLE probe.customers` and
+`DESCRIBE FUNCTION probe.answer` text, in the same session where `SELECT table_name FROM
+system_schema.tables WHERE keyspace_name='probe'` returned nothing.
+
+```bash
+docker exec libredb-cassandra cqlsh -u cassandra -p cassandra \
+  -e "CREATE ROLE nopriv WITH PASSWORD = 'nopriv' AND LOGIN = true;"
+docker exec libredb-cassandra cqlsh -u nopriv -p nopriv -e "DESCRIBE TABLE probe.customers;"
+```
+
+So the `unavailable` arm of this read has exactly **one** producer: a `create_statement` that is empty
+or whitespace only. No build measured in this epic has ever answered one. The arm exists because an
+empty definition is not a definition and an empty editor over one is the failure the whole source read
+was designed to prevent, and its sentence is **ours** rather than the engine's, which is a declared
+deviation from the rule that a refusal carries the engine's own words: the read *succeeded* and the
+server simply put nothing in the column, so there is no engine sentence to carry.
+
+### 12.9 Which servers and which drivers answer `DESCRIBE`
+
+The gate is the **server**, not the protocol and not the driver.
+
+| | Measured |
+|---|---|
+| Apache Cassandra 5.0.9 | Answers `DESCRIBE` for all six kinds |
+| ScyllaDB 2026.2.4 (`release_version` 3.0.8) | Answers `DESCRIBE` with the **same four columns**, the same `type` values and the same absence sentence (`Table 'no_such_table' not found in keyspace 'probe'`), verified on `table`, `index` and `type` |
+| `cassandra-driver` 4.9.0 | Negotiates native protocol **v4** against 5.0.9 (`isSupportedCassandra` caps at `0x04`), and `DESCRIBE` works over it. Note that `system.local.native_protocol_version` reports `5`, which is the server's maximum and not the negotiated version |
+
+The driver needs no feature support at all: it sends `DESCRIBE` as an ordinary one-shot query with
+`prepare: false`, exactly like every other catalog statement here, and the answer arrives as rows.
+
+Server-side `DESCRIBE` is documented as landing in Apache Cassandra 4.0 (CASSANDRA-14825); before
+that, `cqlsh` reconstructed it on the client and no client could ask the server for it. That lower
+bound is **documented and not measured here**: no pre-4.0 server was run. On such a server the
+statement is a syntax error at the `DESCRIBE` keyword, so it fails as a fact about the connection
+rather than about any one object, and it raises rather than putting a parser error in a Source pane.
+
+### 12.10 The fixture already holds one object of every source-bearing kind
+
+Nothing was added to
+[`docker/cassandra-init/01-object-fixture.cql`](../../docker/cassandra-init/01-object-fixture.cql)
+for this read: three tables, one materialized view, three indexes of two catalog kinds, one
+user-defined type, four functions including an overloaded pair, and one aggregate cover all six kinds,
+and the trigger the file's own recipe installs is the one row in the tree that offers **no** Source
+action at all.
+
+**Two of those kinds exist only because this deployment enables them.** `materialized_views_enabled`
+and `user_defined_functions_enabled` both ship **disabled** in Cassandra 5.0, and the `cassandra`
+service in `database-compose.yml` rewrites `cassandra.yaml` before the node starts for exactly that
+reason. A stock 5.0 node legitimately holds no materialized view and no user-defined function, so on
+one of those the `materialized_view`, `function` and `aggregate` folders are correctly empty and their
+source reads have nothing to read. That is a property of the node, not of the provider.
