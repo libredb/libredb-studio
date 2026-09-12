@@ -4,7 +4,11 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import {
+  callerBoundTruncationReason,
+  isSourcePartUnavailable,
+  sourceBoundTruncationReason,
+} from "@/lib/db/object-kinds";
 import { EventEmitter } from "node:events";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
@@ -3344,6 +3348,38 @@ describe("object surface", () => {
     expect(kinds.find((k) => k.id === "table")?.acceptsRowWrites).toBe(true);
   });
 
+  /**
+   * The source declaration, both directions (#789 Phase 2).
+   *
+   * The second assertion is the one that matters over time: a kind added to `objectKinds`
+   * later cannot quietly gain a Source tab, and a kind losing its declaration cannot quietly
+   * lose one. `table` and `sequence` are in the second list as a RESULT and not as a gap:
+   * PostgreSQL publishes no `pg_get_tabledef` and no `pg_get_sequencedef`, and
+   * `pg_catalog.pg_sequences` publishes a sequence's properties rather than any text.
+   */
+  test("declares source on exactly the kinds that have a definition text", () => {
+    const provider = makeProvider();
+    const kinds = provider.getCapabilities().objectKinds ?? [];
+    const declared = kinds
+      .filter((kind) => kind.hasSource === true)
+      .map((kind) => [kind.id, kind.sourceLanguage] as const)
+      .sort();
+    expect(declared).toEqual([
+      ["function", "pgsql"],
+      ["materialized_view", "pgsql"],
+      ["procedure", "pgsql"],
+      ["trigger", "pgsql"],
+      ["view", "pgsql"],
+    ]);
+    // The other direction, so a kind added later cannot quietly gain a Source tab.
+    expect(
+      kinds
+        .filter((kind) => kind.hasSource !== true)
+        .map((kind) => kind.id)
+        .sort(),
+    ).toEqual(["sequence", "table"]);
+  });
+
   test("satisfies the shared object surface contract", async () => {
     // The relations each kind holds, one place, because the helper now reads the listing
     // and the bulk column read against each other: two lists that had to be kept in step
@@ -3361,10 +3397,40 @@ describe("object surface", () => {
     // `current_schema()` is `public`, so the bare `orders` the flat reading spells for it
     // must land HERE and the qualified `app.orders` on the other.
     const publicRelations: Record<string, string[]> = { "'v'": [], "'m'": [], "'r','p'": ["orders"] };
+    // The three kinds that are not relations, listed by their own catalogs. A routine's last
+    // segment is the IDENTITY the listing writes, and a trigger's path carries its table,
+    // which is what makes the source binds below more than one segment (#789).
+    const routines: Record<string, { name: string; identity: string }[]> = {
+      f: [
+        { name: "order_total", identity: "order_total(integer)" },
+        { name: "stamp_updated_at", identity: "stamp_updated_at()" },
+      ],
+      p: [{ name: "touch_order", identity: "touch_order(integer)" }],
+    };
+    // Keyed by the LAST bind, which is the object's own segment on all five statements, so an
+    // absence is the same lookup missing rather than an arm written for the absent case.
+    const definitions: Record<string, string> = {
+      order_summary: MEASURED_VIEW_DEFINITION,
+      daily_sales: MEASURED_VIEW_DEFINITION,
+      revenue_by_month: MEASURED_VIEW_DEFINITION,
+      "order_total(integer)": MEASURED_FUNCTION_DEFINITION,
+      "stamp_updated_at()": MEASURED_FUNCTION_DEFINITION,
+      "touch_order(integer)": MEASURED_FUNCTION_DEFINITION,
+      orders_stamp_updated_at: MEASURED_TRIGGER_DEFINITION,
+    };
     const relkindOf = (sql: string) => Object.keys(relations).find((relkinds) => sql.includes(`IN (${relkinds})`))!;
     const listedIn = (schema: string | undefined, relkinds: string) =>
       (schema === "public" ? publicRelations : relations)[relkinds];
     mockQueryFn = async (sql, params) => {
+      // The source statements FIRST: the view one also names `relkind` and the routine one
+      // also names `prokind`, so a looser arm below would answer a definition read with a
+      // listing row. Keyed on the `pg_get_*` function name, which is the token that tells the
+      // five apart and the one a rewritten statement cannot keep by accident.
+      if (sql.includes("pg_get_viewdef") || sql.includes("pg_get_functiondef") || sql.includes("pg_get_triggerdef")) {
+        const bound = params as string[];
+        const definition = definitions[bound[bound.length - 1]];
+        return { rows: definition === undefined ? [] : [{ definition }] };
+      }
       // The FLAT reading, over the same relations the object reading lists (#789).
       //
       // The guard inside `assertObjectSurface` joins `getSchema()`'s names to the object
@@ -3432,8 +3498,17 @@ describe("object surface", () => {
             { kind: "table", n: 3 },
             { kind: "view", n: 4 },
             { kind: "materialized_view", n: 1 },
+            { kind: "function", n: 2 },
+            { kind: "procedure", n: 1 },
+            { kind: "trigger", n: 1 },
           ],
         };
+      }
+      if (sql.includes("prokind")) {
+        return { rows: routines[params?.[1] as string] };
+      }
+      if (sql.includes("tgisinternal")) {
+        return { rows: [{ name: "orders_stamp_updated_at", parent: "orders" }] };
       }
       if (sql.includes("relkind")) {
         // One row per relkind, and they must be DISTINCT rows. The shared helper lists
@@ -3453,8 +3528,12 @@ describe("object surface", () => {
     await provider.connect();
     await assertObjectSurface(provider, {
       containers: [["app"], ["public"]],
-      kinds: { table: 3, view: 4, materialized_view: 1 },
+      kinds: { table: 3, view: 4, materialized_view: 1, function: 2, procedure: 1, trigger: 1 },
       sampleObject: { path: ["app", "order_summary"], kind: "view" },
+      // Authored, because no listing produces an absence. `no_such_view` is a name the
+      // fixture holds under no kind, and the catalog join answers no row for it, which is
+      // the raise design guarantee 6 requires rather than a refusal part (#789).
+      absentSource: { path: ["app", "no_such_view"], kind: "view" },
     });
     await provider.disconnect();
   });
@@ -3496,7 +3575,9 @@ describe("object surface", () => {
 /**
  * The rest of the object surface: the three listing catalogs, the detail row, and the
  * refusals. Kept out of the block above so `-t "object surface"` still runs exactly the
- * four conformance tests the task brief names.
+ * conformance and declaration tests the task briefs name. The count was four and is five
+ * since the source declaration joined them (#789 Phase 2); what the sentence is about is
+ * which tests that filter selects, not the numeral.
  */
 describe("PostgreSQL object listing and detail", () => {
   function makeProvider() {
@@ -4176,6 +4257,370 @@ describe("PostgreSQL bulk column read", () => {
     const listed = await provider.listObjects(["app"], "table");
     const batch = await provider.describeObjects(["app"], "table");
     expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The source read (#789 Phase 2).
+ *
+ * Every definition text below is what PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) answered for
+ * the objects `docker/postgres-init/02-sample-data.sql` creates, read back through the exact
+ * statements this provider sends, as the privilege-less `src_probe` role
+ * `docker/postgres-init/03-object-fixture.sql` creates. The fixture is the evidence: a reader
+ * can bring the container up on that init directory and get these bytes again.
+ */
+const MEASURED_VIEW_DEFINITION = ` SELECT o.id,
+    o.order_number,
+    (((c.first_name)::text || ' '::text) || (c.last_name)::text) AS customer_name,
+    o.total_amount
+   FROM ((app.orders o
+     JOIN app.customers c ON ((o.customer_id = c.id)))
+     LEFT JOIN app.order_items oi ON ((o.id = oi.order_id)))
+  GROUP BY o.id, o.order_number, c.first_name, c.last_name, o.total_amount;`;
+
+const MEASURED_FUNCTION_DEFINITION = `CREATE OR REPLACE FUNCTION app.order_total(order_id integer)
+ RETURNS numeric
+ LANGUAGE sql
+ STABLE
+AS $function$
+  SELECT coalesce(sum(quantity * unit_price), 0) FROM app.order_items WHERE order_items.order_id = $1;
+$function$
+`;
+
+const MEASURED_TRIGGER_DEFINITION =
+  "CREATE TRIGGER orders_stamp_updated_at BEFORE UPDATE ON app.orders " +
+  "FOR EACH ROW EXECUTE FUNCTION app.stamp_updated_at()";
+
+describe("PostgreSQL object source", () => {
+  function makeProvider() {
+    return new PostgresProvider(makePgConfig());
+  }
+
+  /**
+   * The double dispatches on the `pg_get_*` function NAME, which is the one token that tells
+   * the five statements apart and the one a mutation to the statement cannot preserve by
+   * accident: a read rewritten to `pg_get_function_identity_arguments` or to a `regclass`
+   * cast falls through to `{ rows: [] }` and every assertion below goes red. The binds are
+   * captured rather than matched, so a statement that reaches the server with the wrong
+   * values is a failure here and not a silent miss.
+   */
+  function sourceDouble(definition: string | null) {
+    const sent: { sql: string; params: unknown[] }[] = [];
+    mockQueryFn = async (sql, params) => {
+      if (sql.includes("pg_get_viewdef") || sql.includes("pg_get_functiondef") || sql.includes("pg_get_triggerdef")) {
+        // Recorded only for the source statements, so `connect()`'s own EXPLAIN capability
+        // probe cannot occupy sent[0] and make an index assertion read the wrong statement.
+        sent.push({ sql, params: (params ?? []) as unknown[] });
+        return { rows: definition === null ? [] : [{ definition }] };
+      }
+      return { rows: [] };
+    };
+    return sent;
+  }
+
+  test("reads a view's definition and says what the text is", async () => {
+    const sent = sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    const document = await provider.readObjectSource(["app", "order_summary"], "view");
+    expect(document.path).toEqual(["app", "order_summary"]);
+    expect(document.kind).toBe("view");
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(false);
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.id).toBe("definition");
+    expect(part.label).toBe("Definition");
+    expect(part.text).toContain("JOIN app.customers c ON ((o.customer_id = c.id))");
+    expect(part.language).toBe("pgsql");
+    // `pg_get_viewdef` answers the bare SELECT and no CREATE, measured: the caption exists to
+    // say exactly that, so claiming `complete` here would be a claim about text that does not
+    // run as given.
+    expect(part.form).toBe("partial");
+    // PostgreSQL's own words for this output: "a decompiled reconstruction, not the original
+    // text of the command".
+    expect(part.origin).toBe("regenerated");
+    expect(part.truncated).toBeUndefined();
+
+    // THE OID, never a cast. A `::regclass` or `::regprocedure` resolves the NAME, which needs
+    // USAGE on the schema, and raises 42501 for a schema the caller cannot see - on an object
+    // the tree has already listed. Measured on 18.4: the cast was refused for `src_probe` in
+    // the same session where the oid form returned every character.
+    expect(sent[0].sql).toContain("pg_get_viewdef(c.oid, false)");
+    expect(sent[0].sql).not.toContain("regclass");
+    expect(sent[0].sql).not.toContain("regprocedure");
+    // FALSE for the pretty flag: PostgreSQL documents that pretty-printed output is the format
+    // a future version is less likely to read back the same way, and Phase 3 may submit it back.
+    expect(sent[0].sql).not.toContain("c.oid, true");
+    expect(sent[0].params).toEqual(["app", "order_summary"]);
+    await provider.disconnect();
+  });
+
+  test("reads a routine by the identity its own listing wrote, not by its name", async () => {
+    const sent = sourceDouble(MEASURED_FUNCTION_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    const document = await provider.readObjectSource(["app", "order_total(integer)"], "function");
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("the fixture function is readable");
+    expect(part.text).toContain("CREATE OR REPLACE FUNCTION app.order_total(order_id integer)");
+    // The engine wraps it in a runnable CREATE OR REPLACE, so this one runs as given.
+    expect(part.form).toBe("complete");
+    expect(part.origin).toBe("regenerated");
+    // The overload's TYPE list is the address, so the bind is the whole segment and the
+    // comparison is the same expression the listing built the segment with. A read keyed on
+    // `proname` alone would answer whichever overload the catalog happened to return first.
+    expect(sent[0].params).toEqual(["app", "f", "order_total(integer)"]);
+    expect(sent[0].sql).toContain("proargtypes");
+    expect(sent[0].sql).not.toContain("pg_get_function_identity_arguments");
+
+    const procedure = await provider.readObjectSource(["app", "touch_order(integer)"], "procedure");
+    expect(procedure.kind).toBe("procedure");
+    // The SAME statement with the prokind BOUND, never two statements: a procedure and a
+    // function differ by one character on the wire.
+    expect(sent[1].params).toEqual(["app", "p", "touch_order(integer)"]);
+    expect(sent[1].sql).toBe(sent[0].sql);
+    await provider.disconnect();
+  });
+
+  test("reads a trigger by its table as well as by its name", async () => {
+    const sent = sourceDouble(MEASURED_TRIGGER_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    const document = await provider.readObjectSource(["app", "orders", "orders_stamp_updated_at"], "trigger");
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("the fixture trigger is readable");
+    expect(part.text).toBe(MEASURED_TRIGGER_DEFINITION);
+    expect(part.form).toBe("complete");
+    // A trigger name is unique per TABLE, so the table segment is a bind and not decoration:
+    // two tables in one schema may each carry `stamp_updated_at`.
+    expect(sent[0].params).toEqual(["app", "orders", "orders_stamp_updated_at"]);
+    // PINNED AS TEXT as well as as binds, and the reason is a mutation that survived without
+    // it: a statement that drops `c.relname = $2` still receives all three values, so a double
+    // that does not run SQL cannot see the table stop being part of the address. With the
+    // predicate gone the read would answer whichever table's trigger of that name the catalog
+    // returned first.
+    expect(sent[0].sql).toContain("WHERE n.nspname = $1 AND c.relname = $2 AND t.tgname = $3 AND NOT t.tgisinternal");
+    await provider.disconnect();
+  });
+
+  /**
+   * Standing ruling 5g, driven all the way to the BINDS (#789).
+   *
+   * PostgreSQL declares ONE container level, so its own fixture cannot tell a hardcoded depth
+   * from a derived one: `path[0]` and `path.slice(0, containerDepth())[0]` are the same
+   * segment at depth 1. A two-level declaration is swapped in so they are not, and the
+   * assertion is on the VALUES that reached the server rather than on a refusal, because a
+   * two-level test that stops at the refusal never reaches the bind the defect lives in.
+   */
+  test("derives the schema and the object name from the DECLARATION, not from a position", async () => {
+    const sent = sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...provider.getCapabilities(),
+      containerLevels: [
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+    try {
+      await provider.readObjectSource(["cat", "sch", "obj"], "view");
+      // `sch` and not `cat`: the schema is the segment the DECLARATION calls the schema, which
+      // is the second one here and the first one on the shipped declaration.
+      expect(sent[0].params).toEqual(["sch", "obj"]);
+    } finally {
+      spy.mockRestore();
+    }
+    await provider.disconnect();
+  });
+
+  test("a fork without the pg_get_* function refuses in its own words, and does not raise", async () => {
+    // CockroachDB and Materialize are both reached under this type id. Measured shape, from
+    // asking PostgreSQL 18.4 for a function that does not exist.
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("pg_get_viewdef")) return { rows: [] };
+      throw Object.assign(new Error("function pg_catalog.pg_get_viewdef(oid, boolean) does not exist"), {
+        code: "42883",
+      });
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const document = await provider.readObjectSource(["app", "order_summary"], "view");
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    if (!isSourcePartUnavailable(part)) throw new Error("a fork without the function is a refusal");
+    // The server's own sentence, UNPREFIXED. Routing it through mapDatabaseError would put
+    // this product's words in front of the server's, which is what `unavailableCounts`
+    // already refuses to do one surface up.
+    expect(part.unavailable).toBe("function pg_catalog.pg_get_viewdef(oid, boolean) does not exist");
+    expect(part.label).toBe("Definition");
+    expect("text" in part).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("a fork without pg_proc.prokind refuses the routine read in its own words", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("pg_get_functiondef")) return { rows: [] };
+      throw Object.assign(new Error("column p.prokind does not exist"), { code: "42703" });
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const [part] = (await provider.readObjectSource(["app", "order_total(integer)"], "function")).parts;
+    if (!isSourcePartUnavailable(part)) throw new Error("a fork without prokind is a refusal");
+    expect(part.unavailable).toBe("column p.prokind does not exist");
+    await provider.disconnect();
+  });
+
+  test("a transport failure raises, because nobody answered at all", async () => {
+    // The narrowness of the refusal set is the point. "Connection terminated unexpectedly"
+    // rendered in the Source pane as this object's own refusal is a symptom presented as a
+    // fact about the object, with no raise and nothing telling it apart from a real one.
+    mockQueryFn = async () => {
+      throw Object.assign(new Error("Connection terminated unexpectedly"), { code: "ECONNRESET" });
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.readObjectSource(["app", "order_summary"], "view")).rejects.toThrow(
+      /Connection terminated unexpectedly/,
+    );
+    await provider.disconnect();
+  });
+
+  test("an object the catalog does not hold RAISES, naming it, and never answers a refusal", async () => {
+    sourceDouble(null);
+    const provider = makeProvider();
+    await provider.connect();
+
+    // Absence is a raise and not an `unavailable` part: the engine said nothing rather than
+    // saying no, and a refusal sentence we wrote would be our silence dressed as its answer.
+    await expect(provider.readObjectSource(["app", "no_such_view"], "view")).rejects.toThrow(QueryError);
+    await expect(provider.readObjectSource(["app", "no_such_view"], "view")).rejects.toThrow(/no_such_view/);
+    await provider.disconnect();
+  });
+
+  test("a NULL and a whitespace-only definition are the same absence as no row at all", async () => {
+    // Measured on 18.4: `pg_get_viewdef` answers NULL for an oid that is not a view, and a
+    // driver hands that back as a row carrying null. An empty editor over a definition that
+    // was never read is the one failure this whole surface exists to prevent.
+    const provider = makeProvider();
+    for (const definition of [null, "   \n\t "]) {
+      mockQueryFn = async (sql) => (sql.includes("pg_get_viewdef") ? { rows: [{ definition }] } : { rows: [] });
+      await provider.connect();
+      await expect(provider.readObjectSource(["app", "order_summary"], "view")).rejects.toThrow(/order_summary/);
+      await provider.disconnect();
+    }
+  });
+
+  test("a caller's bound cuts the text and says so, and an exact read is never marked", async () => {
+    sourceDouble(MEASURED_FUNCTION_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    const bounded = await provider.readObjectSource(["app", "order_total(integer)"], "function", 20);
+    const [part] = bounded.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("the fixture function is readable");
+    expect(part.text).toBe(MEASURED_FUNCTION_DEFINITION.slice(0, 20));
+    expect(part.truncated).toEqual({ limit: 20, reason: sourceBoundTruncationReason(20) });
+
+    const exact = await provider.readObjectSource(
+      ["app", "order_total(integer)"],
+      "function",
+      MEASURED_FUNCTION_DEFINITION.length,
+    );
+    const [whole] = exact.parts;
+    if (isSourcePartUnavailable(whole)) throw new Error("the fixture function is readable");
+    // Marking an exact answer teaches a reader to discount every mark, which is the rule
+    // `sampledFrom` already follows one surface up.
+    expect(whole.truncated).toBeUndefined();
+    await provider.disconnect();
+  });
+
+  test("a kind that publishes no definition text is refused by name, not answered empty", async () => {
+    sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    // `sequence` IS declared and has no source; `package` is not declared at all. Two
+    // different facts and two different sentences, and neither is an empty document.
+    await expect(provider.readObjectSource(["app", "invoice_number_seq"], "sequence")).rejects.toThrow(
+      /publishes no definition text for the kind "sequence"/,
+    );
+    await expect(provider.readObjectSource(["app", "x"], "package")).rejects.toThrow(
+      /declares no object kind "package"/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a path of the wrong depth is refused, rather than read from the wrong segment", async () => {
+    sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    // A trigger is [schema, table, trigger] because the declaration says it is attached; a
+    // view is [schema, view]. Reading the last segment of a path of another shape would send
+    // a table name where a view name belongs and answer an absence for an object that exists.
+    await expect(provider.readObjectSource(["app", "orders_stamp_updated_at"], "trigger")).rejects.toThrow(
+      /A PostgreSQL "trigger" path is \[schema, table, name\], received \["app","orders_stamp_updated_at"\]/,
+    );
+    await expect(provider.readObjectSource(["app", "orders", "order_summary"], "view")).rejects.toThrow(
+      /A PostgreSQL "view" path is \[schema, name\]/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a kind declaring source with no language raises, rather than rendering as plain text", async () => {
+    sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+    const capabilities = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      objectKinds: (capabilities.objectKinds ?? []).map((kind) =>
+        kind.id === "view" ? { ...kind, sourceLanguage: undefined } : kind,
+      ),
+    });
+    try {
+      // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
+      // observable, so a declaration that forgot the language would ship a Source tab that
+      // silently stopped highlighting. The declaration is the single source of the language
+      // and there is no literal here to fall back to.
+      await expect(provider.readObjectSource(["app", "order_summary"], "view")).rejects.toThrow(
+        /declares readable source for the kind "view" and no sourceLanguage/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    await provider.disconnect();
+  });
+
+  test("a declared readable kind with no statement behind it is refused by name", async () => {
+    sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+    const capabilities = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      objectKinds: (capabilities.objectKinds ?? []).map((kind) =>
+        kind.id === "sequence" ? { ...kind, hasSource: true, sourceLanguage: "pgsql" } : kind,
+      ),
+    });
+    try {
+      // The declaration and the reader are two lists and a kind can be added to one and not
+      // the other. It fails by name here rather than answering a document with nothing in it.
+      await expect(provider.readObjectSource(["app", "invoice_number_seq"], "sequence")).rejects.toThrow(
+        /declares readable source for the kind "sequence" but has no statement that reads it/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
     await provider.disconnect();
   });
 });

@@ -33,8 +33,16 @@ import {
   type ObjectDetailBatch,
   type ObjectKindSpec,
   type ContainerLevelSpec,
+  type ObjectSourceDocument,
+  type ObjectSourceForm,
 } from "../../types";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+} from "../../object-kinds";
 import { comparePaths } from "../../object-path";
 import {
   DatabaseConfigError,
@@ -592,11 +600,18 @@ const PROKIND_BY_KIND: Record<string, string> = { function: "f", procedure: "p" 
 // COALESCE is load-bearing. `array_to_string` over an empty array answers NULL, not the
 // empty string, so a zero-argument routine would otherwise have a NULL identity and no
 // address at all.
+//
+// ONE WRITER for the expression itself (#789 Phase 2): the listing PRODUCES the segment and
+// the source read CONSUMES it, so a second copy of this expression is a second chance for the
+// two to disagree about what a routine's address is, and the read would then answer "no such
+// routine" for an object the tree had just listed.
+const ROUTINE_IDENTITY_EXPR = `p.proname || '(' || COALESCE(pg_catalog.array_to_string(ARRAY(
+            SELECT pg_catalog.format_type(t, NULL) FROM unnest(p.proargtypes) AS t), ','), '') || ')'`;
+
 const LIST_ROUTINES_SQL = `
         SELECT
           p.proname AS name,
-          p.proname || '(' || COALESCE(pg_catalog.array_to_string(ARRAY(
-            SELECT pg_catalog.format_type(t, NULL) FROM unnest(p.proargtypes) AS t), ','), '') || ')' AS identity
+          ${ROUTINE_IDENTITY_EXPR} AS identity
         FROM pg_catalog.pg_proc p
         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = $1 AND p.prokind = $2`;
@@ -610,6 +625,147 @@ const LIST_TRIGGERS_SQL = `
         JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = $1 AND NOT t.tgisinternal`;
+
+// ============================================================================
+// Object source (#789 Phase 2)
+// ============================================================================
+
+/**
+ * The `pg_get_*` call each source-bearing kind is read with, and what its text IS.
+ *
+ * THE OID IS PASSED AND A NAME CAST IS NEVER USED, which is the one rule nobody would have
+ * written from the documentation. `pg_get_viewdef('app.order_summary'::regclass, false)`
+ * resolves the NAME first, and name resolution needs `USAGE` on the schema: measured on
+ * PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1), a role holding nothing at all got
+ * `ERROR: 42501: permission denied for schema app` from the cast and the COMPLETE text from
+ * `pg_get_viewdef(<oid>, false)` in the same session, while `SELECT app.order_total(1)` was
+ * refused. So a provider that casts manufactures a refusal the engine never made, on an
+ * object the tree has already listed. Every statement below joins `pg_namespace` on the
+ * schema NAME, which any caller may read, and hands the catalog's own `oid` to the function.
+ *
+ * `false` for the pretty flag, on all three functions, and the reason is PostgreSQL's own:
+ * "the default format is more likely to be interpreted the same way by future versions of
+ * PostgreSQL; so avoid using pretty-printed output for dump purposes". Phase 3 may submit
+ * this text back.
+ *
+ * Fully parameterised, every one of them, which is why they are preferred over any
+ * `SHOW`-shaped alternative: no identifier escaper is needed on this engine because no
+ * caller-supplied name ever reaches statement TEXT.
+ */
+function viewSourceSql(relkind: string): string {
+  return `
+        SELECT pg_catalog.pg_get_viewdef(c.oid, false) AS definition
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = ${relkind}`;
+}
+
+// The routine's last path segment is the identity the LISTING wrote, so the same expression
+// is on both sides of the comparison. `prokind` is bound rather than interpolated, exactly
+// as the listing binds it.
+const SOURCE_ROUTINE_SQL = `
+        SELECT pg_catalog.pg_get_functiondef(p.oid) AS definition
+        FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = $1 AND p.prokind = $2 AND ${ROUTINE_IDENTITY_EXPR} = $3`;
+
+// Three binds, because a trigger is addressed by its TABLE as well as by its name: `tgname`
+// is unique per table and not per schema, which is the nesting `attachedTo: "table"` declares
+// and `LIST_TRIGGERS_SQL` produces. `NOT tgisinternal` is the same exclusion the listing and
+// the count apply, so a path this provider never listed cannot be read here either.
+const SOURCE_TRIGGER_SQL = `
+        SELECT pg_catalog.pg_get_triggerdef(t.oid, false) AS definition
+        FROM pg_catalog.pg_trigger t
+        JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1 AND c.relname = $2 AND t.tgname = $3 AND NOT t.tgisinternal`;
+
+/**
+ * What ONE kind's definition text is, alongside the statement that reads it.
+ *
+ * `form` travels WITH the statement rather than in a second record, so a kind cannot gain a
+ * reader and keep somebody else's description of what that reader returns.
+ */
+interface SourceStatement {
+  readonly sql: string;
+  readonly params: unknown[];
+  readonly form: ObjectSourceForm;
+}
+
+/**
+ * The relation-shaped source statements, keyed by kind and built from the SAME relkind map
+ * the listing uses, so a kind cannot be read under one relkind and listed under another.
+ *
+ * `table` and `sequence` are absent, and that is the declaration: there is no
+ * `pg_get_tabledef` and no `pg_get_sequencedef`, and `pg_catalog.pg_sequences` publishes a
+ * sequence's properties rather than any text.
+ */
+const SOURCE_VIEW_SQL: Record<string, string> = {
+  view: viewSourceSql(RELKIND_BY_KIND.view),
+  materialized_view: viewSourceSql(RELKIND_BY_KIND.materialized_view),
+};
+
+/** The attached kinds' source statements, keyed the way `SOURCE_VIEW_SQL` is keyed. */
+const SOURCE_ATTACHED_SQL: Record<string, string> = { trigger: SOURCE_TRIGGER_SQL };
+
+/**
+ * Which statement reads one kind's definition, or nothing when this file has no reader.
+ *
+ * `partial` for a view and a materialized view because `pg_get_viewdef` answers the bare
+ * `SELECT` and no `CREATE`, measured on 18.4; `complete` for the three the engine wraps in a
+ * runnable `CREATE OR REPLACE` or `CREATE TRIGGER`. Nothing here reads the database TYPE id,
+ * and the kind ids it does read are the same ones `objectListingStatement` reads, for the
+ * same reason: which catalog answers is a per-kind fact.
+ */
+function sourceStatement(
+  schema: string,
+  kind: string,
+  name: string,
+  attachedTo: string | undefined,
+): SourceStatement | undefined {
+  const relation = SOURCE_VIEW_SQL[kind];
+  if (relation !== undefined) return { sql: relation, params: [schema, name], form: "partial" };
+  const prokind = PROKIND_BY_KIND[kind];
+  if (prokind !== undefined) return { sql: SOURCE_ROUTINE_SQL, params: [schema, prokind, name], form: "complete" };
+  // BOTH halves are required and neither is a position: the KIND says which catalog answers,
+  // and the DECLARATION says the object hangs off a parent whose segment the path carries. A
+  // second attached kind added later without a reader here falls out as undefined rather than
+  // being read out of `pg_trigger`.
+  const attached = SOURCE_ATTACHED_SQL[kind];
+  if (attached !== undefined && attachedTo !== undefined) {
+    return { sql: attached, params: [schema, attachedTo, name], form: "complete" };
+  }
+  return undefined;
+}
+
+/**
+ * Whether a failed source read is the SERVER refusing rather than nobody answering.
+ *
+ * Two codes and no others, and both are a wire-compatible FORK missing a piece of PostgreSQL
+ * rather than a permission: 42883 is "function ... does not exist", which a fork without
+ * `pg_get_functiondef` answers, and 42703 is "column ... does not exist", which a fork
+ * without `pg_proc.prokind` answers for the routine statement. This type id serves CockroachDB
+ * and Materialize, so both arms are reachable. Both were measured on PostgreSQL 18.4 by asking
+ * for a function and for a column that do not exist.
+ *
+ * Everything else RAISES, deliberately, and the narrowness is the point: a transport failure
+ * is nobody answering at all, and rendering "Connection terminated unexpectedly" in the Source
+ * pane as this object's own refusal would present a symptom as a fact about the object. That
+ * is the same rule the Redis source read states, in this engine's vocabulary.
+ *
+ * There is no privilege arm here and that absence is MEASURED rather than an oversight: the
+ * `pg_get_*` family applies no privilege check at all (see `viewSourceSql`), so PostgreSQL has
+ * no privilege-driven refusal for object source to report.
+ */
+function isMissingSourceCatalogError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as { code?: string }).code;
+  return code === "42883" || code === "42703";
+}
+
+interface SourceRow {
+  definition: string | null;
+}
 
 // Columns for ONE object, from pg_attribute rather than from `CTE_COLUMNS_INFO`.
 //
@@ -807,6 +963,36 @@ function containerSchema(capabilities: ProviderCapabilities, container: readonly
     );
   }
   return segment;
+}
+
+/**
+ * The shape one kind's object path has, refused rather than read from the wrong segment.
+ *
+ * Derived, not counted. `2` and `3` are right for a one-level engine and wrong for the five
+ * two-level ones in this epic, and a provider copying this file must not inherit a literal
+ * that refuses every valid path on a catalog-plus-schema engine. The segment names come from
+ * the declared level labels, so the message and the depth cannot disagree: they are the same
+ * array.
+ *
+ * ONE writer for two readers since #789 Phase 2. `describeObject` and `readObjectSource` ask
+ * the same question about the same path, and two copies of this derivation is two chances for
+ * the detail pane and the Source tab to disagree about what a trigger's address is.
+ */
+function assertObjectPathShape(
+  capabilities: ProviderCapabilities,
+  spec: ObjectKindSpec,
+  kind: string,
+  path: readonly string[],
+): void {
+  const segments = (capabilities.containerLevels ?? []).map((level) => level.label.toLowerCase());
+  if (spec.attachedTo !== undefined) segments.push(spec.attachedTo);
+  segments.push("name");
+  if (path.length !== segments.length) {
+    throw new QueryError(
+      `A PostgreSQL "${kind}" path is [${segments.join(", ")}], received ${JSON.stringify(path)}`,
+      "postgres",
+    );
+  }
 }
 
 /**
@@ -1443,6 +1629,13 @@ export class PostgresProvider extends SQLBaseProvider {
       // table, view, materialized view and sequence from `pg_class.relkind`; function and
       // procedure from `pg_proc.prokind`; trigger from `pg_trigger`.
       //
+      // FIVE of the seven declare `hasSource`, all `pgsql` (#789 Phase 2). `table` and
+      // `sequence` declare NOTHING, and that is a RESULT rather than a gap: PostgreSQL
+      // publishes no `pg_get_tabledef` and no `pg_get_sequencedef`, and
+      // `pg_catalog.pg_sequences` publishes a sequence's properties rather than any text. A
+      // kind an engine cannot answer for is absent from the declaration and is never declared
+      // and then refused, which is standing ruling 4 one level down.
+      //
       // No `index` kind, deliberately. PostgreSQL's own catalog models an index as a
       // property of the relation it is on - `pg_index` is keyed by `indrelid` and an
       // index cannot exist without one - so it belongs in `describeObject`'s output,
@@ -1454,17 +1647,41 @@ export class PostgresProvider extends SQLBaseProvider {
         // provider still declares nothing: whether a given view is one of those is a
         // per-object fact this declaration is per-kind, so claiming it would offer an
         // import target that fails on most views in most schemas.
-        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views", hasSource: true, sourceLanguage: "pgsql" },
         {
           id: "materialized_view",
           role: "relation",
           label: "Materialized View",
           labelPlural: "Materialized Views",
+          hasSource: true,
+          sourceLanguage: "pgsql",
         },
         { id: "sequence", role: "config", label: "Sequence", labelPlural: "Sequences" },
-        { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
-        { id: "procedure", role: "routine", label: "Procedure", labelPlural: "Procedures" },
-        { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table" },
+        {
+          id: "function",
+          role: "routine",
+          label: "Function",
+          labelPlural: "Functions",
+          hasSource: true,
+          sourceLanguage: "pgsql",
+        },
+        {
+          id: "procedure",
+          role: "routine",
+          label: "Procedure",
+          labelPlural: "Procedures",
+          hasSource: true,
+          sourceLanguage: "pgsql",
+        },
+        {
+          id: "trigger",
+          role: "attached",
+          label: "Trigger",
+          labelPlural: "Triggers",
+          attachedTo: "table",
+          hasSource: true,
+          sourceLanguage: "pgsql",
+        },
       ],
     };
   }
@@ -2147,20 +2364,7 @@ export class PostgresProvider extends SQLBaseProvider {
       throw new QueryError(`PostgreSQL declares no object kind "${kind}"`, "postgres");
     }
 
-    // Derived, not counted. `2` and `3` are right for a one-level engine and wrong for the
-    // five two-level ones in this epic, and a provider copying this file must not inherit a
-    // literal that refuses every valid path on a catalog-plus-schema engine. The segment
-    // names come from the declared level labels, so the message and the depth cannot
-    // disagree: they are the same array.
-    const segments = (this.getCapabilities().containerLevels ?? []).map((level) => level.label.toLowerCase());
-    if (spec.attachedTo !== undefined) segments.push(spec.attachedTo);
-    segments.push("name");
-    if (path.length !== segments.length) {
-      throw new QueryError(
-        `A PostgreSQL "${kind}" path is [${segments.join(", ")}], received ${JSON.stringify(path)}`,
-        "postgres",
-      );
-    }
+    assertObjectPathShape(this.getCapabilities(), spec, kind, path);
 
     if (RELKIND_BY_KIND[kind] === undefined) {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
@@ -2239,6 +2443,125 @@ export class PostgresProvider extends SQLBaseProvider {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * One object's definition text, as PostgreSQL reconstructs it (#789 Phase 2).
+   *
+   * FIVE kinds can answer and the DECLARATION says which: `view`, `materialized_view`,
+   * `function`, `procedure` and `trigger` declare `hasSource`, and `table` and `sequence`
+   * declare nothing because PostgreSQL publishes no `pg_get_tabledef` and no
+   * `pg_get_sequencedef`. A kind that declares nothing is refused here by name rather than
+   * answered with a document holding nothing, and the refusal is read off the declaration and
+   * never off a list of kind ids kept beside it.
+   *
+   * THE TEXT IS A RECONSTRUCTION AND THE DOCUMENT SAYS SO. PostgreSQL calls this output "a
+   * decompiled reconstruction, not the original text of the command", so every part is
+   * `origin: "regenerated"`; a view and a materialized view are `form: "partial"` because
+   * `pg_get_viewdef` answers the bare `SELECT` with no `CREATE` around it, measured on 18.4.
+   *
+   * PASS THE OID, NEVER A CAST. The statements are in `viewSourceSql`, and the measurement
+   * behind that rule is there too: the `pg_get_*` family applies NO privilege check, so a
+   * caller who can SEE an object in the catalog can always read its definition, and the only
+   * thing that can refuse is the NAME RESOLUTION a `regclass` or `regprocedure` cast performs.
+   * A provider that casts manufactures a 42501 the engine never made.
+   *
+   * ABSENCE RAISES AND IS NEVER A REFUSAL PART. No row, a NULL definition and a
+   * whitespace-only definition are one fact on this engine: the catalog holds no such object
+   * at that address, measured (`pg_get_viewdef` answers NULL for an oid that is not a view).
+   * PostgreSQL utters no sentence for it, so a refusal part here would carry OUR silence
+   * dressed as the server's answer, and an empty part would put an empty editor over a
+   * definition nobody read. The two refusal arms this method does report are a wire-compatible
+   * FORK missing a catalog surface, and they carry the server's own sentence unprefixed.
+   *
+   * The schema is the container segment the DECLARATION names `schema` and the object name is
+   * `path[path.length - 1]`, never a literal index: standing ruling 5g, pinned in this
+   * provider's suite by a two-level declaration driven all the way to the binds.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`PostgreSQL declares no object kind "${kind}"`, "postgres");
+    }
+    if (spec.hasSource !== true) {
+      throw new QueryError(`PostgreSQL publishes no definition text for the kind "${kind}"`, "postgres");
+    }
+    if (spec.sourceLanguage === undefined) {
+      // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
+      // observable, so a kind that declared source and forgot its language would ship a Source
+      // tab that silently stopped highlighting. The declaration is the only source of the
+      // language and there is no literal here to fall back to.
+      throw new QueryError(
+        `PostgreSQL declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
+        "postgres",
+      );
+    }
+    assertObjectPathShape(capabilities, spec, kind, path);
+
+    const depth = containerDepth(capabilities);
+    const schema = containerSchema(capabilities, path.slice(0, depth));
+    const name = path[path.length - 1];
+    // What sits BETWEEN the container and the name, which is one segment per declared
+    // attachment and empty for every other kind. `assertObjectPathShape` has already refused
+    // any other length, so the last of these is the parent the declaration named.
+    const nesting = path.slice(depth, path.length - 1);
+    const statement = sourceStatement(schema, kind, name, nesting[nesting.length - 1]);
+    if (statement === undefined) {
+      throw new QueryError(
+        `PostgreSQL declares readable source for the kind "${kind}" but has no statement that reads it`,
+        "postgres",
+      );
+    }
+
+    const client = await this.pool!.connect();
+    let rows: SourceRow[];
+    try {
+      rows = (await client.query(statement.sql, statement.params)).rows as SourceRow[];
+    } catch (error) {
+      if (!isMissingSourceCatalogError(error)) throw mapDatabaseError(error, "postgres", statement.sql);
+      return {
+        path: [...path],
+        kind,
+        parts: [
+          {
+            id: "definition",
+            label: "Definition",
+            // The server's own sentence, unprefixed and never through `mapDatabaseError`,
+            // which would put this product's words in front of the server's.
+            unavailable: error instanceof Error ? error.message : String(error),
+          },
+        ],
+      };
+    } finally {
+      client.release();
+    }
+
+    const definition = rows[0]?.definition;
+    if (definition === undefined || definition === null || definition.trim() === "") {
+      throw new QueryError(
+        `PostgreSQL holds no ${spec.label.toLowerCase()} called "${name}" in schema "${schema}"`,
+        "postgres",
+        statement.sql,
+      );
+    }
+    const bounded = applySourceBound(definition, limit);
+    return {
+      path: [...path],
+      kind,
+      parts: [
+        {
+          id: "definition",
+          label: "Definition",
+          text: bounded.text,
+          language: spec.sourceLanguage,
+          form: statement.form,
+          origin: "regenerated",
+          ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+        },
+      ],
+    };
   }
 
   // ============================================================================

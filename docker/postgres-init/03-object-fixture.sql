@@ -22,3 +22,11 @@ CREATE TABLE IF NOT EXISTS public.orders (
   id   INTEGER PRIMARY KEY,
   note TEXT
 );
+
+-- A role holding nothing at all, for the source-read privilege probe recorded in
+-- docs/providers/postgres.md (#789). It is the control that makes "PostgreSQL has no
+-- unreadable case for object source" a measurement rather than a belief: this role cannot
+-- EXECUTE app.order_total and still reads every character of it, because the pg_get_*
+-- family applies no privilege check at all.
+DROP ROLE IF EXISTS src_probe;
+CREATE ROLE src_probe LOGIN PASSWORD 'src_probe';
