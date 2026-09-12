@@ -19,6 +19,7 @@ import {
   type KindCount,
   type ObjectDetail,
   type ObjectDetailBatch,
+  type ObjectSourceDocument,
   type ObjectKindSpec,
   type QueryResult,
   type HealthInfo,
@@ -47,7 +48,13 @@ import {
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 import { loadSQLiteDriver, type SQLiteDatabase } from "./sqlite-driver";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+} from "../../object-kinds";
 import { comparePaths } from "../../object-path";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
@@ -318,13 +325,28 @@ const OBJECT_FOREIGN_KEYS_SQL = `
  * object rather than a fresh one per call: `getCapabilities()` is called several times
  * per request by the object routes and the tree.
  */
+/**
+ * Every kind here publishes its own definition text (#789 Phase 2).
+ *
+ * One constant rather than four copies, because the fact is about the ENGINE and not about
+ * any one kind: `sqlite_schema` keeps a `sql` column on every row it has, so there is no kind
+ * on this engine that declares nothing. `sql` is a Monaco language id the installed bundle
+ * really registers, which `plsql`, `tsql` and `cql` are not.
+ *
+ * The name is short so each entry below stays ONE LINE, which is not cosmetic:
+ * `tests/unit/lib/agent/context-snapshot.test.ts` reads the declared ids out of this array
+ * with a `{ id: "..."` scrape, and a formatter that exploded an entry would take that kind out
+ * of the guard's population without failing anything else.
+ */
+const SOURCE_SQL: Pick<ObjectKindSpec, "hasSource" | "sourceLanguage"> = { hasSource: true, sourceLanguage: "sql" };
+
 const SQLITE_OBJECT_KINDS: readonly ObjectKindSpec[] = [
-  { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+  { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true, ...SOURCE_SQL },
   // No `acceptsRowWrites`. SQLite refuses a write to a view outright unless an INSTEAD OF
   // trigger carries it, which is a per-OBJECT fact a per-kind declaration cannot state.
-  { id: "view", role: "relation", label: "View", labelPlural: "Views" },
-  { id: "index", role: "config", label: "Index", labelPlural: "Indexes" },
-  { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table" },
+  { id: "view", role: "relation", label: "View", labelPlural: "Views", ...SOURCE_SQL },
+  { id: "index", role: "config", label: "Index", labelPlural: "Indexes", ...SOURCE_SQL },
+  { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table", ...SOURCE_SQL },
 ];
 
 /** One row of `COUNTS_SQL`: a declared kind id and how many the file holds. */
@@ -426,6 +448,31 @@ function assertContainerPath(capabilities: ProviderCapabilities, container: read
   if (container.length === levels.length) return;
   const shape = levels.length === 0 ? "empty" : `[${levels.map((level) => level.label.toLowerCase()).join(", ")}]`;
   throw new QueryError(`A SQLite container path is ${shape}, received ${JSON.stringify(container)}`, "sqlite");
+}
+
+/**
+ * Refuses a path no shape of this kind admits, naming the shape it does admit.
+ *
+ * ONE writer for two readers since #789 Phase 2. `describeObject` and `readObjectSource` ask
+ * the same question about the same path, and two copies of this derivation are two chances
+ * for the detail pane and the Source tab to disagree about what a trigger's address is.
+ *
+ * Derived, never counted. The depth comes from `containerDepth()` through `declaredLevels()`,
+ * so absent and empty cannot be answered differently here than anywhere else, and the segment
+ * NAMES are the declared level labels, so the message and the check are the same array. There
+ * is ONE shape per kind rather than MySQL's two, because every SQLite trigger has a parent:
+ * `sqlite_schema.tbl_name` is never null for one.
+ */
+function assertObjectPathShape(
+  capabilities: ProviderCapabilities,
+  spec: ObjectKindSpec,
+  kind: string,
+  path: readonly string[],
+): void {
+  const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
+  const shape = spec.attachedTo === undefined ? [...levels, "name"] : [...levels, spec.attachedTo, "name"];
+  if (path.length === shape.length) return;
+  throw new QueryError(`A SQLite "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`, "sqlite");
 }
 
 /**
@@ -606,6 +653,83 @@ function groupByObject<T extends { object_name: string }>(rows: readonly T[]): M
     else existing.push(row);
   }
   return grouped;
+}
+
+// ----------------------------------------------------------------------------
+// Object source reading (#789 Phase 2)
+// ----------------------------------------------------------------------------
+
+/**
+ * The one statement that answers every kind's definition, on the simplest source story in
+ * the fleet.
+ *
+ * `sqlite_schema` holds one row per object and `sql` is the text the AUTHOR submitted, so
+ * there is nothing to regenerate and nothing to assemble: one column, two binds, four kinds.
+ *
+ * BOTH BINDS ARE PARAMETERS and no identifier is ever interpolated, which is why this
+ * provider needs no escaper for the source read at all. `type` is taken from the KIND
+ * through `SOURCE_CATALOG_TYPES` and never from what the name happens to match, and that is
+ * a behavioural requirement rather than a stylistic one: a trigger may share a name with a
+ * table (measured on SQLite 3.53.2, where `CREATE INDEX` and `CREATE VIEW` under an existing
+ * table's name are both refused and `CREATE TRIGGER` is not), so `WHERE name = ?` alone
+ * answers TWO rows for `audit_log` with the table's first. The fixture holds exactly that
+ * object so the rule is exercised rather than asserted (standing ruling 5a).
+ *
+ * UNQUALIFIED `sqlite_schema` RESOLVES TO `main.sqlite_schema` even with a database
+ * ATTACHed, measured the same way the listing statements' comment records. This provider
+ * declares no container level, so `main` is the only database it addresses and there is no
+ * schema bind to add; the provider doc says so rather than leaving a reader to wonder what
+ * happens under `ATTACH`.
+ */
+const OBJECT_SOURCE_SQL = `
+      SELECT s.sql AS sql
+        FROM sqlite_schema AS s
+       WHERE s.type = ?
+         AND s.name = ?
+    `;
+
+/**
+ * Which `sqlite_schema.type` value belongs to which declared KIND.
+ *
+ * A map rather than the kind id used directly, even though the four spellings coincide
+ * today. The kind id is this provider's own declaration and the type value is the engine's
+ * catalog vocabulary; writing one where the other is meant is how a renamed kind would
+ * silently start reading the wrong rows. A VIRTUAL table is typed `table` here, which is why
+ * the `table` kind covers the FTS5 object the listing takes from `PRAGMA table_list`.
+ */
+const SOURCE_CATALOG_TYPES: Readonly<Record<string, string>> = {
+  table: "table",
+  view: "view",
+  index: "index",
+  trigger: "trigger",
+};
+
+/** One row of `OBJECT_SOURCE_SQL`: the stored text, or NULL. */
+interface ObjectSourceRow {
+  sql: string | null;
+}
+
+/**
+ * The sentence a NULL or blank `sqlite_schema.sql` is reported with.
+ *
+ * OURS rather than the engine's, and that is the exception `docs/providers/sqlite.md`
+ * records: SQLite supplies no sentence at all for this: it simply stores NULL. The MySQL
+ * provider writes its own sentence for the same reason and for the same shape, a row whose
+ * definition column is empty.
+ *
+ * NOTHING THE LISTINGS PRODUCE CAN REACH IT. `sql` is NULL for exactly one shape, an index
+ * SQLite created for itself (`sqlite_autoindex_<table>_<n>`), and every listing and every
+ * count here carries `name NOT LIKE 'sqlite\\_%' ESCAPE '\\'`, so no path the tree offers
+ * addresses such a row. The arm exists anyway, because an empty definition must never reach
+ * an editor as a definition: this is what the read would say if it ever started producing
+ * one.
+ */
+function blankDefinitionReason(kind: string, name: string): string {
+  return (
+    `SQLite answered a row for the ${kind} "${name}" whose sqlite_schema.sql is NULL or blank. ` +
+    "The engine stores NULL there only for an index it created for itself, and it supplies no " +
+    "sentence of its own for this."
+  );
 }
 
 /** Which statement lists one kind, and what it binds. */
@@ -1294,14 +1418,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       throw new QueryError(`SQLite declares no object kind "${kind}"`, "sqlite");
     }
 
-    const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-    const shape = spec.attachedTo === undefined ? [...levels, "name"] : [...levels, spec.attachedTo, "name"];
-    if (path.length !== shape.length) {
-      throw new QueryError(
-        `A SQLite "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`,
-        "sqlite",
-      );
-    }
+    assertObjectPathShape(capabilities, spec, kind, path);
 
     if (spec.role !== "relation") {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
@@ -1460,6 +1577,106 @@ export class SQLiteProvider extends SQLBaseProvider {
       .sort((left, right) => comparePaths(left.path, right.path));
 
     return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
+  }
+
+  /**
+   * One object's definition text, exactly as its author submitted it (#789 Phase 2).
+   *
+   * EVERY DECLARED KIND CAN ANSWER, and this is the simplest source story in the fleet:
+   * `sqlite_schema` keeps one row per object and `sql` on that row is the text somebody
+   * typed. So `form` is `complete` - every one of them runs as given - and `origin` is
+   * `stored`, which on this engine is a real distinction rather than a formality. It is the
+   * one engine family where the `stored` arm has a producer at all among the SQL providers,
+   * and the caption's whole job is to stop a REGENERATION reading as the user's own text: if
+   * every engine said `regenerated` the distinction would be decoration.
+   *
+   * `stored` CARRIES ONE CAVEAT, measured on SQLite 3.53.2 and recorded in
+   * docs/providers/sqlite.md: the engine REWRITES the stored text on `ALTER TABLE`. A rename
+   * rewrites the name and quotes it, and an added column is appended to the text. So the
+   * bytes are the author's own bytes up to the last schema change, which is still a different
+   * fact from a statement rebuilt out of a catalog, and a reader is told which one they have.
+   *
+   * NO REFUSAL IS REACHABLE HERE, and that is a measured CANNOT rather than an omission.
+   * `sqlite_schema.sql` is NULL for exactly one shape, an index SQLite created for itself,
+   * and every listing this provider answers excludes the `sqlite_` prefix, so no path the
+   * tree offers addresses such a row. The blank arm below exists anyway, because an empty
+   * definition must never reach an editor as a definition.
+   *
+   * The document is ONE part, so `parts` is an array literal of one. There is nothing to
+   * assemble: unlike an Oracle or a MariaDB package, a SQLite object has exactly one text.
+   *
+   * Absence RAISES rather than answering a refusal part, and the two are different facts: a
+   * refusal says the definition cannot be read, and no rows says nothing of that name is
+   * there under that kind. The message names the last segment because that is the only thing
+   * a caller can act on.
+   *
+   * Neither bind is positional (standing ruling 5g). The object's own name is
+   * `path[path.length - 1]`, which is right at every depth, and the path SHAPE comes from
+   * `assertObjectPathShape`, the same reader `describeObject` uses, so the Source tab and the
+   * detail pane cannot disagree about what a trigger's address is. A two-level declaration
+   * driven all the way to the binds pins both in this provider's suite, because a zero-level
+   * engine's own fixture cannot tell a derivation from a literal.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`SQLite declares no object kind "${kind}"`, "sqlite");
+    }
+    if (spec.hasSource !== true) {
+      throw new QueryError(`SQLite publishes no definition text for the kind "${kind}"`, "sqlite");
+    }
+    if (spec.sourceLanguage === undefined) {
+      // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
+      // observable, so a kind that declared source and forgot its language would ship a
+      // Source tab that silently stopped highlighting. The declaration is the only source of
+      // the language and there is no literal here to fall back to.
+      throw new QueryError(
+        `SQLite declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
+        "sqlite",
+      );
+    }
+    assertObjectPathShape(capabilities, spec, kind, path);
+    if (!Object.hasOwn(SOURCE_CATALOG_TYPES, kind)) {
+      throw new QueryError(
+        `SQLite declares readable source for the kind "${kind}" but has no catalog type that reads it`,
+        "sqlite",
+      );
+    }
+
+    const name = path[path.length - 1];
+    const rows = this.runObjectQuery<ObjectSourceRow>(OBJECT_SOURCE_SQL, [SOURCE_CATALOG_TYPES[kind], name]);
+    const row = rows[0];
+    if (row === undefined) {
+      throw new QueryError(`No SQLite ${kind} named ${name} in ${MAIN_SCHEMA}`, "sqlite", OBJECT_SOURCE_SQL);
+    }
+
+    const definition = row.sql;
+    if (definition === null || definition === undefined || definition.trim() === "") {
+      return {
+        path: [...path],
+        kind,
+        parts: [{ id: "definition", label: "Definition", unavailable: blankDefinitionReason(kind, name) }],
+      };
+    }
+
+    const bounded = applySourceBound(definition, limit);
+    return {
+      path: [...path],
+      kind,
+      parts: [
+        {
+          id: "definition",
+          label: "Definition",
+          text: bounded.text,
+          language: spec.sourceLanguage,
+          form: "complete",
+          origin: "stored",
+          ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+        },
+      ],
+    };
   }
 
   // ============================================================================
