@@ -116,13 +116,23 @@ export function readFixtureStatements(warehouse: string, file: string = DUCKDB_F
   return substituted;
 }
 
-/** Delete a DuckDB database, the `.wal` sidecar, and the warehouse sibling beside it. */
+/**
+ * Delete a DuckDB database, the `.wal` sidecar, and the warehouse sibling beside it.
+ *
+ * ABSENCE IS THE ONLY FAILURE THIS SWALLOWS, and the narrowing is the point: the file not
+ * being there IS the state this function is asked for, while any other errno means the file
+ * is still on disk. A bare `catch {}` reported success there, and `buildObjectFixture` then
+ * opened the STALE database and replayed the fixture DDL on top of it, so the first failure
+ * a person saw was `CREATE TABLE main.customers` raising a catalog error that named nothing
+ * about an undeleted file. Raising here is also the house rule: no silent recovery and no
+ * symptom-masking guard.
+ */
 export function removeDatabaseFile(file: string): void {
   for (const target of [file, `${file}.wal`, warehouseSibling(file), `${warehouseSibling(file)}.wal`]) {
     try {
       fs.unlinkSync(target);
-    } catch {
-      /* the file not being there is the state this function is asked for */
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
 }

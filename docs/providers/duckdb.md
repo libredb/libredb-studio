@@ -824,6 +824,14 @@ The schema qualification is dropped, `name` is quoted, the default is parenthesi
 whether the author wrote it or not. SQLite is the engine in this fleet where `origin: "stored"` has a
 producer; claiming it here would make the Source caption's distinction decoration.
 
+Both `form` and `origin` are declared **per kind, beside the statement that reads the text**, in the
+same record the count and the listing are built from. They are one shape of fact, so a kind added
+later whose text really is stored bytes has one place to say so and cannot inherit an origin from a
+literal somewhere else.
+
+The `partial` form is this engine's only one, not the fleet's: PostgreSQL `view` and
+`materialized_view` and Couchbase `function` produce the same arm, each for its own reason.
+
 #### The refusals: NONE, stated as a CANNOT
 
 **This engine has no privilege model and no refusal for a source read.** DuckDB has no users, no
@@ -835,11 +843,16 @@ rows and zero of 136 macros carry a NULL or whitespace-only text. Even a macro w
 body publishes something: `CREATE MACRO no_body() AS NULL` answers the four characters `NULL`.
 
 The provider still carries a blank arm, because an empty definition must never reach an editor as a
-definition, and it says **which of three shapes** produced it: the reply carried no definition column
-at all (a fact about the READ, not about the object), the column was NULL, or the column held no
-non-whitespace character. Those three sentences are **ours**, not the engine's, which is this
-engine's one exception to the "the engine's own sentence, unprefixed" guarantee: from DuckDB's point
-of view the read SUCCEEDED and answered a row, so there is nothing to carry verbatim.
+definition, and it says **which of four shapes** produced it: the reply carried no definition column
+at all, the driver handed the column back as something other than a text, the column was NULL, or the
+column held no non-whitespace character. The first two are facts about the READ and the last two are
+facts about the ROW, and they are kept apart because a refusal stating a cause that is false for the
+shape in front of it is worse than one stating none. The non-text shape is not hypothetical:
+`@duckdb/node-api` 1.5.5-r.4 already hands a BIGINT `COUNT(*)` back as a decimal **string**, so this
+driver's JavaScript mapping is per column type rather than fixed, and the sentence for that shape
+names the type the driver answered with. Those four sentences are **ours**, not the engine's, which is
+this engine's one exception to the "the engine's own sentence, unprefixed" guarantee: from DuckDB's
+point of view the read SUCCEEDED and answered a row, so there is nothing to carry verbatim.
 
 #### A missing name is ABSENCE and raises
 

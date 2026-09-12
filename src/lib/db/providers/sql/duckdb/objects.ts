@@ -47,6 +47,7 @@ import type {
   ObjectDetail,
   ObjectKindSpec,
   ObjectSourceForm,
+  ObjectSourceOrigin,
   ProviderCapabilities,
 } from "../../../types";
 
@@ -119,7 +120,7 @@ interface DuckDBObjectSource {
    *
    * `complete` for the three kinds whose column is called `sql`: measured on v1.5.5, each
    * answers a statement ending in `;` that runs as given. `partial` for `macro`, which is
-   * the ONE `partial` producer the #789 design commits to and it is deliberate:
+   * the only `partial` kind ON THIS ENGINE and is deliberate:
    * `duckdb_functions().macro_definition` is a BODY, `(x + 1)` for a scalar macro and
    * `SELECT * FROM analytics.events LIMIT n` for a table macro, and DuckDB publishes no
    * `CREATE MACRO` statement anywhere. Assembling one out of `parameters` would mean
@@ -127,8 +128,31 @@ interface DuckDBObjectSource {
    * run; the caption that says "this is the body only, not a complete statement" is
    * cheaper and more honest. Phase 3 assembles, per the Phase 1 rule that the provider
    * builds the statement and core never does.
+   *
+   * IT IS NOT THE FLEET'S ONLY `partial` PRODUCER, and an earlier revision of this comment
+   * said it was. The #789 design names three: PostgreSQL `view` and `materialized_view`,
+   * where `pg_get_viewdef` answers a bare SELECT, this engine's `macro`, and Couchbase
+   * `function`, whose `definition.text` is a body. `postgres.ts` already answers
+   * `form: "partial"` for a relation, so changing what this record says would not leave the
+   * arm without a producer.
    */
   readonly definitionForm: ObjectSourceForm;
+  /**
+   * WHERE the text in `definitionColumn` came from, and on this engine all four agree (#789).
+   *
+   * `regenerated` for every kind, measured on v1.5.5 rather than assumed: `CREATE TABLE
+   * main.customers (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, note VARCHAR DEFAULT
+   * 'none')` reads back as `CREATE TABLE customers(id INTEGER PRIMARY KEY, "name" VARCHAR
+   * NOT NULL, note VARCHAR DEFAULT('none'));`, so the schema qualification is gone, `name`
+   * is quoted and the default is parenthesised. None of it is the author's bytes.
+   *
+   * It lives HERE, beside `definitionForm`, rather than as a literal in the read, because
+   * it is the same shape of fact: a per-kind statement about the text one catalog column
+   * publishes. A fifth kind whose text really were stored bytes would otherwise be added
+   * with a `definitionColumn` and a `definitionForm`, because that is where the pattern
+   * points, and silently keep the origin the read hardcodes.
+   */
+  readonly definitionOrigin: ObjectSourceOrigin;
 }
 
 /** `'macro', 'table_macro'`: a vocabulary as a SQL literal list. */
@@ -151,20 +175,34 @@ function literalList(values: readonly string[]): string {
  * and no `.routines` - so nothing below reaches for it.
  */
 const DUCKDB_OBJECT_SOURCES: Record<string, DuckDBObjectSource> = {
-  table: { relation: "duckdb_tables()", nameColumn: "table_name", definitionColumn: "sql", definitionForm: "complete" },
-  view: { relation: "duckdb_views()", nameColumn: "view_name", definitionColumn: "sql", definitionForm: "complete" },
+  table: {
+    relation: "duckdb_tables()",
+    nameColumn: "table_name",
+    definitionColumn: "sql",
+    definitionForm: "complete",
+    definitionOrigin: "regenerated",
+  },
+  view: {
+    relation: "duckdb_views()",
+    nameColumn: "view_name",
+    definitionColumn: "sql",
+    definitionForm: "complete",
+    definitionOrigin: "regenerated",
+  },
   macro: {
     relation: "duckdb_functions()",
     nameColumn: "function_name",
     predicate: `function_type IN (${literalList(MACRO_FUNCTION_TYPES)})`,
     definitionColumn: "macro_definition",
     definitionForm: "partial",
+    definitionOrigin: "regenerated",
   },
   sequence: {
     relation: "duckdb_sequences()",
     nameColumn: "sequence_name",
     definitionColumn: "sql",
     definitionForm: "complete",
+    definitionOrigin: "regenerated",
   },
 };
 
@@ -488,6 +526,11 @@ export function objectSourceForm(kind: string): ObjectSourceForm {
   return objectSource(kind).definitionForm;
 }
 
+/** What `origin` the text one kind publishes has, read off that same record. */
+export function objectSourceOrigin(kind: string): ObjectSourceOrigin {
+  return objectSource(kind).definitionOrigin;
+}
+
 /**
  * The catalog COLUMN one kind's definition comes out of, for a refusal to name.
  *
@@ -500,29 +543,38 @@ export function objectSourceColumn(kind: string): string {
 }
 
 /**
- * Which of three ways a row carried no definition, so the refusal can say which (#789).
+ * Which of FOUR ways a row carried no definition, so the refusal can say which (#789).
  *
- * `absent` is this provider asking for a column the reply does not carry, which is a fact
- * about the READ; `null` and `blank` are facts about the ROW. They are kept apart because
- * a refusal stating a cause that is false for the shape in front of it is worse than one
- * stating none.
+ * `absent` is this provider asking for a column the reply does not carry and `nonText` is
+ * the driver handing back a value that is not a string, which are both facts about the
+ * READ; `null` and `blank` are facts about the ROW. They are kept apart because a refusal
+ * stating a cause that is false for the shape in front of it is worse than one stating none.
+ *
+ * `nonText` was folded into `null` until the #789 fix round, and that fold is exactly the
+ * defect this split exists to prevent: `{ definition: 42 }` produced "whose sql is NULL"
+ * and then went on to assert that the engine was measured never to publish a NULL, so a
+ * reader would conclude the provider was confused rather than that the driver's mapping had
+ * moved. It is not a hypothetical mapping either: `@duckdb/node-api` 1.5.5-r.4 hands a
+ * BIGINT `COUNT(*)` back as a decimal STRING (see `KindCountRow`), so this driver's JS
+ * mapping is per type and not stable across a version.
  */
-export type BlankDefinitionShape = "absent" | "null" | "blank";
+export type BlankDefinitionShape = "absent" | "null" | "blank" | "nonText";
 
 export function blankDefinitionShape(row: ObjectSourceRow): BlankDefinitionShape {
   if (!Object.hasOwn(row, "definition")) return "absent";
-  return typeof row.definition === "string" ? "blank" : "null";
+  if (typeof row.definition === "string") return "blank";
+  return row.definition === null ? "null" : "nonText";
 }
 
 /**
- * The sentence a row carrying no definition is refused with, ONE PER SHAPE (#789).
+ * The sentence a row carrying no definition is refused with, ONE PER SHAPE, four of them (#789).
  *
  * OURS rather than the engine's, and `docs/providers/duckdb.md` records that as this
  * engine's one exception to the "the engine's own sentence, unprefixed" guarantee: DuckDB
  * supplies no sentence at all here, because from its point of view the read SUCCEEDED and
  * answered a row. There is nothing to carry verbatim.
  *
- * NONE OF THE THREE WAS OBSERVED ON A LIVE ENGINE, and that is stated in the sentences
+ * NONE OF THE FOUR WAS OBSERVED ON A LIVE ENGINE, and that is stated in the sentences
  * themselves rather than hidden. Measured on DuckDB v1.5.5: zero of the instance's
  * `duckdb_tables()` rows, zero of its 47 `duckdb_views()` rows, zero `duckdb_sequences()`
  * rows and zero of its 136 macros carry a NULL or whitespace-only text, and even
@@ -531,12 +583,29 @@ export function blankDefinitionShape(row: ObjectSourceRow): BlankDefinitionShape
  * because the `absent` one is the failure mode recipe rule 6 (#789) exists for: a wrong
  * reply COLUMN reads as `undefined`, not as an error.
  *
+ * `valueType` is the caller's own `typeof` of the value, and it is read only by the `nonText`
+ * arm, which is the one shape where the useful fact is what the driver DID hand back rather
+ * than what it did not.
+ *
  * The COLUMN is named in the sentence, and it differs by kind - `sql` for a table, a view
  * and a sequence, `macro_definition` for a macro - so a reader is sent to the column this
  * read actually asked for rather than to a spelling that is wrong for their object.
  */
-export function blankDefinitionReason(shape: BlankDefinitionShape, kind: string, column: string, name: string): string {
+export function blankDefinitionReason(
+  shape: BlankDefinitionShape,
+  kind: string,
+  column: string,
+  name: string,
+  valueType: string,
+): string {
   const opening = `DuckDB answered a row for the ${kind} "${name}"`;
+  if (shape === "nonText") {
+    return (
+      `${opening} whose ${column} came back as the JavaScript type "${valueType}" rather than a text. ` +
+      "That is a fact about this read and not about the object: the column is there and it carries a " +
+      "value, so what moved is the driver's mapping of it rather than the definition."
+    );
+  }
   if (shape === "absent") {
     return (
       `${opening} with no ${column} column at all. That is a fact about this read and not ` +

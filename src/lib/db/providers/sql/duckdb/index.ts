@@ -129,6 +129,7 @@ import {
   blankDefinitionShape,
   objectSourceColumn,
   objectSourceForm,
+  objectSourceOrigin,
   objectSourceSql,
   seedZeroCounts,
 } from "./objects";
@@ -441,8 +442,10 @@ export class DuckDBProvider extends SQLBaseProvider {
       // the "declares nothing" half of this engine's row in #789 is empty. `sql` is the
       // honest id rather than a compromise: DuckDB's dialect is PostgreSQL-shaped, the
       // installed monaco-editor 0.56.0 registers no DuckDB id, and the text the engine
-      // publishes is ordinary SQL. The `macro` text is the ONE `partial` form in the
-      // fleet's design and `objects.ts` records why.
+      // publishes is ordinary SQL. The `macro` text is the only `partial` form ON THIS
+      // ENGINE, not in the fleet: the #789 design names PostgreSQL `view` and
+      // `materialized_view` and Couchbase `function` as producers of the same arm, and
+      // `postgres.ts` already answers it. `objects.ts` records why a macro is one.
       objectKinds: [
         {
           id: "table",
@@ -1119,7 +1122,13 @@ export class DuckDBProvider extends SQLBaseProvider {
           {
             id: "definition",
             label: "Definition",
-            unavailable: blankDefinitionReason(blankDefinitionShape(row), kind, objectSourceColumn(kind), read.name),
+            unavailable: blankDefinitionReason(
+              blankDefinitionShape(row),
+              kind,
+              objectSourceColumn(kind),
+              read.name,
+              typeof definition,
+            ),
           },
         ],
       };
@@ -1136,7 +1145,12 @@ export class DuckDBProvider extends SQLBaseProvider {
           text: bounded.text,
           language: spec.sourceLanguage,
           form: objectSourceForm(kind),
-          origin: "regenerated",
+          // Both read off the per-kind record in `objects.ts`, beside the statement they
+          // describe. `origin` was a literal here until the #789 fix round, which made the
+          // two halves of one per-kind fact live in two places: a fifth kind whose text
+          // really were stored bytes would have been declared with its column and its form
+          // and silently kept this literal.
+          origin: objectSourceOrigin(kind),
           ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
         },
       ],

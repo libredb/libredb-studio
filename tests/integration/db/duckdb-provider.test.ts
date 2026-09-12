@@ -20,7 +20,7 @@
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DuckDBProvider, assertReadOnlyStatementIsBounded } from "@/lib/db/providers/sql/duckdb";
@@ -33,6 +33,8 @@ import {
   bulkTargetSql,
   countsSql,
   listObjectsSql,
+  objectSourceForm,
+  objectSourceOrigin,
   objectSourceSql,
   seedZeroCounts,
 } from "@/lib/db/providers/sql/duckdb/objects";
@@ -44,6 +46,7 @@ import { comparePaths } from "@/lib/db/object-path";
 import {
   WAREHOUSE_PLACEHOLDER,
   readFixtureStatements,
+  removeDatabaseFile,
   warehouseSibling,
 } from "../../../docker/duckdb-init/build-fixture";
 
@@ -1172,6 +1175,30 @@ describe("the committed DuckDB fixture", () => {
 
   test("the warehouse sibling is derived from the target, so a file build holds both catalogs", () => {
     expect(warehouseSibling("/tmp/demo.duckdb")).toBe("/tmp/demo.duckdb.warehouse.duckdb");
+  });
+
+  /**
+   * The builder's delete swallows ABSENCE and nothing else (#789).
+   *
+   * `removeDatabaseFile` exists so a second run produces a database identical to the first,
+   * and the only failure it is entitled to ignore is the file already not being there. A
+   * catch with no condition also ignores a refused unlink, and then `buildObjectFixture`
+   * opens the STALE database, replays the fixture DDL on top of it and fails with a catalog
+   * error naming an object rather than the file it could not delete. The house rule is that
+   * an error is raised explicitly and a fallback is asked for rather than assumed.
+   *
+   * A directory is the cheapest real non-ENOENT unlink failure: measured on this machine,
+   * `unlinkSync` on one raises `EISDIR`. The `.wal` and warehouse siblings of that path do
+   * not exist, so the same call also proves the ENOENT arm stays silent.
+   */
+  test("a delete refused for a reason other than absence raises rather than reporting success", () => {
+    const undeletable = join(workDir, "undeletable-task11");
+    mkdirSync(undeletable, { recursive: true });
+
+    expect(() => removeDatabaseFile(undeletable)).toThrow(/EISDIR|EPERM|EACCES/);
+    // The control: the same function over a path where NOTHING exists is silent, so the
+    // raise above is the refusal and not merely "unlink threw".
+    expect(() => removeDatabaseFile(join(workDir, "nothing-of-this-name-task11.duckdb"))).not.toThrow();
   });
 });
 
@@ -2458,6 +2485,11 @@ describe("DuckDB object source", () => {
         // REFERENCES rewritten into a table-level FOREIGN KEY, so none of this is stored
         // bytes.
         expect(part.origin).toBe("regenerated");
+        // And it came off the per-kind RECORD rather than out of a literal in the read.
+        // `form` and `origin` are the same shape of fact, so a fifth kind whose text really
+        // were stored bytes has one place to say so. With all four kinds sharing one origin
+        // today, this equality is what makes a record change visible in the read at all.
+        expect(part.origin).toBe(objectSourceOrigin(kind.id));
         expect(part.truncated).toBeUndefined();
       }
     } finally {
@@ -2466,11 +2498,14 @@ describe("DuckDB object source", () => {
   });
 
   /**
-   * The macro is the fleet's ONE `partial` producer, so the arm has a test of its own.
+   * The macro is this ENGINE's one `partial` kind, so the arm has a test of its own.
    *
-   * If every kind answered `complete` the `partial` arm would be dead under the 100 percent
-   * line gate and the Source caption's whole distinction would be decoration. Both macro
-   * FORMS are read, because `macro_definition` is a body in two different shapes.
+   * Not the fleet's: the #789 design names PostgreSQL `view` and `materialized_view` and
+   * Couchbase `function` as producers of the same arm, and `postgres.ts` already answers it.
+   * What this test guards is local and worth guarding anyway: if the macro answered
+   * `complete` like the other three kinds, nothing in this suite would distinguish a body
+   * from a statement and the Source caption's distinction would be decoration HERE. Both
+   * macro FORMS are read, because `macro_definition` is a body in two different shapes.
    */
   test("a macro publishes a BODY and never a CREATE MACRO statement, in both macro forms", async () => {
     const provider = await seededObjectProvider();
@@ -2553,6 +2588,31 @@ describe("DuckDB object source", () => {
     // A kind DuckDB does not have has no catalog function, and the builder says so rather
     // than interpolating an undefined relation into a statement.
     expect(() => objectSourceSql("procedure")).toThrow(
+      'DuckDB declares the kind "procedure" but has no catalog function that answers for it',
+    );
+  });
+
+  /**
+   * `form` and `origin` per kind, both read off the record the statement is built from.
+   *
+   * They are the same shape of fact: a per-kind statement about the text that kind's
+   * catalog column publishes. `origin` was a bare literal in the read until this round, and
+   * the failure that invites is a fifth kind whose text really is stored bytes, added with
+   * a `definitionColumn` and a `definitionForm` because that is where the pattern points,
+   * and nothing in the record able to correct the origin the read hardcodes.
+   */
+  test("form and origin are per-kind facts, declared beside the statement", () => {
+    expect(objectSourceForm("table")).toBe("complete");
+    expect(objectSourceForm("view")).toBe("complete");
+    expect(objectSourceForm("sequence")).toBe("complete");
+    expect(objectSourceForm("macro")).toBe("partial");
+    // Measured on v1.5.5, all four: DuckDB rebuilds every one of these texts from its own
+    // catalog. There is no kind here whose stored bytes survive.
+    expect(objectSourceOrigin("table")).toBe("regenerated");
+    expect(objectSourceOrigin("view")).toBe("regenerated");
+    expect(objectSourceOrigin("sequence")).toBe("regenerated");
+    expect(objectSourceOrigin("macro")).toBe("regenerated");
+    expect(() => objectSourceOrigin("procedure")).toThrow(
       'DuckDB declares the kind "procedure" but has no catalog function that answers for it',
     );
   });
@@ -2647,6 +2707,39 @@ describe("DuckDB object source", () => {
       expect(part.unavailable).toContain("whose macro_definition holds no non-whitespace character");
       expect(part.unavailable).not.toContain("is NULL");
       expect(part.unavailable).not.toContain("no macro_definition column at all");
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  /**
+   * A definition the driver did not map to a text is its OWN shape, not a NULL (#789).
+   *
+   * `ObjectSourceRow.definition` is typed `unknown` precisely because this reply is not
+   * trusted to be a string or a null: `@duckdb/node-api` already hands a BIGINT `COUNT(*)`
+   * back as a decimal STRING, so its JS mapping is not stable across column types, and a
+   * future mapping change on a catalog column would put a number, a Date or an object here.
+   * Folding that into the NULL arm produces a sentence that is FALSE for the shape in front
+   * of it and then goes on to assert that the engine was measured never to produce a NULL,
+   * which teaches the reader the provider is confused rather than that the driver changed.
+   */
+  test("a definition that is neither a text nor NULL is refused as its own shape", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      answerSourceReadWith(provider, [{ definition: 42 }]);
+      const [part] = (await provider.readObjectSource!(["memory", "main", "orders"], "table")).parts;
+
+      expect(isSourcePartUnavailable(part)).toBe(true);
+      if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(Object.hasOwn(part, "text")).toBe(false);
+      expect(part.unavailable).toContain('for the table "orders"');
+      // The driver's own mapping is named, because that is the only thing that can be
+      // acted on: the column IS there and it does hold a value.
+      expect(part.unavailable).toContain('whose sql came back as the JavaScript type "number" rather than a text');
+      expect(part.unavailable).toContain("a fact about this read and not about the object");
+      // The two sentences this shape must NOT borrow.
+      expect(part.unavailable).not.toContain("is NULL");
+      expect(part.unavailable).not.toContain("no sql column at all");
     } finally {
       await provider.disconnect();
     }
