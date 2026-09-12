@@ -326,7 +326,7 @@ function dictionaryColumnsSql(database: string, name: string): string {
  * value has already been refused unless it is a positive whole number, so nothing that
  * reaches this template can be anything but digits.
  */
-export function bulkTargetSql(database: string, kind: string, limit?: number): string {
+function bulkTargetSql(database: string, kind: string, limit?: number): string {
   return [
     "SELECT objectName",
     `FROM (${databaseObjectsSql(database)})`,
