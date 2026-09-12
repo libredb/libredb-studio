@@ -661,7 +661,11 @@ Three things could have produced one here and none of them does:
 | A NULL definition | `sqlite_schema.sql` is NULL for exactly one shape, an index the engine created for itself. Every listing here carries `name NOT LIKE 'sqlite\_%' ESCAPE '\'`, so no path the object tree produces addresses such a row |
 
 The provider still turns a NULL, an absent column or a whitespace-only text into a REFUSAL part rather than an empty definition, because an empty editor over a definition is the one failure this surface exists to prevent.
-The sentence for that case is OURS and not the server's, which is the exception to the rule that a refusal carries the engine's own words: the server supplies none, it simply stores NULL.
+THOSE ARE THREE DIFFERENT FACTS AND THEY GET THREE DIFFERENT SENTENCES, because a refusal stating a cause that is false for the shape in front of it sends its reader somewhere there is nothing to find.
+A stored NULL says the engine keeps NULL there only for an index it created for itself.
+A whitespace-only text says the column holds no non-whitespace character, and claims no cause at all.
+A reply carrying no `sqlite_schema.sql` column says exactly that, and says it is a fact about the read and not about the object: on this transport a wrong alias answers a row built from the column names the reply really carried, so the key is simply absent.
+The sentences for those cases are OURS and not the server's, which is the exception to the rule that a refusal carries the engine's own words: the server supplies none, it simply stores NULL.
 
 NOTHING IN THIS PROVIDER OR ITS SUITE KEYS ON REFUSAL WORDING, and that is deliberate.
 The two deployments word the identical refusal differently ([§3.2](#32-a-failed-statement-answers-http-200)), so a test that pinned either sentence would pass on one and fail on the other.

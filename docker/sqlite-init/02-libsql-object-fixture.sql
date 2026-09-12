@@ -7,8 +7,9 @@
 -- suite answers from, and `bun docker/sqlite-init/build-fixture.ts <target> 02-libsql-object-fixture.sql`
 -- replays the same text into a local database FILE.
 --
--- Apply it to the compose service (sqld speaks Hrana over HTTP, so there is no client in the
--- image and `curl` is the applier):
+-- Apply it to the compose service. The image carries NEITHER a `sqlite3` binary nor `curl`,
+-- so the only way in is the Hrana HTTP API and `apply-to-libsql.ts` is the applier that
+-- speaks it:
 --
 --   docker compose -f database-compose.yml up -d libsql
 --   bun docker/sqlite-init/apply-to-libsql.ts http://127.0.0.1:18080

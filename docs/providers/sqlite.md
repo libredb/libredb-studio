@@ -604,9 +604,9 @@ THE CAVEAT, measured on SQLite 3.53.2 through `bun:sqlite`, and it is why this e
 
 | What was run | What `sqlite_schema.sql` then holds |
 | --- | --- |
-| `CREATE TABLE   orders  (  id INTEGER PRIMARY KEY , note TEXT ) -- trailing comment` | `CREATE TABLE orders  (  id INTEGER PRIMARY KEY , note TEXT )` — the `CREATE TABLE <name>` prefix is normalized and everything after the closing parenthesis, a trailing comment included, is dropped |
-| `ALTER TABLE orders RENAME TO invoices` | `CREATE TABLE "invoices"  (  id INTEGER PRIMARY KEY , note TEXT )` — the engine REWRITES the stored text and quotes the new name |
-| `ALTER TABLE invoices ADD COLUMN extra TEXT` | `... , note TEXT , extra TEXT)` — the new column is appended to the stored text |
+| `CREATE TABLE   orders  (  id INTEGER PRIMARY KEY , note TEXT ) -- trailing comment` | `CREATE TABLE orders  (  id INTEGER PRIMARY KEY , note TEXT )`. The `CREATE TABLE <name>` prefix is normalized and everything after the closing parenthesis, a trailing comment included, is dropped |
+| `ALTER TABLE orders RENAME TO invoices` | `CREATE TABLE "invoices"  (  id INTEGER PRIMARY KEY , note TEXT )`. The engine REWRITES the stored text and quotes the new name |
+| `ALTER TABLE invoices ADD COLUMN extra TEXT` | `... , note TEXT , extra TEXT)`. The new column is appended to the stored text |
 
 So the bytes are the author's own bytes up to the last schema change.
 That is still a different fact from a statement rebuilt out of a catalog, which is why the arm stays `stored`, and the reader is told which one they are holding.
@@ -618,7 +618,11 @@ Every listing and every count this provider answers carries `name NOT LIKE 'sqli
 There is therefore no privilege refusal, no encryption refusal and no wrapped-text case on this engine: SQLite has no privilege system at all, and a file the process can open is a file the process can read whole.
 
 The provider still turns a NULL, an absent column or a whitespace-only text into a REFUSAL part rather than an empty definition, because an empty editor over a definition is the one failure this surface exists to prevent.
-The sentence is OURS and not the engine's, which is the exception to the rule that a refusal carries the engine's own words: SQLite supplies no sentence for this, it simply stores NULL.
+THOSE ARE THREE DIFFERENT FACTS AND THEY GET THREE DIFFERENT SENTENCES, because a refusal stating a cause that is false for the shape in front of it sends its reader somewhere there is nothing to find.
+A stored NULL says the engine keeps NULL there only for an index it created for itself.
+A whitespace-only text says the column holds no non-whitespace character, and claims no cause at all.
+A reply carrying no `sqlite_schema.sql` column says exactly that, and says it is a fact about the read and not about the object, because that shape is this provider asking for a column the reply does not carry and can be nothing else.
+The sentences are OURS and not the engine's, which is the exception to the rule that a refusal carries the engine's own words: SQLite supplies none for any of the three, it simply stores NULL.
 The MySQL provider writes its own sentence for the same shape and for the same reason.
 
 An object that is not there RAISES, naming the last path segment.

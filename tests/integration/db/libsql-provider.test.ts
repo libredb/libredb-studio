@@ -2300,6 +2300,9 @@ describe("LibSQLProvider object source (#789)", () => {
     // OUR sentence, because the engine supplies none for a NULL, and nothing in this block
     // keys on sqld's or Turso's own wording for anything.
     expect(part.unavailable).toContain("sqlite_schema.sql is NULL");
+    // The CAUSE, asserted here and nowhere else: a stored NULL is the only one of the three
+    // blank shapes for which "an index it created for itself" is a true reason.
+    expect(part.unavailable).toContain("an index it created for itself");
     expect(part.unavailable.trim().length).toBeGreaterThan(20);
   });
 
@@ -2312,13 +2315,43 @@ describe("LibSQLProvider object source (#789)", () => {
    * the `.trim() === ""` half of the guard failed NOTHING in this suite (measured, 95 pass
    * 0 fail), and an editor would have opened over three spaces presented as a definition.
    */
-  test("a whitespace-only definition is refused too, because an empty definition is not one", async () => {
+  test("a whitespace-only definition is refused too, and is NOT reported as the engine's NULL", async () => {
     objects = await connectedWithObjects();
     server = (sql) => (/s\.sql AS sql/.test(sql) ? result([["sql", "TEXT"]], [[text("   \n  ")]]) : failure("x", "y"));
 
     const [part] = (await objects.readObjectSource!(["orders"], "table")).parts;
 
     expect(isSourcePartUnavailable(part)).toBe(true);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.unavailable).toContain("no non-whitespace character");
+    // The row is there and so is the column, so a sentence blaming an index the engine made
+    // for itself would be false of this shape.
+    expect(part.unavailable).not.toContain("an index it created for itself");
+    expect(part.unavailable).not.toContain("is NULL");
+  });
+
+  /**
+   * Recipe rule 6's own failure mode, on the transport that hides it best.
+   *
+   * A reply whose definition COLUMN is spelled differently carries no `sql` key at all, reads
+   * as `undefined`, and becomes a refusal that passes the conformance walk, the statement pin
+   * and every count assertion. It is refused here, which is the only correct answer, and the
+   * SENTENCE has to send a reader to the statement: this is a defect in the read, not a fact
+   * about the object, and the stored-NULL reason would be false as well as misleading.
+   */
+  test("a reply carrying no sql column at all becomes a refusal that names the READ, not the object", async () => {
+    objects = await connectedWithObjects();
+    server = (sql) =>
+      /s\.sql AS sql/.test(sql)
+        ? result([["definition", "TEXT"]], [[text("CREATE TABLE orders (a)")]])
+        : failure("x", "y");
+
+    const [part] = (await objects.readObjectSource!(["orders"], "table")).parts;
+
+    expect(isSourcePartUnavailable(part)).toBe(true);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.unavailable).toContain("no sqlite_schema.sql column at all");
+    expect(part.unavailable).not.toContain("an index it created for itself");
   });
 
   test("a server failure RAISES through the provider's own mapping rather than becoming a refusal", async () => {

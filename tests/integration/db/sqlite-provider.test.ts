@@ -1995,17 +1995,26 @@ describe("SQLiteProvider object source (#789)", () => {
     if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
     expect(part.id).toBe("definition");
     expect(part.unavailable).toContain("sqlite_schema.sql is NULL");
+    // The CAUSE is asserted, and it is asserted HERE and nowhere else: NULL is the only one of
+    // the three blank shapes for which "an index SQLite created for itself" is a true reason.
+    expect(part.unavailable).toContain("an index it created for itself");
     // Not an empty string and not whitespace: a refusal that says nothing is not a refusal.
     expect(part.unavailable.trim().length).toBeGreaterThan(20);
   });
 
-  test("a whitespace-only definition is refused too, because an empty definition is not one", async () => {
+  test("a whitespace-only definition is refused too, and is NOT reported as the engine's NULL", async () => {
     objects = await connectedWithObjects();
     captureReadsMatching(objects, "FROM sqlite_schema AS s", [{ sql: "   \n  " }]);
 
     const [part] = (await objects.readObjectSource!(["orders"], "table")).parts;
 
     expect(isSourcePartUnavailable(part)).toBe(true);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.unavailable).toContain("no non-whitespace character");
+    // The sentence must not carry a cause that is false for this shape: the row is present and
+    // the column is present, so nothing here is an index the engine made for itself.
+    expect(part.unavailable).not.toContain("an index it created for itself");
+    expect(part.unavailable).not.toContain("is NULL");
   });
 
   /**
@@ -2074,13 +2083,20 @@ describe("SQLiteProvider object source (#789)", () => {
    * answer; the per-kind text pin above is what would notice that the live read had started
    * doing it.
    */
-  test("a reply carrying no sql column at all becomes a refusal, never an empty definition", async () => {
+  test("a reply carrying no sql column at all becomes a refusal that names the READ, not the object", async () => {
     objects = await connectedWithObjects();
     captureReadsMatching(objects, "FROM sqlite_schema AS s", [{}]);
 
     const [part] = (await objects.readObjectSource!(["orders"], "table")).parts;
 
     expect(isSourcePartUnavailable(part)).toBe(true);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    // This arm is the defect recipe rule 6 exists for, so its sentence has to send a reader to
+    // the statement rather than to the object. A reason claiming the engine stored NULL for an
+    // index of its own would send them to the listing filter instead, and it would be false:
+    // the row is there and the column this provider asked for is not.
+    expect(part.unavailable).toContain("no sqlite_schema.sql column at all");
+    expect(part.unavailable).not.toContain("an index it created for itself");
   });
 
   test("the caller's bound cuts the text and says so, and an exact answer is never marked", async () => {

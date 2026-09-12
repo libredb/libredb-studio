@@ -1007,26 +1007,65 @@ const SOURCE_CATALOG_TYPES: Readonly<Record<string, string>> = {
 };
 
 /**
- * The sentence a NULL or blank `sqlite_schema.sql` is reported with.
+ * Which of the three ways a source row can carry no definition this row is.
+ *
+ * THEY ARE THREE DIFFERENT FACTS and one sentence cannot be true of all three. `absent` is a
+ * row that does not carry the column this provider asked for, which is a defect in THIS READ;
+ * `null` is the server's own stored NULL; `blank` is a column holding a text with nothing in
+ * it.
+ *
+ * `Object.hasOwn` on the raw row and not `readText(...) === undefined`, because `readText`
+ * collapses all three into one value and the distinction is the whole point: `readRows()`
+ * builds each row out of the column names the reply actually carried, so a statement whose
+ * alias was changed answers a row with no `sql` key at all.
+ */
+type BlankDefinitionShape = "absent" | "null" | "blank";
+
+function blankDefinitionShape(row: LibSQLRow): BlankDefinitionShape {
+  if (!Object.hasOwn(row, "sql")) return "absent";
+  return typeof row.sql === "string" ? "blank" : "null";
+}
+
+/**
+ * The sentence a row carrying no definition is refused with, ONE PER SHAPE.
  *
  * OURS rather than the engine's, and that is the exception the provider doc records: the
- * server supplies no sentence at all for this, it simply stores NULL.
+ * server supplies no sentence at all for any of these, it simply stores NULL.
  *
- * NOTHING THIS PROVIDER LISTS CAN REACH IT. `sql` is NULL for exactly one shape, an index the
- * engine created for itself, and every listing and count here carries
+ * THREE SENTENCES BECAUSE THERE ARE THREE CAUSES, and a refusal stating a cause that is false
+ * for the shape in front of it is worse than one stating none. "The engine stores NULL there
+ * only for an index it created for itself" is TRUE of a stored NULL and FALSE of the other
+ * two: the absent-column shape is this provider asking for a column the reply does not carry,
+ * and a reader sent to the listing filter is a reader sent away from the wrong statement.
+ *
+ * NOTHING THIS PROVIDER LISTS CAN REACH THE NULL SHAPE. `sql` is NULL for exactly one kind of
+ * object, an index the engine created for itself, and every listing and count here carries
  * `name NOT LIKE 'sqlite\\_%' ESCAPE '\\'`, so no path the tree offers addresses such a row.
  * The arm exists anyway, because an empty definition must never reach an editor as a
  * definition.
  *
- * IT DOES NOT QUOTE THE SERVER, and that is deliberate: sqld and Turso Cloud word the
+ * NONE OF THE THREE QUOTES THE SERVER, and that is deliberate: sqld and Turso Cloud word the
  * identical refusal differently, so nothing in this provider and nothing in its suite keys on
  * either deployment's wording.
  */
-function blankDefinitionReason(kind: string, name: string): string {
+function blankDefinitionReason(shape: BlankDefinitionShape, kind: string, name: string): string {
+  const opening = `libSQL answered a row for the ${kind} "${name}"`;
+  if (shape === "absent") {
+    return (
+      `${opening} with no sqlite_schema.sql column at all. That is a fact about this read and ` +
+      "not about the object: the statement asks for one column and the reply does not carry it."
+    );
+  }
+  if (shape === "blank") {
+    return (
+      `${opening} whose sqlite_schema.sql holds no non-whitespace character. An empty ` +
+      "definition is not a definition, so it is refused rather than opened in an editor, and " +
+      "the engine supplies no sentence of its own for this."
+    );
+  }
   return (
-    `libSQL answered a row for the ${kind} "${name}" whose sqlite_schema.sql is NULL or blank. ` +
-    "The engine stores NULL there only for an index it created for itself, and it supplies no " +
-    "sentence of its own for this."
+    `${opening} whose sqlite_schema.sql is NULL. The engine stores NULL there only for an ` +
+    "index it created for itself, and it supplies no sentence of its own for this."
   );
 }
 
@@ -1112,10 +1151,11 @@ export async function readLibSQLObjectSource(
   // refusal arm below.
   const definition = readText(row.sql);
   if (definition === undefined || definition.trim() === "") {
+    const reason = blankDefinitionReason(blankDefinitionShape(row), kind, name);
     return {
       path: [...path],
       kind,
-      parts: [{ id: "definition", label: "Definition", unavailable: blankDefinitionReason(kind, name) }],
+      parts: [{ id: "definition", label: "Definition", unavailable: reason }],
     };
   }
 

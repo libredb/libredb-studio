@@ -335,8 +335,20 @@ const OBJECT_FOREIGN_KEYS_SQL = `
  *
  * The name is short so each entry below stays ONE LINE, which is not cosmetic:
  * `tests/unit/lib/agent/context-snapshot.test.ts` reads the declared ids out of this array
- * with a `{ id: "..."` scrape, and a formatter that exploded an entry would take that kind out
- * of the guard's population without failing anything else.
+ * with a `{ id: "..."` scrape that matches a SINGLE-LINE entry only.
+ *
+ * What that scrape does and does not notice, both measured on 2026-09-13 rather than argued.
+ * Writing `hasSource: true, sourceLanguage: "sql"` inline pushes the `table` and `trigger`
+ * entries past 120 columns and the formatter explodes them; the guard then holds two declared
+ * ids against the agent side's four and FAILS LOUDLY (1 fail, "Expected - 0 / Received + 2",
+ * `table` and `trigger` unmatched). So an exploded EXISTING entry is a red test and not a
+ * silent loss. The silent case is the other one, and it is the reason these entries are kept
+ * scrapable: a FIFTH kind written as a multi-line entry is missing from the guard's population
+ * AND from the agent side's map, both sides shrink together, and the guard passes over a kind
+ * nothing maps (measured: multi-line fifth kind 1 pass 0 fail, the same kind on one line
+ * 1 fail). The durable fix is not here, because that file belongs to the agent side: the guard
+ * should read the declaration through `createDatabaseProvider("sqlite").getCapabilities()`
+ * instead of scraping this text. Filed in the backlog under #789.
  */
 const SOURCE_SQL: Pick<ObjectKindSpec, "hasSource" | "sourceLanguage"> = { hasSource: true, sourceLanguage: "sql" };
 
@@ -710,25 +722,66 @@ interface ObjectSourceRow {
 }
 
 /**
- * The sentence a NULL or blank `sqlite_schema.sql` is reported with.
+ * Which of the three ways a source row can carry no definition this row is.
+ *
+ * THEY ARE THREE DIFFERENT FACTS and one sentence cannot be true of all three, which is why
+ * the shape is decided here rather than folded into a single `=== null || .trim() === ""`
+ * test. `absent` is a row that does not carry the column this provider asked for, which is a
+ * defect in THIS READ; `null` is the engine's own stored NULL; `blank` is a column holding a
+ * text with nothing in it.
+ *
+ * `Object.hasOwn` and not `row.sql === undefined`, because the two are distinguishable and
+ * the distinction is the whole point: `bun:sqlite` builds a row object out of the columns the
+ * reply actually carried, so a statement whose alias was changed answers a row with no `sql`
+ * key at all.
+ */
+type BlankDefinitionShape = "absent" | "null" | "blank";
+
+function blankDefinitionShape(row: ObjectSourceRow): BlankDefinitionShape {
+  if (!Object.hasOwn(row, "sql")) return "absent";
+  return typeof row.sql === "string" ? "blank" : "null";
+}
+
+/**
+ * The sentence a row carrying no definition is refused with, ONE PER SHAPE.
  *
  * OURS rather than the engine's, and that is the exception `docs/providers/sqlite.md`
- * records: SQLite supplies no sentence at all for this: it simply stores NULL. The MySQL
- * provider writes its own sentence for the same reason and for the same shape, a row whose
- * definition column is empty.
+ * records: SQLite supplies no sentence at all for any of these, it simply stores NULL. The
+ * MySQL provider writes its own sentence for the same reason and for the same shape, a row
+ * whose definition column is empty.
  *
- * NOTHING THE LISTINGS PRODUCE CAN REACH IT. `sql` is NULL for exactly one shape, an index
- * SQLite created for itself (`sqlite_autoindex_<table>_<n>`), and every listing and every
- * count here carries `name NOT LIKE 'sqlite\\_%' ESCAPE '\\'`, so no path the tree offers
- * addresses such a row. The arm exists anyway, because an empty definition must never reach
- * an editor as a definition: this is what the read would say if it ever started producing
- * one.
+ * THREE SENTENCES BECAUSE THERE ARE THREE CAUSES, and a refusal that states a cause which is
+ * false for the shape in front of it is worse than one that states none. "The engine stores
+ * NULL there only for an index it created for itself" is TRUE of a stored NULL and FALSE of
+ * the other two: the absent-column shape is this provider asking for a column the reply does
+ * not carry, and sending its reader to the listing filter would send them away from the
+ * statement that is actually wrong.
+ *
+ * NOTHING THE LISTINGS PRODUCE CAN REACH THE NULL SHAPE. `sql` is NULL for exactly one kind
+ * of object, an index SQLite created for itself (`sqlite_autoindex_<table>_<n>`), and every
+ * listing and every count here carries `name NOT LIKE 'sqlite\\_%' ESCAPE '\\'`, so no path
+ * the tree offers addresses such a row. The arm exists anyway, because an empty definition
+ * must never reach an editor as a definition: this is what the read would say if it ever
+ * started producing one.
  */
-function blankDefinitionReason(kind: string, name: string): string {
+function blankDefinitionReason(shape: BlankDefinitionShape, kind: string, name: string): string {
+  const opening = `SQLite answered a row for the ${kind} "${name}"`;
+  if (shape === "absent") {
+    return (
+      `${opening} with no sqlite_schema.sql column at all. That is a fact about this read and ` +
+      "not about the object: the statement asks for one column and the reply does not carry it."
+    );
+  }
+  if (shape === "blank") {
+    return (
+      `${opening} whose sqlite_schema.sql holds no non-whitespace character. An empty ` +
+      "definition is not a definition, so it is refused rather than opened in an editor, and " +
+      "the engine supplies no sentence of its own for this."
+    );
+  }
   return (
-    `SQLite answered a row for the ${kind} "${name}" whose sqlite_schema.sql is NULL or blank. ` +
-    "The engine stores NULL there only for an index it created for itself, and it supplies no " +
-    "sentence of its own for this."
+    `${opening} whose sqlite_schema.sql is NULL. The engine stores NULL there only for an ` +
+    "index it created for itself, and it supplies no sentence of its own for this."
   );
 }
 
@@ -1654,10 +1707,11 @@ export class SQLiteProvider extends SQLBaseProvider {
 
     const definition = row.sql;
     if (definition === null || definition === undefined || definition.trim() === "") {
+      const reason = blankDefinitionReason(blankDefinitionShape(row), kind, name);
       return {
         path: [...path],
         kind,
-        parts: [{ id: "definition", label: "Definition", unavailable: blankDefinitionReason(kind, name) }],
+        parts: [{ id: "definition", label: "Definition", unavailable: reason }],
       };
     }
 
