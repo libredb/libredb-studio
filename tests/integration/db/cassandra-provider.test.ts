@@ -69,7 +69,10 @@ import {
   comparePaths,
   cassandraObjectListCql,
   cassandraTypeFieldsCql,
+  cassandraKeyspaceColumnsCql,
+  cassandraKeyspaceTypesCql,
 } from "@/lib/db/providers/sql/cassandra/objects";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -1833,6 +1836,152 @@ const EMPTY_KEYSPACE_KINDS = [
   "trigger",
 ] as const;
 
+/**
+ * `system_schema.columns` for the WHOLE keyspace: three tables and the materialized view,
+ * verbatim from the live 5.0.9 node holding the committed fixture.
+ *
+ * The single-object column replies below are DERIVED from this array rather than written
+ * out beside it, so the fixture cannot make the bulk read and the single read disagree
+ * where the engine would not (#789).
+ */
+const KEYSPACE_COLUMN_ROWS: Record<string, unknown>[] = [
+  {
+    table_name: "customers",
+    column_name: "city",
+    type: "text",
+    kind: "regular",
+    position: -1,
+    clustering_order: "none",
+  },
+  {
+    table_name: "customers",
+    column_name: "home",
+    type: "frozen<address>",
+    kind: "regular",
+    position: -1,
+    clustering_order: "none",
+  },
+  {
+    table_name: "customers",
+    column_name: "id",
+    type: "int",
+    kind: "partition_key",
+    position: 0,
+    clustering_order: "none",
+  },
+  {
+    table_name: "customers",
+    column_name: "name",
+    type: "text",
+    kind: "regular",
+    position: -1,
+    clustering_order: "none",
+  },
+  {
+    table_name: "customers",
+    column_name: "tags",
+    type: "map<text, text>",
+    kind: "regular",
+    position: -1,
+    clustering_order: "none",
+  },
+  {
+    table_name: "customers_by_city",
+    column_name: "city",
+    type: "text",
+    kind: "partition_key",
+    position: 0,
+    clustering_order: "none",
+  },
+  {
+    table_name: "customers_by_city",
+    column_name: "id",
+    type: "int",
+    kind: "clustering",
+    position: 0,
+    clustering_order: "asc",
+  },
+  {
+    table_name: "customers_by_city",
+    column_name: "name",
+    type: "text",
+    kind: "regular",
+    position: -1,
+    clustering_order: "none",
+  },
+  {
+    table_name: "events",
+    column_name: "ck",
+    type: "timeuuid",
+    kind: "clustering",
+    position: 0,
+    clustering_order: "asc",
+  },
+  {
+    table_name: "events",
+    column_name: "payload",
+    type: "map<text, text>",
+    kind: "regular",
+    position: -1,
+    clustering_order: "none",
+  },
+  {
+    table_name: "events",
+    column_name: "pk",
+    type: "int",
+    kind: "partition_key",
+    position: 0,
+    clustering_order: "none",
+  },
+  { table_name: "orders", column_name: "amount", type: "int", kind: "regular", position: -1, clustering_order: "none" },
+  {
+    table_name: "orders",
+    column_name: "customer_id",
+    type: "int",
+    kind: "partition_key",
+    position: 0,
+    clustering_order: "none",
+  },
+  {
+    table_name: "orders",
+    column_name: "order_id",
+    type: "timeuuid",
+    kind: "clustering",
+    position: 0,
+    clustering_order: "asc",
+  },
+];
+
+const COLUMN_ROW_DECL = declare(
+  ["table_name", TEXT],
+  ["column_name", TEXT],
+  ["type", TEXT],
+  ["kind", TEXT],
+  ["position", INT],
+  ["clustering_order", TEXT],
+);
+
+const KEYSPACE_COLUMN_LIST = result(COLUMN_ROW_DECL, KEYSPACE_COLUMN_ROWS);
+
+const KEYSPACE_TYPE_LIST = result(
+  declare(["type_name", TEXT], ["field_names", LIST_TEXT], ["field_types", LIST_TEXT]),
+  [{ type_name: "address", field_names: ["street", "city", "postcode"], field_types: ["text", "text", "text"] }],
+);
+
+/** The single-object column read for every relation the keyspace holds, derived. */
+function singleColumnReplies(): Record<string, Reply> {
+  const owners = [...new Set(KEYSPACE_COLUMN_ROWS.map((row) => String(row.table_name)))];
+  return Object.fromEntries(
+    owners.map((owner) => [
+      cassandraObjectColumnsCql(KEYSPACE, owner),
+      result(
+        COLUMN_ROW_DECL,
+        KEYSPACE_COLUMN_ROWS.filter((row) => row.table_name === owner),
+      ),
+    ]),
+  );
+}
+
 /** The catalog answers a healthy object-surface read gets, on top of `healthyReplies()`. */
 function objectReplies(overrides: Record<string, Reply> = {}): Record<string, Reply> {
   return {
@@ -1853,6 +2002,31 @@ function objectReplies(overrides: Record<string, Reply> = {}): Record<string, Re
     [cassandraObjectListCql(KEYSPACE, "trigger")!]: OBJECT_TRIGGER_LIST,
     [cassandraObjectColumnsCql(KEYSPACE, "customers")]: CUSTOMERS_COLUMN_LIST,
     [cassandraTypeFieldsCql(KEYSPACE, "address")]: TYPE_FIELD_LIST,
+    // The bulk column read's three statement shapes (#789). They are here rather than in
+    // that block's own helper because the shared conformance contract now drives
+    // `describeObjects` for every declared kind, so every object-surface test needs them.
+    [cassandraKeyspaceColumnsCql(KEYSPACE)]: KEYSPACE_COLUMN_LIST,
+    [cassandraKeyspaceTypesCql(KEYSPACE)]: KEYSPACE_TYPE_LIST,
+    [cassandraKeyspaceColumnsCql("system_reports")]: result(COLUMN_ROW_DECL, []),
+    [cassandraKeyspaceTypesCql("system_reports")]: result(declare(["type_name", TEXT]), []),
+    // The BOUNDED targets. `limit + 1` reaches the statement, so a bound of 1 asks for 2
+    // and a bound of 2 asks for 3, which is what tells a saturated read from an exact one
+    // without a second count. The shared conformance contract bounds the richest kind at
+    // 1, so these belong to every object-surface test and not only to the bulk block.
+    [cassandraObjectListCql(KEYSPACE, "table", 2)!]: result(declare(["table_name", TEXT]), [
+      { table_name: "customers" },
+      { table_name: "events" },
+    ]),
+    [cassandraObjectListCql(KEYSPACE, "table", 3)!]: OBJECT_TABLE_LIST,
+    [cassandraObjectListCql(KEYSPACE, "table", 4)!]: OBJECT_TABLE_LIST,
+    [cassandraObjectListCql(KEYSPACE, "index", 2)!]: result(
+      declare(["index_name", TEXT], ["table_name", TEXT], ["options", MAP_OPTIONS]),
+      [
+        { index_name: "customers_by_city", table_name: "customers", options: { target: "city" } },
+        { index_name: "customers_by_tag", table_name: "customers", options: { target: "keys(tags)" } },
+      ],
+    ),
+    ...singleColumnReplies(),
     ...overrides,
   };
 }
@@ -2343,5 +2517,340 @@ describe("the object surface, at its edges", () => {
     expect(comparePaths(["probe", "a"], ["probe", "b"])).toBeLessThan(0);
     expect(comparePaths(["probe", "b"], ["probe", "a"])).toBeGreaterThan(0);
     expect(comparePaths(["probe", "a"], ["probe", "a"])).toBe(0);
+  });
+});
+
+/**
+ * The bulk column read (#789), the fifth method.
+ *
+ * Cassandra was one of the two type-ids that fell out of the four implementation waves,
+ * and nothing went red because the shared conformance helper skipped a provider that did
+ * not declare the method at all. So the property that helper could not check until this
+ * wave is asserted here directly: the batch describes EVERY object `listObjects` names for
+ * that container and kind, and an unbounded call leaves `truncated` absent.
+ *
+ * Everything below was measured against a live Apache Cassandra 5.0.9 holding the committed
+ * fixture, in a container this task created and removed. The measurements that shaped it:
+ *
+ * 1. `ORDER BY` accepts only the FIRST clustering column. `ORDER BY index_name` on
+ *    `system_schema.indexes` is server error 2200, "Order by currently only supports the
+ *    ordering of columns following their declared order in the PRIMARY KEY", because that
+ *    catalog clusters on `(table_name, index_name)`. So the order column is declared per
+ *    CATALOG and is not the name column for every kind.
+ * 2. `LIMIT 0` is server error 2200, "LIMIT must be strictly positive". The
+ *    positive-whole-number guard is therefore this engine's own rule as well as the
+ *    contract's.
+ * 3. A CQL identifier holds ALPHANUMERIC AND UNDERSCORE CHARACTERS ONLY, quoted or not:
+ *    `CREATE TABLE ordprobe."<U+1F600>"` and `CREATE KEYSPACE "ks<U+1F600>"` are both
+ *    rejected by the server. So the UTF-8 against UTF-16 divergence Task 26a-2 measured on
+ *    four engines is UNREACHABLE here, and the fourth measurement records why rather than
+ *    leaving it unasked.
+ */
+describe("the bulk column read", () => {
+  const TABLES = [
+    [KEYSPACE, "customers"],
+    [KEYSPACE, "events"],
+    [KEYSPACE, "orders"],
+  ];
+
+  test("describes EVERY table the listing names, with no truncation and a CONSTANT statement set", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    const listed = await provider.listObjects!([KEYSPACE], "table");
+    session.asked.length = 0;
+
+    const batch = await provider.describeObjects!([KEYSPACE], "table");
+
+    // The property the helper could not check until this wave. Not "every detail was
+    // listed", which a batch dropping one table also satisfies, but the two sets being
+    // EQUAL.
+    expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+    expect(batch.details.map((detail) => detail.path)).toEqual(TABLES);
+    expect(batch.truncated).toBeUndefined();
+    // THREE statements for the whole folder, not one per table: the target, the
+    // keyspace's columns and the keyspace's indexes. CQL has no join and no subquery, so
+    // a composed single statement is not available on this engine - what matters is that
+    // the number is constant per folder rather than per object.
+    expect([...session.asked].sort()).toEqual(
+      [
+        cassandraObjectListCql(KEYSPACE, "table")!,
+        cassandraKeyspaceColumnsCql(KEYSPACE),
+        cassandraObjectListCql(KEYSPACE, "index")!,
+      ].sort(),
+    );
+  });
+
+  test("every column set is what describeObject answers for the same object, for all four kinds", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    let compared = 0;
+    for (const kind of ["table", "materialized_view", "index", "type"]) {
+      const batch = await provider.describeObjects!([KEYSPACE], kind);
+      expect(batch.details.length).toBeGreaterThan(0);
+      for (const detail of batch.details) {
+        expect(detail).toEqual(await provider.describeObject!(detail.path, kind));
+        compared += 1;
+      }
+    }
+    // The control: a loop that ran zero times certifies nothing (standing ruling 5b).
+    expect(compared).toBe(8);
+  });
+
+  test("a routine, an aggregate and a trigger answer an empty batch with NO round trip", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    for (const kind of ["function", "aggregate", "trigger"]) {
+      expect(await provider.describeObjects!([KEYSPACE], kind)).toEqual({ details: [] });
+    }
+    // A true fact about those kinds rather than a failed read, so it costs nothing.
+    expect(session.asked).toEqual([]);
+  });
+
+  test("an index folder and a type folder each cost ONE statement", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    const indexes = await provider.describeObjects!([KEYSPACE], "index");
+    const indexAsked = [...session.asked];
+    session.asked.length = 0;
+    const types = await provider.describeObjects!([KEYSPACE], "type");
+
+    // The index listing already projects `options`, which is the whole content of an
+    // index detail, and `system_schema.types` carries a UDT's fields on the row that
+    // names it. So neither kind needs a second catalog at all.
+    expect(indexAsked).toEqual([cassandraObjectListCql(KEYSPACE, "index")!]);
+    expect(session.asked).toEqual([cassandraKeyspaceTypesCql(KEYSPACE)]);
+    expect(indexes.details.map((detail) => detail.indexes[0]!.name)).toEqual([
+      "customers_by_city",
+      "customers_by_tag",
+      "orders_by_amount",
+    ]);
+    expect(types.details[0]!.columns.map((column) => column.name)).toEqual(["street", "city", "postcode"]);
+  });
+
+  test("a bounded read returns the bound, orders the cut, and reports the CALLER's limit", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    const batch = await provider.describeObjects!([KEYSPACE], "table", 2);
+
+    expect(batch.details.map((detail) => detail.path)).toEqual(TABLES.slice(0, 2));
+    // The ONE sentence, built by the shared helper rather than spelled here: a reason a
+    // provider phrased for itself is how the same bound came to read three ways.
+    expect(batch.truncated).toEqual({ limit: 2, reason: callerBoundTruncationReason(2) });
+    expect(batch.truncated!.reason).toBe("the bulk column read was bounded at 2 objects by its caller");
+    // `limit + 1` reaches the statement, which is what tells a saturated read from an
+    // exact one without a second count.
+    expect(session.asked).toContain(
+      "SELECT table_name FROM system_schema.tables WHERE keyspace_name = 'probe' ORDER BY table_name ASC LIMIT 3",
+    );
+  });
+
+  test("a bound that is not reached reports no truncation", async () => {
+    const { provider } = await connectedProvider(objectReplies());
+
+    const exact = await provider.describeObjects!([KEYSPACE], "table", 3);
+
+    expect(exact.details).toHaveLength(3);
+    expect(exact.truncated).toBeUndefined();
+  });
+
+  test("the index cut is ordered by the base TABLE, which is not the order its paths take", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    const batch = await provider.describeObjects!([KEYSPACE], "index", 1);
+
+    // Measured on 5.0.9: `system_schema.indexes` clusters on `(table_name, index_name)`
+    // and `ORDER BY index_name` is server error 2200, so the ORDER column is the
+    // catalog's first clustering column and NOT the name column. An index is addressed
+    // `[keyspace, index_name]`, so on this one kind the MEMBERSHIP of a bounded cut
+    // follows the base table's order while the ANSWER is sorted by path.
+    expect(session.asked).toEqual([
+      "SELECT index_name, table_name, options FROM system_schema.indexes WHERE keyspace_name = 'probe' " +
+        "ORDER BY table_name ASC LIMIT 2",
+    ]);
+    expect(batch.details.map((detail) => detail.path)).toEqual([[KEYSPACE, "customers_by_city"]]);
+    expect(batch.truncated).toEqual({ limit: 1, reason: callerBoundTruncationReason(1) });
+  });
+
+  test("the answer is sorted by PATH, which on the index kind is not the order it arrived in", async () => {
+    // The one shape on this engine where the catalog's order and the path order really
+    // disagree, and the fixture does not hold it. `system_schema.indexes` clusters on
+    // `(table_name, index_name)`, so an index whose NAME sorts early on a table whose name
+    // sorts late arrives after one that sorts later by path. The rows below are in the
+    // order the SERVER would return them.
+    //
+    // The committed fixture has no such index, because adding one changes the count every
+    // other test in this file asserts. It is one statement to create:
+    //   CREATE INDEX aaa_orders_ck ON probe.orders (order_id);
+    // and `docs/providers/cassandra.md` carries that alongside this measurement.
+    const { provider } = await connectedProvider(
+      objectReplies({
+        [cassandraObjectListCql(KEYSPACE, "index")!]: result(
+          declare(["index_name", TEXT], ["table_name", TEXT], ["options", MAP_OPTIONS]),
+          [
+            { index_name: "customers_by_city", table_name: "customers", options: { target: "city" } },
+            { index_name: "aaa_orders_ck", table_name: "orders", options: { target: "order_id" } },
+          ],
+        ),
+      }),
+    );
+
+    const batch = await provider.describeObjects!([KEYSPACE], "index");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      [KEYSPACE, "aaa_orders_ck"],
+      [KEYSPACE, "customers_by_city"],
+    ]);
+  });
+
+  test("a limit that is not a positive whole number is refused rather than clamped", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    session.asked.length = 0;
+
+    for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(provider.describeObjects!([KEYSPACE], "table", limit)).rejects.toThrow(/positive whole number/);
+    }
+    // Refused BEFORE the wire, which matters twice here. This transport refuses to bind
+    // a parameter into a catalog read at all, so the guard is what keeps anything but
+    // digits out of the statement text - and `LIMIT 0` is the SERVER's own error on
+    // 5.0.9 ("LIMIT must be strictly positive"), so a clamp would trade a caller's
+    // mistake for a server refusal.
+    expect(session.asked).toEqual([]);
+  });
+
+  test("an undeclared kind, a kind with no catalog and a wrong container path are each refused", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    const real = provider.getCapabilities();
+    session.asked.length = 0;
+
+    await expect(provider.describeObjects!([KEYSPACE], "sequence")).rejects.toThrow(
+      /declares no object kind "sequence"/,
+    );
+    await expect(provider.describeObjects!([KEYSPACE, "extra"], "table")).rejects.toThrow(
+      /container path is \[keyspace\]/,
+    );
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [...(real.objectKinds ?? []), { id: "sequence", role: "relation", label: "S", labelPlural: "S" }],
+    });
+    await expect(provider.describeObjects!([KEYSPACE], "sequence")).rejects.toThrow(/has no statement that lists it/);
+    expect(session.asked).toEqual([]);
+  });
+
+  test("membership is the TARGET's: a column row for an object the target did not name is dropped", async () => {
+    // And the other direction with it: an object the target DID name but the column
+    // catalog holds nothing for is still in the batch, with an empty column list. No CQL
+    // table can be columnless - a primary key is mandatory - so neither case comes from
+    // this engine, and a bulk read whose membership came from the COLUMN read would lose
+    // an object the folder lists the moment one did.
+    const { provider } = await connectedProvider(
+      objectReplies({
+        [cassandraKeyspaceColumnsCql(KEYSPACE)]: result(
+          declare(
+            ["table_name", TEXT],
+            ["column_name", TEXT],
+            ["type", TEXT],
+            ["kind", TEXT],
+            ["position", INT],
+            ["clustering_order", TEXT],
+          ),
+          [
+            {
+              table_name: "ghost",
+              column_name: "x",
+              type: "int",
+              kind: "partition_key",
+              position: 0,
+              clustering_order: "none",
+            },
+            {
+              table_name: "orders",
+              column_name: "order_id",
+              type: "timeuuid",
+              kind: "partition_key",
+              position: 0,
+              clustering_order: "none",
+            },
+          ],
+        ),
+      }),
+    );
+
+    const batch = await provider.describeObjects!([KEYSPACE], "table");
+
+    expect(batch.details.map((detail) => [detail.path[1], detail.columns.length])).toEqual([
+      ["customers", 0],
+      ["events", 0],
+      ["orders", 1],
+    ]);
+  });
+
+  test("the three new statements are pinned by literal, as measured on 5.0.9", async () => {
+    expect(cassandraKeyspaceColumnsCql(KEYSPACE)).toBe(
+      "SELECT table_name, column_name, type, kind, position, clustering_order FROM system_schema.columns " +
+        "WHERE keyspace_name = 'probe'",
+    );
+    expect(cassandraKeyspaceTypesCql(KEYSPACE)).toBe(
+      "SELECT type_name, field_names, field_types FROM system_schema.types WHERE keyspace_name = 'probe'",
+    );
+    // The bounded target is the LISTING statement plus the catalog's first clustering
+    // column and the bound. Every one of these was run against the live server.
+    expect(cassandraObjectListCql(KEYSPACE, "materialized_view", 5)).toBe(
+      "SELECT view_name FROM system_schema.views WHERE keyspace_name = 'probe' ORDER BY view_name ASC LIMIT 5",
+    );
+    expect(cassandraObjectListCql(KEYSPACE, "type", 5)).toBe(
+      "SELECT type_name FROM system_schema.types WHERE keyspace_name = 'probe' ORDER BY type_name ASC LIMIT 5",
+    );
+    // And a keyspace holding a quote is escaped into both, rather than closing them.
+    expect(cassandraKeyspaceColumnsCql("o'brien")).toContain("keyspace_name = 'o''brien'");
+    expect(cassandraKeyspaceTypesCql("o'brien")).toContain("keyspace_name = 'o''brien'");
+  });
+
+  test("a two-level declaration binds the KEYSPACE segment and builds paths at the declared depth", async () => {
+    const { provider, session } = await connectedProvider(objectReplies());
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Keyspace", labelPlural: "Keyspaces" },
+      ],
+    });
+    session.asked.length = 0;
+
+    const batch = await provider.describeObjects!(["ring", KEYSPACE], "table");
+
+    // Standing ruling 5g, driven to a BOUND VALUE rather than to a refusal.
+    // `container[0]` would bind `ring` into all three statements.
+    expect([...session.asked].sort()).toEqual(
+      [
+        cassandraObjectListCql(KEYSPACE, "table")!,
+        cassandraKeyspaceColumnsCql(KEYSPACE),
+        cassandraObjectListCql(KEYSPACE, "index")!,
+      ].sort(),
+    );
+    expect(batch.details.map((detail) => detail.path)).toEqual(TABLES.map(([, name]) => ["ring", KEYSPACE, name]));
+    // And a hardcoded depth would have accepted the one-segment path it must now refuse.
+    await expect(provider.describeObjects!([KEYSPACE], "table")).rejects.toThrow(
+      /container path is \[catalog, keyspace\]/,
+    );
+  });
+
+  test("a refused catalog read raises rather than reporting a short batch as a complete one", async () => {
+    const { provider } = await connectedProvider(
+      objectReplies({
+        [cassandraKeyspaceColumnsCql(KEYSPACE)]: responseError(
+          8448,
+          "User probe has no SELECT permission on <table system_schema.columns>",
+        ),
+      }),
+    );
+
+    // `countObjects` answers `{ unavailable }` per kind because a folder badge has a
+    // state for it. A batch has none: `{ details: [] }` is "this container holds no such
+    // object", so a refusal handed back as an empty batch is the #414 absence exactly.
+    await expect(provider.describeObjects!([KEYSPACE], "table")).rejects.toThrow(/no SELECT permission/);
   });
 });

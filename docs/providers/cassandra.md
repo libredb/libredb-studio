@@ -890,6 +890,81 @@ Nothing reads the name to work out what it is holding.
 `foreignKeys` is always `[]` for the same reason [§6.2](#62-indexes-and-the-one-thing-they-never-are)
 gives.
 
+#### `describeObjects()` describes a whole folder in a CONSTANT number of statements (#789)
+
+`describeObjects(container, kind, limit?)` answers the columns of EVERY object of one kind in one
+keyspace, in a number of round trips that is constant **per folder** rather than one per object.
+Measured on a live 5.0.9 node holding a 200-table keyspace: **11 ms for one `describeObjects()`
+against 232 ms for 200 `describeObject()` calls**, the same 800 columns.
+
+It is not ONE statement here and it cannot be. **CQL has no join, no subquery and no union**, so the
+composed single statement PostgreSQL and Druid use is not in the grammar. What replaces it is a fixed
+statement set per kind:
+
+| Kind | Statements | Which |
+| --- | --- | --- |
+| `table`, `materialized_view` | 3, issued together | the target listing, the keyspace's whole `system_schema.columns` partition, and the keyspace's index listing |
+| `index` | 1 | the listing statement, which already projects `options` |
+| `type` | 1 | `system_schema.types`, which carries `field_names` and `field_types` on the row that names the type |
+| `function`, `aggregate`, `trigger` | 0 | a routine and a trigger have no columns, so the batch is `{ details: [] }` without touching the network |
+
+The three relation statements are independent, so they go out through one `Promise.all` and cost one
+round trip of latency rather than three. `Promise.all` and not `allSettled`, unlike `countObjects()`:
+a folder badge has a state for a refused read and `ObjectDetailBatch` has none, so a refusal here
+**raises** rather than being handed back as an empty batch, which is what would make a reader treat a
+denied keyspace as an empty one.
+
+Five decisions, each measured on Apache Cassandra 5.0.9 rather than reasoned about.
+
+1. **The catalogs are the ones the single read uses**, widened from one object to the keyspace by
+   dropping the `table_name` restriction: `system_schema.columns` is partitioned on `keyspace_name`
+   alone, so the wide read and a narrowed one are the same partition read, and an `IN` list over the
+   target's names would make the statement's SHAPE depend on what the target answered for no gain.
+   They are also the catalogs `getSchema()` reads, through the same `cassandraTableColumns()` mapper,
+   so the flat and the object reading cannot describe one table two different ways.
+2. **Three kinds have no columns and answer with no round trip**: `function`, `aggregate` and
+   `trigger`. The rule is keyed on the CATALOG a kind reads, never on the kind id.
+3. **The bound is `ORDER BY <first clustering column> ASC LIMIT n+1`**, interpolated rather than
+   bound, because this provider refuses to bind a parameter into a catalog read at all. The
+   positive-whole-number guard therefore protects the STATEMENT as well as the answer, and it is this
+   engine's own rule too: **`LIMIT 0` is server error 2200, "LIMIT must be strictly positive"**, so
+   clamping would have traded a caller's mistake for a server refusal. An unbounded read appends
+   nothing, which keeps its target byte-identical to the listing statement the count and the folder
+   already share.
+4. **`ORDER BY` accepts only the FIRST clustering column**, and that refutes the obvious spelling.
+   `ORDER BY index_name` on `system_schema.indexes` is server error 2200, *"Order by currently only
+   supports the ordering of columns following their declared order in the PRIMARY KEY"*, because that
+   catalog clusters on `(table_name, index_name)`. So the order column is declared per catalog and is
+   the base **table** for `index` and `trigger`. The consequence is real: on the `index` kind a
+   bounded read's MEMBERSHIP follows the base table's order while the ANSWER is sorted by path, so
+   the two can disagree. The committed fixture does not hold such an index - every index in it sorts
+   the same way under both rules - and one statement creates one:
+   `CREATE INDEX aaa_orders_ck ON probe.orders (order_id);`. The provider suite drives that shape
+   through an explicit catalog reply instead, because adding the index to the fixture would change
+   the count every other test in that file asserts.
+5. **No kind with columns has mixed path depth.** `trigger` is the only kind that nests, and it is
+   one of the three that have no columns, so the relation set is single-depth.
+
+**The collation question has no edge on this engine, and that is measured rather than assumed.** Four
+other engines in #789 cut under the server's UTF-8 byte order while `comparePaths` compares UTF-16
+code units, the two reversing for `U+E000` against `U+1F600`. Neither name can exist here: a CQL
+identifier holds **alphanumeric and underscore characters only**, quoted or not, and both
+`CREATE TABLE ks."<U+1F600>"` and `CREATE KEYSPACE "ks<U+1F600>"` are refused by the server. Over that
+alphabet the byte order and the UTF-16 order are the same order. Case is preserved in a quoted
+identifier and both rules agree there too, measured: `Upper_A`, `a_b`, `aa`, `zz` come back in that
+order.
+
+**Membership is the TARGET read's, always**, never the column read's. A table the target named and
+the column catalog holds nothing for is still in the batch, with an empty column list - where the
+SINGLE read raises instead. That difference is deliberate: no CQL table can be columnless because a
+primary key is mandatory, so neither case comes from this engine, and a batch that silently drops an
+object its own folder lists is the worse failure of the two.
+
+**The contract this provider satisfies directly rather than through the shared helper:** the batch
+describes every object `listObjects` names for that container and kind, and an unbounded call leaves
+`truncated` absent. Verified live for all seven declared kinds against the committed fixture, each
+batch compared set-for-set against `listObjects` and object-for-object against `describeObject`.
+
 #### Paths are derived, never indexed positionally
 
 The keyspace segment comes from the declared `ContainerLevelSpec` whose id is `schema`, the object's

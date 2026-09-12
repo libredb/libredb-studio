@@ -81,7 +81,7 @@
  */
 
 import { QueryError } from "@/lib/db/errors";
-import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import type {
   ColumnSchema,
   Container,
@@ -90,6 +90,7 @@ import type {
   IndexSchema,
   KindCount,
   ObjectDetail,
+  ObjectDetailBatch,
   ObjectKindSpec,
   ProviderCapabilities,
 } from "@/lib/db/types";
@@ -193,11 +194,31 @@ interface ObjectCatalogSpec {
   readonly projection: readonly string[];
   readonly parentColumn?: string;
   readonly overloaded?: true;
+  /**
+   * The catalog's FIRST clustering column, which is the only column CQL will order by.
+   *
+   * Measured on 5.0.9, and it refutes the obvious spelling: `ORDER BY index_name` on
+   * `system_schema.indexes` is server error 2200, "Order by currently only supports the
+   * ordering of columns following their declared order in the PRIMARY KEY", because that
+   * catalog clusters on `(table_name, index_name)`. So this is NOT the name column for
+   * every kind, and on `indexes` and `triggers` it is the base table instead.
+   *
+   * It appears only in a BOUNDED read. An unbounded read takes every row and is re-sorted
+   * by path here, so it needs no order from the server at all - and leaving the unbounded
+   * statement untouched is what keeps the bulk read's target byte-identical to the
+   * listing statement the count and the folder already share.
+   */
+  readonly orderColumn: string;
 }
 
 const CASSANDRA_OBJECT_CATALOGS: Readonly<Record<string, ObjectCatalogSpec>> = Object.freeze({
-  table: { table: "tables", nameColumn: "table_name", projection: ["table_name"] },
-  materialized_view: { table: "views", nameColumn: "view_name", projection: ["view_name"] },
+  table: { table: "tables", nameColumn: "table_name", projection: ["table_name"], orderColumn: "table_name" },
+  materialized_view: {
+    table: "views",
+    nameColumn: "view_name",
+    projection: ["view_name"],
+    orderColumn: "view_name",
+  },
   index: {
     table: "indexes",
     nameColumn: "index_name",
@@ -205,25 +226,31 @@ const CASSANDRA_OBJECT_CATALOGS: Readonly<Record<string, ObjectCatalogSpec>> = O
     // `describeObject` reports for the kind. It is projected by the LISTING statement
     // so both reads are one statement rather than two that could disagree.
     projection: ["index_name", "table_name", "options"],
+    // NOT `index_name`: this catalog clusters on `(table_name, index_name)` and ordering
+    // by the second clustering column alone is a server error (measured).
+    orderColumn: "table_name",
   },
-  type: { table: "types", nameColumn: "type_name", projection: ["type_name"] },
+  type: { table: "types", nameColumn: "type_name", projection: ["type_name"], orderColumn: "type_name" },
   function: {
     table: "functions",
     nameColumn: "function_name",
     projection: ["function_name", "argument_types"],
     overloaded: true,
+    orderColumn: "function_name",
   },
   aggregate: {
     table: "aggregates",
     nameColumn: "aggregate_name",
     projection: ["aggregate_name", "argument_types"],
     overloaded: true,
+    orderColumn: "aggregate_name",
   },
   trigger: {
     table: "triggers",
     nameColumn: "trigger_name",
     projection: ["trigger_name", "table_name"],
     parentColumn: "table_name",
+    orderColumn: "table_name",
   },
 });
 
@@ -242,11 +269,61 @@ function objectCatalog(kind: string): ObjectCatalogSpec | undefined {
 /**
  * The ONE statement that answers for a kind in a keyspace. Undefined for a kind this
  * engine has no catalog for, which is a caller mistake rather than an empty answer.
+ *
+ * ONE builder for the count, the listing and the bulk read's target, so the three answers
+ * are joined on an address all of them derived the same way rather than on spellings that
+ * happen to agree today. Without `limit` the text is unchanged, which is what keeps the
+ * bulk read's unbounded target byte-identical to the statement the folder already shares.
+ *
+ * `limit` is INTERPOLATED rather than bound, and that is not a shortcut: this provider
+ * REFUSES to bind a parameter into a catalog read at all (`index.ts` sends catalog CQL
+ * one-shot with `prepare: false`). It is safe by construction rather than by inspection -
+ * `describeObjects` refuses a limit that is not a positive whole number before it reaches
+ * here, so nothing but digits can arrive. Measured on 5.0.9: `LIMIT 0` is the server's own
+ * error 2200, "LIMIT must be strictly positive", so a clamp would have traded a caller
+ * mistake for a server refusal.
  */
-export function cassandraObjectListCql(keyspace: string, kind: string): string | undefined {
+export function cassandraObjectListCql(keyspace: string, kind: string, limit?: number): string | undefined {
   const spec = objectCatalog(kind);
   if (spec === undefined) return undefined;
-  return `SELECT ${spec.projection.join(", ")} FROM system_schema.${spec.table} WHERE keyspace_name = ${literal(keyspace)}`;
+  const base = `SELECT ${spec.projection.join(", ")} FROM system_schema.${spec.table} WHERE keyspace_name = ${literal(keyspace)}`;
+  return limit === undefined ? base : `${base} ORDER BY ${spec.orderColumn} ASC LIMIT ${limit}`;
+}
+
+/**
+ * Every column of every table and every materialized view in ONE keyspace.
+ *
+ * The same catalog, the same projection and the same mapper the single read uses, widened
+ * from one object to the keyspace by dropping the `table_name` restriction. That is one
+ * partition read either way: `system_schema.columns` is partitioned on `keyspace_name`
+ * alone and clustered on `(table_name, column_name)`, so restricting it to the bounded
+ * target's names with an `IN` list would read the same partition and would make the
+ * statement's SHAPE depend on what the target answered.
+ *
+ * A table and a materialized view are both keyed here by their own name (measured: the
+ * fixture's view `customers_by_city` has its three rows in this catalog beside the three
+ * tables' rows), so one statement serves both kinds.
+ */
+export function cassandraKeyspaceColumnsCql(keyspace: string): string {
+  return (
+    "SELECT table_name, column_name, type, kind, position, clustering_order FROM system_schema.columns " +
+    `WHERE keyspace_name = ${literal(keyspace)}`
+  );
+}
+
+/**
+ * Every user-defined type in one keyspace WITH its fields.
+ *
+ * One statement for the whole folder, because `system_schema.types` carries a UDT's
+ * parallel `field_names` and `field_types` lists on the very row that names it. So the
+ * membership and the detail come from one read and cannot disagree.
+ *
+ * This is a superset projection of the `type` listing statement over the same catalog and
+ * the same predicate, which is what makes it safe to take membership from: it answers
+ * exactly the rows the folder lists.
+ */
+export function cassandraKeyspaceTypesCql(keyspace: string): string {
+  return `SELECT type_name, field_names, field_types FROM system_schema.types WHERE keyspace_name = ${literal(keyspace)}`;
 }
 
 /**
@@ -629,6 +706,17 @@ async function describeType(
     throw new QueryError(`No Cassandra type named ${name} in ${keyspace}`, PROVIDER, cql);
   }
 
+  return typeDetail(path, row);
+}
+
+/**
+ * One `system_schema.types` row as an `ObjectDetail`.
+ *
+ * The SHARED mapper for a UDT, serving the single read and the bulk read alike, because
+ * two copies are two chances for the batch to spell a field's type differently from the
+ * single read of the same type.
+ */
+function typeDetail(path: readonly string[], row: CassandraRow): ObjectDetail {
   const names = readTextList(row.field_names);
   const types = readTextList(row.field_types);
   const columns: ColumnSchema[] = names.map((field, index) => ({
@@ -638,6 +726,37 @@ async function describeType(
     isPrimary: false,
   }));
   return { path: [...path], columns, indexes: [], foreignKeys: [] };
+}
+
+/**
+ * One `system_schema.indexes` row as an `ObjectDetail`, the shared mapper for the kind.
+ *
+ * An index has no columns of its own, so `columns` is empty and the index itself is what
+ * `indexes` carries.
+ */
+function indexDetail(path: readonly string[], row: CassandraRow): ObjectDetail {
+  return { path: [...path], columns: [], indexes: [toIndexSchema(row)], foreignKeys: [] };
+}
+
+/**
+ * One table's or one materialized view's rows as an `ObjectDetail`, the shared mapper.
+ *
+ * `foreignKeys` is ALWAYS empty and that is the engine rather than an omission: CQL has no
+ * `FOREIGN KEY` clause at all, which is the same measurement behind the provider's
+ * `declaresForeignKeys: false`.
+ */
+function relationDetail(
+  path: readonly string[],
+  name: string,
+  columnRows: CassandraRow[],
+  indexRows: readonly CassandraRow[],
+): ObjectDetail {
+  return {
+    path: [...path],
+    columns: cassandraTableColumns(columnRows),
+    indexes: indexRows.filter((row) => readText(row.table_name) === name).map(toIndexSchema),
+    foreignKeys: [],
+  };
 }
 
 /**
@@ -661,7 +780,7 @@ async function describeIndex(
   if (row === undefined) {
     throw new QueryError(`No Cassandra index named ${name} in ${keyspace}`, PROVIDER, cql);
   }
-  return { path: [...path], columns: [], indexes: [toIndexSchema(row)], foreignKeys: [] };
+  return indexDetail(path, row);
 }
 
 /**
@@ -739,10 +858,175 @@ export async function describeObject(
   // indexes reach this table's columns.
   const indexRows = (await transport.execute(cassandraObjectListCql(keyspace, "index")!)).rows;
 
-  return {
-    path: [...path],
-    columns: cassandraTableColumns(columnRows),
-    indexes: indexRows.filter((row) => readText(row.table_name) === name).map(toIndexSchema),
-    foreignKeys: [],
-  };
+  return relationDetail(path, name, columnRows, indexRows);
+}
+
+/**
+ * Columns for EVERY object of one kind in one keyspace, in a CONSTANT number of round
+ * trips (#789).
+ *
+ * The fifth method, and Cassandra is one of the two type-ids that fell out of the four
+ * waves which landed it elsewhere. Nothing went red, because the shared conformance helper
+ * skipped a provider that did not declare the method at all, which is the second half of
+ * that finding.
+ *
+ * CONSTANT PER FOLDER, never one read per object, which is the whole reason the method
+ * exists. It is not ONE statement here and it cannot be: CQL has no join, no subquery and
+ * no union, so the composed single statement PostgreSQL and Druid use is simply not in the
+ * grammar. What replaces it is a fixed statement set per kind, measured rather than
+ * assumed:
+ *
+ * - `table` and `materialized_view`: THREE, issued together - the target listing, the
+ *   keyspace's whole `system_schema.columns` partition, and the keyspace's index listing,
+ *   which is what the single read joins for the same object. They are independent, so they
+ *   go out in parallel and cost one round trip of latency rather than three.
+ * - `index`: ONE. The listing statement already projects `options`, which is the entire
+ *   content of an index detail.
+ * - `type`: ONE. `system_schema.types` carries a UDT's `field_names` and `field_types` on
+ *   the row that names it.
+ * - `function`, `aggregate` and `trigger`: NONE. A routine has no columns and neither does
+ *   a trigger, which is a true fact about the kind rather than a failed read, so the batch
+ *   is `{ details: [] }` without touching the network - exactly as `describeObject`
+ *   answers three empty arrays for one of them.
+ *
+ * The four guards, in the order the reference implementation writes them: an undeclared
+ * kind THROWS naming the engine and the kind, the container is resolved through
+ * `containerKeyspace()` (the same reader the listing uses, so neither the depth nor the
+ * position of the keyspace segment is a constant, standing ruling 5g), a `limit` that is
+ * not a positive whole number THROWS rather than being clamped, and a kind with no columns
+ * answers an empty batch with no round trip.
+ *
+ * MEMBERSHIP IS THE TARGET READ'S, always, and never the column read's. A table the target
+ * named and the column catalog holds nothing for is still in the batch with an empty column
+ * list, where the SINGLE read raises instead - a deliberate difference, because a batch
+ * that silently drops an object its own folder lists is the #414 absence this epic exists
+ * to stop, and no CQL table can be columnless anyway (a primary key is mandatory).
+ *
+ * WHAT ORDERS THE CUT is the catalog's first clustering column, which is the only column
+ * CQL will order by, and on `system_schema.indexes` that is the BASE TABLE rather than the
+ * index name (`ORDER BY index_name` is server error 2200, measured). So on the `index` kind
+ * a bounded read's MEMBERSHIP follows the base table's order while the ANSWER is sorted by
+ * path. On every other kind the two agree.
+ *
+ * AND THE COLLATION QUESTION HAS NO EDGE HERE, measured rather than assumed. Task 26a-2
+ * found that four engines cut under the UTF-8 byte order while `comparePaths` compares
+ * UTF-16 code units, the two reversing for `U+E000` against `U+1F600`. Neither name can
+ * exist on this engine: a CQL identifier holds alphanumeric and underscore characters only,
+ * quoted or not, and `CREATE TABLE ks."<U+1F600>"` and `CREATE KEYSPACE "ks<U+1F600>"` are
+ * both refused by the server. Over that alphabet the byte order and the UTF-16 order are
+ * the same order, so the two sorts cannot disagree.
+ *
+ * A refused read RAISES here rather than answering a short batch. `countObjects` reports a
+ * refusal per kind because a folder badge has a state for it; a batch has none, and
+ * `{ details: [] }` already means "this keyspace holds no such object".
+ */
+export async function describeObjects(
+  transport: CassandraTransport,
+  capabilities: ProviderCapabilities,
+  container: readonly string[],
+  kind: string,
+  limit?: number,
+): Promise<ObjectDetailBatch> {
+  if (findKind(capabilities, kind) === undefined) {
+    throw new QueryError(`Cassandra declares no object kind "${kind}"`, PROVIDER);
+  }
+  const keyspace = containerKeyspace(capabilities, container);
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+    throw new QueryError(
+      `A Cassandra bulk column read limit must be a positive whole number, received ${limit}`,
+      PROVIDER,
+    );
+  }
+  const spec = objectCatalog(kind);
+  if (spec === undefined) {
+    throw new QueryError(`Cassandra declares the kind "${kind}" but has no statement that lists it`, PROVIDER);
+  }
+  // A kind with no columns, answered without a round trip. Keyed on the CATALOG this kind
+  // reads and never on the kind id, the same rule `describeObject` branches by.
+  if (spec.table !== "tables" && spec.table !== "views" && spec.table !== "indexes" && spec.table !== "types") {
+    return { details: [] };
+  }
+
+  // One row more than the bound, so the read itself says whether it stopped short.
+  const bound = limit === undefined ? undefined : limit + 1;
+  const details =
+    spec.table === "types"
+      ? await describeTypeBatch(transport, container, keyspace, bound)
+      : spec.table === "indexes"
+        ? await describeIndexBatch(transport, container, keyspace, bound)
+        : await describeRelationBatch(transport, container, keyspace, kind, bound);
+
+  const truncated = limit !== undefined && details.length > limit;
+  const kept = (truncated ? details.slice(0, limit) : details).sort((left, right) =>
+    comparePaths(left.path, right.path),
+  );
+  return truncated
+    ? { details: kept, truncated: { limit, reason: callerBoundTruncationReason(limit) } }
+    : { details: kept };
+}
+
+/**
+ * Every UDT in one keyspace, from the one statement that carries both its name and its
+ * fields. In the target's order, so the caller's bound cuts what the SERVER ordered.
+ */
+async function describeTypeBatch(
+  transport: CassandraTransport,
+  container: readonly string[],
+  keyspace: string,
+  bound: number | undefined,
+): Promise<ObjectDetail[]> {
+  const cql = cassandraKeyspaceTypesCql(keyspace);
+  const rows = (await transport.execute(bound === undefined ? cql : `${cql} ORDER BY type_name ASC LIMIT ${bound}`))
+    .rows;
+  return rows.map((row) => typeDetail([...container, readText(row.type_name)], row));
+}
+
+/** Every index in one keyspace, from the listing statement, which already carries it all. */
+async function describeIndexBatch(
+  transport: CassandraTransport,
+  container: readonly string[],
+  keyspace: string,
+  bound: number | undefined,
+): Promise<ObjectDetail[]> {
+  const rows = (await transport.execute(cassandraObjectListCql(keyspace, "index", bound)!)).rows;
+  return rows.map((row) => indexDetail([...container, readText(row.index_name)], row));
+}
+
+/**
+ * Every table or every materialized view in one keyspace, with its columns and the indexes
+ * that reach it.
+ *
+ * Three statements, issued TOGETHER. `Promise.all` and not `allSettled`: unlike
+ * `countObjects`, where a refusal is a per-kind fact a folder badge can carry, there is no
+ * state in `ObjectDetailBatch` for "the columns were refused", so a refusal has to raise.
+ *
+ * Paths are built by `objectPath()`, the same function the listing builds its paths with,
+ * because every caller joins the two answers on path.
+ */
+async function describeRelationBatch(
+  transport: CassandraTransport,
+  container: readonly string[],
+  keyspace: string,
+  kind: string,
+  bound: number | undefined,
+): Promise<ObjectDetail[]> {
+  const spec = objectCatalog(kind)!;
+  const [targets, columns, indexes] = await Promise.all([
+    transport.execute(cassandraObjectListCql(keyspace, kind, bound)!),
+    transport.execute(cassandraKeyspaceColumnsCql(keyspace)),
+    transport.execute(cassandraObjectListCql(keyspace, "index")!),
+  ]);
+
+  const byOwner = new Map<string, CassandraRow[]>();
+  for (const row of columns.rows) {
+    const owner = readText(row.table_name);
+    const owned = byOwner.get(owner);
+    if (owned === undefined) byOwner.set(owner, [row]);
+    else owned.push(row);
+  }
+
+  return targets.rows.map((row) => {
+    const name = readText(row[spec.nameColumn]);
+    return relationDetail(objectPath(container, spec, row), name, byOwner.get(name) ?? [], indexes.rows);
+  });
 }
