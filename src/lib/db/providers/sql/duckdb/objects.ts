@@ -38,10 +38,12 @@
 
 import { QueryError } from "../../../errors";
 import { containerDepth } from "../../../object-kinds";
+import { displayName } from "./introspect";
 import type {
   ContainerLevelSpec,
   DatabaseObject,
   KindCount,
+  ObjectDetail,
   ObjectKindSpec,
   ProviderCapabilities,
 } from "../../../types";
@@ -266,6 +268,117 @@ export function listObjectsSql(kind: string, bySchema: boolean): string {
 // ============================================================================
 // Detail statements
 // ============================================================================
+
+/**
+ * The target set of one bulk read: every object of one kind in one container, in the
+ * engine's own order, optionally cut (#789).
+ *
+ * The same `objectSource()` and the same `kindFilter()` the count and the listing use, so
+ * the three cannot disagree about which rows are in scope. What it adds is an `ORDER BY`,
+ * which the listing deliberately does not carry: a bound with no order keeps an arbitrary
+ * subset, and two calls could keep different ones.
+ *
+ * `schema_name` leads the order because a CATALOG-level container spans every schema under
+ * it, so `(schema_name, name)` is what is unique there; a schema-level read has one value
+ * in the first column and is ordered by name alone in effect.
+ *
+ * The `LIMIT` placeholder takes the next free number after the container binds, which is
+ * why it is derived from `bySchema` rather than written: the container filter is `$1`
+ * alone at catalog level and `$1, $2` at schema level.
+ */
+export function bulkTargetSql(kind: string, bySchema: boolean, bounded: boolean): string {
+  const source = objectSource(kind);
+  const limit = bounded ? `\n      LIMIT $${bySchema ? 3 : 2}` : "";
+  return `SELECT schema_name, ${source.nameColumn} AS name
+      FROM ${source.relation}
+      WHERE ${kindFilter(source, bySchema)}
+      ORDER BY schema_name, name${limit}`;
+}
+
+/**
+ * One detail read of a WHOLE FOLDER, as the single read's statement joined to the target.
+ *
+ * Each of the four detail statements below is its `describeObject()` counterpart with the
+ * `schema_name = $2 AND table_name = $3` pair replaced by a join against `described`, and
+ * nothing else changed: the same catalog function, the same predicates, the same casts. A
+ * rewritten statement would be the one thing this file could get wrong that no fixture
+ * shows, so they are built from one function rather than hand-copied four times.
+ *
+ * The join is on BOTH `schema_name` and the name, never on the name alone. A catalog-level
+ * read spans every schema, and this fixture holds `customers` in two of them with different
+ * columns: a join on the name would answer one table with the other's columns rather than
+ * an error anybody would notice.
+ *
+ * `database_name = $1` stays on the OUTER read as well as inside the target, because
+ * `duckdb_columns()` and the two constraint functions span every attached catalog and the
+ * fixture holds `memory.main.customers` and `warehouse.main.customers` at once.
+ */
+function bulkDetailSql(
+  kind: string,
+  bySchema: boolean,
+  bounded: boolean,
+  relation: string,
+  projection: string,
+  extra: string,
+  order: string,
+): string {
+  return `WITH described AS (${bulkTargetSql(kind, bySchema, bounded)})
+      SELECT o.schema_name, o.table_name, ${projection}
+      FROM ${relation} o
+      JOIN described d ON d.schema_name = o.schema_name AND d.name = o.table_name
+      WHERE o.database_name = $1${extra}${order}`;
+}
+
+export function bulkColumnsSql(kind: string, bySchema: boolean, bounded: boolean): string {
+  return bulkDetailSql(
+    kind,
+    bySchema,
+    bounded,
+    "duckdb_columns()",
+    "o.column_name, o.data_type, o.is_nullable, o.column_default",
+    "",
+    "\n      ORDER BY o.schema_name, o.table_name, o.column_index",
+  );
+}
+
+export function bulkPrimaryKeySql(kind: string, bySchema: boolean, bounded: boolean): string {
+  return bulkDetailSql(
+    kind,
+    bySchema,
+    bounded,
+    "duckdb_constraints()",
+    "o.constraint_column_names",
+    "\n        AND o.constraint_type = 'PRIMARY KEY'",
+    "",
+  );
+}
+
+export function bulkForeignKeysSql(kind: string, bySchema: boolean, bounded: boolean): string {
+  return bulkDetailSql(
+    kind,
+    bySchema,
+    bounded,
+    "duckdb_constraints()",
+    "o.constraint_column_names, o.referenced_table, o.referenced_column_names",
+    "\n        AND o.constraint_type = 'FOREIGN KEY'",
+    "",
+  );
+}
+
+export function bulkIndexesSql(kind: string, bySchema: boolean, bounded: boolean): string {
+  return bulkDetailSql(
+    kind,
+    bySchema,
+    bounded,
+    "duckdb_indexes()",
+    "o.index_name, o.is_unique, o.expressions::VARCHAR[] AS index_columns",
+    "",
+    "\n      ORDER BY o.schema_name, o.table_name, o.index_name",
+  );
+}
+
+/** What `ObjectDetailBatch.truncated.reason` says when the caller's bound bites. */
+export const BULK_TRUNCATION_REASON = "the caller's limit on one DuckDB bulk column read";
 
 /**
  * One relation's columns. `duckdb_columns()` carries a VIEW's columns as well as a
@@ -638,6 +751,84 @@ export function listedObject(
   const segments: Record<ContainerLevelSpec["id"], string> = { catalog, schema: row.schema_name };
   const path = [...declaredLevels(capabilities).map((level) => segments[level.id]), row.name];
   return { path, name: row.name, kind };
+}
+
+/**
+ * The rows of one bulk read, grouped by the object they describe.
+ *
+ * The key is built by the CALLER rather than here, because a schema and a name joined by
+ * any printable separator is a name collision waiting to happen: two objects really can be
+ * called `a` and `b.c` in schemas `a.b` and `b`. The caller uses a NUL, which no DuckDB
+ * identifier can contain.
+ */
+export function groupByObject<T>(rows: readonly T[], key: (row: T) => string): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const row of rows) {
+    const id = key(row);
+    const existing = grouped.get(id);
+    if (existing === undefined) grouped.set(id, [row]);
+    else existing.push(row);
+  }
+  return grouped;
+}
+
+/** One bulk detail row, tagged with the object it belongs to. */
+export type OfObject<T> = T & { schema_name: string; table_name: string };
+
+/** One object's four row sets, whichever read produced them. */
+export interface ObjectDetailRows {
+  readonly columns: readonly ColumnRow[];
+  readonly primaryKey: readonly PrimaryKeyRow[];
+  readonly foreignKeys: readonly ForeignKeyRow[];
+  readonly indexes: readonly IndexRow[];
+}
+
+/**
+ * ONE object's detail, from rows, for BOTH the single read and the bulk read (#789).
+ *
+ * One mapper and not two, because two are two chances for `describeObjects` to spell a
+ * column, an index or a foreign key differently from `describeObject` over the same table,
+ * and nothing downstream compares the two answers.
+ *
+ * `schema` is passed rather than read off the path, because the bulk read takes it from the
+ * ROW: a catalog-level read spans every schema under the catalog, so the object's schema is
+ * something the answer carries and not something the container said.
+ */
+export function objectDetailFromRows(path: readonly string[], schema: string, rows: ObjectDetailRows): ObjectDetail {
+  const primaryKey = new Set(rows.primaryKey.flatMap((row) => row.constraint_column_names));
+
+  return {
+    path: [...path],
+    columns: rows.columns.map((row) => ({
+      name: row.column_name,
+      type: row.data_type,
+      nullable: row.is_nullable,
+      isPrimary: primaryKey.has(row.column_name),
+      // `?? undefined` rather than a conditional spread: `ColumnSchema.defaultValue` is
+      // optional and an absent key and an undefined one are the same fact to every
+      // consumer, so the explicit form keeps the object shape constant across rows.
+      defaultValue: row.column_default ?? undefined,
+    })),
+    // A composite foreign key is ONE constraint over several columns and `ForeignKeySchema`
+    // is per column, so the two aligned arrays are zipped out.
+    foreignKeys: rows.foreignKeys.flatMap((row) =>
+      row.constraint_column_names.map((columnName, index) => ({
+        columnName,
+        // Spelled the way `getSchema()` spells it on this engine, because
+        // `ForeignKeySchema` carries one string and both surfaces are live through Phase 1:
+        // bare in `main` and qualified anywhere else. DuckDB refuses a foreign key across
+        // schemas outright, so the target is always in the reading object's own schema and
+        // the catalog never needs naming.
+        referencedTable: displayName(schema, row.referenced_table),
+        referencedColumn: row.referenced_column_names[index],
+      })),
+    ),
+    indexes: rows.indexes.map((row) => ({
+      name: row.index_name,
+      columns: row.index_columns ?? [],
+      unique: row.is_unique,
+    })),
+  };
 }
 
 /**

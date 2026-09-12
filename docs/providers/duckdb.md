@@ -725,6 +725,68 @@ answers `Catalog Error: Macro Function with name "f" already exists!`, measured,
 name is its unique identifier within its schema and the path segment needs no disambiguated form of
 the kind a PostgreSQL routine needs.
 
+#### `describeObjects()` describes a whole folder in five statements (#789)
+
+`describeObjects(container, kind, limit?)` answers columns, indexes and foreign keys for EVERY object
+of one kind in one container, in FIVE round trips whatever the folder holds: the target read plus the
+four detail reads. The single read is four statements PER OBJECT, so a folder of 200 tables cost 800.
+Measured on DuckDB v1.5.5 against a 200-table schema, each table carrying three columns, a primary key
+and an index: **26 ms for one `describeObjects()` against 1,300 ms for 200 `describeObject()` calls**,
+the same 600 columns and 200 indexes.
+
+Each of the four detail statements is its `describeObject()` counterpart with the
+`schema_name = $2 AND table_name = $3` pair replaced by a join against the target set, and nothing else
+changed: the same catalog function, the same predicates, the same `::VARCHAR[]` cast. They are built by
+one function rather than hand-copied four times, because a rewritten statement is the one thing this
+file could get wrong that no fixture shows.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.** The same `duckdb_columns()`, `duckdb_constraints()` and `duckdb_indexes()` the single
+read uses, and the target from the same `duckdb_tables()` / `duckdb_views()` the listing uses, through
+the same `objectSource()` and `kindFilter()`. It is NOT `getSchema()`'s reading: that one filters
+`NOT internal AND database_name = current_database()`, so it cannot see an ATTACHed catalog at all,
+while the object surface binds the catalog the CALLER asked for. MEMBERSHIP comes from the target read
+and never from the column read, so an object the four detail reads answer nothing for comes back with
+three empty lists rather than missing.
+
+**Which kinds have no columns.** `macro` and `sequence`, which answer `{ details: [] }` with NO round
+trip at all. Measured on v1.5.5: `duckdb_columns()` holds rows for `customers`, `orders`, `t` and
+`v_orders` in a database that also holds `app.seq_a` and `app.m_a`, and none at all for the sequence or
+the macro. That is the same fact `describeObject()` answers as three empty arrays, and it is keyed on
+`role !== "relation"` here because on this engine the two coincide - which is NOT the general rule, as
+a PostgreSQL sequence has three columns and a MariaDB one has eight.
+
+**What bounds the read on the wire.** `LIMIT $n` inside the target, the placeholder BOUND rather than
+interpolated and carrying `limit + 1`, so a saturated read is told from an exact one with no second
+count. Measured accepted inside a CTE on v1.5.5. The placeholder NUMBER is derived from the container
+depth rather than written, because the container filter is `$1` alone at catalog level and `$1, $2` at
+schema level; DuckDB reuses a numbered parameter, which is what lets the same bind array serve the
+target and all four detail statements. The extra object is dropped in code and `truncated` carries the
+CALLER's limit. Nothing here caps the columns of an object.
+
+**What orders the cut, and under whose collation.** `ORDER BY schema_name, name` in the target.
+`schema_name` leads because a CATALOG-level container spans every schema under it, so `(schema, name)`
+is what is unique there. Two things about it were measured rather than assumed. First, no data this
+engine can hold separates the ordered statement from the unordered one: five tables created as
+`main.zz, main.aa, analytics.mm, analytics.bb, main.cc` come back from a bare
+`SELECT ... FROM duckdb_tables()` already sorted, because DuckDB walks its catalog's sorted maps. That
+fixture was built specifically to disprove the pin (standing ruling 5a) and did not, so the `ORDER BY`
+is pinned by statement TEXT and kept, since the natural order is an implementation detail of the
+catalog rather than a promise. Second, that sort runs under the UTF-8 BYTE order, which is NOT the order
+`comparePaths` produces: measured, a schema holding `U+E000` and `U+1F600` comes back from DuckDB as
+`U+E000, U+1F600` and from a JavaScript sort as `U+1F600, U+E000`, because JavaScript compares UTF-16
+code units. So the MEMBERSHIP of a bounded cut is the engine's and the ORDER of the answer is ours.
+
+**Mixed path depth (ruling 5f).** Not in this engine's relation set. Every DuckDB object of every
+declared kind sits in a schema, `objectShapes()` refuses a kind declaring `attachedTo`, and there are
+no triggers at all, so `table` and `view` are both `[catalog, schema, name]` at either container depth.
+
+The join is on BOTH `schema_name` and the name, never on the name alone, and the outer read keeps
+`database_name = $1` as well: the fixture holds `customers` in two schemas of one catalog with
+different columns AND in two catalogs with the same schema name, so a join on the name alone answers
+one table with another's columns rather than an error anybody would notice.
+
 #### No row count on a listed object, deliberately
 
 `estimated_size` is the only per-table cardinality DuckDB publishes and it is an ESTIMATE (§3.5), so

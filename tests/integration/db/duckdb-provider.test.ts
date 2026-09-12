@@ -30,6 +30,7 @@ import {
   FUNCTION_TYPE_RULES,
   OBJECT_COLUMNS_SQL,
   applyKindCounts,
+  bulkTargetSql,
   comparePaths,
   countsSql,
   listObjectsSql,
@@ -1837,6 +1838,306 @@ describe("DuckDB object containers, listings and detail", () => {
  * real tables with two different columns: a positional read answers the wrong one rather
  * than nothing, and the test can tell them apart by name.
  */
+/**
+ * The bulk column read (#789), against the real embedded engine.
+ *
+ * Every assertion below is a live answer from DuckDB v1.5.5: the fixture is built by DDL
+ * in `seededObjectProvider()` and nothing here is recorded or faked.
+ */
+describe("DuckDB bulk column read", () => {
+  /**
+   * Every statement the provider sent from here on.
+   *
+   * The only way to assert "no round trip at all", which is the claim a kind with no
+   * columns makes, and the only way to assert that the round trips are CONSTANT in the
+   * number of objects rather than one per object. `spyOn` keeps the real implementation,
+   * so every answer beside the count is still the engine's.
+   */
+  function recordStatements(provider: DuckDBProvider): string[] {
+    const client = (provider as unknown as { client: { run: (sql: string, params?: unknown[]) => unknown } }).client;
+    const sent: string[] = [];
+    const real = client.run.bind(client);
+    spyOn(client, "run").mockImplementation((sql: string, params?: unknown[]) => {
+      sent.push(sql);
+      return real(sql, params);
+    });
+    return sent;
+  }
+
+  test("describes every table in a CATALOG, across both its schemas, and each detail is the single read's", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      const batch = await provider.describeObjects(["memory"], "table");
+
+      expect(batch.truncated).toBeUndefined();
+      expect(batch.details.map((detail) => detail.path)).toEqual([
+        ["memory", "analytics", "customers"],
+        ["memory", "analytics", "events"],
+        ["memory", "analytics", "orders"],
+        ["memory", "main", "customers"],
+        ["memory", "main", "orders"],
+        ["memory", "main", "overlap"],
+      ]);
+      // One mapper serves both reads, so a divergence here is the bulk read spelling a
+      // column, an index or a foreign key differently from the single read of the same
+      // table - the defect two mappers cause.
+      for (const detail of batch.details) {
+        expect(detail).toEqual(await provider.describeObject(detail.path, "table"));
+      }
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("two same-named tables in two schemas keep their own columns", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      // The catalog-level read spans every schema under the catalog, so this is the case
+      // that a join on NAME alone gets wrong: `main.customers` has three columns and
+      // `analytics.customers` has one, and a merged answer would be a table with columns
+      // it does not have rather than an error anybody would notice.
+      const batch = await provider.describeObjects(["memory"], "table");
+      const byPath = new Map(batch.details.map((detail) => [detail.path.join("."), detail]));
+
+      expect(byPath.get("memory.main.customers")!.columns.map((column) => column.name)).toEqual(["id", "name", "note"]);
+      expect(byPath.get("memory.analytics.customers")!.columns.map((column) => column.name)).toEqual(["event_id"]);
+      // And the indexes land on the right table too: both schemas hold an `orders` with
+      // an index of the SAME NAME, `ix_orders_customer`, over different columns.
+      expect(byPath.get("memory.main.orders")!.indexes).toEqual([
+        { name: "ix_orders_customer", columns: ["customer_id"], unique: false },
+      ]);
+      expect(byPath.get("memory.analytics.orders")!.indexes).toEqual([
+        { name: "ix_orders_customer", columns: ["id"], unique: false },
+      ]);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("a SCHEMA-level read answers that schema only, and the other catalog is never merged in", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      const batch = await provider.describeObjects(["memory", "main"], "table");
+
+      expect(batch.details.map((detail) => detail.path)).toEqual([
+        ["memory", "main", "customers"],
+        ["memory", "main", "orders"],
+        ["memory", "main", "overlap"],
+      ]);
+      // `warehouse.main.customers` holds one column called `sku` and shares both the
+      // schema name and the table name with `memory.main.customers`. A detail read that
+      // dropped `database_name = $1` would report a table with columns from both.
+      expect(batch.details[0]!.columns.map((column) => column.name)).toEqual(["id", "name", "note"]);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("a view is described from the same statements a table is", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      const batch = await provider.describeObjects(["memory", "main"], "view");
+
+      expect(batch.details.map((detail) => detail.path)).toEqual([["memory", "main", "customer_names"]]);
+      expect(batch.details[0]!.columns.map((column) => column.name)).toEqual(["name"]);
+      expect(batch.details[0]!.indexes).toEqual([]);
+      expect(batch.details[0]!.foreignKeys).toEqual([]);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("a macro and a sequence answer an empty batch with no round trip at all", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      const sent = recordStatements(provider);
+
+      await expect(provider.describeObjects(["memory"], "macro")).resolves.toEqual({ details: [] });
+      await expect(provider.describeObjects(["memory"], "sequence")).resolves.toEqual({ details: [] });
+
+      // Not "no rows came back": no statement was sent. Measured on DuckDB v1.5.5,
+      // `duckdb_columns()` holds no row at all for a sequence or a macro, so neither kind
+      // has columns on this engine and that is a fact about the KIND, answered from the
+      // declaration.
+      expect(sent).toEqual([]);
+      // The control: a kind that DOES have columns still reaches the engine.
+      await provider.describeObjects(["memory"], "view");
+      expect(sent.length).toBeGreaterThan(0);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("an undeclared kind raises, naming the engine and the kind", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      await expect(provider.describeObjects(["memory"], "trigger")).rejects.toThrow(
+        /DuckDB declares no object kind "trigger"/,
+      );
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("a container path of the wrong shape raises through the declaration, not a literal depth", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      await expect(provider.describeObjects([], "table")).rejects.toThrow(
+        /A DuckDB container path is \[database\] or \[database, schema\], received \[\]/,
+      );
+      await expect(provider.describeObjects(["memory", "main", "orders"], "table")).rejects.toThrow(
+        /A DuckDB container path is \[database\] or \[database, schema\]/,
+      );
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("the container levels are read BY NAME, so reversing the declaration reverses the binds", async () => {
+    // Standing ruling 5g driven to a VALUE against a live engine. The declaration is the
+    // same two levels in the opposite order, so `container[0]` is now the SCHEMA: a
+    // positional read binds `main` as the catalog and answers nothing, while a read by
+    // level binds the same pair the right way round and the engine answers the same three
+    // tables.
+    const provider = await seededObjectProvider();
+    try {
+      spyOn(provider, "getCapabilities").mockReturnValue({
+        ...provider.getCapabilities(),
+        containerLevels: [
+          { id: "schema", label: "Schema", labelPlural: "Schemas" },
+          { id: "catalog", label: "Database", labelPlural: "Databases" },
+        ],
+      });
+
+      const batch = await provider.describeObjects(["main", "memory"], "table");
+
+      expect(batch.details.map((detail) => detail.path)).toEqual([
+        ["main", "memory", "customers"],
+        ["main", "memory", "orders"],
+        ["main", "memory", "overlap"],
+      ]);
+      expect(batch.details[0]!.columns.map((column) => column.name)).toEqual(["id", "name", "note"]);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("a limit that is not a positive whole number raises rather than clamping", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        await expect(provider.describeObjects(["memory"], "table", limit)).rejects.toThrow(
+          /A DuckDB bulk column read limit must be a positive whole number/,
+        );
+      }
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("a bound that bites reports the caller's own limit, and one that does not never reports", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      const bounded = await provider.describeObjects(["memory"], "table", 2);
+      expect(bounded.details.map((detail) => detail.path)).toEqual([
+        ["memory", "analytics", "customers"],
+        ["memory", "analytics", "events"],
+      ]);
+      expect(bounded.truncated?.limit).toBe(2);
+      expect(bounded.truncated?.reason.length).toBeGreaterThan(0);
+      // Every bounded detail is complete, not a stub: the bound cuts OBJECTS and never
+      // columns.
+      expect(bounded.details[0]!.columns.map((column) => column.name)).toEqual(["event_id"]);
+
+      // Exactly as many as the folder holds: `limit + 1` is what the statement carries, so
+      // a saturated read is told from an exact one with no second count.
+      const exact = await provider.describeObjects(["memory"], "table", FIXTURE_CATALOG_COUNTS.table);
+      expect(exact.details).toHaveLength(FIXTURE_CATALOG_COUNTS.table);
+      expect(exact.truncated).toBeUndefined();
+
+      const unbounded = await provider.describeObjects(["memory"], "table");
+      expect(unbounded.details).toHaveLength(FIXTURE_CATALOG_COUNTS.table);
+      expect(unbounded.truncated).toBeUndefined();
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("the engine cuts under its own order and the answer is sorted by path, and those are two different orders", async () => {
+    // The one probe that separates the two on this engine. DuckDB's `ORDER BY` runs under
+    // the UTF-8 BYTE order, where U+E000 (EE 80 80) sorts below U+1F600 (F0 9F 98 80);
+    // JavaScript compares UTF-16 code units, where the surrogate 0xD83D sorts below
+    // 0xE000. Measured on v1.5.5.
+    const provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+    try {
+      await provider.query('CREATE TABLE "\u{1F600}" (x INTEGER)');
+      await provider.query('CREATE TABLE "" (x INTEGER)');
+
+      const engineOrder = await provider.query(
+        "SELECT table_name FROM duckdb_tables() WHERE database_name = 'memory' ORDER BY table_name",
+      );
+      expect(engineOrder.rows.map((row) => (row as { table_name: string }).table_name)).toEqual(["", "\u{1F600}"]);
+
+      const batch = await provider.describeObjects(["memory", "main"], "table");
+      expect(batch.details.map((detail) => detail.path)).toEqual([
+        ["memory", "main", "\u{1F600}"],
+        ["memory", "main", ""],
+      ]);
+
+      // And the cut keeps the engine's first, which is the other one.
+      const bounded = await provider.describeObjects(["memory", "main"], "table", 1);
+      expect(bounded.details.map((detail) => detail.path)).toEqual([["memory", "main", ""]]);
+      expect(bounded.truncated?.limit).toBe(1);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("the round trips are constant in the number of objects", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      const sent = recordStatements(provider);
+
+      const batch = await provider.describeObjects(["memory"], "table");
+
+      // Six objects, five statements: the target read plus the four detail reads. The
+      // single read is four statements PER OBJECT, so the alternative here was 24.
+      expect(batch.details).toHaveLength(6);
+      expect(sent).toHaveLength(5);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("a composite foreign key is zipped out per column, exactly as the single read does it", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      const batch = await provider.describeObjects(["memory", "main"], "table");
+      const orders = batch.details.find((detail) => detail.path[2] === "orders")!;
+
+      expect(orders.foreignKeys).toEqual([
+        { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
+      ]);
+      expect(orders.columns.find((column) => column.name === "id")!.isPrimary).toBe(true);
+      expect(orders.columns.find((column) => column.name === "total")!.isPrimary).toBe(false);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("an empty folder answers an empty batch rather than raising", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      // `warehouse` holds no view at all, and "this container holds none" is a true answer
+      // rather than a refusal.
+      await expect(provider.describeObjects(["warehouse"], "view")).resolves.toEqual({ details: [] });
+    } finally {
+      await provider.disconnect();
+    }
+  });
+});
+
 describe("DuckDB object paths are derived from the declaration, never from a position", () => {
   async function crossedProvider(): Promise<DuckDBProvider> {
     const provider = new DuckDBProvider(makeConfig());
@@ -2114,6 +2415,28 @@ describe("DuckDB object statements: what the fixture cannot show", () => {
     expect(sql.match(/\$2/g)).toHaveLength(2);
     expect(sql).not.toContain("?");
     expect(countsSql(KINDS, false)).not.toContain("$2");
+  });
+
+  test("the bulk target orders by schema and name, which no fixture on this engine can prove", () => {
+    // Standing ruling 5a asks for the fixture that would DISPROVE a statement-shape pin
+    // before the pin is accepted. It was built and it does not disprove it: five tables
+    // created in the order `main.zz, main.aa, analytics.mm, analytics.bb, main.cc` come
+    // back from a bare `SELECT ... FROM duckdb_tables()` as
+    // `analytics.bb, analytics.mm, main.aa, main.cc, main.zz`, because DuckDB walks its
+    // catalog's sorted maps. So no data this engine can hold separates the ordered
+    // statement from the unordered one, and the `ORDER BY` is pinned by TEXT.
+    //
+    // It stays because the order is what decides WHICH objects a bound keeps, and the
+    // natural order is an implementation detail of the catalog rather than a promise.
+    for (const bySchema of [false, true]) {
+      expect(bulkTargetSql("table", bySchema, false)).toContain("ORDER BY schema_name, name");
+      expect(bulkTargetSql("table", bySchema, true)).toContain("ORDER BY schema_name, name");
+    }
+    // The LIMIT placeholder takes the next free number after the container binds, which is
+    // one at catalog level and two at schema level.
+    expect(bulkTargetSql("table", false, true)).toContain("LIMIT $2");
+    expect(bulkTargetSql("table", true, true)).toContain("LIMIT $3");
+    expect(bulkTargetSql("table", false, false)).not.toContain("LIMIT");
   });
 
   test("the column read orders by column_index, which no fixture can prove", () => {
