@@ -88,6 +88,7 @@ type SchemaRelationRow = Pick<SchemaRow, "table_schema" | "table_name" | "foreig
 /** One row of `CONTAINERS_SQL`. */
 interface ContainerRow {
   name: string;
+  is_session_default: number;
 }
 
 /** One row of `COUNTS_SQL`. `count(*)::int` arrives as a JS number, not a string. */
@@ -540,8 +541,17 @@ function isMissingExtensionCatalogError(error: unknown): boolean {
 // and the overview count hide. Measured on the seeded postgres:18 fixture: `app` and
 // `public`, and nothing else - pg_namespace there holds only those two plus pg_catalog,
 // information_schema and pg_toast, all three of which the fixed list removes.
+// `current_schema()` marks the session's own, which standing ruling 5a2 requires of every
+// provider with container levels and this one answered for none. It is the SERVER'S answer
+// and not the literal `public`: measured on the seeded postgres:18 fixture, a fresh
+// connection reports search_path `"$user", public` and current_schema `public`, and a
+// connection that sets search_path moves it. Without the mark the object browser's flat
+// join had no tie-breaker, so a bare `orders` answering to both `app.orders` and
+// `public.orders` was refused as ambiguous rather than read as the session's own (#789).
 const CONTAINERS_SQL = `
-        SELECT n.nspname AS name
+        SELECT
+          n.nspname AS name,
+          (n.nspname = current_schema())::int AS is_session_default
         FROM pg_catalog.pg_namespace n
         WHERE ${schemaExclusion("n.nspname")}
         ORDER BY n.nspname ASC`;
@@ -2181,7 +2191,12 @@ export class PostgresProvider extends SQLBaseProvider {
     const client = await this.pool!.connect();
     try {
       const result = await this.queryWithMaterializedFallback(client, CONTAINERS_SQL);
-      return result.rows.map((row: ContainerRow) => ({ path: [row.name], name: row.name, level: 0 }));
+      return result.rows.map((row: ContainerRow) => ({
+        path: [row.name],
+        name: row.name,
+        level: 0,
+        isSessionDefault: Number(row.is_session_default) === 1,
+      }));
     } finally {
       client.release();
     }

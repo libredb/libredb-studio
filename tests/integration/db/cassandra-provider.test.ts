@@ -1814,10 +1814,35 @@ const TYPE_FIELD_LIST = result(declare(["field_names", LIST_TEXT], ["field_types
   { field_names: ["street", "city", "postcode"], field_types: ["text", "text", "text"] },
 ]);
 
+/**
+ * `system_reports` holds NOTHING, and the double has to say so rather than not answer.
+ *
+ * The fixture creates that keyspace to prove the system-keyspace exclusion is not a
+ * `system%` prefix rule, and it creates no object in it. The conformance guard resolves a
+ * flat name against every container `listContainers` answered (#789), so it now lists the
+ * relation kinds here too; a double that simply had no reply for those statements failed
+ * with `unexpected statement`, which says nothing about the provider.
+ */
+const EMPTY_KEYSPACE_KINDS = [
+  "table",
+  "materialized_view",
+  "index",
+  "type",
+  "function",
+  "aggregate",
+  "trigger",
+] as const;
+
 /** The catalog answers a healthy object-surface read gets, on top of `healthyReplies()`. */
 function objectReplies(overrides: Record<string, Reply> = {}): Record<string, Reply> {
   return {
     ...healthyReplies(),
+    ...Object.fromEntries(
+      EMPTY_KEYSPACE_KINDS.map((kind) => [
+        cassandraObjectListCql("system_reports", kind)!,
+        result(declare(["keyspace_name", TEXT]), []),
+      ]),
+    ),
     [CASSANDRA_KEYSPACE_LIST_CQL]: KEYSPACE_LIST,
     [cassandraObjectListCql(KEYSPACE, "table")!]: OBJECT_TABLE_LIST,
     [cassandraObjectListCql(KEYSPACE, "materialized_view")!]: OBJECT_VIEW_LIST,

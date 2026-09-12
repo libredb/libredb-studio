@@ -4042,7 +4042,17 @@ describe("object surface", () => {
       "'m'": ["revenue_by_month"],
       "'r','p'": ["orders", "products"],
     };
+    // `public` holds ONE table and it is called `orders`, the same last segment as
+    // `app.orders`. That is `docker/postgres-init/03-object-fixture.sql`, and it is the case
+    // the address rule and its preferred-container tie-breaker exist for: with one schema in
+    // play a bare name is a valid suffix of every address, so the join could not be told
+    // apart from a suffix match. Measured on a postgres:18 seeded with `docker/postgres-init`:
+    // `current_schema()` is `public`, so the bare `orders` the flat reading spells for it
+    // must land HERE and the qualified `app.orders` on the other.
+    const publicRelations: Record<string, string[]> = { "'v'": [], "'m'": [], "'r','p'": ["orders"] };
     const relkindOf = (sql: string) => Object.keys(relations).find((relkinds) => sql.includes(`IN (${relkinds})`))!;
+    const listedIn = (schema: string | undefined, relkinds: string) =>
+      (schema === "public" ? publicRelations : relations)[relkinds];
     mockQueryFn = async (sql, params) => {
       // The FLAT reading, over the same relations the object reading lists (#789).
       //
@@ -4067,7 +4077,7 @@ describe("object surface", () => {
       if (sql.includes("FROM tables_info ti")) {
         const flat = [
           ...Object.values(relations).flatMap((names) => names.map((name) => ["app", name] as const)),
-          ["public", "audit_log"] as const,
+          ["public", "orders"] as const,
         ];
         return {
           rows: flat.map(([schema, name]) => ({
@@ -4097,7 +4107,14 @@ describe("object surface", () => {
           })),
         };
       }
-      if (sql.includes("pg_namespace") && sql.includes("ORDER BY")) return { rows: [{ name: "app" }] };
+      if (sql.includes("pg_namespace") && sql.includes("ORDER BY")) {
+        return {
+          rows: [
+            { name: "app", is_session_default: 0 },
+            { name: "public", is_session_default: 1 },
+          ],
+        };
+      }
       if (sql.includes("GROUP BY kind")) {
         return {
           rows: [
@@ -4112,7 +4129,11 @@ describe("object surface", () => {
         // every counted kind and requires paths unique across all of them, so one row
         // reused for three kinds is three objects at one address.
         return {
-          rows: relations[relkindOf(sql)].map((name) => ({ name, row_count: null, size_bytes: null })),
+          rows: listedIn(params?.[0] as string | undefined, relkindOf(sql)).map((name) => ({
+            name,
+            row_count: null,
+            size_bytes: null,
+          })),
         };
       }
       return { rows: [] };
@@ -4120,7 +4141,7 @@ describe("object surface", () => {
     const provider = makeProvider();
     await provider.connect();
     await assertObjectSurface(provider, {
-      containers: [["app"]],
+      containers: [["app"], ["public"]],
       kinds: { table: 3, view: 4, materialized_view: 1 },
       sampleObject: { path: ["app", "order_summary"], kind: "view" },
     });
@@ -4180,6 +4201,37 @@ describe("PostgreSQL object listing and detail", () => {
     // nothing, which is indistinguishable from a real empty schema.
     await expect(provider.countObjects([])).rejects.toThrow(QueryError);
     await expect(provider.listObjects(["catalog", "schema"], "table")).rejects.toThrow(/one schema name/);
+    await provider.disconnect();
+  });
+
+  test("the containers are the schemas, with the session's own marked", async () => {
+    // Standing ruling 5a2: a provider with container levels marks `isSessionDefault` at
+    // every level, or first paint stops short and opens nothing. This one marked none, and
+    // that also left the flat join with no tie-breaker: measured on a postgres:18 seeded
+    // with `docker/postgres-init/`, a bare `orders` from the flat reading answers to both
+    // `app.orders` and `public.orders` and nothing said which container the session was in.
+    //
+    // `current_schema()` is what the server answers, not `public` written down: measured on
+    // the seeded fixture, a fresh connection reports search_path `"$user", public` and
+    // current_schema `public`, and a connection that sets search_path moves it.
+    const asked: string[] = [];
+    mockQueryFn = async (sql) => {
+      asked.push(sql);
+      return {
+        rows: [
+          { name: "app", is_session_default: 0 },
+          { name: "public", is_session_default: 1 },
+        ],
+      };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect(await provider.listContainers()).toEqual([
+      { path: ["app"], name: "app", level: 0, isSessionDefault: false },
+      { path: ["public"], name: "public", level: 0, isSessionDefault: true },
+    ]);
+    expect(asked.at(-1)).toContain("current_schema()");
     await provider.disconnect();
   });
 

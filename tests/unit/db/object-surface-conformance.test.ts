@@ -61,6 +61,16 @@ describe("assertObjectSurface", () => {
         expect(container).toEqual(["app"]);
         return { table: { count: 2 }, view: { count: 4 } };
       },
+      // The other container holds its own objects, and the fake has to say so. The join
+      // resolves against every container the provider answered, so a fake that returned
+      // `app`'s rows whatever it was asked for would put two `["app","orders"]` in one pool
+      // and report a correct provider as ambiguous.
+      listObjects: async (container: readonly string[], kind: string) =>
+        container[0] === "app"
+          ? kind === "view"
+            ? [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }]
+            : [{ path: ["app", "orders"], name: "orders", kind }]
+          : [{ path: ["INFORMATION_SCHEMA", `columns_${kind}`], name: `columns_${kind}`, kind }],
     });
     await assertObjectSurface(provider as never, {
       containers: [["INFORMATION_SCHEMA"], ["app"]],
@@ -568,6 +578,67 @@ describe("assertObjectSurface ties the flat reading to the object paths", () => 
       kinds: { table: 2, view: 4 },
       sampleObject: { path: ["main", "app", "orders"], kind: "table" },
     });
+  });
+
+  /**
+   * The two tests below are one pair, and they are what closes the hole the wave that added
+   * this join MEASURED in it (#789).
+   *
+   * The hole: on a fixture with ONE container a bare flat name is a valid suffix of every
+   * address, so it always resolves and the guard proved the join returns SOMETHING rather
+   * than the right object. Respelling PostgreSQL's `app` rows as if they sat in `public`,
+   * which drops the qualifier the engine really emits, still passed.
+   *
+   * What closes it is that the pool is now every container `listContainers` ANSWERED, not
+   * just the contract's, plus INJECTIVITY: two flat rows landing on one object is the
+   * doubled header the join exists to prevent, and it is precisely what a dropped qualifier
+   * produces. The first test is the correct provider, where the tie-breaker is the thing
+   * doing the work; the second is the same provider with the qualifier dropped.
+   */
+  const twoSchemas = {
+    listContainers: async () => [
+      { path: ["app"], name: "app", level: 0, isSessionDefault: false },
+      { path: ["public"], name: "public", level: 0, isSessionDefault: true },
+    ],
+    countObjects: async () => ({ table: { count: 1 }, view: { count: 0 } }),
+    listObjects: async (container: readonly string[], kind: string) =>
+      kind === "table" ? [{ path: [container[0], "orders"], name: "orders", kind }] : [],
+  };
+  const twoSchemasExpectation = {
+    containers: [["app"], ["public"]],
+    kinds: { table: 1, view: 0 },
+    sampleObject: { path: ["app", "orders"], kind: "table" },
+  };
+
+  test("joins a flat name against every container the provider answered, and the default decides the bare one", async () => {
+    const provider = fakeProvider({
+      ...twoSchemas,
+      // The engine's own spelling: the session default container is dropped and every other
+      // one is kept, which is what postgres.ts does with `public`.
+      getSchema: async () => [
+        { name: "app.orders", columns: [], indexes: [] },
+        { name: "orders", columns: [], indexes: [] },
+      ],
+    });
+
+    await assertObjectSurface(provider as never, twoSchemasExpectation);
+  });
+
+  test("rejects two flat names that both join onto one object", async () => {
+    const provider = fakeProvider({
+      ...twoSchemas,
+      // The defect: the qualifier is dropped for BOTH schemas, so the two rows are one
+      // string twice. Each resolves on its own - a bare name is a suffix of both addresses
+      // and the default breaks the tie - and the pair cannot address two objects.
+      getSchema: async () => [
+        { name: "orders", columns: [], indexes: [] },
+        { name: "orders", columns: [], indexes: [] },
+      ],
+    });
+
+    await expect(assertObjectSurface(provider as never, twoSchemasExpectation)).rejects.toThrow(
+      /both join onto the same listed object \["public","orders"\]/,
+    );
   });
 });
 

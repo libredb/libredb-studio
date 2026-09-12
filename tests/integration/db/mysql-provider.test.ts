@@ -3240,6 +3240,15 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
     }
     if (normalized.includes("information_schema.tables")) {
       const type = (params ?? [])[1];
+      // Scoped to the DATABASE the read bound. `reporting` holds `regions` and nothing
+      // else, which is what `docker/mysql-init/01-object-fixture.sql` creates and what
+      // `orders.region_id` references. The double answered `app`'s rows for every database
+      // before, and the conformance guard now resolves a flat name against every container
+      // `listContainers` answered (#789), so that lie would have put three phantom objects
+      // in the pool.
+      if ((params ?? [])[0] === "reporting") {
+        return [type === "BASE TABLE" ? [{ name: "regions", row_count: 0, size_bytes: 16384 }] : [], []];
+      }
       if (type === "BASE TABLE") return [tables, []];
       if (type === "VIEW") {
         return [[{ name: "order_summary", row_count: null, size_bytes: null }], []];

@@ -59,7 +59,7 @@
  * which names neither the kind nor the expectation.
  */
 import { expect } from "bun:test";
-import type { DatabaseObject, DatabaseProvider, KindCount, ObjectDetailBatch } from "@/lib/db/types";
+import type { Container, DatabaseObject, DatabaseProvider, KindCount, ObjectDetailBatch } from "@/lib/db/types";
 import { declaredKinds, isCountUnavailable, relationKindIds } from "@/lib/db/object-kinds";
 import { resolveObjectAddress } from "@/lib/db/object-address";
 import { enumerateContainers } from "@/lib/db/container-walk";
@@ -194,7 +194,7 @@ export async function assertObjectSurface(
   expect(detail.path).toEqual([...sample.path]);
 
   await assertBulkColumnRead(provider, container, listings);
-  await assertFlatReadingJoins(provider, listings);
+  await assertFlatReadingJoins(provider, listings, containers, container);
 }
 
 /**
@@ -225,6 +225,27 @@ export async function assertObjectSurface(
  * a listed object's last path segment are the same string, which is a fact about the two
  * ANSWERS. A sample the test author picked would certify the one spelling they thought of.
  *
+ * **TWO THINGS CLOSE THE HOLE THIS GUARD WAS MEASURED TO HAVE.** As first written it ran
+ * against the objects of ONE container, and on a single-container fixture a bare flat name
+ * is a valid suffix of every address, so it always resolved: the guard proved the join
+ * returned SOMETHING, not that it returned the right object. Respelling PostgreSQL's `app`
+ * rows as if they sat in `public`, which is exactly the dropped qualifier the rule exists to
+ * catch, still passed.
+ *
+ *   1. The candidate pool is EVERY container `listContainers` answered. That is the pool the
+ *      browser resolves against, and it is what lets two objects in different containers
+ *      contest one name, which is the only shape in which the preferred-container
+ *      tie-breaker does any work. The other containers contribute candidates only: nothing
+ *      is counted, listed or described there.
+ *   2. The join must be INJECTIVE. Two flat rows landing on one object is the doubled header
+ *      this join exists to prevent, and it is what a dropped qualifier produces: each row
+ *      still resolves on its own, so no per-row check can see it.
+ *
+ * `docker/postgres-init/03-object-fixture.sql` puts that case in a real fixture: an `orders`
+ * in `app` and another in `public`, where the flat reading qualifies one and not the other.
+ * Both halves are mutated in this helper's own suite, and dropping the qualifier in
+ * `postgres.ts` turns the PostgreSQL contract red by name.
+ *
  * **THIS GUARD IS EXPECTED TO TURN SOME PROVIDERS RED, and that is its purpose.** A red
  * here is a provider whose two readings cannot be joined, which is a real defect the app
  * shows as rows with no kind. Do not weaken it to make a provider pass.
@@ -235,13 +256,27 @@ export async function assertObjectSurface(
 async function assertFlatReadingJoins(
   provider: DatabaseProvider,
   listings: ReadonlyMap<string, DatabaseObject[]>,
+  answered: readonly Container[],
+  contract: readonly string[],
 ): Promise<void> {
   const relations = new Set(relationKindIds(provider.getCapabilities()));
-  const objects = [...listings].filter(([kind]) => relations.has(kind)).flatMap(([, listed]) => listed);
-  if (objects.length === 0) {
+  const contractObjects = [...listings].filter(([kind]) => relations.has(kind)).flatMap(([, listed]) => listed);
+  if (contractObjects.length === 0) {
     throw new Error(
       "no listing above is of a relation kind, so nothing the flat reading can name was listed and this join is vacuous",
     );
+  }
+
+  // EVERY container the provider answered, not just the contract's. The browser resolves a
+  // flat name against the whole inventory, so a pool holding one container's objects can
+  // only ever be asked a question with one possible answer, and the tie-breaker below is
+  // then decided by there being nothing to break. The other containers contribute
+  // CANDIDATES only: nothing is counted, listed-non-empty or described there, because those
+  // are the contract's assertions about the container the expectation named.
+  const objects = [...contractObjects];
+  for (const other of answered) {
+    if (pathKey(other.path) === pathKey(contract)) continue;
+    for (const kind of relations) objects.push(...(await provider.listObjects!(other.path, kind)));
   }
 
   const { defaultContainer } = await enumerateContainers(provider, () => provider.listContainers!.bind(provider));
@@ -274,9 +309,28 @@ async function assertFlatReadingJoins(
     );
   }
 
+  // INJECTIVITY, which is the half of the join a suffix match cannot check on its own.
+  // A resolution says the spelling reaches SOME object; only the whole subject read
+  // together says it reaches the RIGHT one. Two flat rows landing on one object is the
+  // doubled header `tagObjectKinds` exists to prevent, and it is what a provider that drops
+  // a qualifier produces: with an `orders` in two containers and both rows spelled bare,
+  // each row still resolves, to the same object, and every per-row check passes.
+  const claimed = new Map<DatabaseObject, string>();
+
   for (const entry of subject) {
     const resolution = resolveObjectAddress(objects, (object) => object.path, entry.name, defaultContainer);
-    if (resolution.kind === "resolved") continue;
+    if (resolution.kind === "resolved") {
+      const already = claimed.get(resolution.object);
+      if (already !== undefined) {
+        throw new Error(
+          `the flat reading spells two objects "${already}" and "${entry.name}" and both join onto the same ` +
+            `listed object ${pathKey(resolution.object.path)}, so one of them is spelled too loosely to say ` +
+            "which object it means",
+        );
+      }
+      claimed.set(resolution.object, entry.name);
+      continue;
+    }
     const detail =
       resolution.kind === "ambiguous"
         ? `${resolution.candidates.length} listed objects answer to it: ${resolution.candidates

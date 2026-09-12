@@ -592,6 +592,30 @@ points across schemas renders correctly. The FK introspection CTE (`CTE_FK_INFO`
 mis-resolves same-named constraints in different schemas (this was a real bug; there is a
 regression test for it).
 
+### 3.4.1 The session default container, and why a bare name needs one
+
+`listContainers()` marks `isSessionDefault` from `current_schema()`, which standing ruling 5a2 of
+issue #789 requires of every provider with container levels and this one answered for none.
+
+It is the SERVER'S answer and not the literal `public` written down. Measured on a `postgres:18`
+seeded from `docker/postgres-init/`: a fresh connection reports `search_path` as `"$user", public`
+and `current_schema()` as `public`, and a connection that sets `search_path` moves it.
+
+Without the mark the object browser's flat join had no tie-breaker. §3.4 above drops the `public`
+qualifier and keeps every other one, so `getSchema()` answers `app.orders` for one table and a bare
+`orders` for another; a bare name is a valid suffix of BOTH addresses, and with no container marked
+as the session's own the shared address rule refused it as ambiguous rather than reading it as the
+schema the connection is actually in. `docker/postgres-init/03-object-fixture.sql` creates
+`public.orders` beside the seeded `app.orders` so that case exists in the fixture rather than in a
+paragraph: it is the only shape that can tell an address that RESOLVES from a name that merely
+happens to be a suffix.
+
+One thing this pairing does NOT yet handle, and it is recorded here rather than fixed: the display
+rule strips `public` unconditionally while the tie-breaker follows `current_schema()`. A connection
+whose `search_path` puts another schema first therefore spells `public.orders` qualified while the
+join prefers that other schema, and a bare name would then be read in the wrong place. Nothing in
+the fixture reaches it, because the seeded connection's default IS `public`.
+
 ### 3.5 Resilient monitoring
 
 Monitoring never hard-fails on a missing optional feature:
@@ -949,7 +973,7 @@ Five more methods answer the container-aware object model (#789) and are documen
 
 | Method | SQL const | Returns |
 |--------|-----------|---------|
-| `listContainers()` | `CONTAINERS_SQL` | the schemas, through the same exclusion set as the three above |
+| `listContainers()` | `CONTAINERS_SQL` | the schemas, through the same exclusion set as the three above, with the session's own marked from `current_schema()` |
 | `countObjects(container)` | `COUNTS_SQL` | one `KindCount` per declared kind, seeded at `{ count: 0 }` |
 | `listObjects(container, kind)` | `LIST_RELATIONS_SQL[kind]`, `LIST_ROUTINES_SQL`, `LIST_TRIGGERS_SQL` | names, plus `reltuples` and size for relations |
 | `describeObject(path, kind)` | `OBJECT_DETAIL_SQL` | columns, indexes and foreign keys for one object; the KIND decides whether there is a relation to read, so nothing infers it from the name |
@@ -1463,7 +1487,9 @@ docker compose -f database-compose.yml up -d postgres
 ```
 
 That service mounts `docker/postgres-init/`, which creates `libredb_dev`, the `app` schema and one
-instance of every object kind the provider declares
+instance of every object kind the provider declares, plus `public.orders`
+(`03-object-fixture.sql`), which exists to make one name live in two schemas
+([§3.4.1](#341-the-session-default-container-and-why-a-bare-name-needs-one))
 ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)). The init scripts
 run **only on a fresh data directory**, so a container that already exists has to be recreated
 before a change to them takes effect. Nothing in this repo recreates a container for you, and

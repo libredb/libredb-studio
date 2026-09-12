@@ -2137,7 +2137,37 @@ function bulkTarget(sql: string, inputs: Record<string, unknown>) {
   return limit === undefined ? rows : rows.slice(0, limit);
 }
 
+/**
+ * `libredb_objects_two`'s own objects, and the four system databases hold NONE.
+ *
+ * The double answered one set of rows whatever database the statement was three-part named
+ * at, which is a fixture that cannot tell a provider reading the connected database from
+ * one reading the catalog it was asked for. The conformance guard resolves a flat name
+ * against every container `listContainers` answered (#789), so it now lists objects in each
+ * of the six databases, and six identical `app.customers` rows made the join ambiguous on a
+ * provider that is correct.
+ *
+ * The rows are the seeded fixture's: `docker/mssql-init/01-object-fixture.sql` creates
+ * `warehouse.stock` and `db_owner.audit_log` in the second database and nothing else, and
+ * `master`, `model`, `msdb` and `tempdb` hold only Microsoft's own objects, which every one
+ * of these statements excludes with `is_ms_shipped = 0`.
+ */
+const FIXTURE_TABLES_TWO = [
+  { schema_name: "db_owner", name: "audit_log", row_count: 0 },
+  { schema_name: "warehouse", name: "stock", row_count: 0 },
+];
+
+/** Which database a statement is three-part named at, read off the statement itself. */
+function fixtureDatabase(sql: string): string {
+  return /\[([^\]]+)\]\.(?:sys|INFORMATION_SCHEMA)\./.exec(sql)?.[1] ?? "libredb_objects";
+}
+
 function fixtureRead(read: string, inputs: Record<string, unknown>, sql: string): unknown {
+  const database = fixtureDatabase(sql);
+  const tablesOf = (): typeof FIXTURE_TABLES =>
+    database === "libredb_objects" ? FIXTURE_TABLES : database === "libredb_objects_two" ? FIXTURE_TABLES_TWO : [];
+  const viewsOf = (): typeof FIXTURE_VIEWS => (database === "libredb_objects" ? FIXTURE_VIEWS : []);
+  const triggersOf = (): typeof FIXTURE_TRIGGERS => (database === "libredb_objects" ? FIXTURE_TRIGGERS : []);
   // The SERVER filters, not the bind. A statement that binds `@schema` and never mentions
   // it returns every row, so the filter is read off the STATEMENT here and not off the
   // parameter - mutation M11b is what found that: with the filter taken from `inputs`
@@ -2169,13 +2199,13 @@ function fixtureRead(read: string, inputs: Record<string, unknown>, sql: string)
       return { recordset: rows, rowsAffected: [rows.length] };
     }
     case "triggers": {
-      const rows = FIXTURE_TRIGGERS.filter((row) => schema === undefined || row.parent_schema === schema);
+      const rows = triggersOf().filter((row) => schema === undefined || row.parent_schema === schema);
       return { recordset: rows, rowsAffected: [rows.length] };
     }
     case "tables":
-      return { recordset: inSchema(FIXTURE_TABLES), rowsAffected: [inSchema(FIXTURE_TABLES).length] };
+      return { recordset: inSchema(tablesOf()), rowsAffected: [inSchema(tablesOf()).length] };
     case "objects":
-      return { recordset: inSchema(FIXTURE_VIEWS), rowsAffected: [inSchema(FIXTURE_VIEWS).length] };
+      return { recordset: inSchema(viewsOf()), rowsAffected: [inSchema(viewsOf()).length] };
     case "columns": {
       // Keyed on the NAME the provider bound, so a read that bound the schema segment
       // instead answers nothing - which is exactly what the last-segment pin needs.
