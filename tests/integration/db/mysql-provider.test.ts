@@ -3107,6 +3107,79 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
         },
       ],
     };
+    // ------------------------------------------------------------------
+    // The FLAT reading (`getSchema()`), over the SAME objects this fixture publishes.
+    //
+    // Four statements, and each one is told apart from the object surface's by a fragment
+    // only it carries, because both surfaces read the same three catalog views:
+    // `SCHEMA_TABLES_SQL` is the only one with a literal `TABLE_TYPE = 'BASE TABLE'`,
+    // `SCHEMA_COLUMNS_SQL` the only one with `LIMIT 100`, `SCHEMA_FOREIGN_KEYS_SQL` the
+    // only `KEY_COLUMN_USAGE` read that does NOT select `REFERENCED_TABLE_SCHEMA`, and
+    // `SCHEMA_INDEXES_SQL` the only index read that uses `GROUP_CONCAT`.
+    //
+    // The spelling is the ENGINE'S, not the one the join would find convenient. Two places
+    // where those differ:
+    //
+    //   - the table names are BARE. `SCHEMA_TABLES_SQL` binds `TABLE_SCHEMA = ?` and
+    //     projects `TABLE_NAME` alone, so the flat reading of a database qualifies nothing,
+    //     while the object path is `[database, table]`. That bare-against-qualified join is
+    //     the whole thing the guard is here to protect.
+    //   - the foreign-key target is bare EVEN WHEN IT LEAVES THE DATABASE. This statement
+    //     does not read `REFERENCED_TABLE_SCHEMA` at all, so `orders.region_id`, which
+    //     references `reporting.regions`, comes back as `regions` with nothing saying where
+    //     it lives. `OBJECT_FOREIGN_KEYS_SQL` reads the schema and qualifies that one; the
+    //     difference between the two answers is a real property of the two statements and
+    //     is asserted below rather than smoothed over here.
+    //
+    // The population is narrower than the object listing on both servers, again because the
+    // engine says so and not because it was arranged: `TABLE_TYPE = 'BASE TABLE'` excludes
+    // the view `order_summary` on both, and on MariaDB it also excludes `order_audit`, whose
+    // type is 'SYSTEM VERSIONED'. So the join has to survive listed objects the flat reading
+    // never names.
+    const flatTables = tables.filter((table) => table.name !== "order_audit");
+    if (normalized.includes("table_type = 'base table'")) {
+      return [
+        flatTables.map((table) => ({
+          table_name: table.name,
+          row_count: table.row_count,
+          total_size: table.size_bytes,
+        })),
+        [],
+      ];
+    }
+    if (normalized.includes("limit 100")) {
+      const named = String((params ?? [])[1]);
+      // The bulk read's rows carry `object_name`, which the single-object read does not
+      // project. Dropping it here keeps one measured column set behind both surfaces.
+      const rows = (columnsByObject[named] ?? []).map((row) => {
+        const { object_name: _objectName, ...rest } = row as Record<string, unknown>;
+        return rest;
+      });
+      return [rows, []];
+    }
+    if (normalized.includes("key_column_usage") && !normalized.includes("referenced_table_schema")) {
+      return [
+        String((params ?? [])[1]) === "orders"
+          ? [
+              { column_name: "customer_id", referenced_table: "customers", referenced_column: "id" },
+              { column_name: "region_id", referenced_table: "regions", referenced_column: "id" },
+            ]
+          : [],
+        [],
+      ];
+    }
+    if (normalized.includes("group_concat")) {
+      return [
+        String((params ?? [])[1]) === "orders"
+          ? [
+              { index_name: "PRIMARY", columns: "id", is_unique: 1 },
+              { index_name: "orders_total_ix", columns: "total,note", is_unique: 0 },
+            ]
+          : [],
+        [],
+      ];
+    }
+
     const targetNames = (type: unknown, bound: number | undefined): string[] => {
       const all =
         type === "BASE TABLE"
@@ -3833,6 +3906,60 @@ describe("MySQL object listing and detail", () => {
     // Three reads, each narrowed to ONE database and ONE object.
     expect(bound).toHaveLength(3);
     for (const params of bound) expect(params).toEqual(["app", "orders"]);
+    await provider.disconnect();
+  });
+
+  test("the flat reading names the same objects bare, and spells a cross-database key bare too", async () => {
+    // The other half of the join `assertObjectSurface` protects, pinned here rather than
+    // left to the guard: the guard proves the two readings CAN be joined, and this proves
+    // the flat side is spelled the way the engine spells it (#789).
+    const provider = await connectedTo(false);
+
+    const flat = await provider.getSchema();
+
+    // BARE, every one of them. `SCHEMA_TABLES_SQL` binds `TABLE_SCHEMA = ?` and projects
+    // `TABLE_NAME` alone, so the flat reading of a database qualifies nothing, while
+    // `listObjects` answers `["app", "orders"]`.
+    expect(flat.map((table) => table.name)).toEqual(["customers", "order_archive", "orders"]);
+    // Narrower than the object listing, because `TABLE_TYPE = 'BASE TABLE'` excludes the
+    // view `order_summary` that the `view` folder lists. The join has to survive that.
+    expect(flat.map((table) => table.name)).not.toContain("order_summary");
+    const orders = flat.find((table) => table.name === "orders")!;
+    expect(orders.columns.map((column) => column.name)).toEqual(["id", "total"]);
+    // Per TABLE, not one column set for the whole database: `customers` has one column and
+    // no foreign key, and reading the same two answers for every table would be a double
+    // that agrees with itself rather than with the fixture.
+    const customers = flat.find((table) => table.name === "customers")!;
+    expect(customers.columns.map((column) => column.name)).toEqual(["id"]);
+    expect(customers.foreignKeys).toEqual([]);
+    expect(customers.indexes).toEqual([]);
+    expect(orders.indexes).toEqual([
+      { name: "PRIMARY", columns: ["id"], unique: true },
+      { name: "orders_total_ix", columns: ["total", "note"], unique: false },
+    ]);
+    // The difference between the two surfaces, and it is the statements' own:
+    // `SCHEMA_FOREIGN_KEYS_SQL` never reads `REFERENCED_TABLE_SCHEMA`, so the key into
+    // `reporting.regions` comes back as `regions` here while `describeObject` qualifies it.
+    expect(orders.foreignKeys).toEqual([
+      { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
+      { columnName: "region_id", referencedTable: "regions", referencedColumn: "id" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a MariaDB SYSTEM VERSIONED table is listed as a table and absent from the flat reading", async () => {
+    // Not an arrangement: `SCHEMA_TABLES_SQL` binds `TABLE_TYPE = 'BASE TABLE'` and
+    // `order_audit` is 'SYSTEM VERSIONED', so the flat reading loses an object the `table`
+    // folder holds. Pinned because it is the shape the join must tolerate.
+    const provider = await connectedTo(true);
+
+    const listed = await provider.listObjects(["app"], "table");
+    const flat = await provider.getSchema();
+
+    expect(listed.map((object) => object.path[object.path.length - 1])).toContain("order_audit");
+    // The control: without it an EMPTY flat reading would satisfy the absence below.
+    expect(flat.map((table) => table.name)).toEqual(["customers", "order_archive", "orders"]);
+    expect(flat.map((table) => table.name)).not.toContain("order_audit");
     await provider.disconnect();
   });
 
