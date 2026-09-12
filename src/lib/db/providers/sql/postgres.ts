@@ -977,6 +977,13 @@ function containerSchema(capabilities: ProviderCapabilities, container: readonly
  * ONE writer for two readers since #789 Phase 2. `describeObject` and `readObjectSource` ask
  * the same question about the same path, and two copies of this derivation is two chances for
  * the detail pane and the Source tab to disagree about what a trigger's address is.
+ *
+ * The levels come from `declaredLevels()` and never from `containerLevels.length`, which is
+ * what this function counted when the hoist inherited it from `describeObject`. The two agree
+ * at every depth `ContainerLevels` admits, and they disagree past it: `containerDepth()`
+ * saturates at two, so a third declared level made this check demand four segments while
+ * `readObjectSource` sliced the container at two and handed `containerSchema` a two-segment
+ * path. One reader, which is what the `declaredLevels` docblock twelve lines up already said.
  */
 function assertObjectPathShape(
   capabilities: ProviderCapabilities,
@@ -984,7 +991,7 @@ function assertObjectPathShape(
   kind: string,
   path: readonly string[],
 ): void {
-  const segments = (capabilities.containerLevels ?? []).map((level) => level.label.toLowerCase());
+  const segments = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
   if (spec.attachedTo !== undefined) segments.push(spec.attachedTo);
   segments.push("name");
   if (path.length !== segments.length) {

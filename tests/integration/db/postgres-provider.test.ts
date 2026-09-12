@@ -11,7 +11,7 @@ import {
 } from "@/lib/db/object-kinds";
 import { EventEmitter } from "node:events";
 import type { DatabaseConnection } from "@/lib/types";
-import type { ReadOnlyStatementBudget } from "@/lib/db/types";
+import type { ContainerLevels, ReadOnlyStatementBudget } from "@/lib/db/types";
 import {
   ConnectionError,
   DatabaseConfigError,
@@ -3411,8 +3411,8 @@ describe("object surface", () => {
     // absence is the same lookup missing rather than an arm written for the absent case.
     const definitions: Record<string, string> = {
       order_summary: MEASURED_VIEW_DEFINITION,
-      daily_sales: MEASURED_VIEW_DEFINITION,
-      revenue_by_month: MEASURED_VIEW_DEFINITION,
+      daily_sales: MEASURED_DAILY_SALES_DEFINITION,
+      revenue_by_month: MEASURED_MATERIALIZED_VIEW_DEFINITION,
       "order_total(integer)": MEASURED_FUNCTION_DEFINITION,
       "stamp_updated_at()": MEASURED_FUNCTION_DEFINITION,
       "touch_order(integer)": MEASURED_FUNCTION_DEFINITION,
@@ -4269,16 +4269,55 @@ describe("PostgreSQL bulk column read", () => {
  * statements this provider sends, as the privilege-less `src_probe` role
  * `docker/postgres-init/03-object-fixture.sql` creates. The fixture is the evidence: a reader
  * can bring the container up on that init directory and get these bytes again.
+ *
+ * VERBATIM AND NOT ABRIDGED, and that is the correction a review made on 2026-09-12. The view
+ * constant used to be a hand-shortened four-column reading of `app.order_summary` while this
+ * same docblock claimed it was measured, and `docs/providers/postgres.md`'s own verification
+ * block said 606 characters for the same object. Re-measured on a `postgres:18` brought up on
+ * `docker/postgres-init`: 606 characters and twelve select-list columns. A length assertion
+ * now pins each one, so an abridgement cannot creep back in while the claim stays.
  */
 const MEASURED_VIEW_DEFINITION = ` SELECT o.id,
     o.order_number,
     (((c.first_name)::text || ' '::text) || (c.last_name)::text) AS customer_name,
-    o.total_amount
+    c.email AS customer_email,
+    c.tier AS customer_tier,
+    o.status,
+    o.payment_status,
+    o.total_amount,
+    count(oi.id) AS item_count,
+    sum(oi.quantity) AS total_items,
+    o.created_at AS order_date
    FROM ((app.orders o
      JOIN app.customers c ON ((o.customer_id = c.id)))
      LEFT JOIN app.order_items oi ON ((o.id = oi.order_id)))
-  GROUP BY o.id, o.order_number, c.first_name, c.last_name, o.total_amount;`;
+  GROUP BY o.id, o.order_number, c.first_name, c.last_name, c.email, c.tier, o.status, o.payment_status, o.total_amount, o.created_at;`;
 
+/** `app.daily_sales`, the suite's second view, measured the same way: 408 characters. */
+const MEASURED_DAILY_SALES_DEFINITION = ` SELECT date(created_at) AS sale_date,
+    count(DISTINCT id) AS order_count,
+    sum(total_amount) AS total_sales,
+    avg(total_amount) AS avg_order_value,
+    count(DISTINCT customer_id) AS unique_customers
+   FROM app.orders o
+  WHERE ((status)::text <> ALL ((ARRAY['cancelled'::character varying, 'pending'::character varying])::text[]))
+  GROUP BY (date(created_at))
+  ORDER BY (date(created_at)) DESC;`;
+
+/**
+ * `app.revenue_by_month`, the materialized view, 161 characters.
+ *
+ * Read through the `c.relkind = 'm'` statement and not the view one. It is a separate constant
+ * because the materialized view has its own read test, and that test exists because building
+ * `SOURCE_VIEW_SQL.materialized_view` from `RELKIND_BY_KIND.view` survived the whole suite
+ * until it was written.
+ */
+const MEASURED_MATERIALIZED_VIEW_DEFINITION = ` SELECT date_trunc('month'::text, created_at) AS month,
+    sum(total_amount) AS revenue
+   FROM app.orders o
+  GROUP BY (date_trunc('month'::text, created_at));`;
+
+/** `app.order_total(integer)`, measured the same way: 228 characters, trailing newline included. */
 const MEASURED_FUNCTION_DEFINITION = `CREATE OR REPLACE FUNCTION app.order_total(order_id integer)
  RETURNS numeric
  LANGUAGE sql
@@ -4288,6 +4327,7 @@ AS $function$
 $function$
 `;
 
+/** `app.orders.orders_stamp_updated_at`, measured the same way: 119 characters. */
 const MEASURED_TRIGGER_DEFINITION =
   "CREATE TRIGGER orders_stamp_updated_at BEFORE UPDATE ON app.orders " +
   "FOR EACH ROW EXECUTE FUNCTION app.stamp_updated_at()";
@@ -4354,7 +4394,42 @@ describe("PostgreSQL object source", () => {
     // FALSE for the pretty flag: PostgreSQL documents that pretty-printed output is the format
     // a future version is less likely to read back the same way, and Phase 3 may submit it back.
     expect(sent[0].sql).not.toContain("c.oid, true");
+    // PINNED AS TEXT as well as as binds. A double that does not run SQL cannot see a
+    // predicate leave the statement: dropping `n.nspname = $1 AND` still receives both binds
+    // and every assertion on `params` stays green, while the read would then answer whichever
+    // schema's same-named view the catalog returned first - and this fixture holds `orders` in
+    // BOTH `app` and `public` for exactly that reason. Dropping `c.relkind = 'v'` would call
+    // `pg_get_viewdef` on a TABLE oid. Both survived the whole suite until this line.
+    expect(sent[0].sql).toContain("WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'v'");
     expect(sent[0].params).toEqual(["app", "order_summary"]);
+    // The bytes, not a substring. This constant is the fixture's evidence under standing
+    // ruling 5i, so its LENGTH is asserted: an abridged text would still contain every
+    // substring above.
+    expect(part.text).toHaveLength(606);
+    await provider.disconnect();
+  });
+
+  test("reads a materialized view under its own relkind, never the view's", async () => {
+    const sent = sourceDouble(MEASURED_MATERIALIZED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    const document = await provider.readObjectSource(["app", "revenue_by_month"], "materialized_view");
+    expect(document.kind).toBe("materialized_view");
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("the fixture materialized view is readable");
+    expect(part.text).toBe(MEASURED_MATERIALIZED_VIEW_DEFINITION);
+    expect(part.text).toHaveLength(161);
+    // `pg_get_viewdef` answers the bare SELECT for a materialized view too, measured on 18.4.
+    expect(part.form).toBe("partial");
+    expect(part.origin).toBe("regenerated");
+    // 'm' AND NOT 'v'. `SOURCE_VIEW_SQL` builds both statements from one relkind map, so
+    // building the materialized-view entry from `RELKIND_BY_KIND.view` is a one-token edit
+    // that binds the same two values and survived the whole suite until this assertion: every
+    // materialized view's Source tab would then raise the absence sentence.
+    expect(sent[0].sql).toContain("WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'm'");
+    expect(sent[0].sql).not.toContain("c.relkind = 'v'");
+    expect(sent[0].params).toEqual(["app", "revenue_by_month"]);
     await provider.disconnect();
   });
 
@@ -4376,6 +4451,11 @@ describe("PostgreSQL object source", () => {
     expect(sent[0].params).toEqual(["app", "f", "order_total(integer)"]);
     expect(sent[0].sql).toContain("proargtypes");
     expect(sent[0].sql).not.toContain("pg_get_function_identity_arguments");
+    // The WHERE clause pinned as TEXT, for the same reason the view's is: dropping
+    // `n.nspname = $1 AND` leaves all three binds in place and every `params` assertion green,
+    // while the read would answer whichever schema's same-named routine came back first.
+    expect(sent[0].sql).toContain("WHERE n.nspname = $1 AND p.prokind = $2 AND");
+    expect(sent[0].sql).toContain("AS t), ','), '') || ')' = $3");
 
     const procedure = await provider.readObjectSource(["app", "touch_order(integer)"], "procedure");
     expect(procedure.kind).toBe("procedure");
@@ -4405,6 +4485,13 @@ describe("PostgreSQL object source", () => {
     // predicate gone the read would answer whichever table's trigger of that name the catalog
     // returned first.
     expect(sent[0].sql).toContain("WHERE n.nspname = $1 AND c.relname = $2 AND t.tgname = $3 AND NOT t.tgisinternal");
+    // FALSE for the pretty flag, on THIS statement and not only on the view's. The view test
+    // asserts `not.toContain("c.oid, true")`, which names the view statement's own alias `c`
+    // and can never see `t.oid, true`; turning pretty printing on here survived the whole
+    // suite until this pair. Phase 3 may submit this text back, and PostgreSQL documents that
+    // the pretty format is the one a future version is less likely to read back the same way.
+    expect(sent[0].sql).toContain("pg_get_triggerdef(t.oid, false)");
+    expect(sent[0].sql).not.toContain("t.oid, true");
     await provider.disconnect();
   });
 
@@ -4573,6 +4660,41 @@ describe("PostgreSQL object source", () => {
     await expect(provider.readObjectSource(["app", "orders", "order_summary"], "view")).rejects.toThrow(
       /A PostgreSQL "view" path is \[schema, name\]/,
     );
+    await provider.disconnect();
+  });
+
+  /**
+   * The path-shape check counts the levels `containerDepth()` reports, not the array's length.
+   *
+   * `ContainerLevels` is a tuple union of nought, one or two levels, so a third level is a
+   * compile error where a provider would write it, and `containerDepth()` still carries a
+   * `>= 2` arm for exactly the cast this test performs. The two readings are behaviour
+   * identical at every depth the type admits, which is why this is the only fixture that can
+   * tell them apart: `assertObjectPathShape` used to count `containerLevels.length`, so at
+   * three declared levels it demanded four segments while `readObjectSource` sliced the
+   * container at two and handed `containerSchema` a two-segment path. The file's own
+   * `declaredLevels` docblock already said `containerDepth()` is what decides.
+   */
+  test("counts the path's segments at the DEPTH the derivation reports, not at the array's length", async () => {
+    const sent = sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...provider.getCapabilities(),
+      containerLevels: [
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+        { id: "extra", label: "Extra", labelPlural: "Extras" },
+      ] as unknown as ContainerLevels,
+    });
+    try {
+      // Three segments, because the depth is two and a view adds its own name. A shape check
+      // reading the raw array would refuse this path by name before any bind was built.
+      await provider.readObjectSource(["cat", "sch", "obj"], "view");
+      expect(sent[0].params).toEqual(["sch", "obj"]);
+    } finally {
+      spy.mockRestore();
+    }
     await provider.disconnect();
   });
 
