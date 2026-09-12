@@ -4332,6 +4332,68 @@ const MEASURED_TRIGGER_DEFINITION =
   "CREATE TRIGGER orders_stamp_updated_at BEFORE UPDATE ON app.orders " +
   "FOR EACH ROW EXECUTE FUNCTION app.stamp_updated_at()";
 
+/**
+ * THE WHOLE STATEMENT, one per kind, squashed to a single line, and why it is the whole one.
+ *
+ * Round 1 pinned each statement's WHERE clause and its pretty flag as text, which killed the
+ * four mutants that lived in a predicate. It left the SELECT expression and the JOINs
+ * unpinned, and three mutants measured on 2026-09-12 then survived the whole suite at
+ * 205 pass 0 fail:
+ *
+ * - `pg_get_functiondef(p.oid)` rewritten to
+ *   `pg_get_functiondef((n.nspname || '.' || p.proname)::regprocedure)`, which is the one rule
+ *   this provider's own docblock says nobody would have written from the documentation. The
+ *   cast resolves a NAME, name resolution needs USAGE on the schema, and it manufactures a
+ *   42501 "permission denied for schema app" the engine never made, on an object the tree has
+ *   already listed. Measured for `src_probe` on PostgreSQL 18.4.
+ * - `pg_get_functiondef(p.oid)` rewritten to `pg_get_functiondef(p.prorettype)`, which asks
+ *   for the definition of some other catalog entry entirely.
+ * - the trigger's `JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid` rewritten to
+ *   `ON c.oid = t.tgconstrrelid`, which is 0 for every trigger that is not a constraint
+ *   trigger, so every ordinary trigger's Source tab would raise the absence sentence.
+ *
+ * The double does not execute SQL, so no assertion on `params` and none on the returned
+ * document can see any of the three. Enumerating tokens is what let them through: the view
+ * test's `not.toContain("regclass")` only ever sees the VIEW statement, exactly the way
+ * `not.toContain("c.oid, true")` could never see the trigger's own flag. One equality per kind
+ * closes the class instead of the members of it somebody has thought of.
+ *
+ * Whitespace is squashed because indentation is not behaviour. Every other byte is pinned: the
+ * function called, its arguments, the pretty flag, every FROM, every JOIN and every predicate.
+ */
+function squashSql(sql: string): string {
+  return sql.trim().replace(/\s+/g, " ");
+}
+
+const EXPECTED_VIEW_SOURCE_SQL =
+  "SELECT pg_catalog.pg_get_viewdef(c.oid, false) AS definition " +
+  "FROM pg_catalog.pg_class c " +
+  "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace " +
+  "WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'v'";
+
+/** Spelled out in full rather than derived from the view's, because the one token that differs is the defect. */
+const EXPECTED_MATERIALIZED_VIEW_SOURCE_SQL =
+  "SELECT pg_catalog.pg_get_viewdef(c.oid, false) AS definition " +
+  "FROM pg_catalog.pg_class c " +
+  "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace " +
+  "WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'm'";
+
+/** One statement for both routine kinds: a function and a procedure differ only by the bound `prokind`. */
+const EXPECTED_ROUTINE_SOURCE_SQL =
+  "SELECT pg_catalog.pg_get_functiondef(p.oid) AS definition " +
+  "FROM pg_catalog.pg_proc p " +
+  "JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace " +
+  "WHERE n.nspname = $1 AND p.prokind = $2 AND p.proname || '(' || " +
+  "COALESCE(pg_catalog.array_to_string(ARRAY( " +
+  "SELECT pg_catalog.format_type(t, NULL) FROM unnest(p.proargtypes) AS t), ','), '') || ')' = $3";
+
+const EXPECTED_TRIGGER_SOURCE_SQL =
+  "SELECT pg_catalog.pg_get_triggerdef(t.oid, false) AS definition " +
+  "FROM pg_catalog.pg_trigger t " +
+  "JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid " +
+  "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace " +
+  "WHERE n.nspname = $1 AND c.relname = $2 AND t.tgname = $3 AND NOT t.tgisinternal";
+
 describe("PostgreSQL object source", () => {
   function makeProvider() {
     return new PostgresProvider(makePgConfig());
@@ -4384,23 +4446,16 @@ describe("PostgreSQL object source", () => {
     expect(part.origin).toBe("regenerated");
     expect(part.truncated).toBeUndefined();
 
-    // THE OID, never a cast. A `::regclass` or `::regprocedure` resolves the NAME, which needs
-    // USAGE on the schema, and raises 42501 for a schema the caller cannot see - on an object
-    // the tree has already listed. Measured on 18.4: the cast was refused for `src_probe` in
-    // the same session where the oid form returned every character.
-    expect(sent[0].sql).toContain("pg_get_viewdef(c.oid, false)");
-    expect(sent[0].sql).not.toContain("regclass");
-    expect(sent[0].sql).not.toContain("regprocedure");
-    // FALSE for the pretty flag: PostgreSQL documents that pretty-printed output is the format
-    // a future version is less likely to read back the same way, and Phase 3 may submit it back.
-    expect(sent[0].sql).not.toContain("c.oid, true");
-    // PINNED AS TEXT as well as as binds. A double that does not run SQL cannot see a
-    // predicate leave the statement: dropping `n.nspname = $1 AND` still receives both binds
-    // and every assertion on `params` stays green, while the read would then answer whichever
-    // schema's same-named view the catalog returned first - and this fixture holds `orders` in
-    // BOTH `app` and `public` for exactly that reason. Dropping `c.relkind = 'v'` would call
-    // `pg_get_viewdef` on a TABLE oid. Both survived the whole suite until this line.
-    expect(sent[0].sql).toContain("WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'v'");
+    // THE WHOLE STATEMENT AS TEXT, and not a chosen set of tokens. The OID and never a
+    // `::regclass` or `::regprocedure` cast, which resolves a NAME, needs USAGE on the schema
+    // and raises 42501 for a schema the caller cannot see, on an object the tree has already
+    // listed; `false` for the pretty flag, which PostgreSQL documents as the format a future
+    // version is likelier to read back the same way; and both predicates, because this fixture
+    // holds `orders` in BOTH `app` and `public`. A double that does not execute SQL sees none
+    // of them leave the statement: the binds still arrive and every assertion on `params` and
+    // on the document stays green. The three mutants a token-by-token pin let through are on
+    // `EXPECTED_VIEW_SOURCE_SQL`.
+    expect(squashSql(sent[0].sql)).toBe(EXPECTED_VIEW_SOURCE_SQL);
     expect(sent[0].params).toEqual(["app", "order_summary"]);
     // The bytes, not a substring. This constant is the fixture's evidence under standing
     // ruling 5i, so its LENGTH is asserted: an abridged text would still contain every
@@ -4423,12 +4478,12 @@ describe("PostgreSQL object source", () => {
     // `pg_get_viewdef` answers the bare SELECT for a materialized view too, measured on 18.4.
     expect(part.form).toBe("partial");
     expect(part.origin).toBe("regenerated");
-    // 'm' AND NOT 'v'. `SOURCE_VIEW_SQL` builds both statements from one relkind map, so
-    // building the materialized-view entry from `RELKIND_BY_KIND.view` is a one-token edit
-    // that binds the same two values and survived the whole suite until this assertion: every
-    // materialized view's Source tab would then raise the absence sentence.
-    expect(sent[0].sql).toContain("WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'm'");
-    expect(sent[0].sql).not.toContain("c.relkind = 'v'");
+    // 'm' AND NOT 'v', and every other byte of the statement with it. `SOURCE_VIEW_SQL`
+    // builds both entries from one relkind map, so building the materialized-view entry from
+    // `RELKIND_BY_KIND.view` is a one-token edit that binds the same two values and survived
+    // the whole suite until this kind got a read test: every materialized view's Source tab
+    // would then raise the absence sentence.
+    expect(squashSql(sent[0].sql)).toBe(EXPECTED_MATERIALIZED_VIEW_SOURCE_SQL);
     expect(sent[0].params).toEqual(["app", "revenue_by_month"]);
     await provider.disconnect();
   });
@@ -4449,13 +4504,15 @@ describe("PostgreSQL object source", () => {
     // comparison is the same expression the listing built the segment with. A read keyed on
     // `proname` alone would answer whichever overload the catalog happened to return first.
     expect(sent[0].params).toEqual(["app", "f", "order_total(integer)"]);
-    expect(sent[0].sql).toContain("proargtypes");
-    expect(sent[0].sql).not.toContain("pg_get_function_identity_arguments");
-    // The WHERE clause pinned as TEXT, for the same reason the view's is: dropping
-    // `n.nspname = $1 AND` leaves all three binds in place and every `params` assertion green,
-    // while the read would answer whichever schema's same-named routine came back first.
-    expect(sent[0].sql).toContain("WHERE n.nspname = $1 AND p.prokind = $2 AND");
-    expect(sent[0].sql).toContain("AS t), ','), '') || ')' = $3");
+    // The WHOLE statement, which is where this suite's blind spot was widest. The READ
+    // EXPRESSION had no pin at all, so `pg_get_functiondef(p.oid)` rewritten to a
+    // `::regprocedure` name cast, the single defect this provider's docblock exists to forbid,
+    // survived the whole suite at 205 pass 0 fail, and so did rewriting it to
+    // `pg_get_functiondef(p.prorettype)`. The identity expression is pinned by the same
+    // equality: it is the address the LISTING wrote, so a read keyed on `proname` alone would
+    // answer whichever overload the catalog returned first, and
+    // `pg_get_function_identity_arguments` would include parameter names the segment has not.
+    expect(squashSql(sent[0].sql)).toBe(EXPECTED_ROUTINE_SOURCE_SQL);
 
     const procedure = await provider.readObjectSource(["app", "touch_order(integer)"], "procedure");
     expect(procedure.kind).toBe("procedure");
@@ -4479,19 +4536,16 @@ describe("PostgreSQL object source", () => {
     // A trigger name is unique per TABLE, so the table segment is a bind and not decoration:
     // two tables in one schema may each carry `stamp_updated_at`.
     expect(sent[0].params).toEqual(["app", "orders", "orders_stamp_updated_at"]);
-    // PINNED AS TEXT as well as as binds, and the reason is a mutation that survived without
-    // it: a statement that drops `c.relname = $2` still receives all three values, so a double
-    // that does not run SQL cannot see the table stop being part of the address. With the
-    // predicate gone the read would answer whichever table's trigger of that name the catalog
-    // returned first.
-    expect(sent[0].sql).toContain("WHERE n.nspname = $1 AND c.relname = $2 AND t.tgname = $3 AND NOT t.tgisinternal");
-    // FALSE for the pretty flag, on THIS statement and not only on the view's. The view test
-    // asserts `not.toContain("c.oid, true")`, which names the view statement's own alias `c`
-    // and can never see `t.oid, true`; turning pretty printing on here survived the whole
-    // suite until this pair. Phase 3 may submit this text back, and PostgreSQL documents that
-    // the pretty format is the one a future version is less likely to read back the same way.
-    expect(sent[0].sql).toContain("pg_get_triggerdef(t.oid, false)");
-    expect(sent[0].sql).not.toContain("t.oid, true");
+    // THE WHOLE STATEMENT, JOINs included, and the JOIN is the half a WHERE-clause pin
+    // cannot reach. `ON c.oid = t.tgrelid` is what makes the table segment address anything:
+    // rewritten to `ON c.oid = t.tgconstrrelid` it is 0 for every trigger that is not a
+    // constraint trigger, all three binds still arrive, every assertion on `params` stays
+    // green, and every ordinary trigger's Source tab would raise the absence sentence. That
+    // mutant survived the whole suite while the WHERE clause and the pretty flag were pinned
+    // and the JOIN was not. The flag is pinned here and not only on the view, because the view
+    // test's `not.toContain("c.oid, true")` names the view statement's own alias and can never
+    // see `t.oid, true`; dropping `c.relname = $2` is pinned by the same equality.
+    expect(squashSql(sent[0].sql)).toBe(EXPECTED_TRIGGER_SOURCE_SQL);
     await provider.disconnect();
   });
 
