@@ -68,6 +68,7 @@ import type {
   IndexSchema,
   KindCount,
   ObjectDetail,
+  ObjectDetailBatch,
   ObjectKindSpec,
   ProviderCapabilities,
 } from "@/lib/db/types";
@@ -306,6 +307,101 @@ function dictionaryColumnsSql(database: string, name: string): string {
     "ORDER BY database DESC LIMIT 1) AS d)",
   ].join(" ");
 }
+
+/**
+ * The target set of one bulk read: every object of one kind in one database, in the
+ * engine's own order, optionally cut (#789).
+ *
+ * The same kind-tagged subquery the count GROUPs and the listing FILTERs, so all three
+ * cannot disagree about which rows are in scope - standing ruling 5f held by construction
+ * rather than by three statements agreeing. What it adds to the listing is a `LIMIT`.
+ *
+ * `ORDER BY objectName ASC` is what makes a bounded cut deterministic, and it runs under
+ * ClickHouse's own String comparison, which is the UTF-8 BYTE order and NOT the order
+ * `comparePaths` produces. So the MEMBERSHIP of a bounded read is the server's and the
+ * ORDER of the answer is ours.
+ *
+ * The limit is INTERPOLATED rather than bound, because this transport binds named
+ * `{name:Type}` parameters and nothing else, and it is safe by construction: the caller's
+ * value has already been refused unless it is a positive whole number, so nothing that
+ * reaches this template can be anything but digits.
+ */
+export function bulkTargetSql(database: string, kind: string, limit?: number): string {
+  return [
+    "SELECT objectName",
+    `FROM (${databaseObjectsSql(database)})`,
+    `WHERE objectKind = ${literal(kind)}`,
+    "ORDER BY objectName ASC",
+    ...(limit === undefined ? [] : [`LIMIT ${limit}`]),
+  ].join(" ");
+}
+
+/**
+ * Every target object's columns in ONE statement, which is `objectColumnsSql()` with the
+ * name equality replaced by membership of the target set.
+ *
+ * `c.database` stays on the outer read as well as inside the target: `system.columns` spans
+ * every database on the server, and two databases holding a table of the same name is the
+ * ordinary case rather than a corner.
+ */
+function bulkColumnsSql(database: string, kind: string, limit?: number): string {
+  return [
+    "SELECT c.table AS objectName,",
+    "c.name AS columnName,",
+    "c.type AS columnType,",
+    "c.is_in_primary_key AS isPrimaryKey,",
+    "c.default_kind AS defaultKind,",
+    "c.default_expression AS defaultExpression",
+    "FROM system.columns AS c",
+    `WHERE c.database = ${literal(database)}`,
+    `AND c.table IN (${bulkTargetSql(database, kind, limit)})`,
+    "ORDER BY c.table, c.position",
+  ].join(" ");
+}
+
+/** The same reshaping of `objectIndexesSql()`. */
+function bulkIndexesSql(database: string, kind: string, limit?: number): string {
+  return [
+    "SELECT i.table AS objectName, i.name AS indexName, i.expr AS indexExpression",
+    "FROM system.data_skipping_indices AS i",
+    `WHERE i.database = ${literal(database)}`,
+    `AND i.table IN (${bulkTargetSql(database, kind, limit)})`,
+    "ORDER BY i.table, i.name",
+  ].join(" ");
+}
+
+/**
+ * Every target dictionary's key and attribute columns in ONE statement.
+ *
+ * `dictionaryColumnsSql()`'s `ORDER BY database DESC LIMIT 1` picks the DDL dictionary over
+ * a config one of the same name, and that is a PER NAME choice, so the bulk form cannot use
+ * a `LIMIT` at all: it groups by name and takes each array with `argMax(..., database)`,
+ * which is the same preference expressed for many names at once. Measured on
+ * clickhouse-server 26.7.1.1315 against both fixture dictionaries, and the answer is
+ * column-for-column what the single read gives for each of them.
+ *
+ * The four `key.*` and `attribute.*` names are backtick-quoted here and not in the single
+ * read, because inside a function call a dotted name would otherwise parse as tuple access.
+ */
+function bulkDictionaryColumnsSql(database: string, kind: string, limit?: number): string {
+  return [
+    "SELECT d.objectName AS objectName, c.1 AS columnName, c.2 AS columnType, c.3 AS isKeyColumn",
+    "FROM (SELECT objectName, arrayJoin(arrayConcat(",
+    "arrayMap((n, t) -> (n, t, 1), keyNames, keyTypes),",
+    "arrayMap((n, t) -> (n, t, 0), attributeNames, attributeTypes))) AS c",
+    "FROM (SELECT name AS objectName,",
+    "argMax(`key.names`, database) AS keyNames, argMax(`key.types`, database) AS keyTypes,",
+    "argMax(`attribute.names`, database) AS attributeNames,",
+    "argMax(`attribute.types`, database) AS attributeTypes",
+    "FROM system.dictionaries",
+    `WHERE (database = ${literal(database)} OR database = '')`,
+    `AND name IN (${bulkTargetSql(database, kind, limit)})`,
+    "GROUP BY name)) AS d",
+  ].join(" ");
+}
+
+/** What `ObjectDetailBatch.truncated.reason` says when the caller's bound bites. */
+const BULK_TRUNCATION_REASON = "the caller's limit on one ClickHouse bulk column read";
 
 function objectIndexesSql(database: string, name: string): string {
   return [
@@ -610,6 +706,16 @@ async function describeDictionary(
     throw new QueryError(`No ClickHouse dictionary named ${name} in ${database}`, PROVIDER, sql);
   }
 
+  return dictionaryDetailFromRows(path, rows);
+}
+
+/**
+ * ONE dictionary's detail, from `system.dictionaries` rows, for BOTH reads (#789).
+ *
+ * One mapper and not two, because two are two chances for `describeObjects` to spell a
+ * dictionary's key column differently from `describeObject` over the same dictionary.
+ */
+function dictionaryDetailFromRows(path: readonly string[], rows: readonly ClickHouseRow[]): ObjectDetail {
   const columns: ColumnSchema[] = [];
   for (const row of rows) {
     const columnName = readIdentifier(row.columnName);
@@ -623,7 +729,62 @@ async function describeDictionary(
       defaultValue: undefined,
     });
   }
+  // No index and no foreign key: a dictionary's LAYOUT is not an index and
+  // `system.data_skipping_indices` holds nothing for it.
   return { path: [...path], columns, indexes: [], foreignKeys: [] };
+}
+
+/**
+ * ONE table-backed object's detail, from rows, for BOTH reads (#789).
+ *
+ * The same reasoning as the dictionary mapper above, and the same shape: everything either
+ * read needs is on the rows, so the two callers differ only in which statement produced
+ * them.
+ */
+function objectDetailFromRows(
+  path: readonly string[],
+  columnRows: readonly ClickHouseRow[],
+  indexRows: readonly ClickHouseRow[],
+): ObjectDetail {
+  const columns: ColumnSchema[] = [];
+  for (const row of columnRows) {
+    const columnName = readIdentifier(row.columnName);
+    if (columnName === null) continue;
+    // The declared type goes through VERBATIM: collapsing it onto a generic family throws
+    // away the wrapper, and the wrapper is the part that says nullable, low-cardinality,
+    // parameterised or enumerated.
+    const type = readText(row.columnType);
+    columns.push({
+      name: columnName,
+      type,
+      nullable: isNullableType(type),
+      // `is_in_primary_key` is the authority: the sorting key may extend past the primary
+      // key, and those trailing columns are not primary.
+      isPrimary: row.isPrimaryKey === 1,
+      defaultValue: readDefault(readText(row.defaultKind), readText(row.defaultExpression)),
+    });
+  }
+
+  const indexes: IndexSchema[] = [];
+  for (const row of indexRows) {
+    const indexName = readIdentifier(row.indexName);
+    if (indexName === null) continue;
+    indexes.push({
+      name: indexName,
+      // A skipping index is declared over an EXPRESSION that may carry commas of its own,
+      // so the split is parenthesis-aware and shared with `getSchema()`.
+      columns: splitKeyExpression(readText(row.indexExpression)),
+      // A data-skipping index prunes granules and enforces nothing, so no index ClickHouse
+      // reports is unique. Nor is the primary key: live-verified, three identical values
+      // were accepted into a table declared PRIMARY KEY (a).
+      unique: false,
+    });
+  }
+
+  // `foreignKeys` is ALWAYS empty, and that is the engine: ClickHouse parses `REFERENCES`
+  // in a column definition and enforces nothing by it, and `system.*` holds no constraint
+  // catalog to read one back from.
+  return { path: [...path], columns, indexes, foreignKeys: [] };
 }
 
 /**
@@ -709,40 +870,133 @@ export async function describeObject(
 
   const indexRows = (await transport.query(objectIndexesSql(database, name))).rows;
 
-  const columns: ColumnSchema[] = [];
-  for (const row of columnRows) {
-    const columnName = readIdentifier(row.columnName);
-    if (columnName === null) continue;
-    // The declared type goes through VERBATIM: collapsing it onto a generic family
-    // throws away the wrapper, and the wrapper is the part that says nullable,
-    // low-cardinality, parameterised or enumerated.
-    const type = readText(row.columnType);
-    columns.push({
-      name: columnName,
-      type,
-      nullable: isNullableType(type),
-      // `is_in_primary_key` is the authority: the sorting key may extend past the
-      // primary key, and those trailing columns are not primary.
-      isPrimary: row.isPrimaryKey === 1,
-      defaultValue: readDefault(readText(row.defaultKind), readText(row.defaultExpression)),
-    });
-  }
+  return objectDetailFromRows(path, columnRows, indexRows);
+}
 
-  const indexes: IndexSchema[] = [];
-  for (const row of indexRows) {
-    const indexName = readIdentifier(row.indexName);
-    if (indexName === null) continue;
-    indexes.push({
-      name: indexName,
-      // A skipping index is declared over an EXPRESSION that may carry commas of its
-      // own, so the split is parenthesis-aware and shared with `getSchema()`.
-      columns: splitKeyExpression(readText(row.indexExpression)),
-      // A data-skipping index prunes granules and enforces nothing, so no index
-      // ClickHouse reports is unique. Nor is the primary key: live-verified, three
-      // identical values were accepted into a table declared PRIMARY KEY (a).
-      unique: false,
-    });
+/**
+ * Columns and indexes for EVERY object of one kind in one database (#789).
+ *
+ * THREE round trips for a table-backed folder and TWO for a dictionary folder, constant in
+ * the number of objects: the target read plus the detail reads, each of which is the single
+ * read's own statement with the name equality replaced by membership of the target set. The
+ * caller's alternative was one `describeObject` per object, which is two statements each for
+ * a table and one for a dictionary.
+ *
+ * The four guards are asked in the same order the reference implementation asks them, with
+ * this engine's fifth in the place the single read puts it:
+ *   1. a kind ClickHouse does not declare RAISES, naming the engine and the kind. An empty
+ *      batch would be a claim about the database; an undeclared kind is a fact about the
+ *      engine.
+ *   2. the container path goes through `containerDatabase`, the same reader `listObjects`
+ *      uses, so the depth and the segment-to-level mapping come from the declaration and
+ *      never from a position (standing ruling 5g).
+ *   3. a `limit` that is not a positive whole number raises rather than clamping. Here that
+ *      guard also protects the STATEMENT: the value is interpolated into a `LIMIT` clause,
+ *      because this transport binds named parameters only, so a fraction would reach the
+ *      server as a syntax error rather than as a bound.
+ *   4. a kind DECLARED with no catalog behind it raises differently, exactly as the single
+ *      read does: a kind added to `CLICKHOUSE_OBJECT_KINDS` alone would otherwise answer an
+ *      empty batch, which reads as a fact about the data.
+ *   5. a kind with no columns answers `{ details: [] }` with NO round trip. On this engine
+ *      that is `function` alone - a ClickHouse UDF is server-global and resolves in no
+ *      column catalog - which is the same fact `describeObject` answers as three empty
+ *      arrays. A DICTIONARY is NOT one of them, which is why the rule is keyed on the
+ *      CATALOG and not on `role === "relation"`.
+ *
+ * The bound is the CALLER's. `limit + 1` reaches the target's `LIMIT`, the extra object is
+ * dropped and `truncated` carries the caller's own limit; an unbounded call can never
+ * report truncation, and nothing here caps the columns of an object.
+ *
+ * The index read is NOT degraded to empty on a refusal, for the reason the single read
+ * gives: "these objects have no skipping index" is a different fact from "you may not see
+ * their indexes".
+ */
+export async function describeObjects(
+  transport: ClickHouseTransport,
+  capabilities: ProviderCapabilities,
+  container: readonly string[],
+  kind: string,
+  limit?: number,
+): Promise<ObjectDetailBatch> {
+  if (findKind(capabilities, kind) === undefined) {
+    throw new QueryError(`ClickHouse declares no object kind "${kind}"`, PROVIDER);
   }
+  const database = containerDatabase(capabilities, container);
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+    throw new QueryError(
+      `A ClickHouse bulk column read limit must be a positive whole number, received ${limit}`,
+      PROVIDER,
+    );
+  }
+  const catalog = objectCatalog(kind);
+  if (catalog === undefined) {
+    throw new QueryError(`ClickHouse declares the kind "${kind}" but has no statement that describes it`, PROVIDER);
+  }
+  if (catalog === "functions") return { details: [] };
 
-  return { path: [...path], columns, indexes, foreignKeys: [] };
+  // One row more than the bound, so the read itself says whether it stopped short.
+  const bound = limit === undefined ? undefined : limit + 1;
+  const targetRows = (await transport.query(bulkTargetSql(database, kind, bound))).rows;
+  const targets: string[] = [];
+  for (const row of targetRows) {
+    const name = readIdentifier(row.objectName);
+    if (name !== null) targets.push(name);
+  }
+  const truncated = limit !== undefined && targets.length > limit;
+  // The extra object the `limit + 1` bound brought back is dropped here, so its rows in the
+  // groupings below are simply never read.
+  const named = truncated ? targets.slice(0, limit) : targets;
+
+  const details =
+    catalog === "dictionaries"
+      ? await describeDictionaries(transport, container, database, kind, bound, named)
+      : await describeRelations(transport, container, database, kind, bound, named);
+
+  // Sorted by PATH, which is what every caller joins the two answers on, and not by the
+  // name the statement ordered by: that order is the server's and decides only which
+  // objects a bound keeps.
+  const sorted = details.sort((left, right) => comparePaths(left.path, right.path));
+  return truncated ? { details: sorted, truncated: { limit, reason: BULK_TRUNCATION_REASON } } : { details: sorted };
+}
+
+/** Every target dictionary described, in one statement. */
+async function describeDictionaries(
+  transport: ClickHouseTransport,
+  container: readonly string[],
+  database: string,
+  kind: string,
+  bound: number | undefined,
+  named: readonly string[],
+): Promise<ObjectDetail[]> {
+  const rows = groupRows((await transport.query(bulkDictionaryColumnsSql(database, kind, bound))).rows);
+  return named.map((name) => dictionaryDetailFromRows([...container, name], rows.get(name) ?? []));
+}
+
+/** Every target table-backed object described, in two statements. */
+async function describeRelations(
+  transport: ClickHouseTransport,
+  container: readonly string[],
+  database: string,
+  kind: string,
+  bound: number | undefined,
+  named: readonly string[],
+): Promise<ObjectDetail[]> {
+  const columns = groupRows((await transport.query(bulkColumnsSql(database, kind, bound))).rows);
+  const indexes = groupRows((await transport.query(bulkIndexesSql(database, kind, bound))).rows);
+  return named.map((name) =>
+    objectDetailFromRows([...container, name], columns.get(name) ?? [], indexes.get(name) ?? []),
+  );
+}
+
+/** The rows of one bulk statement, grouped by the `objectName` each one carries. */
+function groupRows(rows: readonly ClickHouseRow[]): Map<string, ClickHouseRow[]> {
+  const grouped = new Map<string, ClickHouseRow[]>();
+  for (const row of rows) {
+    const name = readIdentifier(row.objectName);
+    if (name === null) continue;
+    const existing = grouped.get(name);
+    if (existing === undefined) grouped.set(name, [row]);
+    else existing.push(row);
+  }
+  return grouped;
 }

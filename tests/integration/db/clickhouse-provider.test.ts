@@ -1792,6 +1792,35 @@ const OBJECT_COLUMN_ROWS = [
 const OBJECT_INDEX_ROWS = [{ indexName: "idx_amount", indexExpression: "amount" }];
 
 /**
+ * `system.columns` for the whole fixture, keyed by the table it answers for.
+ *
+ * Per object rather than one shared row set, and that is what makes the bulk read's join
+ * non-trivial: a batch that answered every object the same columns would satisfy every
+ * "the two readings agree" assertion while joining nothing. `events` keeps the rows the
+ * single-read assertions above were written against.
+ */
+const OBJECT_COLUMNS_BY_TABLE: Readonly<Record<string, typeof OBJECT_COLUMN_ROWS>> = {
+  events: OBJECT_COLUMN_ROWS,
+  ".inner_id.fake": [{ columnName: "x", columnType: "UInt8", isPrimaryKey: 1, defaultKind: "", defaultExpression: "" }],
+  mv_target: [
+    { columnName: "customer_id", columnType: "UInt64", isPrimaryKey: 1, defaultKind: "", defaultExpression: "" },
+    { columnName: "total", columnType: "Decimal(12, 2)", isPrimaryKey: 0, defaultKind: "", defaultExpression: "" },
+  ],
+  events_view: [
+    { columnName: "customer", columnType: "String", isPrimaryKey: 0, defaultKind: "", defaultExpression: "" },
+  ],
+  mv_inner: [
+    { columnName: "customer_id", columnType: "UInt64", isPrimaryKey: 1, defaultKind: "", defaultExpression: "" },
+  ],
+  mv_to: [
+    { columnName: "total", columnType: "Decimal(12, 2)", isPrimaryKey: 0, defaultKind: "", defaultExpression: "" },
+  ],
+};
+
+/** `system.data_skipping_indices`, keyed the same way. Only `events` declares one. */
+const OBJECT_INDEXES_BY_TABLE: Readonly<Record<string, typeof OBJECT_INDEX_ROWS>> = { events: OBJECT_INDEX_ROWS };
+
+/**
  * What `system.dictionaries` answers for a dictionary, one row per key and attribute.
  * The provider flattens the four parallel arrays in SQL, so the transport still sees
  * scalar columns.
@@ -1801,12 +1830,114 @@ const DICTIONARY_COLUMN_ROWS = [
   { columnName: "name", columnType: "Nullable(String)", isKeyColumn: 0 },
 ];
 
+/** The same, keyed by dictionary, so the bulk read's answer can be told apart per object. */
+const DICTIONARY_COLUMNS_BY_NAME: Readonly<Record<string, typeof DICTIONARY_COLUMN_ROWS>> = {
+  dict_regions_config: DICTIONARY_COLUMN_ROWS,
+  dict_users: [
+    { columnName: "id", columnType: "UInt64", isKeyColumn: 1 },
+    { columnName: "label", columnType: "String", isKeyColumn: 0 },
+  ],
+};
+
+/**
+ * The FLAT reading, over the SAME objects the object reading publishes (#789).
+ *
+ * Without it `getSchema()` here answers the monitoring fixture's `probe_*` tables, which
+ * share no name with any object this fixture lists, so the conformance helper's join guard
+ * could only report the two readings as two populations - which is the fixture defect that
+ * guard exists to catch.
+ *
+ * Three rows are deliberately NOT the object reading's:
+ *  - `.inner_id.<uuid>`, the implicit inner table, which the flat read has no exclusion for
+ *    and therefore SEES. The object surface excludes it structurally, by the view's own
+ *    uuid, so this is a real divergence and it is kept rather than smoothed away.
+ *  - `default.audit` and `demo.daily_events`, in other databases, because `getSchema()`
+ *    spans every non-system database while a folder is one database. They are spelled
+ *    qualified, which is what `displayName()` does for anything outside the pinned one.
+ */
+const FLAT_TABLE_ROWS = [
+  { database: OBJECT_DATABASE, name: ".inner_id.fake", total_rows: "0", total_bytes: "0" },
+  { database: OBJECT_DATABASE, name: MV_INNER_TABLE, total_rows: "2", total_bytes: "512" },
+  { database: OBJECT_DATABASE, name: "events", total_rows: "3", total_bytes: "1024" },
+  { database: OBJECT_DATABASE, name: "events_view", total_rows: null, total_bytes: null },
+  { database: OBJECT_DATABASE, name: "mv_inner", total_rows: "2", total_bytes: "512" },
+  { database: OBJECT_DATABASE, name: "mv_target", total_rows: "0", total_bytes: "0" },
+  { database: OBJECT_DATABASE, name: "mv_to", total_rows: null, total_bytes: null },
+  { database: "default", name: "audit", total_rows: "1", total_bytes: "64" },
+  { database: "demo", name: "daily_events", total_rows: "1", total_bytes: "64" },
+].map((row) => ({ ...row, sorting_key: "id", primary_key: "id" }));
+
+const FLAT_COLUMN_ROWS = FLAT_TABLE_ROWS.flatMap((table) =>
+  (OBJECT_COLUMNS_BY_TABLE[table.name] ?? OBJECT_COLUMN_ROWS).map((column) => ({
+    database: table.database,
+    table: table.name,
+    name: column.columnName,
+    type: column.columnType,
+    is_in_primary_key: column.isPrimaryKey,
+    default_kind: column.defaultKind,
+    default_expression: column.defaultExpression,
+  })),
+);
+
 /**
  * Routes the object-surface statements, keyed on the aliases the provider itself
  * chose, and falls back to `defaultReply` for everything else so a test in this block
  * still gets the monitoring and schema fixtures.
  */
+/** The name a detail statement embeds as a literal, for the column it filters on. */
+function literalFor(sql: string, column: string): string | undefined {
+  return new RegExp(`${column} = '([^']*)'`).exec(sql)?.[1];
+}
+
+/**
+ * The BULK column read's statements, answered off the SAME `OBJECT_ROWS` fixture (#789).
+ *
+ * One arm rather than three, because all of them carry the same target subquery and the
+ * point of the fake is that they describe the SAME set: the target is derived once here and
+ * the detail statements are answered against it. The `ORDER BY` and the `LIMIT` are applied
+ * rather than assumed, so dropping either from a statement changes what this answers.
+ *
+ * What it cannot see is a rewrite of the SQL itself (standing ruling 5b), which is why the
+ * whole method was also run against a live clickhouse-server 26.7.1.1315 holding
+ * `docker/clickhouse-init/01-object-fixture.sql` - see docs/providers/clickhouse.md.
+ */
+function bulkObjectReply(sql: string): Reply | null {
+  if (!sql.includes("AS objectName") || !sql.includes("IN (SELECT objectName")) {
+    // The bulk TARGET is the one statement that projects `objectName` alone.
+    if (!/^SELECT objectName FROM \(/.test(sql)) return null;
+  }
+  const kind = /objectKind = '([a-z_]+)'/.exec(sql)?.[1];
+  if (kind === undefined) return null;
+  const limit = /LIMIT (\d+)/.exec(sql)?.[1];
+  const named = OBJECT_ROWS.filter((row) => row.objectKind === kind).map((row) => row.objectName);
+  const ordered = /ORDER BY objectName ASC/.test(sql) ? [...named].sort(byteOrder) : named;
+  const targets = limit === undefined ? ordered : ordered.slice(0, Number(limit));
+
+  if (sql.includes("AS isKeyColumn")) {
+    return jsonReply(
+      targets.flatMap((name) =>
+        (DICTIONARY_COLUMNS_BY_NAME[name] ?? []).map((column) => ({ objectName: name, ...column })),
+      ),
+    );
+  }
+  if (sql.includes("AS columnName")) {
+    return jsonReply(
+      targets.flatMap((name) =>
+        (OBJECT_COLUMNS_BY_TABLE[name] ?? []).map((column) => ({ objectName: name, ...column })),
+      ),
+    );
+  }
+  if (sql.includes("AS indexName")) {
+    return jsonReply(
+      targets.flatMap((name) => (OBJECT_INDEXES_BY_TABLE[name] ?? []).map((index) => ({ objectName: name, ...index }))),
+    );
+  }
+  return jsonReply(targets.map((objectName) => ({ objectName })));
+}
+
 function objectReply(sql: string): Reply {
+  const bulk = bulkObjectReply(sql);
+  if (bulk !== null) return bulk;
   if (sql.includes("containerName")) return jsonReply(CONTAINER_ROWS);
   if (sql.includes("objectCount")) return jsonReply(groupedCountRows());
   if (sql.includes("objectKind")) {
@@ -1817,10 +1948,27 @@ function objectReply(sql: string): Reply {
     if (match === null) return jsonReply(OBJECT_ROWS);
     return jsonReply(OBJECT_ROWS.filter((row) => row.objectKind === match[1]));
   }
-  if (sql.includes("isKeyColumn")) return jsonReply(DICTIONARY_COLUMN_ROWS);
-  if (sql.includes("columnName")) return jsonReply(OBJECT_COLUMN_ROWS);
-  if (sql.includes("indexName") && sql.includes("data_skipping_indices")) return jsonReply(OBJECT_INDEX_ROWS);
+  // Each keyed by the name the statement filters on, so a detail read of one object cannot
+  // be satisfied by another object's rows.
+  if (sql.includes("isKeyColumn")) return jsonReply(DICTIONARY_COLUMNS_BY_NAME[literalFor(sql, "name") ?? ""] ?? []);
+  if (sql.includes("columnName")) return jsonReply(OBJECT_COLUMNS_BY_TABLE[literalFor(sql, "c.table") ?? ""] ?? []);
+  if (sql.includes("indexName") && sql.includes("data_skipping_indices")) {
+    return jsonReply(OBJECT_INDEXES_BY_TABLE[literalFor(sql, "i.table") ?? ""] ?? []);
+  }
+  // The FLAT reading, over the same objects. See FLAT_TABLE_ROWS for what it deliberately
+  // does not share with the object reading.
+  if (sql.includes("FROM system.tables") && sql.includes("sorting_key")) return jsonReply(FLAT_TABLE_ROWS);
+  if (sql.includes("FROM system.columns") && sql.includes("is_in_primary_key")) return jsonReply(FLAT_COLUMN_ROWS);
+  if (sql.includes("FROM system.data_skipping_indices") && sql.includes("expr")) return jsonReply([]);
   return defaultReply(sql);
+}
+
+/**
+ * Two names in the order ClickHouse's own `ORDER BY` puts them, which is the UTF-8 BYTE
+ * order and not JavaScript's UTF-16 code-unit order.
+ */
+function byteOrder(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }
 
 function installObjectReplies(): void {
@@ -2503,6 +2651,323 @@ describe("object surface internals", () => {
     await expect(provider.describeObject([OBJECT_DATABASE, "events"], "table")).rejects.toBeInstanceOf(
       DatabaseConfigError,
     );
+  });
+});
+
+/**
+ * The bulk column read (#789).
+ *
+ * The fake replays the SAME `OBJECT_ROWS` fixture the single read replays, so every "the
+ * two readings agree" assertion compares two answers the provider produced. The whole
+ * method was also run against a live clickhouse-server 26.7.1.1315 holding
+ * `docker/clickhouse-init/01-object-fixture.sql`; what that run measured is in
+ * docs/providers/clickhouse.md.
+ */
+describe("ClickHouse bulk column read", () => {
+  test("describes every table in the folder, and each detail is what the single read answers", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const batch = await provider.describeObjects([OBJECT_DATABASE], "table");
+
+    expect(batch.truncated).toBeUndefined();
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      [OBJECT_DATABASE, ".inner_id.fake"],
+      [OBJECT_DATABASE, "events"],
+      [OBJECT_DATABASE, "mv_target"],
+    ]);
+    // One mapper serves both reads, so a divergence here is the bulk read spelling a column
+    // or an index differently from the single read of the same object.
+    for (const detail of batch.details) {
+      expect(detail).toEqual(await provider.describeObject(detail.path, "table"));
+    }
+    // The implicit inner table is in neither: the target is the same kind-tagged subquery
+    // the folder's listing filters, and it excludes an inner table structurally.
+    expect(batch.details.map((detail) => detail.path[1])).not.toContain(MV_INNER_TABLE);
+    await provider.disconnect();
+  });
+
+  test("every described path is one listObjects produced, for every relation kind", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    for (const kind of ["table", "view", "materialized_view"]) {
+      const listed = await provider.listObjects([OBJECT_DATABASE], kind);
+      const batch = await provider.describeObjects([OBJECT_DATABASE], kind);
+      expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+    }
+    await provider.disconnect();
+  });
+
+  test("a whole folder of tables costs three statements, and a folder of dictionaries two", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+    sentSql.length = 0;
+
+    await provider.describeObjects([OBJECT_DATABASE], "table");
+    // The target read, the column read and the index read. The single read is two
+    // statements PER OBJECT, so the alternative for these three objects was six.
+    expect(sentSql).toHaveLength(3);
+
+    sentSql.length = 0;
+    await provider.describeObjects([OBJECT_DATABASE], "dictionary");
+    // A dictionary has no index at all - its LAYOUT is not one and
+    // `system.data_skipping_indices` holds nothing for it - so there is no third read.
+    expect(sentSql).toHaveLength(2);
+    await provider.disconnect();
+  });
+
+  test("both dictionary flavours describe, from the one catalog they are both in", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const batch = await provider.describeObjects([OBJECT_DATABASE], "dictionary");
+
+    // The DDL one and the CONFIG-FILE one, which has no `system.tables` row at all and
+    // therefore no `system.columns` row either. Each keeps its own columns.
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      [OBJECT_DATABASE, "dict_regions_config"],
+      [OBJECT_DATABASE, "dict_users"],
+    ]);
+    expect(batch.details[0]!.columns.map((column) => column.name)).toEqual(["id", "name"]);
+    expect(batch.details[1]!.columns.map((column) => column.name)).toEqual(["id", "label"]);
+    expect(batch.details.every((detail) => detail.indexes.length === 0)).toBe(true);
+    // The control: `system.columns` was never read for a dictionary folder.
+    expect(sentSql.filter((sql) => sql.includes("FROM system.columns"))).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("the bulk dictionary read prefers the DDL flavour per name, which one LIMIT cannot do", async () => {
+    // `dictionaryColumnsSql()` picks the DDL dictionary over a config one of the same name
+    // with `ORDER BY database DESC LIMIT 1`, and that is a PER NAME choice, so the bulk form
+    // cannot use a `LIMIT` at all: it groups by name and takes each array with
+    // `argMax(..., database)`.
+    //
+    // MEASURED against clickhouse-server 26.7.1.1315, and the collision really is
+    // creatable: a `CREATE DICTIONARY demo.dict_regions_config` beside the config-file one
+    // gives `system.dictionaries` two rows for that name, and both readings then answer the
+    // DDL one's columns. Dropping `argMax` is not a wrong answer on this engine, it is a
+    // SERVER ERROR - code 215, "Column 'system.dictionaries.`key.names`' is not under
+    // aggregate function and not in GROUP BY keys" - which is why the clause is pinned by
+    // TEXT here rather than by a fixture that cannot produce it.
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await provider.describeObjects([OBJECT_DATABASE], "dictionary");
+
+    const sql = sqlWith("AS isKeyColumn");
+    expect(sql).toContain("argMax(`key.names`, database) AS keyNames");
+    expect(sql).toContain("argMax(`attribute.types`, database) AS attributeTypes");
+    expect(sql).toContain("GROUP BY name");
+    // And the config flavour's empty database is still accepted alongside the container's.
+    expect(sql).toContain(`WHERE (database = '${OBJECT_DATABASE}' OR database = '')`);
+    await provider.disconnect();
+  });
+
+  test("the engine cuts under its own order and the answer is sorted by path, and those are two different orders", async () => {
+    // The one probe that separates the two on this engine. MEASURED on
+    // clickhouse-server 26.7.1.1315: `ORDER BY name ASC` over a database holding `U+E000`
+    // and `U+1F600` answers `U+E000` first, because ClickHouse compares Strings as UTF-8
+    // BYTES; a JavaScript sort answers the reverse, because it compares UTF-16 code units
+    // and the surrogate `0xD83D` sorts below `0xE000`. The fake below is the engine's order,
+    // not a convenience.
+    const exotic = ["\uE000", "\u{1F600}"];
+    replyFor = (sql) =>
+      /^SELECT objectName FROM \(/.test(sql) && sql.includes("objectKind = 'table'")
+        ? jsonReply(exotic.map((objectName) => ({ objectName })))
+        : objectReply(sql);
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const batch = await provider.describeObjects([OBJECT_DATABASE], "table");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      [OBJECT_DATABASE, "\u{1F600}"],
+      [OBJECT_DATABASE, "\uE000"],
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a function answers an empty batch with no round trip at all", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+    sentSql.length = 0;
+
+    await expect(provider.describeObjects([OBJECT_DATABASE], "function")).resolves.toEqual({ details: [] });
+
+    // Not "no rows came back": nothing was sent. A ClickHouse UDF resolves in no column
+    // catalog, which is a fact about the KIND and is answered from the declaration.
+    expect(sentSql).toEqual([]);
+    // The control: a kind that DOES have columns still reaches the server.
+    await provider.describeObjects([OBJECT_DATABASE], "view");
+    expect(sentSql.length).toBeGreaterThan(0);
+    await provider.disconnect();
+  });
+
+  test("an undeclared kind raises, and a declared kind with no catalog behind it raises differently", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await expect(provider.describeObjects([OBJECT_DATABASE], "sequence")).rejects.toThrow(
+      /ClickHouse declares no object kind "sequence"/,
+    );
+    // The same two questions the single read asks, in the same order: the DECLARATION
+    // decides whether the kind exists, then the catalog map decides whether anything can
+    // read it.
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...provider.getCapabilities(),
+      objectKinds: [
+        ...(provider.getCapabilities().objectKinds ?? []),
+        { id: "projection", role: "config", label: "Projection", labelPlural: "Projections" },
+      ],
+    });
+    await expect(provider.describeObjects([OBJECT_DATABASE], "projection")).rejects.toThrow(
+      /declares the kind "projection" but has no statement that describes it/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a container path of the wrong shape raises through the declaration, not a literal depth", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await expect(provider.describeObjects([], "table")).rejects.toThrow(/A ClickHouse container path is \[database\]/);
+    await expect(provider.describeObjects([OBJECT_DATABASE, "extra"], "table")).rejects.toThrow(
+      /A ClickHouse container path is \[database\]/,
+    );
+    await provider.disconnect();
+  });
+
+  test("the database is the segment the DECLARATION assigns, which a two-level declaration shows", async () => {
+    // Standing ruling 5g, driven to a BOUND VALUE and not to a refusal. With a catalog
+    // level in front, `container[0]` is the CATALOG and the database is `container[1]`:
+    // both are depth-identical at one level, so only this declaration tells them apart.
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...provider.getCapabilities(),
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Database", labelPlural: "Databases" },
+      ],
+    });
+    sentSql.length = 0;
+
+    const batch = await provider.describeObjects(["warehouse", OBJECT_DATABASE], "table");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["warehouse", OBJECT_DATABASE, ".inner_id.fake"],
+      ["warehouse", OBJECT_DATABASE, "events"],
+      ["warehouse", OBJECT_DATABASE, "mv_target"],
+    ]);
+    // The literal that reached the server is the DATABASE segment, never the catalog one.
+    expect(sqlWith("AS columnName")).toContain(`c.database = '${OBJECT_DATABASE}'`);
+    expect(sqlWith("AS columnName")).not.toContain("'warehouse'");
+    await provider.disconnect();
+  });
+
+  test("a limit that is not a positive whole number raises rather than clamping", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+    sentSql.length = 0;
+
+    for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(provider.describeObjects([OBJECT_DATABASE], "table", limit)).rejects.toThrow(
+        /A ClickHouse bulk column read limit must be a positive whole number/,
+      );
+    }
+    // Nothing was sent for any of them: the guard is before the read, and a fractional
+    // limit interpolated into a `LIMIT` clause is a syntax error rather than a bound.
+    expect(sentSql).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("a bound that bites reports the caller's own limit, and one that does not never reports", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const bounded = await provider.describeObjects([OBJECT_DATABASE], "table", 2);
+    expect(bounded.details.map((detail) => detail.path)).toEqual([
+      [OBJECT_DATABASE, ".inner_id.fake"],
+      [OBJECT_DATABASE, "events"],
+    ]);
+    expect(bounded.truncated?.limit).toBe(2);
+    expect(bounded.truncated?.reason.length).toBeGreaterThan(0);
+    // The bound cuts OBJECTS and never columns: the detail it kept is complete.
+    expect(bounded.details[1]!.columns).toHaveLength(3);
+    // `limit + 1` is what the statement carries, so a saturated read is told from an exact
+    // one with no second count.
+    expect(sqlWith("LIMIT 3")).toContain("ORDER BY objectName ASC LIMIT 3");
+
+    const exact = await provider.describeObjects([OBJECT_DATABASE], "table", 3);
+    expect(exact.details).toHaveLength(3);
+    expect(exact.truncated).toBeUndefined();
+
+    const unbounded = await provider.describeObjects([OBJECT_DATABASE], "table");
+    expect(unbounded.details).toHaveLength(3);
+    expect(unbounded.truncated).toBeUndefined();
+    await provider.disconnect();
+  });
+
+  test("a refused index read propagates instead of reporting a folder with no indexes", async () => {
+    // The same rule the single read carries: `system.data_skipping_indices` needs its own
+    // grant and answers code 497 without it, and "these objects have no skipping index" is
+    // a different fact from "you may not see their indexes".
+    replyFor = (sql) => (sql.includes("AS indexName") ? DENIED() : objectReply(sql));
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await expect(provider.describeObjects([OBJECT_DATABASE], "table")).rejects.toBeInstanceOf(AuthenticationError);
+    await provider.disconnect();
+  });
+
+  test("an empty folder answers an empty batch rather than raising", async () => {
+    replyFor = (sql) => (/^SELECT objectName FROM \(/.test(sql) ? jsonReply([]) : objectReply(sql));
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    // "This database holds none" is a true answer, unlike the single read's zero-column
+    // case, which means the object is not there under the name it was asked for.
+    await expect(provider.describeObjects([OBJECT_DATABASE], "table")).resolves.toEqual({ details: [] });
+    await provider.disconnect();
+  });
+
+  test("a column or index row with no usable name is skipped, as it is in the single read", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+    replyFor = (sql) => {
+      if (sql.includes("AS columnName")) {
+        return jsonReply([
+          {
+            objectName: "events",
+            columnName: "",
+            columnType: "UInt8",
+            isPrimaryKey: 0,
+            defaultKind: "",
+            defaultExpression: "",
+          },
+          {
+            objectName: "events",
+            columnName: "kept",
+            columnType: "UInt8",
+            isPrimaryKey: 0,
+            defaultKind: "",
+            defaultExpression: "",
+          },
+        ]);
+      }
+      if (sql.includes("AS indexName")) {
+        return jsonReply([
+          { objectName: "events", indexName: "", indexExpression: "x" },
+          { objectName: "events", indexName: "idx_kept", indexExpression: "(lower(b))" },
+        ]);
+      }
+      return objectReply(sql);
+    };
+
+    const batch = await provider.describeObjects([OBJECT_DATABASE], "table");
+    const events = batch.details.find((detail) => detail.path[1] === "events")!;
+
+    expect(events.columns.map((column) => column.name)).toEqual(["kept"]);
+    expect(events.indexes).toEqual([{ name: "idx_kept", columns: ["lower(b)"], unique: false }]);
+    await provider.disconnect();
   });
 });
 

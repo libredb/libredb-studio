@@ -931,6 +931,68 @@ The index read here **does not degrade to empty**, unlike `getSchema()`'s.
 object has no skipping index" is a different fact from "you may not see its indexes". A detail panel
 showing the first when the second is true is a claim nobody measured.
 
+#### `describeObjects()` describes a whole folder in three statements (#789)
+
+`describeObjects(container, kind, limit?)` answers columns and indexes for EVERY object of one kind in
+one database, in THREE round trips for a table-backed folder and TWO for a dictionary folder, whatever
+the folder holds. The single read is two statements per table-backed object and one per dictionary, so a
+folder of 200 tables cost 400. Measured on clickhouse-server 26.7.1.1315 against a 200-table database:
+**42 ms for one `describeObjects()` against 614 ms for 200 `describeObject()` calls**, the same 600
+columns and 200 skipping indexes.
+
+Each detail statement is its `describeObject()` counterpart with the name equality replaced by
+membership of the target set, and nothing else changed.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.** The same three the single read uses - `system.columns`,
+`system.data_skipping_indices` and `system.dictionaries` - and the target is the same kind-tagged
+subquery the count GROUPs and the listing FILTERs, so all three cannot disagree about which rows are in
+scope. That is also what keeps the implicit inner table out of the batch: it is excluded structurally,
+by the view's own uuid, in the one place all three read. MEMBERSHIP comes from the target read and never
+from the column read, so an object the detail reads answer nothing for comes back with empty lists
+rather than missing, and this read does not repeat the single read's zero-column throw - there an empty
+answer means the object is not there under that name, here the catalog has just said it is.
+
+**Which kinds have no columns.** `function` alone, which answers `{ details: [] }` with no round trip.
+A ClickHouse UDF is server-global and resolves in no column catalog at all. A DICTIONARY is NOT one of
+them - `system.dictionaries` carries its key and attribute columns - which is why the rule is keyed on
+the CATALOG map and not on `role === "relation"`: a dictionary is declared `config`.
+
+**What bounds the read on the wire.** `LIMIT n` inside the target, carrying `limit + 1` so a saturated
+read is told from an exact one with no second count. The value is INTERPOLATED rather than bound,
+because this transport binds named `{name:Type}` parameters and nothing else; it is safe by
+construction, since the caller's value is refused unless it is a positive whole number, so nothing that
+reaches the template can be anything but digits. That guard therefore protects the STATEMENT here as
+well as the answer: a fractional limit would reach the server as a syntax error. The extra object is
+dropped in code and `truncated` carries the CALLER's limit.
+
+**What orders the cut, and under whose collation.** `ORDER BY objectName ASC` in the target, which runs
+under ClickHouse's own String comparison. Measured: that comparison is the UTF-8 BYTE order, so a
+database holding `U+E000` and `U+1F600` answers `U+E000` first, where a JavaScript sort answers the
+reverse because it compares UTF-16 code units and the surrogate `0xD83D` sorts below `0xE000`. So the
+MEMBERSHIP of a bounded cut is the server's and the ORDER of the answer is ours.
+
+**Mixed path depth (ruling 5f).** Not in this engine's relation set, and there is nothing here that
+could produce one: no kind declares `attachedTo`, and every object of every declared kind is addressed
+`[database, name]`. A function's database segment records the container it was REACHED through rather
+than one that owns it, which is unchanged from the listing.
+
+**The dictionary folder needed its own shape, and the reason is a PER NAME choice.** The single read
+prefers a DDL dictionary over a config-file one of the same name with `ORDER BY database DESC LIMIT 1`.
+A bulk read over many names cannot use a `LIMIT` at all, so it groups by name and takes each of the four
+parallel arrays with `argMax(..., database)`. Measured on 26.7.1.1315, and the collision really is
+creatable: `CREATE DICTIONARY demo.dict_regions_config` beside the config-file one of that name gives
+`system.dictionaries` two rows, and both readings then answer the DDL one's columns, column for column.
+Dropping `argMax` is not a wrong answer on this engine, it is a server error - code 215,
+*"Column 'system.dictionaries.`key.names`' is not under aggregate function and not in GROUP BY keys"* -
+which is why the clause is pinned by statement TEXT in the suite. The four `key.*` and `attribute.*`
+names are backtick-quoted inside `argMax`, where a dotted name would otherwise parse as tuple access.
+
+The index read is NOT degraded to empty on a refusal, for the reason the single read gives:
+`system.data_skipping_indices` needs its own grant and answers code 497 without it, and "these objects
+have no skipping index" is a different fact from "you may not see their indexes".
+
 #### Paths are derived, never indexed positionally
 
 The container depth comes from `containerDepth()`, the database segment from the declared level whose

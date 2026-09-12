@@ -56,6 +56,7 @@ import {
   type DatabaseObject,
   type KindCount,
   type ObjectDetail,
+  type ObjectDetailBatch,
   type ProviderCapabilities,
   type ProviderLabels,
   type ProviderOptions,
@@ -84,6 +85,7 @@ import {
   CLICKHOUSE_OBJECT_KINDS,
   countObjects as readObjectCounts,
   describeObject as readObjectDetail,
+  describeObjects as readObjectDetails,
   listContainers as readContainers,
   listObjects as readObjects,
   literal,
@@ -818,6 +820,11 @@ export class ClickHouseProvider extends SQLBaseProvider {
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
     const transport = this.requireTransport();
     return this.guarded(() => readObjectDetail(transport, this.getCapabilities(), path, kind));
+  }
+
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    const transport = this.requireTransport();
+    return this.guarded(() => readObjectDetails(transport, this.getCapabilities(), container, kind, limit));
   }
 
   // ==========================================================================
