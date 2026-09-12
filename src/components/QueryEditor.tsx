@@ -143,19 +143,37 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     const lastSyncedValueRef = useRef<string>(value);
     const isInternalChangeRef = useRef<boolean>(false);
 
-    // Sync editor content when value prop changes externally (e.g., tab switch)
+    // The ONE path that pushes an external value change (tab switch, Format, Clear,
+    // programmatic setValue) into the model, now that <Editor> is uncontrolled
+    // (defaultValue). Two guards keep it from clobbering active typing:
+    //
+    //  - `value === lastSyncedValueRef.current`: the incoming value is one we already
+    //    reconciled (including our own keystroke echoes, since the parent feeds
+    //    onContentChange back in as `value`). Nothing to do.
+    //
+    //  - buffer has diverged from the last synced value: the user has typed since we last
+    //    synced, so the model is ahead of the parent. An incoming `value` that is not the
+    //    current buffer is therefore a STALE echo (a keystroke the parent is still
+    //    catching up to), not an external change, and applying it would rewrite the buffer
+    //    and jump the caret — the bug. A genuine external change (tab switch) only arrives
+    //    after a blur, which syncs `lastSyncedValueRef` to the buffer first, so there the
+    //    buffer does still equal the last synced value and the change applies.
     useEffect(() => {
-      if (editorRef.current && value !== lastSyncedValueRef.current) {
-        const currentEditorValue = editorRef.current.getValue();
-        // Only update if the new value is different from current editor content
-        // This prevents unnecessary updates when we're the source of the change
-        if (value !== currentEditorValue) {
-          isInternalChangeRef.current = true;
-          editorRef.current.setValue(value);
-          lastSyncedValueRef.current = value;
-          isInternalChangeRef.current = false;
-        }
+      if (!editorRef.current) return;
+      if (value === lastSyncedValueRef.current) return;
+      const currentEditorValue = editorRef.current.getValue();
+      // Unsynced local edits present: treat a differing `value` as a stale echo, not an
+      // external change. Record it so the same string is not re-checked every render.
+      if (currentEditorValue !== lastSyncedValueRef.current) {
+        lastSyncedValueRef.current = value;
+        return;
       }
+      if (value !== currentEditorValue) {
+        isInternalChangeRef.current = true;
+        editorRef.current.setValue(value);
+        isInternalChangeRef.current = false;
+      }
+      lastSyncedValueRef.current = value;
     }, [value]);
 
     // Update editor options when line numbers toggle changes
@@ -626,7 +644,21 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
             height="100%"
             language={language}
             theme={editorTheme}
-            value={value}
+            // `defaultValue`, not `value`: the editor is uncontrolled on the keystroke
+            // path. `@monaco-editor/react`'s controlled-`value` effect runs an
+            // `executeEdits` over the FULL model range on every change to the prop, and
+            // the prop is fed from `onContentChange` on every keystroke (Studio writes
+            // each keystroke into `currentTab.query`, which flows back here). Whenever a
+            // keystroke lands in the model between that state update and the re-render,
+            // the prop arrives one keystroke stale, `t !== getValue()` is true, and the
+            // full-range edit rewrites the buffer and snaps the caret to (1,1) — the
+            // "typing scrambles / cursor jumps" bug, worse on large schemas because the
+            // extra render work widens that window. Passing `defaultValue` leaves the
+            // library's `value` effect at its `t === void 0` early-return, so external
+            // changes (tab switch, Format, Clear, setValue) go through the single
+            // `useEffect([value])` below, which guards self-echoes via
+            // `lastSyncedValueRef`.
+            defaultValue={value}
             beforeMount={handleBeforeMount}
             onChange={handleEditorChange}
             loading={
