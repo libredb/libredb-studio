@@ -5,6 +5,9 @@
  * before importing the RedisProvider class.
  */
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import ts from "typescript";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { isSourcePartUnavailable, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/types";
@@ -2023,5 +2026,60 @@ describe("RedisProvider", () => {
       expect(batch.details[0].columns.map((column) => column.name)).toEqual(["key", "value", "type"]);
       expect(capturedRedisOptions[capturedRedisOptions.length - 1].db).toBe(3);
     });
+  });
+});
+
+/**
+ * Every module-private function in this provider carries its OWN doc comment (#789).
+ *
+ * A guard and not a review note, because the defect it catches is invisible to both linters
+ * this repository runs. A new function inserted BETWEEN an existing docblock and the function
+ * that block documents leaves the original function undocumented and silently re-attributes
+ * the measurement to a different function. Neither Biome nor oxlint nor ESLint reads comment
+ * adjacency at all, and it happened here: `isServerErrorReply` landed between
+ * `parseFunctionLibraryCode`'s block and `parseFunctionLibraryCode`.
+ *
+ * Measured with the TypeScript compiler API rather than by reading the text, because the
+ * compiler resolves a block to the declaration it ACTUALLY attaches to, which is the whole
+ * question. `ts.getJSDocCommentsAndTags` over the real file on disk, the same mechanism the
+ * seven provider seam guards under `tests/unit/db` use.
+ *
+ * The blocks in this file are the only record of why the library selection is byte-equal and
+ * why a reply's pairs are walked rather than indexed, and this is the reference implementation
+ * fifteen provider tasks copy.
+ */
+describe("the Redis provider's own doc comments", () => {
+  const FILE = join(import.meta.dir, "..", "..", "..", "src", "lib", "db", "providers", "keyvalue", "redis.ts");
+  const source = ts.createSourceFile(FILE, readFileSync(FILE, "utf8"), ts.ScriptTarget.Latest, true);
+  const functions = source.statements.filter(ts.isFunctionDeclaration);
+  const blocksOf = (declaration: ts.FunctionDeclaration) => ts.getJSDocCommentsAndTags(declaration).filter(ts.isJSDoc);
+
+  test("no module-private function is left undocumented by a block that moved on to another", () => {
+    // Non-vacuity first: a guard over an empty enumeration passes forever, and this one reads
+    // a file it does not own the shape of.
+    const names = functions.map((declaration) => declaration.name?.text);
+    expect(names).toContain("parseFunctionLibraryCode");
+    expect(names).toContain("isServerErrorReply");
+    expect(functions.length).toBeGreaterThan(5);
+
+    const undocumented = functions
+      .filter((declaration) => blocksOf(declaration).length === 0)
+      .map((declaration) => declaration.name?.text ?? "<anonymous>");
+    expect(undocumented).toEqual([]);
+  });
+
+  test("the byte-equal selection rule is attached to the function that implements it", () => {
+    // The block names a rule about ONE function's behaviour, so it is worth nothing on any
+    // other: a reader asking why `reply[0]` is wrong for a WITHCODE reply finds it here or
+    // nowhere.
+    const declaration = functions.find((entry) => entry.name?.text === "parseFunctionLibraryCode");
+    if (declaration === undefined) throw new Error("parseFunctionLibraryCode is gone from the provider");
+
+    const documented = blocksOf(declaration)
+      .map((block) => block.getText(source))
+      .join("\n");
+
+    expect(documented).toContain("BYTE-EQUAL");
+    expect(documented).toContain("01-object-fixture.redis");
   });
 });

@@ -1393,7 +1393,10 @@ export type ObjectSourceOrigin = "stored" | "regenerated" | "rendered";
  * a provider composing one (spreading a catalog row, or spreading a conditional
  * `{unavailable}` onto a bounded text) would put a refusal sentence over a definition the
  * engine really returned. `assertObjectSurface` refuses that part by name for our own
- * providers, and the client's shape check refuses it for a host's answer.
+ * providers, and that is the ONLY refusal standing today. A HOST's answer is unguarded: the
+ * embedded seam's runtime shape check, the one `isRenderableShape` in
+ * `src/components/object-tree/use-tree-nodes.ts` is the precedent for, is later work in #789
+ * Phase 2 and does not exist in this tree.
  *
  * `id` is provider-local. Core reads it as an identity WITHIN ONE DOCUMENT and for nothing
  * else: the part switcher's selection key, and the Source tab's remembered selection. Core
@@ -1401,9 +1404,9 @@ export type ObjectSourceOrigin = "stored" | "regenerated" | "rendered";
  * documents.
  *
  * `text` is never empty and never whitespace only. TypeScript cannot express that, so it is a
- * runtime invariant asserted in `assertObjectSurface` for our own providers and in the client's
- * shape check for a host's answer. Where an engine answers empty, the provider emits a REFUSAL
- * carrying the engine's own fact instead.
+ * runtime invariant, asserted in `assertObjectSurface` for our own providers and, for a host's
+ * answer, by the same shape check that does not exist yet. Where an engine answers empty, the
+ * provider emits a REFUSAL carrying the engine's own fact instead.
  */
 export type ObjectSourcePart =
   | {

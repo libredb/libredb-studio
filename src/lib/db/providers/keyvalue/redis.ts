@@ -362,6 +362,22 @@ function parseFunctionLibraries(reply: unknown): string[] {
  * the nested `functions` value is itself a list of key/value lists, so a parser reading
  * positions takes a field name for a library name the moment the server adds a field.
  */
+function parseFunctionLibraryCode(reply: unknown, name: string): string | undefined {
+  for (const entry of Array.isArray(reply) ? reply : []) {
+    if (!Array.isArray(entry)) continue;
+    let matched = false;
+    let code: string | undefined;
+    for (let index = 0; index + 1 < entry.length; index += 2) {
+      const key = String(entry[index]);
+      const value = entry[index + 1];
+      if (key === "library_name" && value === name) matched = true;
+      if (key === "library_code" && typeof value === "string") code = value;
+    }
+    if (matched) return code;
+  }
+  return undefined;
+}
+
 /**
  * Whether a driver rejection is the SERVER's own error reply, rather than a transport
  * failure (#789 Phase 2).
@@ -381,22 +397,6 @@ function parseFunctionLibraries(reply: unknown): string[] {
  */
 function isServerErrorReply(error: unknown): boolean {
   return error instanceof Error && error.name === "ReplyError";
-}
-
-function parseFunctionLibraryCode(reply: unknown, name: string): string | undefined {
-  for (const entry of Array.isArray(reply) ? reply : []) {
-    if (!Array.isArray(entry)) continue;
-    let matched = false;
-    let code: string | undefined;
-    for (let index = 0; index + 1 < entry.length; index += 2) {
-      const key = String(entry[index]);
-      const value = entry[index + 1];
-      if (key === "library_name" && value === name) matched = true;
-      if (key === "library_code" && typeof value === "string") code = value;
-    }
-    if (matched) return code;
-  }
-  return undefined;
 }
 
 // ============================================================================
