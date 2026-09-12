@@ -52,6 +52,7 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { comparePaths, DRUID_CONTAINER_LEVELS, DRUID_OBJECT_KINDS } from "@/lib/db/providers/sql/druid/objects";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import { getExplainStrategy } from "@/lib/explain";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { ExplainTreeNode } from "@/lib/explain/types";
@@ -1794,6 +1795,15 @@ const CATALOG_TABLE_ROWS: { schema: string; name: string; type: string }[] = [
 
 /** `INFORMATION_SCHEMA.COLUMNS` for the objects the tests describe, keyed by address. */
 const CATALOG_COLUMN_ROWS: Record<string, [name: string, type: string, nullable: string][]> = {
+  // Verbatim from the live 37.0.0 cluster. This datasource had no entry until the bulk
+  // column read went looking for one (#789): the single read is only ever driven against
+  // `libredb_objects_orders` here, so the gap was invisible while the batch describes
+  // every object the folder lists.
+  "druid.libredb-objects-events": [
+    ["__time", "TIMESTAMP", "NO"],
+    ["event", "VARCHAR", "YES"],
+    ["actor", "VARCHAR", "YES"],
+  ],
   "druid.libredb_objects_orders": [
     ["__time", "TIMESTAMP", "NO"],
     ["order_id", "VARCHAR", "YES"],
@@ -1873,7 +1883,44 @@ function engineKind(row: { schema: string; type: string }): string {
   return "datasource";
 }
 
+/**
+ * The bulk column read's one statement, served by APPLYING its clauses (#789).
+ *
+ * The fake dispatches on statement text, which standing ruling 5b says cannot see a
+ * rewrite of that text. So this arm reads the kind predicate, the `LIMIT` and the join
+ * key out of the statement and applies each one rather than assuming the provider wrote
+ * them: a bulk statement that dropped its `LIMIT`, filtered on the wrong kind or joined
+ * on the wrong schema answers differently here. The statement itself is pinned by
+ * literal in the block below as well, and it was run against a live 37.0.0 cluster.
+ */
+function bulkColumnReply(sql: string): Reply {
+  const schema = boundSchema(sql);
+  const kindMatch = /"objectKind" = '([a-z_]+)'/.exec(sql);
+  if (kindMatch === null) throw new Error(`no objectKind literal in: ${sql}`);
+  const limitMatch = /LIMIT (\d+)\)/.exec(sql);
+  // The join key. A statement joining on another schema's columns must not be served
+  // this schema's, or the whole address derivation goes unchecked.
+  const joinMatch = /ON c\.TABLE_SCHEMA = '((?:[^']|'')*)'/.exec(sql);
+  if (joinMatch === null) throw new Error(`no join schema literal in: ${sql}`);
+  const joinSchema = joinMatch[1].replace(/''/g, "'");
+
+  const ordered = CATALOG_TABLE_ROWS.filter((row) => row.schema === schema)
+    .filter((row) => engineKind(row) === kindMatch[1])
+    .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+  const targets = limitMatch === null ? ordered : ordered.slice(0, Number(limitMatch[1]));
+
+  const rows = targets.flatMap((row) => {
+    const columns = CATALOG_COLUMN_ROWS[`${joinSchema}.${row.name}`] ?? [];
+    // A LEFT JOIN keeps an object with no column row at all, which is what makes
+    // membership come from the TARGET read rather than from the column read.
+    if (columns.length === 0) return [[row.name, null, null, null]];
+    return columns.map(([name, type, nullable]) => [row.name, name, type, nullable]);
+  });
+  return ok(druidBody(["tableName", "columnName", "dataType", "isNullable"], rows));
+}
+
 function objectReply(sql: string): Reply {
+  if (sql.includes("LEFT JOIN INFORMATION_SCHEMA.COLUMNS")) return bulkColumnReply(sql);
   // The FLAT reading's two statements, FIRST (#789).
   //
   // `DRUID_COLUMN_LIST_SQL` carries `columnName`, so without this arm it fell into the
@@ -2567,5 +2614,249 @@ describe("object surface internals", () => {
     await expect(provider.countObjects(["druid"])).rejects.toThrow(
       'A Druid path needs a "schema" container level and a segment for it; the declaration is [catalog] and the path is ["druid"]',
     );
+  });
+});
+
+/**
+ * The bulk column read (#789), the fifth method.
+ *
+ * Druid was one of the two type-ids that fell out of the four implementation waves, and
+ * nothing went red because the shared conformance helper skipped a provider that did not
+ * declare the method at all. So the property the helper could not check is asserted here
+ * directly rather than delegated: the batch describes EVERY object `listObjects` names for
+ * that container and kind, and an unbounded call leaves `truncated` absent.
+ *
+ * Everything here was measured against the running Apache Druid 37.0.0 cluster rather than
+ * reasoned about: the `LEFT JOIN` over `INFORMATION_SCHEMA`, the `ORDER BY` and `LIMIT`
+ * inside the target subquery, and the collation the cut runs under.
+ */
+describe("the bulk column read", () => {
+  const DATASOURCES = ["libredb-objects-events", "libredb_back\\slash", "libredb_o'brien", "libredb_objects_orders"];
+
+  test("describes EVERY object the listing names, in ONE round trip, with no truncation", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const listed = await provider.listObjects([OBJECT_SCHEMA], "datasource");
+    sentSql = [];
+    const batch = await provider.describeObjects!([OBJECT_SCHEMA], "datasource");
+
+    // The property the helper could not check until this wave. Not "every detail was
+    // listed", which a batch dropping one object also satisfies, but the two sets being
+    // EQUAL: a bulk read that quietly loses a table is the #414 absence this epic exists
+    // to stop.
+    expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+    expect(batch.details.map((detail) => detail.path[1])).toEqual(DATASOURCES);
+    // Unbounded, so nothing may claim a bound.
+    expect(batch.truncated).toBeUndefined();
+    // ONE round trip for the folder, not one per object.
+    expect(sentSql).toHaveLength(1);
+  });
+
+  test("every column set is what describeObject answers for the same object, column for column", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const batch = await provider.describeObjects!([OBJECT_SCHEMA], "datasource");
+    for (const detail of batch.details) {
+      const single = await provider.describeObject(detail.path, "datasource");
+      expect(detail).toEqual(single);
+    }
+    // The control: the loop above is only worth anything if it ran over more than one
+    // object, and a zero-iteration loop certifies nothing (standing ruling 5b).
+    expect(batch.details.length).toBe(4);
+  });
+
+  test("all three declared kinds answer, because no Druid kind is columnless", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const lookups = await provider.describeObjects!(["lookup"], "lookup");
+    const system = await provider.describeObjects!(["sys"], "system_table");
+
+    expect(lookups.details.map((detail) => detail.path)).toEqual([
+      ["lookup", "libredb_country_names"],
+      ["lookup", "libredb_status_labels"],
+    ]);
+    expect(lookups.details[0].columns.map((column) => column.name)).toEqual(["k", "v"]);
+    // Measured: `INFORMATION_SCHEMA.COLUMNS` answers for a lookup, for a `sys` table and
+    // for a datasource alike, so unlike every other engine in this epic there is no kind
+    // here that answers an empty batch without a round trip.
+    expect(system.details).toHaveLength(6);
+  });
+
+  test("a bounded read returns the bound, reports it, and reports the CALLER's limit", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const batch = await provider.describeObjects!([OBJECT_SCHEMA], "datasource", 2);
+
+    expect(batch.details.map((detail) => detail.path[1])).toEqual(DATASOURCES.slice(0, 2));
+    // The ONE sentence, built by the shared helper rather than spelled here: a reason a
+    // provider phrased for itself is how the same bound came to read three ways.
+    expect(batch.truncated).toEqual({ limit: 2, reason: callerBoundTruncationReason(2) });
+    expect(batch.truncated!.reason).toBe("the bulk column read was bounded at 2 objects by its caller");
+    // `limit + 1` reaches the statement, which is what tells a saturated read from an
+    // exact one without a second count, and the extra object is dropped here.
+    expect(sqlWith("LEFT JOIN")).toContain("LIMIT 3)");
+  });
+
+  test("a bound that is not reached reports no truncation", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const exact = await provider.describeObjects!([OBJECT_SCHEMA], "datasource", 4);
+    const spare = await provider.describeObjects!([OBJECT_SCHEMA], "datasource", 9);
+
+    expect(exact.details).toHaveLength(4);
+    expect(exact.truncated).toBeUndefined();
+    expect(spare.details).toHaveLength(4);
+    expect(spare.truncated).toBeUndefined();
+  });
+
+  test("a limit that is not a positive whole number is refused rather than clamped", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(provider.describeObjects!([OBJECT_SCHEMA], "datasource", limit)).rejects.toThrow(
+        /positive whole number/,
+      );
+    }
+    // Refused BEFORE the wire, which matters more here than on a binding engine: this
+    // transport has no parameter channel, so the guard is what keeps anything but digits
+    // out of the statement text.
+    expect(sentAnything("LEFT JOIN")).toBe(false);
+  });
+
+  test("an undeclared kind is refused by name, and a container path of the wrong length too", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    await expect(provider.describeObjects!([OBJECT_SCHEMA], "view")).rejects.toThrow(
+      'Druid declares no object kind "view"',
+    );
+    await expect(provider.describeObjects!([], "datasource")).rejects.toThrow(
+      "A Druid container path is [schema], received []",
+    );
+    expect(sentAnything("LEFT JOIN")).toBe(false);
+  });
+
+  test("an object with no column row at all is still in the batch, because membership is the TARGET's", async () => {
+    // A LEFT JOIN, not an inner one. The engine says every Druid object has at least one
+    // column, so no fixture row can produce this - and a bulk read whose membership came
+    // from the COLUMN read would lose an object the folder lists the moment one did.
+    replyFor = (sql) =>
+      sql.includes("LEFT JOIN INFORMATION_SCHEMA.COLUMNS")
+        ? ok(
+            druidBody(
+              ["tableName", "columnName", "dataType", "isNullable"],
+              [
+                ["libredb-objects-events", null, null, null],
+                ["libredb_objects_orders", "__time", "TIMESTAMP", "NO"],
+              ],
+            ),
+          )
+        : objectReply(sql);
+    const provider = await connectProvider();
+
+    const batch = await provider.describeObjects!([OBJECT_SCHEMA], "datasource");
+
+    expect(batch.details.map((detail) => [detail.path[1], detail.columns.length])).toEqual([
+      ["libredb-objects-events", 0],
+      ["libredb_objects_orders", 1],
+    ]);
+  });
+
+  test("the bulk statement is the listing's own target, joined to the column catalog", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    await provider.describeObjects!([OBJECT_SCHEMA], "datasource");
+    const unbounded = sqlWith("LEFT JOIN");
+    sentSql = [];
+    await provider.describeObjects!([OBJECT_SCHEMA], "datasource", 2);
+    const bounded = sqlWith("LEFT JOIN");
+
+    // Pinned by LITERAL, because the fake dispatches on statement text and cannot see a
+    // rewrite of it (standing ruling 5b). Both were run against the live 37.0.0 cluster.
+    expect(unbounded).toBe(
+      'SELECT t."objectName" AS "tableName", c.COLUMN_NAME AS "columnName", ' +
+        'c.DATA_TYPE AS "dataType", c.IS_NULLABLE AS "isNullable" FROM (' +
+        'SELECT "objectName" FROM (SELECT TABLE_NAME AS "objectName", ' +
+        "CASE WHEN TABLE_TYPE = 'SYSTEM_TABLE' THEN 'system_table' WHEN TABLE_SCHEMA = 'lookup' THEN 'lookup' " +
+        "ELSE 'datasource' END AS \"objectKind\" FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'druid') " +
+        'WHERE "objectKind" = \'datasource\' ORDER BY "objectName") t ' +
+        "LEFT JOIN INFORMATION_SCHEMA.COLUMNS c ON c.TABLE_SCHEMA = 'druid' AND c.TABLE_NAME = t.\"objectName\" " +
+        'ORDER BY t."objectName", c.ORDINAL_POSITION',
+    );
+    // The bound is the ONLY difference, and it is inside the target rather than on the
+    // joined rows: a `LIMIT` on the outer statement would cut COLUMNS, not objects.
+    expect(bounded).toBe(unbounded.replace('ORDER BY "objectName") t', 'ORDER BY "objectName" LIMIT 3) t'));
+  });
+
+  test("the target is built by the SAME function the listing uses", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    await provider.listObjects([OBJECT_SCHEMA], "datasource");
+    const listing = sqlWith("\"objectKind\" = 'datasource'");
+    sentSql = [];
+    await provider.describeObjects!([OBJECT_SCHEMA], "datasource");
+
+    // Every caller joins the two answers on path, so the two statements share one target
+    // rather than being two that happen to agree.
+    expect(sqlWith("LEFT JOIN")).toContain(`FROM (${listing}) t`);
+  });
+
+  test("a two-level declaration binds the SCHEMA segment and builds paths at the declared depth", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+
+    const batch = await provider.describeObjects!(["other_catalog", OBJECT_SCHEMA], "datasource");
+
+    // Standing ruling 5g, driven to a BOUND VALUE and not to a refusal. `container[0]`
+    // would bind `other_catalog` into both the target and the join key.
+    expect(sqlWith("LEFT JOIN")).toContain("WHERE TABLE_SCHEMA = 'druid'");
+    expect(sqlWith("LEFT JOIN")).toContain("ON c.TABLE_SCHEMA = 'druid'");
+    expect(batch.details.map((detail) => detail.path)).toEqual(
+      DATASOURCES.map((name) => ["other_catalog", OBJECT_SCHEMA, name]),
+    );
+    // And a hardcoded depth would have refused this path outright.
+    await expect(provider.describeObjects!([OBJECT_SCHEMA], "datasource")).rejects.toThrow(
+      'A Druid container path is [catalog, schema], received ["druid"]',
+    );
+  });
+
+  test("the batch is sorted by comparePaths, which is not the order the cluster cut by", async () => {
+    // The cross-cutting finding Task 26a-2 measured on three engines, re-measured here:
+    // `U&'\+00e000' < U&'\+01f600'` is TRUE on this cluster, the UTF-8 byte order, while
+    // a JavaScript sort compares UTF-16 code units and puts U+1F600 first. So a bounded
+    // cut's MEMBERSHIP is the cluster's and the ORDER of the answer is ours.
+    replyFor = (sql) =>
+      sql.includes("LEFT JOIN INFORMATION_SCHEMA.COLUMNS")
+        ? ok(
+            druidBody(
+              ["tableName", "columnName", "dataType", "isNullable"],
+              [
+                ["", "a", "VARCHAR", "YES"],
+                ["\u{1f600}", "b", "VARCHAR", "YES"],
+              ],
+            ),
+          )
+        : objectReply(sql);
+    const provider = await connectProvider();
+
+    const batch = await provider.describeObjects!([OBJECT_SCHEMA], "datasource");
+
+    expect(batch.details.map((detail) => detail.path[1])).toEqual(["\u{1f600}", ""]);
   });
 });

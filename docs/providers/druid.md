@@ -1225,6 +1225,65 @@ least one column, so an empty answer means the object is not there under that na
 from it would make the whole object tree fail on a cluster that merely declines to describe its
 segments. The per-datasource numbers stay on the Tables panel, which is allowed to lose one panel.
 
+#### `describeObjects()` describes a whole folder in ONE statement (#789)
+
+`describeObjects(container, kind, limit?)` answers the columns of EVERY object of one kind in one
+schema, in **one round trip** rather than one per object.
+Measured on the live 37.0.0 cluster: **23 ms for one `describeObjects(["druid"], "datasource")`
+against 90 ms for four `describeObject()` calls**, the same thirteen columns.
+
+The statement is the LISTING's own target with the column catalog joined onto it:
+
+```sql
+SELECT t."objectName" AS "tableName", c.COLUMN_NAME AS "columnName",
+       c.DATA_TYPE AS "dataType", c.IS_NULLABLE AS "isNullable"
+FROM (<the listing statement, plus LIMIT n+1 when the caller bounds it>) t
+LEFT JOIN INFORMATION_SCHEMA.COLUMNS c
+  ON c.TABLE_SCHEMA = '<schema>' AND c.TABLE_NAME = t."objectName"
+ORDER BY t."objectName", c.ORDINAL_POSITION
+```
+
+Five decisions, each measured on Apache Druid 37.0.0 rather than reasoned about.
+
+1. **The catalog is the same one the single read uses**, `INFORMATION_SCHEMA.COLUMNS`, and the same
+   `readColumn()` maps a row for both: one mapper, so the batch cannot spell a column's type
+   differently from the single read of the same datasource. It is also the catalog `getSchema()`
+   reads, unlike most engines in this epic - the difference there is SCOPE, not source:
+   `getSchema()` is pinned to `TABLE_SCHEMA = 'druid'` (`DATASOURCE_SCHEMA_FILTER`), so it cannot
+   see a lookup or a system table at all, and the bulk read answers for every schema the cluster
+   publishes.
+2. **No kind answers an empty batch without a round trip**, which is what makes Druid unlike the
+   other sixteen providers: `INFORMATION_SCHEMA.COLUMNS` answers for a datasource, for a lookup's
+   `k` and `v` and for a `sys` table alike, measured, so the columnless-kind guard the reference
+   implementation writes has nothing to guard here and is deliberately absent rather than written
+   as an unreachable branch.
+3. **The bound is `LIMIT n+1` INSIDE the target**, interpolated rather than bound: this transport
+   sends a statement as text and has no parameter channel, so the positive-whole-number guard
+   protects the STATEMENT as well as the answer. `ORDER BY` and `LIMIT` were both measured accepted
+   inside a subquery, and the `LIMIT` belongs in the target rather than on the joined rows, where it
+   would cut columns instead of objects. The extra object is dropped in TypeScript and `truncated`
+   carries the CALLER's limit with `callerBoundTruncationReason()`'s shared sentence.
+4. **The cut is ordered by `"objectName"` under the cluster's own String comparison**, which is the
+   UTF-8 byte order: `SELECT U&'\+00e000' < U&'\+01f600'` is **true** on 37.0.0, while a JavaScript
+   sort compares UTF-16 code units and reverses that pair. So the cross-cutting finding recorded for
+   SQLite, libSQL, ClickHouse and Trino **holds here too**: a bounded read's MEMBERSHIP is the
+   cluster's and the ORDER of the answer is ours, re-sorted by `comparePaths`.
+5. **No kind has mixed path depth.** No Druid kind declares `attachedTo` and every object is
+   `[schema, name]`, built by the same `objectPath()` the listing uses.
+
+The join is a **LEFT** one and that is the membership rule rather than a style choice: the set of
+objects is what the TARGET read answered, so an object whose column read returns nothing is still in
+the batch with an empty column list. Druid says that cannot happen - every object has at least one
+column, which is why the single read raises on zero - but a bulk read whose membership came from the
+COLUMN catalog would lose an object the folder lists the moment one did.
+
+**The contract this provider satisfies directly rather than through the shared helper:** the batch
+describes every object `listObjects` names for that container and kind, and an unbounded call leaves
+`truncated` absent. Verified live for all five container-and-kind pairs the fixture holds
+(`druid/datasource` 4, `lookup/lookup` 2, `sys/system_table` 6, `INFORMATION_SCHEMA/system_table` 4,
+`view/datasource` 0), each batch compared set-for-set against `listObjects` and object-for-object
+against `describeObject`.
+
 #### Neither derivation is positional
 
 The schema comes from the segment the **declaration** assigns to the `schema` level, the object's own

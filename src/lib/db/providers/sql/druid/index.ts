@@ -52,6 +52,7 @@ import {
   type MaintenanceResult,
   type MaintenanceType,
   type ObjectDetail,
+  type ObjectDetailBatch,
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
@@ -81,6 +82,7 @@ import {
 import {
   countObjects,
   describeObject,
+  describeObjects,
   DRUID_CONTAINER_LEVELS,
   DRUID_OBJECT_KINDS,
   listContainers,
@@ -567,6 +569,11 @@ export class DruidProvider extends SQLBaseProvider {
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
     const transport = this.requireTransport();
     return this.guarded(() => describeObject(transport, this.getCapabilities(), path, kind));
+  }
+
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    const transport = this.requireTransport();
+    return this.guarded(() => describeObjects(transport, this.getCapabilities(), container, kind, limit));
   }
 
   // ==========================================================================

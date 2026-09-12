@@ -61,13 +61,14 @@
  */
 
 import { QueryError } from "@/lib/db/errors";
-import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import type {
   Container,
   ContainerLevelSpec,
   DatabaseObject,
   KindCount,
   ObjectDetail,
+  ObjectDetailBatch,
   ObjectKindSpec,
   ProviderCapabilities,
 } from "@/lib/db/types";
@@ -201,12 +202,58 @@ function druidCountsSql(schema: string): string {
   ].join(" ");
 }
 
-function druidListingSql(schema: string, kind: string): string {
+/**
+ * The objects of one kind in one schema, optionally bounded.
+ *
+ * ONE builder for the listing and for the bulk read's target, so the two answers are
+ * joined on an address both of them derived the same way rather than on two spellings
+ * that happen to agree today.
+ *
+ * `limit` is INTERPOLATED rather than bound, because this transport sends a statement as
+ * text and the catalog reads in this file use no parameter channel at all. That is safe
+ * by construction rather than by inspection: `describeObjects` refuses a limit that is
+ * not a positive whole number BEFORE it reaches here, so nothing but digits can arrive.
+ * Measured on 37.0.0: `ORDER BY` and `LIMIT` are both accepted inside a subquery, and the
+ * `LIMIT` belongs in the TARGET rather than on the joined rows - on the outer statement it
+ * would cut columns instead of objects.
+ */
+function druidListingSql(schema: string, kind: string, limit?: number): string {
   return [
     'SELECT "objectName"',
     `FROM (${schemaObjectsSql(schema)})`,
     `WHERE "objectKind" = ${druidLiteral(kind)}`,
     'ORDER BY "objectName"',
+    ...(limit === undefined ? [] : [`LIMIT ${limit}`]),
+  ].join(" ");
+}
+
+/**
+ * Every object of one kind in one schema with its columns, in ONE round trip.
+ *
+ * A LEFT JOIN and not an inner one, and that is the membership rule rather than a style
+ * choice: the set of objects is what the TARGET read answered, so an object whose column
+ * read returns nothing is still in the batch. Druid says that cannot happen - a datasource
+ * always has `__time`, a lookup always has `k` and `v` - but a bulk read whose membership
+ * came from the COLUMN catalog would lose an object the folder lists the moment one did,
+ * which is the invisible absence standing ruling 5a exists for.
+ *
+ * Measured on Apache Druid 37.0.0: `INFORMATION_SCHEMA` really does join. Calcite answers
+ * this locally rather than planning a Druid query, so none of the engine's broadcast-side
+ * join restrictions applies, and the same statement with an inner join, an `IN` subquery
+ * and a plain two-statement form were all run against the cluster before this one was
+ * chosen.
+ *
+ * `ORDINAL_POSITION` orders the columns and never appears in the projection: it IS the
+ * declared order, the same rule the single read uses.
+ */
+function druidBulkColumnsSql(schema: string, kind: string, limit?: number): string {
+  return [
+    'SELECT t."objectName" AS "tableName", c.COLUMN_NAME AS "columnName",',
+    'c.DATA_TYPE AS "dataType", c.IS_NULLABLE AS "isNullable"',
+    `FROM (${druidListingSql(schema, kind, limit)}) t`,
+    `LEFT JOIN INFORMATION_SCHEMA.COLUMNS c ON c.TABLE_SCHEMA = ${druidLiteral(schema)}`,
+    'AND c.TABLE_NAME = t."objectName"',
+    'ORDER BY t."objectName", c.ORDINAL_POSITION',
   ].join(" ");
 }
 
@@ -395,6 +442,36 @@ async function readRows(runner: DruidQueryRunner, sql: string): Promise<DruidRow
   return result.rows;
 }
 
+/**
+ * Where one object of any declared kind is addressed.
+ *
+ * ONE builder for the listing, the single read and the bulk read, because every caller
+ * joins those answers on path: two spellings that agree today are two chances for them to
+ * stop agreeing. No kind here declares `attachedTo`, so there is a single shape.
+ */
+function objectPath(container: readonly string[], name: string): string[] {
+  return [...container, name];
+}
+
+/**
+ * One object's rows as an `ObjectDetail`.
+ *
+ * The SHARED mapper, used by the single read and the bulk read alike. Two copies are two
+ * chances for the bulk read to spell a column's type differently from the single read of
+ * the same datasource.
+ *
+ * `indexes` and `foreignKeys` are empty BY CONSTRUCTION rather than by omission: Druid has
+ * no user-defined index and no foreign key anywhere, which is the same measurement behind
+ * the provider's `declaresForeignKeys: false`.
+ */
+function objectDetail(path: readonly string[], rows: readonly DruidRow[]): ObjectDetail {
+  const columns = rows
+    .map((row) => readColumn(row))
+    .filter((owned) => owned !== null)
+    .map((owned) => owned.column);
+  return { path: [...path], columns, indexes: [], foreignKeys: [] };
+}
+
 // ============================================================================
 // The four methods
 // ============================================================================
@@ -488,7 +565,7 @@ export async function listObjects(
   for (const row of rows) {
     const name = readIdentifier(row.objectName);
     if (name === null) continue;
-    objects.push({ path: [...container, name], name, kind });
+    objects.push({ path: objectPath(container, name), name, kind });
   }
   return objects.sort((left, right) => comparePaths(left.path, right.path));
 }
@@ -545,9 +622,87 @@ export async function describeObject(
     throw new QueryError(`No Druid ${kind} named ${name} in ${schema}`, PROVIDER, sql);
   }
 
-  const columns = rows
-    .map((row) => readColumn(row))
-    .filter((owned) => owned !== null)
-    .map((owned) => owned.column);
-  return { path: [...path], columns, indexes: [], foreignKeys: [] };
+  return objectDetail(path, rows);
+}
+
+/**
+ * Columns for EVERY object of one kind in one schema, in ONE round trip (#789).
+ *
+ * The fifth method, and Druid is one of the two type-ids that fell out of the four
+ * implementation waves that landed it elsewhere. Nothing went red, because the shared
+ * conformance helper skipped a provider that did not declare the method at all, which is
+ * the second half of that finding.
+ *
+ * ONE round trip for the folder, never one per object: the target subquery is the LISTING's
+ * own statement and the column catalog is joined onto it. Measured on Apache Druid 37.0.0,
+ * where `INFORMATION_SCHEMA` joins locally in Calcite.
+ *
+ * The four guards, in the order the reference implementation writes them:
+ *
+ * 1. A kind this engine does not declare THROWS, naming the engine and the kind. An
+ *    undeclared kind is a fact about the ENGINE and an empty answer is a claim about the
+ *    DATA, so answering `{ details: [] }` here would say something nobody measured.
+ * 2. The container path is resolved through `containerSchema()`, the same reader
+ *    `listObjects` uses, so neither the depth nor the position of the schema segment is
+ *    written out as a constant (standing ruling 5g).
+ * 3. A `limit` that is not a positive whole number THROWS rather than being clamped or
+ *    ignored: 0 would answer nothing while reporting a truncation the caller never asked
+ *    for. On this engine that guard also protects the STATEMENT and not only the answer,
+ *    because the transport has no parameter channel and the bound is interpolated.
+ * 4. A kind with no columns would answer `{ details: [] }` with no round trip - and Druid
+ *    HAS NO SUCH KIND, measured: `INFORMATION_SCHEMA.COLUMNS` answers for a datasource,
+ *    for a lookup's `k` and `v` and for a `sys` table alike. So the guard the other
+ *    sixteen providers write is absent here rather than written as an unreachable branch,
+ *    and this sentence is where that decision is recorded.
+ *
+ * `limit + 1` reaches the target, the extra object is dropped here, and `truncated`
+ * carries the CALLER's limit with `callerBoundTruncationReason()`'s shared sentence: this
+ * file never spells that sentence itself, because the same bound reading three ways
+ * depending on which engine is open is what that helper exists to stop. Nothing here
+ * applies a second bound of its own, so there is nothing to join onto it. What the cut takes is decided by the target's
+ * `ORDER BY "objectName"`, which runs under the cluster's own String comparison - measured
+ * to be the UTF-8 byte order, `U&'\+00e000' < U&'\+01f600'` being true on 37.0.0 - while
+ * the batch is re-sorted here by `comparePaths`, which compares UTF-16 code units and
+ * reverses exactly that pair. So a bounded read's MEMBERSHIP is the cluster's and the
+ * ORDER of the answer is ours, the same split three other engines in #789 measured.
+ */
+export async function describeObjects(
+  runner: DruidQueryRunner,
+  capabilities: ProviderCapabilities,
+  container: readonly string[],
+  kind: string,
+  limit?: number,
+): Promise<ObjectDetailBatch> {
+  if (findKind(capabilities, kind) === undefined) {
+    throw new QueryError(`Druid declares no object kind "${kind}"`, PROVIDER);
+  }
+  const schema = containerSchema(capabilities, container);
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+    throw new QueryError(`A Druid bulk column read limit must be a positive whole number, received ${limit}`, PROVIDER);
+  }
+
+  const rows = await readRows(runner, druidBulkColumnsSql(schema, kind, limit === undefined ? undefined : limit + 1));
+
+  // Grouped in the order the objects arrived, which is the target's order and therefore
+  // the order the cut was taken in. A `Map` keeps that; an object literal would reorder
+  // anything that looks like an array index.
+  const grouped = new Map<string, DruidRow[]>();
+  for (const row of rows) {
+    // MEMBERSHIP comes from the target read carried on every joined row, never from the
+    // column read: the join is a LEFT one, so an object with no column row still opens a
+    // group here and is described with an empty column list.
+    const owner = readIdentifier(row.tableName);
+    if (owner === null) continue;
+    const owned = grouped.get(owner);
+    if (owned === undefined) grouped.set(owner, [row]);
+    else owned.push(row);
+  }
+
+  const names = [...grouped.keys()];
+  const truncated = limit !== undefined && names.length > limit;
+  const details = (truncated ? names.slice(0, limit) : names)
+    .map((name) => objectDetail(objectPath(container, name), grouped.get(name)!))
+    .sort((left, right) => comparePaths(left.path, right.path));
+
+  return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
 }
