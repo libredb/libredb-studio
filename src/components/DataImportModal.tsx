@@ -20,7 +20,9 @@ import {
 } from "lucide-react";
 import type { DatabaseType } from "@/lib/types";
 import { rowWritableObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import { quoteObjectPath } from "@/lib/query-generators";
 import { quoteLiteral } from "@/lib/sql/values";
 import type { CsvDelimiter } from "@/lib/export/csv";
 
@@ -145,18 +147,47 @@ export function escapeSQL(value: string, dialect?: DatabaseType): string {
   return quoteLiteral(value, dialect);
 }
 
+/**
+ * What an import is pointed at, and the two are different KINDS of thing (#789, Task 36).
+ *
+ * An existing object is addressed by its `path`: the label the select used to carry is shared
+ * by two objects in two containers, measured on the live SQL Server, so a bare
+ * `INSERT INTO customers` wrote into whichever one the connection's session default answers
+ * rather than the one the operator picked. A new table is a NAME the operator typed, which
+ * addresses nothing yet and is emitted as they wrote it.
+ *
+ * One discriminated value rather than the three fields this used to take (a flag, a typed
+ * name and a selected label): only one of the three was ever read, and which one was decided
+ * by the flag at every call site.
+ */
+export type ImportTarget =
+  | { readonly kind: "existing"; readonly path: readonly string[] }
+  | { readonly kind: "new"; readonly name: string };
+
+/**
+ * The target as the statement spells it: fully qualified and quoted per segment for the
+ * connected dialect, exactly as `TestDataGenerator` spells its INSERT.
+ *
+ * With no declaration yet the dotted address is the fallback rather than the label, so the
+ * statement still names the object the operator chose; it can only lack the quoting.
+ */
+function targetIdentifier(target: ImportTarget, capabilities: ProviderCapabilities | undefined): string {
+  if (target.kind === "new") return target.name || "imported_data";
+  return capabilities === undefined ? objectPathLabel(target.path) : quoteObjectPath(target.path, capabilities);
+}
+
 export function generateImportSQL(
   parsedData: ParsedData | null,
-  targetTable: string,
-  createNewTable: boolean,
-  newTableName: string,
+  target: ImportTarget | null,
   columnMapping: Record<string, string>,
   dialect?: DatabaseType,
+  capabilities?: ProviderCapabilities,
 ): string {
   if (!parsedData) return "";
+  if (target === null) return "";
 
-  const tableName = createNewTable ? newTableName || "imported_data" : targetTable;
-  if (!tableName) return "";
+  const tableName = targetIdentifier(target, capabilities);
+  const createNewTable = target.kind === "new";
 
   const statements: string[] = [];
 
@@ -223,7 +254,9 @@ export function DataImportModal({
   const [fileName, setFileName] = useState("");
   const [fileType, setFileType] = useState<"csv" | "json">("csv");
   const [firstRowIsHeader, setFirstRowIsHeader] = useState(true);
-  const [targetTable, setTargetTable] = useState("");
+  // The selected object's ADDRESS as one comparable string, because a `<select>` value is a
+  // string and the label two objects share cannot be one (#789).
+  const [targetKey, setTargetKey] = useState("");
   const [createNewTable, setCreateNewTable] = useState(false);
   const [newTableName, setNewTableName] = useState("");
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
@@ -244,7 +277,7 @@ export function DataImportModal({
     setFirstRowIsHeader(true);
     setCsvDelimiter(",");
     csvTextRef.current = "";
-    setTargetTable("");
+    setTargetKey("");
     setCreateNewTable(false);
     setNewTableName("");
     setColumnMapping({});
@@ -319,17 +352,25 @@ export function DataImportModal({
     }
   };
 
+  const selectedTarget = useMemo(
+    () => targets.find((object) => pathKey(object.path) === targetKey) ?? null,
+    [targets, targetKey],
+  );
+
+  const importTarget: ImportTarget | null = createNewTable
+    ? { kind: "new", name: newTableName }
+    : selectedTarget && { kind: "existing", path: selectedTarget.path };
+
   const generatedSQL = useMemo(
     () =>
       generateImportSQL(
         parsedData,
-        targetTable,
-        createNewTable,
-        newTableName,
+        importTarget,
         columnMapping,
         databaseType as DatabaseType | undefined,
+        capabilities,
       ),
-    [parsedData, targetTable, createNewTable, newTableName, columnMapping, databaseType],
+    [parsedData, importTarget, columnMapping, databaseType, capabilities],
   );
 
   const handleImport = () => {
@@ -598,13 +639,16 @@ export function DataImportModal({
                   </label>
                   <select
                     id="import-target-table"
-                    value={targetTable}
-                    onChange={(e) => setTargetTable(e.target.value)}
+                    value={targetKey}
+                    onChange={(e) => setTargetKey(e.target.value)}
                     className="w-full mt-1 bg-overlay border border-hairline-strong rounded-md px-3 py-2 text-xs text-fg-secondary outline-none focus:border-brand-tint/40"
                   >
                     <option value="">-- Select a table --</option>
+                    {/* VALUED by the address and LABELLED by the name: two objects in two
+                        containers share a label, and it was both the React key and the value
+                        an INSERT was built from (#789). */}
                     {targets.map((t) => (
-                      <option key={t.name} value={t.name}>
+                      <option key={pathKey(t.path)} value={pathKey(t.path)}>
                         {t.name}
                       </option>
                     ))}
@@ -655,7 +699,7 @@ export function DataImportModal({
                   size="sm"
                   className="bg-brand-solid hover:bg-brand-solid-hover h-8 text-xs gap-1"
                   onClick={() => setStep("ready")}
-                  disabled={!createNewTable && !targetTable}
+                  disabled={!createNewTable && selectedTarget === null}
                 >
                   Review SQL <ArrowRight strokeWidth={1.5} className="w-3 h-3" />
                 </Button>
@@ -670,7 +714,8 @@ export function DataImportModal({
                 <div>
                   <p className="text-xs font-medium">Ready to Import</p>
                   <p className="text-xs text-fg-muted mt-0.5">
-                    {parsedData?.totalRows} rows into {createNewTable ? newTableName || "imported_data" : targetTable}
+                    {parsedData?.totalRows} rows into{" "}
+                    {createNewTable ? newTableName || "imported_data" : objectPathLabel(selectedTarget?.path ?? [])}
                   </p>
                 </div>
                 {databaseType && (

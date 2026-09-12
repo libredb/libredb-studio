@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/copy-button";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import { objectPathLabel } from "@/lib/db/object-path";
+import { objectSegment } from "@/lib/query-generators";
 
 interface CodeGeneratorProps {
   isOpen: boolean;
@@ -178,6 +179,9 @@ export function mapSqlTypeToJava(sqlType: string): string {
 }
 
 export function generateCode(lang: Language, table: DetailedObject): string {
+  // The type, model or struct NAME is for a person to read, so it is derived from the display
+  // label. The Prisma `@@map` below is not: it is what Prisma addresses the table by, so it
+  // takes the object's own segment, which the label is not required to equal (#789).
   const name = toIdentifier(table.name);
   const columns = table.columns || [];
 
@@ -206,7 +210,7 @@ export function generateCode(lang: Language, table: DetailedObject): string {
         const auto = c.type.toLowerCase().includes("serial") ? " @default(autoincrement())" : "";
         return `  ${c.name}  ${prismaType}${nullable}${pk}${auto}`;
       });
-      return `model ${name} {\n${fields.join("\n")}\n\n  @@map("${table.name}")\n}`;
+      return `model ${name} {\n${fields.join("\n")}\n\n  @@map("${objectSegment(table.path)}")\n}`;
     }
     case "go": {
       const fields = columns.map((c) => {

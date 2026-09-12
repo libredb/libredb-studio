@@ -5,6 +5,7 @@ import React, { useState } from "react";
 import { FileText, LoaderCircle, Search, Sparkles, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { renderInline } from "@/components/rich-text";
 import { downloadText } from "@/lib/export/download";
@@ -38,9 +39,12 @@ export function DatabaseDocs({ schema, schemaContext, databaseType, capabilities
   // documented without a change here (#789).
   const relations = relationObjects(schema, capabilities);
 
+  // The search matches the label a person typed AND the address the card shows, so typing a
+  // container narrows to it and typing a bare name still finds every namesake (#789).
   const filteredSchema = relations.filter(
     (t) =>
       t.name.toLowerCase().includes(search.toLowerCase()) ||
+      objectPathLabel(t.path).toLowerCase().includes(search.toLowerCase()) ||
       t.columns?.some((c) => c.name.toLowerCase().includes(search.toLowerCase())),
   );
 
@@ -116,7 +120,10 @@ export function DatabaseDocs({ schema, schemaContext, databaseType, capabilities
     md += `## Table Reference\n\n`;
 
     for (const table of relations) {
-      md += `### ${table.name}\n\n`;
+      // The ADDRESS, because this document is read away from the app: two objects in two
+      // containers share a label, and two identical headings say nothing about which is
+      // which (#789).
+      md += `### ${objectPathLabel(table.path)}\n\n`;
       if (table.rowCount !== undefined) md += `Rows: ${table.rowCount.toLocaleString()}\n\n`;
 
       if (table.columns && table.columns.length > 0) {
@@ -237,10 +244,10 @@ export function DatabaseDocs({ schema, schemaContext, databaseType, capabilities
 
         <h3 className="text-xs font-medium text-fg-tertiary">Table Reference</h3>
         {filteredSchema.map((table) => (
-          <div key={table.name} className="bg-surface border border-hairline rounded-lg overflow-hidden">
+          <div key={pathKey(table.path)} className="bg-surface border border-hairline rounded-lg overflow-hidden">
             <div className="px-3 py-2 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-fg">{table.name}</span>
+                <span className="text-xs font-medium text-fg">{objectPathLabel(table.path)}</span>
                 {table.rowCount !== undefined && (
                   <span className="text-xs text-fg-muted font-mono">{table.rowCount.toLocaleString()} rows</span>
                 )}

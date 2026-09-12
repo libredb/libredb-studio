@@ -373,6 +373,50 @@ describe("DatabaseDocs", () => {
     document.createElement = origCreateElement;
   });
 
+  test("two objects sharing a label are two cards and two headings, each at its address", async () => {
+    // The live SQL Server holds both. Keyed and headed by the label, the list carried one
+    // React key for two objects and the exported document held two identical headings with
+    // nothing in it to say which was which (#789, Task 36).
+    const user = userEvent.setup();
+    const createObjectURLMock = mock(() => "blob:fake-url");
+    globalThis.URL.createObjectURL = createObjectURLMock as unknown as typeof URL.createObjectURL;
+    globalThis.URL.revokeObjectURL = mock(() => {});
+    const origCreateElement = document.createElement.bind(document);
+    document.createElement = mock((tag: string) => {
+      const el = origCreateElement(tag);
+      if (tag === "a") el.click = mock(() => {});
+      return el;
+    }) as unknown as typeof document.createElement;
+
+    const namesakes: DetailedObject[] = [
+      {
+        name: "customers",
+        kind: "table",
+        path: ["libredb_objects", "app", "customers"],
+        indexes: [],
+        columns: [{ name: "name", type: "VARCHAR", nullable: true, isPrimary: false }],
+      },
+      {
+        name: "customers",
+        kind: "table",
+        path: ["shop", "dbo", "customers"],
+        indexes: [],
+        columns: [{ name: "email", type: "VARCHAR", nullable: true, isPrimary: false }],
+      },
+    ];
+    const { queryByText } = render(<DatabaseDocs schema={namesakes} schemaContext="[]" databaseType="mssql" />);
+
+    expect(queryByText("libredb_objects.app.customers")).not.toBeNull();
+    expect(queryByText("shop.dbo.customers")).not.toBeNull();
+
+    await user.click(queryByText("Export MD")!);
+    const exported = await ((createObjectURLMock.mock.calls as unknown[][])[0][0] as Blob).text();
+    expect(exported).toContain("### libredb_objects.app.customers");
+    expect(exported).toContain("### shop.dbo.customers");
+
+    document.createElement = origCreateElement;
+  });
+
   // -----------------------------------------------------------------------
   // Header buttons
   // -----------------------------------------------------------------------

@@ -178,11 +178,39 @@ import {
 import { mockToastError } from "../helpers/mock-sonner";
 import { mockSchema, emptySchema } from "../fixtures/schemas";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import { pathKey } from "@/lib/db/object-path";
 import type { ProviderCapabilities } from "@/lib/db/types";
 
 // =============================================================================
 // Test Data
 // =============================================================================
+
+// Two objects carrying ONE label in two containers, as the live SQL Server on 1433 holds
+// them, plus the cross-container foreign key that names its target qualified (#789, Task 36).
+const sameLabelSchema: DetailedObject[] = [
+  {
+    name: "customers",
+    kind: "table",
+    path: ["libredb_objects", "app", "customers"],
+    columns: [
+      { name: "id", type: "integer", nullable: false, isPrimary: true },
+      { name: "name", type: "varchar(255)", nullable: true, isPrimary: false },
+    ],
+    indexes: [],
+    foreignKeys: [],
+  },
+  {
+    name: "customers",
+    kind: "table",
+    path: ["shop", "dbo", "customers"],
+    columns: [
+      { name: "id", type: "integer", nullable: false, isPrimary: true },
+      { name: "email", type: "varchar(255)", nullable: true, isPrimary: false },
+    ],
+    indexes: [],
+    foreignKeys: [],
+  },
+];
 
 // Schema with NO foreign keys at all (triggers heuristic fallback)
 const schemaNoFK: DetailedObject[] = [
@@ -929,9 +957,9 @@ describe("SchemaDiagram", () => {
       const props = createDefaultProps();
       const { container } = render(<SchemaDiagram {...props} />);
 
-      expect(container.querySelector('[data-node-id="users"]')).not.toBeNull();
-      expect(container.querySelector('[data-node-id="orders"]')).not.toBeNull();
-      expect(container.querySelector('[data-node-id="products"]')).not.toBeNull();
+      expect(container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)).not.toBeNull();
+      expect(container.querySelector(`[data-node-id="${pathKey(["public", "orders"])}"]`)).not.toBeNull();
+      expect(container.querySelector(`[data-node-id="${pathKey(["public", "products"])}"]`)).not.toBeNull();
     });
 
     test("node with empty/null data returns nothing", () => {
@@ -962,7 +990,7 @@ describe("SchemaDiagram", () => {
       expect(view.queryByText("Selected:")).toBeNull();
 
       // Click the users node
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
       fireEvent.click(usersNode);
 
       // Selection should appear with selected node name and clear button
@@ -970,7 +998,7 @@ describe("SchemaDiagram", () => {
       // The selected table name appears in a font-mono span
       const selectedSpan = container.querySelector(".font-mono.font-medium");
       expect(selectedSpan).not.toBeNull();
-      expect(selectedSpan!.textContent).toBe("users");
+      expect(selectedSpan!.textContent).toBe("public.users");
       expect(view.queryByText("clear")).not.toBeNull();
     });
 
@@ -979,7 +1007,7 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
 
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
 
       // Select
       fireEvent.click(usersNode);
@@ -996,7 +1024,7 @@ describe("SchemaDiagram", () => {
       const view = within(container);
 
       // Select a node
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
       fireEvent.click(usersNode);
       expect(view.queryByText("Selected:")).not.toBeNull();
 
@@ -1011,7 +1039,7 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
 
-      fireEvent.click(container.querySelector('[data-node-id="users"]')!);
+      fireEvent.click(container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!);
       expect(view.queryByText("Selected:")).not.toBeNull();
 
       // Filtering "users" out of the graph must clear the stale selection.
@@ -1020,14 +1048,35 @@ describe("SchemaDiagram", () => {
 
       expect(view.queryByText("Selected:")).toBeNull();
       // ...and the surviving table does not inherit any highlight.
-      const ordersNode = container.querySelector('[data-node-id="orders"]')!;
+      const ordersNode = container.querySelector(`[data-node-id="${pathKey(["public", "orders"])}"]`)!;
       expect(ordersNode.querySelector(".border-brand-tint\\/60")).toBeNull();
 
       // The drop is permanent: clearing the filter brings the table back to
       // the canvas but must NOT resurrect a selection the user already lost.
       fireEvent.change(searchInput, { target: { value: "" } });
-      expect(container.querySelector('[data-node-id="users"]')).not.toBeNull();
+      expect(container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)).not.toBeNull();
       expect(view.queryByText("Selected:")).toBeNull();
+    });
+
+    test("two objects sharing a label in different containers are two selectable nodes", () => {
+      // The live SQL Server on 1433 holds both of these. Keyed on the label they were one
+      // React Flow node id, so one card was dropped and the readout named neither (#789).
+      const props = createDefaultProps({ schema: sameLabelSchema });
+      const { container } = render(<SchemaDiagram {...props} />);
+      const view = within(container);
+
+      expect(container.querySelectorAll("[data-node-id]").length).toBe(2);
+      const shopNode = container.querySelector(`[data-node-id="${pathKey(["shop", "dbo", "customers"])}"]`);
+      expect(shopNode).not.toBeNull();
+      expect(
+        container.querySelector(`[data-node-id="${pathKey(["libredb_objects", "app", "customers"])}"]`),
+      ).not.toBeNull();
+
+      fireEvent.click(shopNode!);
+      expect(view.queryByText("Selected:")).not.toBeNull();
+      // The readout is for a PERSON, so it is the dotted address and never the key's own
+      // control character.
+      expect(container.querySelector(".font-mono.font-medium")!.textContent).toBe("shop.dbo.customers");
     });
 
     test("clicking pane background clears selection", () => {
@@ -1036,7 +1085,7 @@ describe("SchemaDiagram", () => {
       const view = within(container);
 
       // Select a node
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
       fireEvent.click(usersNode);
       expect(view.queryByText("Selected:")).not.toBeNull();
 
@@ -1058,7 +1107,7 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
 
       // Click users node
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
       fireEvent.click(usersNode);
 
       // The TableNode's root div inside the data-node-id div should carry the brand-tint highlight border
@@ -1071,11 +1120,11 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
 
       // Select 'orders' which has FK to 'users'
-      const ordersNode = container.querySelector('[data-node-id="orders"]')!;
+      const ordersNode = container.querySelector(`[data-node-id="${pathKey(["public", "orders"])}"]`)!;
       fireEvent.click(ordersNode);
 
       // The 'users' table should also be highlighted (FK target)
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
       const usersInner = usersNode.querySelector(".border-brand-tint\\/60");
       expect(usersInner).not.toBeNull();
     });
@@ -1085,11 +1134,11 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
 
       // Select 'users' — orders has FK pointing to users
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
       fireEvent.click(usersNode);
 
       // The 'orders' table should be highlighted (it references users via FK)
-      const ordersNode = container.querySelector('[data-node-id="orders"]')!;
+      const ordersNode = container.querySelector(`[data-node-id="${pathKey(["public", "orders"])}"]`)!;
       const ordersInner = ordersNode.querySelector(".border-brand-tint\\/60");
       expect(ordersInner).not.toBeNull();
     });
@@ -1099,11 +1148,11 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
 
       // Select 'orders' (related to users via FK, not related to products)
-      const ordersNode = container.querySelector('[data-node-id="orders"]')!;
+      const ordersNode = container.querySelector(`[data-node-id="${pathKey(["public", "orders"])}"]`)!;
       fireEvent.click(ordersNode);
 
       // Products should NOT be highlighted
-      const productsNode = container.querySelector('[data-node-id="products"]')!;
+      const productsNode = container.querySelector(`[data-node-id="${pathKey(["public", "products"])}"]`)!;
       const productsInner = productsNode.querySelector(".border-brand-tint\\/60");
       expect(productsInner).toBeNull();
       // Products should have default border
@@ -1816,6 +1865,38 @@ describe("SchemaDiagram", () => {
       fireEvent.click(view.getByTestId("probe-toggle-expand"));
       expect(view.queryByText("col_29")).toBeNull();
       expect(view.queryByText(/\+\d+ more/)).not.toBeNull();
+    });
+
+    test("the expander expands the card it sits in, not its namesake in another container", () => {
+      // Both cards are wide and both are labelled `customers`. Keyed on the label, one click
+      // expanded whichever the set answered for, which is the collision a one-object fixture
+      // cannot see (#789, Task 36).
+      const wideAt = (path: readonly string[], prefix: string): DetailedObject => ({
+        name: path[path.length - 1],
+        kind: "table",
+        path: [...path],
+        columns: Array.from({ length: 30 }, (_, i) => ({
+          name: `${prefix}_${i}`,
+          type: "integer",
+          nullable: true,
+          isPrimary: i === 0,
+        })),
+        indexes: [],
+        foreignKeys: [],
+      });
+      const props = createDefaultProps({
+        schema: [wideAt(["libredb_objects", "app", "customers"], "app"), wideAt(["shop", "dbo", "customers"], "shop")],
+      });
+      const { container } = render(<SchemaDiagram {...props} />);
+      const view = within(container);
+
+      const shopCard = container.querySelector<HTMLElement>(
+        `[data-node-id="${pathKey(["shop", "dbo", "customers"])}"]`,
+      )!;
+      fireEvent.click(within(shopCard).getByText(/\+\d+ more/));
+
+      expect(view.queryByText("shop_29")).not.toBeNull();
+      expect(view.queryByText("app_29")).toBeNull();
     });
 
     test("dragged node positions are recorded and survive cosmetic rebuilds", async () => {

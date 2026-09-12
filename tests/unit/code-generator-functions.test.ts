@@ -195,6 +195,22 @@ describe("generateCode", () => {
     expect(code).toContain("created_at  DateTime?");
   });
 
+  test("the Prisma map names the object's own SEGMENT and never the display label", () => {
+    // `DatabaseObject.name` is a display label and is NOT required to equal the last path
+    // segment (standing ruling 2). `@@map` is what Prisma addresses the table by, so it takes
+    // the segment; the model name is for a person and stays derived from the label (#789).
+    const labelled: DetailedObject = {
+      name: "Order Items",
+      kind: "table",
+      path: ["app", "order_items"],
+      indexes: [],
+      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+    };
+    const code = generateCode("prisma", labelled);
+    expect(code).toContain("model OrderItem {");
+    expect(code).toContain('@@map("order_items")');
+  });
+
   test("Go struct", () => {
     const code = generateCode("go", testSchema);
     expect(code).toContain("package models");

@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useCallback } from "react";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import { pathKey } from "@/lib/db/object-path";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { Search, Hash, LoaderCircle, CircleAlert, Database, Plus, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -49,13 +50,15 @@ export function SchemaExplorer({
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
 
-  const toggleTable = useCallback((tableName: string) => {
+  // Keyed by the ADDRESS: two objects in two containers share a label, so a label-keyed set
+  // expanded both rows at once and gave the list one React key for two objects (#789).
+  const toggleTable = useCallback((key: string) => {
     setExpandedTables((prev) => {
       const next = new Set(prev);
-      if (next.has(tableName)) {
-        next.delete(tableName);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        next.add(tableName);
+        next.add(key);
       }
       return next;
     });
@@ -186,10 +189,10 @@ export function SchemaExplorer({
         <AnimatePresence mode="popLayout">
           {filteredSchema.map((table) => (
             <TableItem
-              key={table.name}
+              key={pathKey(table.path)}
               table={table}
-              isExpanded={expandedTables.has(table.name)}
-              onToggle={() => toggleTable(table.name)}
+              isExpanded={expandedTables.has(pathKey(table.path))}
+              onToggle={() => toggleTable(pathKey(table.path))}
               labels={labels}
               capabilities={capabilities}
               isAdmin={isAdmin}

@@ -18,6 +18,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import { objectPathLabel } from "@/lib/db/object-path";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { Download, Info, LoaderCircle, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -187,10 +188,11 @@ function SchemaDiagramInner({ schema, onClose, capabilities }: SchemaDiagramProp
   // async second-phase schema) is invalid the moment the graph rebuilds. The
   // memo matters: onNodesChange re-renders on every drag frame, and this scan
   // is O(nodes).
-  const selectionInGraph = useMemo(
-    () => (selectedNode ? graph.nodes.some((n) => n.id === selectedNode) : true),
+  const selectedTable = useMemo(
+    () => graph.nodes.find((n) => n.id === selectedNode)?.data.table ?? null,
     [graph, selectedNode],
   );
+  const selectionInGraph = selectedNode === null || selectedTable !== null;
   if (!selectionInGraph) {
     setSelectedNode(null);
   }
@@ -300,13 +302,15 @@ function SchemaDiagramInner({ schema, onClose, capabilities }: SchemaDiagramProp
 
   const diagramActions = useMemo<DiagramActions>(
     () => ({
-      toggleExpand: (table: string) => {
+      // The NODE ID, which `buildGraph` writes as the object's `pathKey`: a label is shared
+      // by two objects in two containers and expanded whichever the set answered for (#789).
+      toggleExpand: (nodeId: string) => {
         setExpandedTables((current) => {
           const next = new Set(current);
-          if (next.has(table)) {
-            next.delete(table);
+          if (next.has(nodeId)) {
+            next.delete(nodeId);
           } else {
-            next.add(table);
+            next.add(nodeId);
           }
           return next;
         });
@@ -509,9 +513,12 @@ function SchemaDiagramInner({ schema, onClose, capabilities }: SchemaDiagramProp
                 )}
 
                 {/* Selected node info */}
-                {selectedNode && (
+                {selectedTable && (
                   <div className="text-xs text-brand border-t border-hairline pt-2">
-                    Selected: <span className="font-mono font-medium">{selectedNode}</span>
+                    {/* The dotted ADDRESS and never the node id: the id is `pathKey`, whose
+                        separator is a control character, and never the bare label, which two
+                        objects in two containers share (#789). */}
+                    Selected: <span className="font-mono font-medium">{objectPathLabel(selectedTable.path)}</span>
                     <button onClick={() => selectTable(null)} className="ml-2 text-fg-subtle hover:text-fg-tertiary">
                       clear
                     </button>

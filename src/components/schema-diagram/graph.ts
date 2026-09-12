@@ -1,6 +1,8 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { DetailedObject } from "@/lib/db/detailed-object";
-import type { ColumnSchema } from "@/lib/types";
+import { resolveObjectAddress } from "@/lib/db/object-address";
+import { pathKey } from "@/lib/db/object-path";
+import type { ColumnSchema, ForeignKeySchema } from "@/lib/types";
 
 /** Maximum column rows rendered per table card before the "+N more" expander. */
 export const MAX_VISIBLE_COLUMNS = 12;
@@ -43,28 +45,64 @@ export interface BuiltGraph {
 }
 
 /**
- * Column names participating in FK relationships, per table: `sources` are a
- * table's own FK columns, `targets` are its columns referenced by other
- * tables. Only FKs whose referenced table is present in the schema count.
+ * The object a foreign key's target SPELLING addresses, or null (#789, Task 36).
+ *
+ * Both maps below and both edge builders ask this one question, and the answer is the shared
+ * rule in `object-address.ts` rather than a set of labels. `referencedTable` is written by
+ * each provider in its own flat dialect: measured on the live SQL Server, one object's key
+ * spells its target `app.customers` because it crosses a container while the object beside it
+ * spells its own `customers` because it does not. A `Set` of labels answers false for the
+ * first spelling and the edge disappeared with no error, and answers true for the second
+ * against WHICHEVER namesake it happened to hold.
+ *
+ * The referencing object's own container is the tie-breaker, because that is how the engine
+ * itself resolves an unqualified target. A spelling two objects answer to at the same rank
+ * from neither of their containers resolves to nothing and draws no edge: this canvas states
+ * that the database has a relation, and drawing one nobody declared is worse than leaving a
+ * table with no line on it.
+ */
+function referencedObject(
+  schema: readonly DetailedObject[],
+  table: DetailedObject,
+  fk: ForeignKeySchema,
+): DetailedObject | null {
+  const resolution = resolveObjectAddress(schema, (object) => object.path, fk.referencedTable, containerOf(table));
+  return resolution.kind === "resolved" ? resolution.object : null;
+}
+
+/** The container an object sits in: its address without its own last segment. */
+function containerOf(object: DetailedObject): readonly string[] {
+  return object.path.slice(0, object.path.length - 1);
+}
+
+/**
+ * Column names participating in FK relationships, per table, KEYED BY ADDRESS: `sources` are
+ * a table's own FK columns, `targets` are its columns referenced by other tables. Only FKs
+ * whose referenced object is in the schema and resolves to exactly one object count.
+ *
+ * The key is `pathKey` and never the label, which is the same key the node ids carry, so a
+ * card's anchors cannot land on its namesake in another container.
  */
 export function computeFkColumnMap(schema: readonly DetailedObject[]): FkColumnMap {
-  const tableSet = new Set(schema.map((t) => t.name));
   const sources = new Map<string, Set<string>>();
   const targets = new Map<string, Set<string>>();
 
   for (const table of schema) {
     for (const fk of table.foreignKeys || []) {
-      if (!tableSet.has(fk.referencedTable)) continue;
-      let sourceSet = sources.get(table.name);
+      const referenced = referencedObject(schema, table, fk);
+      if (referenced === null) continue;
+      const sourceKey = pathKey(table.path);
+      let sourceSet = sources.get(sourceKey);
       if (!sourceSet) {
         sourceSet = new Set();
-        sources.set(table.name, sourceSet);
+        sources.set(sourceKey, sourceSet);
       }
       sourceSet.add(fk.columnName);
-      let targetSet = targets.get(fk.referencedTable);
+      const targetKey = pathKey(referenced.path);
+      let targetSet = targets.get(targetKey);
       if (!targetSet) {
         targetSet = new Set();
-        targets.set(fk.referencedTable, targetSet);
+        targets.set(targetKey, targetSet);
       }
       targetSet.add(fk.referencedColumn);
     }
@@ -116,19 +154,22 @@ interface EdgeSpec {
   heuristic: boolean;
 }
 
-function collectFkEdgeSpecs(schema: readonly DetailedObject[], tableSet: Set<string>): EdgeSpec[] {
+function collectFkEdgeSpecs(schema: readonly DetailedObject[]): EdgeSpec[] {
   const specs: EdgeSpec[] = [];
   const seen = new Set<string>();
   for (const table of schema) {
     for (const fk of table.foreignKeys || []) {
-      if (!tableSet.has(fk.referencedTable)) continue;
-      const id = `${table.name}.${fk.columnName}->${fk.referencedTable}.${fk.referencedColumn}`;
+      const referenced = referencedObject(schema, table, fk);
+      if (referenced === null) continue;
+      const source = pathKey(table.path);
+      const target = pathKey(referenced.path);
+      const id = `${source}.${fk.columnName}->${target}.${fk.referencedColumn}`;
       if (seen.has(id)) continue;
       seen.add(id);
       specs.push({
         id,
-        source: table.name,
-        target: fk.referencedTable,
+        source,
+        target,
         sourceColumn: fk.columnName,
         targetColumn: fk.referencedColumn,
         heuristic: false,
@@ -138,24 +179,38 @@ function collectFkEdgeSpecs(schema: readonly DetailedObject[], tableSet: Set<str
   return specs;
 }
 
+/** The one object a heuristic spelling names, resolved by the same rule a declared key is. */
+function heuristicTarget(
+  schema: readonly DetailedObject[],
+  table: DetailedObject,
+  spelling: string,
+): DetailedObject | null {
+  const resolution = resolveObjectAddress(schema, (object) => object.path, spelling, containerOf(table));
+  return resolution.kind === "resolved" ? resolution.object : null;
+}
+
 function collectHeuristicEdgeSpecs(schema: readonly DetailedObject[]): EdgeSpec[] {
-  const byName = new Map(schema.map((t) => [t.name, t]));
   const specs: EdgeSpec[] = [];
   const seen = new Set<string>();
   for (const table of schema) {
     for (const col of table.columns || []) {
       if (!col.name.endsWith("_id")) continue;
       const base = col.name.slice(0, -3);
-      const target = byName.get(`${base}s`) || byName.get(base);
-      if (!target || target.name === table.name) continue;
-      const id = `heuristic-${table.name}-${target.name}-${col.name}`;
+      // The same address rule the declared keys use, and for the same reason: a `customer_id`
+      // in one container must find the `customers` of ITS container rather than whichever
+      // namesake a name map happened to keep last.
+      const target = heuristicTarget(schema, table, `${base}s`) || heuristicTarget(schema, table, base);
+      const source = pathKey(table.path);
+      if (!target || pathKey(target.path) === source) continue;
+      const targetKey = pathKey(target.path);
+      const id = `heuristic-${source}-${targetKey}-${col.name}`;
       if (seen.has(id)) continue;
       seen.add(id);
       const targetPk = (target.columns || []).find((c) => c.isPrimary);
       specs.push({
         id,
-        source: table.name,
-        target: target.name,
+        source,
+        target: targetKey,
         sourceColumn: col.name,
         targetColumn: targetPk ? targetPk.name : null,
         heuristic: true,
@@ -206,10 +261,9 @@ function gridPosition(index: number, total: number, compact: boolean): { x: numb
  */
 export function buildGraph(schema: readonly DetailedObject[], options: BuildGraphOptions): BuiltGraph {
   const { compact, expandedTables } = options;
-  const tableSet = new Set(schema.map((t) => t.name));
   const { sources, targets } = computeFkColumnMap(schema);
 
-  const fkSpecs = collectFkEdgeSpecs(schema, tableSet);
+  const fkSpecs = collectFkEdgeSpecs(schema);
   const specs = fkSpecs.length > 0 ? fkSpecs : collectHeuristicEdgeSpecs(schema);
   // "Used" means the fallback actually produced displayed edges - FK
   // definitions may exist yet be unusable (referencing tables outside the
@@ -229,10 +283,13 @@ export function buildGraph(schema: readonly DetailedObject[], options: BuildGrap
   }
 
   const nodes: TableFlowNode[] = schema.map((table, index) => {
-    const anchors = new Set([...(sources.get(table.name) || []), ...(targets.get(table.name) || [])]);
-    const { visible, hiddenCount } = selectVisibleColumns(table, anchors, expandedTables?.has(table.name) ?? false);
+    // The ADDRESS is the node id, so two objects sharing a label in two containers are two
+    // nodes. `table.name` gave them one id, which React Flow answers by dropping a node.
+    const key = pathKey(table.path);
+    const anchors = new Set([...(sources.get(key) || []), ...(targets.get(key) || [])]);
+    const { visible, hiddenCount } = selectVisibleColumns(table, anchors, expandedTables?.has(key) ?? false);
     return {
-      id: table.name,
+      id: key,
       type: "table" as const,
       position: gridPosition(index, schema.length, compact),
       data: {
@@ -242,8 +299,8 @@ export function buildGraph(schema: readonly DetailedObject[], options: BuildGrap
         hiddenCount,
         // Sorted: FK declaration order must not change node data (TableNode
         // derives its handle re-measure signature from these).
-        sourceAnchors: [...(sources.get(table.name) || [])].sort(byCodeUnit),
-        targetAnchors: [...(targets.get(table.name) || [])].sort(byCodeUnit),
+        sourceAnchors: [...(sources.get(key) || [])].sort(byCodeUnit),
+        targetAnchors: [...(targets.get(key) || [])].sort(byCodeUnit),
       },
     };
   });

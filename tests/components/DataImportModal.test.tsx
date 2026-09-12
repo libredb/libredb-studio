@@ -7,6 +7,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, within, fireEvent, act, waitFor } from "@testing-library/react";
 import { DataImportModal } from "@/components/DataImportModal";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import { pathKey } from "@/lib/db/object-path";
 import type { ProviderCapabilities } from "@/lib/db/types";
 
 // The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
@@ -1037,6 +1038,8 @@ describe("DataImportModal target filtering", () => {
     { name: "order_total", kind: "function", path: ["order_total"], columns: [], indexes: [] },
   ];
 
+  // The option TEXT, which is the label a person picks from. Its `value` is the address
+  // (#789, Task 36) and is asserted on its own below.
   function targetNames(capabilitiesProp?: ProviderCapabilities): string[] {
     const { baseElement } = render(
       <DataImportModal isOpen onClose={noop} onImport={noop} tables={inventory} capabilities={capabilitiesProp} />,
@@ -1049,8 +1052,8 @@ describe("DataImportModal target filtering", () => {
     });
     const select = within(baseElement).getByLabelText("Select Table") as HTMLSelectElement;
     return Array.from(select.options)
-      .map((option) => option.value)
-      .filter((value) => value !== "");
+      .map((option) => option.textContent ?? "")
+      .filter((text) => text !== "-- Select a table --");
   }
 
   test("a view has columns and is a relation, and is still not an import target", () => {
@@ -1067,5 +1070,94 @@ describe("DataImportModal target filtering", () => {
 
   test("with no declaration yet, every entry is still a target", () => {
     expect(targetNames(undefined)).toEqual(["orders", "order_summary", "order_total"]);
+  });
+});
+
+// =============================================================================
+// The target an import is pointed at is an ADDRESS (#789, Task 36)
+// =============================================================================
+
+describe("DataImportModal target addressing", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  // The live SQL Server on 1433 holds both of these. Keyed on the label, the two options
+  // carried one React key and one value, and the INSERT named a bare `customers` that the
+  // session default container answers.
+  const namesakes: DetailedObject[] = [
+    { name: "customers", kind: "table", path: ["libredb_objects", "app", "customers"], columns: [], indexes: [] },
+    { name: "customers", kind: "table", path: ["shop", "dbo", "customers"], columns: [], indexes: [] },
+  ];
+  const mssqlCapabilities = {
+    queryLanguage: "sql",
+    defaultPort: 1433,
+    objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true }],
+  } as unknown as ProviderCapabilities;
+
+  function generatedFor(value: string): string {
+    const onImport = mock((_sql: string) => {});
+    const { baseElement } = render(
+      <DataImportModal
+        isOpen
+        onClose={noop}
+        onImport={onImport}
+        tables={namesakes}
+        databaseType="mssql"
+        capabilities={mssqlCapabilities}
+      />,
+    );
+    act(() => simulateFileUpload(baseElement, "id,email\n1,a@example.com", "data.csv"));
+    act(() => fireEvent.click(within(baseElement).getByText("Configure Import")));
+    const select = within(baseElement).getByLabelText("Select Table") as HTMLSelectElement;
+    act(() => fireEvent.change(select, { target: { value } }));
+    act(() => fireEvent.click(within(baseElement).getByText("Review SQL")));
+    return baseElement.querySelector("pre")?.textContent ?? "";
+  }
+
+  test("each option is VALUED by its address and LABELLED by its name", () => {
+    const { baseElement } = render(
+      <DataImportModal isOpen onClose={noop} onImport={noop} tables={namesakes} capabilities={mssqlCapabilities} />,
+    );
+    act(() => simulateFileUpload(baseElement, "id,email\n1,a@example.com", "data.csv"));
+    act(() => fireEvent.click(within(baseElement).getByText("Configure Import")));
+    const select = within(baseElement).getByLabelText("Select Table") as HTMLSelectElement;
+    const options = Array.from(select.options).filter((option) => option.value !== "");
+    expect(options.map((option) => option.value)).toEqual([
+      pathKey(["libredb_objects", "app", "customers"]),
+      pathKey(["shop", "dbo", "customers"]),
+    ]);
+    expect(options.map((option) => option.textContent)).toEqual(["customers", "customers"]);
+  });
+
+  test("the SECOND namesake is the one written", () => {
+    const sql = generatedFor(pathKey(["shop", "dbo", "customers"]));
+    expect(sql).toContain("INSERT INTO shop.dbo.customers (id, email)");
+    expect(sql).not.toContain("libredb_objects");
+  });
+
+  test("the FIRST namesake is still reachable, which is the control", () => {
+    const sql = generatedFor(pathKey(["libredb_objects", "app", "customers"]));
+    expect(sql).toContain("INSERT INTO libredb_objects.app.customers (id, email)");
+    expect(sql).not.toContain("shop.dbo");
+  });
+
+  test("the ready step names the selected object by its address", () => {
+    const { baseElement } = render(
+      <DataImportModal
+        isOpen
+        onClose={noop}
+        onImport={noop}
+        tables={namesakes}
+        databaseType="mssql"
+        capabilities={mssqlCapabilities}
+      />,
+    );
+    act(() => simulateFileUpload(baseElement, "id,email\n1,a@example.com", "data.csv"));
+    act(() => fireEvent.click(within(baseElement).getByText("Configure Import")));
+    const select = within(baseElement).getByLabelText("Select Table") as HTMLSelectElement;
+    act(() => fireEvent.change(select, { target: { value: pathKey(["shop", "dbo", "customers"]) } }));
+    act(() => fireEvent.click(within(baseElement).getByText("Review SQL")));
+    expect(baseElement.textContent).toContain("1 rows into shop.dbo.customers");
   });
 });
