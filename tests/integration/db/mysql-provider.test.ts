@@ -4,8 +4,9 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import { callerBoundTruncationReason, isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/types";
+import type { ObjectKindSpec } from "@/lib/db/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
@@ -2932,6 +2933,147 @@ const MYSQL_VERSION_STRING = "26.7.0";
 const MARIADB_VERSION_STRING = "12.3.2-MariaDB-ubu2404";
 
 /**
+ * What `SHOW CREATE ...` really answered, per server, on 2026-09-13 (#789).
+ *
+ * VERBATIM, including the two servers' cosmetic disagreements, because those are exactly what a
+ * hand-written double smooths over: MySQL 26.7.0 writes `int` where MariaDB 12.3.2 writes
+ * `int(11)`, MySQL collates `utf8mb4_0900_ai_ci` where MariaDB collates `utf8mb4_uca1400_ai_ci`,
+ * MySQL's view text doubles the join parentheses, and MySQL's trigger text is ONE line where
+ * MariaDB's keeps the author's three. A fixture that carried one server's text for both would
+ * certify a provider that could only read one of them.
+ *
+ * The reply COLUMN names are the measurement that matters most here and they are keyed as the
+ * server spells them, so a provider reading the wrong column answers a refusal rather than a
+ * text: `Create Table`, `Create View`, `Create Procedure`, `Create Function`,
+ * `SQL Original Statement`, `Create Event`, `Create Package`, `Create Package Body`, and, for a
+ * MariaDB sequence, `Create Table` AGAIN rather than the `Create Sequence` the design predicted.
+ */
+const SOURCE_REPLIES: Record<string, Record<string, Record<string, unknown>>> = {
+  mysql: {
+    "show create table `app`.`customers`": {
+      Table: "customers",
+      "Create Table":
+        "CREATE TABLE `customers` (\n  `id` int NOT NULL,\n  `name` varchar(100) DEFAULT NULL,\n" +
+        "  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
+    },
+    "show create view `app`.`order_summary`": {
+      View: "order_summary",
+      "Create View":
+        "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW " +
+        "`app`.`order_summary` AS select `c`.`name` AS `customer`,sum(`o`.`total`) AS `total` from " +
+        "(`app`.`orders` `o` join `app`.`customers` `c` on((`c`.`id` = `o`.`customer_id`))) group by `c`.`name`",
+    },
+    "show create trigger `app`.`orders_stamp`": {
+      Trigger: "orders_stamp",
+      "SQL Original Statement":
+        "CREATE DEFINER=`root`@`localhost` TRIGGER `orders_stamp` BEFORE INSERT ON `orders` FOR EACH ROW BEGIN\n" +
+        "  SET NEW.total = COALESCE(NEW.total, 0);\nEND",
+    },
+  },
+  mariadb: {
+    "show create table `app`.`customers`": {
+      Table: "customers",
+      "Create Table":
+        "CREATE TABLE `customers` (\n  `id` int(11) NOT NULL,\n  `name` varchar(100) DEFAULT NULL,\n" +
+        "  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci",
+    },
+    "show create view `app`.`order_summary`": {
+      View: "order_summary",
+      "Create View":
+        "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW " +
+        "`app`.`order_summary` AS select `c`.`name` AS `customer`,sum(`o`.`total`) AS `total` from " +
+        "(`app`.`orders` `o` join `app`.`customers` `c` on(`c`.`id` = `o`.`customer_id`)) group by `c`.`name`",
+    },
+    "show create trigger `app`.`orders_stamp`": {
+      Trigger: "orders_stamp",
+      "SQL Original Statement":
+        "CREATE DEFINER=`root`@`localhost` TRIGGER orders_stamp BEFORE INSERT ON orders\nFOR EACH ROW\nBEGIN\n" +
+        "  SET NEW.total = COALESCE(NEW.total, 0);\nEND",
+    },
+    // MariaDB only, and the sequence's reply column is the measured refutation of the design's
+    // `Create Sequence`: a sequence is a table underneath on this server, which is the same fact
+    // that puts it in `information_schema.TABLES` with `TABLE_TYPE = 'SEQUENCE'`.
+    "show create sequence `app`.`invoice_number_seq`": {
+      Table: "invoice_number_seq",
+      "Create Table":
+        "CREATE SEQUENCE `invoice_number_seq` start with 1 minvalue 1 maxvalue 9223372036854775806 " +
+        "increment by 1 cache 1000 nocycle ENGINE=InnoDB",
+    },
+    "show create package `app`.`orders_pkg`": {
+      Package: "orders_pkg",
+      // The mode the package was CREATED under, carried here because it is the column that
+      // produced the design's belief that the READER needs ORACLE mode. It does not: the text
+      // above was read under the image's default sql_mode (#789 probe 4).
+      sql_mode:
+        "PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ORACLE,NO_KEY_OPTIONS,NO_TABLE_OPTIONS,NO_FIELD_OPTIONS," +
+        "NO_AUTO_CREATE_USER,SIMULTANEOUS_ASSIGNMENT",
+      "Create Package":
+        'CREATE DEFINER="root"@"localhost" PACKAGE "orders_pkg" AS\n  PROCEDURE touch_order(p_id INT);\n' +
+        "  FUNCTION order_total(p_id INT) RETURN INT;\nEND",
+    },
+    "show create package body `app`.`orders_pkg`": {
+      "Package body": "orders_pkg",
+      "Create Package Body":
+        'CREATE DEFINER="root"@"localhost" PACKAGE BODY "orders_pkg" AS\n  PROCEDURE touch_order(p_id INT) AS\n' +
+        "  BEGIN\n    UPDATE orders SET note = 'touched' WHERE id = p_id;\n  END;\n" +
+        "  FUNCTION order_total(p_id INT) RETURN INT AS\n  BEGIN\n    RETURN 0;\n  END;\nEND",
+    },
+    "show create package `app`.`spec_only_pkg`": {
+      Package: "spec_only_pkg",
+      "Create Package": 'CREATE DEFINER="root"@"localhost" PACKAGE "spec_only_pkg" AS\n  PROCEDURE p1(p_id INT);\nEND',
+    },
+  },
+};
+
+/**
+ * The replies both servers gave byte-identically, merged into each flavour above.
+ *
+ * Separated rather than duplicated so the DIFFERENCES above stay legible: what is in this record
+ * is what the two servers agree on, and what is in `SOURCE_REPLIES` is what they do not.
+ */
+const SHARED_SOURCE_REPLIES: Record<string, Record<string, unknown>> = {
+  "show create procedure `app`.`order_archive`": {
+    Procedure: "order_archive",
+    "Create Procedure":
+      "CREATE DEFINER=`root`@`localhost` PROCEDURE `order_archive`(IN p_id INT)\nBEGIN\n" +
+      "  INSERT INTO order_archive (id, archived) VALUES (p_id, CURRENT_DATE());\nEND",
+  },
+  "show create function `app`.`order_total`": {
+    Function: "order_total",
+    "Create Function":
+      "CREATE DEFINER=`root`@`localhost` FUNCTION `order_total`(p_id INT) RETURNS decimal(12,2)\n" +
+      "    READS SQL DATA\nBEGIN\n  DECLARE v_total DECIMAL(12, 2);\n" +
+      "  SELECT total INTO v_total FROM orders WHERE id = p_id;\n  RETURN COALESCE(v_total, 0);\nEND",
+  },
+  "show create event `app`.`orders_nightly`": {
+    Event: "orders_nightly",
+    "Create Event":
+      "CREATE DEFINER=`root`@`localhost` EVENT `orders_nightly` ON SCHEDULE EVERY 1 DAY STARTS " +
+      "'2026-09-12 21:07:27' ON COMPLETION NOT PRESERVE ENABLE DO DELETE FROM order_archive WHERE " +
+      "archived < (CURRENT_DATE() - INTERVAL 1 YEAR)",
+  },
+};
+
+/**
+ * The reply one `SHOW CREATE` statement gets, or no row at all.
+ *
+ * Keyed on the WHOLE statement text, squashed for case only, which is the shape the statement pin
+ * in this suite asserts. A statement this record does not hold answers NO ROW, which is how a
+ * provider reading a name it never listed, or building an address without its escaper, shows up
+ * as a failed read rather than as a passing one.
+ */
+function sourceReply(sql: string, mariadb: boolean): unknown[] {
+  const key = sql.trim().toLowerCase();
+  const flavour = mariadb ? SOURCE_REPLIES.mariadb : SOURCE_REPLIES.mysql;
+  const reply = Object.hasOwn(flavour, key)
+    ? flavour[key]
+    : Object.hasOwn(SHARED_SOURCE_REPLIES, key)
+      ? SHARED_SOURCE_REPLIES[key]
+      : undefined;
+  return reply === undefined ? [] : [reply];
+}
+
+/**
  * The fixture the two `docker/*-init/01-object-fixture.sql` files build, answered from the
  * mock so the contract can be driven without a server in the loop.
  *
@@ -2962,7 +3104,7 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
         { kind: "sequence", n: 1 },
         { kind: "procedure", n: 2 },
         { kind: "function", n: 1 },
-        { kind: "package", n: 1 },
+        { kind: "package", n: 2 },
         { kind: "trigger", n: 1 },
         { kind: "event", n: 1 },
       ]
@@ -2981,6 +3123,9 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
       return [[{ version: options.mariadb ? MARIADB_VERSION_STRING : MYSQL_VERSION_STRING }], []];
     }
     if (normalized.startsWith("explain")) return [[], []];
+    // Before every catalog arm: a `SHOW CREATE` statement names no information_schema view and
+    // would otherwise fall through to the empty default, which reads as an absence.
+    if (normalized.startsWith("show create")) return [sourceReply(sql, options.mariadb), []];
     if (normalized.includes("information_schema.schemata")) {
       return [
         [
@@ -3221,7 +3366,12 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
       const type = (params ?? [])[1];
       if (type === "PROCEDURE") return [[{ name: "order_archive" }, { name: "touch_order" }], []];
       if (type === "FUNCTION") return [[{ name: "order_total" }], []];
-      if (type === "PACKAGE" && options.mariadb) return [[{ name: "orders_pkg" }], []];
+      // TWO packages on MariaDB since #789: `spec_only_pkg` is a specification with no body,
+      // which is the ONE-PART shape of the source read and the only thing that tells a missing
+      // body apart from a missing package.
+      if (type === "PACKAGE" && options.mariadb) {
+        return [[{ name: "orders_pkg" }, { name: "spec_only_pkg" }], []];
+      }
       return [[], []];
     }
     if (normalized.includes("information_schema.triggers")) {
@@ -3346,6 +3496,58 @@ describe("object surface", () => {
     await mariadb.disconnect();
   });
 
+  test("declares source on exactly the kinds that have a definition text (#789)", async () => {
+    // BOTH branches, because this provider's declaration is not a constant: the MySQL six
+    // and the MariaDB eight are two different answers from one type id, and a test driving
+    // one of them certifies the other by nothing at all.
+    const mysql = await connectedTo(false);
+    const mariadb = await connectedTo(true);
+
+    const declared = (provider: InstanceType<typeof MySQLProvider>) =>
+      (provider.getCapabilities().objectKinds ?? [])
+        .filter((kind) => kind.hasSource === true)
+        .map((kind) => [kind.id, kind.sourceLanguage] as const)
+        .sort();
+    const silent = (provider: InstanceType<typeof MySQLProvider>) =>
+      (provider.getCapabilities().objectKinds ?? [])
+        .filter((kind) => kind.hasSource !== true)
+        .map((kind) => kind.id)
+        .sort();
+
+    expect(declared(mysql)).toEqual([
+      ["event", "mysql"],
+      ["function", "mysql"],
+      ["procedure", "mysql"],
+      ["table", "mysql"],
+      ["trigger", "mysql"],
+      ["view", "mysql"],
+    ]);
+    // MariaDB's two extra kinds declare source on the SAME language id. `package` and
+    // `sequence` are declared here even though the standalone tree never draws their folders
+    // today, and that is deliberate rather than an oversight: `POST /api/db/provider-meta`
+    // never connects, so the client's copy of the declaration is the MySQL six (#789). The
+    // declaration is true about the ENGINE, and withholding it would be a second wrong
+    // declaration rather than a safer one. docs/providers/mysql.md says the same.
+    expect(declared(mariadb)).toEqual([
+      ["event", "mysql"],
+      ["function", "mysql"],
+      ["package", "mysql"],
+      ["procedure", "mysql"],
+      ["sequence", "mysql"],
+      ["table", "mysql"],
+      ["trigger", "mysql"],
+      ["view", "mysql"],
+    ]);
+    // The other direction, so a kind added later cannot quietly gain a Source tab, and so a
+    // kind cannot quietly LOSE one either. Every kind either server declares has a definition
+    // text, so both lists are empty and that emptiness is the assertion.
+    expect(silent(mysql)).toEqual([]);
+    expect(silent(mariadb)).toEqual([]);
+
+    await mysql.disconnect();
+    await mariadb.disconnect();
+  });
+
   test("an unconnected provider declares the kinds every MySQL-protocol server has", () => {
     // POST /api/db/provider-meta reads capabilities off a provider it never connects
     // (#457), so the pre-connect answer is a real surface rather than an internal state.
@@ -3390,6 +3592,11 @@ describe("object surface", () => {
       containers: [["app"], ["reporting"]],
       kinds: { table: 3, view: 1, procedure: 2, function: 1, trigger: 1, event: 1 },
       sampleObject: { path: ["app", "orders"], kind: "table" },
+      // AUTHORED, because no listing produces a name nothing holds. `procedure` is the kind
+      // whose absence errno is ER_SP_DOES_NOT_EXIST, which is also what a caller holding
+      // nothing is told about a routine that DOES exist; the positive control is the loop
+      // above, which has already read `app.order_archive` under the same kind.
+      absentSource: { path: ["app", "no_such_procedure"], kind: "procedure" },
     });
     await provider.disconnect();
   });
@@ -3402,8 +3609,9 @@ describe("object surface", () => {
       // Four tables, not three: the MariaDB fixture's `order_audit` is SYSTEM VERSIONED and the
       // `table` kind covers it, so this count is also the assertion that the count arms and the
       // listing binds read the same spelling list.
-      kinds: { table: 4, view: 1, sequence: 1, procedure: 2, function: 1, package: 1, trigger: 1, event: 1 },
+      kinds: { table: 4, view: 1, sequence: 1, procedure: 2, function: 1, package: 2, trigger: 1, event: 1 },
       sampleObject: { path: ["app", "orders_pkg"], kind: "package" },
+      absentSource: { path: ["app", "no_such_procedure"], kind: "procedure" },
     });
     await provider.disconnect();
   });
@@ -3532,6 +3740,13 @@ describe("MySQL object listing and detail", () => {
 
     expect(await provider.listObjects(["app"], "package")).toEqual([
       { path: ["app", "orders_pkg"], name: "orders_pkg", kind: "package", rowCount: undefined, sizeBytes: undefined },
+      {
+        path: ["app", "spec_only_pkg"],
+        name: "spec_only_pkg",
+        kind: "package",
+        rowCount: undefined,
+        sizeBytes: undefined,
+      },
     ]);
     expect(await provider.listObjects(["app"], "sequence")).toEqual([
       {
@@ -4413,5 +4628,522 @@ describe("MySQL bulk column read", () => {
       listed.map((object) => ["cluster", "app", object.path[object.path.length - 1]]),
     );
     await provider.disconnect();
+  });
+});
+
+// ============================================================================
+// The object source read (#789 Phase 2)
+// ----------------------------------------------------------------------------
+// `SHOW CREATE <kind> <database>.<name>`, once per part. Eight kinds, two servers, one
+// type id, and every text below is what a real container answered on 2026-09-13 (see
+// `SOURCE_REPLIES`). The statement is what the fixture dispatches on, so a provider that
+// asked for the wrong kind, built the address without its escaper, or read the wrong reply
+// column answers no row and fails here rather than passing on a smoothed-over double.
+// ============================================================================
+
+/** The `SHOW CREATE` statements one read sent, squashed for whitespace and nothing else. */
+function sourceStatements(): string[] {
+  return protocolCalls
+    .filter((call) => call.sql.trim().toLowerCase().startsWith("show create"))
+    .map((call) => call.sql.trim().replace(/\s+/g, " "));
+}
+
+/** A mysql2-shaped server error: the driver carries `errno` and this provider reads it. */
+function serverError(errno: number, message: string, code: string): Error {
+  return Object.assign(new Error(message), { errno, code, sqlState: "42000" });
+}
+
+describe("MySQL object source", () => {
+  beforeEach(() => {
+    mockExecuteFn = defaultMockExecute;
+    protocolCalls = [];
+  });
+
+  test("reads the definition of app.customers and says what the text is", async () => {
+    const provider = await connectedTo(false);
+
+    const document = await provider.readObjectSource(["app", "customers"], "table");
+
+    expect(document.path).toEqual(["app", "customers"]);
+    expect(document.kind).toBe("table");
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(false);
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.id).toBe("definition");
+    expect(part.label).toBe("Definition");
+    expect(part.text).toContain("CREATE TABLE `customers`");
+    expect(part.language).toBe("mysql");
+    expect(part.form).toBe("complete");
+    // REGENERATED and not stored, which is a measurement rather than a default: the fixture
+    // wrote `id INT NOT NULL` and the server answers `` `id` int NOT NULL `` inside an
+    // `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4` envelope nobody typed.
+    expect(part.origin).toBe("regenerated");
+    expect(part.text).toContain("ENGINE=InnoDB");
+    expect(part.truncated).toBeUndefined();
+    await provider.disconnect();
+  });
+
+  test("EVERY declared kind answers a READABLE part, which is what pins each reply column", async () => {
+    // The reply column is per STATEMENT and not per row position, and this is the assertion
+    // that makes that measurement live rather than documented. A provider reading the wrong
+    // column finds `undefined` and emits a refusal, which every other assertion in this file
+    // tolerates: the conformance walk accepts a refusal part, the statement pin below sees only
+    // the statement, and a `toHaveLength` sees only the count. Two mutants survived the whole
+    // suite before this test existed, `Create Table` -> `Create Sequence` on the MariaDB
+    // sequence and `SQL Original Statement` -> `Create Trigger` on the trigger, and both are
+    // exactly the spelling a reader would guess from the statement's own name.
+    const cases: [boolean, string, readonly string[], string][] = [
+      [false, "table", ["app", "customers"], "CREATE TABLE `customers`"],
+      [false, "view", ["app", "order_summary"], "SQL SECURITY DEFINER VIEW `app`.`order_summary`"],
+      [false, "procedure", ["app", "order_archive"], "PROCEDURE `order_archive`(IN p_id INT)"],
+      [false, "function", ["app", "order_total"], "FUNCTION `order_total`(p_id INT) RETURNS decimal(12,2)"],
+      [false, "trigger", ["app", "orders", "orders_stamp"], "TRIGGER `orders_stamp` BEFORE INSERT"],
+      [false, "event", ["app", "orders_nightly"], "EVENT `orders_nightly` ON SCHEDULE EVERY 1 DAY"],
+      [true, "sequence", ["app", "invoice_number_seq"], "CREATE SEQUENCE `invoice_number_seq` start with 1"],
+      [true, "package", ["app", "orders_pkg"], 'PACKAGE "orders_pkg" AS'],
+    ];
+    // The loop's zero-iteration case certifies nothing, so the population is asserted against
+    // the DECLARATION rather than against a number typed here: every source-bearing kind a
+    // MariaDB server declares must appear, and MariaDB declares a superset of MySQL's.
+    const mariadbProvider = await connectedTo(true);
+    const declaredIds = (mariadbProvider.getCapabilities().objectKinds ?? [])
+      .filter((kind) => kind.hasSource === true)
+      .map((kind) => kind.id)
+      .sort();
+    expect([...new Set(cases.map(([, kind]) => kind))].sort()).toEqual(declaredIds);
+    await mariadbProvider.disconnect();
+
+    for (const [mariadb, kind, path, distinctive] of cases) {
+      const provider = await connectedTo(mariadb);
+      const document = await provider.readObjectSource(path, kind);
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) {
+        throw new Error(`kind "${kind}" answered a refusal: ${part.unavailable}`);
+      }
+      expect(part.text).toContain(distinctive);
+      await provider.disconnect();
+    }
+  });
+
+  test("pins the WHOLE statement for every kind on both servers", async () => {
+    // THE WHOLE STATEMENT, not its verb and not one clause. Task 6 measured that pinning a
+    // fragment leaves everything outside that fragment unguarded, and that a `not.toContain`
+    // in one kind's test can never see another kind's statement. There are nine statements
+    // here (a package is two), so nine equalities.
+    const mysql = await connectedTo(false);
+    protocolCalls = [];
+    await mysql.readObjectSource(["app", "customers"], "table");
+    await mysql.readObjectSource(["app", "order_summary"], "view");
+    await mysql.readObjectSource(["app", "order_archive"], "procedure");
+    await mysql.readObjectSource(["app", "order_total"], "function");
+    await mysql.readObjectSource(["app", "orders", "orders_stamp"], "trigger");
+    await mysql.readObjectSource(["app", "orders_nightly"], "event");
+    expect(sourceStatements()).toEqual([
+      "SHOW CREATE TABLE `app`.`customers`",
+      "SHOW CREATE VIEW `app`.`order_summary`",
+      "SHOW CREATE PROCEDURE `app`.`order_archive`",
+      "SHOW CREATE FUNCTION `app`.`order_total`",
+      // The trigger's PARENT segment is not in the statement, and that is the engine's own
+      // shape: `SHOW CREATE TRIGGER` addresses `<database>.<trigger>` and a trigger name is
+      // unique per database here (measured, ER_TRG_ALREADY_EXISTS). The parent is part of the
+      // ADDRESS the tree draws, not part of the statement that reads it.
+      "SHOW CREATE TRIGGER `app`.`orders_stamp`",
+      "SHOW CREATE EVENT `app`.`orders_nightly`",
+    ]);
+    await mysql.disconnect();
+
+    const mariadb = await connectedTo(true);
+    protocolCalls = [];
+    await mariadb.readObjectSource(["app", "invoice_number_seq"], "sequence");
+    await mariadb.readObjectSource(["app", "orders_pkg"], "package");
+    expect(sourceStatements()).toEqual([
+      "SHOW CREATE SEQUENCE `app`.`invoice_number_seq`",
+      "SHOW CREATE PACKAGE `app`.`orders_pkg`",
+      "SHOW CREATE PACKAGE BODY `app`.`orders_pkg`",
+    ]);
+    // And NO session mode is set, on either server. Probe 4 refuted the design's belief that
+    // `SHOW CREATE PACKAGE` needs `sql_mode=ORACLE`, and this is the assertion that keeps the
+    // refutation: a provider that set it would send a statement this list does not hold.
+    expect(protocolCalls.map((call) => call.sql.trim().toLowerCase())).not.toContain("set session sql_mode='oracle'");
+    expect(protocolCalls.filter((call) => call.sql.toLowerCase().includes("sql_mode"))).toEqual([]);
+    await mariadb.disconnect();
+  });
+
+  test("a MariaDB package is ONE document over TWO parts, specification first", async () => {
+    const provider = await connectedTo(true);
+
+    const document = await provider.readObjectSource(["app", "orders_pkg"], "package");
+
+    expect(document.parts.map((part) => [part.id, part.label])).toEqual([
+      ["spec", "Package specification"],
+      ["body", "Package body"],
+    ]);
+    const [spec, body] = document.parts;
+    if (isSourcePartUnavailable(spec) || isSourcePartUnavailable(body)) throw new Error("narrowing");
+    expect(spec.text).toContain('PACKAGE "orders_pkg" AS');
+    expect(body.text).toContain('PACKAGE BODY "orders_pkg" AS');
+    // STORED, not regenerated: the body carries the fixture's own four-space indentation and
+    // its `UPDATE orders SET note = 'touched'` spacing, which is the author's bytes.
+    expect([spec.origin, body.origin]).toEqual(["stored", "stored"]);
+    expect([spec.form, body.form]).toEqual(["complete", "complete"]);
+    await provider.disconnect();
+  });
+
+  test("a package SPECIFICATION with no body answers ONE part, not a refusal", async () => {
+    // The engine's own asymmetry, and the reason the spec is read first: a body cannot exist
+    // without a specification and a specification can exist without a body, so a body that is
+    // absent is a complete package rather than a failed read. Measured on MariaDB 12.3.2 and
+    // committed as `app.spec_only_pkg` in docker/mariadb-init/01-object-fixture.sql.
+    const provider = await connectedTo(true);
+    const answering = objectSurfaceFixture({ mariadb: true });
+    mockExecuteFn = async (sql, params) => {
+      if (sql.trim().toLowerCase() === "show create package body `app`.`spec_only_pkg`") {
+        throw serverError(1305, "PACKAGE BODY spec_only_pkg does not exist", "ER_SP_DOES_NOT_EXIST");
+      }
+      return answering(sql, params);
+    };
+
+    const document = await provider.readObjectSource(["app", "spec_only_pkg"], "package");
+
+    expect(document.parts).toHaveLength(1);
+    const [spec] = document.parts;
+    if (isSourcePartUnavailable(spec)) throw new Error("narrowing");
+    expect(spec.id).toBe("spec");
+    expect(spec.text).toContain('PACKAGE "spec_only_pkg" AS');
+    await provider.disconnect();
+  });
+
+  test("a NULL body column is a REFUSAL carrying our sentence, never an empty definition", async () => {
+    // The measurement this engine's design row was first written without. A caller holding
+    // `GRANT EXECUTE ON app.*` and nothing else gets a ROW whose body column is NULL rather
+    // than an error, on MySQL 26.7.0 and MariaDB 12.3.2 alike, for all four routine forms.
+    // MySQL utters no sentence for it, so this is the one refusal on this engine whose words
+    // are ours.
+    const provider = await connectedTo(false);
+    mockExecuteFn = async () => [[{ Procedure: "order_archive", "Create Procedure": null }], []];
+
+    const document = await provider.readObjectSource(["app", "order_archive"], "procedure");
+
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    // BEFORE the narrowing, which is the hybrid guard: a part carrying both `text` and
+    // `unavailable` compiles, narrows to the refusal arm, and would hide a real definition.
+    expect("text" in part).toBe(false);
+    expect(isSourcePartUnavailable(part)).toBe(true);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.unavailable).toContain('"Create Procedure" column is NULL');
+    expect(part.unavailable).toContain("EXECUTE on the routine is enough");
+    await provider.disconnect();
+  });
+
+  test("an empty or whitespace-only definition is a refusal too", async () => {
+    // An empty definition is not a definition, so it takes the same arm as the NULL rather
+    // than reaching an editor buffer as a blank document.
+    const provider = await connectedTo(false);
+    mockExecuteFn = async () => [[{ Procedure: "order_archive", "Create Procedure": "   \n  " }], []];
+
+    const [part] = (await provider.readObjectSource(["app", "order_archive"], "procedure")).parts;
+
+    expect(isSourcePartUnavailable(part)).toBe(true);
+    await provider.disconnect();
+  });
+
+  test("a refused read carries the SERVER's sentence, unprefixed", async () => {
+    // Three measured errnos and three different sentences, each verbatim from a caller holding
+    // `GRANT EXECUTE ON app.*`. Nothing here goes through `mapDatabaseError`, which would put
+    // this product's words in front of the server's.
+    const provider = await connectedTo(false);
+    const refusals: [number, string, string, string, readonly string[]][] = [
+      [
+        1142,
+        "SHOW command denied to user 'src_probe'@'localhost' for table 'orders'",
+        "ER_TABLEACCESS_DENIED_ERROR",
+        "table",
+        ["app", "orders"],
+      ],
+      [
+        1142,
+        "SELECT command denied to user 'src_probe'@'localhost' for table 'order_summary'",
+        "ER_TABLEACCESS_DENIED_ERROR",
+        "view",
+        ["app", "order_summary"],
+      ],
+      [
+        1227,
+        "Access denied; you need (at least one of) the TRIGGER privilege(s) for this operation",
+        "ER_SPECIFIC_ACCESS_DENIED_ERROR",
+        "trigger",
+        ["app", "orders", "orders_stamp"],
+      ],
+      [
+        1044,
+        "Access denied for user 'src_probe'@'%' to database 'app'",
+        "ER_DBACCESS_DENIED_ERROR",
+        "event",
+        ["app", "orders_nightly"],
+      ],
+    ];
+    // A loop over a list that could be empty certifies nothing, so the count is asserted.
+    expect(refusals).toHaveLength(4);
+    for (const [errno, message, code, kind, path] of refusals) {
+      mockExecuteFn = async () => {
+        throw serverError(errno, message, code);
+      };
+      const [part] = (await provider.readObjectSource(path, kind)).parts;
+      expect("text" in part).toBe(false);
+      if (!isSourcePartUnavailable(part)) throw new Error(`${kind} answered a text`);
+      expect(part.unavailable).toBe(message);
+    }
+    await provider.disconnect();
+  });
+
+  test("every measured absence errno RAISES and names the object", async () => {
+    // Absence is never a refusal part. The sentence is OURS and not the server's, and the
+    // trigger is why: ER_TRG_DOES_NOT_EXIST is the bare words "Trigger does not exist", which
+    // name neither the object nor the database.
+    const provider = await connectedTo(false);
+    const absences: [number, string, string, readonly string[], string][] = [
+      [1146, "Table 'app.no_such_table' doesn't exist", "table", ["app", "no_such_table"], "table"],
+      [1146, "Table 'app.no_such_view' doesn't exist", "view", ["app", "no_such_view"], "view"],
+      [1347, "'app.orders' is not VIEW", "view", ["app", "orders"], "view"],
+      [
+        1305,
+        "PROCEDURE no_such_procedure does not exist",
+        "procedure",
+        ["app", "no_such_procedure"],
+        "stored procedure",
+      ],
+      [1305, "FUNCTION no_such_function does not exist", "function", ["app", "no_such_function"], "function"],
+      [1360, "Trigger does not exist", "trigger", ["app", "orders", "no_such_trigger"], "trigger"],
+      [1539, "Unknown event 'no_such_event'", "event", ["app", "no_such_event"], "event"],
+    ];
+    expect(absences).toHaveLength(7);
+    for (const [errno, message, kind, path, label] of absences) {
+      mockExecuteFn = async () => {
+        throw serverError(errno, message, "ER");
+      };
+      await expect(provider.readObjectSource(path, kind)).rejects.toThrow(
+        new RegExp(`MySQL holds no ${label} called "${path[path.length - 1]}" in database "app"`),
+      );
+    }
+    await provider.disconnect();
+  });
+
+  test("MariaDB's two extra kinds raise on their own absence errnos", async () => {
+    const provider = await connectedTo(true);
+    const absences: [number, string, string, readonly string[], string][] = [
+      [1146, "Table 'app.no_such_seq' doesn't exist", "sequence", ["app", "no_such_seq"], "sequence"],
+      [4089, "'app.orders' is not a SEQUENCE", "sequence", ["app", "orders"], "sequence"],
+      [1305, "PACKAGE no_such_pkg does not exist", "package", ["app", "no_such_pkg"], "package"],
+    ];
+    expect(absences).toHaveLength(3);
+    for (const [errno, message, kind, path, label] of absences) {
+      mockExecuteFn = async () => {
+        throw serverError(errno, message, "ER");
+      };
+      await expect(provider.readObjectSource(path, kind)).rejects.toThrow(
+        new RegExp(`MySQL holds no ${label} called "${path[path.length - 1]}" in database "app"`),
+      );
+    }
+    await provider.disconnect();
+  });
+
+  test("a read that answers NO ROW is an absence, not a refusal", async () => {
+    // No live server produced this: every `SHOW CREATE` measured either answered a row or
+    // raised. It is handled rather than assumed away because a wire-compatible fork may answer
+    // an empty result, and folding it into the NULL arm would put a refusal sentence over an
+    // object nobody found.
+    const provider = await connectedTo(false);
+    mockExecuteFn = async () => [[], []];
+
+    await expect(provider.readObjectSource(["app", "customers"], "table")).rejects.toThrow(
+      /MySQL holds no table called "customers" in database "app"/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a failure that is neither a refusal nor an absence is RAISED, mapped", async () => {
+    // The narrowness is the point: a transport failure is nobody answering at all, and
+    // rendering "Connection lost" in the Source pane as this object's own refusal would
+    // present a symptom as a fact about the object. 2013 is ER_SERVER_LOST.
+    const provider = await connectedTo(false);
+    mockExecuteFn = async () => {
+      throw serverError(2013, "Lost connection to MySQL server during query", "PROTOCOL_CONNECTION_LOST");
+    };
+
+    await expect(provider.readObjectSource(["app", "customers"], "table")).rejects.toThrow(
+      /Lost connection to MySQL server/,
+    );
+    await provider.disconnect();
+  });
+
+  test("an error with no errno at all is RAISED, not read as an absence", async () => {
+    // `sourceErrno()` answers undefined for a failure that did not come from the server, and
+    // both classified sets are then skipped. A predicate that treated a missing errno as a
+    // match would turn every client-side failure into a phantom absence.
+    const provider = await connectedTo(false);
+    mockExecuteFn = async () => {
+      throw new Error("socket hang up");
+    };
+
+    await expect(provider.readObjectSource(["app", "customers"], "table")).rejects.toThrow(/socket hang up/);
+    await provider.disconnect();
+  });
+
+  test("refuses a kind this server does not declare, and says which fact it is", async () => {
+    // MySQL is connected, so `package` and `sequence` are not declared at all, and that is a
+    // different sentence from "declared and has no text". Nothing here reads a list of kind
+    // ids kept beside the declaration.
+    const provider = await connectedTo(false);
+
+    for (const kind of ["package", "sequence", "index"]) {
+      await expect(provider.readObjectSource(["app", "x"], kind)).rejects.toThrow(
+        new RegExp(`MySQL declares no object kind "${kind}"`),
+      );
+    }
+    await provider.disconnect();
+  });
+
+  test("refuses a declared kind whose declaration withholds source or its language", async () => {
+    // Both arms are read off the DECLARATION. The language one matters because an absent or
+    // unregistered Monaco id degrades to plain text with no throw and nothing observable, so a
+    // kind that declared source and forgot its language would ship a Source tab that silently
+    // stopped highlighting.
+    const provider = await connectedTo(false);
+    const real = provider.getCapabilities();
+    const withKind = (kind: Partial<ObjectKindSpec>) => ({
+      ...real,
+      objectKinds: (real.objectKinds ?? []).map((entry) => (entry.id === "table" ? { ...entry, ...kind } : entry)),
+    });
+
+    const silent = spyOn(provider, "getCapabilities").mockReturnValue(withKind({ hasSource: false }));
+    await expect(provider.readObjectSource(["app", "customers"], "table")).rejects.toThrow(
+      /MySQL publishes no definition text for the kind "table"/,
+    );
+    silent.mockRestore();
+
+    const languageless = spyOn(provider, "getCapabilities").mockReturnValue(
+      withKind({ hasSource: true, sourceLanguage: undefined }),
+    );
+    await expect(provider.readObjectSource(["app", "customers"], "table")).rejects.toThrow(
+      /declares readable source for the kind "table" and no sourceLanguage/,
+    );
+    languageless.mockRestore();
+    await provider.disconnect();
+  });
+
+  test("refuses a declared, language-bearing kind that no statement reads", async () => {
+    // The third arm, and it is reachable rather than defensive: a kind added to `objectKinds`
+    // with the shared source declaration and no entry in `MYSQL_SOURCE_PART_PLANS` falls out
+    // here instead of asking the server `SHOW CREATE UNDEFINED`.
+    const provider = await connectedTo(false);
+    const real = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [
+        ...(real.objectKinds ?? []),
+        {
+          id: "materialized_view",
+          role: "relation",
+          label: "Materialized View",
+          labelPlural: "Materialized Views",
+          hasSource: true,
+          sourceLanguage: "mysql",
+        },
+      ],
+    });
+
+    await expect(provider.readObjectSource(["app", "x"], "materialized_view")).rejects.toThrow(
+      /declares readable source for the kind "materialized_view" but has no statement that reads it/,
+    );
+    spy.mockRestore();
+    await provider.disconnect();
+  });
+
+  test("refuses a path no shape of the kind admits", async () => {
+    const provider = await connectedTo(false);
+
+    await expect(provider.readObjectSource(["app"], "table")).rejects.toThrow(
+      /A MySQL "table" path is \[database, name\], received \["app"\]/,
+    );
+    // A trigger takes EITHER depth, which is standing ruling 5f: the listing must contain
+    // exactly what the count counted, so a parentless trigger keeps the container-level
+    // address rather than being filtered out.
+    await expect(provider.readObjectSource(["app", "t", "x", "y"], "trigger")).rejects.toThrow(
+      /A MySQL "trigger" path is \[database, table, name\] or \[database, name\], received \["app","t","x","y"\]/,
+    );
+    await provider.disconnect();
+  });
+
+  test("derives the database and the object name from the DECLARATION, not from a position", async () => {
+    // Standing ruling 5g, for this method. `path[0]` as the database and `path[1]` as the name
+    // are behaviour-identical to the derived forms on MySQL's real one-level declaration, which
+    // is exactly why both spellings have shipped in this repository before. Handing THIS
+    // provider a two-level declaration is what tells them apart, and the assertion is driven all
+    // the way to the BOUND VALUE - the statement text - and never stops at a refusal.
+    const provider = await connectedTo(false);
+    const real = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Database", labelPlural: "Databases" },
+      ],
+    });
+    try {
+      protocolCalls = [];
+      await provider.readObjectSource(["cat", "sch", "obj"], "table").catch(() => undefined);
+
+      // `sch` and not `cat`, `obj` and not `sch`. A positional read of the database would send
+      // `` `cat`.`obj` `` and a positional read of the name would send `` `sch`.`sch` ``.
+      expect(sourceStatements()).toEqual(["SHOW CREATE TABLE `sch`.`obj`"]);
+    } finally {
+      spy.mockRestore();
+    }
+    await provider.disconnect();
+  });
+
+  test("escapes the address, because SHOW CREATE takes an identifier where a bind would go", async () => {
+    // One of the three engines in the fleet where a caller-supplied name reaches statement
+    // TEXT: `SHOW CREATE` has no parameterised form at all. `SQLBaseProvider.escapeIdentifier`
+    // doubles the backtick, which is SUFFICIENT here and measured to be: on MariaDB 12.3.2 a
+    // backslash inside a backtick-quoted identifier is a LITERAL character and the closing
+    // backtick still closes the identifier, which is the direct contrast with ClickHouse.
+    const provider = await connectedTo(false);
+    protocolCalls = [];
+
+    await provider.readObjectSource(["ap`p", "tick`y"], "table").catch(() => undefined);
+
+    expect(sourceStatements()).toEqual(["SHOW CREATE TABLE `ap``p`.`tick``y`"]);
+    await provider.disconnect();
+  });
+
+  test("bounds ONE part at the caller's limit and marks only what it cut", async () => {
+    const provider = await connectedTo(true);
+
+    const document = await provider.readObjectSource(["app", "orders_pkg"], "package", 40);
+
+    const [spec, body] = document.parts;
+    if (isSourcePartUnavailable(spec) || isSourcePartUnavailable(body)) throw new Error("narrowing");
+    expect(spec.text).toHaveLength(40);
+    expect(body.text).toHaveLength(40);
+    expect(spec.truncated?.limit).toBe(40);
+    expect(spec.truncated?.reason).toContain("bounded at 40 characters by its caller");
+
+    // An exact answer is NEVER marked, which is the rule `sampledFrom` already follows: marking
+    // one teaches a reader to discount every mark.
+    const whole = await provider.readObjectSource(["app", "orders_pkg"], "package", 100_000);
+    for (const part of whole.parts) {
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(part.truncated).toBeUndefined();
+    }
+    await provider.disconnect();
+  });
+
+  test("refuses to read anything before the provider is connected", async () => {
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
+
+    await expect(provider.readObjectSource(["app", "customers"], "table")).rejects.toThrow();
   });
 });

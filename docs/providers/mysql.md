@@ -73,10 +73,19 @@ distinguishable from a broken read at all. `information_schema`, `PROCESSLIST`, 
 FORMAT=JSON`, schema introspection, sizes and row counts are unaffected. Start the server with
 `performance_schema=ON` to get the monitoring figures.
 
-**MariaDB declares two object kinds MySQL does not have.** `package` and `sequence` reach the object
-browser through `objectKinds`, which on this provider is resolved from the `VERSION()` string rather
-than being a constant, see [§7.1](#71-the-object-surface-789). That is the third of the three
-behaviours on this page that are this provider's code and not the engine's.
+**MariaDB declares two object kinds MySQL does not have.** `package` and `sequence` are declared by
+`objectKinds`, which on this provider is resolved from the `VERSION()` string rather than being a
+constant, see [§7.1](#71-the-object-surface-789). That is the third of the three behaviours on this
+page that are this provider's code and not the engine's.
+
+Those two folders are **not drawn in the standalone tree today**, and this sentence used to say they
+reach the object browser, which was wrong. `POST /api/db/provider-meta` reads capabilities off a
+provider it never connects (#457), so the client's copy of the declaration is the MySQL six and the
+version-resolved pair never arrives. The declaration itself is correct about the engine and is
+therefore kept, source read included (#789): a connected provider answers both kinds, and the API
+route reaches them. The gap is the client's copy of the declaration, it is filed in
+[`docs/BACKLOG.md`](../BACKLOG.md), and it is a Phase 1 seam rather than anything about definition
+text.
 
 The one metric that goes the other way is `deadlocks`: it comes from the `Innodb_deadlocks` row of
 `SHOW STATUS`, which MariaDB publishes and MySQL does not, so it is the single performance figure a
@@ -915,6 +924,158 @@ DELIMITER ;
 CALL bulk26a1.seed();
 ```
 
+#### Object source (#789)
+
+`readObjectSource(path, kind, limit?)` answers one object's definition text as a document of named
+parts. **Every kind either server declares can answer**, which makes this the one provider in the
+fleet with no kind that declares nothing: MySQL's six and MariaDB's eight each have a `SHOW CREATE`
+form. The Monaco language id is `mysql` on all eight; `mysql` is an id the installed monaco-editor
+0.56.0 bundle really registers, unlike `plsql`, `tsql` and `cql`.
+
+Measured 2026-09-13 on **MySQL 26.7.0** and **MariaDB 12.3.2** against the two committed fixtures.
+
+| Kind | Statement | Reply column | `form` | `origin` |
+|---|---|---|---|---|
+| `table` | `SHOW CREATE TABLE` | `Create Table` | `complete` | `regenerated` |
+| `view` | `SHOW CREATE VIEW` | `Create View` | `complete` | `regenerated` |
+| `procedure` | `SHOW CREATE PROCEDURE` | `Create Procedure` | `complete` | `stored` |
+| `function` | `SHOW CREATE FUNCTION` | `Create Function` | `complete` | `stored` |
+| `trigger` | `SHOW CREATE TRIGGER` | `SQL Original Statement` | `complete` | `stored` |
+| `event` | `SHOW CREATE EVENT` | `Create Event` | `complete` | `stored` |
+| `sequence` (MariaDB) | `SHOW CREATE SEQUENCE` | **`Create Table`** | `complete` | `regenerated` |
+| `package` (MariaDB) | `SHOW CREATE PACKAGE` **and** `SHOW CREATE PACKAGE BODY`, two parts | `Create Package`, `Create Package Body` | `complete` | `stored` |
+
+**The reply column is per statement, never per position.** The four routine forms disagree with each
+other and with the table forms, and the sequence's is the one a reader would get wrong: it answers
+`Table` and `Create Table`, NOT `Sequence` and `Create Sequence`, because a MariaDB sequence is a
+table underneath. That is the same fact that puts it in `information_schema.TABLES` with
+`TABLE_TYPE = 'SEQUENCE'`. A provider reading the guessable column finds `undefined` and emits a
+refusal over a definition the server really returned, which is why every column above is pinned by a
+test asserting the READ TEXT rather than only the statement.
+
+**`origin` is split and it is a measurement.** A procedure, a function, a trigger, an event and a
+MariaDB package come back as the author's own bytes, indentation included, so they are `stored`. A
+table, a view and a MariaDB sequence are rebuilt from the dictionary: the fixture's
+`CREATE TABLE customers (id INT NOT NULL, ...)` comes back as ``CREATE TABLE `customers` (`id` int
+NOT NULL, ...) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4``, with backquoting and an `ENGINE=` clause
+nobody typed, and `CREATE SEQUENCE invoice_number_seq START WITH 1` comes back carrying `minvalue`,
+`maxvalue`, `cache` and `nocycle`. They are `regenerated`, and a reader must never be shown a
+reconstruction as an original.
+
+**A MariaDB package needs no `sql_mode=ORACLE`, and this provider does not set one.** MEASURED on
+12.3.2: `SHOW CREATE PACKAGE` and `SHOW CREATE PACKAGE BODY` returned the full text under the image's
+default `sql_mode`
+(`STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`),
+byte-identical to the same statements after `SET SESSION sql_mode='ORACLE'`. This is written down
+because the belief that ORACLE mode is needed is easy to re-derive from the reply itself: the row's
+own `sql_mode` COLUMN carries
+`PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ORACLE,...`, which is the mode the package was CREATED
+under, a property of the stored object rather than a requirement on its reader. `SET sql_mode =
+'ORACLE'` IS still required to `CREATE` a package, which is why the fixture sets it.
+
+**A package is two statements and one node, specification first.** The order is the engine's own
+asymmetry: a body cannot exist without a specification (`CREATE PACKAGE BODY` with no spec answers
+`ERROR 1305`), and a specification can exist without a body. So reading the spec FIRST is what tells
+a missing body apart from a missing package. A spec that is absent raises; a body that is absent
+drops its part and the document carries one. `app.spec_only_pkg` in the MariaDB fixture is that
+object. The two part ids and labels are the ones the Oracle provider uses, `spec` /
+"Package specification" and `body` / "Package body", so a reader moving between the two engines reads
+one vocabulary.
+
+##### The refusals, and which words are whose
+
+A caller holding `GRANT EXECUTE ON app.*` and nothing else is the measured refusal case, and it
+splits in two. The fixtures create that user as `src_probe`, and it is **not reachable from the
+primary connection**: the integration suite drives it by answering the measured errors from the
+fixture rather than by connecting as `root`, and a live check needs a second connection as
+`src_probe` / `src_probe`.
+
+| Statement | What that caller gets |
+|---|---|
+| `SHOW CREATE PROCEDURE` / `FUNCTION` / `PACKAGE` / `PACKAGE BODY` | a ROW whose body column is **NULL** |
+| `SHOW CREATE TABLE` | `ERROR 1142 SHOW command denied to user 'src_probe'@'localhost' for table 'orders'` |
+| `SHOW CREATE VIEW` | `ERROR 1142 SELECT command denied to user 'src_probe'@'localhost' for table 'order_summary'` (this is the `SHOW VIEW` plus `SELECT` requirement in the server's own words) |
+| `SHOW CREATE TRIGGER` | `ERROR 1227 Access denied; you need (at least one of) the TRIGGER privilege(s) for this operation` |
+| `SHOW CREATE EVENT` | `ERROR 1044 Access denied for user 'src_probe'@'%' to database 'app'` |
+| `SHOW CREATE SEQUENCE` | `ERROR 1142 SHOW command denied ...` |
+
+Each raised sentence is carried into the part VERBATIM and unprefixed, never through
+`mapDatabaseError`, and the reason to keep it verbatim rather than rebuild it is in the table:
+MariaDB 12.3.2 qualifies the table name in 1142 and MySQL 26.7.0 does not.
+
+**The NULL is the one refusal on this engine whose words are OURS**, because the server utters none.
+The part says that the row's body column is NULL, that this is how the server reports a definition
+the connected user may not read, and that the server supplied no sentence of its own. An empty or
+whitespace-only text takes the same arm: an empty definition is not a definition, and it must never
+reach an editor buffer as a blank document. This case is the direct refutation of the Phase 1 sketch's
+claim that MySQL and MariaDB have "no unreadable case".
+
+**A caller holding nothing at all never reaches this read.** MEASURED: that caller is told
+`ERROR 1305 (42000) PROCEDURE order_archive does not exist`, which is byte-identical to what a
+genuinely absent object answers, and it sees no row for the routine in `information_schema.ROUTINES`
+either, so the tree never lists the object. It is deliberately not modelled as a refusal.
+
+##### Absence RAISES, and the sentence is ours
+
+| Statement, against a name nothing holds | errno and the server's sentence |
+|---|---|
+| `SHOW CREATE TABLE` / `VIEW` / `SEQUENCE` | 1146 `Table 'app.no_such_table' doesn't exist` |
+| `SHOW CREATE PROCEDURE` / `FUNCTION` / `PACKAGE` / `PACKAGE BODY` | 1305 `PROCEDURE no_such_procedure does not exist` |
+| `SHOW CREATE TRIGGER` | 1360 `Trigger does not exist` |
+| `SHOW CREATE EVENT` | 1539 `Unknown event 'no_such_event'` |
+| `SHOW CREATE VIEW app.orders` (a name of another kind) | 1347 `'app.orders' is not VIEW` (MySQL) / `is not of type 'VIEW'` (MariaDB) |
+| `SHOW CREATE SEQUENCE app.orders` | 4089 `'app.orders' is not a SEQUENCE` |
+
+A `QueryError` naming the object and its database is raised, never a document and never a refusal
+part. The sentence is OURS here and 1360 is why: `Trigger does not exist` names neither the object
+nor the database, so a message that named nothing could not tell a reader which read failed. The
+1347 and 4089 rows are a live case rather than a defensive one, because a name really can address
+objects of two kinds in one database on this engine (see the namespace measurement above).
+
+Anything that is neither classified errno RAISES through `mapDatabaseError`, and the narrowness is
+the point: a transport failure is nobody answering at all, and rendering "Lost connection to MySQL
+server" in the Source pane as this object's own refusal would present a symptom as a fact about the
+object.
+
+##### The escaper, and why a bind is not available
+
+`SHOW CREATE ...` has NO parameterised form, so this is one of the three engines in the fleet where a
+caller-supplied name reaches statement TEXT. The address is built with
+`SQLBaseProvider.escapeIdentifier`
+([`sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts)), which doubles the backtick, and
+doubling alone is SUFFICIENT here rather than assumed to be. Measured on MariaDB 12.3.2:
+
+```sql
+CREATE TABLE app.`bs_one\` (id INT);
+SELECT TABLE_NAME, LENGTH(TABLE_NAME) FROM information_schema.TABLES
+ WHERE TABLE_SCHEMA = 'app' AND TABLE_NAME LIKE 'bs%';   -- bs_one\   7
+SHOW CREATE TABLE app.`bs_one\`;                          -- answers the table
+CREATE TABLE app.`tick``y` (id INT);
+SHOW CREATE TABLE app.`tick``y`;                          -- round-trips as `tick``y`
+```
+
+The backslash is a LITERAL character inside a backtick-quoted identifier and the closing backtick
+still closed the identifier, which is the direct contrast with ClickHouse, where a backslash IS an
+escape in both quoting forms and the shared escaper is unsafe. Those two objects are NOT in the
+mounted fixture, deliberately: adding a table would move the `table` count and the MariaDB
+collation-ordering measurement recorded under `describeObjects()` above, neither of which this work
+re-measured. The escaper is pinned in the suite by a statement-text assertion instead, and the two
+statements above reproduce the engine measurement in a scratch database.
+
+##### The trigger's parent segment is an address, not a bind
+
+A trigger's path is `[database, table, trigger]`, and `SHOW CREATE TRIGGER` addresses
+`<database>.<trigger>`. The parent is not in the statement because a trigger name is unique per
+DATABASE on this engine (measured, `ER_TRG_ALREADY_EXISTS` above), so it is part of the address the
+tree draws rather than part of the read.
+
+##### MariaDB's `package` and `sequence` declare source and are not reachable from the tree
+
+Both kinds declare `hasSource`, and neither folder is drawn in the standalone tree today, for the
+`provider-meta` reason in [§1.1](#11-mariadb-and-the-other-mysql-protocol-engines). The declaration
+is kept because it is true about the ENGINE: a connected provider answers both kinds and the source
+route reaches them. Withholding it would be a second wrong declaration rather than a safer one.
+
 #### The fixture, and running it
 
 [`docker/mysql-init/01-object-fixture.sql`](../../docker/mysql-init/01-object-fixture.sql) and
@@ -929,7 +1090,13 @@ open against, and a cross-database foreign key from `app.orders` into `reporting
 `DELIMITER` in those files is a CLIENT command and is correct there because the `mysql` client is
 what runs them. It must never be sent through mysql2, which takes one statement per call and has no
 notion of it. `SET sql_mode = 'ORACLE'` is REQUIRED for `CREATE PACKAGE` and rewrites the grammar of
-everything after it, which is why it is the last thing in the MariaDB file.
+everything after it, which is why it is the last thing in the MariaDB file. Reading a package needs
+no such mode; see the object source section above.
+
+Both files also create `src_probe`, a user holding `GRANT EXECUTE ON app.*` and nothing else, which
+is the source read's measured refusal case, and the MariaDB file adds `app.spec_only_pkg`, a package
+specification with no body, which is the one-part shape of the source document. Neither is reachable
+from the primary connection: connect as `src_probe` / `src_probe` to see the refusals.
 
 ---
 

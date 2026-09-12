@@ -117,6 +117,23 @@ CREATE EVENT orders_nightly
   ON SCHEDULE EVERY 1 DAY
   DO DELETE FROM order_archive WHERE archived < (CURRENT_DATE() - INTERVAL 1 YEAR);
 
+-- An EXECUTE-only caller, for the source-read refusal recorded in docs/providers/mysql.md
+-- (#789), and it sits HERE, above `SET sql_mode = 'ORACLE'`, so it is parsed under the
+-- default mode with the rest of the file.
+--
+-- MEASURED on MariaDB 12.3.2: this user sees all five `information_schema.ROUTINES` rows
+-- with a NULL `ROUTINE_DEFINITION`, and `SHOW CREATE PROCEDURE`, `SHOW CREATE FUNCTION`,
+-- `SHOW CREATE PACKAGE` and `SHOW CREATE PACKAGE BODY` each answer a ROW whose body column
+-- is NULL rather than raising. MariaDB utters no sentence for it, so the provider supplies
+-- its own.
+--
+-- A caller holding NOTHING on `app` is a DIFFERENT case and is deliberately not modelled
+-- here: that caller is told `ERROR 1305 (42000) PROCEDURE order_archive does not exist`,
+-- which is byte-identical to what a genuinely absent object answers, and it sees no row in
+-- `information_schema.ROUTINES` either, so it never reaches the source read.
+CREATE USER IF NOT EXISTS 'src_probe'@'%' IDENTIFIED BY 'src_probe';
+GRANT EXECUTE ON app.* TO 'src_probe'@'%';
+
 -- LAST, and everything below it is a package. ORACLE mode is what makes CREATE PACKAGE
 -- parse at all, and it rewrites the grammar of every statement after it.
 --
@@ -142,6 +159,20 @@ CREATE PACKAGE BODY orders_pkg AS
   BEGIN
     RETURN 0;
   END;
+END //
+
+-- A package SPECIFICATION with no BODY, which is the ONE-PART shape of the source read
+-- (#789). MEASURED on MariaDB 12.3.2: `SHOW CREATE PACKAGE app.spec_only_pkg` answers the
+-- spec text and `SHOW CREATE PACKAGE BODY app.spec_only_pkg` answers
+-- `ERROR 1305 (42000) PACKAGE BODY spec_only_pkg does not exist`, so a body's absence is
+-- told apart from the package's absence by asking for the SPEC first. The other direction
+-- is measured too and is why one PACKAGE row per package is a complete count: a
+-- `CREATE PACKAGE BODY` with no specification is refused with the same ER_SP_DOES_NOT_EXIST.
+--
+-- `information_schema.ROUTINES` holds ONE row for this package, ROUTINE_TYPE 'PACKAGE',
+-- where `orders_pkg` holds two.
+CREATE PACKAGE spec_only_pkg AS
+  PROCEDURE p1(p_id INT);
 END //
 
 DELIMITER ;

@@ -101,3 +101,20 @@ DELIMITER ;
 CREATE EVENT orders_nightly
   ON SCHEDULE EVERY 1 DAY
   DO DELETE FROM order_archive WHERE archived < (CURRENT_DATE() - INTERVAL 1 YEAR);
+
+-- An EXECUTE-only caller, for the source-read refusal recorded in docs/providers/mysql.md
+-- (#789). This is the caller the Source tab has to say something true about: MEASURED on
+-- MySQL 26.7.0, `SHOW CREATE PROCEDURE app.order_archive` answers a ROW whose
+-- `Create Procedure` column is NULL rather than raising, and the same is true of
+-- `SHOW CREATE FUNCTION`. MySQL utters no sentence for it, so the provider supplies its own.
+--
+-- A caller holding NOTHING on `app` is a DIFFERENT case and is deliberately not modelled
+-- here: that caller is told `ERROR 1305 (42000) PROCEDURE order_archive does not exist`,
+-- which is byte-identical to what a genuinely absent object answers, and it cannot see the
+-- routine in `information_schema.ROUTINES` either, so it never reaches the source read.
+--
+-- The routines above carry an explicit `DEFINER` for exactly this reason:
+-- `information_schema.ROUTINES` is privilege filtered, and a routine whose definer is the
+-- connecting user is the easy case that hides it.
+CREATE USER IF NOT EXISTS 'src_probe'@'%' IDENTIFIED BY 'src_probe';
+GRANT EXECUTE ON app.* TO 'src_probe'@'%';
