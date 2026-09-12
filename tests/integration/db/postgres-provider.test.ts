@@ -1005,18 +1005,106 @@ describe("PostgresProvider", () => {
   // MATERIALIZED-keyword fallback (Materialize/RisingWave compatibility, #38680)
   // --------------------------------------------------------------------------
 
-  describe("MATERIALIZED-keyword schema fallback", () => {
-    // Materialize/RisingWave reserve MATERIALIZED as a keyword and reject the
-    // CTE modifier with a syntax error, even though the underlying
-    // information_schema views are otherwise queryable there.
-    function rejectMaterializedHintOnce(onRetry: (sql: string) => ReturnType<typeof defaultMockQuery>) {
+  describe("the repair chain around an engine that rejects part of a catalog statement (#38680)", () => {
+    /*
+      Every object read goes through `queryWithMaterializedFallback()`, which recovers real
+      catalog data on four independent gaps rather than failing outright. The chain used to be
+      driven here through the flat schema reading; that reading is deleted (#789), so it is
+      driven through `describeObjects()`, which composes the same `json_agg` /
+      `json_build_object` CTEs.
+
+      Each repair is used AT MOST ONCE per statement, and a message no remaining repair
+      recognises is mapped and rethrown rather than retried forever. That is the property
+      under test, and it is what keeps a permanently failing engine from looping here.
+    */
+    const describeTables = async (): Promise<unknown> => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      return provider.describeObjects(["public"], "table");
+    };
+
+    /** Reject the first attempt with `message`, then answer; the statements sent are returned. */
+    function rejectFirst(message: string): string[] {
+      const sent: string[] = [];
       mockQueryFn = (sql: string) => {
-        if (sql.includes("AS MATERIALIZED (")) {
-          return Promise.reject(new Error('syntax error at or near "MATERIALIZED"'));
+        sent.push(sql);
+        if (
+          sent.filter((entry) => entry.includes("described_columns")).length === 1 &&
+          sql.includes("described_columns")
+        ) {
+          return Promise.reject(new Error(message));
         }
-        return onRetry(sql);
+        return defaultMockQuery(sql);
       };
+      return sent;
     }
+
+    const detailStatements = (sent: readonly string[]): string[] =>
+      sent.filter((sql) => sql.includes("described_columns"));
+
+    test("json_agg is swapped for jsonb_agg, which returns the same shape over the wire", async () => {
+      // Materialize has only the jsonb_ equivalents, and node-postgres parses both the json
+      // and the jsonb OID into the same plain JS value, so the swap is enough.
+      const sent = rejectFirst('function "json_agg" does not exist');
+
+      await describeTables();
+
+      const attempts = detailStatements(sent);
+      expect(attempts.length).toBe(2);
+      expect(attempts[0]).toContain("json_agg(");
+      expect(attempts[1]).toContain("jsonb_agg(");
+      expect(attempts[1]).toContain("jsonb_build_object(");
+      expect(attempts[1]).not.toContain(" json_agg(");
+    });
+
+    test("a missing pg_total_relation_size() is recognised and the statement retried", async () => {
+      // CockroachDB's first gap, and it has no MATERIALIZED collision at all. The repair is a
+      // no-op on THIS statement, which names no size call, and that is the honest behaviour of
+      // a shared chain: a repair that does not apply costs one retry and never a wrong reading.
+      const sent = rejectFirst("unknown function: pg_total_relation_size()");
+
+      await describeTables();
+
+      expect(detailStatements(sent).length).toBe(2);
+    });
+
+    test("a missing to_regclass is recognised and the statement retried", async () => {
+      const sent = rejectFirst('function "to_regclass" does not exist');
+
+      await describeTables();
+
+      expect(detailStatements(sent).length).toBe(2);
+    });
+
+    test("an error no repair recognises is mapped and rethrown rather than retried", async () => {
+      const sent: string[] = [];
+      mockQueryFn = (sql: string) => {
+        sent.push(sql);
+        if (sql.includes("described_columns")) return Promise.reject(new Error("column lists are not readable here"));
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      await expect(provider.describeObjects(["public"], "table")).rejects.toThrow(QueryError);
+      // One attempt, not two: nothing recognised it, so nothing was rewritten.
+      expect(detailStatements(sent).length).toBe(1);
+    });
+
+    test("a repair is used ONCE: the same message twice is rethrown rather than looping", async () => {
+      const sent: string[] = [];
+      mockQueryFn = (sql: string) => {
+        sent.push(sql);
+        if (sql.includes("described_columns")) return Promise.reject(new Error('function "json_agg" does not exist'));
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      await expect(provider.describeObjects(["public"], "table")).rejects.toThrow(DatabaseError);
+      // Exactly two: the repair consumed the first, and the second found no repair left.
+      expect(detailStatements(sent).length).toBe(2);
+    });
   });
 
   // --------------------------------------------------------------------------

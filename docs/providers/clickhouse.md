@@ -59,7 +59,7 @@ from:
 | Columns | The declared column list, types verbatim | `system.columns` / the query response `meta` |
 | Primary key | The MergeTree sparse primary index | `system.tables.primary_key`, `is_in_primary_key` |
 | `query(sql)` | One SQL statement | `POST /?default_format=JSON` |
-| Indexes | The primary key, the sorting key (when it differs), and data-skipping indexes | `system.tables` + `system.data_skipping_indices` |
+| Indexes | Data-skipping indexes | `system.data_skipping_indices` |
 | Foreign keys | none (ClickHouse has none) | always `[]` |
 | `getOverview()` / storage | Server identity, connection counts, part sizes | `version()`, `uptime()`, `system.metrics`, `system.parts`, `system.disks` |
 | `getSlowQueries()` / `getActiveSessions()` | Finished and in-flight statements | `system.query_log`, `system.processes` |
@@ -701,7 +701,7 @@ transport seam:
 |------|--------|
 | Tables | `system.tables` — name, `total_rows`, `total_bytes`, `sorting_key`, `primary_key`, filtered to non-system databases |
 | Columns | `system.columns` — name, type, `is_in_primary_key`, `default_kind`/`default_expression`, ordered by declaration `position` |
-| Indexes | `system.data_skipping_indices` — the nearest thing ClickHouse has to a secondary index object, plus the synthesized `PRIMARY KEY` / `ORDER BY` entries |
+| Indexes | `system.data_skipping_indices` — the nearest thing ClickHouse has to a secondary index object |
 | Foreign keys | always `[]` — ClickHouse has no foreign-key concept anywhere: no engine, no table setting, no DDL declares one |
 
 Non-system databases are `system`, `information_schema`, and `INFORMATION_SCHEMA` (the last exists
@@ -720,13 +720,14 @@ Load-bearing details:
   `a, b, cityHash64(c, c)` — so splitting is parenthesis-depth-aware, never a naive `.split(',')`.
   A one-element key renders as `(a)` while a multi-element one renders as `a, b`; the parser strips
   exactly one wrapping pair when the whole expression is parenthesized.
-- **The primary key and the sorting key are reported as separate index entries only when they
-  differ.** ClickHouse's primary index is a real sparse index over the sort order — reporting no
-  index at all on a MergeTree table would be misleading — but `ORDER BY` may extend `PRIMARY KEY`
-  with trailing columns that genuinely shape the on-disk order and the query plan, so those are
-  surfaced as a second `ORDER BY` entry when they add anything the primary key entry does not
-  already say (comparing the split element lists, because the server renders the same one-element
-  key as `(a)` in one column and `a` in the other).
+- **The primary key and the sorting key are NOT reported as index entries, and that is a change
+  the flat reading's deletion made (#789).** That reading synthesized a `PRIMARY KEY` entry out of
+  `system.tables.primary_key`, and an `ORDER BY` entry beside it where the sorting key extended it.
+  The object surface reads `system.data_skipping_indices` and nothing else, so a MergeTree table
+  with no skipping index now reports no index at all. What the primary key still decides is the
+  COLUMNS: `system.columns.is_in_primary_key` is what `isPrimary` reads, and the sorting key's
+  trailing columns are correctly not primary. Whether the sparse primary index deserves an entry of
+  its own is a product question for Phase 2 rather than something to reinstate silently.
 - **No index ClickHouse reports is unique** — not the data-skipping indexes, which only prune
   granules, and not the primary key either: live-verified, three identical values were accepted into
   a table declared `PRIMARY KEY (a)`.

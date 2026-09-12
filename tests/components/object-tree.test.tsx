@@ -302,6 +302,43 @@ describe("ObjectTree absence states", () => {
 });
 
 describe("ObjectTree engine gaps", () => {
+  /*
+    A read that settles after the reader has moved to another connection must not land on the
+    connection that replaced it. `applyFor` decides that by the id the READ carried and never
+    by what is currently stored, which is the only rule that also lets a connection fill a
+    cache that has already been thrown away.
+  */
+  test("a container read that settles after a connection switch lands on neither tree", async () => {
+    let releaseFirst: ((value: unknown) => void) | null = null;
+    let attempt = 0;
+    installFetch({
+      containers: () => {
+        attempt += 1;
+        if (attempt === 1) {
+          return new Promise((resolve) => {
+            releaseFirst = () => resolve([{ path: ["stale"], name: "stale", level: 0 }]);
+          });
+        }
+        return [{ path: ["fresh"], name: "fresh", level: 0 }];
+      },
+      counts: () => ({ table: { count: 1 } }),
+    });
+
+    const { rerender } = render(<ObjectTree connection={connectionOf("a")} capabilities={oneLevel} />);
+    // The first read is in flight for connection `a`. Move to `b`, which reads its own.
+    rerender(<ObjectTree connection={connectionOf("b")} capabilities={oneLevel} />);
+    expect(await screen.findByRole("treeitem", { name: /fresh/ })).toBeTruthy();
+
+    await act(async () => {
+      releaseFirst?.(undefined);
+      await Promise.resolve();
+    });
+
+    // `a`'s answer arrived last and is dropped: the tree on screen belongs to `b`.
+    expect(screen.queryByRole("treeitem", { name: /stale/ })).toBeNull();
+    expect(screen.getByRole("treeitem", { name: /fresh/ })).toBeTruthy();
+  });
+
   test("an engine that answers nothing reads as empty, which is not the same panel", async () => {
     installFetch({ containers: () => [] });
     render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);

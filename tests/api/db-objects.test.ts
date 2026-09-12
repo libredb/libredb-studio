@@ -120,6 +120,7 @@ interface ProviderShape {
   countObjects?: DatabaseProvider["countObjects"];
   listObjects?: DatabaseProvider["listObjects"];
   describeObject?: DatabaseProvider["describeObject"];
+  describeObjects?: DatabaseProvider["describeObjects"];
 }
 
 /** A provider that declares one schema level and two kinds unless the test says otherwise. */
@@ -135,6 +136,7 @@ function objectProvider(shape: ProviderShape = {}): DatabaseProvider {
   if (shape.countObjects) provider.countObjects = shape.countObjects;
   if (shape.listObjects) provider.listObjects = shape.listObjects;
   if (shape.describeObject) provider.describeObject = shape.describeObject;
+  if (shape.describeObjects) provider.describeObjects = shape.describeObjects;
   return provider;
 }
 
@@ -782,6 +784,142 @@ describe("POST /api/db/objects/inventory", () => {
       ["ops", "orders"],
     ]);
     expect(listContainers).toHaveBeenCalledTimes(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // includeColumns (#789)
+  // ---------------------------------------------------------------------------
+  //
+  // Re-introduced as ONE `describeObjects` per container-and-kind PAIR, where the spelling
+  // Task 4 removed was one `describeObject` per OBJECT, up to 5000 sequential round trips.
+  // The pairs are the ones the listing loop already walks, under the same pair limit, so
+  // asking for columns at most doubles the round trips rather than multiplying them.
+
+  test("columns are not read at all unless the caller asks", async () => {
+    const describeObjects = mock(async () => ({ details: [] }));
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
+      listObjects: mock(async () => [object(["app", "orders"], "table")]),
+      describeObjects,
+    });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", { method: "POST", body: { connection } }) as never,
+    );
+
+    const body = await parseResponseJSON<{ objects: DatabaseObject[]; details?: unknown }>(response);
+    expect(describeObjects).toHaveBeenCalledTimes(0);
+    // ABSENT, not empty: an empty array would say every object was described and none had
+    // anything, which is a different claim from "nobody asked".
+    expect("details" in body).toBe(false);
+  });
+
+  test("includeColumns reads the whole folder once, bounded by the objects it is handing over", async () => {
+    const describeObjects = mock(async (container: readonly string[], kind: string, limit?: number) => ({
+      details: [
+        {
+          path: [...container, "orders"],
+          columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+          indexes: [],
+          foreignKeys: [],
+        },
+      ],
+      calledWith: { container, kind, limit },
+    }));
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
+      listObjects: mock(async () => [object(["app", "orders"], "table")]),
+      describeObjects: describeObjects as unknown as DatabaseProvider["describeObjects"],
+    });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, includeColumns: true },
+      }) as never,
+    );
+
+    const body = await parseResponseJSON<{ objects: DatabaseObject[]; details: ObjectDetail[] }>(response);
+    expect(describeObjects).toHaveBeenCalledTimes(1);
+    // The bound is the number of objects this answer carries for that pair: describing more
+    // would buy columns for objects the caller is not being given.
+    expect(describeObjects.mock.calls[0]).toEqual([["app"], "table", 1]);
+    // A SEPARATE array keyed by path, never merged onto the objects: what the engine NAMED
+    // and what it could DESCRIBE are two facts.
+    expect(body.objects.map((entry) => entry.path)).toEqual([["app", "orders"]]);
+    expect(body.details.map((detail) => detail.path)).toEqual([["app", "orders"]]);
+    expect(body.details[0].columns).toHaveLength(1);
+  });
+
+  test("a pair that named nothing buys no round trip", async () => {
+    const describeObjects = mock(async () => ({ details: [] }));
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND, VIEW_KIND],
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
+      listObjects: mock(async (_container: readonly string[], kind: string) =>
+        kind === "table" ? [object(["app", "orders"], "table")] : [],
+      ),
+      describeObjects,
+    });
+
+    await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, includeColumns: true },
+      }) as never,
+    );
+
+    // One call, for the kind that listed something. The empty folder is not described.
+    expect(describeObjects).toHaveBeenCalledTimes(1);
+  });
+
+  test("a provider that bounded its own column read says so, in its own words", async () => {
+    // Reported even though the LISTING fitted: a complete list of objects whose columns were
+    // cut is still an incomplete answer, and a reader that trusted it would read a missing
+    // column as an absent one.
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
+      listObjects: mock(async () => [object(["app", "orders"], "table")]),
+      describeObjects: mock(async () => ({
+        details: [],
+        truncated: { limit: 1, reason: "the bulk column read was bounded at 1 object by its caller" },
+      })),
+    });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, includeColumns: true },
+      }) as never,
+    );
+
+    const body = await parseResponseJSON<{ truncated?: { limit: number; reason: string } }>(response);
+    expect(body.truncated).toEqual({
+      limit: 1,
+      reason: "the bulk column read was bounded at 1 object by its caller",
+    });
+  });
+
+  test("includeColumns must be a boolean, and anything else is a caller mistake", async () => {
+    // Answering the cheap read to a caller who is about to render an empty column list is the
+    // silent degradation this surface exists to avoid.
+    activeProvider = objectProvider({
+      listContainers: mock(async () => []),
+      listObjects: mock(async () => []),
+    });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, includeColumns: "true" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe('"includeColumns" must be true or false');
   });
 
   test("refuses a named container deeper than the engine declares", async () => {

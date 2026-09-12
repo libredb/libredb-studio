@@ -56,25 +56,6 @@ export const CLICKHOUSE_SYSTEM_DATABASES: readonly string[] = Object.freeze([
   "INFORMATION_SCHEMA",
 ]);
 
-/**
- * Name for the synthesized primary-key index.
- *
- * ClickHouse does not name its primary index - it is part of the table, not a
- * separate object - so this is the wording `SHOW CREATE TABLE` uses, which is
- * what a ClickHouse user already reads.
- */
-export const CLICKHOUSE_PRIMARY_INDEX_NAME = "PRIMARY KEY";
-
-/** Name for the sorting key, reported only when it extends the primary key. */
-export const CLICKHOUSE_SORTING_INDEX_NAME = "ORDER BY";
-
-/**
- * Server-side deadline for a catalog read, in seconds (`max_execution_time`'s
- * unit). A cluster with thousands of tables or one stuck replica must not leave
- * the schema tree spinning with no way out.
- */
-export const CLICKHOUSE_CATALOG_TIMEOUT_SECONDS = 15;
-
 /** The one wrapper ClickHouse puts outside `Nullable` instead of inside it. */
 const LOW_CARDINALITY_PREFIX = "LowCardinality(";
 

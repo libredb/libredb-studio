@@ -11,131 +11,14 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
-  CLICKHOUSE_CATALOG_TIMEOUT_SECONDS,
-  CLICKHOUSE_PRIMARY_INDEX_NAME,
-  CLICKHOUSE_SORTING_INDEX_NAME,
   CLICKHOUSE_SYSTEM_DATABASES,
+  isNullableType,
+  readCount,
+  readDefault,
+  readIdentifier,
+  readText,
+  splitKeyExpression,
 } from "@/lib/db/providers/sql/clickhouse/introspect";
-import {
-  CLICKHOUSE_ERROR_CODES,
-  type ClickHouseQueryOptions,
-  type ClickHouseQueryResult,
-  type ClickHouseRow,
-  type ClickHouseTransport,
-  ClickHouseTransportError,
-} from "@/lib/db/providers/sql/clickhouse/transport";
-
-// ============================================================================
-// Fake transport
-// ============================================================================
-
-/** Which system table a recorded statement reads. */
-type Surface = "tables" | "columns" | "indices";
-
-interface RecordedCall {
-  sql: string;
-  opts: ClickHouseQueryOptions | undefined;
-}
-
-interface FakeOptions {
-  tables?: ClickHouseRow[];
-  columns?: ClickHouseRow[];
-  indices?: ClickHouseRow[];
-  /** Raised instead of returning rows, per surface. */
-  failures?: Partial<Record<Surface, Error>>;
-}
-
-function surfaceOf(sql: string): Surface {
-  if (sql.includes("system.data_skipping_indices")) return "indices";
-  if (sql.includes("system.columns")) return "columns";
-  return "tables";
-}
-
-function createTransport(options: FakeOptions = {}) {
-  const calls: RecordedCall[] = [];
-
-  const transport: ClickHouseTransport = {
-    kind: "http",
-    query: async (sql: string, opts?: ClickHouseQueryOptions): Promise<ClickHouseQueryResult> => {
-      calls.push({ sql, opts });
-      const surface = surfaceOf(sql);
-      const failure = options.failures?.[surface];
-      if (failure) throw failure;
-      return {
-        rows: options[surface] ?? [],
-        fieldNames: null,
-        columnTypes: null,
-        executionTimeMs: 1,
-        mutationCount: 0,
-        rawText: null,
-      };
-    },
-    close: () => Promise.resolve(),
-  };
-
-  return { transport, calls };
-}
-
-function sqlFor(calls: RecordedCall[], surface: Surface): string {
-  const call = calls.find((entry) => surfaceOf(entry.sql) === surface);
-  if (!call) throw new Error(`no ${surface} statement was sent`);
-  return call.sql;
-}
-
-function accessDenied(): ClickHouseTransportError {
-  return new ClickHouseTransportError(
-    "libredb: Not enough privileges. To execute this query, it's necessary to have the grant SELECT " +
-      "for at least one column on system.data_skipping_indices. (ACCESS_DENIED)",
-    CLICKHOUSE_ERROR_CODES.ACCESS_DENIED,
-    "ACCESS_DENIED",
-  );
-}
-
-// ============================================================================
-// Row builders (shapes captured from ClickHouse 26.7.1.1315)
-// ============================================================================
-
-/**
- * A `system.tables` row. `total_rows`/`total_bytes` default to the quoted-string
- * form a MergeTree reports; pass null for the view / non-MergeTree case.
- */
-function tableRow(overrides: Partial<ClickHouseRow> = {}): ClickHouseRow {
-  return {
-    database: "demo",
-    name: "users",
-    total_rows: "3",
-    total_bytes: "1346",
-    sorting_key: "id",
-    primary_key: "id",
-    ...overrides,
-  };
-}
-
-function columnRow(overrides: Partial<ClickHouseRow> = {}): ClickHouseRow {
-  return {
-    database: "demo",
-    table: "users",
-    name: "id",
-    type: "UInt32",
-    is_in_primary_key: 0,
-    default_kind: "",
-    default_expression: "",
-    ...overrides,
-  };
-}
-
-function indexRow(overrides: Partial<ClickHouseRow> = {}): ClickHouseRow {
-  return {
-    database: "demo",
-    table: "orders",
-    name: "idx_status",
-    expr: "status",
-    ...overrides,
-  };
-}
-
-/** The pinned database of the live probe connection. */
-const PINNED = "demo";
 
 // ============================================================================
 // The system-database filter
@@ -148,51 +31,108 @@ describe("the system-database filter", () => {
 });
 
 // ============================================================================
-// Row counts and sizes
+// The key expression reader
 // ============================================================================
 
-describe("row counts and sizes", () => {});
+/**
+ * `splitKeyExpression` is what turns a ClickHouse sorting key, primary key or skipping-index
+ * expression into the column list the object surface publishes as an index
+ * (`objects.ts` calls it for `system.data_skipping_indices.expr`). ClickHouse writes those as
+ * ONE expression, not as a list, so every case below is a real shape the server produces.
+ *
+ * The quoted-span cases are the ones that make this a reader rather than a `split(",")`: a
+ * backtick-quoted identifier may legally contain a comma or a parenthesis, and an escaped
+ * quote does not close the span.
+ */
+describe("splitKeyExpression", () => {
+  test("a single column is one element", () => {
+    expect(splitKeyExpression("id")).toEqual(["id"]);
+  });
 
-// ============================================================================
-// Columns
-// ============================================================================
+  test("a tuple is unwrapped and split, and the whitespace goes", () => {
+    expect(splitKeyExpression("(id, created_at)")).toEqual(["id", "created_at"]);
+  });
 
-describe("columns", () => {});
+  test("a comma INSIDE a quoted identifier does not split it", () => {
+    // `region,code` is one column name. A `split(",")` reads it as two columns that do not
+    // exist, and the index then publishes a column list nobody declared.
+    expect(splitKeyExpression("(`region,code`, id)")).toEqual(["`region,code`", "id"]);
+  });
 
-// ============================================================================
-// Indexes
-// ============================================================================
+  test("a parenthesis inside a quoted identifier does not move the depth counter", () => {
+    // The `(` inside the name would otherwise leave the reader one level deep for the rest
+    // of the expression, so the trailing `id` would never be split off.
+    expect(splitKeyExpression("(`a(b`, id)")).toEqual(["`a(b`", "id"]);
+  });
 
-describe("indexes", () => {});
+  test("a doubled quote escapes the quote rather than closing the span", () => {
+    expect(splitKeyExpression("(`a``b,c`, id)")).toEqual(["`a``b,c`", "id"]);
+  });
 
-// ============================================================================
-// Foreign keys
-// ============================================================================
+  test("a backslash escapes the next character inside a quoted span", () => {
+    expect(splitKeyExpression("('a\\',b', id)")).toEqual(["'a\\',b'", "id"]);
+  });
 
-describe("foreign keys", () => {});
+  test("an unterminated quote consumes the rest, which cannot mis-split", () => {
+    // The reading that is wrong in the safe direction: one element carrying everything,
+    // rather than a split at a comma that is inside a name.
+    expect(splitKeyExpression("(`a,b, id)")).toEqual(["`a,b, id"]);
+  });
 
-// ============================================================================
-// Table naming (spec 3.4)
-// ============================================================================
+  test("a function call keeps its own arguments together", () => {
+    expect(splitKeyExpression("(toYYYYMM(created_at), id)")).toEqual(["toYYYYMM(created_at)", "id"]);
+  });
 
-describe("table naming", () => {
-  const tables = [
-    tableRow({ database: "demo", name: "users" }),
-    tableRow({ database: "analytics", name: "events" }),
-    tableRow({ database: "default", name: "probe" }),
-  ];
+  test("an empty expression is no columns at all", () => {
+    expect(splitKeyExpression("")).toEqual([]);
+    expect(splitKeyExpression("()")).toEqual([]);
+  });
+
+  test("a parenthesised expression that is not a tuple is left whole", () => {
+    // `unwrapOuterParens` only strips a wrapper that really wraps the whole expression.
+    expect(splitKeyExpression("(a) + (b)")).toEqual(["(a) + (b)"]);
+  });
 });
 
 // ============================================================================
-// The split reads
+// Row value readers
 // ============================================================================
 
-describe("getSchemaList", () => {});
+describe("row value readers", () => {
+  test("readIdentifier answers a non-empty string and nothing else", () => {
+    expect(readIdentifier("users")).toBe("users");
+    expect(readIdentifier("")).toBeNull();
+    expect(readIdentifier(null)).toBeNull();
+    expect(readIdentifier(7)).toBeNull();
+  });
 
-describe("getSchemaRelations", () => {});
+  test("readText answers the empty string where there is no text", () => {
+    expect(readText("x")).toBe("x");
+    expect(readText(null)).toBe("");
+    expect(readText(3)).toBe("");
+  });
 
-// ============================================================================
-// Degradation
-// ============================================================================
+  test("readCount reads the quoted-string form a MergeTree reports", () => {
+    // `system.tables.total_rows` arrives as a STRING over the HTTP interface.
+    expect(readCount("3")).toBe(3);
+    expect(readCount(3)).toBe(3);
+    // A view reports null for both figures, which is an absence and never a zero.
+    expect(readCount(null)).toBeUndefined();
+    expect(readCount("not a number")).toBeUndefined();
+  });
 
-describe("degradation", () => {});
+  test("isNullableType reads the declared type rather than a value", () => {
+    expect(isNullableType("Nullable(String)")).toBe(true);
+    expect(isNullableType("LowCardinality(Nullable(String))")).toBe(true);
+    expect(isNullableType("String")).toBe(false);
+  });
+
+  test("readDefault carries only a default the column really declares", () => {
+    expect(readDefault("DEFAULT", "now()")).toBe("now()");
+    expect(readDefault("", "")).toBeUndefined();
+    // A MATERIALIZED or ALIAS column is not a value an INSERT may override, so its
+    // expression is LABELLED with its kind rather than printed bare as a default.
+    expect(readDefault("MATERIALIZED", "a + b")).toBe("MATERIALIZED a + b");
+    expect(readDefault("DEFAULT", "")).toBeUndefined();
+  });
+});

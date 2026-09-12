@@ -673,6 +673,22 @@ describe("TrinoProvider lifecycle", () => {
     expect(provider.isConnected()).toBe(true);
   });
 
+  test("disconnect closes the transport and forgets what was running", async () => {
+    // The tail of a successful connect and the whole of `disconnect()`: the provider is
+    // connected after `connect()` resolves, and afterwards it holds no transport, reports
+    // itself disconnected, and has dropped every query id it was tracking for cancellation.
+    const provider = await connectProvider();
+    expect(provider.isConnected()).toBe(true);
+
+    await provider.disconnect();
+    expect(provider.isConnected()).toBe(false);
+
+    // Idempotent: a second disconnect on a provider holding no transport is a no-op rather
+    // than a throw, which is what the pool's teardown path relies on.
+    await provider.disconnect();
+    expect(provider.isConnected()).toBe(false);
+  });
+
   test("names itself to the coordinator, so its statements are attributable", async () => {
     await connectProvider();
 

@@ -13,6 +13,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   readHealth,
+  readNumber,
   readIndexStats,
   readOverview,
   readStorageStats,
@@ -150,7 +151,37 @@ function twoTableTransport(overrides: [RegExp, Answer][] = []): FakeTransport {
 // Schema
 // ============================================================================
 
-describe("readSchema", () => {});
+/**
+ * `readNumber` is the ONE rule for reading a statistic as a number in this provider
+ * directory, and it is exported so both the stats tabs and the object surface read a
+ * figure the same way. Two spellings of "a statistic as a number" in one directory is how
+ * two surfaces come to disagree about one value, which is why it is pinned here directly
+ * rather than only through whichever caller happens to exercise it.
+ */
+describe("readNumber", () => {
+  test("a number passes through, and a non-finite one is an absence", () => {
+    expect(readNumber(0)).toBe(0);
+    expect(readNumber(12)).toBe(12);
+    expect(readNumber(Number.NaN)).toBeUndefined();
+    expect(readNumber(Number.POSITIVE_INFINITY)).toBeUndefined();
+  });
+
+  test("a NUMERIC STRING is read, which is the shape Hrana sends a large integer in", () => {
+    expect(readNumber("12")).toBe(12);
+    expect(readNumber(" 12 ")).toBe(12);
+  });
+
+  test("text that is not a number is an absence rather than a zero", () => {
+    // A zero here would publish a measurement nobody took: the stats tabs draw the figure
+    // they are given, so an unparseable value has to reach them as no value at all.
+    expect(readNumber("wal")).toBeUndefined();
+    expect(readNumber("")).toBeUndefined();
+    expect(readNumber("   ")).toBeUndefined();
+    expect(readNumber(null)).toBeUndefined();
+    expect(readNumber(undefined)).toBeUndefined();
+    expect(readNumber(true)).toBeUndefined();
+  });
+});
 
 // ============================================================================
 // Overview, health, metrics
