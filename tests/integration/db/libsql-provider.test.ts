@@ -683,7 +683,16 @@ const TABLE_LIST_WITH_EXOTIC: readonly { schema: string; name: string; type: str
   { schema: "main", name: "\u{1F600}", type: "table" },
 ];
 
-/** One row of `sqlite_schema`, verbatim and in the engine's own order. */
+/**
+ * One row of `sqlite_schema`, verbatim and in the engine's own order.
+ *
+ * RE-CAPTURED 2026-09-13 against a self-hosted sqld 0.24.33 (40a151bd 2025-12-19) started
+ * from `docker/sqlite-init/02-libsql-object-fixture.sql`, which is where that DDL lives now:
+ * it was a fenced block in `docs/providers/libsql.md` and nowhere else, so nobody could
+ * re-run the measurement it stood for (D53, standing ruling 5i). The row ORDER is the
+ * earlier capture's and is kept; what the re-capture adds is the `badges` TRIGGER below and
+ * the definition text in `SQLITE_SCHEMA_SQL`.
+ */
 const SQLITE_SCHEMA_ROWS: readonly { type: string; name: string; tbl_name: string }[] = [
   { type: "table", name: "customers", tbl_name: "customers" },
   { type: "table", name: "sqlite_sequence", tbl_name: "sqlite_sequence" },
@@ -703,6 +712,13 @@ const SQLITE_SCHEMA_ROWS: readonly { type: string; name: string; tbl_name: strin
   { type: "index", name: "idx_customers_name", tbl_name: "customers" },
   { type: "trigger", name: "orders_stamp", tbl_name: "orders" },
   { type: "trigger", name: "order_summary_guard", tbl_name: "order_summary" },
+  // A TRIGGER whose name is ALSO a TABLE's, which sqld accepts (measured, and the file
+  // engine accepts it too). It is here for the Source read: `SELECT sql FROM sqlite_schema
+  // WHERE name = 'badges'` answers TWO rows and the table's comes first, so a read taking
+  // its `type` from what the name matched rather than from the KIND hands a reader the
+  // table's DDL under a trigger's address. Every other name in this catalog resolves to one
+  // row whatever the type filter does.
+  { type: "trigger", name: "badges", tbl_name: "badges" },
   { type: "table", name: "legacy", tbl_name: "legacy" },
   { type: "table", name: "legacy_ref", tbl_name: "legacy_ref" },
   { type: "table", name: "shipments", tbl_name: "shipments" },
@@ -714,6 +730,65 @@ const SQLITE_SCHEMA_ROWS: readonly { type: string; name: string; tbl_name: strin
   // earlier fixture and made the reserved-name predicate look untestable here.
   { type: "index", name: "sqlite_autoindex_badges_1", tbl_name: "badges" },
 ];
+
+/**
+ * `sqlite_schema.sql` per row, keyed `"<type>/<name>"`, from the SAME live capture (#789).
+ *
+ * Beside the array rather than on it, so the rows above keep the comments that say what each
+ * one is for and this file keeps one row per line. `sqliteSchemaSql()` is the only reader and
+ * it THROWS by name for a row this map does not carry, so a row added to the catalog without
+ * its definition text fails loudly instead of reading as a definition the server refused.
+ *
+ * NULL on exactly one entry, `index/sqlite_autoindex_badges_1`. That is the only shape in
+ * which this engine answers a row with no definition, and the listings exclude every
+ * `sqlite_`-prefixed name, so no path the tree produces can address it: the Source read has
+ * no reachable refusal here, which docs/providers/libsql.md states as a CANNOT.
+ *
+ * Captured 2026-09-13 against a self-hosted sqld 0.24.33 (40a151bd 2025-12-19) started from
+ * `docker/sqlite-init/02-libsql-object-fixture.sql`.
+ */
+const SQLITE_SCHEMA_SQL: Readonly<Record<string, string | null>> = {
+  "table/customers":
+    "CREATE TABLE customers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, country TEXT DEFAULT 'TR')",
+  "table/sqlite_sequence": "CREATE TABLE sqlite_sequence(name,seq)",
+  "table/orders":
+    "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers,\n                     total REAL NOT NULL, tax REAL GENERATED ALWAYS AS (total * 0.2) VIRTUAL, placed_at TEXT)",
+  "table/regions":
+    "CREATE TABLE regions (region TEXT NOT NULL, year INTEGER NOT NULL, revenue REAL,\n                      PRIMARY KEY (region, year)) WITHOUT ROWID",
+  "table/archive": "CREATE TABLE archive (id INTEGER PRIMARY KEY, body TEXT) STRICT",
+  "table/sqliteXledger": "CREATE TABLE sqliteXledger (id INTEGER PRIMARY KEY, note TEXT)",
+  "table/legacy": "CREATE TABLE legacy (note TEXT)",
+  "table/legacy_ref": "CREATE TABLE legacy_ref (id INTEGER PRIMARY KEY, note TEXT REFERENCES legacy)",
+  "table/shipments":
+    "CREATE TABLE shipments (id INTEGER PRIMARY KEY, order_id INTEGER REFERENCES orders(id), carrier TEXT)",
+  "table/badges": "CREATE TABLE badges (id INTEGER PRIMARY KEY, code TEXT UNIQUE, label TEXT)",
+  "index/sqlite_autoindex_badges_1": null,
+  "table/notes": "CREATE VIRTUAL TABLE notes USING fts5(title, body)",
+  "table/notes_data": "CREATE TABLE 'notes_data'(id INTEGER PRIMARY KEY, block BLOB)",
+  "table/notes_idx": "CREATE TABLE 'notes_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
+  "table/notes_content": "CREATE TABLE 'notes_content'(id INTEGER PRIMARY KEY, c0, c1)",
+  "table/notes_docsize": "CREATE TABLE 'notes_docsize'(id INTEGER PRIMARY KEY, sz BLOB)",
+  "table/notes_config": "CREATE TABLE 'notes_config'(k PRIMARY KEY, v) WITHOUT ROWID",
+  "view/order_summary":
+    "CREATE VIEW order_summary AS SELECT c.name, o.total FROM orders o JOIN customers c ON c.id = o.customer_id",
+  "index/idx_orders_customer": "CREATE INDEX idx_orders_customer ON orders(customer_id)",
+  "index/idx_orders_placed": "CREATE INDEX idx_orders_placed ON orders(date(placed_at))",
+  "index/idx_customers_name": "CREATE UNIQUE INDEX idx_customers_name ON customers(name)",
+  "trigger/orders_stamp":
+    "CREATE TRIGGER orders_stamp AFTER INSERT ON orders\n  BEGIN UPDATE orders SET placed_at = datetime('now') WHERE id = NEW.id; END",
+  "trigger/order_summary_guard":
+    "CREATE TRIGGER order_summary_guard INSTEAD OF INSERT ON order_summary\n  BEGIN SELECT RAISE(ABORT, 'read only'); END",
+  "trigger/badges": "CREATE TRIGGER badges AFTER INSERT ON badges BEGIN SELECT 1; END",
+};
+
+/** One row's stored definition, or a throw naming the row the capture forgot. */
+function sqliteSchemaSql(type: string, name: string): string | null {
+  const key = `${type}/${name}`;
+  if (!Object.hasOwn(SQLITE_SCHEMA_SQL, key)) {
+    throw new Error(`the sqlite_schema capture carries no sql for ${key}`);
+  }
+  return SQLITE_SCHEMA_SQL[key];
+}
 
 /**
  * `pragma_table_xinfo(name, 'main')` per object, exactly as the engine publishes it:
@@ -823,7 +898,7 @@ const FOREIGN_KEYS: Readonly<Record<string, [number, number, string, string, str
 };
 
 /** Every kind, and how many of it `main` holds. Counted by hand off the fixture DDL. */
-const EXPECTED_COUNTS = { table: 10, view: 1, index: 3, trigger: 2 } as const;
+const EXPECTED_COUNTS = { table: 10, view: 1, index: 3, trigger: 3 } as const;
 
 /** True when the statement carries the reserved-name predicate, escaped or not. */
 function reservedPredicate(sql: string): "escaped" | "wildcard" | "none" {
@@ -1452,6 +1527,9 @@ describe("LibSQLProvider object surface (#789)", () => {
     // INSTEAD OF trigger on a VIEW and `sqlite_schema.tbl_name` then names the view.
     // Both the count and the listing carry it rather than one of them dropping it.
     expect(triggers.map((trigger) => trigger.path)).toEqual([
+      // The name collision the Source read needs: sqld accepts a trigger whose name is
+      // also a table's, which no other kind here can be.
+      ["badges", "badges"],
       ["order_summary", "order_summary_guard"],
       ["orders", "orders_stamp"],
     ]);
@@ -1840,6 +1918,7 @@ describe("LibSQLProvider object surface (#789)", () => {
     expect(tables.map((table) => table.path)).toContainEqual(["cat", "sch", "orders"]);
     const triggers = await objects.listObjects(["cat", "sch"], "trigger");
     expect(triggers.map((trigger) => trigger.path)).toEqual([
+      ["cat", "sch", "badges", "badges"],
       ["cat", "sch", "order_summary", "order_summary_guard"],
       ["cat", "sch", "orders", "orders_stamp"],
     ]);

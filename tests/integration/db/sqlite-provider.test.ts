@@ -35,6 +35,7 @@ import {
 } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { comparePaths } from "@/lib/db/object-path";
+import { readFixtureStatements } from "../../../docker/sqlite-init/build-fixture";
 
 // ============================================================================
 // Helpers
@@ -998,55 +999,17 @@ describe("SQLiteProvider", () => {
  * The `temp` and `attached` objects deliberately SHADOW names in `main`: a listing
  * that did not restrict itself to `main` would answer two objects with one path,
  * which is the invariant the conformance helper checks and the tree relies on.
+ *
+ * THE DDL IS NOT HERE ANY MORE and that is standing ruling 5i (#789). It lives in
+ * `docker/sqlite-init/01-object-fixture.sql`, which this reads and which
+ * `bun docker/sqlite-init/build-fixture.ts` replays into a database FILE a person
+ * can open in Studio. A fixture only a test can apply is a measurement nobody else
+ * can re-run; every object asserted below is created by that file.
  */
-const OBJECT_FIXTURE_DDL: readonly string[] = [
-  // A UNIQUE column, so SQLite also creates `sqlite_autoindex_customers_1`.
-  "CREATE TABLE customers (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL)",
-  // Two foreign keys of the two shapes SQLite publishes differently, and a generated
-  // column, which `PRAGMA table_info` drops and `table_xinfo` publishes.
-  `CREATE TABLE orders (
-     id INTEGER PRIMARY KEY,
-     customer_id INTEGER REFERENCES customers,
-     customer_email TEXT REFERENCES customers(email),
-     total INTEGER NOT NULL DEFAULT 0,
-     total_with_tax INTEGER GENERATED ALWAYS AS (total * 2) VIRTUAL
-   )`,
-  // A composite primary key, so `table_info.pk` carries the ranks 1 and 2.
-  "CREATE TABLE archive (region TEXT, year INTEGER, PRIMARY KEY (region, year)) WITHOUT ROWID",
-  // AUTOINCREMENT, so the engine adds `sqlite_sequence` to `PRAGMA table_list`.
-  "CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT)",
-  "INSERT INTO audit_log (note) VALUES ('seed')",
-  // A user table the UNESCAPED `LIKE 'sqlite_%'` would also exclude, because `_` is
-  // LIKE's single-character wildcard. SQLite reserves only the `sqlite_` prefix, so this
-  // name is one a user can really have.
-  "CREATE TABLE sqliteXledger (id INTEGER PRIMARY KEY)",
-  // One `virtual` row and five `shadow` rows in `PRAGMA table_list`.
-  "CREATE VIRTUAL TABLE notes USING fts5(body)",
-  "CREATE VIEW order_summary AS SELECT id, total FROM orders",
-  "CREATE INDEX idx_orders_customer ON orders(customer_id)",
-  // An index on an EXPRESSION, whose key publishes a null column name.
-  "CREATE INDEX idx_orders_doubled ON orders(total * 2)",
-  "CREATE TRIGGER orders_stamp AFTER INSERT ON orders BEGIN UPDATE orders SET total = total; END",
-  // SQLite allows an INSTEAD OF trigger on a VIEW, so a trigger's parent segment is
-  // not always a table even though the kind declares `attachedTo: "table"`.
-  "CREATE TRIGGER order_summary_guard INSTEAD OF INSERT ON order_summary BEGIN SELECT 1; END",
-  // Session scratch that shadows `main`, and must never reach the tree. The temp
-  // `orders` carries ONE column, so a detail read that forgot the schema is visible
-  // as a different column list rather than as an error.
-  "CREATE TEMP TABLE orders (id INTEGER)",
-  "CREATE TEMP VIEW order_summary AS SELECT 1 AS x",
-  "CREATE TEMP TRIGGER orders_stamp_temp AFTER INSERT ON orders BEGIN SELECT 1; END",
-  "CREATE INDEX temp.idx_orders_customer_temp ON orders(id)",
-  // Another database file entirely, which the connection was not configured for.
-  "ATTACH DATABASE ':memory:' AS attached",
-  "CREATE TABLE attached.orders (id INTEGER)",
-  "CREATE VIEW attached.order_summary AS SELECT 1 AS x",
-  "CREATE INDEX attached.idx_orders_customer_attached ON orders(id)",
-  "CREATE TRIGGER attached.orders_stamp_attached AFTER INSERT ON orders BEGIN SELECT 1; END",
-];
+const OBJECT_FIXTURE_DDL: readonly string[] = readFixtureStatements();
 
 /** Every kind, and how many of it `main` holds. Derived nowhere: counted by hand off the DDL. */
-const EXPECTED_COUNTS = { table: 6, view: 1, index: 2, trigger: 2 } as const;
+const EXPECTED_COUNTS = { table: 6, view: 1, index: 2, trigger: 3 } as const;
 
 /**
  * Swaps the provider's own database handle for one that intercepts a named statement.
@@ -1187,7 +1150,7 @@ describe("SQLiteProvider object surface (#789)", () => {
       { id: "table", label: "Tables", depth: 0, badge: "6" },
       { id: "view", label: "Views", depth: 0, badge: "1" },
       { id: "index", label: "Indexes", depth: 0, badge: "2" },
-      { id: "trigger", label: "Triggers", depth: 0, badge: "2" },
+      { id: "trigger", label: "Triggers", depth: 0, badge: "3" },
     ]);
     // ARIA position is computed per sibling group, and at depth 0 that group is the four
     // folders and nothing else.
@@ -1352,10 +1315,13 @@ describe("SQLiteProvider object surface (#789)", () => {
     // parent is a VIEW, which the `attachedTo: "table"` declaration does not forbid and
     // which the count includes, so the listing has to as well.
     expect(triggers.map((trigger) => trigger.path)).toEqual([
+      // The name collision the source read needs: a trigger may share a name with the table
+      // it fires on, which SQLite accepts and which no other kind here can do.
+      ["audit_log", "audit_log"],
       ["order_summary", "order_summary_guard"],
       ["orders", "orders_stamp"],
     ]);
-    expect(triggers.map((trigger) => trigger.name)).toEqual(["order_summary_guard", "orders_stamp"]);
+    expect(triggers.map((trigger) => trigger.name)).toEqual(["audit_log", "order_summary_guard", "orders_stamp"]);
     expect(triggers.every((trigger) => trigger.kind === "trigger")).toBe(true);
   });
 
@@ -1635,6 +1601,7 @@ describe("SQLiteProvider object surface (#789)", () => {
     expect(tables.map((table) => table.path)).toContainEqual(["cat", "sch", "orders"]);
     const triggers = await objects.listObjects(["cat", "sch"], "trigger");
     expect(triggers.map((trigger) => trigger.path)).toEqual([
+      ["cat", "sch", "audit_log", "audit_log"],
       ["cat", "sch", "order_summary", "order_summary_guard"],
       ["cat", "sch", "orders", "orders_stamp"],
     ]);

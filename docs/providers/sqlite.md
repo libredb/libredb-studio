@@ -544,15 +544,30 @@ apart. Both drivers this provider selects between are far above that floor (`bun
 
 #### The fixture, and running it
 
-`tests/integration/db/sqlite-provider.test.ts` builds the fixture by DDL against a real `:memory:`
-database, so every assertion is measured against the engine rather than a mock. It holds one of every
-declared kind, all four `table_list.type` values, a generated column, a composite primary key, an
-`AUTOINCREMENT` table, an expression index, an `INSTEAD OF` trigger on a view, a `sqliteXledger`
-table, and `orders` in all three of `main`, `temp` and an ATTACHed database.
+The DDL is [`docker/sqlite-init/01-object-fixture.sql`](../../docker/sqlite-init/01-object-fixture.sql).
+`tests/integration/db/sqlite-provider.test.ts` reads that file and replays it into a real `:memory:`
+database, so every assertion is measured against the engine rather than a mock, and every object it
+reasons about is created by the file rather than by a literal inside the test.
+It holds one of every declared kind, all four `table_list.type` values, a generated column, a
+composite primary key, an `AUTOINCREMENT` table, an expression index, an `INSTEAD OF` trigger on a
+view, a trigger whose name is also a table's, a `sqliteXledger` table, and `orders` in all three of
+`main`, `temp` and an ATTACHed database.
+Counts in `main`: `table 6, view 1, index 2, trigger 3`.
+
+There is no `docker compose` service for SQLite and there never will be, because the engine is a
+file. The build script is what an init directory is for every other engine: it replays the same
+statements into a database FILE that can be opened in Studio.
 
 ```bash
 bun test tests/integration/db/sqlite-provider.test.ts
+bun docker/sqlite-init/build-fixture.ts                    # ./.sqlite-fixture/object-fixture.sqlite
+bun docker/sqlite-init/build-fixture.ts /tmp/demo.sqlite   # anywhere else
 ```
+
+A `CREATE TRIGGER` body carries its own semicolons, so the file is split by
+`readFixtureStatements()` in [`build-fixture.ts`](../../docker/sqlite-init/build-fixture.ts), which
+ends a trigger statement only at the `;` after its `END`. A `split(";")` hands the engine a truncated
+body and a bare `END`, and it refuses both.
 
 ---
 

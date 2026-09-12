@@ -578,39 +578,45 @@ product prefix in front of the server's words, and `listObjects()` raises. A fai
 
 #### The fixture, and running it
 
-The object-surface tests answer from the catalog below, captured live in the engine's own order; the fake
-server applies only the predicates each statement actually spells. To rebuild it, start the service and
-send this DDL (the object surface reads it and never writes):
+The DDL is [`docker/sqlite-init/02-libsql-object-fixture.sql`](../../docker/sqlite-init/02-libsql-object-fixture.sql).
+It used to live here as a fenced block and nowhere else, which meant a reader could see the
+measurement and could not re-run it; the file is what replaced that. The object-surface tests answer
+from a catalog captured off a live server started from that file, and the fake applies only the
+predicates each statement actually spells, so dropping a predicate from the provider widens the
+population here the way it would against the real server.
 
-```sql
-CREATE TABLE customers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, country TEXT DEFAULT 'TR');
-CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers,
-                     total REAL NOT NULL, tax REAL GENERATED ALWAYS AS (total * 0.2) VIRTUAL, placed_at TEXT);
-CREATE TABLE regions (region TEXT NOT NULL, year INTEGER NOT NULL, revenue REAL,
-                      PRIMARY KEY (region, year)) WITHOUT ROWID;
-CREATE TABLE archive (id INTEGER PRIMARY KEY, body TEXT) STRICT;
-CREATE TABLE sqliteXledger (id INTEGER PRIMARY KEY, note TEXT);
-CREATE TABLE legacy (note TEXT);
-CREATE TABLE legacy_ref (id INTEGER PRIMARY KEY, note TEXT REFERENCES legacy);
-CREATE TABLE shipments (id INTEGER PRIMARY KEY, order_id INTEGER REFERENCES orders(id), carrier TEXT);
-CREATE TABLE badges (id INTEGER PRIMARY KEY, code TEXT UNIQUE, label TEXT);
-CREATE VIRTUAL TABLE notes USING fts5(title, body);
-CREATE VIEW order_summary AS SELECT c.name, o.total FROM orders o JOIN customers c ON c.id = o.customer_id;
-CREATE INDEX idx_orders_customer ON orders(customer_id);
-CREATE INDEX idx_orders_placed ON orders(date(placed_at));
-CREATE UNIQUE INDEX idx_customers_name ON customers(name);
-CREATE TRIGGER orders_stamp AFTER INSERT ON orders
-  BEGIN UPDATE orders SET placed_at = datetime('now') WHERE id = NEW.id; END;
-CREATE TRIGGER order_summary_guard INSTEAD OF INSERT ON order_summary
-  BEGIN SELECT RAISE(ABORT, 'read only'); END;
+Apply it, and print the catalog it built:
+
+```bash
+docker compose -f database-compose.yml up -d libsql          # sqld on localhost:18080
+bun docker/sqlite-init/apply-to-libsql.ts http://127.0.0.1:18080
+bun docker/sqlite-init/apply-to-libsql.ts http://127.0.0.1:18080 <token>   # Turso Cloud
+```
+
+sqld ships no client: the image carries neither `sqlite3` nor `curl`, so the fixture needs an applier
+of its own and that script is it. It sends one statement per request rather than one batch, because a
+batch stops at the first failure and a half-applied fixture is worse than one that did not apply, and
+it prints each statement's own outcome. The same file also builds a local database FILE:
+
+```bash
+bun docker/sqlite-init/build-fixture.ts /tmp/demo.sqlite 02-libsql-object-fixture.sql
 ```
 
 It holds one of every declared kind, all four `table_list.type` values, a generated column, a composite
-primary key on a `WITHOUT ROWID` table, an `AUTOINCREMENT` table, an expression index, BOTH implicit-index
-shapes (the `WITHOUT ROWID` one that only `pragma_index_list` publishes and the `UNIQUE`-on-a-ROWID-table
-one that is also a `sqlite_schema` row), an `INSTEAD OF` trigger on a view, a `sqliteXledger` table, a
-foreign key that names its column and two that do not, and a foreign-key parent with no primary key.
-Counts: `table 10, view 1, index 3, trigger 2`.
+primary key on a `WITHOUT ROWID` table, an `AUTOINCREMENT` table, an expression index, BOTH
+implicit-index shapes (the `WITHOUT ROWID` one that only `pragma_index_list` publishes and the
+`UNIQUE`-on-a-ROWID-table one that is also a `sqlite_schema` row), an `INSTEAD OF` trigger on a view,
+a trigger whose name is also a table's, a `sqliteXledger` table, a foreign key that names its column
+and two that do not, and a foreign-key parent with no primary key.
+Counts: `table 10, view 1, index 3, trigger 3`.
+
+It is NOT the same DDL as [`01-object-fixture.sql`](../../docker/sqlite-init/01-object-fixture.sql),
+which the SQLite provider's suite replays: that one holds `TEMP` and `ATTACH`ed objects sqld refuses
+outright, and this one holds a `STRICT` table and the second implicit-index shape. One directory, one
+splitter, one build script, one file per engine's own captured catalog.
+
+`ANALYZE` is absent from the file and must stay absent: measured on sqld 0.24.33, it answers
+`SQL string could not be parsed: unsupported statement: ANALYZE`.
 
 ---
 
