@@ -684,6 +684,72 @@ all three kinds alike. Unlike Redis, where one kind can be described without ask
 here comes out of the same read, so checking costs nothing, and an empty shape would claim a
 table that was never cataloged or a grouping whose last key is gone.
 
+#### What `describeObjects()` answers, and the two bounds it reports
+
+`describeObjects(container, kind, limit?)` is the bulk column read (#789): every object of one
+kind in one container, in ONE enumeration.
+
+**One pass for a whole folder, and on this engine that is the whole point.** There is no
+statement layer here, so the N+1 the inventory route removed would not come back as 5,000 round
+trips but as 5,000 KEY WALKS: `describeObject()` calls `enumerate()`, so a body looping it would
+scan the file once per object. The suite counts the passes with a spy on `scanGroups` rather than
+comparing times, because an embedded engine is fast enough that a timing comparison would pass
+either way.
+
+**No kind here answers an empty batch for want of columns.** The reference implementation's
+fourth guard covers a routine, a trigger or a sequence, and this store has none: all three
+declared kinds are `role: "relation"` and `schemaForGroup()` answers real columns for each - a
+cataloged table's declared schema, a collection's `id`/`document` pair, a raw grouping's
+`key`/`value` pair. There is no early return to write here, and writing one would be a branch
+nothing can reach.
+
+**One mapper, shared with the single read.** `objectDetailOf()` builds both answers, so the two
+cannot spell the same table's columns differently. Every column set the bulk read answers is
+byte-identical to `describeObject()` for the same path, asserted for every object of every kind
+in the fixture.
+
+**Two bounds, and the answer names whichever bit.**
+
+| Bound | Applies to | `truncated.limit` | `truncated.reason` |
+| --- | --- | --- | --- |
+| The caller's `limit` | every kind | the caller's own number | `the bulk column read was bounded at N objects by its caller` |
+| The key walk's cap | `keyspace` only | the number of objects answered | `the key walk stopped at the first 10,000 keys of a bounded key scan` |
+| Both | `keyspace` | the caller's own number | the two joined with `, and ` |
+
+The second is a bound this provider did not choose on the call and the caller never asked for, so
+it is reported on an unbounded read as readily as on a bounded one: a cap nobody can see is the
+defect `truncated` exists to prevent. It is reported on the DERIVED kind alone, which is the same
+rule `countObjects()` applies to `KindCount.sampledFrom` and for the same measured reason -
+`catalog()` is read whole as an eager snapshot, so `table` and `collection` are populations
+however far the key walk got. One file can therefore answer a truncated `keyspace` batch and two
+untruncated cataloged ones from one pass.
+
+A limit that is not a positive whole number **raises** rather than being clamped: a `0` would
+answer nothing while reporting a truncation the caller never asked for. The guard runs after the
+declaration check and after the container check, so a caller gets the strongest true statement
+first.
+
+**The cut is OURS and the walk is the ENGINE's, which is the reverse of every SQL engine in
+#789.** There is no `LIMIT` to push down: `scanGroups()` has to reach the end of the keyspace
+before it knows which GROUPS exist, and it appends a cataloged namespace the walk never saw after
+that. So the enumeration is sorted with `comparePaths` and cut afterwards, and the membership of
+a bounded read is this provider's order rather than the kernel's.
+
+Those two orders are not the same one, and the fixture can show it. Task 26a-2 measured across
+five SQL engines that a server's own `ORDER BY` is the UTF-8 BYTE order while `comparePaths`
+compares UTF-16 code units, and that the two answer the REVERSE for `U+E000` against `U+1F600`.
+The same holds here, measured on @libredb/libredb 0.2.2:
+
+```
+# keys U+E000 (bytes ee 80 80) and U+1F600 (bytes f0 9f 98 80) in one file
+range \u{E000} \u{10FFFF}      ->  U+E000, U+1F600      the kernel's own walk, byte order
+describeObjects([], "keyspace") ->  U+1F600, U+E000      comparePaths, UTF-16 code units
+```
+
+so `describeObjects([], "keyspace", 1)` keeps the emoji where a server-side cut would have kept
+the private-use character. The suite pins both halves; the `range` control is what keeps the
+assertion from passing vacuously.
+
 #### The derived-grouping refusal, and the declaration that carries it
 
 `tablesAreDerivedGroupings: true` ([§9](#9-capabilities--labels)) stays. It is a refusal about

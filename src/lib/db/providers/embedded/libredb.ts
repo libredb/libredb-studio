@@ -44,6 +44,7 @@ import {
   type DatabaseObject,
   type KindCount,
   type ObjectDetail,
+  type ObjectDetailBatch,
   type ObjectKindSpec,
 } from "../../types";
 import { containerDepth, declaredKinds, findKind } from "../../object-kinds";
@@ -224,6 +225,28 @@ const SCAN_DERIVED_KIND_ID = objectKindFor(undefined);
  * the same `truncated` from the same pass.
  */
 const KEY_SCAN_SAMPLE_SENTENCE = `the first ${LIBREDB_MAX_KEY_SCAN.toLocaleString("en-US")} keys of a bounded key scan`;
+
+/**
+ * The two sentences `describeObjects` reports a bound with, and they are two DIFFERENT
+ * bounds rather than two phrasings of one (#789).
+ *
+ * The first is the CALLER's: a `limit` this provider was handed and applied, so the number
+ * in the sentence is the caller's own. The second is a bound the caller never asked for
+ * and this provider did not choose per call - the key walk stops at
+ * `LIBREDB_MAX_KEY_SCAN`, so on a larger file the derived groupings are the groupings of a
+ * SAMPLE. A cap nobody can see is exactly what `ObjectDetailBatch.truncated` exists to
+ * prevent, so the second is reported on an UNBOUNDED call too, and both are named when
+ * both bite.
+ *
+ * The scan sentence reuses `KEY_SCAN_SAMPLE_SENTENCE`, the same words `countObjects` puts
+ * on the badge through `KindCount.sampledFrom`, so a person meeting the fact twice meets
+ * it in one wording.
+ */
+function callerBoundSentence(limit: number): string {
+  return `the bulk column read was bounded at ${limit} object${limit === 1 ? "" : "s"} by its caller`;
+}
+
+const SCAN_BOUND_SENTENCE = `the key walk stopped at ${KEY_SCAN_SAMPLE_SENTENCE}`;
 
 /**
  * The container levels this provider declares, sliced to the depth `containerDepth()`
@@ -1014,12 +1037,105 @@ export class LibreDBProvider extends BaseDatabaseProvider {
         "libredb",
       );
     }
+    return this.objectDetailOf(path, found);
+  }
+
+  /**
+   * One enumerated object turned into one `ObjectDetail`, shared by the single and the
+   * bulk read.
+   *
+   * One function because a caller joins the two answers together: two copies of this
+   * mapping would be two chances for the bulk read to spell a cataloged table's columns
+   * differently from the single read of the same table. It goes through `schemaForGroup`,
+   * which is also what `getSchema()` builds its rows from, so all three surfaces describe
+   * one group one way while the flat one is still live.
+   *
+   * `indexes` and `foreignKeys` are empty for every kind, and both are facts about the
+   * engine rather than unread fields: the kernel is one ordered keyspace where a key's own
+   * byte order is the only index there is, and the catalog records a namespace's lens and
+   * a table's columns and nothing that references another namespace.
+   */
+  private objectDetailOf(path: readonly string[], enumerated: LibreDBEnumeratedObject): ObjectDetail {
     return {
       path: [...path],
-      columns: this.schemaForGroup(found.groupName, found.rowCount, found.entry).columns,
+      columns: this.schemaForGroup(enumerated.groupName, enumerated.rowCount, enumerated.entry).columns,
       indexes: [],
       foreignKeys: [],
     };
+  }
+
+  /**
+   * Columns for EVERY object of one kind in the file, from ONE enumeration (#789).
+   *
+   * ONE PASS for the whole folder, which is the entire reason this method exists. There is
+   * no statement layer on this engine, so the N+1 the inventory route removed would not
+   * come back here as 5000 round trips but as 5000 KEY WALKS: `describeObject` calls
+   * `enumerate()`, and a body that looped it would scan the file once per object. The
+   * suite counts the passes rather than the time, because an embedded engine is fast
+   * enough that a timing comparison would pass either way.
+   *
+   * NO KIND ON THIS ENGINE ANSWERS AN EMPTY BATCH FOR WANT OF COLUMNS, and that is a
+   * measurement rather than an omission. The reference's fourth guard covers a routine, a
+   * trigger or a sequence, and this store has none: all three declared kinds are
+   * `role: "relation"` and `schemaForGroup` answers real columns for each of them - a
+   * cataloged table's declared schema, a collection's id/document pair, and a raw
+   * grouping's key/value pair. So there is no early return to write, and writing one would
+   * be a branch nothing can reach.
+   *
+   * TWO BOUNDS, AND THE ANSWER NAMES WHICHEVER BIT. The caller's `limit` is applied to the
+   * SORTED enumeration and reports the caller's own number. The key walk's own cap is a
+   * bound this provider did not choose on this call, and it is reported too, on an
+   * unbounded read as readily as on a bounded one, because a cap nobody can see is the
+   * defect `truncated` exists to prevent. It is reported on the DERIVED kind alone, which
+   * is the same rule `countObjects` applies to `KindCount.sampledFrom` and for the same
+   * measured reason: `catalog()` is read whole as an eager snapshot, so `table` and
+   * `collection` are populations however far the key walk got.
+   *
+   * THE CUT IS OURS AND THE WALK IS THE ENGINE'S, which is the reverse of every SQL engine
+   * in #789, where a `LIMIT` cuts under the server's collation and the sort is ours. There
+   * is no `LIMIT` to push down here - `scanGroups` has to reach the end of the keyspace
+   * before it knows which GROUPS exist at all, and it appends a cataloged namespace the
+   * walk never saw after that - so the enumeration is sorted with `comparePaths` and cut
+   * afterwards. On the two names Task 26a-2 measured across five engines, `U+E000` and
+   * `U+1F600`, that is observable: the kernel walks them in UTF-8 byte order and
+   * `comparePaths` compares UTF-16 code units, so a bounded read here keeps the emoji
+   * where a server-side cut would have kept the private-use character.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    // The four guards, in the reference's order: the DECLARATION first, because an
+    // undeclared kind is a fact about the engine and an empty answer is a claim about the
+    // data; then the container, through the same reader `listObjects` uses.
+    this.assertDeclaredKind(capabilities, kind);
+    assertContainerPath(capabilities, container);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      // Not clamped and not ignored. A 0 would answer nothing while reporting a truncation
+      // the caller never asked for, and a fraction cannot cut a list; both are caller
+      // mistakes and neither has a right answer to guess at.
+      throw new QueryError(
+        `A LibreDB bulk column read limit must be a positive whole number, received ${limit}`,
+        "libredb",
+      );
+    }
+
+    const { byKind, truncated: scanTruncated } = this.enumerate(container);
+    const enumerated = byKind[kind];
+    const bounded = limit !== undefined && enumerated.length > limit;
+    const details = (bounded ? enumerated.slice(0, limit) : enumerated).map((object) =>
+      this.objectDetailOf(object.object.path, object),
+    );
+
+    // Only the DERIVED kind can be short because of the walk. The two cataloged kinds come
+    // from the whole catalog, so marking them would teach a reader to discount a number
+    // that is exact.
+    const scanBound = scanTruncated && kind === SCAN_DERIVED_KIND_ID;
+    if (!bounded && !scanBound) return { details };
+    const reasons = [...(bounded ? [callerBoundSentence(limit!)] : []), ...(scanBound ? [SCAN_BOUND_SENTENCE] : [])];
+    // The CALLER's limit whenever the caller set one that bit; otherwise the number this
+    // read actually produced, which is the only bound in existence on that arm and keeps
+    // `details.length <= truncated.limit` true either way.
+    return { details, truncated: { limit: bounded ? limit! : details.length, reason: reasons.join(", and ") } };
   }
 
   /** One spelling of the declaration check, so two methods cannot refuse by two rules. */

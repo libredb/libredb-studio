@@ -1075,4 +1075,228 @@ describe("LibreDBProvider object surface (#789)", () => {
     // Still usable afterwards: nothing above took or dropped the lock.
     expect((await provider.getSchema()).length).toBeGreaterThan(0);
   });
+
+  // ==========================================================================
+  // The bulk column read (#789)
+  // ==========================================================================
+
+  /**
+   * ONE enumeration for the whole folder, and the count of passes is what is asserted.
+   *
+   * `enumerate()` is the single reader of the catalog and the keyspace on this engine, so
+   * the thing that would re-introduce the N+1 here is not a second statement but a second
+   * PASS: a body looping `describeObject` would scan the file once per object. `scanGroups`
+   * is spied to count the passes rather than the time, because an embedded engine is fast
+   * enough that a timing comparison would pass either way.
+   */
+  test("describeObjects reads the file ONCE for a whole folder, not once per object", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const scan = spyOn(provider as any, "scanGroups");
+    const batch = await provider.describeObjects!([], "table");
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(batch.details.map((detail) => detail.path)).toEqual([["applicants:*"], ["employees:*"], ["vacancies:*"]]);
+    expect(batch.truncated).toBeUndefined();
+  });
+
+  test("every kind on this engine has columns, and the bulk read spells them as the single read does", async () => {
+    for (const kind of ["table", "collection", "keyspace"] as const) {
+      const batch = await provider.describeObjects!([], kind);
+      const listed = await provider.listObjects([], kind);
+      // Every detail path was NAMED by the listing, and nothing the listing named is missing.
+      expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+      for (const detail of batch.details) {
+        // Byte-identical to the single read of the same object, which is what one shared
+        // mapper buys: two copies would be two chances to spell a column differently.
+        expect(detail).toEqual(await provider.describeObject(detail.path, kind));
+      }
+    }
+  });
+
+  test("the three lenses come through the bulk read intact", async () => {
+    const tables = await provider.describeObjects!([], "table");
+    expect(tables.details.find((detail) => detail.path[0] === "employees:*")!.columns).toEqual([
+      { name: "id", type: "string", nullable: false, isPrimary: true },
+      { name: "name", type: "string", nullable: false, isPrimary: false },
+      { name: "salary", type: "number", nullable: false, isPrimary: false },
+      { name: "active", type: "boolean", nullable: false, isPrimary: false },
+    ]);
+    const collections = await provider.describeObjects!([], "collection");
+    expect(collections.details.find((detail) => detail.path[0] === "notes:*")!.columns).toEqual([
+      { name: "id", type: "string", nullable: false, isPrimary: true },
+      { name: "document", type: "object", nullable: true, isPrimary: false },
+    ]);
+    const keyspaces = await provider.describeObjects!([], "keyspace");
+    // The RAW half of the `notes` collision, described as key/value while the cataloged
+    // half above is described as a document collection. Two objects, two shapes, one name.
+    expect(keyspaces.details.find((detail) => detail.path[0] === "notes")!.columns).toEqual([
+      { name: "key", type: "string", nullable: false, isPrimary: true },
+      { name: "value", type: "string", nullable: true, isPrimary: false },
+    ]);
+    // Facts about the engine, on every kind: one ordered keyspace has no secondary index
+    // and the catalog records nothing that references another namespace.
+    for (const batch of [tables, collections, keyspaces]) {
+      for (const detail of batch.details) {
+        expect(detail.indexes).toEqual([]);
+        expect(detail.foreignKeys).toEqual([]);
+      }
+    }
+  });
+
+  test("the caller's bound cuts the SORTED enumeration and reports the caller's own limit", async () => {
+    const batch = await provider.describeObjects!([], "table", 2);
+    // `applicants:*` and `employees:*`, in the order `comparePaths` puts them, and NOT the
+    // order the enumerator reached them in - `applicants:*` is injected after `employees:*`
+    // because the key scan never saw it. The cut is applied after the sort, so a bounded
+    // read's membership on this engine is OURS rather than the engine's.
+    expect(batch.details.map((detail) => detail.path)).toEqual([["applicants:*"], ["employees:*"]]);
+    expect(batch.truncated).toEqual({
+      limit: 2,
+      reason: "the bulk column read was bounded at 2 objects by its caller",
+    });
+  });
+
+  test("a bound the folder fits inside reports nothing", async () => {
+    const batch = await provider.describeObjects!([], "collection", 2);
+    expect(batch.details.length).toBe(2);
+    expect(batch.truncated).toBeUndefined();
+  });
+
+  test("a bound of exactly the folder size reports nothing, which is the off-by-one", async () => {
+    expect((await provider.describeObjects!([], "table", 3)).truncated).toBeUndefined();
+    expect((await provider.describeObjects!([], "table", 4)).truncated).toBeUndefined();
+  });
+
+  /**
+   * The bound this provider did NOT choose, reported rather than hidden.
+   *
+   * The key walk stops at `LIBREDB_MAX_KEY_SCAN`, which is a cap nobody asked for on this
+   * call, and on a file larger than it the derived groupings are the groupings of a SAMPLE.
+   * `countObjects` already says so through the fourth `KindCount` state; this is the same
+   * fact on the same pass, in the field `ObjectDetailBatch` has for it. The two CATALOGED
+   * kinds are not marked in the same answer, because `catalog()` is read whole.
+   */
+  test("a key scan stopped at its cap is reported as truncation on the derived kind alone", async () => {
+    await provider.disconnect();
+    const writer = open({ path: fixtureFile });
+    const encoder = new TextEncoder();
+    writer.transact((tx) => {
+      for (let i = 0; i < LIBREDB_MAX_KEY_SCAN + 500; i++) {
+        tx.set(encoder.encode(`bulk:${i}`), encoder.encode("x"));
+      }
+    });
+    writer.close();
+    await provider.connect();
+
+    const keyspaces = await provider.describeObjects!([], "keyspace");
+    expect(keyspaces.details.map((detail) => detail.path)).toEqual([["bulk:*"]]);
+    expect(keyspaces.truncated).toEqual({
+      limit: 1,
+      reason: "the key walk stopped at the first 10,000 keys of a bounded key scan",
+    });
+    // The same answer, unmarked, for the two kinds the CATALOG enumerates.
+    expect((await provider.describeObjects!([], "table")).truncated).toBeUndefined();
+    expect((await provider.describeObjects!([], "collection")).truncated).toBeUndefined();
+  });
+
+  test("both bounds at once name both, and the limit reported is the caller's", async () => {
+    await provider.disconnect();
+    const writer = open({ path: fixtureFile });
+    const encoder = new TextEncoder();
+    writer.transact((tx) => {
+      for (let i = 0; i < LIBREDB_MAX_KEY_SCAN + 500; i++) {
+        tx.set(encoder.encode(`b${i % 3}:${i}`), encoder.encode("x"));
+      }
+    });
+    writer.close();
+    await provider.connect();
+
+    const batch = await provider.describeObjects!([], "keyspace", 1);
+    expect(batch.details.map((detail) => detail.path)).toEqual([["b0:*"]]);
+    expect(batch.truncated).toEqual({
+      limit: 1,
+      reason:
+        "the bulk column read was bounded at 1 object by its caller, and the key walk " +
+        "stopped at the first 10,000 keys of a bounded key scan",
+    });
+  });
+
+  test("an undeclared kind is refused by the DECLARATION, naming the engine and the kind", async () => {
+    await expect(provider.describeObjects!([], "view")).rejects.toThrow(/LibreDB declares no object kind "view"/);
+  });
+
+  test("a container path of another engine's shape is refused before anything is read", async () => {
+    await expect(provider.describeObjects!(["main"], "table")).rejects.toThrow(
+      /container path is empty, received \["main"\]/,
+    );
+  });
+
+  test("a limit that is not a positive whole number is refused, never clamped", async () => {
+    for (const limit of [0, -1, 1.5, Number.NaN]) {
+      await expect(provider.describeObjects!([], "table", limit)).rejects.toThrow(
+        /bulk column read limit must be a positive whole number/,
+      );
+    }
+    // The guard runs AFTER the declaration check and AFTER the container check, which is
+    // the order the reference sets: a caller gets the strongest true statement first.
+    await expect(provider.describeObjects!([], "view", 0)).rejects.toThrow(/declares no object kind "view"/);
+    await expect(provider.describeObjects!(["main"], "table", 0)).rejects.toThrow(/container path is empty/);
+  });
+
+  /**
+   * The sort is OURS and the walk is the ENGINE's, and on these two names they disagree.
+   *
+   * Task 26a-2 measured that on sqlite, libsql, duckdb, clickhouse and trino the server's
+   * own order is the UTF-8 BYTE order while `comparePaths` compares UTF-16 code units, and
+   * that the two answer the reverse for `U+E000` against `U+1F600`. The same holds here and
+   * it is worth pinning, because on this engine the CUT is applied to the sorted list: the
+   * kernel walks `U+E000` first (bytes `ee 80 80` below `f0 9f 98 80`) and `comparePaths`
+   * puts `U+1F600` first (the high surrogate `D83D` below `E000`), so a bounded read keeps
+   * the emoji and not the private-use character.
+   */
+  test("the bounded read cuts in comparePaths order, which is the reverse of the kernel's byte order", async () => {
+    await provider.disconnect();
+    const writer = open({ path: fixtureFile });
+    kv(writer).set("\u{E000}", "private use");
+    kv(writer).set("\u{1F600}", "emoji");
+    writer.close();
+    await provider.connect();
+
+    const all = await provider.describeObjects!([], "keyspace");
+    const exotic = all.details
+      .map((detail) => detail.path[0])
+      .filter((name) => name === "\u{E000}" || name === "\u{1F600}");
+    expect(exotic).toEqual(["\u{1F600}", "\u{E000}"]);
+    // The control, and it is what makes the assertion above non-vacuous: the kernel's own
+    // walk answers the two the other way round. The `range` covers exactly this pair,
+    // because every other key in the fixture is ASCII and sorts below both on either order.
+    const walked = (await provider.query("range \u{E000} \u{10FFFF}")).rows.map((row) => String(row.key));
+    expect(walked).toEqual(["\u{E000}", "\u{1F600}"]);
+  });
+
+  /**
+   * Standing ruling 5g on the fifth method: the two-level declaration is driven to a BOUND
+   * VALUE and not to a refusal, so a hardcoded depth and a positional read both die.
+   */
+  test("the bulk read follows a two-level declaration to a bound value", async () => {
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+
+    const batch = await provider.describeObjects!(["cat", "sch"], "table");
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["cat", "sch", "applicants:*"],
+      ["cat", "sch", "employees:*"],
+      ["cat", "sch", "vacancies:*"],
+    ]);
+    expect(batch.details[1].columns.map((column) => column.name)).toEqual(["id", "name", "salary", "active"]);
+    // The shape it accepted before the declaration changed is now the one it refuses.
+    await expect(provider.describeObjects!([], "table")).rejects.toThrow(
+      /container path is \[catalog, schema\], received \[\]/,
+    );
+  });
 });
