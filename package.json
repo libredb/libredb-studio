@@ -133,6 +133,9 @@
     "tedious": "^20.0.5"
   },
   "scripts": {
+    "shortcuts:sync": "bun scripts/sync-shortcuts.mjs",
+    "shortcuts:check": "bun scripts/sync-shortcuts.mjs --check",
+    "test:shortcuts": "bun test tests/unit/keyboard-shortcuts.test.ts && bun test tests/components/CommandPalette.test.tsx tests/components/QueryEditor.test.tsx tests/components/studio/StudioTabBar.test.tsx tests/components/sidebar-shortcuts.test.tsx",
     "dev": "node scripts/copy-monaco.mjs && next dev",
     "build": "node scripts/copy-monaco.mjs && next build",
     "build:lib": "tsup && node scripts/copy-theme.mjs",

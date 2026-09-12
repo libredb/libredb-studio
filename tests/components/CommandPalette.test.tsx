@@ -139,7 +139,7 @@ describe("CommandPalette", () => {
     expect(queryByText("Run Query")).toBeNull();
 
     // Fire Cmd+K to open the dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // After opening, the actions should be visible
     expect(queryByText("Run Query")).not.toBeNull();
@@ -150,7 +150,7 @@ describe("CommandPalette", () => {
     const { queryByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // Connection names should appear
     expect(queryByText("Test PostgreSQL")).not.toBeNull();
@@ -162,7 +162,7 @@ describe("CommandPalette", () => {
     const { queryByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // Table names from mockSchema
     expect(queryByText("users")).not.toBeNull();
@@ -177,7 +177,7 @@ describe("CommandPalette", () => {
     const { queryByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // The active connection should have "Active" text
     expect(queryByText("Active")).not.toBeNull();
@@ -190,7 +190,7 @@ describe("CommandPalette", () => {
     const { queryByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     expect(queryByText("Active")).toBeNull();
   });
@@ -201,7 +201,7 @@ describe("CommandPalette", () => {
     const { getByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // Find and click "Run Query" item
     const runQueryText = getByText("Run Query");
@@ -218,11 +218,11 @@ describe("CommandPalette", () => {
     const { queryByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
     expect(queryByText("Run Query")).not.toBeNull();
 
     // Close dialog by pressing Cmd+K again
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
     expect(queryByText("Run Query")).toBeNull();
   });
 
@@ -238,10 +238,36 @@ describe("CommandPalette", () => {
     expect(queryByText("Run Query")).toBeNull();
 
     // Fire Ctrl+K (Windows shortcut) to open the dialog
-    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", ctrlKey: true });
 
     // After opening, the actions should be visible
     expect(queryByText("Run Query")).not.toBeNull();
+  });
+
+  test("uses the physical key with Caps Lock or another keyboard layout", () => {
+    const { queryByText } = render(<CommandPalette {...createDefaultProps()} />);
+    for (const key of ["K", "л"]) {
+      fireEvent.keyDown(document, { key, code: "KeyK", ctrlKey: true });
+      expect(queryByText("Run Query")).not.toBeNull();
+      fireEvent.keyDown(document, { key, code: "KeyK", ctrlKey: true });
+      expect(queryByText("Run Query")).toBeNull();
+    }
+  });
+
+  test("does not claim a different physical key or extra modifiers", () => {
+    const { queryByText } = render(<CommandPalette {...createDefaultProps()} />);
+    for (const change of [{ code: "KeyJ" }, { altKey: true }, { shiftKey: true }]) {
+      const event = new KeyboardEvent("keydown", {
+        key: "k",
+        code: "KeyK",
+        ctrlKey: true,
+        cancelable: true,
+        ...change,
+      });
+      fireEvent(document, event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(queryByText("Run Query")).toBeNull();
+    }
   });
 
   test("Schema Diagram is hidden when no activeConnection", () => {
@@ -249,7 +275,7 @@ describe("CommandPalette", () => {
     const { queryByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // Schema Diagram (ERD) should not be rendered
     expect(queryByText("Schema Diagram (ERD)")).toBeNull();
@@ -260,7 +286,7 @@ describe("CommandPalette", () => {
     const { queryByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // Schema Diagram (ERD) should be rendered
     expect(queryByText("Schema Diagram (ERD)")).not.toBeNull();
@@ -291,7 +317,7 @@ describe("CommandPalette", () => {
     const { queryByText, getByTestId } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // Saved Queries group heading should appear
     expect(getByTestId("command-group-Saved Queries")).not.toBeNull();
@@ -320,7 +346,7 @@ describe("CommandPalette", () => {
     try {
       const onLoadSavedQuery = mock(() => {});
       const { getByText } = render(<CommandPalette {...createDefaultProps({ onLoadSavedQuery })} />);
-      fireEvent.keyDown(document, { key: "k", metaKey: true });
+      fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
       expect(getByText(preview, { exact: true })).not.toBeNull();
       const item = getByText("Preview regression").closest('[role="option"]');
       expect(item).not.toBeNull();
@@ -356,7 +382,7 @@ describe("CommandPalette", () => {
     const { getByTestId, queryByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // Recent Queries group heading should appear
     expect(getByTestId("command-group-Recent Queries")).not.toBeNull();
@@ -372,7 +398,7 @@ describe("CommandPalette", () => {
     const { queryByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // users table: 6 columns, 100 rows
     expect(queryByText("6 cols / 100 rows")).not.toBeNull();
@@ -388,7 +414,7 @@ describe("CommandPalette", () => {
     const { getByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // Click Format Query item
     const formatItem = getByText("Format Query").closest('[role="option"]');
@@ -405,7 +431,7 @@ describe("CommandPalette", () => {
     const { getByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // Click Save Current Query item
     const saveItem = getByText("Save Current Query").closest('[role="option"]');
@@ -426,7 +452,7 @@ describe("CommandPalette", () => {
     const { getByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     const agentItem = getByText("Ask the agent about this query").closest('[role="option"]');
     expect(agentItem).not.toBeNull();
@@ -444,7 +470,7 @@ describe("CommandPalette", () => {
     const props = createDefaultProps({ onAskAgent: undefined });
     const { queryByText } = render(<CommandPalette {...props} />);
 
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     expect(queryByText("Ask the agent about this query")).toBeNull();
     // The rest of the group is untouched by the absence.
@@ -457,7 +483,7 @@ describe("CommandPalette", () => {
     const { getByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // Click Logout item
     const logoutItem = getByText("Logout").closest('[role="option"]');
@@ -471,7 +497,7 @@ describe("CommandPalette", () => {
     const { getByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // Click the MySQL connection item
     const mysqlItem = getByText("Test MySQL").closest('[role="option"]');
@@ -488,7 +514,7 @@ describe("CommandPalette", () => {
     const { getByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // Click the "orders" table item
     const ordersItem = getByText("orders").closest('[role="option"]');
@@ -510,7 +536,7 @@ describe("CommandPalette", () => {
     const { getAllByTestId } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // Each connection should render a db-icon via the mocked getDBIcon
     const dbIcons = getAllByTestId("db-icon");
@@ -526,7 +552,7 @@ describe("CommandPalette", () => {
     const { queryByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
-    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
 
     // CommandEmpty renders "No results found." text
     expect(queryByText("No results found.")).not.toBeNull();
