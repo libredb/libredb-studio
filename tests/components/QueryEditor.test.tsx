@@ -1898,19 +1898,41 @@ describe("QueryEditor", () => {
 });
 
 describe("QueryEditor completion dialect", () => {
-  test("registers completions again when the connection dialect changes", () => {
-    mockUseMonacoReturn = { Range: class {} };
-    mockRegisterSQLCompletionProvider.mockClear();
-    const { rerender, unmount } = render(
-      React.createElement(QueryEditor, createDefaultProps({ databaseType: "postgres" })),
-    );
-    expect(mockRegisterSQLCompletionProvider).toHaveBeenLastCalledWith(
-      expect.anything(),
-      expect.anything(),
-      "postgres",
-    );
-    rerender(React.createElement(QueryEditor, createDefaultProps({ databaseType: "mysql" })));
-    expect(mockRegisterSQLCompletionProvider).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "mysql");
-    unmount();
-  });
+  test.each(["mysql", "sqlite", "duckdb", "mssql", "oracle"] as const)(
+    "disposes and replaces completions when switching PostgreSQL to %s and back",
+    (dialect) => {
+      mockUseMonacoReturn = { Range: class {} };
+      mockRegisterSQLCompletionProvider.mockClear();
+      const { rerender, unmount } = render(
+        React.createElement(QueryEditor, createDefaultProps({ databaseType: "postgres" })),
+      );
+      expect(mockRegisterSQLCompletionProvider).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.anything(),
+        "postgres",
+      );
+      const postgresRegistration = mockRegisterSQLCompletionProvider.mock.results[0].value as ReturnType<
+        typeof mockRegisterSQLCompletionProvider
+      >;
+      rerender(React.createElement(QueryEditor, createDefaultProps({ databaseType: dialect })));
+      expect(postgresRegistration.dispose).toHaveBeenCalledTimes(1);
+      expect(mockRegisterSQLCompletionProvider).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), dialect);
+      const otherRegistration = mockRegisterSQLCompletionProvider.mock.results[1].value as ReturnType<
+        typeof mockRegisterSQLCompletionProvider
+      >;
+      rerender(React.createElement(QueryEditor, createDefaultProps({ databaseType: "postgres" })));
+      expect(otherRegistration.dispose).toHaveBeenCalledTimes(1);
+      expect(mockRegisterSQLCompletionProvider).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.anything(),
+        "postgres",
+      );
+      expect(mockRegisterSQLCompletionProvider).toHaveBeenCalledTimes(3);
+      const finalRegistration = mockRegisterSQLCompletionProvider.mock.results[2].value as ReturnType<
+        typeof mockRegisterSQLCompletionProvider
+      >;
+      unmount();
+      expect(finalRegistration.dispose).toHaveBeenCalledTimes(1);
+    },
+  );
 });

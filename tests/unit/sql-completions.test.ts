@@ -1,6 +1,7 @@
 import "../setup";
 import { describe, test, expect } from "bun:test";
 import type * as Monaco from "monaco-editor";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   SQL_KEYWORDS,
   SQL_FUNCTIONS,
@@ -664,5 +665,64 @@ describe("Quoted PostgreSQL table column lookup", () => {
       ._getProvider()!
       .provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1));
     expect(result.suggestions.map((item) => item.label)).toEqual(["id", "name", "email"]);
+  });
+});
+
+describe("Completion dialect compatibility", () => {
+  // Include the legacy caller without a dialect as well as every non-Postgres
+  // registration. This is provider behavior coverage, not live-engine coverage.
+  const otherDialects = [...SHIPPED_DATABASE_TYPES.filter((type) => type !== "postgres"), undefined];
+
+  test.each(otherDialects)("%s preserves table insertion and qualified replacement", (dialect) => {
+    const monaco = createMockMonaco();
+    const label = "Sales.OrderDetails";
+    registerSQLCompletionProvider(
+      monaco,
+      createSchemaCache({ tableItems: [{ label, labelLower: label.toLowerCase(), rowCount: 1, columnNames: "id" }] }),
+      dialect,
+    );
+    for (const line of ["SELECT * FROM ", "SELECT * FROM Sal", "SELECT * FROM Sales.", "SELECT * FROM Sales.Ord"]) {
+      const result = monaco
+        ._getProvider()!
+        .provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1));
+      const suggestion = result.suggestions.find((item) => item.label === label)!;
+      expect(suggestion.insertText).toBe(label);
+      const range = suggestion.range as Monaco.IRange;
+      expect(line.slice(0, range.startColumn - 1) + suggestion.insertText).toBe("SELECT * FROM Sales.OrderDetails");
+    }
+  });
+
+  test.each(otherDialects)("%s retains bare column lookup and existing delimiter behavior", (dialect) => {
+    const monaco = createMockMonaco();
+    registerSQLCompletionProvider(monaco, createSchemaCache(), dialect);
+    for (const [line, fullText, expected] of [
+      ["SELECT users.", "SELECT users.", ["id", "name", "email"]],
+      ["SELECT u.", "SELECT u. FROM users u", ["id", "name", "email"]],
+      ["SELECT public.products.", "SELECT public.products.", ["id", "price"]],
+      ['SELECT "users".', 'SELECT "users".', []],
+      ['SELECT "public"."users".', 'SELECT "public"."users".', []],
+      ["SELECT `users`.", "SELECT `users`.", []],
+      ["SELECT [users].", "SELECT [users].", []],
+      ["SELECT missing.", "SELECT missing.", []],
+    ] as const) {
+      const result = monaco
+        ._getProvider()!
+        .provideCompletionItems(createMockModel(line, fullText), createPosition(1, line.length + 1));
+      expect(result.suggestions.map((item) => item.label)).toEqual([...expected]);
+    }
+  });
+
+  test("PostgreSQL keeps escaped quoted-name lookup", () => {
+    const monaco = createMockMonaco();
+    const cache = createSchemaCache();
+    cache.columnMap.set('odd"name', [
+      { label: "marker", labelLower: "marker", type: "text", isPrimary: false, tableName: 'Odd"Name' },
+    ]);
+    registerSQLCompletionProvider(monaco, cache, "postgres");
+    const line = 'SELECT "Odd""Name".';
+    const result = monaco
+      ._getProvider()!
+      .provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1));
+    expect(result.suggestions.map((item) => item.label)).toEqual(["marker"]);
   });
 });

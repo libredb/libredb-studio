@@ -254,10 +254,13 @@ export function registerSQLCompletionProvider(
 
       // Dot-triggered: Show columns for specific table or alias
       if (lastChar === ".") {
-        const matches = line.substring(0, position.column - 1).match(/(?:"((?:[^"]|"")+)"|(\w+))\.$/);
-        if (matches) {
-          const identifier = (matches[1]?.replace(/""/g, '"') ?? matches[2]).toLowerCase();
-
+        const textToDot = line.substring(0, position.column - 1);
+        // Only PostgreSQL completions introduce quoted table names in this PR.
+        // Other dialects retain their existing bare-identifier lookup.
+        const quotedIdentifier =
+          databaseType === "postgres" ? textToDot.match(/"((?:[^"]|"")+)"\.$/)?.[1].replace(/""/g, '"') : undefined;
+        const identifier = (quotedIdentifier ?? textToDot.match(/(\w+)\.$/)?.[1])?.toLowerCase();
+        if (identifier) {
           // Helper to find columns by table name (handles schema.table format)
           const findColumns = (tableName: string) => {
             const tableNameLower = tableName.toLowerCase();
