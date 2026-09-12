@@ -34,8 +34,9 @@ import {
   type ObjectDetail,
   type ObjectDetailBatch,
   type ObjectKindSpec,
+  type ContainerLevelSpec,
 } from "../../types";
-import { callerBoundTruncationReason, declaredKinds, findKind } from "../../object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
 import {
   DatabaseConfigError,
   ConnectionError,
@@ -863,21 +864,43 @@ const BULK_DETAIL_SQL_BOUNDED: Record<string, string> = Object.fromEntries(
 );
 
 /**
+ * The container levels this provider declares, sliced to the depth `containerDepth()`
+ * reports.
+ *
+ * One reader for the whole file, so the depth and the level list can never be taken by two
+ * different rules. `containerDepth()` is what decides, never `containerLevels.length`.
+ */
+function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerLevelSpec[] {
+  return (capabilities.containerLevels ?? []).slice(0, containerDepth(capabilities));
+}
+
+/**
  * The one schema a container path names on this engine.
  *
- * PostgreSQL declares exactly one container level, so a path of any other length is a
- * caller that built it from another engine's shape. It raises rather than reading
- * `path[0]` and carrying on, because `undefined` bound to `$1` would answer an empty
- * folder that looks exactly like a schema holding nothing.
+ * Both the expected DEPTH and the schema's POSITION are read off the declaration, and
+ * neither may be written as a constant. This function used to be `container.length !== 1`
+ * returning `container[0]`, which is two of the three spellings standing ruling 5g names,
+ * and the bulk column read routed its container through it. Both are behaviour-identical
+ * on a one-level engine, which is exactly why they survived: no fixture of PostgreSQL can
+ * tell them from the derived form, and on a two-level declaration the first refuses every
+ * valid path while the second binds the catalog where the schema belongs.
+ *
+ * A path of another depth is a caller that built it from another engine's shape, and it
+ * raises rather than reading a segment and carrying on: `undefined` bound to `$1` would
+ * answer an empty folder that looks exactly like a schema holding nothing.
  */
-function containerSchema(container: readonly string[]): string {
-  if (container.length !== 1) {
+function containerSchema(capabilities: ProviderCapabilities, container: readonly string[]): string {
+  const levels = declaredLevels(capabilities);
+  const index = levels.findIndex((level) => level.id === "schema");
+  const segment = container.length === levels.length && index >= 0 ? container[index] : undefined;
+  if (segment === undefined) {
     throw new QueryError(
-      `A PostgreSQL container path is one schema name, received ${JSON.stringify(container)}`,
+      `A PostgreSQL container path is [${levels.map((level) => level.id).join(", ")}], ` +
+        `received ${JSON.stringify(container)}`,
       "postgres",
     );
   }
-  return container[0];
+  return segment;
 }
 
 /**
@@ -2212,7 +2235,7 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
     this.ensureConnected();
-    const schema = containerSchema(container);
+    const schema = containerSchema(this.getCapabilities(), container);
     const declared = declaredKinds(this.getCapabilities());
     const counts = seedZeroCounts(declared);
 
@@ -2291,7 +2314,7 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     this.ensureConnected();
-    const schema = containerSchema(container);
+    const schema = containerSchema(this.getCapabilities(), container);
     // Two questions, asked in order, and only the DECLARATION answers the first one.
     // Deciding "is this kind declared" from whether a listing statement exists made the two
     // methods disagree, and would have reported "declares no object kind" about a kind
@@ -2420,7 +2443,7 @@ export class PostgresProvider extends SQLBaseProvider {
     if (findKind(this.getCapabilities(), kind) === undefined) {
       throw new QueryError(`PostgreSQL declares no object kind "${kind}"`, "postgres");
     }
-    const schema = containerSchema(container);
+    const schema = containerSchema(this.getCapabilities(), container);
     if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
       // Not clamped and not ignored. A 0 would answer nothing while reporting a
       // truncation the caller never asked for, and a fraction reaches the server as a

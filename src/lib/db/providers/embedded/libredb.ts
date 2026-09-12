@@ -1132,8 +1132,10 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       ...(scanBound ? [SCAN_BOUND_SENTENCE] : []),
     ];
     // The CALLER's limit whenever the caller set one that bit; otherwise the number this
-    // read actually produced, which is the only bound in existence on that arm and keeps
-    // `details.length <= truncated.limit` true either way.
+    // read actually produced. On that arm the bound the provider applied is a key-walk
+    // budget and not an object count, so there is no object count to report and no number
+    // that would be one; `reason` is what carries the truth, and `types.ts` says so beside
+    // the field rather than leaving a reader to infer a cap nobody set.
     return { details, truncated: { limit: bounded ? limit! : details.length, reason: reasons.join(", and ") } };
   }
 

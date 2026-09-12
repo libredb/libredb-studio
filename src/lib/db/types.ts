@@ -1276,6 +1276,16 @@ export interface ObjectDetail {
  * absent one - the #414 defect, measured against the agent. `details.length` never
  * exceeds `truncated.limit`.
  *
+ * `limit` is the bound where the bound IS an object count, which is every caller-bounded
+ * read. Where the bound is not one - redis and libredb stop a key walk after a fixed
+ * number of KEYS and derive their objects from what it saw - there is no object count to
+ * report, and those two answer `details.length`, the number the read actually produced. So
+ * read `limit` as an upper bound on `details.length` that a caller may not read back as a
+ * cap somebody set: `reason` is the field that says WHICH bound bit, and it is the one to
+ * show a person. Making the field optional was considered and refused: it is published
+ * through `src/exports/types.ts`, every consumer compares against it, and an absent number
+ * would buy accuracy on two engines by making the comparison conditional on all seventeen.
+ *
  * `reason` is ONE SENTENCE for one event across every engine, and that is a rule rather
  * than a convention: build the caller's half with `callerBoundTruncationReason()` in
  * `src/lib/db/object-kinds.ts` and never spell it per provider. Eleven implementers wrote

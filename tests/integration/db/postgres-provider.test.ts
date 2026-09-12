@@ -4201,7 +4201,9 @@ describe("PostgreSQL object listing and detail", () => {
     // Not [] and not a zero count: binding undefined to $1 would answer a schema holding
     // nothing, which is indistinguishable from a real empty schema.
     await expect(provider.countObjects([])).rejects.toThrow(QueryError);
-    await expect(provider.listObjects(["catalog", "schema"], "table")).rejects.toThrow(/one schema name/);
+    await expect(provider.listObjects(["catalog", "schema"], "table")).rejects.toThrow(
+      /A PostgreSQL container path is \[schema\], received \["catalog","schema"\]/,
+    );
     await provider.disconnect();
   });
 
@@ -4376,6 +4378,55 @@ describe("PostgreSQL object listing and detail", () => {
 
     await expect(provider.listObjects(["app"], "package")).rejects.toThrow(
       /declares the kind "package" but has no statement that lists it/,
+    );
+    await provider.disconnect();
+  });
+
+  /**
+   * Ruling 5g, on this file's container reader (#789 bulk-read review, Minor 6).
+   *
+   * `containerSchema()` was `container.length !== 1` plus `container[0]`, which is the
+   * exact spelling the pattern tells every other implementer not to copy, and the bulk
+   * read routed through it. Both halves are behaviour-identical on a one-level engine, so
+   * no fixture of PostgreSQL can tell the two spellings apart: this test hands THIS
+   * provider a two-level declaration and drives it to the BOUND VALUE, which is the only
+   * place the difference shows. The hardcoded depth refuses a valid two-segment path; a
+   * positional `container[0]` binds the catalog where the schema belongs.
+   */
+  test("the container depth and the schema bind are DERIVED, which a two-level declaration shows", async () => {
+    const bound: unknown[][] = [];
+    mockQueryFn = async (_sql, params) => {
+      bound.push(params ?? []);
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+
+    const batch = await provider.describeObjects(["shop", "app"], "table");
+
+    expect(batch.details).toEqual([]);
+    // The SCHEMA segment, which is the second one under this declaration. `container[0]`
+    // would bind "shop" and narrow every read to a schema that does not exist. Every
+    // statement that binds anything is asserted, rather than a count of them: the number of
+    // round trips is this method's business and not this rule's.
+    expect(bound.filter((params) => params.length > 0)).toEqual([["app"]]);
+    await provider.disconnect();
+  });
+
+  test("a path whose depth is not the declared one is refused, naming the declaration", async () => {
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObjects(["shop", "app"], "table")).rejects.toThrow(
+      /A PostgreSQL container path is \[schema\], received \["shop","app"\]/,
     );
     await provider.disconnect();
   });
@@ -4719,7 +4770,9 @@ describe("PostgreSQL bulk column read", () => {
     const provider = makeProvider();
     await provider.connect();
 
-    await expect(provider.describeObjects([], "table")).rejects.toThrow(/one schema name/);
+    await expect(provider.describeObjects([], "table")).rejects.toThrow(
+      /A PostgreSQL container path is \[schema\], received \[\]/,
+    );
     await provider.disconnect();
   });
 
