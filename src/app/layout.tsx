@@ -14,7 +14,7 @@ import { Toaster } from "@/components/ui/sonner";
 
 const title = "LibreDB Studio | Universal Database Editor";
 const description =
-  "A self-hosted, web-based SQL IDE for PostgreSQL, MySQL, MongoDB and more, with AI-assisted queries, schema exploration, and support for SQL and NoSQL engines.";
+  "A self-hosted database management platform for SQL and NoSQL databases, with schema exploration, query tools, data import, and AI-assisted database development.";
 // Project previews use the public demo documented in README, including on private deployments.
 const siteUrl = "https://libredb.org";
 const previewImage = {
@@ -23,9 +23,8 @@ const previewImage = {
 };
 
 export const metadata: Metadata = {
-  title: "LibreDB Studio | Universal Database Editor",
-  description:
-    "A self-hosted database management platform for SQL and NoSQL databases, with schema exploration, query tools, data import, and AI-assisted database development.",
+  title,
+  description,
   openGraph: {
     type: "website",
     url: siteUrl,

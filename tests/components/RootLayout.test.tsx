@@ -49,15 +49,16 @@ describe("RootLayout", () => {
       type: "website",
       url: "https://libredb.org",
       title: metadata.title,
+      description: metadata.description,
       siteName: "LibreDB Studio",
       images: [{ ...image, width: screenshot.readUInt32BE(16), height: screenshot.readUInt32BE(20) }],
     });
     expect(metadata.twitter).toMatchObject({
       card: "summary_large_image",
       title: metadata.title,
+      description: metadata.description,
       images: [image],
     });
-    expect(metadata.openGraph?.description).toBe(metadata.twitter?.description);
   });
 
   test("describes the database scope in a search-result snippet", () => {
