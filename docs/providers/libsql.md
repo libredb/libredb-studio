@@ -493,6 +493,77 @@ name, and the field is empty.
 Zero columns IS a failed read and raises: the engine refuses `CREATE TABLE t()`, so every table and every
 view has at least one column.
 
+#### `describeObjects()` describes a whole folder in ONE round trip (#789)
+
+`describeObjects(container, kind, limit?)` answers columns, indexes and foreign keys for EVERY object
+of one kind in `main`, in ONE request whatever the folder holds. The five statements - the target read
+plus four detail reads - are independent of each other, each carrying its own copy of the target CTE,
+so they go in a single Hrana batch. Measured against
+`ghcr.io/tursodatabase/libsql-server:v0.24.33` holding the fixture below: **1 request for the ten-table
+folder against 12 for ten `describeObject()` calls**, and 1 ms against 8 ms over the loopback, where a
+round trip costs almost nothing. On a Turso Cloud database that ratio is the whole story.
+
+That is the engine-specific half of the decision. The SQLite provider issues the same five statements
+as five separate calls into a file handle, because there a round trip is a function call.
+
+Each detail statement joins a pragma table-valued function against the target set, which sqld accepts:
+measured, a TVF argument that references a column of the row being joined runs the pragma once per
+target object inside one statement.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.** The same pragmas `describeObject()` reads and the same `PRAGMA table_list` target
+`listObjects()` reads. It is not `readSchema()`'s: the flat surface reads `sqlite_master` and
+`PRAGMA table_info`, so it sees the FTS5 shadow tables as ordinary tables and DROPS a generated column,
+and its `NOT LIKE 'sqlite_%'` carries no `ESCAPE`, so it also drops `sqliteXledger`. MEMBERSHIP comes
+from the target read and never from the column read: deriving it from the columns would drop an object
+whose every column is hidden, and the folder's listing would then name an object the batch does not
+carry. It is also why this read does not repeat the single read's zero-column throw - there an empty
+answer means the object is not there under that name, here the catalog has just said it is.
+
+**Which kinds have no columns.** `index` and `trigger`, which answer `{ details: [] }` without touching
+the network: `pragma_table_xinfo` answers zero rows for an index name and for a trigger name. That is
+the same fact `describeObject()` answers as three empty arrays, and on this engine it coincides exactly
+with `role === "relation"` - which is not the general rule, since a MariaDB sequence is declared
+`config` and has eight real columns.
+
+**What bounds the read on the wire.** `LIMIT ?` inside the target CTE, the placeholder BOUND rather than
+interpolated and carrying `limit + 1`, so a saturated read is told from an exact one with no second
+count. Measured accepted on 0.24.33, which the flat surface does not rely on: `introspect.ts` embeds
+object names as SQL literals. The extra object is dropped in code and `truncated` carries the CALLER's
+limit. Nothing here caps the columns of an object.
+
+**What orders the cut, and under whose collation.** `ORDER BY t.name` in the target CTE, and it is
+load-bearing twice. Measured: `pragma_table_list` answers in no useful order without it, so a bounded
+read would keep an arbitrary subset. And that sort runs under BINARY, the UTF-8 BYTE order, which is not
+the order `comparePaths` produces: measured on the live server, a database holding the two names
+`U+E000` and `U+1F600` answers `ORDER BY t.name` as `U+E000, U+1F600` (bytes `EE 80 80` below
+`F0 9F 98 80`) where a JavaScript sort answers the reverse, because JavaScript compares UTF-16 code
+units and the surrogate `0xD83D` sorts below `0xE000`. So the MEMBERSHIP of a bounded cut is the
+server's and the ORDER of the answer is ours. The four detail statements repeat the same target CTE
+rather than joining a temporary of it, which is safe because a name is unique within a schema, so
+`ORDER BY t.name` is a TOTAL order and all five statements cut the same set.
+
+**Mixed path depth (ruling 5f).** Not in this engine's relation set. `table` and `view` are the kinds
+with columns and both are addressed `[name]` under a zero-level container; `trigger` is the one kind
+that nests, and it has no columns.
+
+**Two repairs the single read needed to make one mapper possible**, and both are improvements rather
+than accommodations. The foreign key statement now resolves an unnamed parent key in a correlated
+`(SELECT p.name FROM pragma_table_info(f."table", ?) AS p WHERE p.pk = f.seq + 1)`, so no foreign key
+costs a request of its own any more and the bulk read needs no statement per distinct parent; and
+`pragma_index_list` is ordered by name, because measured it answers in reverse creation order and the
+bulk read has to order by the object to group its rows.
+
+**One defect only the live run caught**, which is standing ruling 5b's trap exactly. The new foreign
+key statement carries THREE placeholders - the subquery's schema is first, because SQLite numbers
+placeholders by where they appear in the statement text and the select list is written before the FROM
+- and the single read was still passing the old two-value array. sqld answers
+`Arguments do not match SQL parameters: value for parameter 3 not found`. The fake server in the test
+file dispatches on statement text and never counted binds, so the suite was green while every
+`describeObject()` foreign key read would have failed against a real server. The bind arity is now
+pinned by an assertion in that suite.
+
 #### No `rowCount` and no `sizeBytes` on a listed object
 
 There is no catalog row estimate: `sqlite_stat1` exists only after an `ANALYZE` this server refuses

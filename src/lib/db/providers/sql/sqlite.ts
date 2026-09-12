@@ -555,7 +555,7 @@ function describedCte(types: readonly string[], bounded: boolean): string {
         SELECT t.name AS object_name
           FROM pragma_table_list AS t
          WHERE t.schema = ?
-           AND t.type IN (${types.map(() => "?").join(", ")})
+           AND t.type IN (${types.map((type) => `'${type}'`).join(", ")})
            AND t.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
          ORDER BY t.name${bounded ? "\n         LIMIT ?" : ""}
       )`;
@@ -1559,8 +1559,7 @@ export class SQLiteProvider extends SQLBaseProvider {
 
     const bounded = limit !== undefined;
     const statements = bounded ? BULK_DETAIL_SQL_BOUNDED[kind]! : BULK_DETAIL_SQL[kind]!;
-    const types = BULK_RELATION_TYPES[kind]!;
-    const head = [MAIN_SCHEMA, ...types, ...(bounded ? [limit + 1] : [])];
+    const head = [MAIN_SCHEMA, ...(bounded ? [limit + 1] : [])];
     const params = (schemaBinds: number): unknown[] => [...head, ...Array<string>(schemaBinds).fill(MAIN_SCHEMA)];
 
     const targets = this.runObjectQuery<{ object_name: string }>(statements.target, params(statements.schemaBinds[0]));

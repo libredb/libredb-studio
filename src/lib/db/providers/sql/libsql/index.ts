@@ -43,6 +43,7 @@ import {
   type MaintenanceResult,
   type MaintenanceType,
   type ObjectDetail,
+  type ObjectDetailBatch,
   type PerformanceMetrics,
   type ProviderCapabilities,
   type ProviderLabels,
@@ -68,6 +69,7 @@ import {
 import {
   countLibSQLObjects,
   describeLibSQLObject,
+  describeLibSQLObjects,
   LIBSQL_OBJECT_KINDS,
   type LibSQLObjectReader,
   listLibSQLObjects,
@@ -354,6 +356,10 @@ export class LibSQLProvider extends SQLBaseProvider {
 
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
     return describeLibSQLObject(this.objectReader(), path, kind);
+  }
+
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    return describeLibSQLObjects(this.objectReader(), container, kind, limit);
   }
 
   // ==========================================================================

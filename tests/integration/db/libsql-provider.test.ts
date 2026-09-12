@@ -735,6 +735,21 @@ const TABLE_LIST_WITH_TEMP: readonly { schema: string; name: string; type: strin
   { schema: "temp", name: "orders", type: "view" },
 ];
 
+/**
+ * The same catalog plus the two names that separate the ENGINE's order from this process's.
+ *
+ * Measured on a live sqld 0.24.33: `ORDER BY t.name` answers `U+E000` before `U+1F600`,
+ * because SQLite's BINARY collation is the UTF-8 BYTE order (`EE 80 80` below
+ * `F0 9F 98 80`), while a JavaScript sort compares UTF-16 code units and puts the surrogate
+ * `0xD83D` first. So a bounded read's MEMBERSHIP is the server's and the ORDER of the
+ * answer is ours, and neither can be dropped without the other showing it.
+ */
+const TABLE_LIST_WITH_EXOTIC: readonly { schema: string; name: string; type: string }[] = [
+  ...TABLE_LIST_ROWS,
+  { schema: "main", name: "\uE000", type: "table" },
+  { schema: "main", name: "\u{1F600}", type: "table" },
+];
+
 /** One row of `sqlite_schema`, verbatim and in the engine's own order. */
 const SQLITE_SCHEMA_ROWS: readonly { type: string; name: string; tbl_name: string }[] = [
   { type: "table", name: "customers", tbl_name: "customers" },
@@ -828,6 +843,10 @@ const COLUMNS: Readonly<Record<string, ColumnRow[]>> = {
     column("order_id", "INTEGER", 0, null, 0),
     column("carrier", "TEXT", 0, null, 0),
   ],
+  // Two names whose UTF-8 byte order is the OPPOSITE of their UTF-16 code-unit order, so
+  // the engine's cut and this process's sort can be told apart (#789).
+  "\uE000": [column("x", "INTEGER", 0, null, 0)],
+  "\u{1F600}": [column("x", "INTEGER", 0, null, 0)],
   badges: [
     column("id", "INTEGER", 0, null, 1),
     column("code", "TEXT", 0, null, 0),
@@ -952,9 +971,246 @@ interface Catalog {
 
 const FIXTURE: Catalog = { tableList: TABLE_LIST_ROWS, sqliteSchema: SQLITE_SCHEMA_ROWS };
 
+/**
+ * Two names in the order SQLite's BINARY collation puts them, which is the UTF-8 BYTE
+ * order and NOT JavaScript's UTF-16 code-unit order. Measured on a live sqld 0.24.33.
+ */
+function byteOrder(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+}
+
+/** The name a flat-surface statement embeds as a LITERAL rather than binding. */
+function literalArg(sql: string): string | undefined {
+  return /pragma_\w+\('([^']*)'\)/.exec(sql)?.[1];
+}
+
+/**
+ * The parent key column an unnamed foreign key resolves to, as the correlated subquery in
+ * `OBJECT_FOREIGN_KEYS_SQL` resolves it: the parent's key column whose 1-based `pk` rank is
+ * `seq + 1`. `legacy` declares no primary key at all, so it answers null.
+ */
+function parentKey(parent: string, seq: number): string | null {
+  const keys = lookup(COLUMNS, parent)
+    .filter((row) => row.pk > 0)
+    .sort((left, right) => left.pk - right.pk);
+  return keys[seq]?.name ?? null;
+}
+
+/**
+ * The five statements of the BULK column read, answered off the same fixture the single
+ * read answers off (#789).
+ *
+ * Written as one arm rather than five, because all five carry the same target CTE and the
+ * point of the fake is that they cut the SAME set: the target is derived here once and the
+ * four detail statements are answered against it. What this arm cannot see is a rewrite of
+ * the SQL itself (standing ruling 5b), which is why the whole method was also run against a
+ * live `ghcr.io/tursodatabase/libsql-server:v0.24.33` - see docs/providers/libsql.md.
+ */
+function bulkRows(sql: string, args: unknown[], catalog: Catalog): Cell | null {
+  if (!/WITH described AS/.test(sql)) return null;
+  const types = selectedTypes(sql) ?? [];
+  // `?` are positional and the type list is a LITERAL list, the same spelling the folder's
+  // own listing carries, so the only binds before the LIMIT are the schema.
+  const limit = /LIMIT \?/.test(sql) ? Number(args[1]) : undefined;
+  const ordered = catalog.tableList
+    .filter((row) => row.schema === args[0])
+    .filter((row) => types.includes(row.type))
+    .filter((row) => keepsName(sql, row.name))
+    .map((row) => row.name);
+  // `ORDER BY t.name` is APPLIED here rather than assumed, and under the engine's own
+  // collation. Measured against a live sqld 0.24.33: the sort is BINARY, the UTF-8 BYTE
+  // order, so `U+E000` (EE 80 80) comes back before `U+1F600` (F0 9F 98 80) - the opposite
+  // of a JavaScript sort, which compares UTF-16 code units and puts the surrogate 0xD83D
+  // first. Without applying it here, dropping the clause from the statement could not be
+  // mutated, and the two orders could not be told apart at all.
+  const targets = (/ORDER BY t\.name/.test(sql) ? [...ordered].sort(byteOrder) : ordered).slice(0, limit);
+
+  const cols = (names: string[]): [string, string | null][] => names.map((name) => [name, null]);
+  const rows = (names: string[], values: (Cell | null)[][]): Cell =>
+    result(
+      cols(names),
+      values.map((row) => row.map((cell) => cell ?? { type: "null" })),
+    );
+
+  if (/JOIN pragma_table_xinfo/.test(sql)) {
+    return rows(
+      ["object_name", "name", "type", "notnull", "dflt_value", "pk"],
+      targets.flatMap((object) =>
+        lookup(COLUMNS, object)
+          .filter((row) => !/hidden <> 1/.test(sql) || row.hidden !== 1)
+          .map((row) => [
+            text(object),
+            text(row.name),
+            text(row.type),
+            int(row.notnull),
+            row.dflt === null ? null : text(row.dflt),
+            int(row.pk),
+          ]),
+      ),
+    );
+  }
+  if (/JOIN pragma_index_info/.test(sql)) {
+    return rows(
+      ["object_name", "index_name", "name"],
+      targets.flatMap((object) =>
+        lookup(INDEX_LIST, object)
+          .filter(([name]) => keepsName(sql, name))
+          .flatMap(([index]) =>
+            lookup(INDEX_COLUMNS, index).map((column) => [
+              text(object),
+              text(index),
+              column === null ? null : text(column),
+            ]),
+          ),
+      ),
+    );
+  }
+  if (/JOIN pragma_index_list/.test(sql)) {
+    return rows(
+      ["object_name", "name", "unique"],
+      targets.flatMap((object) =>
+        (/ORDER BY d\.object_name, i\.name/.test(sql)
+          ? [...lookup(INDEX_LIST, object)].sort(([left], [right]) => byteOrder(left, right))
+          : lookup(INDEX_LIST, object)
+        )
+          .filter(([name]) => keepsName(sql, name))
+          .map(([name, unique]) => [text(object), text(name), int(unique)]),
+      ),
+    );
+  }
+  if (/JOIN pragma_foreign_key_list/.test(sql)) {
+    return rows(
+      ["object_name", "id", "seq", "table", "from", "to", "parent_key"],
+      targets.flatMap((object) =>
+        lookup(FOREIGN_KEYS, object).map(([id, seq, parent, from, to]) => {
+          const key = parentKey(parent, seq);
+          return [
+            text(object),
+            int(id),
+            int(seq),
+            text(parent),
+            text(from),
+            to === null ? null : text(to),
+            key === null ? null : text(key),
+          ];
+        }),
+      ),
+    );
+  }
+  return rows(
+    ["object_name"],
+    targets.map((object) => [text(object)]),
+  );
+}
+
+/**
+ * The FLAT reading, answered off the SAME fixture the object reading answers off (#789).
+ *
+ * Without it `getSchema()` here answers the two `probe_*` tables of the recorded
+ * connection payloads, which share no name with any object this fixture publishes - so the
+ * conformance helper's join guard could only report the two readings as two populations.
+ * A fixture that puts one object in front of both surfaces is the whole point of that
+ * guard, and answering the flat read from a different catalog is the thing it exists to
+ * catch.
+ *
+ * Two differences from the object reading are the ENGINE's and are kept rather than
+ * smoothed away: the flat read is over `sqlite_master`, so it sees the FTS5 shadow tables
+ * as ordinary tables, and its `NOT LIKE 'sqlite_%'` carries no `ESCAPE`, so it also drops
+ * `sqliteXledger`, a name a user can really have. Both are why the object surface reads
+ * `PRAGMA table_list` and escapes its wildcard.
+ */
+function flatRows(sql: string, catalog: Catalog): Cell | null {
+  if (/FROM sqlite_master/.test(sql) && /type = 'table'/.test(sql) && /SELECT name/.test(sql)) {
+    const names = catalog.sqliteSchema
+      .filter((row) => row.type === "table")
+      .map((row) => row.name)
+      .filter((name) => !/^sqlite.{1}/.test(name))
+      .sort();
+    return result(
+      [["name", "TEXT"]],
+      names.map((name) => [text(name)]),
+    );
+  }
+  if (/^SELECT COUNT\(\*\) AS row_count/.test(sql.trim())) {
+    return result([["row_count", null]], [[int(0)]]);
+  }
+  const name = literalArg(sql);
+  if (name === undefined) return null;
+  if (/pragma_table_info/.test(sql)) {
+    return result(
+      [
+        ["cid", null],
+        ["name", null],
+        ["type", null],
+        ["notnull", null],
+        ["dflt_value", null],
+        ["pk", null],
+      ],
+      lookup(COLUMNS, name)
+        // `table_info` and not `table_xinfo`: the flat surface loses a generated column,
+        // which is the defect the object surface's `table_xinfo` does not have.
+        .filter((row) => row.hidden === 0)
+        .map((row, cid) => [
+          int(cid),
+          text(row.name),
+          text(row.type),
+          int(row.notnull),
+          row.dflt === null ? { type: "null" } : text(row.dflt),
+          int(row.pk),
+        ]),
+    );
+  }
+  if (/pragma_index_list/.test(sql)) {
+    return result(
+      [
+        ["seq", null],
+        ["name", null],
+        ["unique", null],
+        ["origin", null],
+      ],
+      lookup(INDEX_LIST, name).map(([index, unique], seq) => [int(seq), text(index), int(unique), text("c")]),
+    );
+  }
+  if (/pragma_index_info/.test(sql)) {
+    return result(
+      [
+        ["seqno", null],
+        ["cid", null],
+        ["name", null],
+      ],
+      lookup(INDEX_COLUMNS, name).map((column, seqno) => [
+        int(seqno),
+        int(seqno),
+        column === null ? { type: "null" } : text(column),
+      ]),
+    );
+  }
+  if (/pragma_foreign_key_list/.test(sql)) {
+    return result(
+      [
+        ["id", null],
+        ["seq", null],
+        ["table", null],
+        ["from", null],
+        ["to", null],
+      ],
+      lookup(FOREIGN_KEYS, name).map(([id, seq, parent, from, to]) => [
+        int(id),
+        int(seq),
+        text(parent),
+        text(from),
+        to === null ? { type: "null" } : text(to),
+      ]),
+    );
+  }
+  return null;
+}
+
 /** The catalog every object-surface test runs against. */
 function objectServer(catalog: Catalog = FIXTURE): Server {
   return (sql, args) => {
+    const bulk = bulkRows(sql, args, catalog);
+    if (bulk !== null) return bulk;
     if (/GROUP BY kind/.test(sql)) return groupedCounts(sql, args, catalog);
     if (/pragma_table_list/.test(sql)) {
       return result(
@@ -978,6 +1234,37 @@ function objectServer(catalog: Catalog = FIXTURE): Server {
         selected.map((row) => [text(row.name)]),
       );
     }
+    if (/pragma_foreign_key_list/.test(sql)) {
+      // `args[1]`, not `args[0]`: the statement's first placeholder belongs to the
+      // parent-key subquery, which SQLite numbers first because the select list is written
+      // before the FROM. A fake reading `args[0]` would answer the SCHEMA's foreign keys,
+      // which is nothing, and every foreign key assertion would quietly go vacuous.
+      const object = args[1];
+      return result(
+        [
+          ["id", null],
+          ["seq", null],
+          ["table", null],
+          ["from", null],
+          ["to", null],
+          ["parent_key", null],
+        ],
+        lookup(FOREIGN_KEYS, object).map(([id, seq, parent, from, to]) => {
+          const key = parentKey(parent, seq);
+          return [
+            int(id),
+            int(seq),
+            text(parent),
+            text(from),
+            to === null ? { type: "null" } : text(to),
+            key === null ? { type: "null" } : text(key),
+          ];
+        }),
+      );
+    }
+    // BEFORE the `pragma_table_x?info` branch, and that order is load-bearing: the foreign
+    // key statement resolves the parent's key with a correlated `pragma_table_info`, so a
+    // column-shaped answer would win and every foreign key would read as empty.
     if (/pragma_table_x?info/.test(sql)) {
       // `table_info` publishes only the ordinary columns and `table_xinfo` publishes the
       // hidden ones too; then the statement's own `hidden <> 1` narrows what it asked for.
@@ -1008,14 +1295,20 @@ function objectServer(catalog: Catalog = FIXTURE): Server {
       );
     }
     if (/pragma_index_list/.test(sql)) {
+      // `INDEX_LIST` is captured in the ENGINE's own order, which is reverse creation
+      // order, and the statement's `ORDER BY name` is applied here rather than assumed:
+      // dropping it from the statement has to change what this fake answers, or the clause
+      // that keeps the single and the bulk read agreeing could not be mutated (#789).
+      const listed = lookup(INDEX_LIST, args[0]).filter(([name]) => keepsName(sql, name));
+      const ordered = /ORDER BY name/.test(sql)
+        ? [...listed].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        : listed;
       return result(
         [
           ["name", null],
           ["unique", null],
         ],
-        lookup(INDEX_LIST, args[0])
-          .filter(([name]) => keepsName(sql, name))
-          .map(([name, unique]) => [text(name), int(unique)]),
+        ordered.map(([name, unique]) => [text(name), int(unique)]),
       );
     }
     if (/pragma_index_info/.test(sql)) {
@@ -1024,24 +1317,8 @@ function objectServer(catalog: Catalog = FIXTURE): Server {
         lookup(INDEX_COLUMNS, args[0]).map((name) => [name === null ? { type: "null" } : text(name)]),
       );
     }
-    if (/pragma_foreign_key_list/.test(sql)) {
-      return result(
-        [
-          ["id", null],
-          ["seq", null],
-          ["table", null],
-          ["from", null],
-          ["to", null],
-        ],
-        lookup(FOREIGN_KEYS, args[0]).map(([id, seq, parent, from, to]) => [
-          int(id),
-          int(seq),
-          text(parent),
-          text(from),
-          to === null ? { type: "null" } : text(to),
-        ]),
-      );
-    }
+    const flat = flatRows(sql, catalog);
+    if (flat !== null) return flat;
     return answerFor(sql);
   };
 }
@@ -1323,9 +1600,14 @@ describe("LibSQLProvider object surface (#789)", () => {
     const orders = await objects.describeObject(["orders"], "table");
     const regions = await objects.describeObject(["regions"], "table");
 
+    // BY NAME, which is this read's own `ORDER BY` and not `pragma_index_list`'s: measured
+    // on sqld 0.24.33, that pragma answers in reverse creation order, so it would put
+    // `idx_orders_placed` first. The bulk read has to order by the object to group its
+    // rows, and two orders over one table's indexes is a disagreement between the two
+    // surfaces (#789).
     expect(orders.indexes).toEqual([
-      { name: "idx_orders_placed", columns: [], unique: false },
       { name: "idx_orders_customer", columns: ["customer_id"], unique: false },
+      { name: "idx_orders_placed", columns: [], unique: false },
     ]);
     // `sqlite_autoindex_regions_1` serves the composite primary key of a WITHOUT ROWID
     // table. Nobody declared it and nobody can drop it, and the Indexes folder excludes
@@ -1356,21 +1638,25 @@ describe("LibSQLProvider object surface (#789)", () => {
     expect(detail.foreignKeys).toEqual([{ columnName: "note", referencedTable: "legacy", referencedColumn: "" }]);
   });
 
-  test("a foreign key that NAMES its column needs no parent read at all", async () => {
+  test("no foreign key costs a parent read of its own, whether it names its column or not", async () => {
     // The other half of the resolution rule, and the half a fixture of all-implicit keys
-    // cannot see: `REFERENCES orders(id)` answers `to = 'id'`, so the parent's primary key
-    // is never asked for and the second round trip carries nothing but index columns.
+    // cannot see: `REFERENCES orders(id)` answers `to = 'id'`, so nothing has to be
+    // resolved at all. Neither half costs a request any more - the parent's key is a
+    // correlated subquery inside the foreign key statement (#789), which is what lets the
+    // bulk read describe a whole folder without a statement per distinct parent.
     objects = await connectedWithObjects();
 
     const detail = await objects.describeObject(["shipments"], "table");
 
     expect(detail.foreignKeys).toEqual([{ columnName: "order_id", referencedTable: "orders", referencedColumn: "id" }]);
     // `shipments` declares no index either, so the second batch is empty and costs no
-    // request: a provider that asked every parent for its key would send one here.
-    expect(sentCalls().map((call) => call.sql.match(/pragma_\w+/)?.[0])).toEqual([
-      "pragma_table_xinfo",
-      "pragma_index_list",
-      "pragma_foreign_key_list",
+    // The pragma matched is the LAST `FROM pragma_*` in each statement, because the foreign
+    // key statement also names `pragma_table_info` inside its parent-key subquery, and the
+    // subquery is written before the outer FROM.
+    expect(sentCalls().map((call) => [...call.sql.matchAll(/FROM pragma_(\w+)/g)].pop()?.[1])).toEqual([
+      "table_xinfo",
+      "index_list",
+      "foreign_key_list",
     ]);
   });
 
@@ -1390,7 +1676,7 @@ describe("LibSQLProvider object surface (#789)", () => {
     // The difference from the SQLite provider, and the reason it is not a copy: there
     // every read is a call into a file handle, and here every read is a request across
     // a network. One batch asks for the columns, the index list and the foreign keys;
-    // one more asks for every index's columns and every unresolved parent's key at once.
+    // one more asks for every index's columns.
     objects = await connectedWithObjects();
 
     await objects.describeObject(["orders"], "table");
@@ -1399,10 +1685,15 @@ describe("LibSQLProvider object surface (#789)", () => {
     expect(sentCalls().map((call) => call.args)).toEqual([
       ["orders", "main"],
       ["orders", "main"],
-      ["orders", "main"],
-      ["idx_orders_placed", "main"],
+      // THREE binds, and the schema first: the foreign key statement's first placeholder
+      // belongs to the parent-key subquery, because SQLite numbers placeholders by where
+      // they appear in the text and the select list is written before the FROM. Passing
+      // the two-value array here is what sqld answers "Arguments do not match SQL
+      // parameters: value for parameter 3 not found" to - measured against a live server,
+      // and invisible to any fake that does not count binds (#789).
+      ["main", "orders", "main"],
       ["idx_orders_customer", "main"],
-      ["customers", "main"],
+      ["idx_orders_placed", "main"],
     ]);
   });
 
@@ -1627,13 +1918,14 @@ describe("LibSQLProvider object surface (#789)", () => {
     const detail = await objects.describeObject(["cat", "sch", "orders"], "table");
     expect(detail.path).toEqual(["cat", "sch", "orders"]);
     expect(detail.columns.map((column) => column.name)).toEqual(["id", "customer_id", "total", "tax", "placed_at"]);
+    // The foreign key statement binds the SCHEMA first, so its `args[0]` is `main`; every
+    // other read binds the object's own name, which is `orders` and never `cat` or `sch`.
     expect(sentCalls().map((call) => call.args[0])).toEqual([
       "orders",
       "orders",
-      "orders",
-      "idx_orders_placed",
+      "main",
       "idx_orders_customer",
-      "customers",
+      "idx_orders_placed",
     ]);
   });
 
@@ -1743,6 +2035,260 @@ describe("LibSQLProvider object surface (#789)", () => {
     // The control, so this is not a test of an empty read.
     expect(counts.table).toEqual({ count: 3 });
     expect(Object.keys(counts).sort()).toEqual(["index", "table", "trigger", "view"]);
+  });
+});
+
+/**
+ * The bulk column read (#789).
+ *
+ * The fake below replays the SAME fixture the single read replays, so every "the two
+ * readings agree" assertion compares two answers the provider produced. What it cannot see
+ * is a rewrite of the SQL itself (standing ruling 5b), which is why the whole method was
+ * also run against a live `ghcr.io/tursodatabase/libsql-server:v0.24.33` - the measurements
+ * and what that run caught are in docs/providers/libsql.md.
+ */
+describe("LibSQLProvider bulk column read (#789)", () => {
+  let objects: LibSQLProvider;
+
+  test("describes every table in ONE round trip, and each detail is what the single read answers", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "table");
+
+    expect(batch.truncated).toBeUndefined();
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["archive"],
+      ["badges"],
+      ["customers"],
+      ["legacy"],
+      ["legacy_ref"],
+      ["notes"],
+      ["orders"],
+      ["regions"],
+      ["shipments"],
+      ["sqliteXledger"],
+    ]);
+    // ONE request for ten objects. This is the engine-specific half of the decision: the
+    // five statements are independent of each other, so they go in one batch, where the
+    // SQLite provider issues five calls into a file handle.
+    expect(calls).toHaveLength(1);
+
+    // One mapper serves both reads, so a divergence here is the bulk read spelling a
+    // column, an index or a foreign key differently from the single read of the same table.
+    for (const detail of batch.details) {
+      expect(detail).toEqual(await objects.describeObject(detail.path, "table"));
+    }
+  });
+
+  test("every described path is one listObjects produced", async () => {
+    objects = await connectedWithObjects();
+
+    const listed = await objects.listObjects([], "table");
+    const batch = await objects.describeObjects([], "table");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+  });
+
+  test("the five statements bind what their placeholders ask for, and the foreign key read takes three", async () => {
+    // The arity pin, and it is not theoretical: a two-value array against the foreign key
+    // statement's three placeholders is what sqld answers "Arguments do not match SQL
+    // parameters: value for parameter 3 not found" to. Measured against a live server, and
+    // invisible to this fake, which dispatches on statement text and never counted binds.
+    objects = await connectedWithObjects();
+
+    await objects.describeObjects([], "table", 4);
+
+    const sent = sentCalls();
+    expect(sent).toHaveLength(5);
+    for (const call of sent) {
+      const placeholders = (call.sql.match(/\?/g) ?? []).length;
+      expect(call.args).toHaveLength(placeholders);
+    }
+    // The schema, the bound `limit + 1`, and one schema per pragma the statement joins.
+    // Hrana encodes an integer as a decimal STRING on the wire, which is why the 5 comes
+    // back quoted here and never in a provider assertion.
+    expect(sent.map((call) => call.args)).toEqual([
+      ["main", "5"],
+      ["main", "5", "main"],
+      ["main", "5", "main"],
+      ["main", "5", "main", "main"],
+      ["main", "5", "main", "main"],
+    ]);
+  });
+
+  test("a view is described from the same statements a table is", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "view");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([["order_summary"]]);
+    expect(batch.details[0]!.columns.map((column) => column.name)).toEqual(["name", "total"]);
+    expect(batch.details[0]!.indexes).toEqual([]);
+    expect(batch.details[0]!.foreignKeys).toEqual([]);
+  });
+
+  test("an index and a trigger answer an empty batch without touching the network", async () => {
+    objects = await connectedWithObjects();
+
+    await expect(objects.describeObjects([], "index")).resolves.toEqual({ details: [] });
+    await expect(objects.describeObjects([], "trigger")).resolves.toEqual({ details: [] });
+
+    // Not "no rows came back": nothing was sent. Neither kind has columns on this engine -
+    // `pragma_table_xinfo` answers zero rows for either name - and that is a fact about the
+    // KIND, answered from the declaration.
+    expect(calls).toEqual([]);
+    // The control: a kind that DOES have columns still reaches the server.
+    await objects.describeObjects([], "view");
+    expect(calls.length).toBeGreaterThan(0);
+  });
+
+  test("an undeclared kind raises, naming the engine and the kind", async () => {
+    objects = await connectedWithObjects();
+
+    await expect(objects.describeObjects([], "sequence")).rejects.toThrow(/libSQL declares no object kind "sequence"/);
+  });
+
+  test("a container path of the wrong shape raises through the declaration, not a literal depth", async () => {
+    objects = await connectedWithObjects();
+
+    await expect(objects.describeObjects(["main"], "table")).rejects.toThrow(/A libSQL container path is empty/);
+  });
+
+  test("a two-level declaration is accepted and reaches the produced path", async () => {
+    // Standing ruling 5g, driven to a VALUE and not to a refusal. libSQL declares no
+    // container level, so `container.length !== 0` and `[name]` are behaviour-identical on
+    // the real server and only a differently shaped declaration tells them apart.
+    objects = await connectedWithObjects();
+    spyOn(objects, "getCapabilities").mockReturnValue({
+      ...objects.getCapabilities(),
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Database", labelPlural: "Databases" },
+      ],
+    });
+
+    const batch = await objects.describeObjects(["cat", "sch"], "view");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([["cat", "sch", "order_summary"]]);
+    await expect(objects.describeObjects([], "view")).rejects.toThrow(
+      /A libSQL container path is \[catalog, database\]/,
+    );
+  });
+
+  test("a limit that is not a positive whole number raises rather than clamping", async () => {
+    objects = await connectedWithObjects();
+
+    for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(objects.describeObjects([], "table", limit)).rejects.toThrow(
+        /A libSQL bulk column read limit must be a positive whole number/,
+      );
+    }
+    // Nothing was sent for any of them: the guard is before the batch.
+    expect(calls).toEqual([]);
+  });
+
+  test("a bound that bites reports the caller's own limit, and one that does not never reports", async () => {
+    objects = await connectedWithObjects();
+
+    const bounded = await objects.describeObjects([], "table", 3);
+    expect(bounded.details.map((detail) => detail.path)).toEqual([["archive"], ["badges"], ["customers"]]);
+    expect(bounded.truncated?.limit).toBe(3);
+    expect(bounded.truncated?.reason.length).toBeGreaterThan(0);
+    // The bound cuts OBJECTS and never columns: every detail it kept is complete.
+    expect(bounded.details[2]!.columns.map((column) => column.name)).toEqual(["id", "name", "country"]);
+
+    // Exactly as many as the folder holds. `limit + 1` is what the statement carries, so a
+    // saturated read is told from an exact one with no second count.
+    const exact = await objects.describeObjects([], "table", EXPECTED_COUNTS.table);
+    expect(exact.details).toHaveLength(EXPECTED_COUNTS.table);
+    expect(exact.truncated).toBeUndefined();
+
+    const unbounded = await objects.describeObjects([], "table");
+    expect(unbounded.details).toHaveLength(EXPECTED_COUNTS.table);
+    expect(unbounded.truncated).toBeUndefined();
+  });
+
+  test("the engine cuts under BINARY and the answer is sorted by path, and those are two different orders", async () => {
+    // The one probe that separates the two, and it is a real disagreement rather than a
+    // contrived one - see TABLE_LIST_WITH_EXOTIC for the live measurement behind the
+    // fixture's order.
+    objects = await connectedWithObjects({ tableList: TABLE_LIST_WITH_EXOTIC, sqliteSchema: SQLITE_SCHEMA_ROWS });
+
+    const batch = await objects.describeObjects([], "table");
+
+    // Last two by path, in UTF-16 order: the emoji before U+E000.
+    expect(batch.details.map((detail) => detail.path).slice(-2)).toEqual([["\u{1F600}"], ["\uE000"]]);
+    // And the cut keeps the engine's last, which is the other one: a limit of 11 over the
+    // twelve the catalog now holds drops the emoji, not U+E000.
+    const bounded = await objects.describeObjects([], "table", 11);
+    expect(bounded.details.map((detail) => detail.path)).toContainEqual(["\uE000"]);
+    expect(bounded.details.map((detail) => detail.path)).not.toContainEqual(["\u{1F600}"]);
+    expect(bounded.truncated?.limit).toBe(11);
+  });
+
+  test("a generated column survives the bulk read, as it does the single one", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "table");
+    const orders = batch.details.find((detail) => detail.path[0] === "orders")!;
+
+    // `pragma_table_xinfo` and not `pragma_table_info`, which DROPS a generated column.
+    // `readSchema()` still reads `table_info` and still loses it: the bulk read inherits the
+    // object model's catalog and not the flat surface's.
+    expect(orders.columns.map((column) => column.name)).toContain("tax");
+  });
+
+  test("an expression index publishes no fabricated column name, and an implicit one is not published at all", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "table");
+    const byName = new Map(batch.details.map((detail) => [detail.path[0], detail]));
+
+    expect(byName.get("orders")!.indexes).toEqual([
+      { name: "idx_orders_customer", columns: ["customer_id"], unique: false },
+      // `idx_orders_placed` keys `date(placed_at)`, whose `index_info` row carries a null
+      // name. The index still appears, with an empty column list.
+      { name: "idx_orders_placed", columns: [], unique: false },
+    ]);
+    // `regions` is WITHOUT ROWID with a composite primary key, so the engine made
+    // `sqlite_autoindex_regions_1`, which the same `sqlite_` predicate removes here as in
+    // the Indexes folder.
+    expect(byName.get("regions")!.indexes).toEqual([]);
+  });
+
+  test("a foreign key resolves its parent's key, and a parent with none carries no column", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "table");
+    const byName = new Map(batch.details.map((detail) => [detail.path[0], detail]));
+
+    // `REFERENCES customers`, no column list: the correlated subquery answers the parent's
+    // primary key.
+    expect(byName.get("orders")!.foreignKeys).toEqual([
+      { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
+    ]);
+    // `REFERENCES orders(id)`, which names its column, so nothing had to be resolved.
+    expect(byName.get("shipments")!.foreignKeys).toEqual([
+      { columnName: "order_id", referencedTable: "orders", referencedColumn: "id" },
+    ]);
+    // `REFERENCES legacy`, whose parent declares no primary key at all. There is nothing to
+    // name and the field is empty rather than invented.
+    expect(byName.get("legacy_ref")!.foreignKeys).toEqual([
+      { columnName: "note", referencedTable: "legacy", referencedColumn: "" },
+    ]);
+  });
+
+  test("a statement the server refused raises with the server's own sentence", async () => {
+    objects = await connectedWithObjects();
+    server = (sql) =>
+      /JOIN pragma_index_info/.test(sql)
+        ? failure("no such table: pragma_index_info", "SQLITE_UNKNOWN")
+        : objectServer()(sql, []);
+
+    // One statement of the batch failing is the whole read failing: a batch whose index
+    // columns are missing would otherwise answer every index with no columns, which reads
+    // as a fact about the tables.
+    await expect(objects.describeObjects([], "table")).rejects.toThrow(/no such table: pragma_index_info/);
   });
 });
 
