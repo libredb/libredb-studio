@@ -63,6 +63,7 @@
 import { expect } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
 import type {
+  Container,
   DatabaseObject,
   DatabaseProvider,
   KindCount,
@@ -94,9 +95,19 @@ export interface ObjectSurfaceExpectation {
    * `TABLE_SCHEMA = 'druid'` (`druid/introspect.ts`), so the two readings shared no name
    * and the join was reported vacuous on a provider whose join is correct.
    *
-   * It is not a way out of a red. The container named must be one `listContainers`
-   * ANSWERED, checked below, so an expectation cannot point the contract at a container
-   * the engine does not publish.
+   * It is not a way out of a red. Every PREFIX of the container named must be one
+   * `listContainers` ANSWERED at that depth, checked below, so an expectation cannot point
+   * the contract at a container the engine does not publish.
+   *
+   * IT MAY BE DEEPER THAN THE ROOT LISTING, which it could not be until Trino (#789). The
+   * check used to look for the whole path in the PARENTLESS `listContainers()` answer, which
+   * on a two-level engine holds only the outermost level, so naming a schema was refused as
+   * unpublished however real the schema was. That was not a theoretical limit: Trino answers
+   * a catalog-level `function` count `{ unavailable }` on purpose, because `SHOW FUNCTIONS`
+   * takes a schema and cannot be aggregated, and a `hasSource` kind answering the unavailable
+   * arm is the dead end the count loop below names - it throws when the expectation names the
+   * kind and `assertSourceSurface` throws when it does not. The engine's own answer is a real
+   * number one level down, so the way out is to let the contract run there.
    */
   readonly container?: readonly string[];
   readonly kinds: Readonly<Record<string, number>>;
@@ -162,6 +173,49 @@ function startsWith(path: readonly string[], prefix: readonly string[]): boolean
   return prefix.every((segment, index) => path[index] === segment);
 }
 
+/**
+ * Every prefix of a named container is one the provider PUBLISHED at that depth (#789).
+ *
+ * The walk and not a single lookup, because a two-level engine's parentless `listContainers()`
+ * answers only its outermost level: Trino's schemas arrive from `listContainers(["memory"])`
+ * and nowhere else, so the old root-only lookup refused a schema that exists. Walking asks the
+ * provider the same question the tree asks, one level at a time, and it is STRICTER than the
+ * old check rather than looser - a catalog that is real and a schema under it that is not is
+ * now refused, where before the whole path was refused for the wrong reason.
+ *
+ * THE ZERO-ITERATION CASE IS REFUSED BY NAME. An expectation naming `[]` would walk nothing
+ * and certify nothing, and it would read as "the root container", which is what OMITTING the
+ * field already means. So the empty path is a mistake rather than a selection, and it throws
+ * instead of passing in silence.
+ */
+async function assertContainerIsPublished(
+  provider: DatabaseProvider,
+  root: readonly Container[],
+  container: readonly string[],
+): Promise<void> {
+  if (container.length === 0) {
+    throw new Error(
+      "the expectation names the container [], which selects nothing and certifies nothing; omit the field to " +
+        "run the contract in the first answered container",
+    );
+  }
+  let answered = root;
+  for (let depth = 0; depth < container.length; depth += 1) {
+    const prefix = container.slice(0, depth + 1);
+    if (!answered.some((candidate) => pathKey(candidate.path) === pathKey(prefix))) {
+      throw new Error(
+        `the expectation names the container ${JSON.stringify(container)}, whose prefix ${JSON.stringify(prefix)} ` +
+          `listContainers did not answer; at that depth it answered ` +
+          `${JSON.stringify(answered.map((candidate) => candidate.path))}`,
+      );
+    }
+    // Not asked at the deepest level: nothing below the named container is being checked, and
+    // an engine that refuses a read below its last level would fail for a question this
+    // helper never needed to ask.
+    if (depth + 1 < container.length) answered = await provider.listContainers!(prefix);
+  }
+}
+
 export async function assertObjectSurface(
   provider: DatabaseProvider,
   expected: ObjectSurfaceExpectation,
@@ -180,15 +234,7 @@ export async function assertObjectSurface(
 
   // An engine with no container level addresses every object at the root container.
   const container = expected.container ?? expected.containers[0] ?? [];
-  if (
-    expected.container !== undefined &&
-    !containers.some((answered) => pathKey(answered.path) === pathKey(container))
-  ) {
-    throw new Error(
-      `the expectation names the container ${JSON.stringify(container)}, which listContainers did not answer; ` +
-        `it answered ${JSON.stringify(containers.map((answered) => answered.path))}`,
-    );
-  }
+  if (expected.container !== undefined) await assertContainerIsPublished(provider, containers, container);
   const counts: Record<string, KindCount> = await provider.countObjects!(container);
 
   for (const id of Object.keys(counts)) {

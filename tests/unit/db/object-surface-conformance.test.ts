@@ -112,7 +112,70 @@ describe("assertObjectSurface", () => {
         kinds: { table: 2, view: 4 },
         sampleObject: { path: ["app", "order_summary"], kind: "view" },
       }),
-    ).rejects.toThrow(/the expectation names the container \["warehouse"\], which listContainers did not answer/);
+    ).rejects.toThrow(/whose prefix \["warehouse"\] listContainers did not answer/);
+  });
+
+  // The three below are the container WALK (#789), which replaced a lookup in the parentless
+  // listing. Trino is why: its schemas are only ever answered by `listContainers(["memory"])`,
+  // so the old check refused a schema that exists, and a schema is the only depth at which
+  // Trino can count its functions.
+  test("accepts a container deeper than the root listing, and runs the contract there", async () => {
+    const asked: (readonly string[] | undefined)[] = [];
+    const provider = fakeProvider({
+      listContainers: async (parent?: readonly string[]) => {
+        asked.push(parent);
+        return parent === undefined
+          ? [{ path: ["app"], name: "app", level: 0 }]
+          : [{ path: [...parent, "inner"], name: "inner", level: 1 }];
+      },
+      countObjects: async (container: readonly string[]) => {
+        expect(container).toEqual(["app", "inner"]);
+        return { table: { count: 2 }, view: { count: 4 } };
+      },
+      listObjects: async (_c: readonly string[], kind: string) =>
+        kind === "view"
+          ? [{ path: ["app", "inner", "order_summary"], name: "order_summary", kind: "view" }]
+          : [
+              { path: ["app", "inner", "orders"], name: "orders", kind },
+              { path: ["app", "inner", "customers"], name: "customers", kind },
+            ],
+    });
+    await assertObjectSurface(provider as never, {
+      containers: [["app"]],
+      container: ["app", "inner"],
+      kinds: { table: 2, view: 4 },
+      sampleObject: { path: ["app", "inner", "order_summary"], kind: "view" },
+    });
+    // The walk asks the provider one level at a time and never below the named container.
+    expect(asked).toContainEqual(["app"]);
+  });
+
+  test("rejects a deep container whose LAST segment the provider never answered", async () => {
+    const provider = fakeProvider({
+      listContainers: async (parent?: readonly string[]) =>
+        parent === undefined
+          ? [{ path: ["app"], name: "app", level: 0 }]
+          : [{ path: [...parent, "inner"], name: "inner", level: 1 }],
+    });
+    await expect(
+      assertObjectSurface(provider as never, {
+        containers: [["app"]],
+        container: ["app", "gone"],
+        kinds: { table: 2, view: 4 },
+        sampleObject: { path: ["app", "gone", "order_summary"], kind: "view" },
+      }),
+    ).rejects.toThrow(/whose prefix \["app","gone"\] listContainers did not answer/);
+  });
+
+  test("rejects an expectation naming the EMPTY container, which certifies nothing", async () => {
+    await expect(
+      assertObjectSurface(fakeProvider() as never, {
+        containers: [["app"]],
+        container: [],
+        kinds: { table: 2, view: 4 },
+        sampleObject: { path: ["app", "order_summary"], kind: "view" },
+      }),
+    ).rejects.toThrow(/names the container \[\], which selects nothing and certifies nothing/);
   });
 
   test("rejects a count for a kind the provider never declared", async () => {
