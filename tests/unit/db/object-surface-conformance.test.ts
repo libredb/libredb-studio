@@ -982,6 +982,76 @@ describe("assertObjectSurface and the object source read", () => {
     );
   });
 
+  /**
+   * The zero, which is the one expectation that READS NOTHING (Task 1b, #789).
+   *
+   * The four tests below are the whole of it. A source-bearing kind counted above zero is
+   * read by the loop; a source-bearing kind the expectation OMITS is refused by the test
+   * above; and between those two sits a kind the expectation NAMES AT ZERO, which is
+   * exercised by nothing and passed in silence. Oracle declares nine source-bearing kinds,
+   * so an expectation naming eight truthfully and the ninth at zero certified that ninth
+   * unread. Requiring a non-zero instead would be wrong, because Cassandra ships
+   * materialized views and UDFs disabled and a Trino materialized view needs a connector the
+   * compose cluster may not get, so what is required is the REASON.
+   *
+   * `view` is source-bearing and empty in every double here, so the kind under test is
+   * genuinely at zero rather than made zero by the expectation alone.
+   */
+  function emptyViewProvider(overrides: Record<string, unknown> = {}) {
+    return sourceProvider({
+      getCapabilities: () => ({
+        ...capabilities(),
+        objectKinds: capabilities().objectKinds.map((kind) =>
+          kind.id === "view" ? { ...kind, hasSource: true, sourceLanguage: "sql" } : kind,
+        ),
+      }),
+      countObjects: async () => ({ table: { count: 2 }, view: { count: 0 }, function: { count: 2 } }),
+      listObjects: async (_c: readonly string[], kind: string) => (kind === "view" ? [] : (listed[kind] ?? [])),
+      ...overrides,
+    });
+  }
+
+  const emptyViewExpectation = {
+    ...expectation,
+    kinds: { table: 2, view: 0, function: 2 },
+    sampleObject: { path: ["app", "order_total(integer)"], kind: "function" },
+  };
+
+  test("a source-bearing kind expected at zero passes when the expectation says why", async () => {
+    await assertObjectSurface(emptyViewProvider() as never, {
+      ...emptyViewExpectation,
+      emptyKinds: { view: "the fixture defines no view over the two probe tables yet" },
+    });
+  });
+
+  test("a source-bearing kind expected at zero with no reason is refused by name", async () => {
+    await expect(assertObjectSurface(emptyViewProvider() as never, emptyViewExpectation)).rejects.toThrow(
+      /expects zero of the source-bearing kind "view", which reads nothing, and emptyKinds carries no reason for it/,
+    );
+  });
+
+  // Whitespace and not only the empty string, because a reason nobody can read is the same
+  // absence wearing an answer's clothes, which is the bar `assertSourceDocument` already
+  // holds an engine's own refusal sentence to.
+  test("a blank reason for a kind expected at zero is refused", async () => {
+    await expect(
+      assertObjectSurface(emptyViewProvider() as never, { ...emptyViewExpectation, emptyKinds: { view: "  \n " } }),
+    ).rejects.toThrow(/emptyKinds\["view"\] carries no sentence a person can read/);
+  });
+
+  // The other direction, so a sentence cannot outlive the absence it describes: `function`
+  // holds two objects and is read by the loop, so a reason for it explains nothing.
+  test("a reason for a kind that is not a source-bearing kind at zero is refused", async () => {
+    await expect(
+      assertObjectSurface(emptyViewProvider() as never, {
+        ...emptyViewExpectation,
+        emptyKinds: { view: "the fixture defines no view yet", function: "stale, this kind holds two" },
+      }),
+    ).rejects.toThrow(
+      /emptyKinds names "function", which is not a source-bearing kind this expectation counts at zero/,
+    );
+  });
+
   test("an absentSource naming a kind the source loop never read has no control, and is refused", async () => {
     await expect(
       assertObjectSurface(sourceProvider() as never, {

@@ -52,11 +52,13 @@
  * which is sixteen of the seventeen while the bulk read lands one family at a time. What it
  * asserts, and why each part of it is not vacuous, is in `assertBulkColumnRead()` below.
  *
- * One further check guards the caller rather than the provider: an expectation naming a
+ * Two further checks guard the caller rather than the provider. An expectation naming a
  * kind countObjects never answered for is reported by name. That is a caller-side
  * mistake, a kind id written into the expectation that this engine never declares, and
  * without the explicit throw it surfaces as `Cannot use 'in' operator ... in undefined`,
- * which names neither the kind nor the expectation.
+ * which names neither the kind nor the expectation. And a source-bearing kind the
+ * expectation counts at ZERO must carry a reason in `emptyKinds`, because a zero is the one
+ * count this contract reads nothing for: see that field's docblock.
  */
 import { expect } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
@@ -108,6 +110,39 @@ export interface ObjectSurfaceExpectation {
    * source-bearing kind, and the helper throws by name when it is missing.
    */
   readonly absentSource?: { readonly path: readonly string[]; readonly kind: string };
+  /**
+   * WHY a source-bearing kind is expected at ZERO, one sentence per kind id.
+   *
+   * Required for every source-bearing kind this expectation counts at 0, and the helper
+   * throws by name without it. A zero is the one count that READS NOTHING: the source loop
+   * walks the kinds counted above zero, so a kind at zero has its `readObjectSource` path
+   * driven by no object at all while every assertion around it stays green. Naming a kind at
+   * zero and naming it truthfully are two different acts, and this field is the second one.
+   * An expectation that names eight of an engine's nine source-bearing kinds truthfully and
+   * the ninth at zero certifies that ninth unread.
+   *
+   * A non-zero is deliberately NOT demanded instead, because legitimate zeros exist:
+   * Cassandra ships materialized views and user-defined functions disabled by default, and a
+   * Trino materialized view needs a connector the compose cluster may not get. So the bar is
+   * the repository's own grammar for an absence, the one `KindCount` already uses in its
+   * `{ unavailable }` arm: an absence that says WHICH absence it is, in the engine's or the
+   * fixture's own words.
+   *
+   * Write the FACT, and write it for someone reading a red build who has never seen this
+   * engine. "the Cassandra image ships with materialized views disabled" is a fact.
+   * "not applicable", "none" and "TODO" are not, and a blank one is refused outright.
+   *
+   * Say which of the two absences it is, because they are different facts and only the
+   * sentence can tell them apart: the FIXTURE holds none of this kind today, which whoever
+   * owns the fixture can close by adding one, or this DEPLOYMENT cannot hold one at all,
+   * which nobody can close here. A fixture shortfall is debt and belongs in the backlog as
+   * well as here; a deployment that cannot hold one is the end of the matter. One field
+   * carries both honestly only if you write which one you mean.
+   *
+   * A reason for a kind that is NOT a source-bearing kind counted at zero is refused too, so
+   * a sentence cannot outlive the absence it was written about.
+   */
+  readonly emptyKinds?: Readonly<Record<string, string>>;
 }
 
 function startsWith(path: readonly string[], prefix: readonly string[]): boolean {
@@ -417,6 +452,9 @@ async function assertBulkColumnRead(
  *   - a source-bearing kind the expectation never NAMES is refused by name, one notch narrower
  *     than "named none". Oracle declares nine of them and an expectation naming one would
  *     silence a "none" guard while eight kinds went unread;
+ *   - a source-bearing kind the expectation counts at ZERO is exercised by nothing at all, so
+ *     it must carry a reason in `emptyKinds` saying which absence it is, which is the closest
+ *     a helper can come to reading a kind no object exists for;
  *   - a document of nothing but refusals answers no readable part, so the bound probe below
  *     would never run and every bound assertion would be vacuous;
  *   - a definition under two characters cannot be bounded distinguishably, which is the same
@@ -456,18 +494,52 @@ async function assertSourceSurface(
   //
   // WHAT THIS LEAVES OPEN, stated so no provider task has to discover it: a source-bearing
   // kind named at ZERO has its `readObjectSource` path driven by NOTHING here, because there
-  // is no object of it to read. Only the OMITTED case is refused. On an engine declaring many
-  // source-bearing kinds, a fixture holding none of one of them therefore drops that kind's
-  // read out of the contract entirely while every assertion stays green. The remedy is the
+  // is no object of it to read, and no assertion below can close that. The remedy is the
   // FIXTURE and not this helper: build one that holds an object of every source-bearing kind
-  // the engine declares. The `longest === undefined` throw below bounds the damage by
-  // requiring at least one readable part from at least one kind, and that is all it does.
+  // the engine declares. What the helper CAN do, and does immediately below, is refuse a zero
+  // that does not say which absence it is, so a kind dropping out of the contract is a
+  // sentence a reviewer reads rather than a silence. The `longest === undefined` throw
+  // further down bounds the damage by requiring at least one readable part from at least one
+  // kind, and that is all it does.
   const unexercised = sourceKinds.filter((kind) => !Object.hasOwn(expected.kinds, kind.id)).map((kind) => kind.id);
   if (unexercised.length > 0) {
     throw new Error(
       `${provider.type} declares source-bearing kinds the expectation never exercised (${unexercised.join(", ")}), ` +
         "so every source assertion for them is vacuous",
     );
+  }
+
+  // The zero, which is the case the `unexercised` guard above deliberately lets through and
+  // which nothing else here exercises. A kind counted above zero is read by the loop below;
+  // a kind the expectation OMITS is refused above; a kind NAMED AT ZERO is read by nothing,
+  // and until this throw it passed in silence. Requiring a non-zero would refuse correct
+  // fixtures, so what is required is the reason, in the same grammar `KindCount` uses for an
+  // absence. What the reason must say is on `emptyKinds` above, and that docblock is the
+  // instruction every provider task reads.
+  const reasons = expected.emptyKinds ?? {};
+  const zeroed = sourceKinds.filter((kind) => expected.kinds[kind.id] === 0).map((kind) => kind.id);
+  for (const id of zeroed) {
+    if (!Object.hasOwn(reasons, id)) {
+      throw new Error(
+        `${provider.type} expects zero of the source-bearing kind "${id}", which reads nothing, and emptyKinds ` +
+          `carries no reason for it; say in emptyKinds["${id}"] whether this fixture holds none of it yet or this ` +
+          "deployment cannot hold one at all",
+      );
+    }
+    if (reasons[id].trim() === "") {
+      throw new Error(`emptyKinds["${id}"] carries no sentence a person can read, which is not a reason`);
+    }
+  }
+  // The other direction, so a sentence cannot outlive the absence it was written about: a
+  // kind that grew an object, or that never bore source at all, keeps a reason that now
+  // explains nothing, and a reader trusts it.
+  for (const id of Object.keys(reasons)) {
+    if (!zeroed.includes(id)) {
+      throw new Error(
+        `emptyKinds names "${id}", which is not a source-bearing kind this expectation counts at zero, so its ` +
+          "reason describes nothing",
+      );
+    }
   }
 
   const wanted = new Set(sourceKinds.filter((kind) => (expected.kinds[kind.id] ?? 0) > 0).map((kind) => kind.id));
