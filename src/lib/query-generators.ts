@@ -119,19 +119,61 @@ export function quoteIdentifier(name: string, capabilities: ProviderCapabilities
 }
 
 /**
- * Quote a possibly schema-qualified name (e.g. `employees.department`) by quoting
- * each dotted segment independently. Quoting the whole string as one identifier
- * (`"employees.department"`) would make the database look for a single relation
- * literally named with a dot, which fails. Each segment is still quoted only when
- * needed, so `employees.department` stays unquoted and `public.Order` becomes
- * `public."Order"`.
+ * Quote an object ADDRESS: one segment per container level, then the object's own
+ * segment, each quoted independently and joined with `.`.
+ *
+ * Segments in and never a string to split, which is the whole of the rule. A name is
+ * what LABELS an object and a path is what ADDRESSES it (#789), and the string form
+ * below could only guess where one segment ends: a ClickHouse table really named
+ * `.inner_id.fake` in `demo` generated `SELECT * FROM "".inner_id.fake`, which the
+ * server answers with a syntax error at position 15, because the dots in its NAME were
+ * read as qualifiers. Reproduced in the browser on ClickHouse 25.8 before this changed.
+ *
+ * Quoting stays per segment and stays conditional, so `["employees", "department"]` is
+ * still `employees.department` and `["public", "Order"]` is still `public."Order"`.
+ *
+ * Full qualification is emitted unconditionally, including inside the session default
+ * container. `demo.orders`, `[libredb_objects].[app].[customers]` and `APP.APP_CUSTOMERS`
+ * are all valid wherever the bare name is, so nothing here has to know which container a
+ * connection defaults to - and no capability declares that, which is why the flat spelling
+ * could not be qualified at the call site.
+ */
+export function quoteObjectPath(path: readonly string[], capabilities: ProviderCapabilities): string {
+  if (capabilities.queryLanguage === "json") return path.join(".");
+  return path.map((segment) => quoteIdentifier(segment, capabilities)).join(".");
+}
+
+/**
+ * The same rule for a caller that holds the FLAT spelling and nothing better: a dotted
+ * string, split on `.` and then quoted per segment.
+ *
+ * One caller, `src/app/api/db/profile/route.ts`, whose request body carries a table NAME
+ * over the wire and no segments. It is a wrapper rather than a second implementation so
+ * that the two cannot disagree about what a name means, which is a bill this epic has
+ * already paid twice. Everything reached by CLICKING an object goes through
+ * `quoteObjectPath` with the path the object surface answered, where no guess is made.
  */
 export function quoteQualifiedName(name: string, capabilities: ProviderCapabilities): string {
-  if (capabilities.queryLanguage === "json") return name;
-  return name
-    .split(".")
-    .map((part) => quoteIdentifier(part, capabilities))
-    .join(".");
+  return quoteObjectPath(name.split("."), capabilities);
+}
+
+/**
+ * The object's own segment, which is the LAST one and is never read by index 0 (standing
+ * ruling 5g): at container depth 2 the object is `path[2]`, and a positional read there
+ * addresses a container instead.
+ *
+ * An empty path is refused rather than rendered. It is a caller that lost the address, and
+ * every dialect below would otherwise spell it silently: `FROM ` on SQL, `get ` on LibreDB,
+ * `"collection": undefined` on MongoDB. Both generators resolve it before they branch, so
+ * one refusal covers every dialect.
+ *
+ * Exported for `useTabManager`, which names the tab it opens after the object and has the
+ * same two reasons to read the last segment and to refuse an empty address.
+ */
+export function objectSegment(path: readonly string[]): string {
+  const segment = path[path.length - 1];
+  if (segment === undefined) throw new Error("Cannot generate a query: the object address has no segments.");
+  return segment;
 }
 
 /**
@@ -321,10 +363,13 @@ function redisScan(base: string): string {
  *
  * Only the two shapes a user reaches by CLICKING are bounded here - the schema tree's
  * "Select Top N" and "Generate Query" - because those are the statements this file
- * writes on the user's behalf. The dialect-specific returns above keep their own
- * literal `;`: each of those engines accepts one, and this is the fallthrough every
- * other SQL engine shares, which is where the two search products land. See
- * `ProviderCapabilities.statementTerminator` for the measurement.
+ * writes on the user's behalf.
+ *
+ * The Oracle and the fallthrough returns both ask this; SQL Server and Couchbase keep a
+ * literal `;`, because both accept one. Oracle did not, and that is the one measurement
+ * that moved: `SELECT * FROM app_customers FETCH FIRST 50 ROWS ONLY;` answers ORA-00933,
+ * so clicking a table on Oracle had never once worked. See
+ * `ProviderCapabilities.statementTerminator` for both measurements.
  */
 function terminator(capabilities: ProviderCapabilities): string {
   return capabilities.statementTerminator === "none" ? "" : ";";
@@ -350,11 +395,20 @@ function libredbNewlineNote(base: string): string | null {
   return "# This key's name contains a line break. LibreDB commands are line-oriented, so no generated line can address it.";
 }
 
+/**
+ * The statement behind "Select Top 50", the one a CLICK on a tree row runs (#789).
+ *
+ * It takes the object's PATH, because that is what addresses an object; `name` is what
+ * labels it (standing ruling 2). Every dialect below that addresses by qualification gets
+ * the whole path, and the three that address a single key or collection get the object's
+ * own segment.
+ */
 export function generateTableQuery(
-  tableName: string,
+  path: readonly string[],
   capabilities: ProviderCapabilities,
   columns?: readonly ColumnSchema[],
 ): string {
+  const tableName = objectSegment(path);
   // LibreDB speaks its own command grammar (get/put/delete/prefix/range), not SQL
   // and not MongoDB JSON. "Scan" lists everything under the group's prefix.
   if (capabilities.queryDialect === "libredb") {
@@ -379,14 +433,14 @@ export function generateTableQuery(
   if (capabilities.queryLanguage === "json") {
     return JSON.stringify({ collection: tableName, operation: "find", filter: {}, options: { limit: 50 } }, null, 2);
   }
-  const table = quoteQualifiedName(tableName, capabilities);
+  const table = quoteObjectPath(path, capabilities);
   // Couchbase (SQL++)
   if (capabilities.defaultPort === COUCHBASE_PORT) {
     return `SELECT ${COUCHBASE_KEY_PROJECTION}, ${COUCHBASE_ALIAS}.* FROM ${table} AS ${COUCHBASE_ALIAS} LIMIT 50;`;
   }
   // Oracle
   if (capabilities.defaultPort === 1521) {
-    return `SELECT * FROM ${table} FETCH FIRST 50 ROWS ONLY;`;
+    return `SELECT * FROM ${table} FETCH FIRST 50 ROWS ONLY${terminator(capabilities)}`;
   }
   // MSSQL
   if (capabilities.defaultPort === 1433) {
@@ -495,11 +549,19 @@ function redisCheatsheet(tableName: string, columns: readonly ColumnSchema[]): s
   return lines.join("\n");
 }
 
+/**
+ * The statement behind "Generate Query", which is written into a tab and NOT run.
+ *
+ * Takes the object's PATH for the same reason `generateTableQuery` does, and the two stay
+ * in step: a user who clicks a row and a user who asks for the statement must be handed
+ * the same address.
+ */
 export function generateSelectQuery(
-  tableName: string,
+  path: readonly string[],
   columns: readonly ColumnSchema[],
   capabilities: ProviderCapabilities,
 ): string {
+  const tableName = objectSegment(path);
   // LibreDB: emit an explanatory cheatsheet — a use-case comment above each
   // command — where every command line is a concrete, directly-runnable example
   // (so "Run Selected" on any line works as-is). The provider skips `#` comment
@@ -529,7 +591,7 @@ export function generateSelectQuery(
       2,
     );
   }
-  const table = quoteQualifiedName(tableName, capabilities);
+  const table = quoteObjectPath(path, capabilities);
   // Couchbase (SQL++): every field is reached through the keyspace alias, and the
   // document key comes from META() rather than from the document body.
   if (capabilities.defaultPort === COUCHBASE_PORT) {
@@ -544,7 +606,7 @@ export function generateSelectQuery(
   const cols = columns.map((c) => `  ${quoteIdentifier(c.name, capabilities)}`).join(",\n") || "  *";
   // Oracle
   if (capabilities.defaultPort === 1521) {
-    return `SELECT\n${cols}\nFROM ${table}\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY;`;
+    return `SELECT\n${cols}\nFROM ${table}\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY${terminator(capabilities)}`;
   }
   // MSSQL
   if (capabilities.defaultPort === 1433) {

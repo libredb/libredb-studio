@@ -936,7 +936,7 @@ describe("ElasticsearchProvider metadata", () => {
     const capabilities = new ElasticsearchProvider(makeConnection()).getCapabilities();
 
     expect(capabilities.statementTerminator).toBe("none");
-    expect(generateTableQuery("orders", capabilities)).toBe("SELECT * FROM orders LIMIT 50");
+    expect(generateTableQuery(["orders"], capabilities)).toBe("SELECT * FROM orders LIMIT 50");
   });
 
   test("declares no explain format at all, which is what hides the button and the tab", () => {

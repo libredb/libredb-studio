@@ -154,6 +154,30 @@ deliberately stricter than node-oracledb's tokenizer, which opens a q-string at 
 `q`/`Q` whatever comes before it; the strict side is the one whose mistake costs a bound — and, since
 #297, a confirmation prompt on that statement — rather than a misplaced clause.
 
+### 3.2a A generated statement carries no terminator
+
+`getCapabilities()` declares `statementTerminator: 'none'`, so the two statements
+`src/lib/query-generators.ts` writes on the user's behalf - "Select Top 50" and
+"Generate Query" - end without a `;`.
+
+`;` is a SQL*Plus convention rather than Oracle SQL. node-oracledb sends ONE statement and the
+terminator is not part of it, so the generated form was rejected outright.
+
+Measured through this provider on Oracle AI Database 26ai Free on 2026-09-12, by clicking a table
+in the object browser:
+
+```
+SELECT * FROM APP.APP_CUSTOMERS FETCH FIRST 50 ROWS ONLY;   -> ORA-00933: SQL command not properly ended
+SELECT * FROM APP.APP_CUSTOMERS FETCH FIRST 50 ROWS ONLY    -> rows
+```
+
+The generator carried that `;` from the day its Oracle branch was written, so clicking a table on
+Oracle had never once worked. This is a declaration rather than a branch in the generator: nothing
+in `src/lib/query-generators.ts` needs to know which engine it is writing for (#789).
+
+It bounds the GENERATORS only. A `;` a user types is still stripped by the editor's statement reader
+before the statement is sent, and the raw API passes text through untouched.
+
 ### 3.3 Schema introspection reads the `ALL_*` views, and is not owner-scoped
 
 Every reading of this engine's objects goes through the object surface
@@ -1486,6 +1510,7 @@ is what lets the Operations tab render those words and send an operation Oracle 
 | `maintenanceOperations` | `['analyze', 'optimize', 'kill']` |
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `1521` |
+| `statementTerminator` | `'none'` - node-oracledb sends one statement and `;` is not part of it (see [§3.2a](#32a-a-generated-statement-carries-no-terminator)) |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 | `containerLevels` | one level, `schema` - and on Oracle that level is a USER ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)) |
 | `objectKinds` | nine: table, view, materialized view, synonym, sequence, package, procedure, function, trigger. No `index` kind ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)) |

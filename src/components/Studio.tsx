@@ -415,8 +415,9 @@ export default function Studio() {
     downloadText(file.content, file.mimeType, resultExportFileName(file.extension, hydrated?.runId));
   };
 
-  const onTableClick = (tableName: string) => {
-    tabMgr.handleTableClick(tableName, queryExec.executeQuery);
+  /** Open and run the statement for one object, addressed by its PATH (#789). */
+  const onTableClick = (path: readonly string[]) => {
+    tabMgr.handleTableClick(path, queryExec.executeQuery);
   };
 
   /**
@@ -429,13 +430,14 @@ export default function Studio() {
    * lists every declared kind, so the gate is what keeps a click on a function from
    * being a failed statement in the reader's history.
    *
-   * The NAME and not the path, which is what the flat query generator still takes. Task
-   * 25 migrates that; until then a schema-qualified object behaves exactly as it did
-   * under the explorer.
+   * The PATH and not the name. `name` is the label and `path` is the address (standing
+   * ruling 2), and the generator now takes segments, so an object outside the session
+   * default container generates a QUALIFIED statement instead of a bare identifier the
+   * server cannot resolve.
    */
   const onObjectClick = (object: DatabaseObject) => {
     if (metadata === null || !relationKindIds(metadata.capabilities).includes(object.kind)) return;
-    onTableClick(object.name);
+    onTableClick(object.path);
   };
 
   /**
@@ -453,7 +455,7 @@ export default function Studio() {
    * other five are the same for every role, exactly as the flat explorer had them.
    */
   const objectActions: TreeRowActionHandlers = {
-    onGenerateSelect: (object) => tabMgr.handleGenerateSelect(flatTargetName(object)),
+    onGenerateSelect: (object) => tabMgr.handleGenerateSelect(object.path),
     onProfileObject: (object) => setProfilerTable(flatTargetName(object)),
     onGenerateCode: (object) => setCodeGenTable(flatTargetName(object)),
     onGenerateTestData: (object) => setTestDataTable(flatTargetName(object)),
@@ -681,12 +683,12 @@ export default function Studio() {
                       schema={conn.schema}
                       isLoadingSchema={conn.isLoadingSchema}
                       schemaError={conn.schemaError}
-                      onTableClick={(tableName) => {
-                        onTableClick(tableName);
+                      onTableClick={(path) => {
+                        onTableClick(path);
                         setActiveMobileTab("editor");
                       }}
-                      onGenerateSelect={(tableName) => {
-                        tabMgr.handleGenerateSelect(tableName);
+                      onGenerateSelect={(path) => {
+                        tabMgr.handleGenerateSelect(path);
                         setActiveMobileTab("editor");
                       }}
                       onCreateTableClick={() => setIsCreateTableModalOpen(true)}

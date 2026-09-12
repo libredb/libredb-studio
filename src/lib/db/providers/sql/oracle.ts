@@ -1042,6 +1042,14 @@ export class OracleProvider extends SQLBaseProvider {
     return {
       ...super.getCapabilities(),
       defaultPort: 1521,
+      // node-oracledb sends ONE statement and the terminator is not part of it: it is a
+      // SQL*Plus convention, not Oracle SQL. Measured on Oracle AI Database 26ai Free
+      // through this provider on 2026-09-12, reproduced by clicking a table in the object
+      // browser: `SELECT * FROM app_customers FETCH FIRST 50 ROWS ONLY;` answers
+      // ORA-00933 "SQL command not properly ended", and the identical statement without
+      // the `;` returns the rows. `query-generators.ts` emitted that `;` from the day the
+      // Oracle branch was written, so "Select Top 50" on Oracle had never worked (#789).
+      statementTerminator: "none",
       // Disabled until an Oracle dialect wrapper exists (#126): a real plan flow needs
       // EXPLAIN PLAN FOR + DBMS_XPLAN, which the single-statement explain path cannot express.
       supportsExplain: false,

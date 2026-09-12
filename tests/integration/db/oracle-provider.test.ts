@@ -6,6 +6,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes } from "@/lib/export/binary";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
+import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
 
 // ---------------------------------------------------------------------------
 // Mock oracledb BEFORE loading the provider
@@ -971,6 +972,29 @@ describe("OracleProvider", () => {
       expect(labels.vacuumAction).toBe("Rebuild Indexes");
       expect(labels.vacuumActionOperation).toBe("optimize");
     });
+    /**
+     * #789 Task 30. node-oracledb sends ONE statement and `;` is a SQL*Plus convention
+     * rather than Oracle SQL: measured through this provider on Oracle AI Database 26ai
+     * Free on 2026-09-12, `SELECT * FROM app_customers FETCH FIRST 50 ROWS ONLY;` answers
+     * ORA-00933 and the same statement without the `;` returns rows. The generator reads
+     * this declaration, so clicking a table in the object browser turned on it.
+     */
+    test("declares that a generated statement carries no terminator", () => {
+      expect(provider.getCapabilities().statementTerminator).toBe("none");
+    });
+
+    test("the generators emit no trailing semicolon for this provider", () => {
+      // The declaration and its one consumer, so a future edit that drops the field is a
+      // failure here rather than an ORA-00933 the next user meets by clicking.
+      const caps = provider.getCapabilities();
+      expect(generateTableQuery(["APP", "APP_CUSTOMERS"], caps)).toBe(
+        "SELECT * FROM APP.APP_CUSTOMERS FETCH FIRST 50 ROWS ONLY",
+      );
+      expect(generateSelectQuery(["APP", "APP_CUSTOMERS"], [], caps)).toBe(
+        "SELECT\n  *\nFROM APP.APP_CUSTOMERS\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY",
+      );
+    });
+
     test("returns correct capabilities for Oracle", () => {
       const caps = provider.getCapabilities();
       expect(caps.defaultPort).toBe(1521);

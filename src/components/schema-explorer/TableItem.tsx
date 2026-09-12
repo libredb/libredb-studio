@@ -45,8 +45,8 @@ interface TableItemProps {
   labels?: NonNullable<ProviderMetadata["labels"]>;
   capabilities?: ProviderMetadata["capabilities"];
   isAdmin: boolean;
-  onTableClick?: (tableName: string) => void;
-  onGenerateSelect?: (tableName: string) => void;
+  onTableClick?: (path: readonly string[]) => void;
+  onGenerateSelect?: (path: readonly string[]) => void;
   onProfileTable?: (tableName: string) => void;
   onGenerateCode?: (tableName: string) => void;
   onGenerateTestData?: (tableName: string) => void;
@@ -107,11 +107,11 @@ function renderMenuItems({
 
   return (
     <>
-      <Item onClick={() => callbacks.onTableClick?.(table.name)}>
+      <Item onClick={() => callbacks.onTableClick?.(table.path)}>
         <Play strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-green" />
         {labels?.selectAction || "Select Top 50"}
       </Item>
-      <Item onClick={() => callbacks.onGenerateSelect?.(table.name)}>
+      <Item onClick={() => callbacks.onGenerateSelect?.(table.path)}>
         <Funnel strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
         {labels?.generateAction || "Generate Query"}
       </Item>

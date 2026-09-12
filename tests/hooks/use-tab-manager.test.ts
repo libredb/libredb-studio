@@ -263,7 +263,7 @@ describe("useTabManager", () => {
     );
 
     act(() => {
-      result.current.handleTableClick("users", executeFn);
+      result.current.handleTableClick(["users"], executeFn);
     });
 
     // New tab should be added
@@ -297,7 +297,7 @@ describe("useTabManager", () => {
     );
 
     act(() => {
-      result.current.handleGenerateSelect("users");
+      result.current.handleGenerateSelect(["users"]);
     });
 
     expect(result.current.tabs).toHaveLength(2);
@@ -657,7 +657,7 @@ describe("useTabManager", () => {
     );
 
     act(() => {
-      result.current.handleTableClick("users", executeFn);
+      result.current.handleTableClick(["users"], executeFn);
     });
 
     const newTab = result.current.tabs[1];
@@ -685,7 +685,7 @@ describe("useTabManager", () => {
     );
 
     act(() => {
-      result.current.handleTableClick("users", executeFn);
+      result.current.handleTableClick(["users"], executeFn);
     });
 
     const newTab = result.current.tabs[1];
@@ -704,7 +704,7 @@ describe("useTabManager", () => {
     );
 
     act(() => {
-      result.current.handleGenerateSelect("users");
+      result.current.handleGenerateSelect(["users"]);
     });
 
     const newTab = result.current.tabs[1];
@@ -725,7 +725,7 @@ describe("useTabManager", () => {
     );
 
     act(() => {
-      result.current.handleGenerateSelect("unknown_table");
+      result.current.handleGenerateSelect(["unknown_table"]);
     });
 
     const newTab = result.current.tabs[1];
@@ -751,7 +751,7 @@ describe("useTabManager", () => {
     );
 
     act(() => {
-      result.current.handleGenerateSelect("users");
+      result.current.handleGenerateSelect(["users"]);
     });
 
     const newTab = result.current.tabs[1];
@@ -832,7 +832,7 @@ describe("useTabManager — Redis dialect", () => {
     );
 
     act(() => {
-      result.current.handleTableClick("session:*", executeFn);
+      result.current.handleTableClick(["session:*"], executeFn);
     });
 
     const newTab = result.current.tabs[1];
@@ -851,7 +851,7 @@ describe("useTabManager — Redis dialect", () => {
     );
 
     act(() => {
-      result.current.handleTableClick("counter", executeFn);
+      result.current.handleTableClick(["counter"], executeFn);
     });
 
     expect(result.current.tabs[1].query).toBe("HGETALL counter");
@@ -867,12 +867,139 @@ describe("useTabManager — Redis dialect", () => {
     );
 
     act(() => {
-      result.current.handleGenerateSelect("session:*");
+      result.current.handleGenerateSelect(["session:*"]);
     });
 
     const newTab = result.current.tabs[1];
     expect(newTab.type).toBe("redis");
     expect(newTab.query).toContain("SCAN 0 MATCH session:* COUNT 50");
     expect(newTab.query).not.toContain('"collection"');
+  });
+});
+
+// ============================================================================
+// The click path is addressed by PATH (#789, Task 30)
+// ============================================================================
+
+describe("useTabManager addresses an object by its path", () => {
+  /**
+   * Two objects called `customers`, one in each schema, with DIFFERENT columns. A lookup
+   * by name cannot tell them apart and takes the first; a lookup by path takes the one
+   * that was clicked. The columns are what makes the two answers visibly different.
+   */
+  const twoSchemas: DetailedObject[] = [
+    {
+      name: "customers",
+      kind: "table",
+      path: ["dbo", "customers"],
+      columns: [{ name: "dbo_only", type: "int", nullable: false, isPrimary: true }],
+      indexes: [],
+    },
+    {
+      name: "customers",
+      kind: "table",
+      path: ["app", "customers"],
+      columns: [{ name: "app_only", type: "int", nullable: false, isPrimary: true }],
+      indexes: [],
+    },
+  ];
+
+  test("a table outside the default container generates a QUALIFIED statement", () => {
+    const executeFn = mock(() => {});
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ type: "mssql", port: 1433 }),
+        metadata: { ...defaultMetadata, capabilities: { ...defaultMetadata.capabilities, defaultPort: 1433 } },
+        schema: twoSchemas,
+      }),
+    );
+
+    act(() => {
+      result.current.handleTableClick(["libredb_objects", "app", "customers"], executeFn);
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.query).toBe("SELECT TOP 50 * FROM libredb_objects.app.customers;");
+    // The tab is still LABELLED with the object's own segment.
+    expect(newTab.name).toBe("customers");
+  });
+
+  test("the columns are joined on the PATH, so two same-named tables do not collide", () => {
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection(),
+        metadata: defaultMetadata,
+        schema: twoSchemas,
+      }),
+    );
+
+    act(() => {
+      result.current.handleGenerateSelect(["app", "customers"]);
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.query).toContain("app_only");
+    expect(newTab.query).not.toContain("dbo_only");
+    expect(newTab.query).toContain("FROM app.customers");
+  });
+
+  /**
+   * `handleTableClick` has a lookup of its own, and only the Redis dialect reads what it
+   * finds: the reader a key gets comes from its SAMPLED TYPE, which lives on the schema
+   * node's columns (#427). So this is the one shape that can tell the two joins apart in
+   * that handler - two keys with one name, in two databases, with different types.
+   */
+  test("handleTableClick joins on the path too, so a same-named key gets ITS OWN reader", () => {
+    const executeFn = mock(() => {});
+    const redisTwoDatabases: DetailedObject[] = [
+      {
+        name: "counter",
+        kind: "key",
+        path: ["0", "counter"],
+        columns: [{ name: "type", type: "string", nullable: false, isPrimary: false }],
+        indexes: [],
+      },
+      {
+        name: "counter",
+        kind: "key",
+        path: ["1", "counter"],
+        columns: [{ name: "type", type: "hash", nullable: false, isPrimary: false }],
+        indexes: [],
+      },
+    ];
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ type: "redis", port: 6379 }),
+        metadata: {
+          ...defaultMetadata,
+          capabilities: {
+            ...defaultMetadata.capabilities,
+            queryLanguage: "json",
+            queryDialect: "redis",
+            defaultPort: 6379,
+          },
+        },
+        schema: redisTwoDatabases,
+      }),
+    );
+
+    act(() => {
+      result.current.handleTableClick(["1", "counter"], executeFn);
+    });
+
+    expect(result.current.tabs[1].query).toBe("HGETALL counter");
+  });
+
+  test("without capabilities the fallback statement is qualified too", () => {
+    const executeFn = mock(() => {});
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: null, schema: twoSchemas }),
+    );
+
+    act(() => {
+      result.current.handleTableClick(["app", "customers"], executeFn);
+    });
+
+    expect(result.current.tabs[1].query).toBe("SELECT * FROM app.customers LIMIT 50;");
   });
 });

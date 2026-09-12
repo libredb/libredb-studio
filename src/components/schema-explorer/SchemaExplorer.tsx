@@ -18,8 +18,8 @@ interface SchemaExplorerProps {
    * both mean "nothing failed", not "nothing was wrong".
    */
   schemaError?: string | null;
-  onTableClick?: (tableName: string) => void;
-  onGenerateSelect?: (tableName: string) => void;
+  onTableClick?: (path: readonly string[]) => void;
+  onGenerateSelect?: (path: readonly string[]) => void;
   onCreateTableClick?: () => void;
   isAdmin?: boolean;
   onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", table?: string) => void;

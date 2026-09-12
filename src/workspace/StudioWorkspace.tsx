@@ -282,9 +282,10 @@ export function StudioWorkspace({
   );
 
   // === Table click handler ===
+  /** Open and run the statement for one object, addressed by its PATH (#789). */
   const onTableClick = useCallback(
-    (tableName: string) => {
-      tabMgr.handleTableClick(tableName, queryExec.executeQuery);
+    (path: readonly string[]) => {
+      tabMgr.handleTableClick(path, queryExec.executeQuery);
     },
     [tabMgr, queryExec.executeQuery],
   );
@@ -301,7 +302,7 @@ export function StudioWorkspace({
     (object: DatabaseObject) => {
       const capabilities = conn.metadata?.capabilities;
       if (capabilities === undefined || !relationKindIds(capabilities).includes(object.kind)) return;
-      onTableClick(object.name);
+      onTableClick(object.path);
     },
     [conn.metadata, onTableClick],
   );
@@ -328,7 +329,7 @@ export function StudioWorkspace({
    * shells, which is a change to those hooks rather than to this line.
    */
   const objectActions: TreeRowActionHandlers = {
-    onGenerateSelect: (object) => tabMgr.handleGenerateSelect(flatTargetName(object)),
+    onGenerateSelect: (object) => tabMgr.handleGenerateSelect(object.path),
     onProfileObject: features.codeGenerator ? (object) => setProfilerTable(flatTargetName(object)) : undefined,
     onGenerateCode: features.codeGenerator ? (object) => setCodeGenTable(flatTargetName(object)) : undefined,
     onGenerateTestData: features.testDataGenerator ? (object) => setTestDataTable(flatTargetName(object)) : undefined,

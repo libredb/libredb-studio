@@ -4,7 +4,8 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
-import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
+import { generateTableQuery, generateSelectQuery, objectSegment } from "@/lib/query-generators";
+import { pathKey } from "@/lib/db/object-path";
 import { resolveTabType } from "@/lib/editor/tab-language";
 import { logger } from "@/lib/logger";
 import { newLocalId } from "@/lib/ids";
@@ -182,18 +183,34 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
     [activeTabId],
   );
 
-  // handleTableClick takes executeQuery as callback param to avoid circular dependency
+  /**
+   * Open a tab holding the statement for one object and RUN it. Takes the object's PATH
+   * and nothing else (#789).
+   *
+   * The path is the address and the name is only a label (standing ruling 2), so the
+   * lookup that finds this object's columns joins on the path, segment by segment, the
+   * same key `describeObjects` joins on. It used to compare `t.name === tableName`, which
+   * both missed an object outside the session default container and could match the wrong
+   * one where two containers hold the same name.
+   *
+   * The tab is still named after the object's own segment, which is what it was named
+   * before: a tab reading `customers` over a statement that says `app.customers` is the
+   * label doing its job.
+   *
+   * Takes executeQuery as a callback param to avoid a circular dependency.
+   */
   const handleTableClick = useCallback(
-    (tableName: string, executeQueryFn: (query: string, tabId: string) => void) => {
+    (path: readonly string[], executeQueryFn: (query: string, tabId: string) => void) => {
       const capabilities = metadata?.capabilities;
-      // Look the table up exactly as handleGenerateSelect does: the Redis
-      // generator is type-aware, and the sampled key type lives on the schema
-      // node's `type` column (#427).
-      const table = schema.find((t) => t.name === tableName);
+      const tableName = objectSegment(path);
+      // Look the object up exactly as handleGenerateSelect does: the Redis generator is
+      // type-aware, and the sampled key type lives on the schema node's `type` column (#427).
+      const key = pathKey(path);
+      const table = schema.find((t) => pathKey(t.path) === key);
       const columns = table?.columns || [];
       const newQuery = capabilities
-        ? generateTableQuery(tableName, capabilities, columns)
-        : `SELECT * FROM ${tableName} LIMIT 50;`;
+        ? generateTableQuery(path, capabilities, columns)
+        : `SELECT * FROM ${path.join(".")} LIMIT 50;`;
 
       const newId = newLocalId();
       const newTab: QueryTab = {
@@ -211,15 +228,18 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
     [metadata, schema],
   );
 
+  /** The same address and the same join as `handleTableClick`, without the run (#789). */
   const handleGenerateSelect = useCallback(
-    (tableName: string) => {
+    (path: readonly string[]) => {
       const capabilities = metadata?.capabilities;
-      const table = schema.find((t) => t.name === tableName);
+      const tableName = objectSegment(path);
+      const key = pathKey(path);
+      const table = schema.find((t) => pathKey(t.path) === key);
       const columns = table?.columns || [];
 
       const newQuery = capabilities
-        ? generateSelectQuery(tableName, columns, capabilities)
-        : `SELECT\n${columns.map((c) => `  ${c.name}`).join(",\n") || "  *"}\nFROM ${tableName}\nWHERE 1=1\nLIMIT 100;`;
+        ? generateSelectQuery(path, columns, capabilities)
+        : `SELECT\n${columns.map((c) => `  ${c.name}`).join(",\n") || "  *"}\nFROM ${path.join(".")}\nWHERE 1=1\nLIMIT 100;`;
 
       const tabType = resolveTabType(capabilities);
 

@@ -832,7 +832,9 @@ describe("Studio", () => {
     render(<Studio />);
     const fn = capturedSidebarProps.onObjectClick as (object: DatabaseObject) => void;
     act(() => fn({ path: ["app", "users"], name: "users", kind: "table" }));
-    expect(mockHandleTableClick).toHaveBeenCalledWith("users", mockExecuteQuery);
+    // The PATH and not the name: the generator qualifies from it, so an object outside
+    // the session default container generates a statement the server can resolve (#789).
+    expect(mockHandleTableClick).toHaveBeenCalledWith(["app", "users"], mockExecuteQuery);
   });
 
   /**
@@ -853,7 +855,7 @@ describe("Studio", () => {
     render(<Studio />);
     const fn = capturedSidebarProps.onObjectClick as (object: DatabaseObject) => void;
     act(() => fn({ path: ["app", "order_summary"], name: "order_summary", kind: "view" }));
-    expect(mockHandleTableClick).toHaveBeenCalledWith("order_summary", mockExecuteQuery);
+    expect(mockHandleTableClick).toHaveBeenCalledWith(["app", "order_summary"], mockExecuteQuery);
   });
 
   test("a routine activated in the object tree runs nothing", () => {
@@ -887,7 +889,7 @@ describe("Studio", () => {
     const actions = sidebarActions();
 
     act(() => actions.onGenerateSelect?.(usersObject));
-    expect(mockHandleGenerateSelect).toHaveBeenCalledWith("users");
+    expect(mockHandleGenerateSelect).toHaveBeenCalledWith(["app", "users"]);
 
     act(() => actions.onProfileObject?.(usersObject));
     expect(queryByTestId("dataprofiler")).not.toBeNull();
@@ -915,21 +917,23 @@ describe("Studio", () => {
     expect(sidebarActions().onProfileObject).toBeDefined();
   });
 
-  test("the old consumers are handed the object's NAME and not its path segment", () => {
+  test("the consumers that still look a target up by name are handed the NAME", () => {
     // The two differ wherever an engine disambiguates its addresses: a PostgreSQL routine
     // is addressed `order_total(integer)` and labelled `order_total` (standing ruling 2).
-    // Every consumer behind these handlers looks its target up in the flat schema list by
-    // name, so the name is the half that can still be used, and this pins which one crosses.
+    // The profiler, the code generator, the test-data generator and the maintenance deep
+    // link all look their target up in the flat schema list BY NAME, so the name is the
+    // half that crosses for them. The two query generators no longer do - they take the
+    // path - and the test above pins that, so this pins the seam that is left (#789).
     connMgrOverride = { activeConnection: pgConn };
     render(<Studio />);
     act(() =>
-      sidebarActions().onGenerateSelect?.({
+      sidebarActions().onOpenMaintenance?.({
         path: ["app", "order_total(integer)"],
         name: "order_total",
         kind: "table",
       }),
     );
-    expect(mockHandleGenerateSelect).toHaveBeenCalledWith("order_total");
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?table=order_total");
   });
 
   // #765: the connection owns the answer, so both halves reach the tree from the hook

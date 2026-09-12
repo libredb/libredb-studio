@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { DatabaseConnection, SavedQuery, QueryHistoryItem } from "@/lib/types";
 import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import { pathKey } from "@/lib/db/object-path";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { storage } from "@/lib/storage";
 import { getDBIcon } from "@/lib/db-ui-config";
@@ -43,7 +44,7 @@ interface CommandPaletteProps {
    */
   capabilities?: ProviderCapabilities;
   onSelectConnection: (conn: DatabaseConnection) => void;
-  onTableClick: (tableName: string) => void;
+  onTableClick: (path: readonly string[]) => void;
   onAddConnection: () => void;
   onExecuteQuery: () => void;
   onLoadSavedQuery: (query: string) => void;
@@ -197,7 +198,7 @@ export function CommandPalette({
         {tables.length > 0 && (
           <CommandGroup heading="Tables">
             {tables.map((table) => (
-              <CommandItem key={table.name} onSelect={() => runAction(() => onTableClick(table.name))}>
+              <CommandItem key={pathKey(table.path)} onSelect={() => runAction(() => onTableClick(table.path))}>
                 <Table2 strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-muted" />
                 <span>{table.name}</span>
                 <span className="ml-auto text-xs text-fg-subtle">

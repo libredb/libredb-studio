@@ -387,6 +387,13 @@ export interface ProviderCapabilities {
    * here keeps `query-generators.ts` from having to know which engine it is
    * generating for.
    *
+   * Oracle is the second product that declares it, and for a different reason worth
+   * keeping apart: `;` is a SQL*Plus convention rather than Oracle SQL, and node-oracledb
+   * sends one statement with no terminator in it. Measured on Oracle AI Database 26ai Free
+   * on 2026-09-12 by clicking a table in the object browser -
+   * `SELECT * FROM app_customers FETCH FIRST 50 ROWS ONLY;` answers ORA-00933 "SQL command
+   * not properly ended" and the same statement without the `;` returns the rows (#789).
+   *
    * This bounds the GENERATORS only. A user who types a `;` still has it stripped
    * by the editor's statement reader before the statement is sent, and the raw API
    * passes text through untouched - neither of those is this field's business.

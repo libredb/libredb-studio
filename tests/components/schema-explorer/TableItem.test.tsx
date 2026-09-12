@@ -144,6 +144,14 @@ const largeTable: DetailedObject = {
   ],
 };
 
+/**
+ * The same object OUTSIDE the session default container, which is the only fixture the two
+ * menu items below can be measured with: `name` is the label and `path` is the address
+ * (standing ruling 2), and at path `["users"]` the two are the same string, so an
+ * implementation still handing over the name would pass (#789).
+ */
+const qualifiedTable: DetailedObject = { ...largeTable, path: ["app", "users"] };
+
 const smallTable: DetailedObject = {
   name: "settings",
   kind: "table",
@@ -259,13 +267,13 @@ describe("TableItem", () => {
 
   // ── Dropdown action callbacks ─────────────────────────────────────────────
 
-  test('onTableClick fires with table name on "Select Top 50" click', () => {
-    const onTableClick = mock((name: string) => {
-      void name;
+  test('onTableClick fires with the object PATH on "Select Top 50" click', () => {
+    const onTableClick = mock((path: readonly string[]) => {
+      void path;
     });
     const { getByTestId } = render(
       <TableItem
-        table={largeTable}
+        table={qualifiedTable}
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin={false}
@@ -275,16 +283,16 @@ describe("TableItem", () => {
     const dropdown = within(getByTestId("dropdown"));
     fireEvent.click(dropdown.getByText("Select Top 50"));
     expect(onTableClick).toHaveBeenCalledTimes(1);
-    expect(onTableClick.mock.calls[0][0]).toBe("users");
+    expect(onTableClick.mock.calls[0][0]).toEqual(["app", "users"]);
   });
 
-  test('onGenerateSelect fires with table name on "Generate Query" click', () => {
-    const onGenerateSelect = mock((name: string) => {
-      void name;
+  test('onGenerateSelect fires with the object PATH on "Generate Query" click', () => {
+    const onGenerateSelect = mock((path: readonly string[]) => {
+      void path;
     });
     const { getByTestId } = render(
       <TableItem
-        table={largeTable}
+        table={qualifiedTable}
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin={false}
@@ -294,7 +302,7 @@ describe("TableItem", () => {
     const dropdown = within(getByTestId("dropdown"));
     fireEvent.click(dropdown.getByText("Generate Query"));
     expect(onGenerateSelect).toHaveBeenCalledTimes(1);
-    expect(onGenerateSelect.mock.calls[0][0]).toBe("users");
+    expect(onGenerateSelect.mock.calls[0][0]).toEqual(["app", "users"]);
   });
 
   test('copyToClipboard copies table name and shows toast on "Copy Name" click', async () => {

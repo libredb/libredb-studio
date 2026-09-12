@@ -743,7 +743,10 @@ describe("StudioWorkspace", () => {
         kind: "table",
       }),
     );
-    expect(mockHandleTableClick).toHaveBeenCalledWith("users", mockExecuteQuery);
+    // The PATH and not the name, the same as the standalone shell: the generator
+    // qualifies from it, so an object outside the session default container generates a
+    // statement the server can resolve (#789).
+    expect(mockHandleTableClick).toHaveBeenCalledWith(["app", "users"], mockExecuteQuery);
   });
 
   /**
@@ -797,7 +800,7 @@ describe("StudioWorkspace", () => {
     const { queryByTestId } = renderWorkspace();
 
     act(() => sidebarActions().onGenerateSelect?.(usersObject));
-    expect(mockHandleGenerateSelect).toHaveBeenCalledWith("users");
+    expect(mockHandleGenerateSelect).toHaveBeenCalledWith(["app", "users"]);
 
     act(() => sidebarActions().onProfileObject?.(usersObject));
     expect(queryByTestId("dataprofiler")).not.toBeNull();
@@ -1042,7 +1045,7 @@ describe("StudioWorkspace", () => {
       // The generator the tab manager runs, fed the metadata this shell actually
       // passed it: with `null` it fell through to `SELECT * FROM user:* LIMIT 50;`.
       const capabilities = (capturedTabManagerArgs.metadata as ProviderMetadata).capabilities;
-      const query = generateTableQuery("user:*", capabilities, []);
+      const query = generateTableQuery(["user:*"], capabilities, []);
       expect(query.startsWith("SCAN ")).toBe(true);
       expect(query).not.toContain("SELECT");
     });

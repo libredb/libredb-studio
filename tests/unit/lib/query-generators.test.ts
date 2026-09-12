@@ -5,6 +5,7 @@ import {
   shouldRefreshSchema,
   quoteIdentifier,
   quoteQualifiedName,
+  quoteObjectPath,
 } from "@/lib/query-generators";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
@@ -40,12 +41,12 @@ const sampleColumns: ColumnSchema[] = [
 
 describe("generateTableQuery", () => {
   test("SQL (postgres/mysql/sqlite) uses LIMIT 50", () => {
-    const result = generateTableQuery("users", makeCaps({ defaultPort: 5432 }));
+    const result = generateTableQuery(["users"], makeCaps({ defaultPort: 5432 }));
     expect(result).toBe("SELECT * FROM users LIMIT 50;");
   });
 
   test("JSON (MongoDB) generates JSON find query", () => {
-    const result = generateTableQuery("users", makeCaps({ queryLanguage: "json", defaultPort: null }));
+    const result = generateTableQuery(["users"], makeCaps({ queryLanguage: "json", defaultPort: null }));
     const parsed = JSON.parse(result);
     expect(parsed.collection).toBe("users");
     expect(parsed.operation).toBe("find");
@@ -53,7 +54,7 @@ describe("generateTableQuery", () => {
   });
 
   test("Oracle (port 1521) uses FETCH FIRST 50 ROWS ONLY", () => {
-    const result = generateTableQuery("users", makeCaps({ defaultPort: 1521 }));
+    const result = generateTableQuery(["users"], makeCaps({ defaultPort: 1521 }));
     expect(result).toContain("FETCH FIRST 50 ROWS ONLY");
     // Oracle folds unquoted identifiers to UPPERCASE, so a lowercase name is
     // quoted to preserve it.
@@ -61,7 +62,7 @@ describe("generateTableQuery", () => {
   });
 
   test("MSSQL (port 1433) uses TOP 50", () => {
-    const result = generateTableQuery("users", makeCaps({ defaultPort: 1433 }));
+    const result = generateTableQuery(["users"], makeCaps({ defaultPort: 1433 }));
     expect(result).toBe("SELECT TOP 50 * FROM users;");
   });
 
@@ -73,17 +74,17 @@ describe("generateTableQuery", () => {
   // runs on both, so one answer serves both products.
   test("a dialect that declares no terminator gets no trailing semicolon", () => {
     const caps = makeCaps({ defaultPort: 9200, statementTerminator: "none" });
-    expect(generateTableQuery("orders", caps)).toBe("SELECT * FROM orders LIMIT 50");
+    expect(generateTableQuery(["orders"], caps)).toBe("SELECT * FROM orders LIMIT 50");
   });
 
   test('LibreDB dialect: a ":*" prefix group scans with prefix', () => {
     const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
-    expect(generateTableQuery("users:*", caps)).toBe("prefix users:");
+    expect(generateTableQuery(["users:*"], caps)).toBe("prefix users:");
   });
 
   test("LibreDB dialect: a bare (no-colon) group reads with get", () => {
     const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
-    expect(generateTableQuery("orphan", caps)).toBe("get orphan");
+    expect(generateTableQuery(["orphan"], caps)).toBe("get orphan");
   });
 
   // "Scan Keys" AUTO-EXECUTES through `handleTableClick`, and a key name is
@@ -94,7 +95,7 @@ describe("generateTableQuery", () => {
   // gives — emit the note, emit no command (U11).
   test("LibreDB dialect: a newline-bearing key name emits the note and NO command", () => {
     const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
-    const out = generateTableQuery("x\ndelete billing:2024", caps);
+    const out = generateTableQuery(["x\ndelete billing:2024"], caps);
     const runnable = out
       .split("\n")
       .map((l) => l.trim())
@@ -105,20 +106,20 @@ describe("generateTableQuery", () => {
 
   test("LibreDB dialect: a bare CR in a key name refuses the same way (U11)", () => {
     const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
-    expect(generateTableQuery("x\rdelete billing:2024", caps)).not.toContain("get x");
+    expect(generateTableQuery(["x\rdelete billing:2024"], caps)).not.toContain("get x");
   });
 
   test("LibreDB dialect: a newline-bearing PREFIX GROUP refuses too (U11)", () => {
     const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
-    expect(generateTableQuery("x\ndelete billing:2024:*", caps)).not.toContain("prefix ");
+    expect(generateTableQuery(["x\ndelete billing:2024:*"], caps)).not.toContain("prefix ");
   });
 
   // The two LibreDB branches must not drift: Scan Keys and the cheatsheet emit
   // the identical note text for the identical name (U11).
   test("LibreDB dialect: Scan Keys and the cheatsheet share one refusal note (U11)", () => {
     const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
-    const note = generateTableQuery("x\ndelete billing:2024", caps);
-    expect(generateSelectQuery("x\ndelete billing:2024", [], caps)).toContain(note);
+    const note = generateTableQuery(["x\ndelete billing:2024"], caps);
+    expect(generateSelectQuery(["x\ndelete billing:2024"], [], caps)).toContain(note);
   });
 });
 
@@ -132,7 +133,7 @@ describe("generateSelectQuery — no statement terminator", () => {
   // `line 6:10: extraneous input ';' expecting <EOF>` (measured 2026-08-19).
   test("omits the trailing semicolon the other dialects carry", () => {
     const caps = makeCaps({ defaultPort: 9200, statementTerminator: "none" });
-    const out = generateSelectQuery("orders", sampleColumns, caps);
+    const out = generateSelectQuery(["orders"], sampleColumns, caps);
     expect(out.endsWith("LIMIT 100")).toBe(true);
     expect(out).not.toContain(";");
   });
@@ -162,7 +163,7 @@ describe("generateSelectQuery — LibreDB dialect", () => {
       .filter((l) => l !== "" && !l.startsWith("#"));
 
   test("output carries explanatory # comments", () => {
-    const out = generateSelectQuery("users:*", kvColumns, libreCaps);
+    const out = generateSelectQuery(["users:*"], kvColumns, libreCaps);
     expect(out.split("\n").some((l) => l.trim().startsWith("#"))).toBe(true);
   });
 
@@ -171,7 +172,7 @@ describe("generateSelectQuery — LibreDB dialect", () => {
     // second line rendered as a runnable command of its own — `delete billing:2024`
     // below would have been executed by Run Selected. LibreDB has no lossless JSON
     // command form to fall back to, so the cheatsheet declines to guess.
-    const out = generateSelectQuery("x\ndelete billing:2024", kvColumns, libreCaps);
+    const out = generateSelectQuery(["x\ndelete billing:2024"], kvColumns, libreCaps);
     expect(out.split("\n")[0]).toBe(
       '# LibreDB commands for "x\\ndelete billing:2024" — select a line and Run Selected.',
     );
@@ -182,23 +183,23 @@ describe("generateSelectQuery — LibreDB dialect", () => {
 
   test("a node name containing a bare CR emits the same note (#427)", () => {
     // A lone CR ends a line for an editor and for Run Selected just as LF does.
-    const out = generateSelectQuery("x\rdelete billing:2024", kvColumns, libreCaps);
+    const out = generateSelectQuery(["x\rdelete billing:2024"], kvColumns, libreCaps);
     expect(commandLines(out)).toEqual([]);
   });
 
   test("a PREFIX GROUP whose name contains a newline emits the same note (#427)", () => {
-    const out = generateSelectQuery("x\ndelete billing:2024:*", kvColumns, libreCaps);
+    const out = generateSelectQuery(["x\ndelete billing:2024:*"], kvColumns, libreCaps);
     expect(commandLines(out)).toEqual([]);
   });
 
   test("an ordinary node name still renders unescaped in the header (#427)", () => {
-    expect(generateSelectQuery("users:*", kvColumns, libreCaps).split("\n")[0]).toBe(
+    expect(generateSelectQuery(["users:*"], kvColumns, libreCaps).split("\n")[0]).toBe(
       '# LibreDB commands for "users:*" — select a line and Run Selected.',
     );
   });
 
   test("relational group: put example is a concrete JSON object from the columns", () => {
-    const out = generateSelectQuery("users:*", relationalColumns, libreCaps);
+    const out = generateSelectQuery(["users:*"], relationalColumns, libreCaps);
     expect(commandLines(out)).toEqual([
       "prefix users:",
       "get users:1",
@@ -208,12 +209,12 @@ describe("generateSelectQuery — LibreDB dialect", () => {
   });
 
   test("raw kv group (key/value columns): put example uses a plain value", () => {
-    const out = generateSelectQuery("config:*", kvColumns, libreCaps);
+    const out = generateSelectQuery(["config:*"], kvColumns, libreCaps);
     expect(commandLines(out)).toEqual(["prefix config:", "get config:1", "put config:1 example", "delete config:1"]);
   });
 
   test("bare (no-colon) group: get/put/delete on the key itself, no prefix scan", () => {
-    const out = generateSelectQuery("orphan", kvColumns, libreCaps);
+    const out = generateSelectQuery(["orphan"], kvColumns, libreCaps);
     expect(commandLines(out)).toEqual(["get orphan", "put orphan example", "delete orphan"]);
   });
 
@@ -223,7 +224,7 @@ describe("generateSelectQuery — LibreDB dialect", () => {
       { name: "meta", type: "object", nullable: true, isPrimary: false },
       { name: "notes", type: "text", nullable: true, isPrimary: false },
     ];
-    const out = generateSelectQuery("things:*", exoticColumns, libreCaps);
+    const out = generateSelectQuery(["things:*"], exoticColumns, libreCaps);
     expect(commandLines(out)).toContain(`put things:1 '{"id":"example","meta":{},"notes":"example"}'`);
   });
 
@@ -232,12 +233,12 @@ describe("generateSelectQuery — LibreDB dialect", () => {
       { name: "id", type: "string", nullable: false, isPrimary: true },
       { name: "document", type: "object", nullable: true, isPrimary: false },
     ];
-    const out = generateSelectQuery("articles:*", docColumns, libreCaps);
+    const out = generateSelectQuery(["articles:*"], docColumns, libreCaps);
     expect(commandLines(out)).toContain(`put articles:1 '{"name":"example"}'`);
   });
 
   test("every command line is a concrete, directly-runnable verb (no placeholders)", () => {
-    const out = generateSelectQuery("people:*", kvColumns, libreCaps);
+    const out = generateSelectQuery(["people:*"], kvColumns, libreCaps);
     for (const line of commandLines(out)) {
       expect(["prefix", "get", "put", "delete"]).toContain(line.split(" ")[0]);
       expect(line).not.toContain("<"); // no <key>/<value> placeholders
@@ -251,7 +252,7 @@ describe("generateSelectQuery — LibreDB dialect", () => {
 
 describe("generateSelectQuery", () => {
   test("SQL with columns generates column list and LIMIT 100", () => {
-    const result = generateSelectQuery("users", sampleColumns, makeCaps({ defaultPort: 5432 }));
+    const result = generateSelectQuery(["users"], sampleColumns, makeCaps({ defaultPort: 5432 }));
     expect(result).toContain("id");
     expect(result).toContain("name");
     expect(result).toContain("LIMIT 100");
@@ -259,7 +260,11 @@ describe("generateSelectQuery", () => {
   });
 
   test("JSON (MongoDB) generates projection", () => {
-    const result = generateSelectQuery("users", sampleColumns, makeCaps({ queryLanguage: "json", defaultPort: null }));
+    const result = generateSelectQuery(
+      ["users"],
+      sampleColumns,
+      makeCaps({ queryLanguage: "json", defaultPort: null }),
+    );
     const parsed = JSON.parse(result);
     expect(parsed.collection).toBe("users");
     expect(parsed.options.projection.id).toBe(1);
@@ -268,14 +273,14 @@ describe("generateSelectQuery", () => {
   });
 
   test("Oracle uses FETCH FIRST 100 ROWS ONLY", () => {
-    const result = generateSelectQuery("users", sampleColumns, makeCaps({ defaultPort: 1521 }));
+    const result = generateSelectQuery(["users"], sampleColumns, makeCaps({ defaultPort: 1521 }));
     expect(result).toContain("FETCH FIRST 100 ROWS ONLY");
     expect(result).toContain("id");
     expect(result).toContain("name");
   });
 
   test("MSSQL uses TOP 100", () => {
-    const result = generateSelectQuery("users", sampleColumns, makeCaps({ defaultPort: 1433 }));
+    const result = generateSelectQuery(["users"], sampleColumns, makeCaps({ defaultPort: 1433 }));
     expect(result).toContain("SELECT TOP 100");
     expect(result).toContain("id");
     expect(result).toContain("name");
@@ -297,32 +302,32 @@ describe("Couchbase (SQL++) generation", () => {
   ];
 
   test("generateTableQuery aliases the keyspace and projects the document key", () => {
-    expect(generateTableQuery("hotel", couchbaseCaps)).toBe(
+    expect(generateTableQuery(["hotel"], couchbaseCaps)).toBe(
       "SELECT META(d).id AS __id, d.* FROM `hotel` AS d LIMIT 50;",
     );
   });
 
   test("generateTableQuery quotes every segment of a scope-qualified collection", () => {
-    expect(generateTableQuery("inventory.hotel", couchbaseCaps)).toBe(
+    expect(generateTableQuery(["inventory", "hotel"], couchbaseCaps)).toBe(
       "SELECT META(d).id AS __id, d.* FROM `inventory`.`hotel` AS d LIMIT 50;",
     );
   });
 
   test("generateSelectQuery projects fields through the alias and the key through META", () => {
-    expect(generateSelectQuery("inventory.hotel", hotelColumns, couchbaseCaps)).toBe(
+    expect(generateSelectQuery(["inventory", "hotel"], hotelColumns, couchbaseCaps)).toBe(
       "SELECT\n  META(d).id AS __id,\n  d.`city`\nFROM `inventory`.`hotel` AS d\nWHERE 1=1\nLIMIT 100;",
     );
   });
 
   test("generateSelectQuery falls back to the wildcard when no columns are known", () => {
-    expect(generateSelectQuery("hotel", [], couchbaseCaps)).toBe(
+    expect(generateSelectQuery(["hotel"], [], couchbaseCaps)).toBe(
       "SELECT\n  META(d).id AS __id,\n  d.*\nFROM `hotel` AS d\nWHERE 1=1\nLIMIT 100;",
     );
   });
 
   test("generateSelectQuery adds the key projection even when the columns carry no key", () => {
     const cityOnly: ColumnSchema[] = [{ name: "city", type: "string", nullable: true, isPrimary: false }];
-    const out = generateSelectQuery("hotel", cityOnly, couchbaseCaps);
+    const out = generateSelectQuery(["hotel"], cityOnly, couchbaseCaps);
     expect(out).toContain("META(d).id AS __id");
     expect(out).not.toContain("d.`__id`");
   });
@@ -351,13 +356,13 @@ describe("ClickHouse (8123) generation", () => {
   const clickhouseCaps = makeCaps({ defaultPort: 8123 });
 
   test("generateTableQuery uses the plain LIMIT form", () => {
-    expect(generateTableQuery("events", clickhouseCaps)).toBe("SELECT * FROM events LIMIT 50;");
+    expect(generateTableQuery(["events"], clickhouseCaps)).toBe("SELECT * FROM events LIMIT 50;");
   });
 
   test("generateTableQuery qualifies and quotes a database-scoped table per segment", () => {
     // Cross-database tables are addressed as `database.table`, so the dot must stay
     // a separator; ClickHouse is case-sensitive, so a mixed-case name needs quoting.
-    expect(generateTableQuery("demo.Events", clickhouseCaps)).toBe('SELECT * FROM demo."Events" LIMIT 50;');
+    expect(generateTableQuery(["demo", "Events"], clickhouseCaps)).toBe('SELECT * FROM demo."Events" LIMIT 50;');
   });
 
   test("generateSelectQuery emits a double-quoted column list and LIMIT 100", () => {
@@ -365,14 +370,14 @@ describe("ClickHouse (8123) generation", () => {
       { name: "id", type: "Int32", nullable: false, isPrimary: true },
       { name: "Name", type: "Nullable(String)", nullable: true, isPrimary: false },
     ];
-    expect(generateSelectQuery("demo.regtest", cols, clickhouseCaps)).toBe(
+    expect(generateSelectQuery(["demo", "regtest"], cols, clickhouseCaps)).toBe(
       'SELECT\n  id,\n  "Name"\nFROM demo.regtest\nWHERE 1=1\nLIMIT 100;',
     );
   });
 
   test("the trailing LIMIT is the last clause, so a user-appended FORMAT stays legal", () => {
     // `... FORMAT TSV LIMIT 1` is a syntax error; `... LIMIT 1 FORMAT TSV` is not.
-    const out = generateTableQuery("events", clickhouseCaps);
+    const out = generateTableQuery(["events"], clickhouseCaps);
     expect(out.trimEnd().endsWith("LIMIT 50;")).toBe(true);
   });
 
@@ -401,7 +406,7 @@ describe("Druid (8888) generation", () => {
   const druidCaps = makeCaps({ defaultPort: 8888 });
 
   test("generateTableQuery quotes the datasource and uses the plain LIMIT form", () => {
-    expect(generateTableQuery("libredb_demo", druidCaps)).toBe('SELECT * FROM "libredb_demo" LIMIT 50;');
+    expect(generateTableQuery(["libredb_demo"], druidCaps)).toBe('SELECT * FROM "libredb_demo" LIMIT 50;');
   });
 
   // The trap that makes the default branch correct for Druid rather than merely
@@ -411,8 +416,8 @@ describe("Druid (8888) generation", () => {
   // thing to do for a "top 50" - would produce a query that cannot be planned on
   // any Druid datasource. So no provider-generated scan may ever carry ORDER BY.
   test("no generated Druid statement carries ORDER BY", () => {
-    expect(generateTableQuery("libredb_demo", druidCaps)).not.toContain("ORDER BY");
-    expect(generateSelectQuery("libredb_demo", sampleColumns, druidCaps)).not.toContain("ORDER BY");
+    expect(generateTableQuery(["libredb_demo"], druidCaps)).not.toContain("ORDER BY");
+    expect(generateSelectQuery(["libredb_demo"], sampleColumns, druidCaps)).not.toContain("ORDER BY");
   });
 
   test("generateSelectQuery emits a double-quoted column list and LIMIT 100", () => {
@@ -420,7 +425,7 @@ describe("Druid (8888) generation", () => {
       { name: "id", type: "BIGINT", nullable: true, isPrimary: false },
       { name: "region", type: "VARCHAR", nullable: true, isPrimary: false },
     ];
-    expect(generateSelectQuery("libredb_demo", cols, druidCaps)).toBe(
+    expect(generateSelectQuery(["libredb_demo"], cols, druidCaps)).toBe(
       'SELECT\n  "id",\n  "region"\nFROM "libredb_demo"\nWHERE 1=1\nLIMIT 100;',
     );
   });
@@ -429,7 +434,7 @@ describe("Druid (8888) generation", () => {
     // __time is mandatory on every datasource, so it is in almost every generated
     // projection. It parses both bare and quoted; quoting it needs no exception.
     const cols: ColumnSchema[] = [{ name: "__time", type: "TIMESTAMP", nullable: false, isPrimary: true }];
-    expect(generateSelectQuery("libredb_demo", cols, druidCaps)).toContain('  "__time"');
+    expect(generateSelectQuery(["libredb_demo"], cols, druidCaps)).toContain('  "__time"');
   });
 
   // The defect this branch exists for (issue #265 review): Calcite reserves a large
@@ -486,7 +491,7 @@ describe("Druid (8888) generation", () => {
 
   test("generateSelectQuery with no columns falls back to a bare star, not a quoted one", () => {
     // `SELECT "*"` would be a column literally named `*`; the star must stay bare.
-    expect(generateSelectQuery("libredb_demo", [], druidCaps)).toBe(
+    expect(generateSelectQuery(["libredb_demo"], [], druidCaps)).toBe(
       'SELECT\n  *\nFROM "libredb_demo"\nWHERE 1=1\nLIMIT 100;',
     );
   });
@@ -511,13 +516,13 @@ describe("Trino (declared capabilities, port 8080) generation", () => {
     // Not cosmetic. Measured: `SELECT * FROM tpch.sf1.nation LIMIT 50;` is
     // "line 1:39: mismatched input ';'. Expecting: <EOF>" - the terminator is not in
     // Trino's grammar, so a generated statement carrying one cannot run at all.
-    expect(generateTableQuery("nation", trinoCaps)).toBe("SELECT * FROM nation LIMIT 50");
+    expect(generateTableQuery(["nation"], trinoCaps)).toBe("SELECT * FROM nation LIMIT 50");
   });
 
   test("generateSelectQuery emits the column list unquoted and no terminator", () => {
     // Live: the same five lines answer the two columns. Unquoted lowercase names
     // round-trip because Trino folds an unquoted identifier to lower case.
-    expect(generateSelectQuery("nation", sampleColumns, trinoCaps)).toBe(
+    expect(generateSelectQuery(["nation"], sampleColumns, trinoCaps)).toBe(
       "SELECT\n  id,\n  name\nFROM nation\nWHERE 1=1\nLIMIT 100",
     );
   });
@@ -550,7 +555,7 @@ describe("Trino (declared capabilities, port 8080) generation", () => {
     // quote identifiers" - so a generator that guessed MySQL's form from a generic
     // port would produce a statement no Trino coordinator can parse.
     expect(quoteIdentifier("Weird", trinoCaps)).not.toContain("`");
-    expect(generateSelectQuery("nation", sampleColumns, trinoCaps)).not.toContain("`");
+    expect(generateSelectQuery(["nation"], sampleColumns, trinoCaps)).not.toContain("`");
   });
 });
 
@@ -568,7 +573,7 @@ describe("Apache Cassandra (port 9042) generation", () => {
     // Measured: `SELECT * FROM probe.customers LIMIT 50;` returns rows - CQL accepts
     // a trailing semicolon on a single statement - and `LIMIT n` is its own row bound.
     // So no `statementTerminator` is declared and no branch is added.
-    expect(generateTableQuery("customers", cassandraCaps)).toBe("SELECT * FROM customers LIMIT 50;");
+    expect(generateTableQuery(["customers"], cassandraCaps)).toBe("SELECT * FROM customers LIMIT 50;");
   });
 
   test("a keyspace-qualified name keeps its separator", () => {
@@ -641,7 +646,9 @@ describe("quoteIdentifier", () => {
   });
 
   test("generateTableQuery quotes a mixed-case Postgres table", () => {
-    expect(generateTableQuery("Customer", makeCaps({ defaultPort: 5432 }))).toBe('SELECT * FROM "Customer" LIMIT 50;');
+    expect(generateTableQuery(["Customer"], makeCaps({ defaultPort: 5432 }))).toBe(
+      'SELECT * FROM "Customer" LIMIT 50;',
+    );
   });
 
   test("schema-qualified names are quoted per-segment, not as one identifier", () => {
@@ -655,7 +662,7 @@ describe("quoteIdentifier", () => {
 
   test("generateTableQuery on a schema-qualified table does NOT wrap the dot (regression)", () => {
     // Was producing the broken `"employees.department"`; must be `employees.department`.
-    expect(generateTableQuery("employees.department", makeCaps({ defaultPort: 5432 }))).toBe(
+    expect(generateTableQuery(["employees", "department"], makeCaps({ defaultPort: 5432 }))).toBe(
       "SELECT * FROM employees.department LIMIT 50;",
     );
   });
@@ -665,7 +672,7 @@ describe("quoteIdentifier", () => {
       { name: "Id", type: "integer", nullable: false, isPrimary: true },
       { name: "full_name", type: "text", nullable: true, isPrimary: false },
     ];
-    const result = generateSelectQuery("Customer", cols, makeCaps({ defaultPort: 5432 }));
+    const result = generateSelectQuery(["Customer"], cols, makeCaps({ defaultPort: 5432 }));
     expect(result).toContain('FROM "Customer"');
     expect(result).toContain('"Id"');
     expect(result).toContain("full_name"); // lowercase stays unquoted
@@ -721,89 +728,89 @@ function typeCols(sample: string): ColumnSchema[] {
 
 describe("generateTableQuery — Redis dialect", () => {
   test("prefix group scans with SCAN 0 MATCH ... COUNT 50", () => {
-    expect(generateTableQuery("user:*", redisCaps, typeCols("string"))).toBe("SCAN 0 MATCH user:* COUNT 50");
+    expect(generateTableQuery(["user:*"], redisCaps, typeCols("string"))).toBe("SCAN 0 MATCH user:* COUNT 50");
   });
 
   test("prefix group SCANs regardless of the sampled type", () => {
-    expect(generateTableQuery("session:*", redisCaps, typeCols("hash"))).toBe("SCAN 0 MATCH session:* COUNT 50");
+    expect(generateTableQuery(["session:*"], redisCaps, typeCols("hash"))).toBe("SCAN 0 MATCH session:* COUNT 50");
   });
 
   test("bare key, string sample -> GET", () => {
-    expect(generateTableQuery("counter", redisCaps, typeCols("string"))).toBe("GET counter");
+    expect(generateTableQuery(["counter"], redisCaps, typeCols("string"))).toBe("GET counter");
   });
 
   test("bare key, hash sample -> HGETALL", () => {
-    expect(generateTableQuery("counter", redisCaps, typeCols("hash"))).toBe("HGETALL counter");
+    expect(generateTableQuery(["counter"], redisCaps, typeCols("hash"))).toBe("HGETALL counter");
   });
 
   test("bare key, list sample -> LRANGE k 0 -1", () => {
-    expect(generateTableQuery("counter", redisCaps, typeCols("list"))).toBe("LRANGE counter 0 -1");
+    expect(generateTableQuery(["counter"], redisCaps, typeCols("list"))).toBe("LRANGE counter 0 -1");
   });
 
   test("bare key, set sample -> SMEMBERS", () => {
-    expect(generateTableQuery("counter", redisCaps, typeCols("set"))).toBe("SMEMBERS counter");
+    expect(generateTableQuery(["counter"], redisCaps, typeCols("set"))).toBe("SMEMBERS counter");
   });
 
   test("bare key, zset sample -> ZRANGE k 0 -1 WITHSCORES", () => {
-    expect(generateTableQuery("counter", redisCaps, typeCols("zset"))).toBe("ZRANGE counter 0 -1 WITHSCORES");
+    expect(generateTableQuery(["counter"], redisCaps, typeCols("zset"))).toBe("ZRANGE counter 0 -1 WITHSCORES");
   });
 
   test('bare key, mixed sample ("string, hash") -> TYPE', () => {
-    expect(generateTableQuery("counter", redisCaps, typeCols("string, hash"))).toBe("TYPE counter");
+    expect(generateTableQuery(["counter"], redisCaps, typeCols("string, hash"))).toBe("TYPE counter");
   });
 
   test('bare key, unrecognised sample ("stream") -> TYPE', () => {
-    expect(generateTableQuery("counter", redisCaps, typeCols("stream"))).toBe("TYPE counter");
+    expect(generateTableQuery(["counter"], redisCaps, typeCols("stream"))).toBe("TYPE counter");
   });
 
   test('bare key, empty sample ("") -> TYPE', () => {
-    expect(generateTableQuery("counter", redisCaps, typeCols(""))).toBe("TYPE counter");
+    expect(generateTableQuery(["counter"], redisCaps, typeCols(""))).toBe("TYPE counter");
   });
 
   test("bare key with no columns argument -> TYPE", () => {
-    expect(generateTableQuery("counter", redisCaps)).toBe("TYPE counter");
+    expect(generateTableQuery(["counter"], redisCaps)).toBe("TYPE counter");
   });
 
   test('bare key with columns that have no "type" column -> TYPE', () => {
-    expect(generateTableQuery("counter", redisCaps, sampleColumns)).toBe("TYPE counter");
+    expect(generateTableQuery(["counter"], redisCaps, sampleColumns)).toBe("TYPE counter");
   });
 
   test("glob metacharacters in the prefix are escaped in MATCH", () => {
     // The escape introduces a backslash, which the plain tokenizer cannot be
     // trusted to carry, so the line switches to the lossless JSON form (#427).
-    expect(generateTableQuery("a[b:*", redisCaps, typeCols("string"))).toBe(
+    expect(generateTableQuery(["a[b:*"], redisCaps, typeCols("string"))).toBe(
       '{"command":"SCAN","args":["0","MATCH","a\\\\[b:*","COUNT","50"]}',
     );
   });
 
   test("a key containing a double quote falls back to the JSON form (#427)", () => {
     // Plain `GET "say"hi""` tokenizes to the key `sayhi` — a different key.
-    expect(generateTableQuery('say"hi"', redisCaps, typeCols("string"))).toBe(
+    expect(generateTableQuery(['say"hi"'], redisCaps, typeCols("string"))).toBe(
       '{"command":"GET","args":["say\\"hi\\""]}',
     );
   });
 
   test("a key containing a single quote falls back to the JSON form (#427)", () => {
-    expect(generateTableQuery("it's", redisCaps, typeCols("hash"))).toBe('{"command":"HGETALL","args":["it\'s"]}');
+    expect(generateTableQuery(["it's"], redisCaps, typeCols("hash"))).toBe('{"command":"HGETALL","args":["it\'s"]}');
   });
 
   test("a quoted prefix group falls back to the JSON form (#427)", () => {
-    expect(generateTableQuery('a"b:*', redisCaps, typeCols("string"))).toBe(
+    expect(generateTableQuery(['a"b:*'], redisCaps, typeCols("string"))).toBe(
       '{"command":"SCAN","args":["0","MATCH","a\\"b:*","COUNT","50"]}',
     );
   });
 
   test("an argument containing whitespace is quoted", () => {
-    expect(generateTableQuery("my key", redisCaps, typeCols(""))).toBe('TYPE "my key"');
+    expect(generateTableQuery(["my key"], redisCaps, typeCols(""))).toBe('TYPE "my key"');
   });
 
   test("returns exactly one line", () => {
-    expect(generateTableQuery("user:*", redisCaps, typeCols("string"))).not.toContain("\n");
-    expect(generateTableQuery("counter", redisCaps, typeCols("string"))).not.toContain("\n");
+    expect(generateTableQuery(["user:*"], redisCaps, typeCols("string"))).not.toContain("\n");
+    expect(generateTableQuery(["counter"], redisCaps, typeCols("string"))).not.toContain("\n");
   });
 
   test("Redis no longer emits MongoDB JSON (#427 regression)", () => {
-    const result = generateTableQuery("user:*", redisCaps, typeCols("string"));
+    const result = generateTableQuery(["user:*"], redisCaps, typeCols("string"));
     expect(() => JSON.parse(result)).toThrow();
   });
 });
@@ -817,12 +824,12 @@ describe("generateSelectQuery — Redis dialect", () => {
       .filter((l) => l !== "" && !l.startsWith("#"));
 
   test("output carries explanatory # comments", () => {
-    const out = generateSelectQuery("user:*", typeCols("string"), redisCaps);
+    const out = generateSelectQuery(["user:*"], typeCols("string"), redisCaps);
     expect(out.split("\n").some((l) => l.trim().startsWith("#"))).toBe(true);
   });
 
   test("prefix group (string) emits the exact cheatsheet", () => {
-    expect(generateSelectQuery("user:*", typeCols("string"), redisCaps)).toBe(
+    expect(generateSelectQuery(["user:*"], typeCols("string"), redisCaps)).toBe(
       [
         '# Redis commands for "user:*" — select a line and Run Selected.',
         "",
@@ -850,7 +857,7 @@ describe("generateSelectQuery — Redis dialect", () => {
   });
 
   test("hash prefix group emits the exact cheatsheet", () => {
-    expect(generateSelectQuery("session:*", typeCols("hash"), redisCaps)).toBe(
+    expect(generateSelectQuery(["session:*"], typeCols("hash"), redisCaps)).toBe(
       [
         '# Redis commands for "session:*" — select a line and Run Selected.',
         "",
@@ -878,7 +885,7 @@ describe("generateSelectQuery — Redis dialect", () => {
   });
 
   test("bare key (string) emits the exact cheatsheet", () => {
-    expect(generateSelectQuery("counter", typeCols("string"), redisCaps)).toBe(
+    expect(generateSelectQuery(["counter"], typeCols("string"), redisCaps)).toBe(
       [
         '# Redis commands for "counter" — select a line and Run Selected.',
         "",
@@ -901,7 +908,7 @@ describe("generateSelectQuery — Redis dialect", () => {
   });
 
   test("list prefix group emits LRANGE/RPUSH", () => {
-    expect(commandLines(generateSelectQuery("queue:*", typeCols("list"), redisCaps))).toEqual([
+    expect(commandLines(generateSelectQuery(["queue:*"], typeCols("list"), redisCaps))).toEqual([
       "SCAN 0 MATCH queue:* COUNT 50",
       "TYPE queue:1",
       "LRANGE queue:1 0 -1",
@@ -912,7 +919,7 @@ describe("generateSelectQuery — Redis dialect", () => {
   });
 
   test("set prefix group emits SMEMBERS/SADD", () => {
-    expect(commandLines(generateSelectQuery("tags:*", typeCols("set"), redisCaps))).toEqual([
+    expect(commandLines(generateSelectQuery(["tags:*"], typeCols("set"), redisCaps))).toEqual([
       "SCAN 0 MATCH tags:* COUNT 50",
       "TYPE tags:1",
       "SMEMBERS tags:1",
@@ -923,7 +930,7 @@ describe("generateSelectQuery — Redis dialect", () => {
   });
 
   test("zset prefix group emits ZRANGE ... WITHSCORES / ZADD", () => {
-    expect(commandLines(generateSelectQuery("score:*", typeCols("zset"), redisCaps))).toEqual([
+    expect(commandLines(generateSelectQuery(["score:*"], typeCols("zset"), redisCaps))).toEqual([
       "SCAN 0 MATCH score:* COUNT 50",
       "TYPE score:1",
       "ZRANGE score:1 0 -1 WITHSCORES",
@@ -934,7 +941,7 @@ describe("generateSelectQuery — Redis dialect", () => {
   });
 
   test("mixed-type prefix group omits the read and write blocks", () => {
-    expect(commandLines(generateSelectQuery("misc:*", typeCols("string, hash"), redisCaps))).toEqual([
+    expect(commandLines(generateSelectQuery(["misc:*"], typeCols("string, hash"), redisCaps))).toEqual([
       "SCAN 0 MATCH misc:* COUNT 50",
       "TYPE misc:1",
       "TTL misc:1",
@@ -943,12 +950,12 @@ describe("generateSelectQuery — Redis dialect", () => {
   });
 
   test("bare key emits no SCAN line", () => {
-    const out = generateSelectQuery("counter", typeCols("string"), redisCaps);
+    const out = generateSelectQuery(["counter"], typeCols("string"), redisCaps);
     expect(out).not.toContain("SCAN");
   });
 
   test("bare key with an unknown type omits the read and write blocks", () => {
-    expect(commandLines(generateSelectQuery("counter", typeCols(""), redisCaps))).toEqual([
+    expect(commandLines(generateSelectQuery(["counter"], typeCols(""), redisCaps))).toEqual([
       "TYPE counter",
       "TTL counter",
       "DEL counter",
@@ -958,7 +965,7 @@ describe("generateSelectQuery — Redis dialect", () => {
   test("every command line is a single runnable command", () => {
     for (const sample of ["string", "hash", "list", "set", "zset"]) {
       for (const name of ["user:*", "counter"]) {
-        for (const line of commandLines(generateSelectQuery(name, typeCols(sample), redisCaps))) {
+        for (const line of commandLines(generateSelectQuery([name], typeCols(sample), redisCaps))) {
           expect(line).not.toContain("\n");
           expect(line).not.toContain("<");
           expect(line.split(" ")[0]).toBe(line.split(" ")[0].toUpperCase());
@@ -968,7 +975,7 @@ describe("generateSelectQuery — Redis dialect", () => {
   });
 
   test("no command line but SCAN takes the group name as a key argument", () => {
-    const lines = commandLines(generateSelectQuery("user:*", typeCols("string"), redisCaps));
+    const lines = commandLines(generateSelectQuery(["user:*"], typeCols("string"), redisCaps));
     for (const line of lines) {
       if (line.includes(":*")) expect(line.startsWith("SCAN ")).toBe(true);
     }
@@ -976,14 +983,14 @@ describe("generateSelectQuery — Redis dialect", () => {
   });
 
   test("Redis no longer emits MongoDB JSON (#427 regression)", () => {
-    const out = generateSelectQuery("user:*", typeCols("string"), redisCaps);
+    const out = generateSelectQuery(["user:*"], typeCols("string"), redisCaps);
     expect(out).not.toContain('"collection"');
   });
 
   test("only the lines that need it fall back to the JSON form (#427)", () => {
     // Mixed forms in one cheatsheet are fine: the provider decides per run, and
     // every line is run on its own. Here the key needs JSON; nothing else does.
-    const lines = commandLines(generateSelectQuery('say"hi"', typeCols("string"), redisCaps));
+    const lines = commandLines(generateSelectQuery(['say"hi"'], typeCols("string"), redisCaps));
     expect(lines).toEqual([
       '{"command":"TYPE","args":["say\\"hi\\""]}',
       '{"command":"GET","args":["say\\"hi\\""]}',
@@ -997,13 +1004,13 @@ describe("generateSelectQuery — Redis dialect", () => {
     // Redis keys are arbitrary byte strings. Raw interpolation put `DEL user:1
     // x" — select a line and Run Selected.` on line 2, which the provider then
     // ran as the buffer's first command.
-    const out = generateSelectQuery("a\nDEL user:1 x", typeCols("string"), redisCaps);
+    const out = generateSelectQuery(["a\nDEL user:1 x"], typeCols("string"), redisCaps);
     expect(out.split("\n")[0]).toBe('# Redis commands for "a\\nDEL user:1 x" — select a line and Run Selected.');
     for (const line of commandLines(out)) expect(line).not.toContain("Run Selected");
   });
 
   test("a node name containing CR LF and a quote stays inside the header comment (#427)", () => {
-    const out = generateSelectQuery('a\r\nDEL "user:1" x', typeCols("hash"), redisCaps);
+    const out = generateSelectQuery(['a\r\nDEL "user:1" x'], typeCols("hash"), redisCaps);
     expect(out.split("\n")[0]).toBe(
       '# Redis commands for "a\\r\\nDEL \\"user:1\\" x" — select a line and Run Selected.',
     );
@@ -1017,14 +1024,162 @@ describe("generateSelectQuery — Redis dialect", () => {
   });
 
   test("an ordinary node name still renders unescaped in the header (#427)", () => {
-    expect(generateSelectQuery("user:*", typeCols("string"), redisCaps).split("\n")[0]).toBe(
+    expect(generateSelectQuery(["user:*"], typeCols("string"), redisCaps).split("\n")[0]).toBe(
       '# Redis commands for "user:*" — select a line and Run Selected.',
     );
   });
 
   test("the SCAN comment says one iteration is not the whole set (#427)", () => {
-    const out = generateSelectQuery("user:*", typeCols("string"), redisCaps);
+    const out = generateSelectQuery(["user:*"], typeCols("string"), redisCaps);
     expect(out).toContain("ONE scan iteration");
     expect(out).toContain("the reply's first row is the next cursor");
+  });
+});
+
+// ============================================================================
+// The click path: an object is addressed by its PATH (#789, Task 30)
+//
+// Three defects the user hit by clicking a table in the object browser, each
+// reproduced in a real browser against a live engine before any of this was
+// written, and each pinned here with the address and the engine that produced it.
+// ============================================================================
+
+describe("the generated statement addresses an object by its path", () => {
+  const mssqlCaps = makeCaps({ defaultPort: 1433 });
+  const clickhouseCaps = makeCaps({ defaultPort: 8123 });
+  // What `OracleProvider.getCapabilities()` declares, including the terminator: the
+  // generator reads the DECLARATION, so a fixture without it would pin nothing.
+  const oracleCaps = makeCaps({ defaultPort: 1521, statementTerminator: "none" });
+
+  // --- A. an object outside the session default container ------------------
+
+  test("SQL Server qualifies a table in a non-default schema", () => {
+    // Reproduced in the browser on SQL Server 2022 against `libredb_objects`:
+    // clicking `app.customers` generated `SELECT TOP 50 * FROM customers;` and the
+    // server answered `Invalid object name 'customers'.`
+    expect(generateTableQuery(["libredb_objects", "app", "customers"], mssqlCaps)).toBe(
+      "SELECT TOP 50 * FROM libredb_objects.app.customers;",
+    );
+  });
+
+  test("ClickHouse qualifies a table in a non-default database", () => {
+    // Reproduced on ClickHouse 25.8 with the connection defaulted to `demo`: clicking
+    // `reporting.regions` generated `SELECT * FROM regions LIMIT 50;` and the server
+    // answered `Code: 60 ... Maybe you meant reporting.regions?`.
+    expect(generateTableQuery(["reporting", "regions"], clickhouseCaps)).toBe(
+      "SELECT * FROM reporting.regions LIMIT 50;",
+    );
+  });
+
+  test("Oracle qualifies a table in another owner", () => {
+    expect(generateTableQuery(["REPORTING", "REPORT_DAILY"], oracleCaps)).toBe(
+      "SELECT * FROM REPORTING.REPORT_DAILY FETCH FIRST 50 ROWS ONLY",
+    );
+  });
+
+  test("qualification is emitted INSIDE the default container too", () => {
+    // Deliberate, and the reason the fix is here rather than at the call site: no
+    // capability declares which container a connection defaulted to, and the qualified
+    // form is valid wherever the bare one is.
+    expect(generateTableQuery(["demo", "orders"], clickhouseCaps)).toBe("SELECT * FROM demo.orders LIMIT 50;");
+  });
+
+  test("Generate Query qualifies the same way Select Top N does", () => {
+    const cols: ColumnSchema[] = [{ name: "id", type: "Int64", nullable: false, isPrimary: true }];
+    expect(generateSelectQuery(["reporting", "regions"], cols, clickhouseCaps)).toBe(
+      "SELECT\n  id\nFROM reporting.regions\nWHERE 1=1\nLIMIT 100;",
+    );
+  });
+
+  // --- B. a name that contains a dot ---------------------------------------
+
+  test("a dot inside a NAME is not read as a qualifier", () => {
+    // The live case: ClickHouse holds `.inner_id.fake` in `demo`. Splitting the name
+    // generated `SELECT * FROM "".inner_id.fake LIMIT 50;`, a syntax error at position 15.
+    expect(generateTableQuery(["demo", ".inner_id.fake"], clickhouseCaps)).toBe(
+      'SELECT * FROM demo.".inner_id.fake" LIMIT 50;',
+    );
+  });
+
+  test("a one-segment path whose name holds dots stays ONE identifier", () => {
+    expect(generateTableQuery([".inner_id.fake"], clickhouseCaps)).toBe('SELECT * FROM ".inner_id.fake" LIMIT 50;');
+  });
+
+  test("the flat string wrapper still splits, because a dotted name is all it has", () => {
+    // `quoteQualifiedName` survives for `POST /api/db/profile`, whose request body carries
+    // a NAME and no segments. It is the same rule applied to a guess, not a second rule.
+    expect(quoteQualifiedName("demo.regtest", clickhouseCaps)).toBe("demo.regtest");
+    expect(quoteQualifiedName("demo.regtest", clickhouseCaps)).toBe(
+      quoteObjectPath(["demo", "regtest"], clickhouseCaps),
+    );
+  });
+
+  // --- C. the Oracle terminator (pre-existing, not a PR regression) ---------
+
+  test("Oracle emits no trailing semicolon", () => {
+    // node-oracledb answers ORA-00933 for `... FETCH FIRST 50 ROWS ONLY;`, so clicking a
+    // table on Oracle never worked. Reproduced in the browser on Oracle 26ai Free.
+    const out = generateTableQuery(["APP", "APP_CUSTOMERS"], oracleCaps);
+    expect(out.endsWith(";")).toBe(false);
+    expect(out).toBe("SELECT * FROM APP.APP_CUSTOMERS FETCH FIRST 50 ROWS ONLY");
+  });
+
+  test("Generate Query on Oracle emits no trailing semicolon either", () => {
+    const out = generateSelectQuery(["APP", "APP_CUSTOMERS"], sampleColumns, oracleCaps);
+    expect(out.endsWith(";")).toBe(false);
+    expect(out).toBe('SELECT\n  "id",\n  "name"\nFROM APP.APP_CUSTOMERS\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY');
+  });
+
+  // --- an address with no segments is refused rather than spelled ----------
+
+  test("an empty address is refused by both generators", () => {
+    expect(() => generateTableQuery([], clickhouseCaps)).toThrow("the object address has no segments");
+    expect(() => generateSelectQuery([], [], clickhouseCaps)).toThrow("the object address has no segments");
+  });
+});
+
+// ============================================================================
+// The four branches that must NOT be qualified, one test each (#789, Task 30)
+// ============================================================================
+
+describe("the dialects that address one key or collection, not a qualified name", () => {
+  test("MongoDB names the COLLECTION, not the database that holds it", () => {
+    // A collection's path is [database, collection] (`MONGODB_CONTAINER_LEVELS`), and the
+    // driver takes the collection name alone: `db.collection("sample_shop.users")` would
+    // create a collection literally called that.
+    const out = generateTableQuery(["sample_shop", "users"], makeCaps({ queryLanguage: "json", defaultPort: null }));
+    expect(JSON.parse(out).collection).toBe("users");
+    expect(out).not.toContain("sample_shop");
+  });
+
+  test("MongoDB's Generate Query names the collection too", () => {
+    const caps = makeCaps({ queryLanguage: "json", defaultPort: null });
+    expect(JSON.parse(generateSelectQuery(["sample_shop", "users"], sampleColumns, caps)).collection).toBe("users");
+  });
+
+  test("Redis takes the bare key, never the database segment with it", () => {
+    // A Redis key's path is [database index, key] (`redis.ts` listObjects), and a key
+    // argument is a literal byte string: `GET 0.counter` reads a key nobody wrote.
+    const caps = makeCaps({ queryLanguage: "json", defaultPort: 6379, queryDialect: "redis" });
+    const typeCols: ColumnSchema[] = [{ name: "type", type: "string", nullable: false, isPrimary: false }];
+    expect(generateTableQuery(["0", "counter"], caps, typeCols)).toBe("GET counter");
+    expect(generateTableQuery(["0", "user:*"], caps, typeCols)).toBe("SCAN 0 MATCH user:* COUNT 50");
+  });
+
+  test("LibreDB takes the bare key", () => {
+    // LibreDB declares NO container levels, so a key's path is one segment; this pins that
+    // the command still carries the key alone if that ever changes.
+    const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
+    expect(generateTableQuery(["users:*"], caps)).toBe("prefix users:");
+    expect(generateTableQuery(["orphan"], caps)).toBe("get orphan");
+  });
+
+  test("Couchbase keeps the WHOLE keyspace qualification", () => {
+    // The opposite case, and the reason this is four tests rather than one rule: a
+    // keyspace is addressed bucket.scope.collection (`COUCHBASE_CONTAINER_LEVELS`), and
+    // SQL++ needs every part of it.
+    expect(generateTableQuery(["travel", "inventory", "hotel"], makeCaps({ defaultPort: 8091 }))).toBe(
+      "SELECT META(d).id AS __id, d.* FROM `travel`.`inventory`.`hotel` AS d LIMIT 50;",
+    );
   });
 });

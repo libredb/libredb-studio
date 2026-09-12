@@ -103,36 +103,32 @@ export interface TreeRowActionContext {
 }
 
 /**
- * The one place the object model is narrowed to the old flat model.
+ * The one place the object model is still narrowed to the old flat model.
  *
- * `DataProfiler`, `CodeGenerator`, `TestDataGenerator`, `handleGenerateSelect` and the
- * maintenance deep link all take a table NAME and look it up by `name` in the list the
- * shell holds. Those consumers now take `DetailedObject` rather than the flat shape
- * (#789), and the LOOKUP is still by name.
+ * `DataProfiler`, `CodeGenerator`, `TestDataGenerator` and the maintenance deep link take
+ * a table NAME and look it up by `name` in the list the shell holds, down to
+ * `conn.schema.find((t) => t.name === profilerTable)`. Those consumers now take
+ * `DetailedObject` rather than the flat shape (#789), and the LOOKUP is still by name, so
+ * `name` is the half that can cross this seam for them.
  *
- * The list the shells search does now carry `path`, where the object surface answered for
- * the entry, so the reason is no longer that there is nothing better available: it is that
- * `name` is what the consumers on the other side of this seam are written in, down to
- * `conn.schema.find((t) => t.name === profilerTable)`. `path` is what ADDRESSES an object
- * and `name` is what LABELS it (standing ruling 2), and `name` is the same string
- * `onObjectClick` already hands `handleTableClick` in both shells. A schema-qualified object
- * therefore behaves exactly as it did under the flat explorer, including its ambiguity when
- * two schemas hold the same table name, and including the miss the review recorded: this
- * hands over the BARE identifier while a flat entry outside the default container is spelled
- * `sales.orders`, so that lookup finds nothing. Migrating those consumers onto `path` is the
- * task that removes the flat reading.
+ * THE TWO QUERY GENERATORS NO LONGER GO THROUGH HERE. `onGenerateSelect` and the row click
+ * hand over `object.path`, because a generated statement is the one consumer that does not
+ * look anything up: it writes an address, and `path` is the address (standing ruling 2).
+ * An earlier version of this note recorded the miss that followed from spelling it `name`
+ * - an object outside the session default container generated a bare identifier, which
+ * three engines answered with an error - and deferred it to the task that removes the flat
+ * reading. Task 30 closed it for the generators, in `src/lib/query-generators.ts`, which
+ * quotes per segment; what stays here is the four lookups above.
  *
- * It cannot be closed here by qualifying the name from `path`, and that was measured rather
- * than assumed. The flat spelling elides the DEFAULT container and nothing else, and which
- * container that is, is a per-engine literal inside each engine's own flat reader:
- * `postgres.ts:1881` compares against "public", `mssql.ts:1604` against "dbo", and Couchbase
- * against its `_default` scope in `couchbase/keyspace.ts:36`. No capability declares that
- * name, so a rule written at this seam would have to carry every engine's default, and
- * joining `path` unconditionally would break the common case that works today. The fix
- * belongs where the consumers move onto `path`.
+ * Qualifying the NAME from `path` at this seam is still refused, and the measurement that
+ * refused it still holds: the flat spelling elides the DEFAULT container, which container
+ * that is, is a per-engine literal inside each engine's own flat reader, and no capability
+ * declares it. That reasoning is about matching a flat LIST lookup. Generating a query is
+ * the opposite case - full qualification is valid everywhere the bare name is - which is
+ * why the generators could move and these four could not.
  *
  * Exported, and called at the SHELL rather than inside the tree, so that the tree stays in
- * object-model terms and every site Task 25 has to migrate is one grep for this name.
+ * object-model terms and every site left to migrate is one grep for this name.
  */
 export function flatTargetName(object: DatabaseObject): string {
   return object.name;
