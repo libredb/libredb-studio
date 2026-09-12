@@ -728,6 +728,70 @@ A rejected `INFER` yields **no columns rather than an error**: the collection be
 
 A function's parameters and its body, and an index's keys as a first-class detail, are Phase 2.
 
+### 6a.7b `describeObjects`, the bulk column read
+
+`describeObjects(container, kind, limit?)` answers columns and indexes for every object of one kind
+in one container. The two halves of an `ObjectDetail` do not have the same answer here, and both
+answers are measurements on Couchbase Server 8.0.2 Community, on a node this task created and
+removed.
+
+**The indexes bulk-read, and already did.** `INDEXES_SQL` answers one bucket's whole index catalog
+in one statement and `describeObject` filters it down to one collection, so the batch reads it
+**once** for the folder where a loop over `describeObject` reads the same statement once per
+object.
+
+**The columns cannot.** Couchbase stores no schema: a collection has whatever fields its documents
+carry, and `INFER` is the engine's own sampler. Three measurements close every combined form:
+
+1. `INFER a, b` is error 3000, a syntax error at the comma. `INFER` takes one keyspace.
+2. `INFER` against a scope is refused: `Keyspace resolves to default:travel.inventory - only 2 or 4
+   parts are valid`. There is no folder-level form.
+3. `INFER` **is** subquery-able — both `SELECT * FROM (INFER ...) AS x` and
+   `WITH x AS (INFER ...) SELECT x` parse — so a `UNION ALL` over several of them is a real
+   statement. It is still wrong here: measured, such a statement fails **entirely** with error 7014,
+   `No documents found, unable to infer schema`, as soon as one of its keyspaces is empty. An empty
+   collection is an ordinary state, and the fixture keeps `hotel` and `bookings` empty on purpose,
+   so a combined statement would cost a whole folder its columns because one collection held no
+   documents.
+
+So the `INFER`s are **one per described object**, at most `INFER_CONCURRENCY` (4) in flight, and cut
+by the caller's `limit` before any of them is issued. A folder of N collections costs two catalog
+statements plus N `INFER`s, against 2N statements for the same objects one at a time.
+
+| Shape | Statements | Time |
+| --- | --- | --- |
+| One `describeObjects` over a 40-collection scope | 42 | 293 ms |
+| The 40 `describeObject` calls it replaces | 80 | 462 ms |
+
+The gain is real but modest, and that is the honest shape of it: the `INFER`s dominate and they do
+not go away, so what the batch removes is 39 whole-bucket index reads. The bench scope is
+re-runnable — 40 collections in a `bench` scope, two documents each — and is not part of the
+committed fixture.
+
+**One mapper, shared with the single read.** `relationDetail()` in
+[`objects.ts`](../../src/lib/db/providers/document/couchbase/objects.ts) builds both, so a batch
+cannot spell an index differently from `describeObject` on the same collection. Verified live: for
+every collection of `travel`, `travel`.`_default` and `travel`.`inventory`, the batch's detail is
+identical to `describeObject()` for the same path.
+
+**`function` and `index` answer `{ details: [] }` with no round trip**, which is the same fact the
+single read states by answering three empty arrays: a function's parameters and an index's keys are
+not columns.
+
+**The bound is the caller's, and there is no `limit + 1`.** The catalog statements answer a whole
+bucket in one round trip each, so the target set is complete before anything is cut and the
+comparison is exact. The cut is applied in code, after `comparePaths`, which makes a bounded read's
+membership **ours** rather than the server's — the server never orders this read. `INFER`'s own
+`sample_size` is deliberately **not** reported as truncation: it bounds the documents a column list
+is inferred from, exactly as in the single read and in `getSchema()`, and no object is dropped by
+it, so reporting it would claim the batch left objects out when it left none out.
+
+**Collation, for the record.** SQL++ `ORDER BY` over `["\ue000", "😀"]` answers `U+E000` first,
+which is UTF-8 byte order, while `comparePaths` compares UTF-16 code units and puts `😀` first
+(`0xD83D` is below `0xE000`). Task 26a-2 measured the same divergence on five SQL engines. It cannot
+bite here, because no statement in the object surface carries an `ORDER BY` at all: every listing,
+and the cut a bounded read applies, is sorted in TypeScript.
+
 ### 6a.8 The fixture
 
 [`docker/couchbase-init/01-object-fixture.sh`](../../docker/couchbase-init/01-object-fixture.sh) is

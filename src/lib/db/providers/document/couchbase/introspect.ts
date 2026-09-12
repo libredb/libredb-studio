@@ -299,6 +299,27 @@ export async function inferColumns(transport: CouchbaseTransport, keyspace: Keys
 }
 
 /**
+ * Columns for MANY keyspaces, at most `INFER_CONCURRENCY` statements in flight (#789).
+ *
+ * One INFER per keyspace and not one statement for all of them, and that is a measurement
+ * on Server 8.0.2 rather than a preference. `INFER a, b` is a syntax error and `INFER`
+ * against a scope is refused ("only 2 or 4 parts are valid"), so the only combined form is
+ * a `WITH`/`UNION ALL` over INFER subqueries - which the parser does accept - and that
+ * form fails ENTIRELY on the first empty keyspace with error 7014. An empty collection is
+ * an ordinary state here, so a combined statement would cost a whole folder its columns
+ * whenever one collection held no documents.
+ *
+ * Answers are written by index, so a keyspace whose INFER was refused carries `[]` in its
+ * own slot rather than shifting another keyspace's columns onto it.
+ */
+export async function inferColumnsEach(
+  transport: CouchbaseTransport,
+  keyspaces: readonly Keyspace[],
+): Promise<ColumnSchema[][]> {
+  return await mapWithConcurrency([...keyspaces], INFER_CONCURRENCY, (keyspace) => inferColumns(transport, keyspace));
+}
+
+/**
  * Fast structural schema: every collection of the bucket, with inferred
  * columns. Indexes are left to getSchemaRelations() so their cost never blocks
  * the tree, exactly as in the SQL providers.

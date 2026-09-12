@@ -109,9 +109,11 @@
 import { QueryError } from "@/lib/db/errors";
 import { containerDepth } from "@/lib/db/object-kinds";
 import type {
+  ColumnSchema,
   ContainerLevelSpec,
   DatabaseObject,
   IndexSchema,
+  ObjectDetail,
   ObjectKindSpec,
   ProviderCapabilities,
 } from "@/lib/db/types";
@@ -586,8 +588,11 @@ export function listedObject(path: string[], name: string, kind: string): Databa
  * explorer is the same index described twice. A PRIMARY index carries no `index_key` at
  * all - it keys the document key itself - and it is the only unique index Couchbase has:
  * no secondary GSI enforces uniqueness.
+ *
+ * Module-private: `relationDetail` below is the only caller, and it is what both the single
+ * and the bulk read go through, so an index cannot be spelled two ways.
  */
-export function indexSchemaOf(row: CouchbaseObjectRow, name: string): IndexSchema {
+function indexSchemaOf(row: CouchbaseObjectRow, name: string): IndexSchema {
   const isPrimary = row.is_primary === true;
   const keys = Array.isArray(row.index_key)
     ? row.index_key.filter((key): key is string => typeof key === "string").map(unquoteIndexKey)
@@ -597,4 +602,40 @@ export function indexSchemaOf(row: CouchbaseObjectRow, name: string): IndexSchem
     columns: isPrimary && keys.length === 0 ? [DOCUMENT_KEY_EXPRESSION] : keys,
     unique: isPrimary,
   };
+}
+
+/**
+ * One relation's `ObjectDetail`, from its columns and the bucket's whole index catalog.
+ *
+ * ONE mapper for the single read and the bulk read (#789). Two copies would be two chances
+ * for a batch to spell an index differently from `describeObject` on the same collection,
+ * and every caller joins the two answers on path.
+ *
+ * The index rows are the BUCKET's, so the filter is what selects this collection's own -
+ * and it compares BOTH the scope and the collection, because one collection NAME can live
+ * in two scopes. The fixture puts `airline` in `_default` and in `inventory`, each with its
+ * own `ix_name` over a different key, so a name-only filter reports the wrong keys rather
+ * than merely the wrong count.
+ *
+ * `foreignKeys` is ALWAYS empty, the measurement behind `declaresForeignKeys: false`: SQL++
+ * has no referential constraint at all.
+ */
+export function relationDetail(
+  path: readonly string[],
+  keyspace: Keyspace,
+  columns: readonly ColumnSchema[],
+  indexRows: readonly CouchbaseObjectRow[],
+): ObjectDetail {
+  const indexes: IndexSchema[] = [];
+  for (const row of indexRows) {
+    const name = typeof row.object_name === "string" ? row.object_name : undefined;
+    const keyspaceName = typeof row.collection_id === "string" ? row.collection_id : undefined;
+    const rowKeyspace = resolveKeyspaceOf(keyspace.bucket, row, keyspaceName);
+    if (name === undefined) continue;
+    if (rowKeyspace.scope !== keyspace.scope || rowKeyspace.collection !== keyspace.collection) continue;
+    indexes.push(indexSchemaOf(row, name));
+  }
+  indexes.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+
+  return { path: [...path], columns: [...columns], indexes, foreignKeys: [] };
 }
