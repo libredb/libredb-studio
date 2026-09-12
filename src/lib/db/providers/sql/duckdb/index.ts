@@ -1063,7 +1063,12 @@ export class DuckDBProvider extends SQLBaseProvider {
    * `duckdb_sequences()` rows and zero of 136 macros carry a NULL or whitespace-only text,
    * and even `CREATE MACRO no_body() AS NULL` publishes the four characters `NULL`. The
    * blank arm exists anyway, because an empty definition must never reach an editor as a
-   * definition, and its three sentences say which of three shapes produced it.
+   * definition, and it says which SHAPE produced it, one sentence per arm of
+   * `blankDefinitionShape()` in `objects.ts`, which is the list. That measurement reaches
+   * only the two shapes that are facts about the ROW, a NULL and a text holding no
+   * non-whitespace character. The other two are facts about the READ, a reply carrying no
+   * such column at all and the driver handing that column back as something other than a
+   * text, and no scan of the engine's own rows could have observed either of those.
    *
    * ABSENCE RAISES, and on this engine it is the ONLY failure the read has. A missing name
    * answers ZERO ROWS rather than a row carrying nothing, and no rows says nothing of that

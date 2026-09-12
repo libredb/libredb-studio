@@ -2664,12 +2664,19 @@ describe("DuckDB object source", () => {
   });
 
   /**
-   * The three refusals this engine was NOT observed to produce, driven anyway.
+   * Every refusal shape this read can build, driven anyway, one test each below.
    *
-   * Measured on v1.5.5: zero `duckdb_tables()` rows, zero of 47 `duckdb_views()` rows, zero
-   * `duckdb_sequences()` rows and zero of 136 macros carry a NULL or whitespace-only text,
-   * and even `CREATE MACRO no_body() AS NULL` publishes the four characters `NULL`. So
-   * `docs/providers/duckdb.md` states the absence of a refusal as a CANNOT. The arms exist
+   * No count is written here: the tests below ARE the inventory, one per arm of
+   * `blankDefinitionShape()`, so a numeral beside them could only agree or go stale.
+   *
+   * NONE OF THEM WAS OBSERVED ON A LIVE ENGINE, and the measurement reaches only the two
+   * shapes that are facts about the ROW. Measured on v1.5.5: zero `duckdb_tables()` rows,
+   * zero of 47 `duckdb_views()` rows, zero `duckdb_sequences()` rows and zero of 136 macros
+   * carry a NULL or whitespace-only text, and even `CREATE MACRO no_body() AS NULL` publishes
+   * the four characters `NULL`. So `docs/providers/duckdb.md` states the absence of a refusal
+   * as a CANNOT. The remaining shapes are facts about the READ, a reply carrying no definition
+   * column at all and the driver handing that column back as something other than a text, and
+   * no scan of the engine's own rows could have observed either of those. The arms exist
    * anyway, because an empty definition must never reach an editor as a definition.
    *
    * EVERY ONE ASSERTS `Object.hasOwn(part, "text") === false`, which is recipe rule 8
