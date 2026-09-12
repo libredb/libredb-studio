@@ -1362,8 +1362,9 @@ a000000
 ...
 ```
 
-**The rule was mutation-tested rather than asserted.** The fixture commits three plain, VALID,
-COMPILING functions built to defeat the naive TEXTUAL rule, and they must not be tidied away:
+**The rule was mutation-tested rather than asserted.** The fixture commits four plain, VALID,
+COMPILING functions, three of them built to defeat the naive TEXTUAL rule and the fourth the control
+for the header position itself, and none of the four may be tidied away:
 
 | Fixture unit | Built to defeat | First source line |
 |---|---|---|

@@ -158,14 +158,15 @@ CREATE OR REPLACE TRIGGER app.app_logon_trg AFTER LOGON ON app.SCHEMA BEGIN NULL
 -- quoted name is the bare keyword `wrapped`, and the next physical line is the wrap format
 -- marker matching ^[a-z][0-9]{6}$ (`a000000` on 21.3.0.0.0).
 --
--- The three plain units below are the point of this block and must not be "tidied". Each
--- one is a VALID, COMPILING function built to defeat one half of the naive TEXTUAL rule,
--- and APP_CONJ_DEFEATER defeats both halves at once: its first source line ends with the
--- token `wrapped` and its second line is exactly the wrap format marker. What none of them
--- can imitate is the header position, because GET_DDL writes the object name inside double
--- quotes and what follows it is decided by the PARSER: a plain unit admits only `(`,
+-- The four plain units below are the point of this block and must not be "tidied". Three of
+-- them are VALID, COMPILING functions built to defeat the naive TEXTUAL rule: one ends its
+-- first source line with the token `wrapped`, one carries the wrap format marker on its
+-- second line, and APP_CONJ_DEFEATER does both at once. The fourth, APP_ZERO_ARG, is the
+-- control for the header position itself and the paragraph below says why. What none of the
+-- four can imitate is the header position, because GET_DDL writes the object name inside
+-- double quotes and what follows it is decided by the PARSER: a plain unit admits only `(`,
 -- RETURN, IS or AS there. A test that reads only a wrapped unit certifies nothing; these
--- three are what make the predicate non-vacuous, and if a future Oracle ever admits
+-- four are what make the predicate non-vacuous, and if a future Oracle ever admits
 -- `wrapped` in that position for a plain unit, the assertion over them fails by name.
 --
 -- APP_ZERO_ARG is the closest PLAIN shape to a wrapped header there is, a zero-argument

@@ -2793,10 +2793,11 @@ describe("object surface", () => {
         // metadata spelling of synonym, sequence, trigger, view or procedure left this whole
         // file green while every live Source tab on them would raise ORA-31600 (#789).
         //
-        // The ten keys are `GET_DDL`'s own argument vocabulary against the names the listing
-        // arms further down publish. `NO_SUCH_PKG`, which `absentSource` names, is absent
-        // from it by construction, so the absence raise is driven by the same fall-through
-        // the server would take.
+        // The keys are `GET_DDL`'s own argument vocabulary against the names the listing
+        // arms further down publish, one per (metadata type, name) PAIR rather than one per
+        // kind: each of the two packages takes two, a spec and a body. `NO_SUCH_PKG`, which
+        // `absentSource` names, is absent from it by construction, so the absence raise is
+        // driven by the same fall-through the server would take.
         const ddl: Record<string, string> = {
           "TABLE APP_ORDERS": "TABLE",
           "TABLE APP_CUSTOMERS": "TABLE",
