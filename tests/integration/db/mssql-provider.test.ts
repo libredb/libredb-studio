@@ -1,5 +1,9 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import {
+  callerBoundTruncationReason,
+  isSourcePartUnavailable,
+  sourceBoundTruncationReason,
+} from "@/lib/db/object-kinds";
 import { EventEmitter } from "node:events";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 
@@ -1982,6 +1986,12 @@ function objectRead(sql: string): string {
   if (upper.includes("WHERE I.IS_PRIMARY_KEY = 1") && upper.includes("T.NAME AS TABLE_NAME")) return "flat-pk";
   if (upper.includes("OBJECT_SCHEMA_NAME(FK.PARENT_OBJECT_ID)")) return "flat-fks";
   if (upper.includes("I.IS_PRIMARY_KEY = 0") && upper.includes("IC.KEY_ORDINAL")) return "flat-indexes";
+  // The source read (#789 Phase 2), before every arm below it: its object statement names
+  // `sys.objects` and its trigger statement names `sys.triggers`, and both name
+  // `sys.sql_modules`, which nothing else in this provider reads.
+  if (upper.includes("SYS.SQL_MODULES")) {
+    return upper.includes("SYS.TRIGGERS") ? "source-trigger" : "source-object";
+  }
   if (upper.includes("SYS.DATABASES")) return "databases";
   if (upper.includes("SYS.DATABASE_PRINCIPALS")) return "schemas";
   if (upper.includes("GROUP BY KIND")) return "counts";
@@ -2016,8 +2026,11 @@ const FIXTURE_DATABASES = [
 const FIXTURE_COUNTS: Record<string, Array<{ kind: string; n: number }>> = {
   "": [
     { kind: "table", n: 6 },
-    { kind: "view", n: 1 },
-    { kind: "procedure", n: 1 },
+    // TWO views and TWO procedures since #789 Phase 2: the fixture's encrypted view and
+    // encrypted procedure sit beside their readable siblings in `app`, which is what makes
+    // the source refusal visibly per-OBJECT rather than per-kind.
+    { kind: "view", n: 2 },
+    { kind: "procedure", n: 2 },
     { kind: "function", n: 3 },
     { kind: "trigger", n: 4 },
     { kind: "synonym", n: 1 },
@@ -2025,8 +2038,8 @@ const FIXTURE_COUNTS: Record<string, Array<{ kind: string; n: number }>> = {
   ],
   app: [
     { kind: "table", n: 4 },
-    { kind: "view", n: 1 },
-    { kind: "procedure", n: 1 },
+    { kind: "view", n: 2 },
+    { kind: "procedure", n: 2 },
     { kind: "function", n: 3 },
     { kind: "trigger", n: 1 },
     { kind: "synonym", n: 1 },
@@ -2057,7 +2070,55 @@ const FIXTURE_TABLES = [
   { schema_name: "reporting", name: "daily", row_count: 0 },
 ];
 
-const FIXTURE_VIEWS = [{ schema_name: "app", name: "order_summary" }];
+/**
+ * The `sys.objects`-backed listings, PER KIND, as the seeded fixture holds them.
+ *
+ * One array per kind rather than one shared array, because #789 Phase 2's source read binds
+ * the object NAME: a fixture answering the view rows for a procedure listing would hand the
+ * source walk a name no procedure has, and the read it drove would be a read of nothing.
+ * Every row here is `docker/mssql-init/01-object-fixture.sql`'s, ordered the way
+ * `ORDER BY s.name, o.name` returns it under the database's collation.
+ */
+const FIXTURE_SCHEMA_OBJECTS: Record<string, Array<{ schema_name: string; name: string }>> = {
+  view: [
+    { schema_name: "app", name: "order_summary" },
+    { schema_name: "app", name: "order_summary_secret" },
+  ],
+  procedure: [
+    { schema_name: "app", name: "touch_order" },
+    { schema_name: "app", name: "touch_order_secret" },
+  ],
+  function: [
+    { schema_name: "app", name: "order_total" },
+    { schema_name: "app", name: "orders_for_customer" },
+    { schema_name: "app", name: "orders_report" },
+  ],
+  synonym: [{ schema_name: "app", name: "customer_alias" }],
+  sequence: [{ schema_name: "app", name: "order_number_seq" }],
+};
+
+/**
+ * Which kind a `sys.objects` listing is about, read off the type list it interpolated.
+ *
+ * The spellings are written out here rather than imported from the provider ON PURPOSE: a
+ * double that asked the provider which types it meant could not tell a changed type list
+ * from a correct one. `bulkKind` above pins the same fact the same way.
+ */
+const FIXTURE_OBJECT_TYPE_LISTS: Record<string, string> = {
+  view: "'V'",
+  procedure: "'P','PC','X'",
+  function: "'FN','IF','TF','FS','FT','AF'",
+  synonym: "'SN'",
+  sequence: "'SO'",
+};
+
+function listedKind(sql: string): string {
+  const found = Object.entries(FIXTURE_OBJECT_TYPE_LISTS).find(([, types]) => sql.includes(`o.type IN (${types})`));
+  if (found === undefined) {
+    throw new Error(`the object-surface mock cannot tell which kind this listing is for: ${sql}`);
+  }
+  return found[0];
+}
 
 const FIXTURE_TRIGGERS = [
   { name: "ddl_audit", parent_schema: null, parent_name: null, is_disabled: false },
@@ -2105,7 +2166,100 @@ const FIXTURE_BULK_TARGET: Record<string, Array<{ object_id: number; schema_name
     { object_id: 7, schema_name: "dbo", name: "audit_trail" },
     { object_id: 5, schema_name: "reporting", name: "daily" },
   ],
-  view: [{ object_id: 6, schema_name: "app", name: "order_summary" }],
+  view: [
+    { object_id: 6, schema_name: "app", name: "order_summary" },
+    { object_id: 8, schema_name: "app", name: "order_summary_secret" },
+  ],
+};
+
+/**
+ * The source read's recordset, keyed by the address the provider binds (#789 Phase 2).
+ *
+ * EVERY `definition` here is the bytes SQL Server 2022 RTM-CU26 (16.0.4265.3) really
+ * answered for `docker/mssql-init/01-object-fixture.sql`, dumped out of
+ * `sys.sql_modules.definition` and pasted whole. The leading newline and the comment lines
+ * that precede `CREATE` are part of the stored text and are what `origin: "stored"` means on
+ * this engine: `app.order_total`'s definition begins `-- FN: a scalar function.`, which is
+ * the line above `CREATE FUNCTION` in the fixture file's own batch.
+ *
+ * The three states each row can be in were all measured on that server:
+ *
+ *  - a readable module: a row, a text, `is_encrypted = 0`;
+ *  - an ENCRYPTED module: a row, a NULL definition, `is_encrypted = 1`;
+ *  - a DDL trigger: a row and a text, and `is_encrypted` NULL, because a database-scoped
+ *    trigger has no `sys.objects` row and therefore no `sys.syscomments` row either.
+ *
+ * The DENIED state is the same shape as the encrypted one with `is_encrypted` NULL, and it is
+ * driven by its own test below rather than from this table, because it is a property of the
+ * CALLER and not of the object.
+ */
+interface SourceRow {
+  definition: string | null;
+  has_module: number;
+  is_encrypted: number | null;
+}
+
+const FIXTURE_SOURCE_OBJECTS: Record<string, SourceRow> = {
+  "app.order_summary": {
+    definition:
+      "\nCREATE VIEW app.order_summary AS\n  SELECT o.id, o.total, c.name AS customer_name\n  FROM app.orders o\n  LEFT JOIN app.customers c ON c.id = o.customer_id;\n",
+    has_module: 1,
+    is_encrypted: 0,
+  },
+  "app.order_summary_secret": { definition: null, has_module: 1, is_encrypted: 1 },
+  "app.touch_order": {
+    definition:
+      "\nCREATE PROCEDURE app.touch_order @order_id INT AS\n  UPDATE app.orders SET note = 'touched' WHERE id = @order_id;\n",
+    has_module: 1,
+    is_encrypted: 0,
+  },
+  "app.touch_order_secret": { definition: null, has_module: 1, is_encrypted: 1 },
+  "app.order_total": {
+    definition:
+      "\n-- FN: a scalar function.\nCREATE FUNCTION app.order_total (@order_id INT) RETURNS DECIMAL(12, 2) AS\nBEGIN\n  DECLARE @total DECIMAL(12, 2);\n  SELECT @total = total FROM app.orders WHERE id = @order_id;\n  RETURN ISNULL(@total, 0);\nEND;\n",
+    has_module: 1,
+    is_encrypted: 0,
+  },
+  "app.orders_for_customer": {
+    definition:
+      "\n-- IF: an inline table-valued function. A different sys.objects.type from FN and TF, and\n-- all three are one `function` kind, which is why the mapping is a table and not a case.\nCREATE FUNCTION app.orders_for_customer (@customer_id INT)\nRETURNS TABLE AS\n  RETURN (SELECT id, total FROM app.orders WHERE customer_id = @customer_id);\n",
+    has_module: 1,
+    is_encrypted: 0,
+  },
+  "app.orders_report": {
+    definition:
+      "\n-- TF: a multi-statement table-valued function.\nCREATE FUNCTION app.orders_report ()\nRETURNS @report TABLE (id INT, total DECIMAL(12, 2)) AS\nBEGIN\n  INSERT INTO @report (id, total) SELECT id, total FROM app.orders;\n  RETURN;\nEND;\n",
+    has_module: 1,
+    is_encrypted: 0,
+  },
+};
+
+/** The trigger half, keyed by the address a DML or a DDL trigger is reached at. */
+const FIXTURE_SOURCE_TRIGGERS: Record<string, SourceRow> = {
+  "app.stamp_order": {
+    definition:
+      "\n-- TR, a DML trigger: this one IS in sys.objects.\nCREATE TRIGGER app.stamp_order ON app.orders AFTER INSERT AS\n  UPDATE app.orders SET note = ISNULL(note, 'inserted') WHERE id IN (SELECT id FROM inserted);\n",
+    has_module: 1,
+    is_encrypted: 0,
+  },
+  "reporting.stamp_order": {
+    definition:
+      "\nCREATE TRIGGER reporting.stamp_order ON reporting.daily AFTER INSERT AS\n  UPDATE reporting.daily SET orders = ISNULL(orders, 0) WHERE day IN (SELECT day FROM inserted);\n",
+    has_module: 1,
+    is_encrypted: 0,
+  },
+  ddl_audit: {
+    definition:
+      "\n-- A DATABASE-scoped DDL trigger. Absent from sys.objects, present in sys.triggers with\n-- parent_class = 0 and parent_id = 0, so it has no schema and no base object: its address\n-- is [database, name] and not [database, schema, name].\nCREATE TRIGGER ddl_audit ON DATABASE FOR CREATE_TABLE AS\n  PRINT 'a table was created';\n",
+    has_module: 1,
+    is_encrypted: null,
+  },
+  orders: {
+    definition:
+      "\n-- A second DDL trigger, named exactly like the table app.orders. Measured: this succeeds,\n-- while CREATE PROCEDURE app.orders, CREATE SEQUENCE app.orders and\n-- CREATE TRIGGER app.orders ON app.customers each answer Msg 2714 - every schema object\n-- shares one namespace per schema and a DDL trigger is not in it. That pair is what makes\n-- describeObject's `kind` argument load-bearing on this engine rather than theoretical: a\n-- read keyed on the name alone would hand this trigger the table's columns.\nCREATE TRIGGER orders ON DATABASE FOR DROP_TABLE AS\n  PRINT 'a table was dropped';\n",
+    has_module: 1,
+    is_encrypted: null,
+  },
 };
 
 /** Which kind a bulk statement is about, read off the type list it interpolated. */
@@ -2150,7 +2304,8 @@ function fixtureRead(read: string, inputs: Record<string, unknown>, sql: string)
   const database = fixtureDatabase(sql);
   const tablesOf = (): typeof FIXTURE_TABLES =>
     database === "libredb_objects" ? FIXTURE_TABLES : database === "libredb_objects_two" ? FIXTURE_TABLES_TWO : [];
-  const viewsOf = (): typeof FIXTURE_VIEWS => (database === "libredb_objects" ? FIXTURE_VIEWS : []);
+  const objectsOf = (kind: string): Array<{ schema_name: string; name: string }> =>
+    database === "libredb_objects" ? (FIXTURE_SCHEMA_OBJECTS[kind] ?? []) : [];
   const triggersOf = (): typeof FIXTURE_TRIGGERS => (database === "libredb_objects" ? FIXTURE_TRIGGERS : []);
   // The SERVER filters, not the bind. A statement that binds `@schema` and never mentions
   // it returns every row, so the filter is read off the STATEMENT here and not off the
@@ -2188,8 +2343,10 @@ function fixtureRead(read: string, inputs: Record<string, unknown>, sql: string)
     }
     case "tables":
       return { recordset: inSchema(tablesOf()), rowsAffected: [inSchema(tablesOf()).length] };
-    case "objects":
-      return { recordset: inSchema(viewsOf()), rowsAffected: [inSchema(viewsOf()).length] };
+    case "objects": {
+      const rows = inSchema(objectsOf(listedKind(sql)));
+      return { recordset: rows, rowsAffected: [rows.length] };
+    }
     case "columns": {
       // Keyed on the NAME the provider bound, so a read that bound the schema segment
       // instead answers nothing - which is exactly what the last-segment pin needs.
@@ -2312,6 +2469,29 @@ function fixtureRead(read: string, inputs: Record<string, unknown>, sql: string)
         ],
         rowsAffected: [1],
       };
+    // The source read answers ONE row or NONE, and none is the object's absence (#789).
+    // Keyed on the address the provider BOUND, so a read that bound a container segment
+    // instead of `path[path.length - 1]` finds nothing and the last-segment derivation is
+    // what this table can see.
+    case "source-trigger": {
+      const key = inputs.schema === undefined ? `${inputs.name}` : `${inputs.schema}.${inputs.name}`;
+      const found = FIXTURE_SOURCE_TRIGGERS[key];
+      const rows = found === undefined ? [] : [found];
+      return { recordset: rows, rowsAffected: [rows.length] };
+    }
+    case "source-object": {
+      // The KIND filter is the STATEMENT's, not this table's: a view asked for at a
+      // procedure's name must answer zero rows, and the type list the provider interpolated
+      // is what decides it. Reading the address alone would answer a definition for every
+      // kind at once and could not see a lost type filter.
+      const kind = listedKind(sql);
+      const listed = FIXTURE_SCHEMA_OBJECTS[kind].some(
+        (object) => object.schema_name === inputs.schema && object.name === inputs.name,
+      );
+      const found = FIXTURE_SOURCE_OBJECTS[`${inputs.schema}.${inputs.name}`];
+      const rows = !listed || found === undefined ? [] : [found];
+      return { recordset: rows, rowsAffected: [rows.length] };
+    }
     case "pk":
       return { recordset: [{ name: "id" }], rowsAffected: [1] };
     case "fks":
@@ -2391,6 +2571,35 @@ describe("object surface", () => {
       { id: "catalog", label: "Database", labelPlural: "Databases" },
       { id: "schema", label: "Schema", labelPlural: "Schemas" },
     ]);
+  });
+
+  test("declares source on exactly the kinds that have a definition text", () => {
+    const kinds = new MSSQLProvider({ ...baseConfig, database: "libredb_objects" }).getCapabilities().objectKinds ?? [];
+    const declared = kinds
+      .filter((kind) => kind.hasSource === true)
+      .map((kind) => [kind.id, kind.sourceLanguage] as const)
+      .sort();
+
+    // `sql` and NOT `tsql`. MEASURED in this epic: `tsql` is not one of the 89 language ids
+    // the installed monaco-editor 0.56.0 bundle registers, and an unregistered id degrades
+    // to plain text with no throw and nothing observable (#789).
+    expect(declared).toEqual([
+      ["function", "sql"],
+      ["procedure", "sql"],
+      ["trigger", "sql"],
+      ["view", "sql"],
+    ]);
+
+    // The other direction, so a kind added later cannot quietly gain a Source tab. All three
+    // are DOCUMENTED absences rather than gaps: only the types `P`, `RF`, `V`, `TR`, `FN`,
+    // `IF`, `TF` and `R` have a SQL module at all, and `sys.synonyms.base_object_name` and
+    // `sys.sequences` hold properties rather than text.
+    expect(
+      kinds
+        .filter((kind) => kind.hasSource !== true)
+        .map((kind) => kind.id)
+        .sort(),
+    ).toEqual(["sequence", "synonym", "table"]);
   });
 
   test("the top level is databases, and a nested list reads the CALLER's catalog", async () => {
@@ -2492,8 +2701,11 @@ describe("object surface", () => {
 
     await assertObjectSurface(provider, {
       containers: FIXTURE_DATABASES.map((database) => [database.name]),
-      kinds: { table: 6, view: 1, procedure: 1, function: 3, trigger: 4, synonym: 1, sequence: 1 },
+      kinds: { table: 6, view: 2, procedure: 2, function: 3, trigger: 4, synonym: 1, sequence: 1 },
       sampleObject: { path: ["libredb_objects", "app", "orders"], kind: "table" },
+      // A name nothing in the fixture holds, under a source-bearing kind, so the helper can
+      // drive the absence RAISE rather than take it on trust (#789 Phase 2).
+      absentSource: { path: ["libredb_objects", "app", "no_such_view"], kind: "view" },
     });
 
     await provider.disconnect();
@@ -2652,7 +2864,13 @@ describe("SQL Server object containers, listings and detail", () => {
     // A view holds no rows of its own, so the statement that answers for one selects no
     // count and the object carries no key at all rather than a fabricated 0.
     const views = await provider.listObjects(["libredb_objects", "app"], "view");
-    expect(views).toEqual([{ path: ["libredb_objects", "app", "order_summary"], name: "order_summary", kind: "view" }]);
+    expect(views).toEqual([
+      { path: ["libredb_objects", "app", "order_summary"], name: "order_summary", kind: "view" },
+      // The encrypted sibling. It LISTS exactly like the readable one: encryption is a fact
+      // about the definition text, not about the object's existence, which is why the refusal
+      // lives on the source part and not on the listing (#789).
+      { path: ["libredb_objects", "app", "order_summary_secret"], name: "order_summary_secret", kind: "view" },
+    ]);
     expect(Object.hasOwn(views[0], "rowCount")).toBe(false);
 
     // The whole database, which is the depth `assertObjectSurface` reads at: the same kind
@@ -3050,6 +3268,495 @@ describe("SQL Server object containers, listings and detail", () => {
  * `TOP (@limit)` with an `ORDER BY`, and nothing here caps a column - and all of them are
  * measured live in the task report.
  */
+// ---------------------------------------------------------------------------
+// The object source read (#789 Phase 2)
+// ---------------------------------------------------------------------------
+
+/** Whitespace-squashed, so a statement can be pinned WHOLE without pinning its indentation. */
+function squashSql(sql: string): string {
+  return sql.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * The whole source statement per kind, spelled out rather than assembled from tokens.
+ *
+ * Recipe rule 6 (#789), which Task 8 measured and this suite inherits: a whole-statement pin
+ * is NECESSARY AND NOT SUFFICIENT, because a wrong reply COLUMN reads as `undefined`, the
+ * provider correctly turns that into a REFUSAL, and a refusal passes the conformance walk,
+ * the count assertions and the length assertions. So the statements are pinned here AND the
+ * text of every readable kind is pinned below, with the population taken from the
+ * DECLARATION rather than from a number typed into a test.
+ *
+ * Three things in each statement are load-bearing and none of them is in a WHERE clause, which
+ * is the half Task 6 measured a token pin cannot see:
+ *
+ *  - `sys.syscomments` and NOT `OBJECTPROPERTY`. MEASURED on SQL Server 2022 RTM-CU26:
+ *    `OBJECTPROPERTY` resolves its object id in the CONNECTED database whatever database a
+ *    three-part name addresses, so it answered `0` - "no VIEW DEFINITION" - for a view that is
+ *    encrypted in another catalog, because that id belongs to a default constraint here.
+ *  - `LEFT JOIN sys.sql_modules` and not an inner join. An inner join answers NO ROW for a
+ *    module-less object, which is indistinguishable from the object not existing, and absence
+ *    RAISES while module-lessness is a refusal.
+ *  - `o.type IN (...)`. The kind the caller asked under is what decides, so a `view` asked for
+ *    at a table's name is an absence rather than a table's definition.
+ */
+const EXPECTED_SOURCE_SQL: Record<string, string> = {
+  view:
+    "SELECT sm.definition AS definition, " +
+    "CASE WHEN sm.object_id IS NULL THEN 0 ELSE 1 END AS has_module, " +
+    "(SELECT MAX(CONVERT(INT, c.encrypted)) FROM [libredb_objects].sys.syscomments c WHERE c.id = o.object_id) AS is_encrypted " +
+    "FROM [libredb_objects].sys.objects o " +
+    "JOIN [libredb_objects].sys.schemas s ON s.schema_id = o.schema_id " +
+    "LEFT JOIN [libredb_objects].sys.sql_modules sm ON sm.object_id = o.object_id " +
+    "WHERE o.is_ms_shipped = 0 AND o.type IN ('V') AND s.name = @schema AND o.name = @name",
+  procedure:
+    "SELECT sm.definition AS definition, " +
+    "CASE WHEN sm.object_id IS NULL THEN 0 ELSE 1 END AS has_module, " +
+    "(SELECT MAX(CONVERT(INT, c.encrypted)) FROM [libredb_objects].sys.syscomments c WHERE c.id = o.object_id) AS is_encrypted " +
+    "FROM [libredb_objects].sys.objects o " +
+    "JOIN [libredb_objects].sys.schemas s ON s.schema_id = o.schema_id " +
+    "LEFT JOIN [libredb_objects].sys.sql_modules sm ON sm.object_id = o.object_id " +
+    "WHERE o.is_ms_shipped = 0 AND o.type IN ('P','PC','X') AND s.name = @schema AND o.name = @name",
+  function:
+    "SELECT sm.definition AS definition, " +
+    "CASE WHEN sm.object_id IS NULL THEN 0 ELSE 1 END AS has_module, " +
+    "(SELECT MAX(CONVERT(INT, c.encrypted)) FROM [libredb_objects].sys.syscomments c WHERE c.id = o.object_id) AS is_encrypted " +
+    "FROM [libredb_objects].sys.objects o " +
+    "JOIN [libredb_objects].sys.schemas s ON s.schema_id = o.schema_id " +
+    "LEFT JOIN [libredb_objects].sys.sql_modules sm ON sm.object_id = o.object_id " +
+    "WHERE o.is_ms_shipped = 0 AND o.type IN ('FN','IF','TF','FS','FT','AF') AND s.name = @schema AND o.name = @name",
+  trigger:
+    "SELECT sm.definition AS definition, " +
+    "CASE WHEN sm.object_id IS NULL THEN 0 ELSE 1 END AS has_module, " +
+    "(SELECT MAX(CONVERT(INT, c.encrypted)) FROM [libredb_objects].sys.syscomments c WHERE c.id = t.object_id) AS is_encrypted " +
+    "FROM [libredb_objects].sys.triggers t " +
+    "LEFT JOIN [libredb_objects].sys.objects po ON po.object_id = t.parent_id " +
+    "LEFT JOIN [libredb_objects].sys.schemas ps ON ps.schema_id = po.schema_id " +
+    "LEFT JOIN [libredb_objects].sys.sql_modules sm ON sm.object_id = t.object_id " +
+    "WHERE t.is_ms_shipped = 0 AND t.name = @name AND ps.name = @schema",
+};
+
+/** The catalog-scoped trigger form, which a DDL trigger is the only object to reach. */
+const EXPECTED_DDL_TRIGGER_SOURCE_SQL = EXPECTED_SOURCE_SQL.trigger.replace("ps.name = @schema", "ps.name IS NULL");
+
+/**
+ * One object per source-bearing kind, with the bytes its definition really begins with.
+ *
+ * The POPULATION is asserted against the declaration below rather than trusted, because a
+ * kind that quietly became a refusal passes every count, every length and the whole-statement
+ * pin. Each `contains` is a line the fixture file wrote and SQL Server stored verbatim.
+ */
+const SOURCE_READ_PER_KIND: Record<string, { path: string[]; contains: string; length: number }> = {
+  view: {
+    path: ["libredb_objects", "app", "order_summary"],
+    contains: "CREATE VIEW app.order_summary AS",
+    length: 155,
+  },
+  procedure: {
+    path: ["libredb_objects", "app", "touch_order"],
+    contains: "UPDATE app.orders SET note = 'touched' WHERE id = @order_id;",
+    length: 114,
+  },
+  function: {
+    path: ["libredb_objects", "app", "order_total"],
+    contains: "RETURN ISNULL(@total, 0);",
+    length: 235,
+  },
+  trigger: {
+    path: ["libredb_objects", "app", "orders", "stamp_order"],
+    contains: "CREATE TRIGGER app.stamp_order ON app.orders AFTER INSERT AS",
+    length: 207,
+  },
+};
+
+describe("SQL Server object source", () => {
+  beforeEach(installObjectFixture);
+
+  test("reads the definition of app.order_summary and says what the text is", async () => {
+    const provider = await connectedForObjects();
+
+    const document = await provider.readObjectSource!(["libredb_objects", "app", "order_summary"], "view");
+    expect(document.path).toEqual(["libredb_objects", "app", "order_summary"]);
+    expect(document.kind).toBe("view");
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(false);
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.id).toBe("definition");
+    expect(part.label).toBe("Definition");
+    expect(part.text).toContain("CREATE VIEW app.order_summary AS");
+    expect(part.language).toBe("sql");
+    // COMPLETE and STORED, both measured rather than cited. `sys.sql_modules.definition` is a
+    // statement that runs as given, and it is the AUTHOR'S bytes: the leading newline of the
+    // fixture's batch is in it, and `app.order_total`'s text below starts with the comment
+    // line that preceded its CREATE.
+    expect(part.form).toBe("complete");
+    expect(part.origin).toBe("stored");
+    expect(part.truncated).toBeUndefined();
+    expect(part.text.startsWith("\nCREATE VIEW")).toBe(true);
+    // The bytes and not a substring: this length is the fixture's evidence under standing
+    // ruling 5i, and an abridged text would still contain every substring above.
+    expect(part.text).toHaveLength(155);
+
+    expect(squashSql(issued.at(-1)!.sql)).toBe(EXPECTED_SOURCE_SQL.view);
+    expect(issued.at(-1)!.inputs).toEqual({ schema: "app", name: "order_summary" });
+    await provider.disconnect();
+  });
+
+  test("reads the text of EVERY source-bearing kind, with the population from the DECLARATION", async () => {
+    const provider = await connectedForObjects();
+    const declared = (provider.getCapabilities().objectKinds ?? [])
+      .filter((kind) => kind.hasSource === true)
+      .map((kind) => kind.id)
+      .sort();
+    // Recipe rule 6: the population is the DECLARATION's, so a kind that gains `hasSource`
+    // later cannot be certified by a table nobody extended. This throws by name when the two
+    // sets differ rather than silently reading the intersection.
+    expect(Object.keys(SOURCE_READ_PER_KIND).sort()).toEqual(declared);
+    expect(declared.length).toBeGreaterThan(0);
+
+    let read = 0;
+    for (const kindId of declared) {
+      const expectation = SOURCE_READ_PER_KIND[kindId];
+      const document = await provider.readObjectSource!(expectation.path, kindId);
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) {
+        throw new Error(`the ${kindId} read answered a refusal: ${part.unavailable}`);
+      }
+      expect(part.text).toContain(expectation.contains);
+      expect(part.text).toHaveLength(expectation.length);
+      expect(part.form).toBe("complete");
+      expect(part.origin).toBe("stored");
+      expect(squashSql(issued.at(-1)!.sql)).toBe(EXPECTED_SOURCE_SQL[kindId]);
+      read += 1;
+    }
+    // The zero-iteration case certified nothing, so it is refused by name.
+    if (read === 0) throw new Error("no source-bearing kind was read, so every assertion above is vacuous");
+    expect(read).toBe(declared.length);
+    await provider.disconnect();
+  });
+
+  test("a DDL trigger is read at [database, name], through the catalog-scoped form", async () => {
+    const provider = await connectedForObjects();
+
+    const document = await provider.readObjectSource!(["libredb_objects", "ddl_audit"], "trigger");
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("a DDL trigger's definition is readable");
+    expect(part.text).toContain("CREATE TRIGGER ddl_audit ON DATABASE FOR CREATE_TABLE AS");
+    // The schema is NOT bound, because a database-scoped trigger has none: `parent_class = 0`
+    // and `parent_id = 0`, measured, so `ps.name` is NULL and there is nothing to compare.
+    expect(issued.at(-1)!.inputs).toEqual({ name: "ddl_audit" });
+    expect(squashSql(issued.at(-1)!.sql)).toBe(EXPECTED_DDL_TRIGGER_SOURCE_SQL);
+    await provider.disconnect();
+  });
+
+  test("an ENCRYPTED module refuses per OBJECT, beside a readable sibling of the same kind", async () => {
+    const provider = await connectedForObjects();
+
+    for (const path of [
+      ["libredb_objects", "app", "order_summary_secret"],
+      ["libredb_objects", "app", "touch_order_secret"],
+    ]) {
+      const kind = path[2].startsWith("order") ? "view" : "procedure";
+      const document = await provider.readObjectSource!(path, kind);
+      const [part] = document.parts;
+      if (!isSourcePartUnavailable(part)) throw new Error(`${path[2]} is encrypted and must refuse`);
+      // NO `text` KEY AT ALL, and this is not belt and braces: a part carrying BOTH keys
+      // COMPILES, because TypeScript's excess-property check on a union admits any property
+      // declared on ANY member, and `isSourcePartUnavailable` then narrows it to the refusal
+      // while the definition rides along underneath. MEASURED here: without this line a
+      // refusal arm that also carried a text passed the whole suite at 172 pass 0 fail,
+      // which is the fourth place in #789 the same shape has been found.
+      expect(Object.hasOwn(part, "text")).toBe(false);
+      expect(part.id).toBe("definition");
+      expect(part.label).toBe("Definition");
+      expect(part.unavailable).toBe(
+        "This module was created WITH ENCRYPTION: sys.sql_modules.definition is NULL for every " +
+          "caller and SQL Server keeps no readable text for it.",
+      );
+    }
+
+    // The sibling, in the SAME schema and the SAME kind, still reads. That is the whole
+    // argument for a per-OBJECT field rather than a per-kind declaration.
+    const sibling = await provider.readObjectSource!(["libredb_objects", "app", "order_summary"], "view");
+    expect(isSourcePartUnavailable(sibling.parts[0])).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("a caller without VIEW DEFINITION is told THAT, and never that the module is encrypted", async () => {
+    const provider = await connectedForObjects();
+    // What `src_probe` sees, measured on SQL Server 2022 RTM-CU26: a ROW, a NULL definition
+    // and NO `sys.syscomments` row, so the encryption flag is NULL rather than 0 or 1. The
+    // control that makes this the VIEW DEFINITION boundary and not something else: with that
+    // permission granted on two of four objects, the SAME principal's read answered a text for
+    // one, `is_encrypted = 1` for the encrypted one, and NULL for the two it still lacked.
+    mockQueryFn = async (sql: string, inputs: Record<string, unknown> = {}) => {
+      issued.push({ sql, inputs });
+      if (sql.toUpperCase().includes("SELECT 1 AS TEST")) return { recordset: [{ test: 1 }], rowsAffected: [1] };
+      return { recordset: [{ definition: null, has_module: 1, is_encrypted: null }], rowsAffected: [1] };
+    };
+
+    const document = await provider.readObjectSource!(["libredb_objects", "app", "touch_order"], "procedure");
+    const [part] = document.parts;
+    if (!isSourcePartUnavailable(part)) throw new Error("a denied read is a refusal");
+    expect(Object.hasOwn(part, "text")).toBe(false);
+    expect(part.unavailable).toBe(
+      "SQL Server answered a module row with no definition text and publishes no encryption " +
+        "flag for this object, which is what a caller without VIEW DEFINITION on it is shown.",
+    );
+    await provider.disconnect();
+  });
+
+  test("an object with no SQL module at all is its own refusal, not a denial", async () => {
+    const provider = await connectedForObjects();
+    // A CLR or extended module: `PC`, `X`, `FS`, `FT`, `AF` and `TA` have no `sys.sql_modules`
+    // row at all. NOT REACHABLE on the seeded fixture, and that is disclosed rather than
+    // arranged: registering a CLR assembly needs a compiled DLL and `sp_configure 'clr
+    // enabled'`, which `docker/mssql-init/01-object-fixture.sql` does not ship. The row shape
+    // is the one the LEFT JOIN produces for a `sys.objects` row with no module beside it,
+    // which the fixture DOES produce for its tables, synonym and sequence (measured:
+    // `has_module = 0`, `is_encrypted` NULL).
+    mockQueryFn = async (sql: string, inputs: Record<string, unknown> = {}) => {
+      issued.push({ sql, inputs });
+      if (sql.toUpperCase().includes("SELECT 1 AS TEST")) return { recordset: [{ test: 1 }], rowsAffected: [1] };
+      return { recordset: [{ definition: null, has_module: 0, is_encrypted: null }], rowsAffected: [1] };
+    };
+
+    const document = await provider.readObjectSource!(["libredb_objects", "app", "clr_proc"], "procedure");
+    const [part] = document.parts;
+    if (!isSourcePartUnavailable(part)) throw new Error("a module-less object is a refusal");
+    expect(Object.hasOwn(part, "text")).toBe(false);
+    expect(part.unavailable).toBe(
+      "SQL Server holds no SQL module for this object: sys.sql_modules has no row for it, " +
+        "which is what a CLR or an extended module answers.",
+    );
+    await provider.disconnect();
+  });
+
+  test("an EMPTY definition is a refusal, because an empty definition is not a definition", async () => {
+    const provider = await connectedForObjects();
+    // Not engine-reachable on this fixture and disclosed as such: every module SQL Server
+    // stored here begins with a newline and a CREATE. The guarantee is the design's second
+    // one and it is what stops an empty editor being drawn over a read that "succeeded".
+    mockQueryFn = async (sql: string, inputs: Record<string, unknown> = {}) => {
+      issued.push({ sql, inputs });
+      if (sql.toUpperCase().includes("SELECT 1 AS TEST")) return { recordset: [{ test: 1 }], rowsAffected: [1] };
+      return { recordset: [{ definition: "   \n\t ", has_module: 1, is_encrypted: 0 }], rowsAffected: [1] };
+    };
+
+    const document = await provider.readObjectSource!(["libredb_objects", "app", "order_summary"], "view");
+    const [part] = document.parts;
+    if (!isSourcePartUnavailable(part)) throw new Error("a blank definition is a refusal");
+    expect(Object.hasOwn(part, "text")).toBe(false);
+    expect(part.unavailable).toBe(
+      "SQL Server answered an empty module text for this object, which is not a definition.",
+    );
+    await provider.disconnect();
+  });
+
+  test("an object the read cannot find RAISES, naming its last segment", async () => {
+    const provider = await connectedForObjects();
+
+    await expect(provider.readObjectSource!(["libredb_objects", "app", "no_such_view"], "view")).rejects.toThrow(
+      QueryError,
+    );
+    await expect(provider.readObjectSource!(["libredb_objects", "app", "no_such_view"], "view")).rejects.toThrow(
+      /no_such_view/,
+    );
+    // The KIND is part of the address: `orders` is a table in `app` and the view read must
+    // not answer its definition. Measured on the server: the same statement with
+    // `o.type IN ('V')` returns zero rows for it.
+    await expect(provider.readObjectSource!(["libredb_objects", "app", "orders"], "view")).rejects.toThrow(/orders/);
+    await provider.disconnect();
+  });
+
+  test("a kind that declares no source refuses by name, and never answers an empty document", async () => {
+    const provider = await connectedForObjects();
+
+    for (const kind of ["table", "synonym", "sequence"]) {
+      await expect(provider.readObjectSource!(["libredb_objects", "app", "customers"], kind)).rejects.toThrow(
+        `SQL Server publishes no definition text for the kind "${kind}"`,
+      );
+    }
+    await expect(provider.readObjectSource!(["libredb_objects", "app", "customers"], "nonesuch")).rejects.toThrow(
+      'SQL Server declares no object kind "nonesuch"',
+    );
+    await provider.disconnect();
+  });
+
+  test("a declaration that promises source and cannot deliver it refuses BY NAME", async () => {
+    const provider = await connectedForObjects();
+    const real = provider.getCapabilities();
+
+    // Both throws are reachable through the DECLARATION and not only through a bug in this
+    // file, which is why they are branches rather than dead guards: `objectKinds` is what a
+    // future edit changes, and a kind can gain `hasSource` in one edit and its language or its
+    // statement in another.
+    const noLanguage = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [{ id: "view", role: "relation", label: "View", labelPlural: "Views", hasSource: true }],
+    });
+    try {
+      await expect(provider.readObjectSource!(["libredb_objects", "app", "order_summary"], "view")).rejects.toThrow(
+        'SQL Server declares readable source for the kind "view" and no sourceLanguage to render it with',
+      );
+    } finally {
+      noLanguage.mockRestore();
+    }
+
+    const noStatement = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [
+        ...(real.objectKinds ?? []),
+        {
+          id: "materialized_view",
+          role: "relation",
+          label: "Materialized View",
+          labelPlural: "Materialized Views",
+          hasSource: true,
+          sourceLanguage: "sql",
+        },
+      ],
+    });
+    try {
+      await expect(
+        provider.readObjectSource!(["libredb_objects", "app", "order_summary"], "materialized_view"),
+      ).rejects.toThrow(
+        'SQL Server declares readable source for the kind "materialized_view" but has no statement that reads it',
+      );
+    } finally {
+      noStatement.mockRestore();
+    }
+    await provider.disconnect();
+  });
+
+  test("refuses a path whose shape the kind's declaration does not allow", async () => {
+    const provider = await connectedForObjects();
+
+    await expect(provider.readObjectSource!(["libredb_objects", "order_summary"], "view")).rejects.toThrow(
+      /A SQL Server "view" path is \[database, schema, name\], received \["libredb_objects","order_summary"\]/,
+    );
+    await expect(
+      provider.readObjectSource!(["libredb_objects", "app", "orders", "stamp_order", "x"], "trigger"),
+    ).rejects.toThrow(/\[database, schema, table, name\] or \[database, name\]/);
+    await provider.disconnect();
+  });
+
+  test("bounds a part at the caller's limit and marks it, and marks an exact answer never", async () => {
+    const provider = await connectedForObjects();
+
+    const bounded = await provider.readObjectSource!(["libredb_objects", "app", "order_total"], "function", 20);
+    const [part] = bounded.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("a bounded read is still a read");
+    expect(part.text).toHaveLength(20);
+    expect(part.truncated).toEqual({ limit: 20, reason: sourceBoundTruncationReason(20) });
+
+    const exact = await provider.readObjectSource!(["libredb_objects", "app", "order_total"], "function", 235);
+    const [whole] = exact.parts;
+    if (isSourcePartUnavailable(whole)) throw new Error("a whole read is still a read");
+    expect(whole.text).toHaveLength(235);
+    // An exact answer is NEVER marked: marking one teaches a reader to discount every mark.
+    expect(whole.truncated).toBeUndefined();
+    await provider.disconnect();
+  });
+
+  /**
+   * THE DERIVATION PIN THE FLEET OWES, and SQL Server is the engine that can write it.
+   *
+   * Standing ruling 5g (#789): every provider owes one `spyOn` on `getCapabilities` driven to
+   * a BOUND VALUE, and on a ONE-level engine that test cannot tell a hardcoded depth from a
+   * derived one, because `path[0]` and `path.slice(0, containerDepth())[0]` are the same
+   * segment at depth 1. Here they are not: the schema is `path[1]`, the object name is
+   * `path[2]`, and a positional read of either is silently wrong rather than merely unpinned.
+   *
+   * TWO declarations, and the second is what makes the first non-vacuous. The shipped
+   * declaration IS two-level, so asserting against it alone would pass for an implementation
+   * that hardcoded `catalog = path[0]` and `schema = path[1]`. The second swaps the two levels
+   * over, so a positional implementation three-part names `[sch]` and binds `cat` while a
+   * derived one reads each segment by the level id its declaration gives it.
+   */
+  test("derives the object name and the container from the DECLARATION, not from a position", async () => {
+    const provider = await connectedForObjects();
+    const real = provider.getCapabilities();
+
+    const twoLevel = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+    try {
+      await provider.readObjectSource!(["cat", "sch", "obj"], "view").catch(() => undefined);
+      // A BOUND VALUE and not a refusal: `obj` is the name, `sch` is the schema, and `cat` is
+      // the catalog the statement is three-part named at.
+      expect(issued.at(-1)!.inputs).toEqual({ schema: "sch", name: "obj" });
+      expect(issued.at(-1)!.sql).toContain("[cat].sys.sql_modules");
+      expect(issued.at(-1)!.sql).not.toContain("[sch].sys.sql_modules");
+    } finally {
+      twoLevel.mockRestore();
+    }
+
+    const reordered = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+      ],
+    });
+    try {
+      await provider.readObjectSource!(["sch", "cat", "obj"], "view").catch(() => undefined);
+      // The SAME values reach the server from a path whose segments moved, because each one is
+      // read by its declared level id and not by its index.
+      expect(issued.at(-1)!.inputs).toEqual({ schema: "sch", name: "obj" });
+      expect(issued.at(-1)!.sql).toContain("[cat].sys.sql_modules");
+      expect(issued.at(-1)!.sql).not.toContain("[sch].sys.sql_modules");
+    } finally {
+      reordered.mockRestore();
+    }
+    await provider.disconnect();
+  });
+
+  test("reads the PATH's catalog and never the connected one", async () => {
+    const provider = await connectedForObjects({ database: "libredb_objects_two" });
+
+    const document = await provider.readObjectSource!(["libredb_objects", "app", "order_summary"], "view");
+    expect(isSourcePartUnavailable(document.parts[0])).toBe(false);
+    // A catalog name cannot be bound, so a provider that dropped the segment would read the
+    // CONNECTED database's catalog views under every database in the tree and look healthy
+    // doing it. VERIFIED LIVE against SQL Server 2022 RTM-CU26 through this same provider:
+    // connected to `libredb_objects_two`, all four `libredb_objects` modules answered
+    // correctly, and the same read with `OBJECTPROPERTY` in place of `sys.syscomments`
+    // reported the two ENCRYPTED ones as "no VIEW DEFINITION" instead, because that function
+    // resolves its id in the connected database.
+    expect(issued.at(-1)!.sql).toContain("[libredb_objects].sys.sql_modules");
+    expect(issued.at(-1)!.sql).not.toContain("[libredb_objects_two]");
+    await provider.disconnect();
+  });
+
+  test("escapes the catalog identifier with the METHOD, and binds the schema and the name", async () => {
+    const provider = await connectedForObjects({ database: "lib]redb" });
+    mockQueryFn = async (sql: string, inputs: Record<string, unknown> = {}) => {
+      issued.push({ sql, inputs });
+      if (sql.toUpperCase().includes("SELECT 1 AS TEST")) return { recordset: [{ test: 1 }], rowsAffected: [1] };
+      return {
+        recordset: [{ definition: "\nCREATE VIEW x AS SELECT 1;", has_module: 1, is_encrypted: 0 }],
+        rowsAffected: [1],
+      };
+    };
+
+    // The CATALOG is an identifier position and there is nothing to bind there, so it goes
+    // through `escapeIdentifier`'s `]` doubling - the method, never a fourth inline copy. The
+    // schema and the name are BINDS and never reach the statement text.
+    await provider.readObjectSource!(["lib]redb", "a']b", "o']b"], "view");
+    expect(issued.at(-1)!.sql).toContain("[lib]]redb].sys.objects");
+    expect(issued.at(-1)!.sql).not.toContain("a']b");
+    expect(issued.at(-1)!.sql).not.toContain("o']b");
+    expect(issued.at(-1)!.inputs).toEqual({ schema: "a']b", name: "o']b" });
+    await provider.disconnect();
+  });
+});
+
 describe("SQL Server bulk column read", () => {
   beforeEach(installObjectFixture);
 

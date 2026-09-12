@@ -36,8 +36,16 @@ import {
   type IndexSchema,
   type ForeignKeySchema,
   type ContainerLevelSpec,
+  type ObjectSourceDocument,
+  type ObjectSourcePart,
 } from "../../types";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+} from "../../object-kinds";
 import { comparePaths } from "../../object-path";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
@@ -397,6 +405,22 @@ const MSSQL_OBJECT_TYPES: Record<string, readonly string[]> = {
 /** The one kind `sys.objects` cannot answer for. */
 const TRIGGER_KIND = "trigger";
 
+/**
+ * The source declaration every module-bearing kind on this engine carries (#789 Phase 2).
+ *
+ * ONE value spread into four kinds rather than four pairs of literals, so a kind cannot
+ * gain `hasSource` and miss its language: an absent or unregistered Monaco id degrades to
+ * plain text with no throw and nothing observable, which is a Source tab that silently
+ * stopped highlighting.
+ *
+ * `sql` and NOT `tsql`. MEASURED in #789: `tsql` is not among the 89 language ids the
+ * installed monaco-editor 0.56.0 bundle registers, and neither are `plsql` and `cql`, so
+ * the one id in the bundle that highlights this dialect is the generic one. T-SQL keywords
+ * the generic grammar does not know (`OUTER APPLY`, `MERGE ... OUTPUT`) render as plain
+ * identifiers, which is a compromise `docs/providers/mssql.md` records rather than hides.
+ */
+const MSSQL_SOURCE_DECLARATION = { hasSource: true, sourceLanguage: "sql" } as const;
+
 /** `'U','V'` and so on: one kind's spellings as a SQL literal list. */
 function typeList(types: readonly string[]): string {
   return types.map((type) => `'${type}'`).join(",");
@@ -581,6 +605,81 @@ function listTriggersSql(database: string, bySchema: boolean): string {
         LEFT JOIN ${database}.sys.objects po ON po.object_id = t.parent_id
         LEFT JOIN ${database}.sys.schemas ps ON ps.schema_id = po.schema_id
         WHERE t.is_ms_shipped = 0${bySchema ? " AND ps.name = @schema" : ""}
+      `;
+}
+
+/**
+ * One object's definition text, and the three separable reasons there may be none (#789).
+ *
+ * THE LEFT JOIN IS THE SHAPE, not a style. `sys.objects` is the spine and `sys.sql_modules`
+ * hangs off it, so an object with no SQL module at all answers a ROW with `has_module = 0`
+ * rather than no row. An inner join would answer nothing for it, which is the same shape as
+ * the object not existing, and those two are a refusal and a raise respectively.
+ *
+ * `sys.syscomments` AND NOT `OBJECTPROPERTY`, and this REFUTES the row the design wrote for
+ * this engine (#789 recipe rule 7). MEASURED on SQL Server 2022 RTM-CU26 (16.0.4265.3):
+ * `OBJECTPROPERTY(id, 'IsEncrypted')` resolves its object id in the CONNECTED database
+ * whatever database a three-part name addresses. Reading `libredb_objects_two` from a session
+ * in `libredb_objects`, it answered NULL for a readable view and 0 - the "no VIEW DEFINITION"
+ * answer - for a view that really is encrypted, because those two ids belong, in the connected
+ * database, to a foreign key and a default constraint. `OBJECT_ID('db.schema.name')` does not
+ * rescue it: the id resolves and `OBJECTPROPERTY` still answers 0. On a two-level engine whose
+ * catalog level is part of every path that is not a limitation, it is a wrong answer about
+ * somebody else's object, so the flag comes from the one place that IS three-part nameable.
+ *
+ * `sys.syscomments` is a compatibility view and carries a deprecation notice; it is used for
+ * the `encrypted` BIT alone and never for its chunked `text`, which `sys.sql_modules` answers
+ * whole. MEASURED: a 5045-character module is one `sys.sql_modules.definition` and TWO
+ * `sys.syscomments` rows, which is why the flag is aggregated rather than joined.
+ *
+ * AND THE AGGREGATE IS WHAT MAKES THE THREE CAUSES SEPARABLE FOR THE DENIED CALLER ITSELF.
+ * MEASURED, with `VIEW DEFINITION` granted on exactly two of four objects to one login: that
+ * login's own read answered a text and `is_encrypted = 0` for the granted plain module,
+ * `is_encrypted = 1` for the granted encrypted one, and NULL for the two it still lacked. So
+ * the flag is visible exactly where `VIEW DEFINITION` is, per OBJECT, which is what separates
+ * "this is encrypted" from "you cannot see this".
+ *
+ * `o.type IN (...)` because the KIND the caller asked under is part of the address. Measured:
+ * `app.orders` is a table and the view statement answers zero rows for it, which is the
+ * absence of a VIEW at that name rather than a table's definition handed to a view reader.
+ */
+function sourceObjectSql(database: string, types: readonly string[]): string {
+  return `
+        SELECT sm.definition AS definition,
+          CASE WHEN sm.object_id IS NULL THEN 0 ELSE 1 END AS has_module,
+          (SELECT MAX(CONVERT(INT, c.encrypted)) FROM ${database}.sys.syscomments c WHERE c.id = o.object_id) AS is_encrypted
+        FROM ${database}.sys.objects o
+        JOIN ${database}.sys.schemas s ON s.schema_id = o.schema_id
+        LEFT JOIN ${database}.sys.sql_modules sm ON sm.object_id = o.object_id
+        WHERE o.is_ms_shipped = 0 AND o.type IN (${typeList(types)}) AND s.name = @schema AND o.name = @name
+      `;
+}
+
+/**
+ * The same read for a trigger, whose spine is `sys.triggers` for the reason the LISTING's is.
+ *
+ * `sys.objects` holds no DATABASE-scoped DDL trigger at all, so this statement outer-joins it
+ * only to reach the trigger's parent SCHEMA, and a DDL trigger is addressed by the arm that
+ * asks for `ps.name IS NULL`. The schema is the filter and the parent TABLE is not: measured,
+ * a trigger name is unique per SCHEMA on SQL Server, which is why `app` and `reporting` may
+ * each hold a `stamp_order` and one schema may not hold two.
+ *
+ * CONSEQUENCE OF THE SAME ABSENCE, disclosed rather than left to be found: a DDL trigger has no
+ * `sys.syscomments` row either, readable or encrypted, so `is_encrypted` is NULL for one. Its
+ * definition is readable and the text arm answers first, so the only degraded case is an
+ * ENCRYPTED DDL trigger, which reports the "cannot be read here" refusal rather than the
+ * encryption one. `docs/providers/mssql.md` records it.
+ */
+function sourceTriggerSql(database: string, bySchema: boolean): string {
+  return `
+        SELECT sm.definition AS definition,
+          CASE WHEN sm.object_id IS NULL THEN 0 ELSE 1 END AS has_module,
+          (SELECT MAX(CONVERT(INT, c.encrypted)) FROM ${database}.sys.syscomments c WHERE c.id = t.object_id) AS is_encrypted
+        FROM ${database}.sys.triggers t
+        LEFT JOIN ${database}.sys.objects po ON po.object_id = t.parent_id
+        LEFT JOIN ${database}.sys.schemas ps ON ps.schema_id = po.schema_id
+        LEFT JOIN ${database}.sys.sql_modules sm ON sm.object_id = t.object_id
+        WHERE t.is_ms_shipped = 0 AND t.name = @name AND ${bySchema ? "ps.name = @schema" : "ps.name IS NULL"}
       `;
 }
 
@@ -960,19 +1059,181 @@ function containerTarget(
  * it states where a DDL trigger lives, and naming the level is what keeps it true on an
  * engine whose levels are declared in another order.
  */
-function objectShapes(capabilities: ProviderCapabilities, spec: ObjectKindSpec): readonly string[][] {
-  const levels = declaredLevels(capabilities);
-  const names = (specs: readonly ContainerLevelSpec[]) => specs.map((level) => level.label.toLowerCase());
-  if (spec.attachedTo === undefined) return [[...names(levels), "name"]];
+type PathSegmentSpec =
+  | { readonly role: "level"; readonly level: ContainerLevelSpec }
+  | { readonly role: "parent"; readonly label: string }
+  | { readonly role: "name" };
 
-  const shapes = [[...names(levels), spec.attachedTo, "name"]];
+function objectShapeSpecs(
+  capabilities: ProviderCapabilities,
+  spec: ObjectKindSpec,
+): readonly (readonly PathSegmentSpec[])[] {
+  const levels = declaredLevels(capabilities);
+  const asLevels = (specs: readonly ContainerLevelSpec[]): readonly PathSegmentSpec[] =>
+    specs.map((level) => ({ role: "level", level }) as const);
+  if (spec.attachedTo === undefined) return [[...asLevels(levels), { role: "name" }]];
+
+  const shapes: (readonly PathSegmentSpec[])[] = [
+    [...asLevels(levels), { role: "parent", label: spec.attachedTo }, { role: "name" }],
+  ];
   // Only when the engine HAS a catalog level. An empty filter would spread to nothing and
   // leave `["name"]`, a container-less single segment - unreachable on SQL Server, and
   // reachable in any one-level provider that copies this helper, where it would accept a
   // bare object name for an attached kind and answer a detail for it.
   const catalogLevels = levels.filter((level) => level.id === "catalog");
-  if (catalogLevels.length > 0) shapes.push([...names(catalogLevels), "name"]);
+  if (catalogLevels.length > 0) shapes.push([...asLevels(catalogLevels), { role: "name" }]);
   return shapes;
+}
+
+/** One segment's word for a refusal sentence: the level's own LABEL, or the role. */
+function segmentLabel(segment: PathSegmentSpec): string {
+  if (segment.role === "level") return segment.level.label.toLowerCase();
+  if (segment.role === "parent") return segment.label;
+  return "name";
+}
+
+/** The shapes above as the words a message uses, so the check and the sentence are one array. */
+function objectShapes(capabilities: ProviderCapabilities, spec: ObjectKindSpec): readonly string[][] {
+  return objectShapeSpecs(capabilities, spec).map((shape) => shape.map(segmentLabel));
+}
+
+/**
+ * Which shape a path matched, as the SEGMENTS each declared level holds plus the object name.
+ *
+ * This is the one derivation standing ruling 5g (#789) asks the fleet's two-level engine to
+ * pin, written once so `describeObject` and `readObjectSource` cannot disagree about it. Every
+ * level's segment is found at the position the MATCHED SHAPE puts that level at, never at an
+ * index, which is what keeps it right for a kind whose paths come at two depths: a DML trigger
+ * is `[database, schema, table, name]` and a DDL trigger is `[database, name]`, so `path[1]`
+ * is the schema of one and the NAME of the other. The object name is `path[path.length - 1]`
+ * in both, which is the rule's own spelling and agrees with the matched shape's last segment.
+ */
+function objectAddress(
+  capabilities: ProviderCapabilities,
+  spec: ObjectKindSpec,
+  kind: string,
+  path: readonly string[],
+): { levels: Partial<Record<ContainerLevelSpec["id"], string>>; name: string } {
+  const matched = objectShapeSpecs(capabilities, spec).find((shape) => shape.length === path.length);
+  if (matched === undefined) {
+    throw new QueryError(
+      `A SQL Server "${kind}" path is ${shapeList(objectShapes(capabilities, spec))}, received ${JSON.stringify(path)}`,
+      "mssql",
+    );
+  }
+  const levels: Partial<Record<ContainerLevelSpec["id"], string>> = {};
+  matched.forEach((segment, index) => {
+    if (segment.role === "level") levels[segment.level.id] = path[index];
+  });
+  return { levels, name: path[path.length - 1] };
+}
+
+/** One row of the source read: the definition, whether there is a module, and the flag. */
+interface SourceRow {
+  definition: string | null;
+  has_module: number;
+  is_encrypted: number | null;
+}
+
+/**
+ * The four sentences a source read can answer instead of a text.
+ *
+ * THEY ARE OURS AND NOT THE ENGINE'S, and that is a measured exception to the rule that a
+ * refusal carries the engine's own sentence unprefixed (#789). There is nothing to carry: the
+ * read SUCCEEDS and answers a NULL, so SQL Server raises nothing and says nothing. The only
+ * sentences the engine has here are `sp_helptext`'s, and they cannot tell these causes apart
+ * for the caller who needs them told apart - measured on SQL Server 2022 RTM-CU26, a login
+ * without VIEW DEFINITION gets the identical `Msg 15197 ... There is no text for object '<x>'`
+ * for a plain module and for an encrypted one, while a privileged caller gets a PRINT with no
+ * message number at all, `The text for object '<x>' is encrypted.`. Carrying the engine's
+ * words would therefore collapse exactly the distinction this read exists to keep.
+ *
+ * Each one names the catalog view and the column the decision was taken from, so a reader can
+ * check the claim rather than believe it.
+ */
+const SOURCE_NO_MODULE =
+  "SQL Server holds no SQL module for this object: sys.sql_modules has no row for it, " +
+  "which is what a CLR or an extended module answers.";
+
+const SOURCE_ENCRYPTED =
+  "This module was created WITH ENCRYPTION: sys.sql_modules.definition is NULL for every " +
+  "caller and SQL Server keeps no readable text for it.";
+
+const SOURCE_NOT_VISIBLE =
+  "SQL Server answered a module row with no definition text and publishes no encryption " +
+  "flag for this object, which is what a caller without VIEW DEFINITION on it is shown.";
+
+const SOURCE_EMPTY = "SQL Server answered an empty module text for this object, which is not a definition.";
+
+/**
+ * What one source read produced: a text, or the reason there is none.
+ *
+ * Two arms and never one shape with an optional `text`, for the reason `ObjectSourcePart` is a
+ * union: a refusal and an empty answer are different facts, and one shape carrying both makes
+ * them the same value at every call site.
+ */
+type SourceRead =
+  | { readonly outcome: "text"; readonly text: string }
+  | { readonly outcome: "refused"; readonly unavailable: string };
+
+/**
+ * One row as the outcome it describes, in the order the three causes separate.
+ *
+ * The module-less test comes FIRST because a module-less object also has a NULL definition, so
+ * asking about the definition first would report every CLR procedure as a privilege problem.
+ * The blank-text arm is last and is the design's second guarantee: an empty definition is not
+ * a definition, and an empty editor over a read that "succeeded" is the failure this whole
+ * design exists to remove. It is not engine-reachable on the seeded fixture - every module
+ * SQL Server stored there begins with a newline and a CREATE - and the provider doc says so.
+ */
+function sourceReadFromRow(row: SourceRow): SourceRead {
+  if (Number(row.has_module) === 0) {
+    return { outcome: "refused", unavailable: SOURCE_NO_MODULE };
+  }
+  if (row.definition === null || row.definition === undefined) {
+    return {
+      outcome: "refused",
+      unavailable: Number(row.is_encrypted) === 1 ? SOURCE_ENCRYPTED : SOURCE_NOT_VISIBLE,
+    };
+  }
+  if (row.definition.trim() === "") {
+    return { outcome: "refused", unavailable: SOURCE_EMPTY };
+  }
+  return { outcome: "text", text: row.definition };
+}
+
+/**
+ * One read as the single part a SQL Server document carries.
+ *
+ * The two arms are built as WHOLE LITERALS and neither is spread from the other, which is the
+ * point rather than a style. A part carrying BOTH `text` and `unavailable` COMPILES as an
+ * `ObjectSourcePart`, because TypeScript's excess-property check on a union admits any
+ * property declared on ANY member of it, and `isSourcePartUnavailable` then narrows such a
+ * part to the refusal arm and drops a definition the engine really returned. That defect has
+ * been found in three separate places in this phase (#789); it cannot be built here, because
+ * the refusal arm returns before the text arm is reached and neither literal mentions the
+ * other's keys.
+ */
+function sourcePart(read: SourceRead, language: string, limit: number | undefined): ObjectSourcePart {
+  if (read.outcome === "refused") {
+    return { id: "definition", label: "Definition", unavailable: read.unavailable };
+  }
+  const bounded = applySourceBound(read.text, limit);
+  return {
+    id: "definition",
+    label: "Definition",
+    text: bounded.text,
+    language,
+    // COMPLETE and STORED, both measured. `sys.sql_modules.definition` is a statement that
+    // runs as given, and it is the AUTHOR'S bytes rather than a reconstruction: on the seeded
+    // fixture `app.order_total`'s definition begins with the comment line that preceded its
+    // CREATE in the same batch, and every module carries that batch's leading newline. That is
+    // the same fact the `sp_rename` caveat is about - renaming an object does not rewrite the
+    // text, so the stored text can name the old name.
+    form: "complete",
+    origin: "stored",
+    ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+  };
 }
 
 /**
@@ -1267,13 +1528,26 @@ export class MSSQLProvider extends SQLBaseProvider {
         // No `acceptsRowWrites` on a view. SQL Server takes an UPDATE against a view over
         // exactly one base table and refuses one over a join without an INSTEAD OF trigger,
         // which is a per-OBJECT fact this per-kind declaration cannot state.
-        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
-        { id: "procedure", role: "routine", label: "Stored Procedure", labelPlural: "Stored Procedures" },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views", ...MSSQL_SOURCE_DECLARATION },
+        {
+          id: "procedure",
+          role: "routine",
+          label: "Stored Procedure",
+          labelPlural: "Stored Procedures",
+          ...MSSQL_SOURCE_DECLARATION,
+        },
         // One kind for three spellings: a scalar function, an inline table-valued function
         // and a multi-statement table-valued one are all things a person wrote as a
         // function.
-        { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
-        { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table" },
+        { id: "function", role: "routine", label: "Function", labelPlural: "Functions", ...MSSQL_SOURCE_DECLARATION },
+        {
+          id: "trigger",
+          role: "attached",
+          label: "Trigger",
+          labelPlural: "Triggers",
+          attachedTo: "table",
+          ...MSSQL_SOURCE_DECLARATION,
+        },
         { id: "synonym", role: "config", label: "Synonym", labelPlural: "Synonyms" },
         { id: "sequence", role: "config", label: "Sequence", labelPlural: "Sequences" },
       ],
@@ -1843,13 +2117,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       throw new QueryError(`SQL Server declares no object kind "${kind}"`, "mssql");
     }
 
-    const shapes = objectShapes(capabilities, spec);
-    if (!shapes.some((shape) => shape.length === path.length)) {
-      throw new QueryError(
-        `A SQL Server "${kind}" path is ${shapeList(shapes)}, received ${JSON.stringify(path)}`,
-        "mssql",
-      );
-    }
+    const address = objectAddress(capabilities, spec, kind, path);
 
     if (spec.role !== "relation") {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
@@ -1868,9 +2136,8 @@ export class MSSQLProvider extends SQLBaseProvider {
     //     `[...levels, name]` by construction - the shape check above is what makes that
     //     true - so the cut is exactly this object's container.
     //   - the catalog is `catalog`, the schema is `schema`, and neither is an index.
-    const segments = containerSegments(capabilities, path);
-    const quotedCatalog = this.objectCatalog(requiredSegment(segments, "catalog"));
-    const binds = { schema: requiredSegment(segments, "schema"), name: path[path.length - 1] };
+    const quotedCatalog = this.objectCatalog(requiredSegment(address.levels, "catalog"));
+    const binds = { schema: requiredSegment(address.levels, "schema"), name: address.name };
 
     const columnRows = await this.runObjectRows<ColumnRow>(objectColumnsSql(quotedCatalog), binds);
     if (columnRows.length === 0) {
@@ -1980,6 +2247,99 @@ export class MSSQLProvider extends SQLBaseProvider {
       )
       .sort((left, right) => comparePaths(left.path, right.path));
     return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
+  }
+
+  /**
+   * One object's definition text, out of `sys.sql_modules` (#789 Phase 2).
+   *
+   * FOUR OF THE SEVEN DECLARED KINDS ANSWER, and the three that do not are a documented fact
+   * rather than a gap: only the `sys.objects` types `P`, `RF`, `V`, `TR`, `FN`, `IF`, `TF` and
+   * `R` have a SQL module at all, and a table, a synonym and a sequence are none of them -
+   * `sys.synonyms.base_object_name` and `sys.sequences` hold PROPERTIES, not text. The
+   * declaration is what decides here, read off `objectKinds` and never off a list of kind ids
+   * kept beside it.
+   *
+   * ONE PART, ALWAYS. SQL Server keeps one module per object, so there is no second part to
+   * push and no tail whose absence is legal, which is what separates this engine from Oracle's
+   * package and MariaDB's.
+   *
+   * THE THREE-PART NAME IS WHY THIS READ IS NOT `OBJECT_DEFINITION(object_id)`. That function
+   * takes an id and resolves it in the CURRENT database, and this is the fleet's only engine
+   * whose catalog level is part of every path: a connection on `libredb_objects` reads
+   * `libredb_objects_two.warehouse.stock` and nothing may resolve in the wrong database. The
+   * same measurement is what removed `OBJECTPROPERTY` from the encryption test above.
+   *
+   * The catalog is an IDENTIFIER position with nothing to bind, so it goes through
+   * `escapeIdentifier`'s `]` doubling - the METHOD, never a fourth inline copy of it. The
+   * schema and the object name are BINDS and never reach the statement text.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`SQL Server declares no object kind "${kind}"`, "mssql");
+    }
+    if (spec.hasSource !== true) {
+      throw new QueryError(`SQL Server publishes no definition text for the kind "${kind}"`, "mssql");
+    }
+    if (spec.sourceLanguage === undefined) {
+      // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
+      // observable, so a kind that declared source and forgot its language would ship a Source
+      // tab that silently stopped highlighting. The declaration is the only source of the
+      // language and there is no literal here to fall back to.
+      throw new QueryError(
+        `SQL Server declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
+        "mssql",
+      );
+    }
+
+    const address = objectAddress(capabilities, spec, kind, path);
+    const quotedCatalog = this.objectCatalog(requiredSegment(address.levels, "catalog"));
+    const schema = address.levels.schema;
+    const sql = this.sourceStatement(quotedCatalog, kind, schema !== undefined);
+    const binds = schema === undefined ? { name: address.name } : { schema, name: address.name };
+
+    const rows = await this.runObjectRows<SourceRow>(sql, binds);
+    const row = rows[0];
+    if (row === undefined) {
+      // ABSENCE RAISES and is never a refusal part. The sentence is OURS because nothing was
+      // raised to carry: the statement succeeded and returned no row, which is what a name
+      // nothing holds AND a name holding an object of another KIND both answer, and the kind
+      // is what the caller asked under.
+      throw new QueryError(
+        `SQL Server holds no ${spec.label.toLowerCase()} called "${address.name}" in ` +
+          `${path.slice(0, path.length - 1).join(".")}`,
+        "mssql",
+        sql,
+      );
+    }
+
+    const parts: [ObjectSourcePart, ...ObjectSourcePart[]] = [
+      sourcePart(sourceReadFromRow(row), spec.sourceLanguage, limit),
+    ];
+    return { path: [...path], kind, parts };
+  }
+
+  /**
+   * Which statement reads one kind's module: the trigger's spine, or `sys.objects`.
+   *
+   * The same split `objectListingStatement` makes and for the same reason, taken through
+   * `Object.hasOwn` rather than a bare index because a kind id is an OPEN string and
+   * `MSSQL_OBJECT_TYPES["toString"]` answers a function off the prototype chain. The throw is
+   * reachable through the DECLARATION rather than only through a bug here: a kind given
+   * `hasSource` with no entry in that table has no statement to read it with, and saying so by
+   * name is better than interpolating `undefined` into a type list.
+   */
+  private sourceStatement(quotedCatalog: string, kind: string, bySchema: boolean): string {
+    if (kind === TRIGGER_KIND) return sourceTriggerSql(quotedCatalog, bySchema);
+    if (!Object.hasOwn(MSSQL_OBJECT_TYPES, kind)) {
+      throw new QueryError(
+        `SQL Server declares readable source for the kind "${kind}" but has no statement that reads it`,
+        "mssql",
+      );
+    }
+    return sourceObjectSql(quotedCatalog, MSSQL_OBJECT_TYPES[kind]);
   }
 
   // ============================================================================

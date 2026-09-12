@@ -723,6 +723,154 @@ it. Measured on the fixture: `app.orders` reports `customers`, and `reporting.da
 one column on SQL Server (`CREATE TABLE t ()` is a syntax error), so no rows means the object is not
 there, and `describeObject` raises rather than rendering a dropped table as a table with no columns.
 
+#### Object source (#789)
+
+`readObjectSource(path, kind, limit?)` answers one object's definition text, out of
+`sys.sql_modules`.
+Four of the seven declared kinds answer; three declare nothing, and that is a documented fact
+rather than a gap.
+
+| Kind | `hasSource` | `sourceLanguage` | Parts | `form` / `origin` |
+|---|---|---|---|---|
+| `view` | Yes | `sql` | 1, `Definition` | `complete` / `stored` |
+| `procedure` | Yes | `sql` | 1, `Definition` | `complete` / `stored` |
+| `function` | Yes | `sql` | 1, `Definition` | `complete` / `stored` |
+| `trigger` | Yes | `sql` | 1, `Definition` | `complete` / `stored` |
+| `table` | No | - | - | the engine publishes no such text |
+| `synonym` | No | - | - | the engine publishes no such text |
+| `sequence` | No | - | - | the engine publishes no such text |
+
+The three that declare nothing are the FIRST of the two absences the design distinguishes: SQL
+Server publishes no definition text for them at all.
+Only the `sys.objects` types `P`, `RF`, `V`, `TR`, `FN`, `IF`, `TF` and `R` have a SQL module, and a
+table, a synonym and a sequence are none of them: `sys.synonyms.base_object_name` and
+`sys.sequences` hold PROPERTIES (a target name, a start value, an increment), not text.
+Those properties reach the tree through `describeObject` instead.
+
+**The statement.**
+One read, three-part named at the path's own catalog, with the schema and the object name BOUND:
+
+```sql
+SELECT sm.definition AS definition,
+  CASE WHEN sm.object_id IS NULL THEN 0 ELSE 1 END AS has_module,
+  (SELECT MAX(CONVERT(INT, c.encrypted)) FROM [<catalog>].sys.syscomments c WHERE c.id = o.object_id) AS is_encrypted
+FROM [<catalog>].sys.objects o
+JOIN [<catalog>].sys.schemas s ON s.schema_id = o.schema_id
+LEFT JOIN [<catalog>].sys.sql_modules sm ON sm.object_id = o.object_id
+WHERE o.is_ms_shipped = 0 AND o.type IN (<the kind's types>) AND s.name = @schema AND o.name = @name
+```
+
+A trigger takes the same shape against `sys.triggers`, outer-joined to `sys.objects` and
+`sys.schemas` only to reach its parent's schema, because `sys.objects` holds no DATABASE-scoped DDL
+trigger at all.
+A DDL trigger is addressed `[database, name]` and the statement then asks for `ps.name IS NULL`
+instead of binding a schema.
+
+`OBJECT_DEFINITION(object_id)` is REJECTED and the reason is the same one the detail reads give:
+it resolves an id in the CURRENT database and cannot be three-part named, and this is the one engine
+in the fleet whose catalog level is part of every path.
+
+**`sys.syscomments` and NOT `OBJECTPROPERTY`, which REFUTES the row this task was given.**
+The plan named `OBJECTPROPERTY(object_id, 'IsEncrypted')` for the encryption flag.
+MEASURED on SQL Server 2022 RTM-CU26 (16.0.4265.3): that function resolves its object id in the
+CONNECTED database whatever database a three-part name addresses.
+From a session in `libredb_objects` reading `libredb_objects_two`, it answered NULL for a readable
+view and `0` - the "no VIEW DEFINITION" answer - for a view that really is encrypted, because those
+two ids belong, in the connected database, to a foreign key and a default constraint.
+`OBJECTPROPERTY(OBJECT_ID('db.schema.name'), 'IsEncrypted')` does not rescue it: the id resolves and
+the answer is still `0`.
+Verified end to end through this provider: connected to `libredb_objects_two` and reading
+`libredb_objects.app.order_summary_secret`, the shipped statement reports the module as encrypted
+and the same read with `OBJECTPROPERTY` in its place reports it as "no VIEW DEFINITION" instead.
+Reproduce it with the fixture and the two connections; nothing else in the fixture is needed.
+
+`sys.syscomments` is a compatibility view carrying a deprecation notice, and it is read for the
+`encrypted` BIT alone, never for its `text`: a 5045-character module is ONE
+`sys.sql_modules.definition` and TWO `sys.syscomments` rows, which is also why the flag is
+aggregated with `MAX` rather than joined.
+
+**Three causes of one NULL, and the read separates them.**
+A caller without `VIEW DEFINITION` gets a ROW WITH A NULL definition, never "no row", so the read
+cannot treat a NULL as an absence.
+The four outcomes, in the order the provider decides them:
+
+| Row | Answer |
+|---|---|
+| `has_module = 0` | REFUSAL: "SQL Server holds no SQL module for this object: sys.sql_modules has no row for it, which is what a CLR or an extended module answers." |
+| `definition` NULL and `is_encrypted = 1` | REFUSAL: "This module was created WITH ENCRYPTION: sys.sql_modules.definition is NULL for every caller and SQL Server keeps no readable text for it." |
+| `definition` NULL and `is_encrypted` NULL or 0 | REFUSAL: "SQL Server answered a module row with no definition text and publishes no encryption flag for this object, which is what a caller without VIEW DEFINITION on it is shown." |
+| `definition` blank | REFUSAL: "SQL Server answered an empty module text for this object, which is not a definition." |
+| otherwise | the text |
+
+The module-less test comes first because a module-less object also has a NULL definition, so asking
+about the definition first would report every CLR procedure as a privilege problem.
+
+THE CONTROL THAT MAKES THE SECOND AND THIRD ROWS A MEASUREMENT rather than a belief: with
+`VIEW DEFINITION` granted on exactly two of four objects to the fixture's `src_probe` login, that
+login's own read answered a text and `is_encrypted = 0` for the granted plain module,
+`is_encrypted = 1` for the granted encrypted one, and NULL for the two it still lacked - all four
+in one result set.
+So the flag is visible exactly where `VIEW DEFINITION` is, per OBJECT, which is what tells "this is
+encrypted" apart from "you cannot see this".
+
+**These four sentences are OURS, not the engine's, and that is a deliberate exception.**
+The repository's rule is that a refusal carries the server's own sentence unprefixed.
+There is nothing to carry here: the read SUCCEEDS and answers a NULL, so SQL Server raises nothing.
+The only sentences the engine has are `sp_helptext`'s, and they cannot tell these causes apart for
+the caller who needs them told apart: measured, a login without `VIEW DEFINITION` gets the identical
+`Msg 15197 ... There is no text for object '<name>'` for a plain module and for an encrypted one,
+while a privileged caller gets a PRINT with no message number at all,
+`The text for object '<name>' is encrypted.`, and an absent object answers `Msg 15009`.
+Carrying the engine's words would collapse exactly the distinction this read exists to keep, so each
+sentence names the catalog view and the column the decision came from instead.
+
+**Two refusals that degrade, disclosed rather than left to be found.**
+
+- An ENCRYPTED DDL trigger reports the third sentence rather than the second. A database-scoped
+  trigger has no `sys.objects` row and therefore no `sys.syscomments` row either, readable or
+  encrypted, so no encryption flag exists for one. A readable DDL trigger is unaffected: its
+  definition is there and the text arm answers first (`ddl_audit` is 325 characters on the fixture).
+- An ENCRYPTED module read by a caller without `VIEW DEFINITION` also reports the third sentence,
+  which is the honest answer: that caller has not been shown the flag and cannot establish
+  encryption at all.
+
+**`sql` and not `tsql`.**
+MEASURED in #789: `tsql` is not among the 89 language ids the installed monaco-editor 0.56.0 bundle
+registers, and an unregistered id degrades to plain text silently.
+So a T-SQL definition renders under the generic `sql` grammar, and T-SQL-only spellings
+(`OUTER APPLY`, `MERGE ... OUTPUT`, `@variable`) draw as plain identifiers.
+That is a compromise, recorded here rather than hidden.
+
+**`complete` and `stored`, both measured.**
+`sys.sql_modules.definition` is a statement that runs as given, and it is the AUTHOR'S bytes rather
+than a reconstruction: on the fixture every module carries its batch's leading newline, and
+`app.order_total`'s definition begins `-- FN: a scalar function.`, the comment line that preceded
+its `CREATE`.
+That is the same fact the `sp_rename` caveat is about: renaming an object does not rewrite the
+stored text, so a renamed module's definition can still name the old name.
+
+**Escaping.**
+The catalog is an IDENTIFIER position with nothing to bind, so it goes through `escapeIdentifier`'s
+`]`-doubling - the METHOD, and not a fourth inline copy of it.
+The schema and the object name are BINDS and never reach the statement text.
+
+**Absence RAISES, and never answers a refusal part.**
+Zero rows is what a name nothing holds answers AND what a name holding an object of another KIND
+answers, because the kind the caller asked under is part of the address: measured, the view
+statement answers zero rows for the table `app.orders`, which is a real collision on this engine.
+
+**What the fixture cannot reach, stated in advance.**
+A module-less object of a source-bearing KIND is a CLR or extended module (`PC`, `X`, `FS`, `FT`,
+`AF`, `TA`), and registering one needs a compiled assembly and `sp_configure 'clr enabled'`, which
+[`docker/mssql-init/01-object-fixture.sql`](../../docker/mssql-init/01-object-fixture.sql) does not
+ship.
+The row shape that arm reads is the one the LEFT JOIN produces for any `sys.objects` row with no
+module beside it, which the fixture DOES produce, measured, for its tables, its synonym and its
+sequence: `has_module = 0`, `is_encrypted` NULL.
+An empty definition text is not engine-reachable either; every module the server stored here begins
+with a newline and a `CREATE`.
+Both arms are driven in the suite instead, and both are mutation-tested.
+
 #### `describeObjects()` describes a whole folder in five statements (#789)
 
 `describeObjects(container, kind, limit?)` answers columns, indexes and foreign keys for EVERY object

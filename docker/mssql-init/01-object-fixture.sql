@@ -9,7 +9,7 @@
 --   docker exec <container> /opt/mssql-tools18/bin/sqlcmd \
 --     -S localhost -U sa -P '<password>' -C -b -i /tmp/fixture.sql
 --
--- Three things about this file are load-bearing and must not be "tidied":
+-- Four things about this file are load-bearing and must not be "tidied":
 --
 --  1. The `GO` separators. They are a client convention that never reaches the server, and
 --     they are correct HERE because sqlcmd is what runs this file: CREATE VIEW, CREATE
@@ -23,6 +23,29 @@
 --  3. A DATABASE-scoped DDL trigger. It is absent from sys.objects entirely (measured
 --     below on SQL Server 2022 CU26), so a trigger count taken from sys.objects alone is
 --     wrong in a way no test on sys.objects can see.
+--  4. TWO encrypted modules, a VIEW and a PROCEDURE, and the `src_probe` login (#789).
+--     Together they make all THREE causes of one NULL definition reachable: an encrypted
+--     module, a caller without VIEW DEFINITION, and a module-less object. Two encrypted
+--     objects and not one, so the refusal is visibly per-OBJECT rather than per-kind: the
+--     encrypted view sits beside an unencrypted procedure in the same schema. `src_probe`
+--     is granted EXECUTE as well as SELECT, and that is load-bearing rather than generous:
+--     measured, SQL Server's metadata visibility hides every PROCEDURE in a schema from a
+--     principal holding only SELECT ON SCHEMA::app, so OBJECT_ID resolves to nothing and
+--     the encrypted-procedure case cannot be reached at all.
+
+-- ============================================================================
+-- src_probe: a SERVER principal, created before the databases that grant to it
+-- ============================================================================
+-- The second of the three NULL definitions (#789). This login is deliberately given no
+-- VIEW DEFINITION anywhere, so `sys.sql_modules` answers it a ROW with a NULL `definition`
+-- rather than no row at all - measured on SQL Server 2022 RTM-CU26 (16.0.4265.3), and that
+-- is what makes a denial distinguishable from an absence. CHECK_POLICY is OFF because the
+-- host's own password policy is not this fixture's to satisfy.
+IF SUSER_ID('src_probe') IS NOT NULL
+  DROP LOGIN src_probe;
+GO
+CREATE LOGIN src_probe WITH PASSWORD = 'Task09Probe!', CHECK_POLICY = OFF;
+GO
 
 -- ============================================================================
 -- libredb_objects: the connected database, two user schemas
@@ -109,8 +132,26 @@ CREATE VIEW app.order_summary AS
   LEFT JOIN app.customers c ON c.id = o.customer_id;
 GO
 
+-- ENCRYPTED, and it sits in the same schema as the readable view above ON PURPOSE (#789).
+-- WITH ENCRYPTION makes `sys.sql_modules` answer a ROW whose `definition` is NULL for
+-- everybody, sa included, which is the FIRST of the three causes of that NULL. Its name
+-- sorts AFTER `order_summary`, so the shared conformance walk - which reads the first
+-- object a listing returns - still reads a definition here and the refusal is reached by
+-- this suite's own named test rather than by accident.
+CREATE VIEW app.order_summary_secret WITH ENCRYPTION AS
+  SELECT o.id, o.total FROM app.orders o WHERE o.total > 0;
+GO
+
 CREATE PROCEDURE app.touch_order @order_id INT AS
   UPDATE app.orders SET note = 'touched' WHERE id = @order_id;
+GO
+
+-- The SECOND encrypted module, and a second kind. One encrypted object would let a reader
+-- believe the refusal is a property of the KIND; two, in two kinds, beside an unencrypted
+-- sibling in each, say it is a property of the OBJECT. Sorts after `touch_order` for the
+-- reason the encrypted view sorts after `order_summary`.
+CREATE PROCEDURE app.touch_order_secret @order_id INT WITH ENCRYPTION AS
+  UPDATE app.orders SET note = 'secret' WHERE id = @order_id;
 GO
 
 -- FN: a scalar function.
@@ -191,6 +232,23 @@ CREATE SYNONYM app.customer_alias FOR app.customers;
 GO
 
 CREATE SEQUENCE app.order_number_seq AS INT START WITH 1 INCREMENT BY 1;
+GO
+
+-- The database half of `src_probe` (#789). SELECT and EXECUTE on the schema and NOTHING
+-- else: no VIEW DEFINITION at the object, schema or database level, which is what makes
+-- this principal's read of `app.touch_order` answer a row with a NULL definition and
+-- `OBJECTPROPERTY(..., 'IsEncrypted') = 0`, telling a DENIAL apart from an ENCRYPTION.
+--
+-- EXECUTE is not generosity. Measured on SQL Server 2022 RTM-CU26: a principal holding
+-- only SELECT ON SCHEMA::app sees no PROCEDURE in the schema at all, because SQL Server's
+-- metadata visibility shows an object only to a principal holding some permission ON it,
+-- and SELECT is not applicable to a procedure. Without this grant `OBJECT_ID` resolves to
+-- nothing for every procedure and the encrypted-procedure case is unreachable.
+CREATE USER src_probe FOR LOGIN src_probe;
+GO
+GRANT SELECT ON SCHEMA::app TO src_probe;
+GO
+GRANT EXECUTE ON SCHEMA::app TO src_probe;
 GO
 
 -- ============================================================================
