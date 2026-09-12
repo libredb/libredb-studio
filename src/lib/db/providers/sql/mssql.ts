@@ -1960,16 +1960,21 @@ export class MSSQLProvider extends SQLBaseProvider {
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
-    const target = containerTarget(capabilities, container);
-    const catalog = requiredSegment(target, "catalog");
-    const schema = target.schema;
     // Two questions, asked in order, and only the DECLARATION answers the first. Deciding
     // "is this kind declared" from whether a listing statement exists would make the two
     // methods disagree, and would report "declares no object kind" about a kind
     // `objectKinds` does declare.
+    //
+    // Before the container is resolved, which is the order `describeObjects` uses and the
+    // order the pattern requires. Resolving first made the two methods refuse ONE bad call
+    // with two different sentences: `listObjects(["bad","path"], "package")` named the path
+    // while `describeObjects` of the same named the kind.
     if (findKind(capabilities, kind) === undefined) {
       throw new QueryError(`SQL Server declares no object kind "${kind}"`, "mssql");
     }
+    const target = containerTarget(capabilities, container);
+    const catalog = requiredSegment(target, "catalog");
+    const schema = target.schema;
     const statement = objectListingStatement(this.objectCatalog(catalog), kind, schema !== undefined);
     if (statement === undefined) {
       throw new QueryError(`SQL Server declares the kind "${kind}" but has no statement that lists it`, "mssql");

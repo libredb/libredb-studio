@@ -2886,6 +2886,14 @@ describe("SQL Server object containers, listings and detail", () => {
       'SQL Server declares no object kind "package"',
     );
 
+    // The DECLARATION is checked first, before the container is resolved, which is the
+    // order the pattern requires and the order `describeObjects` already used. This method
+    // resolved the container first, so the same bad call was refused by two different
+    // sentences depending on which method a caller reached (#789 bulk-read review, Minor 9).
+    await expect(provider.listObjects(["bad", "path", "shape"], "package")).rejects.toThrow(
+      'SQL Server declares no object kind "package"',
+    );
+
     // Two questions, asked in order, and only the DECLARATION answers the first. Deciding
     // "is this kind declared" from whether a listing statement exists would report
     // "declares no object kind" about a kind `objectKinds` does declare.

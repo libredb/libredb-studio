@@ -29,6 +29,7 @@
  *    cancellation is idempotent and its success proves nothing about the target.
  */
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import {
   AuthenticationError,
   ConnectionError,
@@ -2147,6 +2148,35 @@ describe("Trino bulk column read", () => {
     expect(batch.details[1]!.columns.map((column) => column.name)).toEqual(["id", "customer_id", "total"]);
     expect(sqlWith("JOIN (SELECT t.table_schema")).toContain('"memory".information_schema.columns');
     expect(sqlWith("JOIN (SELECT t.table_schema")).toContain("t.table_schema = 'app'");
+  });
+
+  /**
+   * `truncated` is computed from the READ, never from what survived the row filter (#789
+   * bulk-read review, Minor 8).
+   *
+   * The target read asks for `limit + 1` rows precisely so a saturated read is told from an
+   * exact one. Counting the filtered list instead means a row this provider cannot read back
+   * both drops the object and suppresses the flag: `limit` details handed over as complete
+   * while `limit + 1` objects exist. Unreachable on today's row shapes -
+   * `readObjectIdentifier` rejects only a non-string or an empty string, and no Trino
+   * catalog column answers either - so the fake cluster answers one.
+   */
+  test("a target row this provider cannot read still counts towards the truncation flag", async () => {
+    const provider = await objectProvider();
+    // AFTER the surface is served, so this reply is the one that wins: `objectProvider()`
+    // reinstalls the whole fixture and would otherwise overwrite it.
+    serveInstead(
+      trinoObjectTargetSql(ICEBERG, "table", 2),
+      rows(OBJECT_NAME_COLUMNS, [
+        ["system", "iceberg_tables"],
+        ["warehouse", ""],
+      ]),
+    );
+
+    const batch = await provider.describeObjects(["iceberg"], "table", 1);
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([["iceberg", "system", "iceberg_tables"]]);
+    expect(batch.truncated).toEqual({ limit: 1, reason: callerBoundTruncationReason(1) });
   });
 
   test("a limit that is not a positive whole number raises rather than clamping", async () => {

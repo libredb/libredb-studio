@@ -22,6 +22,7 @@
  *   is a hard syntax error.
  */
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { ClickHouseProvider } from "@/lib/db/providers/sql/clickhouse";
 import {
@@ -2862,6 +2863,43 @@ describe("ClickHouse bulk column read", () => {
     // The literal that reached the server is the DATABASE segment, never the catalog one.
     expect(sqlWith("AS columnName")).toContain(`c.database = '${OBJECT_DATABASE}'`);
     expect(sqlWith("AS columnName")).not.toContain("'warehouse'");
+    await provider.disconnect();
+  });
+
+  /**
+   * `truncated` is computed from the read, never from what survived the row filter (#789
+   * bulk-read review, Minor 8).
+   *
+   * The target read asks for `limit + 1` rows precisely so a saturated read is told from an
+   * exact one. Counting the FILTERED list instead means a name this provider could not read
+   * back both drops the object and suppresses the flag: the caller gets `limit` details and
+   * a claim of completeness while `limit + 1` objects exist, which is the absence ruling 5a
+   * calls the worst shape of defect in this epic.
+   *
+   * Unreachable on today's row shapes - `readIdentifier` rejects only a non-string or an
+   * empty string, neither of which ClickHouse can put in `system.tables.name` - so the fake
+   * server puts one there. Nine other providers already compute the flag from the unfiltered
+   * read, and this is the shape a twelfth implementer would copy.
+   */
+  test("a target row this provider cannot read still counts towards the truncation flag", async () => {
+    const reply = objectReply;
+    replyFor = (sql: string) => {
+      if (/^SELECT objectName FROM \(/.test(sql) && sql.includes("LIMIT 3")) {
+        return jsonReply([{ objectName: ".inner_id.fake" }, { objectName: "" }, { objectName: "events" }]);
+      }
+      return reply(sql);
+    };
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    const batch = await provider.describeObjects([OBJECT_DATABASE], "table", 2);
+
+    // Two of the three rows were readable, so two objects are described - and the third row
+    // is why the answer is still marked short.
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      [OBJECT_DATABASE, ".inner_id.fake"],
+      [OBJECT_DATABASE, "events"],
+    ]);
+    expect(batch.truncated).toEqual({ limit: 2, reason: callerBoundTruncationReason(2) });
     await provider.disconnect();
   });
 

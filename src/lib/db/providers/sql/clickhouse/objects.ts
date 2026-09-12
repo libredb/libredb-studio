@@ -788,16 +788,18 @@ function objectDetailFromRows(
  * Columns and indexes for one object of one KIND.
  *
  * The kind decides everything and nothing here reads the name to work out what it is
- * holding. Only the kinds `system.columns` resolves - the `tables` entries of
+ * holding. Only the kinds a catalog answers for - the entries of
  * `CLICKHOUSE_OBJECT_CATALOGS` - have either, so a FUNCTION answers three empty arrays
  * without a round trip. That is a true fact about the kind rather than a failed read,
  * and `tests/helpers/object-surface-conformance.ts` states the same rule from the
  * caller's side.
  *
- * A DICTIONARY does describe, and measured rather than assumed: `system.columns`
- * answers its key and attribute columns, because a dictionary is a table underneath
- * (engine `Dictionary`). Keying this on the catalog rather than on
- * `role === "relation"` is what makes that come out right.
+ * A DICTIONARY does describe, and measured rather than assumed, but out of
+ * `system.dictionaries` and NOT `system.columns`: that is the only catalog both flavours
+ * are in, because a config-file dictionary has no `system.tables` row and so no
+ * `system.columns` row either (measured, count 0). `describeDictionary()` carries the
+ * whole measurement. Keying this on the catalog rather than on `role === "relation"` is
+ * what makes it come out right, since a dictionary is declared `config`.
  *
  * `foreignKeys` is ALWAYS empty, and that is the engine: ClickHouse parses
  * `REFERENCES` in a column definition and enforces nothing by it, and `system.*` holds
@@ -939,7 +941,12 @@ export async function describeObjects(
     const name = readIdentifier(row.objectName);
     if (name !== null) targets.push(name);
   }
-  const truncated = limit !== undefined && targets.length > limit;
+  // From the READ and never from `targets`, which is what survived `readIdentifier`. A row
+  // this provider cannot read back would otherwise both drop the object and suppress the
+  // flag: the caller would get `limit` details and a claim of completeness while `limit + 1`
+  // objects exist. Unreachable on today's row shapes and pinned anyway, because nine other
+  // providers compute it this way and this is the shape a twelfth implementer copies.
+  const truncated = limit !== undefined && targetRows.length > limit;
   // The extra object the `limit + 1` bound brought back is dropped here, so its rows in the
   // groupings below are simply never read.
   const named = truncated ? targets.slice(0, limit) : targets;

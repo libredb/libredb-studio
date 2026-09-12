@@ -1009,7 +1009,11 @@ export class TrinoProvider extends SQLBaseProvider {
       const name = readObjectIdentifier(row.objectName);
       return schema === null || name === null ? [] : [{ schema, name }];
     });
-    const truncated = limit !== undefined && targets.length > limit;
+    // From the READ and never from `targets`, which is what survived `readObjectIdentifier`.
+    // A row this cluster answered that cannot be read back would otherwise both drop the
+    // object and suppress the flag: the caller would get `limit` details and a claim of
+    // completeness while `limit + 1` objects exist.
+    const truncated = limit !== undefined && targetRows.length > limit;
     // The extra object the `limit + 1` bound brought back is dropped here, so its rows in
     // the grouping below are simply never read.
     const described = truncated ? targets.slice(0, limit) : targets;
