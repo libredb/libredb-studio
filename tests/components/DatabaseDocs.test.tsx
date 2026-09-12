@@ -404,7 +404,16 @@ describe("DatabaseDocs", () => {
         columns: [{ name: "email", type: "VARCHAR", nullable: true, isPrimary: false }],
       },
     ];
+    // React's duplicate-key warning is the only place a list key is observable, and the key
+    // was the label the two objects share.
+    const originalError = console.error;
+    const errors: string[] = [];
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    };
     const { queryByText } = render(<DatabaseDocs schema={namesakes} schemaContext="[]" databaseType="mssql" />);
+    console.error = originalError;
+    expect(errors.filter((message) => message.includes("same key"))).toEqual([]);
 
     expect(queryByText("libredb_objects.app.customers")).not.toBeNull();
     expect(queryByText("shop.dbo.customers")).not.toBeNull();

@@ -264,7 +264,17 @@ describe("SchemaExplorer", () => {
       { name: "customers", kind: "table", path: ["shop", "dbo", "customers"], columns: [], indexes: [] },
     ];
     const props = createDefaultProps({ schema: namesakes });
+    // React's duplicate-key warning is the only place a list key is OBSERVABLE, and the key
+    // is exactly what this defect was: two objects, one label, one key. Without it the row
+    // identity assertions below pass while React is reconciling two rows as one.
+    const originalError = console.error;
+    const errors: string[] = [];
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    };
     const { container } = render(<SchemaExplorer {...props} />);
+    console.error = originalError;
+    expect(errors.filter((message) => message.includes("same key"))).toEqual([]);
     const rows = () => Array.from(container.querySelectorAll<HTMLElement>("[data-address]"));
 
     expect(rows().map((row) => row.dataset.address)).toEqual(["libredb_objects.app.customers", "shop.dbo.customers"]);

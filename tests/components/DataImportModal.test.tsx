@@ -1116,11 +1116,19 @@ describe("DataImportModal target addressing", () => {
   }
 
   test("each option is VALUED by its address and LABELLED by its name", () => {
+    const originalError = console.error;
+    const errors: string[] = [];
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    };
     const { baseElement } = render(
       <DataImportModal isOpen onClose={noop} onImport={noop} tables={namesakes} capabilities={mssqlCapabilities} />,
     );
     act(() => simulateFileUpload(baseElement, "id,email\n1,a@example.com", "data.csv"));
     act(() => fireEvent.click(within(baseElement).getByText("Configure Import")));
+    console.error = originalError;
+    // The option KEY, which nothing else in this file can see: two namesakes shared it.
+    expect(errors.filter((message) => message.includes("same key"))).toEqual([]);
     const select = within(baseElement).getByLabelText("Select Table") as HTMLSelectElement;
     const options = Array.from(select.options).filter((option) => option.value !== "");
     expect(options.map((option) => option.value)).toEqual([

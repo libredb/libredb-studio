@@ -413,6 +413,29 @@ describe("addresses rather than labels", () => {
     expect(edges).toEqual([]);
   });
 
+  test("two namesakes referencing one object keep both edges", () => {
+    // The edge id is the DEDUP key. Built from labels, these two are one string and the
+    // second edge is silently swallowed by `seen`.
+    const hub = makeAt("hub/dbo/customers".split("/"), [{ name: "id", isPrimary: true }]);
+    const fk = [{ columnName: "customer_id", referencedTable: "hub.dbo.customers", referencedColumn: "id" }];
+    const shopOrdersHere = makeAt(
+      "shop/dbo/orders".split("/"),
+      [{ name: "id", isPrimary: true }, { name: "customer_id" }],
+      fk,
+    );
+    const warehouseOrders = makeAt(
+      "warehouse/dbo/orders".split("/"),
+      [{ name: "id", isPrimary: true }, { name: "customer_id" }],
+      fk,
+    );
+    const { edges } = buildGraph([hub, shopOrdersHere, warehouseOrders], { compact: false });
+    expect(edges.length).toBe(2);
+    expect(new Set(edges.map((e) => e.id)).size).toBe(2);
+    expect(edges.map((e) => e.source).sort()).toEqual(
+      [pathKey(shopOrdersHere.path), pathKey(warehouseOrders.path)].sort(),
+    );
+  });
+
   test("the heuristic fallback resolves in the referencing object's own container", () => {
     const bareApp = makeAt("libredb_objects/app/customers".split("/"), [{ name: "id", isPrimary: true }]);
     const bareShop = makeAt("shop/dbo/customers".split("/"), [{ name: "id", isPrimary: true }]);
