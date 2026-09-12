@@ -54,8 +54,18 @@ const realFetch = globalThis.fetch;
 const objects: Record<string, DatabaseObject[]> = {
   // A row count, because the trigger sits beside one: the defect the flat explorer's version
   // had was that reaching for the menu HID the number, and only a row that has one can pin it.
-  table: [{ path: ["app", "orders"], name: "orders", kind: "table", rowCount: 1234 }],
-  view: [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }],
+  //
+  // `ZZ ARCHIVE` holds a SPACE, which a quoted identifier is allowed to and every engine here
+  // permits. It is the row that decides whether the ids behind `aria-labelledby` survive a
+  // real name: a space inside an IDREF splits the token in two, and both halves resolve to
+  // nothing, so the row would silently fall back to naming itself from its contents.
+  table: [
+    { path: ["app", "orders"], name: "orders", kind: "table", rowCount: 1234 },
+    { path: ["app", "ZZ ARCHIVE"], name: "ZZ ARCHIVE", kind: "table", rowCount: 7 },
+  ],
+  // A status, because the word the engine published is part of the row's name and the fix
+  // that removes the button's name from it must not remove this one too.
+  view: [{ path: ["app", "order_summary"], name: "order_summary", kind: "view", status: "INVALID" }],
   function: [{ path: ["app", "order_total(integer)"], name: "order_total", kind: "function" }],
 };
 
@@ -66,7 +76,7 @@ function installFetch(): void {
     const body = JSON.parse(String(init?.body ?? "{}")) as { kind?: string };
     if (route === "containers")
       return Response.json([{ path: ["app"], name: "app", level: 0, isSessionDefault: true }]);
-    if (route === "counts") return Response.json({ table: { count: 1 }, view: { count: 1 }, function: { count: 1 } });
+    if (route === "counts") return Response.json({ table: { count: 2 }, view: { count: 1 }, function: { count: 1 } });
     return Response.json(objects[String(body.kind)] ?? []);
   }) as never;
 }
@@ -628,5 +638,93 @@ describe("the row menu has a visible trigger", () => {
     expect(menu.style.top).toBe("");
     expect(menu.style.bottom).toBe(`${VIEWPORT.height - box.top}px`);
     expect(menu.style.left).toBe(`${box.left}px`);
+  });
+});
+
+/**
+ * The row's own name (Task 34).
+ *
+ * The trigger above is a DESCENDANT of the `treeitem`, so a row that names itself from its
+ * contents folds the button's name into its own: Chrome computes `APP_ORDERS` as
+ * `APP_ORDERS Actions for APP_ORDERS`, measured on the running app before this suite existed.
+ * The fix names the row by REFERENCE instead: `aria-labelledby` points at the spans the row
+ * already renders, which excludes the button while restating nothing in JavaScript.
+ *
+ * Why the assertions below are about the REFERENCES and not only about the string: the string
+ * cannot see the defect here. `dom-accessibility-api`, which is what `getByRole(..., { name })`
+ * computes with, deliberately departs from the spec at step 2C (`w3c/accname#64`) and drops a
+ * CONTROL's `aria-label` during recursion, so the contaminated row and the fixed row compute
+ * the same name under it. Asserting the string alone would be vacuous in both directions. The
+ * string is still pinned, because it is what keeps the ORDER and the CONTENTS of the name
+ * right, and the contamination itself is measured in Chrome and recorded in the report.
+ */
+function nameSources(item: HTMLElement): Element[] {
+  const refs = (item.getAttribute("aria-labelledby") ?? "").split(" ").filter((id) => id !== "");
+  return refs.map((id) => document.getElementById(id)).filter((element) => element !== null);
+}
+
+function nameSourceIds(item: HTMLElement): string[] {
+  return nameSources(item).map((element) => element.getAttribute("data-testid") ?? element.tagName);
+}
+
+describe("the row names itself, and never the control inside it", () => {
+  test("a relation row's name is its label and its count, with the trigger left out", async () => {
+    await openTree();
+    const orders = row(/orders/);
+    // The control is present, which is what makes this non-vacuous: the row carries a button
+    // and still does not carry its name.
+    expect(within(orders).getByTestId("tree-row-menu-trigger")).toBeTruthy();
+    expect(nameSourceIds(orders)).toEqual(["tree-row-label", "tree-row-count"]);
+    expect(nameSources(orders).some((element) => element.tagName === "BUTTON")).toBe(false);
+    expect(screen.getByRole("treeitem", { name: "orders 1,234" })).toBe(orders);
+  });
+
+  test("a folder row's name is its label and its badge, with the trigger left out", async () => {
+    await openTree();
+    const tables = row(/Tables/);
+    expect(within(tables).getByTestId("tree-row-menu-trigger")).toBeTruthy();
+    expect(nameSourceIds(tables)).toEqual(["tree-row-label", "tree-row-badge"]);
+    expect(screen.getByRole("treeitem", { name: "Tables 2" })).toBe(tables);
+  });
+
+  test("the engine's own status word stays in the name of a row that has a trigger", async () => {
+    // The reason an explicit `aria-label` was refused: it would have to restate this word,
+    // which the renderer never wrote and the engine owns.
+    await openTree();
+    const summary = row(/order_summary/);
+    expect(within(summary).getByTestId("tree-row-menu-trigger")).toBeTruthy();
+    expect(nameSourceIds(summary)).toEqual(["tree-row-label", "tree-row-status"]);
+    expect(screen.getByRole("treeitem", { name: "order_summary INVALID" })).toBe(summary);
+  });
+
+  test("a row with no trigger keeps exactly the name it had", async () => {
+    // The control for the whole change: these three rows never carried a button, so nothing
+    // about their names may move.
+    await openTree();
+    expect(within(row(/order_total/)).queryByTestId("tree-row-menu-trigger")).toBeNull();
+    expect(screen.getByRole("treeitem", { name: "order_total" })).toBe(row(/order_total/));
+    expect(screen.getByRole("treeitem", { name: "app" })).toBe(row(/app/));
+    expect(screen.getByRole("treeitem", { name: "Views 1" })).toBe(row(/Views/));
+    expect(nameSourceIds(row(/order_total/))).toEqual(["tree-row-label"]);
+  });
+
+  test("every reference resolves to a span inside its own row, whatever the object is named", async () => {
+    // `ZZ ARCHIVE` is why this test exists. The ids are derived from the row id, which is
+    // unique and may hold a space; an id carrying that space would split the IDREF list and
+    // resolve to nothing, and the row would name itself from its contents again without a
+    // single attribute looking wrong.
+    await openTree();
+    for (const item of screen.getAllByRole("treeitem")) {
+      const refs = (item.getAttribute("aria-labelledby") ?? "").split(" ").filter((id) => id !== "");
+      expect(refs.length).toBeGreaterThan(0);
+      const resolved = nameSources(item);
+      // At least the label, and every one of them inside THIS row: a collision between two
+      // rows' ids would resolve to a span in the other one.
+      expect(resolved.length).toBeGreaterThan(0);
+      for (const element of resolved) expect(item.contains(element)).toBe(true);
+    }
+    const archive = row(/ZZ ARCHIVE/);
+    expect(nameSourceIds(archive)).toEqual(["tree-row-label", "tree-row-count"]);
+    expect(screen.getByRole("treeitem", { name: "ZZ ARCHIVE 7" })).toBe(archive);
   });
 });

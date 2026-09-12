@@ -44,6 +44,49 @@ const ROW_PADDING_RIGHT = "pr-7";
 
 const ROW_ICONS = { container: Database, folder: Folder, object: Table2 } as const;
 
+/**
+ * The pieces of the row that carry its meaning, in render order, which is the order they
+ * are read in.
+ *
+ * The row NAMES ITSELF BY REFERENCE through these (`aria-labelledby` below) rather than
+ * from its contents, because its contents include the menu trigger: a control inside a
+ * `treeitem` folds its own name into the row's, so `APP_ORDERS` announced as
+ * `APP_ORDERS Actions for APP_ORDERS` on every arrow-key move (Task 34). Naming by
+ * reference removes the button from the name and removes nothing else. The two convenient
+ * alternatives are both worse: an `aria-label` built here would duplicate in JavaScript
+ * what the JSX below renders, and the pair drifts the first time a field is added; and
+ * shortening the button's own name to "More" would leave a reader who navigates BY BUTTON
+ * with a column of controls that name nothing.
+ *
+ * Every slot is referenced UNCONDITIONALLY. A slot that did not render leaves a dangling
+ * IDREF, which the name computation skips, so the list of conditions lives in exactly one
+ * place - the JSX - instead of being restated here where the two could disagree.
+ */
+const ROW_NAME_PARTS = ["label", "status", "unavailable", "failure", "count", "badge"] as const;
+
+/**
+ * A DOM id for one name slot of one row.
+ *
+ * Derived from `row.id`, which `flatten.ts` guarantees is unique and injective over the
+ * path segments (`pathKey`), never rebuilt from those segments here. `row.id` is not
+ * usable as an IDREF as it stands: a quoted identifier may hold a space, and ASCII
+ * whitespace is exactly what separates the tokens of `aria-labelledby`, so one id would
+ * split into two that resolve to nothing and the row would go back to naming itself from
+ * its contents - on the rows with an awkward name and nowhere else.
+ *
+ * The class escaped is therefore ASCII whitespace, plus the escape character itself so the
+ * mapping is injective over any string rather than only over what `pathKey` happens to
+ * emit. Every code in it is two hex digits wide, so the encoding is prefix-free; putting
+ * the slot name first keeps the join unambiguous, since no slot name is a prefix of another.
+ */
+function rowNameId(part: (typeof ROW_NAME_PARTS)[number], rowId: string): string {
+  const escaped = rowId.replace(
+    /[ \t\n\f\r%]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).padStart(2, "0")}`,
+  );
+  return `tree-name-${part}-${escaped}`;
+}
+
 export interface TreeRowProps {
   readonly row: TreeRowModel;
   /** The object an object row was built from, for `status` and `rowCount`, which the model omits. */
@@ -101,6 +144,7 @@ export function TreeRow({
       aria-selected={selected}
       aria-busy={busy ? true : undefined}
       aria-haspopup={hasActions === true ? "menu" : undefined}
+      aria-labelledby={ROW_NAME_PARTS.map((part) => rowNameId(part, row.id)).join(" ")}
       tabIndex={active ? 0 : -1}
       style={{ top, height: TREE_ROW_HEIGHT, paddingLeft: 8 + row.depth * 12 }}
       className={`group absolute inset-x-0 flex items-center gap-1.5 ${ROW_PADDING_RIGHT} text-xs cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-brand ${
@@ -115,7 +159,7 @@ export function TreeRow({
         )}
       </span>
       <Icon aria-hidden="true" strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-      <span data-testid="tree-row-label" className="truncate">
+      <span id={rowNameId("label", row.id)} data-testid="tree-row-label" className="truncate">
         {row.label}
       </span>
       {/*
@@ -127,7 +171,12 @@ export function TreeRow({
         the text serves a screen reader, which a tooltip alone does not.
       */}
       {object?.status !== undefined && (
-        <span data-testid="tree-row-status" title={object.status} className="shrink-0 text-warning">
+        <span
+          id={rowNameId("status", row.id)}
+          data-testid="tree-row-status"
+          title={object.status}
+          className="shrink-0 text-warning"
+        >
           <TriangleAlert aria-hidden="true" strokeWidth={1.5} className="w-3.5 h-3.5" />
           <span className="sr-only">{object.status}</span>
         </span>
@@ -136,6 +185,7 @@ export function TreeRow({
       {/* The engine's own sentence for a read it refused, in place of the number it could not give. */}
       {row.unavailable !== undefined && (
         <span
+          id={rowNameId("unavailable", row.id)}
           data-testid="tree-row-unavailable"
           title={row.unavailable}
           className="ml-auto truncate pl-2 text-[10px] text-warning"
@@ -146,6 +196,7 @@ export function TreeRow({
       {/* A read that failed, in the engine's own words. */}
       {failure !== undefined && (
         <span
+          id={rowNameId("failure", row.id)}
           data-testid="tree-row-failure"
           title={failure.message}
           className="ml-auto truncate pl-2 text-[10px] text-destructive"
@@ -155,6 +206,7 @@ export function TreeRow({
       )}
       {object?.rowCount !== undefined && (
         <span
+          id={rowNameId("count", row.id)}
           data-testid="tree-row-count"
           title="Rows, as the engine reported them, which is an estimate on most engines"
           className="ml-auto shrink-0 pl-2 text-[10px] text-muted-foreground tabular-nums"
@@ -170,6 +222,7 @@ export function TreeRow({
       */}
       {row.badge !== undefined && (
         <span
+          id={rowNameId("badge", row.id)}
           data-testid="tree-row-badge"
           title={row.badgeTitle}
           className="ml-auto shrink-0 pl-2 text-[10px] text-muted-foreground tabular-nums"

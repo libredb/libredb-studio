@@ -248,6 +248,9 @@ describe("ObjectTree absence states", () => {
 
     const views = row(/Views/);
     expect(within(views).getByTestId("tree-row-unavailable").textContent).toBe("permission denied for schema app");
+    // The sentence is part of the row's NAME, not decoration beside it: the row is named by
+    // reference from the spans it renders, and this one stands where the number would be.
+    expect(screen.getByRole("treeitem", { name: "Views permission denied for schema app" })).toBe(views);
     expect(within(views).queryByTestId("tree-row-badge")).toBeNull();
     expect(views.hasAttribute("aria-expanded")).toBe(false);
 
@@ -418,6 +421,8 @@ describe("ObjectTree engine gaps", () => {
     await userEvent.click(row(/Tables/));
     await waitFor(() => expect(within(row(/Tables/)).getByTestId("tree-row-failure")).toBeTruthy());
     expect(within(row(/Tables/)).getByTestId("tree-row-failure").textContent).toContain("relation lock timeout");
+    // And the failure reaches the row's name for the same reason the refusal above does.
+    expect(screen.getByRole("treeitem", { name: /relation lock timeout/ })).toBe(row(/Tables/));
 
     await userEvent.click(row(/Tables/));
     await userEvent.click(row(/Tables/));
