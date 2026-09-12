@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { assertContainerDepth, handleObjectRequest, optionalStringArray, requireMethod } from "@/lib/api/object-route";
+import { assertContainerDepth, handleObjectRequest, optionalStringArray } from "@/lib/api/object-route";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +15,6 @@ export async function POST(req: NextRequest) {
   return handleObjectRequest(req, "api/db/objects/containers", async (provider, body) => {
     const parent = optionalStringArray(body, "parent");
     if (parent !== undefined) assertContainerDepth(provider, "parent", parent);
-    return requireMethod(provider, "listContainers")(parent);
+    return provider.listContainers(parent);
   });
 }

@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CircleAlert, Database, LoaderCircle, PlugZap } from "lucide-react";
+import { CircleAlert, Database, LoaderCircle } from "lucide-react";
 import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import type { TreeRowModel } from "./flatten";
@@ -364,12 +364,7 @@ export function ObjectTree({
 
   if (tree.rootFailure !== undefined) {
     const failure = tree.rootFailure;
-    return failure.unimplemented ? (
-      <TreePanel testId="tree-unimplemented" icon={<PlugZap strokeWidth={1.5} className="w-6 h-6 text-brand" />}>
-        <h3 className="text-foreground text-xs font-medium mb-1">This engine is not wired up yet</h3>
-        <p className="text-xs text-muted-foreground leading-relaxed break-words">{failure.message}</p>
-      </TreePanel>
-    ) : (
+    return (
       <TreePanel testId="tree-failure" icon={<CircleAlert strokeWidth={1.5} className="w-6 h-6 text-warning" />}>
         <h3 className="text-foreground text-xs font-medium mb-1">The object list could not be read</h3>
         <p className="text-xs text-muted-foreground leading-relaxed break-words">{failure.message}</p>

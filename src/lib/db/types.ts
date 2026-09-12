@@ -7,8 +7,6 @@
 export type {
   DatabaseType,
   DatabaseConnection,
-  TableSchema,
-  TableRelations,
   ColumnSchema,
   // `ObjectDetail` below is defined over these two, so a provider implementing
   // `describeObject` needs them from here rather than reaching past this module (#789).
@@ -21,8 +19,6 @@ export type {
 import type {
   DatabaseType,
   DatabaseConnection,
-  TableSchema,
-  TableRelations,
   QueryResult,
   ColumnSchema,
   IndexSchema,
@@ -259,7 +255,7 @@ export interface ProviderCapabilities {
    * Whether this engine has foreign keys to declare at all — not whether any
    * particular schema declares one, and not whether the current role can see them.
    *
-   * It exists because an empty `TableSchema.foreignKeys` means two different things
+   * It exists because an empty foreign-key list means two different things
    * and the reader cannot tell them apart. On PostgreSQL an empty list means this
    * schema declares none, or that the role this connection reads with cannot see the
    * ones it declares — an empty read cannot tell those two apart, which is why the
@@ -279,11 +275,11 @@ export interface ProviderCapabilities {
    */
   declaresForeignKeys?: boolean;
   /**
-   * Whether the rows of this provider's `getSchema()` are objects the engine holds,
-   * or groupings this server derived from a bounded scan of what it found.
+   * Whether this provider's relation-shaped rows are objects the engine holds, or
+   * groupings this server derived from a bounded scan of what it found.
    *
    * True on Redis and LibreDB and nowhere else. Neither engine has a schema to read:
-   * `getSchema()` scans a bounded slice of the keyspace — 1000 keys on Redis, 10000 on
+   * the walk scans a bounded slice of the keyspace — 1000 keys on Redis, 10000 on
    * LibreDB — and collapses the real key names it found into one row per common
    * prefix. So a row named `user:*` is not a key, was never named by anybody, and no
    * command can be given it; and the set of rows is what that one scan happened to
@@ -626,37 +622,20 @@ export interface DatabaseProvider {
   queryReadOnly?(sql: string, budget: ReadOnlyStatementBudget): Promise<QueryResult>;
 
   /**
-   * Get full database schema
-   * @returns Array of table schemas with columns, indexes, and foreign keys
-   */
-  getSchema(): Promise<TableSchema[]>;
-
-  /**
-   * Fast structural schema (tables + columns + PKs), excluding the expensive
-   * foreign-key/index introspection. Optional: providers that don't implement
-   * it fall back to getSchema(). Pairs with getSchemaRelations().
-   */
-  getSchemaList?(): Promise<TableSchema[]>;
-
-  /**
-   * Heavy relationship/index data (foreign keys + indexes) keyed by table
-   * display name, for async merge into getSchemaList() results. Optional.
-   */
-  getSchemaRelations?(): Promise<TableRelations[]>;
-
-  /**
    * Containers at `parent`, or the top level when `parent` is absent (#789).
    *
-   * Optional through Phase 1 so providers can land one at a time; the phase that removes
-   * `getSchema` makes all four required. Optional is also what keeps an external
-   * implementer of this published interface compiling, the same reason
-   * `containerLevels` gives above.
+   * REQUIRED, along with the four below. They were optional through the phase that landed
+   * them one provider at a time, and that phase is over: the flat reading they replaced
+   * (`getSchema`, `getSchemaList`, `getSchemaRelations`) no longer exists, so a provider
+   * that does not implement these answers nothing at all about what a database holds.
+   * Optionality also bought a 501 the object routes had to carry for a provider gap, and a
+   * gap that cannot occur is a guard nothing executes.
    */
-  listContainers?(parent?: readonly string[]): Promise<Container[]>;
+  listContainers(parent?: readonly string[]): Promise<Container[]>;
   /** Per-kind counts for one container. A refused read is `{ unavailable }`, never 0. */
-  countObjects?(container: readonly string[]): Promise<Record<string, KindCount>>;
+  countObjects(container: readonly string[]): Promise<Record<string, KindCount>>;
   /** Objects of one kind in one container. Names only: columns come from describeObject. */
-  listObjects?(container: readonly string[], kind: string): Promise<DatabaseObject[]>;
+  listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]>;
   /**
    * Columns, indexes and foreign keys for one object.
    *
@@ -667,20 +646,20 @@ export interface DatabaseProvider {
    * being correct the moment a name collides. The caller always has the kind, because an
    * object is only ever reached through its kind's folder.
    */
-  describeObject?(path: readonly string[], kind: string): Promise<ObjectDetail>;
+  describeObject(path: readonly string[], kind: string): Promise<ObjectDetail>;
 
   /**
    * Columns, indexes and foreign keys for EVERY object of one kind in one container, in
    * one round trip (#789).
    *
    * The fifth method, and it exists because a consumer none of the other four serves was
-   * measured rather than imagined: `src/lib/agent/tools.ts` reads the agent's whole
-   * column, index and foreign-key grounding through `getSchema()`, and the phase that
-   * deletes `getSchema` would otherwise leave the agent with no columns at all on fifteen
-   * engines. It is the object-model-shaped successor of `getSchema()`, not a new
-   * invention, so a provider reshapes that method's own body rather than writing a new
-   * statement: those bodies carry which catalog answers which fact, which system schemas
-   * are excluded and how an extension-owned relation is hidden.
+   * measured rather than imagined: `src/lib/agent/tools.ts` read the agent's whole column,
+   * index and foreign-key grounding through the flat reading, and deleting that reading
+   * would otherwise have left the agent with no columns at all on fifteen engines. It is
+   * the object-model-shaped successor of that method, not a new invention, so each provider
+   * reshaped the old body rather than writing a new statement: those bodies carried which
+   * catalog answers which fact, which system schemas are excluded and how an
+   * extension-owned relation is hidden.
    *
    * ONE ROUND TRIP PER CONTAINER AND KIND, never one per object. `includeColumns` on the
    * inventory route was built as one `describeObject` per object, up to 5000 sequential
@@ -708,12 +687,7 @@ export interface DatabaseProvider {
    * engines - answers an empty `details` array without a round trip, exactly as
    * `describeObject` answers three empty arrays for one of them.
    */
-  describeObjects?(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch>;
-
-  /**
-   * Get list of table names
-   */
-  getTables(): Promise<string[]>;
+  describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch>;
 
   /**
    * Get health and performance metrics

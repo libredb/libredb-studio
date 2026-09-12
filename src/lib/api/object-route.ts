@@ -4,7 +4,6 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
-import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { DatabaseConnection, DatabaseObject, DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
 
 /**
@@ -55,16 +54,8 @@ export async function handleObjectRequest(
     return NextResponse.json(await run(provider, body));
   } catch (error) {
     if (error instanceof ObjectRouteError) {
-      // A 501 carries a code because the tree has to render it as a state of its own, and keying
-      // on the HTTP status alone would make that rendering break the first time another status
-      // means something else. The 400s stay `{ error }`, the shape this handler's own body-shape
-      // refusals above already use.
-      return NextResponse.json(
-        error.code === undefined
-          ? { error: error.message }
-          : { error: error.message, code: error.code, statusCode: error.status },
-        { status: error.status },
-      );
+      // `{ error }`, the shape this handler's own body-shape refusals above already use.
+      return NextResponse.json({ error: error.message }, { status: error.status });
     }
     return createErrorResponse(error, { route });
   }
@@ -78,46 +69,23 @@ interface ObjectRequestBody {
 /**
  * A refusal this layer decides for itself, rather than one an engine raised.
  *
- * Two statuses use it. 400 is a caller mistake the provider must never be asked to interpret: a
- * container deeper than the engine has levels, a kind it does not declare, a path that is not a
- * path. 501 is the provider gap: through Phase 1 the four object methods are optional and only
- * some engines implement them, and a 501 naming the method and the engine is the only answer that
- * keeps "this engine has not been migrated yet" apart from "this database holds nothing". An
- * empty 200 would collapse those two, which is the same collapse `KindCount` exists to prevent
- * one level down.
+ * One status uses it, 400: a caller mistake the provider must never be asked to interpret, such as
+ * a container deeper than the engine has levels, a kind it does not declare, or a path that is not
+ * a path.
+ *
+ * It carried a 501 as well, for the phase in which the object methods were optional and only some
+ * engines implemented them. They are required now, so there is no provider gap left to name and no
+ * `requireMethod` to name it with: a guard for a state the type cannot express is an unreachable
+ * throw, which is a covered line nothing executes.
  */
 class ObjectRouteError extends Error {
   constructor(
     message: string,
     public readonly status: number,
-    public readonly code?: ApiErrorCode,
   ) {
     super(message);
     this.name = "ObjectRouteError";
   }
-}
-
-/** The four object methods, and nothing else, may be demanded of a provider. */
-type ObjectMethod = "listContainers" | "countObjects" | "listObjects" | "describeObject";
-
-/**
- * The provider's implementation of one object method, or a 501 that names both the method and the
- * engine, so the reader of a failed tree knows which of the two facts it is looking at.
- */
-export function requireMethod<K extends ObjectMethod>(
-  provider: DatabaseProvider,
-  method: K,
-): NonNullable<DatabaseProvider[K]> {
-  const implementation = provider[method];
-  if (implementation === undefined) {
-    throw new ObjectRouteError(
-      `The ${provider.type} provider does not implement ${method} yet (#789). ` +
-        `That is a gap in the provider, not an empty database.`,
-      501,
-      ApiErrorCode.OBJECT_SURFACE_UNIMPLEMENTED,
-    );
-  }
-  return implementation.bind(provider) as NonNullable<DatabaseProvider[K]>;
 }
 
 function isStringArray(value: unknown): value is readonly string[] {

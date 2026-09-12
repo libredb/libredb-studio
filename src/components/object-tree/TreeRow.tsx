@@ -95,20 +95,12 @@ export function TreeRow({ row, object, active, selected, busy, failure, hasActio
           {row.unavailable}
         </span>
       )}
-      {/*
-        A read that failed, in the engine's own words. The 501 that says the provider has not been
-        migrated yet is NOT drawn as a failure: it is not red, because nothing is wrong with the
-        database or the request. That distinction is the same one the root panel makes, and it
-        reaches a single row whenever a provider implements one object method and not the next,
-        which is the state each of the fifteen remaining provider tasks passes through.
-      */}
+      {/* A read that failed, in the engine's own words. */}
       {failure !== undefined && (
         <span
-          data-testid={failure.unimplemented ? "tree-row-unimplemented" : "tree-row-failure"}
+          data-testid="tree-row-failure"
           title={failure.message}
-          className={`ml-auto truncate pl-2 text-[10px] ${
-            failure.unimplemented ? "text-muted-foreground" : "text-destructive"
-          }`}
+          className="ml-auto truncate pl-2 text-[10px] text-destructive"
         >
           {failure.message}
         </span>

@@ -9,7 +9,6 @@ import {
   optionalContainerList,
   optionalStringArray,
   PAIR_TRUNCATION_REASON,
-  requireMethod,
   resolveKinds,
   type ObjectInventory,
 } from "@/lib/api/object-route";
@@ -55,12 +54,9 @@ export async function POST(req: NextRequest) {
     // The enumeration also answers which container the SESSION is in, off the same walk and at
     // no extra round trip. A body that NAMED its containers skips the walk, so there is no
     // default to report and none is invented (#789).
-    const enumerated =
-      named === undefined
-        ? await enumerateContainers(provider, () => requireMethod(provider, "listContainers"))
-        : { containers: named };
+    const enumerated = named === undefined ? await enumerateContainers(provider) : { containers: named };
     const containers = dedupePaths(enumerated.containers);
-    const listObjects = requireMethod(provider, "listObjects");
+    const listObjects = provider.listObjects.bind(provider);
 
     // Flattened to one loop so each limit is checked in one place. Nested loops would need a label
     // to leave both, and the outer check would otherwise re-enter for every later container.

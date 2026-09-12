@@ -10,10 +10,10 @@
  * alone, in files that have nothing to do with objects. One definition, reachable from both
  * sides, with no route in the path.
  *
- * The method is passed IN rather than read off the provider, which is what keeps the API layer
- * out: the route resolves it through `requireMethod`, so a provider that has not implemented it
- * still answers the 501 that names both the method and the engine, and nothing here has to know
- * what an HTTP status is.
+ * It reads `listContainers` straight off the provider. It used to take the method as an argument,
+ * because the object surface was optional through the phase that landed it one provider at a time
+ * and the route had to turn an absent method into a 501 naming the engine. The method is required
+ * now, so there is no absence to report and no reason for this to know what an HTTP status is.
  */
 import { containerDepth } from "@/lib/db/object-kinds";
 import type { Container, DatabaseProvider } from "@/lib/db/types";
@@ -53,17 +53,11 @@ export interface ContainerEnumeration {
  * container at the deepest level is a provider defect, and it is answered as no default rather
  * than by picking one.
  */
-export async function enumerateContainers(
-  provider: DatabaseProvider,
-  requireListContainers: () => NonNullable<DatabaseProvider["listContainers"]>,
-): Promise<ContainerEnumeration> {
+export async function enumerateContainers(provider: DatabaseProvider): Promise<ContainerEnumeration> {
   const depth = containerDepth(provider.getCapabilities());
   if (depth === 0) return { containers: [[]], defaultContainer: [] };
 
-  // Resolved only once the depth says there is a level to walk, and it is a THUNK for exactly
-  // that reason: a zero-level engine never calls `listContainers`, so demanding it up front
-  // would refuse SQLite and every engine like it for a method its inventory does not need.
-  const listContainers = requireListContainers();
+  const listContainers = provider.listContainers.bind(provider);
   let level = await listContainers();
   for (let below = 1; below < depth; below++) {
     const next: Container[] = [];

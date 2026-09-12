@@ -21,7 +21,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiErrorCode } from "@/lib/api/error-codes";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { appFetch } from "@/lib/config/base-path";
 import { containerDepth, declaredKinds } from "@/lib/db/object-kinds";
@@ -32,17 +31,18 @@ import { containerRowId, flattenTree, pathKey, type TreeRowModel } from "./flatt
 /** How a read addresses its connection: a seed by id, anything else in full. */
 type ConnectionPayload = ReturnType<typeof buildConnectionPayload>;
 
-/** A read that did not answer. */
+/**
+ * A read that did not answer.
+ *
+ * One field, and it used to carry a second: a flag for HTTP 501
+ * `OBJECT_SURFACE_UNIMPLEMENTED`, which the object routes answered while the surface was
+ * optional and only some engines implemented it. Every engine implements it now, the route
+ * cannot produce that status, and a rendering branch for a status nothing answers is a
+ * screen no user can reach.
+ */
 export interface TreeReadFailure {
   /** The engine's or the route's own sentence, never a rewrite of it. */
   readonly message: string;
-  /**
-   * The provider has not been migrated to the object surface yet: HTTP 501 with
-   * `OBJECT_SURFACE_UNIMPLEMENTED`. Sixteen of seventeen engines answer that today, so it is the
-   * common path rather than an edge, and it has to read as a gap in the provider rather than as an
-   * engine holding nothing.
-   */
-  readonly unimplemented: boolean;
 }
 
 /** Where one read's answer lands. `key` addresses the slot; `kind` says which map holds it. */
@@ -256,10 +256,7 @@ function forget(cache: TreeCache, slot: ReadSlot): TreeCache {
 }
 
 class ObjectReadError extends Error {
-  constructor(
-    message: string,
-    readonly unimplemented: boolean,
-  ) {
+  constructor(message: string) {
     super(message);
     this.name = "ObjectReadError";
   }
@@ -297,22 +294,19 @@ async function postRead(payload: ConnectionPayload, read: TreeRead): Promise<unk
   });
   // A route that answered with no body at all still answered something worth showing, so the
   // status stands in for the sentence rather than the read being reported as a parse error.
-  const body = (await response.json().catch(() => ({}))) as { error?: string; code?: string };
+  const body = (await response.json().catch(() => ({}))) as { error?: string };
   if (!response.ok) {
-    throw new ObjectReadError(
-      body.error ?? `The object read failed with HTTP ${response.status}`,
-      body.code === ApiErrorCode.OBJECT_SURFACE_UNIMPLEMENTED,
-    );
+    throw new ObjectReadError(body.error ?? `The object read failed with HTTP ${response.status}`);
   }
   if (!isRenderableShape(read, body)) {
-    throw new ObjectReadError(`/api/db/objects/${read.route} answered with a body this tree cannot render`, false);
+    throw new ObjectReadError(`/api/db/objects/${read.route} answered with a body this tree cannot render`);
   }
   return body;
 }
 
 function toFailure(error: unknown): TreeReadFailure {
-  if (error instanceof ObjectReadError) return { message: error.message, unimplemented: error.unimplemented };
-  return { message: error instanceof Error ? error.message : String(error), unimplemented: false };
+  if (error instanceof ObjectReadError) return { message: error.message };
+  return { message: error instanceof Error ? error.message : String(error) };
 }
 
 /**

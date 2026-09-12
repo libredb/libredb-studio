@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { handleObjectRequest, requireMethod, requireObjectPath, requireString } from "@/lib/api/object-route";
+import { handleObjectRequest, requireObjectPath, requireString } from "@/lib/api/object-route";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +22,6 @@ export async function POST(req: NextRequest) {
   return handleObjectRequest(req, "api/db/objects/describe", async (provider, body) => {
     const path = requireObjectPath(body);
     const kind = requireString(body, "kind");
-    return requireMethod(provider, "describeObject")(path, kind);
+    return provider.describeObject(path, kind);
   });
 }

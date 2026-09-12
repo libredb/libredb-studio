@@ -1,11 +1,5 @@
 import { NextRequest } from "next/server";
-import {
-  handleObjectRequest,
-  optionalStringArray,
-  requireMethod,
-  requireString,
-  resolveKinds,
-} from "@/lib/api/object-route";
+import { handleObjectRequest, optionalStringArray, requireString, resolveKinds } from "@/lib/api/object-route";
 import { enumerateContainers } from "@/lib/db/container-walk";
 import type { DatabaseObject } from "@/lib/db/types";
 
@@ -33,8 +27,8 @@ export async function POST(req: NextRequest) {
     const term = requireString(body, "term").toLowerCase();
     const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
 
-    const { containers } = await enumerateContainers(provider, () => requireMethod(provider, "listContainers"));
-    const listObjects = requireMethod(provider, "listObjects");
+    const { containers } = await enumerateContainers(provider);
+    const listObjects = provider.listObjects.bind(provider);
 
     // Sequential on purpose, and the `no-await-in-loop` warning is accepted here. Every listing
     // takes a client from one pool, so a `Promise.all` over containers times kinds would open as
