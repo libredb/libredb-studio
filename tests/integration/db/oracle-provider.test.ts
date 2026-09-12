@@ -2785,16 +2785,39 @@ describe("object surface", () => {
       // predicate is really driven over it here rather than short-circuited: it answers false
       // for every one of these, which is what a document of readable parts requires.
       if (sql.includes("DBMS_METADATA.GET_DDL")) {
+        const type = String((params ?? [])[0]);
         const name = String((params ?? [])[1]);
-        if (name.startsWith("NO_SUCH_")) {
-          throw new Error(`ORA-31603: object "${name}" of type ${String((params ?? [])[0])} not found in schema "APP"`);
+        // Keyed on the METADATA TYPE AND the name, the way the `driver()` double in the
+        // source describe below already is. Keying on the NAME ALONE echoed the type back
+        // into the text and answered a wrong type as if it were right, so mutating the
+        // metadata spelling of synonym, sequence, trigger, view or procedure left this whole
+        // file green while every live Source tab on them would raise ORA-31600 (#789).
+        //
+        // The ten keys are `GET_DDL`'s own argument vocabulary against the names the listing
+        // arms further down publish. `NO_SUCH_PKG`, which `absentSource` names, is absent
+        // from it by construction, so the absence raise is driven by the same fall-through
+        // the server would take.
+        const ddl: Record<string, string> = {
+          "TABLE APP_ORDERS": "TABLE",
+          "TABLE APP_CUSTOMERS": "TABLE",
+          "VIEW APP_ORDER_SUMMARY": "VIEW",
+          "MATERIALIZED_VIEW APP_REVENUE_MV": "MATERIALIZED VIEW",
+          "SYNONYM APP_ORDERS_SYN": "SYNONYM",
+          "SEQUENCE APP_INVOICE_SEQ": "SEQUENCE",
+          "PACKAGE_SPEC APP_ORDERS_PKG": "PACKAGE",
+          "PACKAGE_BODY APP_ORDERS_PKG": "PACKAGE BODY",
+          "PACKAGE_SPEC APP_BROKEN_PKG": "PACKAGE",
+          "PACKAGE_BODY APP_BROKEN_PKG": "PACKAGE BODY",
+          "PROCEDURE APP_TOUCH_ORDER": "PROCEDURE",
+          "FUNCTION APP_ORDER_TOTAL": "FUNCTION",
+          "TRIGGER APP_ORDERS_TRG": "TRIGGER",
+        };
+        const key = `${type} ${name}`;
+        if (!Object.hasOwn(ddl, key)) {
+          throw new Error(`ORA-31603: object "${name}" of type ${type} not found in schema "APP"`);
         }
         return {
-          rows: [
-            {
-              DDL: `\n  CREATE OR REPLACE EDITIONABLE ${String((params ?? [])[0]).replace("_", " ")} "APP"."${name}" IS BEGIN NULL; END;`,
-            },
-          ],
+          rows: [{ DDL: `\n  CREATE OR REPLACE EDITIONABLE ${ddl[key]} "APP"."${name}" IS BEGIN NULL; END;` }],
         };
       }
       // The ORA-31603 second question. `absentSource` names an object nothing holds, so this
@@ -4126,7 +4149,7 @@ describe("Oracle object source", () => {
     await provider.disconnect();
   });
 
-  test("the wrapped predicate reads a POSITION, so the three plain units built to defeat it are not wrapped", async () => {
+  test("the wrapped predicate reads a POSITION and a MARKER, and every unit built to defeat either half is not wrapped", async () => {
     // Every text here is verbatim GET_DDL output from the committed fixture. The three
     // defeaters are VALID, COMPILING functions: the first ends its source line with the token
     // `wrapped`, the second carries exactly the wrap format marker on its second line, and the
@@ -4154,13 +4177,18 @@ describe("Oracle object source", () => {
         '\n  CREATE OR REPLACE EDITIONABLE FUNCTION "APP"."APP_ZERO_ARG" RETURN NUMBER IS\nBEGIN\n  RETURN 1;\nEND;',
         false,
       ],
-      // SYNTHETIC, and labelled so rather than dressed up as a capture: no Oracle this epic
-      // measured emits the keyword in the header position without the format marker under it,
-      // and probe 7 could not build a plain unit that does either. It is here because the rule
-      // is a CONJUNCTION, and the marker conjunct is otherwise asserted by nothing at all: a
-      // predicate that dropped it would pass every real text above. The name is the one this
-      // fixture reserves for the shape, and if a future Oracle ever emits it the answer this
-      // pins is the conservative one, a readable text rather than a manufactured refusal.
+      // The unit that attacks the OTHER conjunct, and the only one here that does not compile.
+      // The four above all defeat the keyword half; the MARKER half was asserted by nothing
+      // until this object existed, because a real wrapped unit always carries its marker.
+      //
+      // This text was SYNTHETIC when the file first shipped and is now a CAPTURE. Measured on
+      // gvenzl/oracle-xe 21.3.0.0.0: `wrapped` after a function name is ACCEPTED, because it
+      // is the wrap keyword, the unit fails to compile with PLS-00753 and is left INVALID, and
+      // GET_DDL answers its source verbatim anyway. `docker/oracle-init/01-object-fixture.sql`
+      // creates it, and the bytes below are byte-identical to what that server returned (the
+      // leading `\n  ` confirmed through DUMP as 10,32,32, because SQL*Plus renders those two
+      // spaces as a tab). The answer it pins is the conservative one: a readable text rather
+      // than a manufactured refusal.
       [
         "APP_MARKERLESS_HEADER",
         '\n  CREATE OR REPLACE EDITIONABLE FUNCTION "APP"."APP_MARKERLESS_HEADER" wrapped\nBEGIN\n  RETURN 1;\nEND;',
@@ -4368,6 +4396,73 @@ describe("Oracle object source", () => {
     if (isSourcePartUnavailable(whole)) throw new Error("narrowing");
     expect(whole.truncated).toBeUndefined();
     expect(whole.text.length).toBeGreaterThan(40);
+    await provider.disconnect();
+  });
+
+  test("binds the GET_DDL METADATA spelling every one of the nine kinds needs", async () => {
+    // THE FIRST BIND'S VOCABULARY, pinned as a LITERAL and deliberately not derived from the
+    // provider's own translation table. A test that reads `ORACLE_OBJECT_TYPES` to say what
+    // `ORACLE_OBJECT_TYPES` should hold asserts nothing at all.
+    //
+    // WHY IT EXISTS. That table is read by TWO consumers with two vocabularies: Phase 1's
+    // counts and listings take the `dictionary` column, and this read takes the `metadata`
+    // one. When this file first shipped, only `table`, `function`, `package` and
+    // `materialized_view` drove the metadata spelling through a double that keys on it, so
+    // mutating the metadata value of the other five to `BOGUS_TYPE` left the whole suite
+    // green while every live Source tab on them would raise ORA-31600 (#789).
+    //
+    // Every spelling below is `DBMS_METADATA.GET_DDL`'s own argument vocabulary on
+    // gvenzl/oracle-xe 21.3.0.0.0, captured from the committed fixture. Three of the nine
+    // differ from the dictionary spelling: `MATERIALIZED_VIEW` for `MATERIALIZED VIEW`, and
+    // `PACKAGE_SPEC` plus `PACKAGE_BODY` where the dictionary says `PACKAGE` and
+    // `PACKAGE BODY`.
+    const expected: readonly (readonly [string, readonly string[]])[] = [
+      ["function", ["FUNCTION"]],
+      ["materialized_view", ["MATERIALIZED_VIEW"]],
+      ["package", ["PACKAGE_SPEC", "PACKAGE_BODY"]],
+      ["procedure", ["PROCEDURE"]],
+      ["sequence", ["SEQUENCE"]],
+      ["synonym", ["SYNONYM"]],
+      ["table", ["TABLE"]],
+      ["trigger", ["TRIGGER"]],
+      ["view", ["VIEW"]],
+    ];
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    // The POPULATION, so a tenth source-bearing kind cannot be declared without a spelling
+    // here. The VALUES above stay literal; only the set of ids is read from the declaration.
+    expect(expected.map(([kind]) => kind)).toEqual(
+      (provider.getCapabilities().objectKinds ?? [])
+        .filter((kind) => kind.hasSource === true)
+        .map((kind) => kind.id)
+        .sort(),
+    );
+
+    const bound: Record<string, string[]> = {};
+    for (const [kind] of expected) {
+      sent = [];
+      // `ddlValue` answers ANY type, so the double cannot decide the outcome by the bind
+      // this test is measuring. What comes back is a plain header, so every kind reads.
+      mockExecuteFn = driver({
+        ddlValue: '\n  CREATE OR REPLACE EDITIONABLE THING "APP"."APP_OBJ" IS BEGIN NULL; END;',
+      });
+      await provider.readObjectSource!(["APP", "APP_OBJ"], kind);
+      bound[kind] = sent
+        .filter((execute) => execute.sql.includes("DBMS_METADATA.GET_DDL"))
+        .map((execute) => String(execute.params[0]));
+    }
+
+    // Non-vacuity, by NAME and BEFORE the equality: a kind whose read sent no GET_DDL at all
+    // would compare an empty array against an expectation and fail with a diff that reads
+    // like a wrong spelling rather than like a read that never happened.
+    const silent = expected.filter(([kind]) => bound[kind].length === 0).map(([kind]) => kind);
+    if (silent.length > 0) {
+      throw new Error(
+        `${silent.join(", ")} sent no DBMS_METADATA.GET_DDL at all, so no metadata spelling was measured for them`,
+      );
+    }
+    expect(expected.map(([kind]) => [kind, bound[kind]])).toEqual(expected.map(([kind, types]) => [kind, [...types]]));
     await provider.disconnect();
   });
 });

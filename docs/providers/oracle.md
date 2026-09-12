@@ -1251,6 +1251,14 @@ listings, so the two vocabularies cannot drift: `ALL_OBJECTS.OBJECT_TYPE` writes
 (`MATERIALIZED VIEW`, `PACKAGE BODY`) and `GET_DDL` takes them with underscores
 (`MATERIALIZED_VIEW`, `PACKAGE_BODY`).
 
+That shared table is what makes the two vocabularies drift-proof, and it is also what makes ONE
+edit able to break nine reads at once, so the nine spellings above are pinned in
+`tests/integration/db/oracle-provider.test.ts` as a LITERAL list captured from the live server
+rather than read back out of the provider's own table.
+A wrong spelling is not a soft failure: `GET_DDL` answers an unknown `object_type` with
+`ORA-31600: invalid input value BOGUS_TYPE for parameter OBJECT_TYPE in function GET_DDL`, so the
+Source tab for every object of that kind fails.
+
 **`form` is `complete` and `origin` is `regenerated`, on every kind, and both are measurements.**
 `GET_DDL` answers a statement that runs as given, never a body or a bare SELECT.
 It is not the author's bytes either: the fixture's
@@ -1369,6 +1377,26 @@ follows it is decided by the PARSER: a plain unit admits only `(`, a RETURN clau
 that position. If a future Oracle ever admits `wrapped` there for a plain unit, the assertion over
 these units fails by name.
 
+**The fifth unit attacks the OTHER conjunct, and it is the one that does not compile.**
+All four above defeat the keyword half of the rule; until `APP_MARKERLESS_HEADER` was added, the
+MARKER half was asserted by nothing at all, because a real wrapped unit always carries its marker.
+MEASURED on Oracle XE 21.3.0.0.0, and it is not what the parser rule above would lead you to expect:
+`wrapped` after a function name is ACCEPTED, because it is the wrap keyword.
+
+```sql
+CREATE OR REPLACE FUNCTION app.app_markerless_header wrapped
+BEGIN
+  RETURN 1;
+END;
+```
+
+That leaves one row in `USER_ERRORS`, `PLS-00753: malformed or corrupted wrapped unit`, the object is
+created `FUNCTION` / `INVALID`, and `DBMS_METADATA.GET_DDL` answers its source verbatim anyway: the
+header carries the keyword and the next line is `BEGIN`.
+So the predicate must answer NOT WRAPPED for it, and a reader gets a readable text rather than a
+manufactured refusal.
+Deleting the marker conjunct from the rule fails exactly the test over this unit.
+
 **A second, independent signal exists and is deliberately not used.** `ALL_SOURCE` holds a whole
 wrapped unit in ONE row with embedded newlines, where a plain unit is one row per line, and that shape
 is not forgeable from source text at all. It is not used because it costs a second round trip on every
@@ -1397,17 +1425,30 @@ grant to create a wrapped unit.
 
 The whole fixture is applied by the mount, so no command below creates anything:
 
+The container name and the host port below are a PRIVATE pair, not the defaults, and that is
+deliberate: a machine already running an Oracle on 1521, or a container already called `oracle`, is
+the ordinary case rather than the exception, and the recipe must not collide with one.
+Every measurement in this section was taken on exactly this pair.
+Remove only what you created.
+
 ```bash
-docker run -d --name oracle-src -e ORACLE_PASSWORD='Password123!' -p 1521:1521 \
+docker run -d --name src-task07-oracle -e ORACLE_PASSWORD='Password123!' -p 15217:1521 \
   -v "$PWD/docker/oracle-init:/container-entrypoint-initdb.d:ro" gvenzl/oracle-xe
-# wait for "DATABASE IS READY TO USE!" in `docker logs oracle-src`, about four minutes
-docker exec -i oracle-src sqlplus -s app/'Password123!'@localhost:1521/XEPDB1
+# wait for "DATABASE IS READY TO USE!" in `docker logs src-task07-oracle`, about four minutes
+docker exec -i src-task07-oracle sqlplus -s app/'Password123!'@localhost:1521/XEPDB1
+# 15217 is the HOST port, for a connection from the Studio UI; the exec above is already
+# inside the container, where the listener is on 1521.
+docker rm -f src-task07-oracle   # when you are done, and nothing else
 ```
 
 ```sql
 SET LONG 200000 PAGESIZE 0 LINESIZE 32767 LONGCHUNKSIZE 200000
 SELECT DBMS_METADATA.GET_DDL('FUNCTION','APP_WRAPPED_MULTI','APP') FROM DUAL;   -- wrapped
 SELECT DBMS_METADATA.GET_DDL('FUNCTION','APP_CONJ_DEFEATER','APP') FROM DUAL;   -- plain, and imitates it
+SELECT DBMS_METADATA.GET_DDL('FUNCTION','APP_MARKERLESS_HEADER','APP') FROM DUAL; -- keyword, no marker
+SELECT LINE, POSITION, TEXT FROM ALL_ERRORS WHERE NAME = 'APP_MARKERLESS_HEADER'; -- PLS-00753
+SELECT DBMS_METADATA.GET_DDL('BOGUS_TYPE','APP_ORDERS','APP') FROM DUAL;        -- ORA-31600
+SELECT DBMS_METADATA.GET_DDL('MATERIALIZED VIEW','APP_REVENUE_MV','APP') FROM DUAL; -- ORA-31600 again
 SELECT DBMS_METADATA.GET_DDL('PACKAGE_BODY','APP_WRAPPED_PKG','APP') FROM DUAL; -- wrapped body
 SELECT DBMS_METADATA.GET_DDL('PACKAGE_BODY','APP_SPEC_ONLY_PKG','APP') FROM DUAL; -- ORA-31603, absent
 SELECT DBMS_METADATA.GET_DDL('TABLE','REPORT_DAILY','REPORTING') FROM DUAL;     -- ORA-31603, refused
@@ -1417,6 +1458,9 @@ SELECT OWNER, OBJECT_NAME, OBJECT_TYPE FROM ALL_OBJECTS WHERE OWNER = 'REPORTING
 
 The last statement is the second question by hand: it answers a row for `REPORT_DAILY` and none for
 `NO_SUCH_TABLE`, which is the entire difference between a refusal and a raise.
+The two ORA-31600 lines are the other vocabulary's failure mode: the dictionary spelling
+`MATERIALIZED VIEW` is as invalid an `object_type` as `BOGUS_TYPE` is, which is why the nine metadata
+spellings are pinned in the suite rather than left to a table two consumers read differently.
 
 #### The fixture
 
@@ -1424,7 +1468,8 @@ The last statement is the second question by hand: it answers a row for `REPORT_
 mounted at `/container-entrypoint-initdb.d` by the `oracle` service in `database-compose.yml`. It
 creates two owners so the lifted confinement is observable, one object of every declared kind, the
 three trigger cases above, the package whose body does not compile, and the wrapped-PL/SQL block with
-the four plain units that imitate it ([Object source](#object-source-789)). Connect as `APP` /
+the four plain units that imitate it and the fifth, INVALID one that carries the keyword without the
+marker ([Object source](#object-source-789)). Connect as `APP` /
 `Password123!` on service `XEPDB1`.
 
 It also seeds ROWS, two in `APP.APP_CUSTOMERS` and two in `REPORTING.REPORT_DAILY`, and those are

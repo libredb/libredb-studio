@@ -145,7 +145,7 @@ CREATE OR REPLACE TRIGGER app.app_logon_trg AFTER LOGON ON app.SCHEMA BEGIN NULL
 /
 
 -- ---------------------------------------------------------------------------
--- Wrapped PL/SQL, and the three plain units built to imitate it (#789).
+-- Wrapped PL/SQL, and the units built to defeat each half of the rule (#789).
 -- ---------------------------------------------------------------------------
 --
 -- Measured on Oracle XE 21.3.0.0.0 (gvenzl/oracle-xe): EXECUTE ON DBMS_DDL is already
@@ -171,6 +171,9 @@ CREATE OR REPLACE TRIGGER app.app_logon_trg AFTER LOGON ON app.SCHEMA BEGIN NULL
 -- APP_ZERO_ARG is the closest PLAIN shape to a wrapped header there is, a zero-argument
 -- function whose header carries no parameter list at all, so the token after the quoted
 -- name is the bare word `return`. It is the control for the position itself.
+--
+-- APP_MARKERLESS_HEADER, at the end of this block, attacks the OTHER conjunct and is the one
+-- unit here that does not compile. Its own comment carries the measurement.
 
 BEGIN
   DBMS_DDL.CREATE_WRAPPED(
@@ -205,6 +208,29 @@ END;
 /
 
 CREATE OR REPLACE FUNCTION app.app_zero_arg RETURN NUMBER IS
+BEGIN
+  RETURN 1;
+END;
+/
+
+-- The unit that defeats the OTHER half of the conjunction, and the one object in this block
+-- that does NOT compile. The detection rule is `wrapped` in the header position AND the wrap
+-- format marker on the next line; the four units above all attack the first conjunct, and
+-- until this object existed the SECOND conjunct was asserted by nothing at all, because a
+-- real wrapped unit always carries its marker.
+--
+-- MEASURED on Oracle XE 21.3.0.0.0 (gvenzl/oracle-xe), and it is not what the header
+-- position's parser rule would lead you to expect: `wrapped` after the function name is
+-- ACCEPTED, because it is the wrap keyword. The unit then fails to compile with
+-- `PLS-00753: malformed or corrupted wrapped unit` (one row in `USER_ERRORS`, line 0), the
+-- object is created FUNCTION / INVALID, and `DBMS_METADATA.GET_DDL` answers its source
+-- verbatim anyway: the header carries the keyword and the next line is `BEGIN`, so the
+-- predicate must answer NOT WRAPPED and the reader gets a readable text rather than a
+-- manufactured refusal. Do not "fix" the missing marker: the missing marker is the point.
+--
+-- A `CREATE OR REPLACE` on an object left INVALID is harmless here and is the same state
+-- APP_BROKEN_PKG is committed in.
+CREATE OR REPLACE FUNCTION app.app_markerless_header wrapped
 BEGIN
   RETURN 1;
 END;

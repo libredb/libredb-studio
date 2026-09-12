@@ -210,6 +210,14 @@ const TABLE_IS_KNOWN_SQL = `SELECT TABLE_NAME FROM USER_TABLES WHERE TABLE_NAME 
  * One entry per declared kind, and the count statement's IN list and every listing's
  * bound type are both built from it, so a kind added to `objectKinds` without an entry
  * here fails loudly instead of drawing a folder nothing can fill.
+ *
+ * ONE value here is read by nothing, and it is written down so a maintainer does not edit
+ * it expecting an effect: `package.metadata`. A package's source is read as TWO parts
+ * through `PACKAGE_SPEC` and `PACKAGE_BODY`, which `ORACLE_SOURCE_PART_PLANS` owns, so the
+ * bare `PACKAGE` metadata spelling is never bound anywhere. MEASURED: changing it to a
+ * nonsense value fails no test in `tests/integration/db/oracle-provider.test.ts`, while
+ * changing either spelling in the plans fails three or four (#789). It stays in the table
+ * because the record is per kind and a hole in it would read as an oversight.
  */
 const ORACLE_OBJECT_TYPES: Record<string, { dictionary: string; metadata: string }> = {
   table: { dictionary: "TABLE", metadata: "TABLE" },
@@ -2142,7 +2150,7 @@ export class OracleProvider extends SQLBaseProvider {
    *    the ordinary path, and shipping that sentence unqualified tells a user their objects
    *    are gone. The refusal keeps ORACLE'S OWN SENTENCE whole and appends the fact that
    *    settles which of the two it is; nothing is prefixed and nothing is rewritten.
-   * 3. IT DETECTS WRAPPED PL/SQL, which raises nothing at all. See `isWrappedDefinition`. A
+   * 3. IT DETECTS WRAPPED PL/SQL, which raises nothing at all. See `wrapFormatMarker`. A
    *    wrapped unit's part is a REFUSAL beside a readable sibling, which is the whole reason
    *    unreadability is a per-part field rather than a raise: `APP_WRAPPED_PKG` in the fixture
    *    has a readable specification and a wrapped body, and raising would take the readable
