@@ -609,6 +609,23 @@ Everything else RAISES, including a transport failure, because nobody answering 
 All five are fully parameterised: the schema, the object's own segment and, for a trigger, its table are binds, and `prokind` is a bind too.
 No caller-supplied name ever reaches statement text on this engine, which is the reason these are preferred over any `SHOW`-shaped alternative.
 
+**Verified end to end against the seeded `postgres:18`**, through the provider itself, connected as `src_probe`, which holds nothing:
+
+```
+view              app.order_summary                   1 part  partial   regenerated  pgsql  606 chars
+materialized_view app.revenue_by_month                1 part  partial   regenerated  pgsql  161 chars
+function          app.order_total(integer)            1 part  complete  regenerated  pgsql  228 chars
+procedure         app.touch_order(integer)            1 part  complete  regenerated  pgsql  185 chars
+trigger           app.orders.orders_stamp_updated_at  1 part  complete  regenerated  pgsql  119 chars
+limit 30 on the function:  30 chars, truncated={"limit":30,
+                           "reason":"the source read was bounded at 30 characters by its caller"}
+app.no_such_view (view):            raises  PostgreSQL holds no view called "no_such_view" in schema "app"
+app.invoice_number_seq (sequence):  raises  PostgreSQL publishes no definition text for the kind "sequence"
+```
+
+Every object `listObjects()` named under each of the five kinds was then read: 4/4 views, 1/1 materialized view, 2/2 functions, 1/1 procedure, 1/1 trigger, nine of nine, all readable text and no refusal.
+A role holding no privilege of any kind read all nine.
+
 **A routine is read by the identity its own listing wrote.**
 The last path segment of a routine is `proname` plus the argument TYPE list, and the source statement compares the SAME expression, `ROUTINE_IDENTITY_EXPR`, which the listing builds the segment with.
 One writer for both, because two copies are two chances for the read to answer "no such routine" for an object the tree had just listed.
