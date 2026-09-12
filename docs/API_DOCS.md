@@ -1177,7 +1177,7 @@ Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ 
 
 ---
 
-> **Internal routes (not part of this public reference).** The frontend also calls several internal `/api/db/*` endpoints that mirror provider internals and change with the UI: `multi-query`, `schema/list`, `schema/relations`, `transaction`, `cancel`, `disconnect`, `test-connection`, `monitoring`, `pool-stats`, `profile`, `provider-meta`, `schema-snapshot`. They're auth-gated by the middleware like everything else; consult the route handlers in `src/app/api/db/` for their shapes.
+> **Internal routes (not part of this public reference).** The frontend also calls several internal `/api/db/*` endpoints that mirror provider internals and change with the UI: `multi-query`, `transaction`, `cancel`, `disconnect`, `test-connection`, `monitoring`, `pool-stats`, `profile`, `provider-meta`, and the object-surface routes under `objects/`. They're auth-gated by the middleware like everything else; consult the route handlers in `src/app/api/db/` for their shapes.
 
 ---
 

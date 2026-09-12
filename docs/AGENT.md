@@ -454,25 +454,29 @@ bound of 1,000. So the budget charge is a charge for the READING and not a measu
 an engine with many containers pays for the reading in latency rather than in budget. The audit stream
 carries the one call, and the deadline this call was granted is what bounds the whole walk.
 
-It carries no columns, and that is the measured decision rather than an omission: the bulk inventory
-route removed `includeColumns` after measuring it as one `describeObject` per object, up to 5,000
-sequential round trips. So identity comes from this read, columns from the reading that already
-carries them, and `context-snapshot.ts` joins the two on the object's ADDRESS. The key is every suffix
-of the object's path, most qualified first, because the flat readings do not agree on how much of the
-address they put in the single string they answer with: MySQL names a table bare against a
-`[database, table]` path and SQL Server strips `dbo.` against a `[catalog, schema, table]` one, so a
-join keyed on the fully composed form alone matched nothing at all on either engine and carried both
-halves of every object into the prompt. Only relation kinds join, since a MySQL procedure may share a
-table's name. An object the join could
-not match reaches the model named and kinded with an empty column list; a flat entry it could not
-match is carried with **no kind at all** rather than labelled a table. Filling a missing fact in with
-the commonest value is how a view came to be handed over as one. Closing the gap properly needs a bulk
-column read on the provider surface, which is a fifth method across seventeen providers and is an open
-item of #789 rather than something invented here.
+**IT CARRIES COLUMNS TOO, and the join is gone.** This used to be an identity read with no columns,
+joined afterwards to a second, FLAT reading that had them: the key was every suffix of the object's
+path, most qualified first, because the flat readings did not agree on how much of the address they
+put in the single string they answered with, and an object whose name held a dot or whose engine
+spelled it differently matched nothing and reached the model with an empty column list. The flat
+reading is deleted. `describeObjects` answers a whole container-and-kind folder in ONE round trip, so
+the columns arrive WITH the identity and are joined on the PATH inside the walk itself, which both
+halves spell the same way because both came from the same call. The `includeColumns` that was once
+removed from the inventory route was one `describeObject` PER OBJECT, up to 5,000 sequential round
+trips; this is one call per container-and-kind pair, under the same pair bound the listing already
+obeys.
 
-Two bounds, and they are the numbers `POST /api/db/objects/inventory` uses so that the agent and the
-route cannot disagree about how much of a database an inventory is: **5,000 objects** and **1,000
-container-and-kind listings**. Either one biting reports `truncated`, which the packing turns into a
+What that leaves is narrower and is stated rather than inferred: an object the bulk read did not
+describe reaches the model with an EMPTY column list, which is a true reading on both of its arms - a
+kind that has no columns at all, a routine or a trigger or a sequence, and a bulk read the provider
+bounded before it reached that object. The second arm is why a provider's own `truncated` travels
+with the inventory and is said in the prompt: a model told nothing would read a missing column as an
+absent one.
+
+Two bounds, and they are literally the numbers `POST /api/db/objects/inventory` uses - one owner,
+`src/lib/db/inventory-bounds.ts`, imported by both - so that the agent and the route cannot disagree
+about how much of a database an inventory is: **5,000 objects** and **1,000 container-and-kind
+listings**. Either one biting reports `truncated`, which the packing turns into a
 sentence saying the inventory is incomplete and naming the limit. A kind whose count came back with
 `sampledFrom`, Redis key groupings from one bounded `SCAN` and LibreDB keyspaces from a bounded key
 walk, is reported as a FLOOR ("at least what is shown"), and a kind on an engine declaring
@@ -484,9 +488,11 @@ absence in the database, which is #414 in one sentence.
 PostgreSQL costs three and SQLite two. No object method takes a budget on any provider, so the call is
 raced against the timeout this call was granted — which bounds THE RUN and not the database: the driver
 call is not cancelled, this run simply stops waiting, and the capture is then `unavailable` whole
-rather than partial. And the reading is BOUNDED by the provider itself — MongoDB stops at 200
-collections, Redis scans 1000 keys, LibreDB 10000 — so the preface says the inventory is what the
-inspection found and not proof that nothing else exists. On MongoDB and Couchbase the field names are
+rather than partial. And the reading may be BOUNDED by the provider itself — Redis scans 1000 keys
+and LibreDB 10000, and each says so through `sampledFrom`, which makes that kind's count and listing
+a floor — so the preface says the inventory is what the inspection found and not proof that nothing
+else exists. MongoDB is NOT one of them, measured: `listCollections` is tallied whole, with no cap,
+and the 200-collection slice that claim came from belonged to the deleted flat reading. On MongoDB and Couchbase the field names are
 inferred from a sample of the user's own documents: no value is kept, but the existence of a field
 there is derived from data rather than read from a catalog, which is why `db.schema.read` is its own
 operation id an operator can deny without denying any other agent read.

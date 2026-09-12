@@ -59,11 +59,25 @@ from:
 | Columns | The declared column list, types verbatim | `system.columns` / the query response `meta` |
 | Primary key | The MergeTree sparse primary index | `system.tables.primary_key`, `is_in_primary_key` |
 | `query(sql)` | One SQL statement | `POST /?default_format=JSON` |
-| Indexes | Data-skipping indexes | `system.data_skipping_indices` |
+| Indexes | Data-skipping indexes, and nothing else ([below](#indexes-are-only-the-skipping-indexes)) | `system.data_skipping_indices` |
 | Foreign keys | none (ClickHouse has none) | always `[]` |
 | `getOverview()` / storage | Server identity, connection counts, part sizes | `version()`, `uptime()`, `system.metrics`, `system.parts`, `system.disks` |
 | `getSlowQueries()` / `getActiveSessions()` | Finished and in-flight statements | `system.query_log`, `system.processes` |
 | Maintenance | `optimize` / `analyze` / `kill` | `OPTIMIZE TABLE ... FINAL`, a `system.parts` summary, `KILL QUERY ... SYNC` |
+
+#### Indexes are only the skipping indexes
+
+A MergeTree table with no data-skipping index reports **no index at all**, and that is a change from
+the flat schema reading this replaced. That reading synthesized two entries out of the table's
+engine clause, one labelled `PRIMARY KEY` and one `ORDER BY`, so every MergeTree table appeared to
+carry two indexes. Neither is an index object: ClickHouse's primary index is a sparse mark file the
+sorting key defines, it has no name of its own, and `system.data_skipping_indices` - the one catalog
+of named index objects on this engine - holds no row for it.
+
+The key columns are still reported, where they belong: a column that is part of the primary key is
+marked `isPrimary` from `system.columns.is_in_primary_key`, which is the catalog's own answer rather
+than a parse of the DDL. So nothing was measured and then dropped; what went was a pair of rows that
+named a structure ClickHouse does not model as an index.
 
 ---
 

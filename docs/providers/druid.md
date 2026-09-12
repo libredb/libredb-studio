@@ -949,19 +949,22 @@ Druid's planner publishes none.
 
 ## 6. Schema introspection
 
-the object surface ([`introspect.ts`](../../src/lib/db/providers/sql/druid/introspect.ts)) makes **two**
-`INFORMATION_SCHEMA` reads in parallel with `Promise.all`, both through the transport seam:
+The object surface ([`objects.ts`](../../src/lib/db/providers/sql/druid/objects.ts)) reads
+`INFORMATION_SCHEMA` through the transport seam: `SCHEMATA` for the containers, `TABLES` for the
+objects in one of them, and `COLUMNS` for one object or for a whole folder at once.
 
 | Data | Source |
 |---|---|
-| Datasources | `INFORMATION_SCHEMA.TABLES` where `TABLE_SCHEMA = 'druid'`, ordered by name |
-| Columns | `INFORMATION_SCHEMA.COLUMNS` where `TABLE_SCHEMA = 'druid'`, ordered by `TABLE_NAME, ORDINAL_POSITION` |
+| Schemas (the one container level) | `INFORMATION_SCHEMA.SCHEMATA`, ordered by name |
+| Datasources, lookups and system tables | `INFORMATION_SCHEMA.TABLES` for the schema asked for |
+| Columns | `INFORMATION_SCHEMA.COLUMNS`, ordered by `TABLE_NAME, ORDINAL_POSITION` |
 | Indexes | always `[]` — Druid has no user-defined indexes |
 | Foreign keys | always `[]` — Druid has no foreign keys anywhere |
 
-**Only the `druid` schema is listed.** The same catalog also carries the four `INFORMATION_SCHEMA`
-views and the six `sys` tables as `TABLE_TYPE = 'SYSTEM_TABLE'`, and a cluster with lookups or views
-carries rows under a `lookup` / `view` schema besides. Live, on the fixture cluster:
+**Every schema is listed, which is a change.** The flat schema reading this replaced filtered to
+`TABLE_SCHEMA = 'druid'` and nothing else reached the sidebar. `INFORMATION_SCHEMA.SCHEMATA` reports
+five schemas on a bare cluster — `INFORMATION_SCHEMA`, `druid`, `lookup`, `sys` and `view` — and the
+container list is now that answer rather than one hardcoded name. Live, on the fixture cluster:
 
 ```
 ["INFORMATION_SCHEMA","COLUMNS","SYSTEM_TABLE","NO","NO"]      ... 4 rows
@@ -970,9 +973,11 @@ carries rows under a `lookup` / `view` schema besides. Live, on the fixture clus
 ["sys","segments","SYSTEM_TABLE","NO","NO"]                    ... 6 rows
 ```
 
-The schema predicate is the entire mechanism that keeps all of that out of the sidebar. Everything
-excluded stays **queryable by typing SQL** — the monitoring panels read `sys` themselves — so nothing
-is lost, only unlisted.
+So a **lookup** and a **system table** are now browsable objects, each under the schema that holds
+it, and a run's grounding sees them too: a model asked about a lookup used to be told the database
+holds nothing by that name. Nothing became queryable that was not queryable before — all of it
+always answered `SELECT` by typing SQL, and the monitoring panels have always read `sys` — the
+change is that it is listed rather than hidden.
 
 **`DatabaseObject.name` is the bare datasource name.** `druid` is the default schema, so
 `SELECT * FROM "libredb_demo"` resolves without qualification. No prefix is added and none is needed.
