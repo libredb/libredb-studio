@@ -26,10 +26,15 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, DatabaseError, QueryError } from "@/lib/db/errors";
-import { containerDepth, isCountUnavailable } from "@/lib/db/object-kinds";
+import {
+  containerDepth,
+  isCountUnavailable,
+  isSourcePartUnavailable,
+  sourceBoundTruncationReason,
+} from "@/lib/db/object-kinds";
 import { LibSQLProvider } from "@/lib/db/providers/sql/libsql";
 import { countLibSQLObjects, type LibSQLObjectReader } from "@/lib/db/providers/sql/libsql/objects";
-import type { DatabaseConnection } from "@/lib/db/types";
+import type { DatabaseConnection, ObjectKindSpec } from "@/lib/db/types";
 import { comparePaths } from "@/lib/db/object-path";
 
 // ============================================================================
@@ -791,6 +796,19 @@ function sqliteSchemaSql(type: string, name: string): string | null {
 }
 
 /**
+ * The same, for a row an assertion expects to HAVE a definition.
+ *
+ * A NULL reaching a text assertion would be compared against a refusal and could only pass by
+ * accident, so it raises naming the row instead. Exactly one row of this capture is NULL and
+ * it has its own test.
+ */
+function definedSchemaSql(type: string, name: string): string {
+  const definition = sqliteSchemaSql(type, name);
+  if (definition === null) throw new Error(`${type}/${name} has a NULL definition and cannot be read back as text`);
+  return definition;
+}
+
+/**
  * `pragma_table_xinfo(name, 'main')` per object, exactly as the engine publishes it:
  * name, declared type, `notnull`, default, `pk` rank and `hidden`.
  *
@@ -1226,6 +1244,29 @@ function objectServer(catalog: Catalog = FIXTURE): Server {
         tableListRows(sql, args, catalog.tableList).map((row) => [text(row[0])]),
       );
     }
+    // BEFORE the generic `sqlite_schema` branch, because the Source read selects from the
+    // same catalog and a listing-shaped answer would win. The predicates are read off the
+    // STATEMENT and bound by the order they appear in it, so dropping either one widens the
+    // population here exactly as it would against the real server: with no `s.type = ?` the
+    // name `badges` answers the TABLE row as well as the trigger's, and the table's comes
+    // first, which is the live behaviour measured on sqld 0.24.33.
+    if (/s\.sql AS sql/.test(sql)) {
+      const bound = Object.fromEntries(
+        [...sql.matchAll(/s\.(type|name) = \?/g)].map((match, index) => [match[1], String(args[index])]),
+      );
+      const selected = catalog.sqliteSchema.filter(
+        (row) =>
+          (bound.type === undefined || row.type === bound.type) &&
+          (bound.name === undefined || row.name === bound.name),
+      );
+      return result(
+        [["sql", "TEXT"]],
+        selected.map((row) => {
+          const definition = sqliteSchemaSql(row.type, row.name);
+          return [definition === null ? { type: "null" } : text(definition)];
+        }),
+      );
+    }
     if (/FROM sqlite_schema AS s/.test(sql)) {
       const selected = sqliteSchemaRows(sql, catalog.sqliteSchema);
       if (/s\.tbl_name AS parent/.test(sql)) {
@@ -1380,6 +1421,9 @@ describe("LibSQLProvider object surface (#789)", () => {
       containers: [],
       kinds: { ...EXPECTED_COUNTS },
       sampleObject: { path: ["orders"], kind: "table" },
+      // No container level, so the authored path is the bare name. `emptyKinds` is absent
+      // because every source-bearing kind this engine declares is counted above zero.
+      absentSource: { path: ["no_such_table"], kind: "table" },
     });
   });
 
@@ -2059,6 +2103,313 @@ describe("LibSQLProvider object surface (#789)", () => {
  * also run against a live `ghcr.io/tursodatabase/libsql-server:v0.24.33` - the measurements
  * and what that run caught are in docs/providers/libsql.md.
  */
+/**
+ * The Source read, against the catalog the live server built (#789 Phase 2).
+ *
+ * Every definition asserted here is the text sqld 0.24.33 answered for that row, captured
+ * from `docker/sqlite-init/02-libsql-object-fixture.sql` and carried in `SQLITE_SCHEMA_SQL`.
+ * The fake applies the predicates the statement actually spells, so dropping one widens the
+ * population here the way it would against the real server.
+ *
+ * NOTHING IN THIS BLOCK KEYS ON REFUSAL WORDING, and that is deliberate rather than an
+ * oversight: sqld and Turso Cloud word the identical refusal differently (section 3.2 of the
+ * provider doc), so a test that pinned either sentence would pass on one deployment and fail
+ * on the other. The one sentence asserted below is OURS, for a NULL definition the engine
+ * says nothing at all about.
+ */
+describe("LibSQLProvider object source (#789)", () => {
+  let objects: LibSQLProvider;
+
+  afterEach(async () => {
+    if (objects?.isConnected()) await objects.disconnect();
+  });
+
+  test("declares source on exactly the kinds that have a definition text", async () => {
+    objects = await connectedWithObjects();
+    const kinds = objects.getCapabilities().objectKinds ?? [];
+    const declared = kinds
+      .filter((kind) => kind.hasSource === true)
+      .map((kind) => [kind.id, kind.sourceLanguage] as const)
+      .sort();
+
+    expect(declared).toEqual([
+      ["index", "sql"],
+      ["table", "sql"],
+      ["trigger", "sql"],
+      ["view", "sql"],
+    ]);
+    // The other direction, so a kind added later cannot quietly gain a Source tab. libSQL is
+    // one of the engines where this list is EMPTY, and the assertion is still what fails the
+    // day a fifth kind is declared without a decision about its source.
+    expect(
+      kinds
+        .filter((kind) => kind.hasSource !== true)
+        .map((kind) => kind.id)
+        .sort(),
+    ).toEqual([]);
+  });
+
+  test("reads the definition of a table and says what the text is", async () => {
+    objects = await connectedWithObjects();
+
+    const document = await objects.readObjectSource!(["orders"], "table");
+
+    expect(document.path).toEqual(["orders"]);
+    expect(document.kind).toBe("table");
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(false);
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.id).toBe("definition");
+    expect(part.label).toBe("Definition");
+    expect(part.text).toBe(definedSchemaSql("table", "orders"));
+    expect(part.text).toContain("tax REAL GENERATED ALWAYS AS (total * 0.2) VIRTUAL");
+    expect(part.language).toBe("sql");
+    // The author's own bytes: the second line of the fixture statement comes back with its
+    // twenty-one-space continuation indent, which a regeneration would destroy.
+    expect(part.form).toBe("complete");
+    expect(part.origin).toBe("stored");
+    expect(part.text).toContain("\n                     total REAL NOT NULL,");
+    expect(part.truncated).toBeUndefined();
+  });
+
+  /**
+   * The per-kind READ-THE-TEXT pin, population taken from the DECLARATION (#789).
+   *
+   * Recipe rule 6: a whole-statement pin is necessary and NOT sufficient. A wrong reply
+   * column reads as `undefined`, the provider correctly turns that into a refusal, and a
+   * refusal passes the conformance walk, the statement pin and every count and length
+   * assertion there is. Only comparing the TEXT, per object, can see it.
+   *
+   * Three guards against a vacuous arm: a declared source-bearing kind whose listing is
+   * empty THROWS by name, a listed object whose capture carries no definition THROWS by name
+   * through `sqliteSchemaSql`, and the total read is compared against the total listed.
+   */
+  test("every object of every source-bearing kind reads back the text the live capture holds", async () => {
+    objects = await connectedWithObjects();
+    const sourceKinds = (objects.getCapabilities().objectKinds ?? []).filter((kind) => kind.hasSource === true);
+    if (sourceKinds.length === 0) throw new Error("no kind declares hasSource, so this test reads nothing");
+
+    let read = 0;
+    let listedTotal = 0;
+    for (const spec of sourceKinds) {
+      const listed = await objects.listObjects([], spec.id);
+      if (listed.length === 0) throw new Error(`the fixture holds no ${spec.id}, so its source read is unexercised`);
+      listedTotal += listed.length;
+      for (const object of listed) {
+        const document = await objects.readObjectSource!(object.path, spec.id);
+        const [part] = document.parts;
+        if (isSourcePartUnavailable(part)) {
+          throw new Error(`${spec.id}/${object.name} answered the refusal "${part.unavailable}"`);
+        }
+        expect(part.text).toBe(definedSchemaSql(spec.id, object.name));
+        read += 1;
+      }
+    }
+    expect(read).toBe(listedTotal);
+    expect(read).toBe(EXPECTED_COUNTS.table + EXPECTED_COUNTS.view + EXPECTED_COUNTS.index + EXPECTED_COUNTS.trigger);
+  });
+
+  test("the statement is one text, with the type BOUND and taken from the KIND", async () => {
+    objects = await connectedWithObjects();
+
+    await objects.readObjectSource!(["orders"], "table");
+
+    const sent = calls.map((call) => JSON.parse(call.body ?? "{}").requests[0].stmt);
+    // The whole statement as a LITERAL, never the module's own constant: importing it would
+    // move both sides of the assertion together and pin nothing (recipe rule 6).
+    expect(sent).toEqual([
+      {
+        sql: `
+      SELECT s.sql AS sql
+        FROM sqlite_schema AS s
+       WHERE s.type = ?
+         AND s.name = ?
+    `,
+        args: [
+          { type: "text", value: "table" },
+          { type: "text", value: "orders" },
+        ],
+      },
+    ]);
+  });
+
+  /**
+   * The one object this fixture holds that can tell a KIND-derived type from a name match.
+   *
+   * `badges` is a table AND a trigger, which sqld accepts. `SELECT sql FROM sqlite_schema
+   * WHERE name = 'badges'` answers TWO rows with the table's first, measured live, so a read
+   * that resolved the type from the name would hand a reader the table's DDL under the
+   * trigger's address.
+   */
+  test("a trigger sharing a name with a table reads the TRIGGER, not the table", async () => {
+    objects = await connectedWithObjects();
+
+    const [triggerPart] = (await objects.readObjectSource!(["badges", "badges"], "trigger")).parts;
+    const [tablePart] = (await objects.readObjectSource!(["badges"], "table")).parts;
+    if (isSourcePartUnavailable(triggerPart) || isSourcePartUnavailable(tablePart)) throw new Error("narrowing");
+
+    expect(triggerPart.text).toBe(definedSchemaSql("trigger", "badges"));
+    expect(tablePart.text).toBe(definedSchemaSql("table", "badges"));
+    expect(triggerPart.text).not.toBe(tablePart.text);
+  });
+
+  test("an object that is not there RAISES, naming the segment, and never answers a refusal", async () => {
+    objects = await connectedWithObjects();
+
+    await expect(objects.readObjectSource!(["no_such_table"], "table")).rejects.toThrow(
+      /No libSQL table named no_such_table/,
+    );
+    await expect(objects.readObjectSource!(["orders", "orders"], "trigger")).rejects.toThrow(
+      /No libSQL trigger named orders/,
+    );
+  });
+
+  test("a kind this engine does not declare, and a path of the wrong shape, both raise", async () => {
+    objects = await connectedWithObjects();
+
+    await expect(objects.readObjectSource!(["x"], "procedure")).rejects.toThrow(
+      /libSQL declares no object kind "procedure"/,
+    );
+    await expect(objects.readObjectSource!(["orders_stamp"], "trigger")).rejects.toThrow(
+      /A libSQL "trigger" path is \[table, name\], received \["orders_stamp"\]/,
+    );
+  });
+
+  /**
+   * The refusal this engine CANNOT produce, driven anyway.
+   *
+   * `sqlite_schema.sql` is NULL for exactly one row of this catalog, the autoindex behind
+   * `code TEXT UNIQUE`, and the listings exclude every `sqlite_`-prefixed name, so no path
+   * the tree offers addresses it. The provider doc states that as a CANNOT. The arm exists
+   * anyway, because an empty definition must never reach an editor as a definition, and this
+   * is what the suite would say if the read ever started producing one.
+   *
+   * The path is authored rather than listed, which is the exception the control below covers:
+   * the same catalog answers the readable rows above, so a refusal here is the NULL and not
+   * a broken connection.
+   */
+  test("the one NULL definition in the catalog becomes a refusal part, not an empty text", async () => {
+    objects = await connectedWithObjects();
+
+    const [part] = (await objects.readObjectSource!(["sqlite_autoindex_badges_1"], "index")).parts;
+
+    expect(isSourcePartUnavailable(part)).toBe(true);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.id).toBe("definition");
+    // OUR sentence, because the engine supplies none for a NULL, and nothing in this block
+    // keys on sqld's or Turso's own wording for anything.
+    expect(part.unavailable).toContain("sqlite_schema.sql is NULL");
+    expect(part.unavailable.trim().length).toBeGreaterThan(20);
+  });
+
+  /**
+   * The other half of the blank arm, which no row of this catalog can produce.
+   *
+   * The NULL case above is a real row; a whitespace-only definition is not a state this
+   * engine reaches at all, and it is driven here because "unreachable" is the reason to
+   * write the arm rather than a reason to leave it unmeasured. Without this test, deleting
+   * the `.trim() === ""` half of the guard failed NOTHING in this suite (measured, 95 pass
+   * 0 fail), and an editor would have opened over three spaces presented as a definition.
+   */
+  test("a whitespace-only definition is refused too, because an empty definition is not one", async () => {
+    objects = await connectedWithObjects();
+    server = (sql) => (/s\.sql AS sql/.test(sql) ? result([["sql", "TEXT"]], [[text("   \n  ")]]) : failure("x", "y"));
+
+    const [part] = (await objects.readObjectSource!(["orders"], "table")).parts;
+
+    expect(isSourcePartUnavailable(part)).toBe(true);
+  });
+
+  test("a server failure RAISES through the provider's own mapping rather than becoming a refusal", async () => {
+    objects = await connectedWithObjects();
+    server = () => failure("SQLite error: no such table: sqlite_schema", "SQLITE_UNKNOWN");
+
+    await expect(objects.readObjectSource!(["orders"], "table")).rejects.toThrow(/no such table: sqlite_schema/);
+  });
+
+  test("the caller's bound cuts the text and says so, and an exact answer is never marked", async () => {
+    objects = await connectedWithObjects();
+    const [whole] = (await objects.readObjectSource!(["orders"], "table")).parts;
+    if (isSourcePartUnavailable(whole)) throw new Error("narrowing");
+
+    const [cut] = (await objects.readObjectSource!(["orders"], "table", 20)).parts;
+    if (isSourcePartUnavailable(cut)) throw new Error("narrowing");
+
+    expect(whole.text.length).toBeGreaterThan(20);
+    expect(cut.text).toBe(whole.text.slice(0, 20));
+    expect(cut.truncated).toEqual({ limit: 20, reason: sourceBoundTruncationReason(20) });
+
+    const [uncut] = (await objects.readObjectSource!(["orders"], "table", whole.text.length)).parts;
+    if (isSourcePartUnavailable(uncut)) throw new Error("narrowing");
+    expect(uncut.truncated).toBeUndefined();
+  });
+
+  /**
+   * The three guards a correct DECLARATION cannot reach, driven through the declaration.
+   *
+   * A kind that is declared and not source-bearing, a kind that declares source and forgets
+   * the Monaco id that renders it, and a kind that declares source with no catalog type
+   * behind it. None is reachable with the four kinds libSQL really declares.
+   */
+  test("a declared kind that is not source-bearing, or is under-declared, raises by name", async () => {
+    objects = await connectedWithObjects();
+    const real = objects.getCapabilities();
+    const withKind = (extra: ObjectKindSpec) =>
+      spyOn(objects, "getCapabilities").mockReturnValue({ ...real, objectKinds: [...(real.objectKinds ?? []), extra] });
+    const base = { id: "synonym", role: "config" as const, label: "Synonym", labelPlural: "Synonyms" };
+
+    for (const [extra, pattern] of [
+      [base, /libSQL publishes no definition text for the kind "synonym"/],
+      [{ ...base, hasSource: true }, /declares readable source for the kind "synonym" and no sourceLanguage/],
+      [
+        { ...base, hasSource: true, sourceLanguage: "sql" },
+        /declares readable source for the kind "synonym" but has no catalog type that reads it/,
+      ],
+    ] as const) {
+      const spy = withKind(extra);
+      try {
+        await expect(objects.readObjectSource!(["x"], "synonym")).rejects.toThrow(pattern);
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  });
+
+  /**
+   * Standing ruling 5g, on a zero-level engine, driven to the BOUND VALUE (#789).
+   *
+   * The declaration is swapped for a two-level one and a three-segment path is driven all the
+   * way to the binds. Two mutations die here and nowhere else in this suite: a shape check
+   * written `path.length !== 1` refuses this path, and a name bind written `path[0]` binds
+   * "cat" instead of "orders".
+   */
+  test("derives the object name and the path shape from the DECLARATION, not from a position", async () => {
+    objects = await connectedWithObjects();
+    const spy = spyOn(objects, "getCapabilities").mockReturnValue({
+      ...objects.getCapabilities(),
+      containerLevels: [
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+    try {
+      const document = await objects.readObjectSource!(["cat", "sch", "orders"], "table");
+
+      const sent = calls.map((call) => JSON.parse(call.body ?? "{}").requests[0].stmt.args);
+      expect(sent).toEqual([
+        [
+          { type: "text", value: "table" },
+          { type: "text", value: "orders" },
+        ],
+      ]);
+      expect(document.path).toEqual(["cat", "sch", "orders"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("LibSQLProvider bulk column read (#789)", () => {
   let objects: LibSQLProvider;
 

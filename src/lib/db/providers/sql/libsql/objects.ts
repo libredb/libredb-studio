@@ -37,11 +37,18 @@ import type {
   KindCount,
   ObjectDetail,
   ObjectDetailBatch,
+  ObjectSourceDocument,
   ObjectKindSpec,
   ProviderCapabilities,
 } from "@/lib/db/types";
 import { QueryError } from "@/lib/db/errors";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+} from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import { readNumber, readText } from "./introspect";
 import type { LibSQLBatchOutcome, LibSQLRow, LibSQLStatement, LibSQLTransport } from "./transport";
@@ -348,13 +355,23 @@ const BULK_DETAIL_SQL_BOUNDED: Readonly<Record<string, BulkDetailStatements>> = 
  * rather than a fresh one per call: `getCapabilities()` is called several times per request
  * by the object routes and the tree.
  */
+/**
+ * Every kind here publishes its own definition text (#789 Phase 2).
+ *
+ * One constant rather than four copies, because the fact is about the ENGINE and not about any
+ * one kind: `sqlite_schema` keeps a `sql` column on every row it has, so there is no kind on
+ * this engine that declares nothing. `sql` is a Monaco language id the installed bundle really
+ * registers, which `plsql`, `tsql` and `cql` are not.
+ */
+const SOURCE_SQL: Pick<ObjectKindSpec, "hasSource" | "sourceLanguage"> = { hasSource: true, sourceLanguage: "sql" };
+
 export const LIBSQL_OBJECT_KINDS: readonly ObjectKindSpec[] = [
-  { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+  { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true, ...SOURCE_SQL },
   // No `acceptsRowWrites`. A write to a view is refused outright unless an INSTEAD OF
   // trigger carries it, which is a per-OBJECT fact a per-kind declaration cannot state.
-  { id: "view", role: "relation", label: "View", labelPlural: "Views" },
-  { id: "index", role: "config", label: "Index", labelPlural: "Indexes" },
-  { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table" },
+  { id: "view", role: "relation", label: "View", labelPlural: "Views", ...SOURCE_SQL },
+  { id: "index", role: "config", label: "Index", labelPlural: "Indexes", ...SOURCE_SQL },
+  { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table", ...SOURCE_SQL },
 ];
 
 // ============================================================================
@@ -394,6 +411,32 @@ function assertContainerPath(capabilities: ProviderCapabilities, container: read
   if (container.length === levels.length) return;
   const shape = levels.length === 0 ? "empty" : `[${levels.map((level) => level.label.toLowerCase()).join(", ")}]`;
   throw new QueryError(`A libSQL container path is ${shape}, received ${JSON.stringify(container)}`, "libsql");
+}
+
+/**
+ * Refuses a path no shape of this kind admits, naming the shape it does admit.
+ *
+ * ONE writer for two readers since #789 Phase 2. `describeLibSQLObject` and
+ * `readLibSQLObjectSource` ask the same question about the same path, and two copies of this
+ * derivation are two chances for the detail pane and the Source tab to disagree about what a
+ * trigger's address is.
+ *
+ * Derived, never counted. The depth comes from `containerDepth()` through `declaredLevels()`,
+ * so absent and empty cannot be answered differently here than anywhere else, and the segment
+ * NAMES are the declared level labels, so the message and the check are the same array. There
+ * is ONE shape per kind rather than MySQL's two, because every trigger on this engine has a
+ * parent: `sqlite_schema.tbl_name` is never null for one.
+ */
+function assertObjectPathShape(
+  capabilities: ProviderCapabilities,
+  spec: ObjectKindSpec,
+  kind: string,
+  path: readonly string[],
+): void {
+  const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
+  const shape = spec.attachedTo === undefined ? [...levels, "name"] : [...levels, spec.attachedTo, "name"];
+  if (path.length === shape.length) return;
+  throw new QueryError(`A libSQL "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`, "libsql");
 }
 
 /**
@@ -735,14 +778,7 @@ export async function describeLibSQLObject(
     throw new QueryError(`libSQL declares no object kind "${kind}"`, "libsql");
   }
 
-  const levels = declaredLevels(reader.capabilities).map((level) => level.label.toLowerCase());
-  const shape = spec.attachedTo === undefined ? [...levels, "name"] : [...levels, spec.attachedTo, "name"];
-  if (path.length !== shape.length) {
-    throw new QueryError(
-      `A libSQL "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`,
-      "libsql",
-    );
-  }
+  assertObjectPathShape(reader.capabilities, spec, kind, path);
 
   if (spec.role !== "relation") {
     return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
@@ -918,4 +954,185 @@ function groupByObject(rows: readonly LibSQLRow[], sql: string): Map<string, Lib
     else existing.push(row);
   }
   return grouped;
+}
+
+// ============================================================================
+// Object source reading (#789 Phase 2)
+// ============================================================================
+
+/**
+ * The one statement that answers every kind's definition.
+ *
+ * libSQL IS SQLite, so this is the same read the file provider does and for the same reason:
+ * `sqlite_schema` holds one row per object and `sql` on that row is the text somebody typed.
+ * One column, two binds, four kinds, and nothing to assemble.
+ *
+ * BOTH BINDS ARE PARAMETERS, so no identifier is interpolated and this read needs no
+ * identifier escaper at all. `type` comes from the KIND through `SOURCE_CATALOG_TYPES` and
+ * never from what the name happens to match: measured live on sqld 0.24.33, a TRIGGER may
+ * share a name with a TABLE, so `WHERE name = ?` alone answers TWO rows for `badges` with
+ * the table's first. `docker/sqlite-init/02-libsql-object-fixture.sql` holds that object so
+ * the rule is exercised rather than asserted by statement shape.
+ *
+ * SQLD'S STATEMENT ALLOWLIST DOES NOT TOUCH IT. The server refuses `VACUUM`, `ANALYZE`,
+ * `ATTACH` and `PRAGMA query_only` outright (section 3.5 of the provider doc) and a plain
+ * `SELECT` from `sqlite_schema` is not in that set: measured on 0.24.33, this exact statement
+ * answers on both the self-hosted server and Turso Cloud.
+ *
+ * Unqualified `sqlite_schema` resolves to `main.sqlite_schema`, and this provider declares no
+ * container level, so there is no schema bind to add - the same reason the index and trigger
+ * listings carry none.
+ */
+const OBJECT_SOURCE_SQL = `
+      SELECT s.sql AS sql
+        FROM sqlite_schema AS s
+       WHERE s.type = ?
+         AND s.name = ?
+    `;
+
+/**
+ * Which `sqlite_schema.type` value belongs to which declared KIND.
+ *
+ * A map rather than the kind id used directly, even though the four spellings coincide today.
+ * The kind id is this provider's own declaration and the type value is the engine's catalog
+ * vocabulary; writing one where the other is meant is how a renamed kind would silently start
+ * reading the wrong rows. A VIRTUAL table is typed `table` here, which is why the `table` kind
+ * covers the FTS5 object the listing takes from `PRAGMA table_list`.
+ */
+const SOURCE_CATALOG_TYPES: Readonly<Record<string, string>> = {
+  table: "table",
+  view: "view",
+  index: "index",
+  trigger: "trigger",
+};
+
+/**
+ * The sentence a NULL or blank `sqlite_schema.sql` is reported with.
+ *
+ * OURS rather than the engine's, and that is the exception the provider doc records: the
+ * server supplies no sentence at all for this, it simply stores NULL.
+ *
+ * NOTHING THIS PROVIDER LISTS CAN REACH IT. `sql` is NULL for exactly one shape, an index the
+ * engine created for itself, and every listing and count here carries
+ * `name NOT LIKE 'sqlite\\_%' ESCAPE '\\'`, so no path the tree offers addresses such a row.
+ * The arm exists anyway, because an empty definition must never reach an editor as a
+ * definition.
+ *
+ * IT DOES NOT QUOTE THE SERVER, and that is deliberate: sqld and Turso Cloud word the
+ * identical refusal differently, so nothing in this provider and nothing in its suite keys on
+ * either deployment's wording.
+ */
+function blankDefinitionReason(kind: string, name: string): string {
+  return (
+    `libSQL answered a row for the ${kind} "${name}" whose sqlite_schema.sql is NULL or blank. ` +
+    "The engine stores NULL there only for an index it created for itself, and it supplies no " +
+    "sentence of its own for this."
+  );
+}
+
+/**
+ * One object's definition text, exactly as its author submitted it (#789 Phase 2).
+ *
+ * EVERY DECLARED KIND CAN ANSWER, because `sqlite_schema` keeps a `sql` column on every row it
+ * has. `form` is `complete` - each of these runs as given - and `origin` is `stored`, which on
+ * this engine family is a real distinction rather than a formality: the text is the author's
+ * own bytes, newlines and inner spacing included, where PostgreSQL and MySQL hand back a
+ * statement rebuilt out of a catalog. The Source tab's caption exists to keep those two apart.
+ *
+ * `stored` carries the same ALTER TABLE caveat SQLite has and the provider doc records it: the
+ * engine rewrites the stored text on a rename or an added column, so the bytes are the
+ * author's own up to the last schema change.
+ *
+ * NO REFUSAL IS REACHABLE, a measured CANNOT rather than an omission. There is no privilege
+ * system to refuse a read and the one NULL shape is excluded from every listing.
+ *
+ * ONE ROUND TRIP and one part. A libSQL object has exactly one text, so there is no batch to
+ * assemble and no second statement to pay for; unlike an Oracle or a MariaDB package, nothing
+ * here splits into a specification and a body.
+ *
+ * Absence RAISES and is never a refusal part: a refusal says the definition cannot be read,
+ * and no rows says nothing of that name is there under that kind. The message names the last
+ * path segment, the only thing a caller can act on.
+ *
+ * Neither bind is positional (standing ruling 5g): the object's own name is
+ * `path[path.length - 1]` and the path SHAPE comes from `assertObjectPathShape`, the same
+ * reader `describeLibSQLObject` uses, so the Source tab and the detail pane cannot disagree
+ * about what a trigger's address is.
+ */
+export async function readLibSQLObjectSource(
+  reader: LibSQLObjectReader,
+  path: readonly string[],
+  kind: string,
+  limit?: number,
+): Promise<ObjectSourceDocument> {
+  const spec = findKind(reader.capabilities, kind);
+  if (spec === undefined) {
+    throw new QueryError(`libSQL declares no object kind "${kind}"`, "libsql");
+  }
+  if (spec.hasSource !== true) {
+    throw new QueryError(`libSQL publishes no definition text for the kind "${kind}"`, "libsql");
+  }
+  if (spec.sourceLanguage === undefined) {
+    // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
+    // observable, so a kind that declared source and forgot its language would ship a Source
+    // tab that silently stopped highlighting. The declaration is the only source of the
+    // language and there is no literal here to fall back to.
+    throw new QueryError(
+      `libSQL declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
+      "libsql",
+    );
+  }
+  assertObjectPathShape(reader.capabilities, spec, kind, path);
+  if (!Object.hasOwn(SOURCE_CATALOG_TYPES, kind)) {
+    throw new QueryError(
+      `libSQL declares readable source for the kind "${kind}" but has no catalog type that reads it`,
+      "libsql",
+    );
+  }
+
+  const name = path[path.length - 1];
+  let rows: LibSQLRow[];
+  try {
+    rows = (await reader.transport.execute(OBJECT_SOURCE_SQL, { params: [SOURCE_CATALOG_TYPES[kind], name] })).rows;
+  } catch (error) {
+    // RAISES through the provider's own mapping and never becomes a refusal part. A statement
+    // the server rejected and a credential that expired mid-session are both "nobody answered
+    // about this object", and rendering either in the Source pane as this object's own refusal
+    // would present a symptom as a fact about the object.
+    throw reader.mapError(error, OBJECT_SOURCE_SQL);
+  }
+
+  const row = rows[0];
+  if (row === undefined) {
+    throw new QueryError(`No libSQL ${kind} named ${name} in ${MAIN_SCHEMA}`, "libsql", OBJECT_SOURCE_SQL);
+  }
+
+  // `readText` and not `String(row.sql)`: a Hrana NULL arrives as a typed cell, and the
+  // difference between "no text" and the four characters `null` is the whole point of the
+  // refusal arm below.
+  const definition = readText(row.sql);
+  if (definition === undefined || definition.trim() === "") {
+    return {
+      path: [...path],
+      kind,
+      parts: [{ id: "definition", label: "Definition", unavailable: blankDefinitionReason(kind, name) }],
+    };
+  }
+
+  const bounded = applySourceBound(definition, limit);
+  return {
+    path: [...path],
+    kind,
+    parts: [
+      {
+        id: "definition",
+        label: "Definition",
+        text: bounded.text,
+        language: spec.sourceLanguage,
+        form: "complete",
+        origin: "stored",
+        ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+      },
+    ],
+  };
 }
