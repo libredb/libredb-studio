@@ -236,8 +236,14 @@ GO
 
 -- The database half of `src_probe` (#789). SELECT and EXECUTE on the schema and NOTHING
 -- else: no VIEW DEFINITION at the object, schema or database level, which is what makes
--- this principal's read of `app.touch_order` answer a row with a NULL definition and
--- `OBJECTPROPERTY(..., 'IsEncrypted') = 0`, telling a DENIAL apart from an ENCRYPTION.
+-- this principal's read of `app.touch_order` answer a row with a NULL definition and a NULL
+-- encryption flag, telling a DENIAL apart from an ENCRYPTION.
+--
+-- THE FLAG IS `sys.syscomments.encrypted` AND NOT `OBJECTPROPERTY(..., 'IsEncrypted')`, which
+-- the provider rejects by name: measured on SQL Server 2022 RTM-CU26, OBJECTPROPERTY resolves
+-- its object id in the CONNECTED database whatever database a three-part name addresses, and
+-- this is the one engine whose catalog level is part of every path. `docs/providers/mssql.md`
+-- carries the measurement. Reading it here would answer for somebody else's object.
 --
 -- EXECUTE is not generosity. Measured on SQL Server 2022 RTM-CU26: a principal holding
 -- only SELECT ON SCHEMA::app sees no PROCEDURE in the schema at all, because SQL Server's

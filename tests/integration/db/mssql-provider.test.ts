@@ -3453,14 +3453,17 @@ describe("SQL Server object source", () => {
   test("an ENCRYPTED module refuses per OBJECT, beside a readable sibling of the same kind", async () => {
     const provider = await connectedForObjects();
 
-    for (const path of [
-      ["libredb_objects", "app", "order_summary_secret"],
-      ["libredb_objects", "app", "touch_order_secret"],
-    ]) {
-      const kind = path[2].startsWith("order") ? "view" : "procedure";
+    // The kind travels WITH its path rather than being recovered from a segment. The array is
+    // a local literal, so a positional read of it is safe, and this file is the fleet's pin for
+    // standing ruling 5g (#789): a positional path read spelled here is the one the other
+    // twelve provider suites would copy.
+    for (const [path, kind] of [
+      [["libredb_objects", "app", "order_summary_secret"], "view"],
+      [["libredb_objects", "app", "touch_order_secret"], "procedure"],
+    ] as const) {
       const document = await provider.readObjectSource!(path, kind);
       const [part] = document.parts;
-      if (!isSourcePartUnavailable(part)) throw new Error(`${path[2]} is encrypted and must refuse`);
+      if (!isSourcePartUnavailable(part)) throw new Error(`${path.at(-1)} is encrypted and must refuse`);
       // NO `text` KEY AT ALL, and this is not belt and braces: a part carrying BOTH keys
       // COMPILES, because TypeScript's excess-property check on a union admits any property
       // declared on ANY member, and `isSourcePartUnavailable` then narrows it to the refusal
@@ -3714,6 +3717,63 @@ describe("SQL Server object source", () => {
     } finally {
       reordered.mockRestore();
     }
+    await provider.disconnect();
+  });
+
+  /**
+   * THE OTHER HALF OF THE SAME DERIVATION, found in this task's first fix round.
+   *
+   * The catalog goes through `requiredSegment`, which names the level it could not find. The
+   * SCHEMA did not: it was read as an optional `address.levels.schema`, and that optionality
+   * only ever belonged to the TRIGGER arm, whose statement has a second spelling
+   * (`ps.name IS NULL`) for the database-scoped trigger that genuinely has no schema. Every
+   * other kind's statement spells `s.name = @schema` unconditionally, so a declaration with no
+   * schema level shipped that statement with `@schema` never bound. MEASURED through this
+   * provider before the fix: the statement issued for `["cat", "obj"]` contained `@schema` and
+   * the bound inputs were `{"name":"obj"}`, which is SQL Server Msg 137, "Must declare the
+   * scalar variable \"@schema\"", arriving through `mapDatabaseError` as a driver error rather
+   * than as this provider's own named refusal.
+   *
+   * It needs a declaration change to reach, so it is latent rather than live - and this file is
+   * the fleet's derivation pin, so the shape is pinned here for the thirteen providers that
+   * copy `objectAddress`.
+   */
+  test("refuses a non-trigger read when the declaration has no schema level, instead of binding nothing to @schema", async () => {
+    const provider = await connectedForObjects();
+    const real = provider.getCapabilities();
+
+    const catalogOnly = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [{ id: "catalog", label: "Database", labelPlural: "Databases" }],
+    });
+    try {
+      issued = [];
+      await expect(provider.readObjectSource!(["cat", "obj"], "view")).rejects.toThrow(
+        "SQL Server declares no schema level to read this path's segment from",
+      );
+      // NON-VACUOUS, and this is the assertion the finding turns on: the refusal must come
+      // BEFORE the round trip. A provider that issued the statement and let the server answer
+      // would leave a call here, and the mocked double would report the miss as a clean
+      // absence raise, which reads exactly like correct behaviour.
+      expect(issued).toEqual([]);
+
+      // The TRIGGER arm keeps its optional schema under the same declaration, because its
+      // statement has a spelling that binds none: this is the asymmetry that is intended.
+      const ddl = await provider.readObjectSource!(["cat", "ddl_audit"], "trigger");
+      expect(isSourcePartUnavailable(ddl.parts[0])).toBe(false);
+      expect(issued.at(-1)!.inputs).toEqual({ name: "ddl_audit" });
+      expect(issued.at(-1)!.sql).toContain("ps.name IS NULL");
+    } finally {
+      catalogOnly.mockRestore();
+    }
+
+    // THE CONTROL for the refusal above, so it cannot pass because nothing binds a schema
+    // anywhere: under the SHIPPED declaration the same view read binds one, and the statement
+    // that carries `@schema` is the one that gets it.
+    const document = await provider.readObjectSource!(["libredb_objects", "app", "order_summary"], "view");
+    expect(isSourcePartUnavailable(document.parts[0])).toBe(false);
+    expect(issued.at(-1)!.sql).toContain("s.name = @schema");
+    expect(issued.at(-1)!.inputs).toEqual({ schema: "app", name: "order_summary" });
     await provider.disconnect();
   });
 

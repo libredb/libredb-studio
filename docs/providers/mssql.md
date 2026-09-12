@@ -765,6 +765,10 @@ A trigger takes the same shape against `sys.triggers`, outer-joined to `sys.obje
 trigger at all.
 A DDL trigger is addressed `[database, name]` and the statement then asks for `ps.name IS NULL`
 instead of binding a schema.
+The trigger is the ONLY kind whose schema is optional: every other statement above spells
+`s.name = @schema`, so the read refuses by name when the declaration carries no schema level rather
+than issuing a statement with `@schema` unbound, which SQL Server answers with Msg 137, "Must
+declare the scalar variable".
 
 `OBJECT_DEFINITION(object_id)` is REJECTED and the reason is the same one the detail reads give:
 it resolves an id in the CURRENT database and cannot be three-part named, and this is the one engine
@@ -774,9 +778,13 @@ in the fleet whose catalog level is part of every path.
 The plan named `OBJECTPROPERTY(object_id, 'IsEncrypted')` for the encryption flag.
 MEASURED on SQL Server 2022 RTM-CU26 (16.0.4265.3): that function resolves its object id in the
 CONNECTED database whatever database a three-part name addresses.
-From a session in `libredb_objects` reading `libredb_objects_two`, it answered NULL for a readable
-view and `0` - the "no VIEW DEFINITION" answer - for a view that really is encrypted, because those
-two ids belong, in the connected database, to a foreign key and a default constraint.
+From a session in `libredb_objects` reading `libredb_objects_two`, it answered NULL or `0`, and never
+the right answer, because the id resolves against the CONNECTED database: an id that names an
+encrypted module in the addressed database names something else there, or nothing.
+Which of the two comes back depends on what that database holds at that id and is therefore
+object-creation-order dependent, so the reproducible fact is the one that matters: `NULL` and `0`
+both route to the "no VIEW DEFINITION" refusal, and an encrypted module is never reported as
+encrypted.
 `OBJECTPROPERTY(OBJECT_ID('db.schema.name'), 'IsEncrypted')` does not rescue it: the id resolves and
 the answer is still `0`.
 Verified end to end through this provider: connected to `libredb_objects_two` and reading

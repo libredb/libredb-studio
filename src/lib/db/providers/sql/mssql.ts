@@ -620,9 +620,11 @@ function listTriggersSql(database: string, bySchema: boolean): string {
  * this engine (#789 recipe rule 7). MEASURED on SQL Server 2022 RTM-CU26 (16.0.4265.3):
  * `OBJECTPROPERTY(id, 'IsEncrypted')` resolves its object id in the CONNECTED database
  * whatever database a three-part name addresses. Reading `libredb_objects_two` from a session
- * in `libredb_objects`, it answered NULL for a readable view and 0 - the "no VIEW DEFINITION"
- * answer - for a view that really is encrypted, because those two ids belong, in the connected
- * database, to a foreign key and a default constraint. `OBJECT_ID('db.schema.name')` does not
+ * in `libredb_objects`, it answered NULL or 0, and never the right answer, for a view that
+ * really is encrypted: the id names something else in the connected database, or nothing, and
+ * which of the two depends on what that database holds at that id. Both values route to the
+ * "no VIEW DEFINITION" refusal, so an encrypted module is never reported as encrypted.
+ * `OBJECT_ID('db.schema.name')` does not
  * rescue it: the id resolves and `OBJECTPROPERTY` still answers 0. On a two-level engine whose
  * catalog level is part of every path that is not a limitation, it is a wrong answer about
  * somebody else's object, so the flag comes from the one place that IS three-part nameable.
@@ -2296,9 +2298,7 @@ export class MSSQLProvider extends SQLBaseProvider {
 
     const address = objectAddress(capabilities, spec, kind, path);
     const quotedCatalog = this.objectCatalog(requiredSegment(address.levels, "catalog"));
-    const schema = address.levels.schema;
-    const sql = this.sourceStatement(quotedCatalog, kind, schema !== undefined);
-    const binds = schema === undefined ? { name: address.name } : { schema, name: address.name };
+    const { sql, binds } = this.sourceRead(quotedCatalog, kind, address);
 
     const rows = await this.runObjectRows<SourceRow>(sql, binds);
     const row = rows[0];
@@ -2322,24 +2322,51 @@ export class MSSQLProvider extends SQLBaseProvider {
   }
 
   /**
-   * Which statement reads one kind's module: the trigger's spine, or `sys.objects`.
+   * Which statement reads one kind's module, AND the parameters that statement declares.
    *
-   * The same split `objectListingStatement` makes and for the same reason, taken through
-   * `Object.hasOwn` rather than a bare index because a kind id is an OPEN string and
+   * The two come back together rather than as a statement plus binds assembled beside it,
+   * because the pairing is the invariant: each spelling below carries exactly the parameters
+   * its own text names, so a statement naming `@schema` cannot be issued without one.
+   * FOUND IN THIS TASK'S FIX ROUND (#789), and it was latent rather than live: the schema was
+   * read as an OPTIONAL segment for every kind while only the trigger has a spelling that
+   * binds none, so under a declaration with no schema level the object statement went out
+   * naming `@schema` with nothing bound to it. MEASURED, that is Msg 137, "Must declare the
+   * scalar variable", reaching the caller through `mapDatabaseError` as a driver error instead
+   * of as this provider's own named refusal. The catalog already went through
+   * `requiredSegment`; now the schema does too, on the arm that requires one.
+   *
+   * The trigger is the one kind whose schema is genuinely optional, because a DATABASE-scoped
+   * DDL trigger has none: `parent_class = 0` and `parent_id = 0`, measured, so its address is
+   * `[database, name]` and its statement asks `ps.name IS NULL` rather than comparing a bind.
+   *
+   * The split is the same one `objectListingStatement` makes and for the same reason, taken
+   * through `Object.hasOwn` rather than a bare index because a kind id is an OPEN string and
    * `MSSQL_OBJECT_TYPES["toString"]` answers a function off the prototype chain. The throw is
    * reachable through the DECLARATION rather than only through a bug here: a kind given
    * `hasSource` with no entry in that table has no statement to read it with, and saying so by
    * name is better than interpolating `undefined` into a type list.
    */
-  private sourceStatement(quotedCatalog: string, kind: string, bySchema: boolean): string {
-    if (kind === TRIGGER_KIND) return sourceTriggerSql(quotedCatalog, bySchema);
+  private sourceRead(
+    quotedCatalog: string,
+    kind: string,
+    address: { levels: Partial<Record<ContainerLevelSpec["id"], string>>; name: string },
+  ): { sql: string; binds: Record<string, string> } {
+    if (kind === TRIGGER_KIND) {
+      const schema = address.levels.schema;
+      return schema === undefined
+        ? { sql: sourceTriggerSql(quotedCatalog, false), binds: { name: address.name } }
+        : { sql: sourceTriggerSql(quotedCatalog, true), binds: { schema, name: address.name } };
+    }
     if (!Object.hasOwn(MSSQL_OBJECT_TYPES, kind)) {
       throw new QueryError(
         `SQL Server declares readable source for the kind "${kind}" but has no statement that reads it`,
         "mssql",
       );
     }
-    return sourceObjectSql(quotedCatalog, MSSQL_OBJECT_TYPES[kind]);
+    return {
+      sql: sourceObjectSql(quotedCatalog, MSSQL_OBJECT_TYPES[kind]),
+      binds: { schema: requiredSegment(address.levels, "schema"), name: address.name },
+    };
   }
 
   // ============================================================================
