@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D51, U17 · 12
+- [Drivers and connections](#drivers-and-connections) — D1–D53, U17 · 14
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 8
@@ -532,6 +532,43 @@ FIELD inside a successful response is a different question and needs its own mea
 **Done when:** a refused monitoring read is distinguishable from an empty one in all four providers, the
 optional fields are absent rather than 0 on the refusal, each provider's doc and test move with it, and
 `maxConnections` keeps its 0 - for that field the type says 0 and absence are one fact.
+
+### D52. A Couchbase node behind a port mapping is unreachable
+
+`http-transport.ts` resolves the query service from the cluster's own node map, which is right for a
+plain deployment and wrong behind a port mapping. A node advertises its INTERNAL ports there, so a
+container published on other host ports hands back an address only the container can reach, and the
+`DEFAULT_QUERY_PORT = 8093` fallback at `http-transport.ts:484` is unreachable for the same reason.
+The connection's own port is read for management (`:367`) and never for the query service.
+
+Measured on Couchbase CE 8.0.2 during the object-model epic's live acceptance: a node published on
+38091/38093 failed while the same node on 8091/8093 worked.
+
+Couchbase's own answer to this is `alternateAddresses.external`, which the transport already prefers
+when the cluster publishes it (`:473-477`), so an operator-configured cluster is fine today. What is
+not handled is the ordinary developer case of a stock image published on other ports, where nothing
+configures the external address and the user has already told us the port.
+
+Not fixed inside #789 because it is a transport defect with no object-model component, and that PR
+is a major already carrying seventeen providers.
+
+**Done when:** a Couchbase connection reaches the query service on a node published behind a port
+mapping, with the precedence between the node map, the external addresses and the user's own port
+stated where a reader meets it.
+
+### D53. The libSQL object fixture exists only as prose
+
+Every other engine's object fixture is a file under `docker/*-init/` mounted by
+`database-compose.yml`. libSQL's is a fenced SQL block in `docs/providers/libsql.md:584`, so it is
+applied by hand and cannot drift-check against the suite that depends on it. Standing ruling 5i in
+the object-model epic says a fixture is a deliverable rather than scaffolding, and this one is the
+exception nobody chose.
+
+Applying it also needs a client that does not split `CREATE TRIGGER ... BEGIN ... END` on the
+semicolon, which is a real trap for anyone reproducing the suite and is currently unwritten.
+
+**Done when:** the libSQL fixture is a file applied the way the other sixteen are, or the doc says
+why it cannot be and how to apply it safely.
 
 ## Value interpolation
 
