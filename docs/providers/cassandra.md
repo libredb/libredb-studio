@@ -58,7 +58,7 @@ Three properties of that model drive everything below:
 | `DatabaseProvider` slot | Cassandra realisation | Mechanism |
 |---|---|---|
 | "Database" (the connection's `database` field) | One **keyspace**, pinned for the session | `keyspace` in the client options ([§3.3](#33-the-connections-database-field-pins-one-keyspace)) |
-| "Table" (`TableSchema`) | A table, or a materialized view | `system_schema.tables` + `system_schema.views` |
+| "Table" (the relation kind) | A table, or a materialized view | `system_schema.tables` + `system_schema.views` |
 | Columns | Partition key, clustering columns, regular and static columns | `system_schema.columns` ([§6.1](#61-declaration-order-is-not-recoverable)) |
 | Indexes | Secondary indexes (`COMPOSITES`, SAI) | `system_schema.indexes`, `options.target` |
 | Foreign keys | **Do not exist** | `declaresForeignKeys: false` |
@@ -157,7 +157,7 @@ A row count derived from the first is wrong by a factor that depends on how the 
 5% for a partition-per-row table, **71% low** for a clustered one — and no reader can tell which they
 are looking at. A byte figure derived from the second is wrong by up to 50×.
 
-So: no `rowCount` and no `size` on any `TableSchema`, `databaseSize` reported as `N/A` with
+So: no `rowCount` and no `sizeBytes` on any object, `databaseSize` reported as `N/A` with
 `databaseSizeBytes` **omitted entirely** — the field is optional on `DatabaseOverview`, because
 absence and zero are different facts: a zero is a measurement, and the Storage tab read `?? 0`, so it
 formatted a `0 B` total and divided a 0.0% breakdown out of it. With the field absent the tab's two
@@ -192,7 +192,7 @@ It is pinned at connect time, which has two measured consequences worth knowing:
   to connect", because the one word the user has to change is in it.
 
 A connection with no keyspace still runs every fully qualified statement. What it cannot do is show
-the flat table list: `getSchema()` refuses it and says which field to fill.
+the flat table list: the object surface refuses it and says which field to fill.
 The object browser is not refused. `listContainers()` lists every keyspace the role can see on a
 connection that pins none, with no container marked as the session default, because that connection
 is exactly the one a container tree exists to serve.
@@ -409,7 +409,7 @@ output could not run at all, even after its type names became correct. It now ap
 `PRIMARY KEY (<first column>)` and puts a comment directly above the statement saying that CQL
 requires exactly one key, that a result set does not know the real one, and that the reader must
 confirm the chosen column is unique per row before running it. This is a placeholder, not a schema
-recovery: `getSchema()`'s tree reads the true partition and clustering keys off `system_schema`, while
+recovery: the object surface's tree reads the true partition and clustering keys off `system_schema`, while
 the export has only the grid in front of it and picks positionally. A wrong-but-loud key was chosen
 deliberately over a file that fails to parse. The identifier is quoted through the same
 `quoteIdentifier` the column list uses, and never interpolated into the comment prose, so a column
@@ -715,7 +715,8 @@ read — which is why the list is read rather than omitted, and why this paragra
 
 ### 6.4 The object surface (#789)
 
-`getSchema()` above answers one flat table list. The object surface answers a lazy, per-kind tree
+The object surface answers a lazy,
+ per-kind tree
 through four methods: `listContainers`, `countObjects`, `listObjects` and `describeObject(path, kind)`.
 It lives in [`objects.ts`](../../src/lib/db/providers/sql/cassandra/objects.ts) and it reads the
 ordinary queryable `system_schema` keyspace, through the same transport seam everything else here uses.
@@ -834,7 +835,7 @@ A connection that pins **no** keyspace still opens the tree, and gets the full k
 nothing marked as the session default. `validate()` ([§4](#4-connection)) requires a host and a
 local data centre and deliberately not a keyspace, so such a connection is legal and connectable, and
 it is precisely the connection a container tree exists to serve: the tree is how somebody picks a
-keyspace when the connection names none. `getSchema()` beside it still refuses one, and that refusal
+keyspace when the connection names none. the object surface beside it still refuses one, and that refusal
 is right for a flat table list, which has no keyspace to read. The comparison needs no guard of its
 own: it is an equality against `""`, and no keyspace can be named `""`.
 
@@ -920,7 +921,7 @@ Five decisions, each measured on Apache Cassandra 5.0.9 rather than reasoned abo
    dropping the `table_name` restriction: `system_schema.columns` is partitioned on `keyspace_name`
    alone, so the wide read and a narrowed one are the same partition read, and an `IN` list over the
    target's names would make the statement's SHAPE depend on what the target answered for no gain.
-   They are also the catalogs `getSchema()` reads, through the same `cassandraTableColumns()` mapper,
+   They are also the catalogs the object surface reads, through the same `cassandraTableColumns()` mapper,
    so the flat and the object reading cannot describe one table two different ways.
 2. **Three kinds have no columns and answer with no round trip**: `function`, `aggregate` and
    `trigger`. The rule is keyed on the CATALOG a kind reads, never on the kind id.
@@ -1313,7 +1314,7 @@ then the provider, against both servers:
 | `getActiveSessions` | 1 running statement | `[]` |
 | `getHealth` | `cacheHitRatio` `86.97%`, connections 1 | `cacheHitRatio` `N/A`, `activeConnections` with no value, no sessions |
 | `getMonitoringData` | answers with data | answers, `performance: {}` |
-| `getSchema` | answers | answers |
+| object reads | answers | answers |
 | `system_views` statements sent per monitoring refresh | 3 | **0** |
 
 The fact was a boolean when this table was written and is a REASON since 2026-08-25
@@ -1366,7 +1367,7 @@ reader inspecting the object with `in` will find the key on `getHealth()`.
 
 What works:
 
-- `connect`, `query`, `getSchema`, `disconnect` — the editor and the object browser in full, columns
+- `connect`, `query`, the object reads, `disconnect` — the editor and the object browser in full, columns
   and index metadata included.
 - `getSlowQueries` answers `[]` and `getTableStats`, `getIndexStats` and `getStorageStats` REFUSE with
   their reason, both without sending a statement, exactly as they do on Cassandra

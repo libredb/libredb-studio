@@ -506,50 +506,13 @@ form; the strategy publishes no timings and fabricates none. See §3.6 for the f
 
 ## 6. Schema introspection
 
-`getSchema()` issues **five catalog statements plus one counting statement**, and no per-object
-sweep. The five are the exported constants in
-[`introspect.ts`](../../src/lib/db/providers/sql/duckdb/introspect.ts) — copied here verbatim, so a
-change to one side is visible against the other:
+Every reading of this engine's objects goes through the object surface below. The flat reading that
+came before it issued five catalog statements over `duckdb_tables()`, `duckdb_views()`,
+`duckdb_columns()`, `duckdb_constraints()` and `duckdb_indexes()` plus one counting statement, all
+filtered `NOT internal AND database_name = current_database()`. It is deleted, and the filter is why
+that matters: scoped to `current_database()`, it could not see an `ATTACH`ed catalog at all.
 
-```sql
--- TABLES_SQL
-SELECT schema_name, table_name, estimated_size
-FROM duckdb_tables()
-WHERE NOT internal AND database_name = current_database()
-ORDER BY schema_name, table_name;
-
--- VIEWS_SQL
-SELECT schema_name, view_name
-FROM duckdb_views()
-WHERE NOT internal AND database_name = current_database()
-ORDER BY schema_name, view_name;
-
--- COLUMNS_SQL  (duckdb_columns() covers VIEWS as well as tables, so one read serves both)
-SELECT schema_name, table_name, column_name, data_type, is_nullable, column_default
-FROM duckdb_columns()
-WHERE NOT internal AND database_name = current_database()
-ORDER BY schema_name, table_name, column_index;
-
--- CONSTRAINTS_SQL  (primary keys AND foreign keys in one read)
-SELECT schema_name, table_name, constraint_type,
-       constraint_column_names, referenced_table, referenced_column_names
-FROM duckdb_constraints()
-WHERE database_name = current_database()
-  AND constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY');
-
--- INDEXES_SQL
-SELECT schema_name, table_name, index_name, is_unique, is_primary,
-       expressions::VARCHAR[] AS index_columns
-FROM duckdb_indexes()
-WHERE database_name = current_database()
-ORDER BY schema_name, table_name, index_name;
-```
-
-**No schema query is issued.** The `duckdb_schemas()` statement in §3.3 is the measurement that
-decided how the five above are filtered; it is not part of the object tree, which takes its schema
-names from the `schema_name` column every one of them already carries.
-
-Four shapes to know:
+Four shapes to know, all of which the object surface inherits:
 
 - `duckdb_constraints()` is filtered by `constraint_type` rather than by `NOT internal`, because it
   publishes every NOT NULL and UNIQUE constraint as its own row too. On a `PRIMARY KEY` row
@@ -561,21 +524,18 @@ Four shapes to know:
 - `duckdb_indexes().expressions` is declared `VARCHAR` and prints as `"[a, b]"`. The `::VARCHAR[]`
   cast makes the engine produce the real list (measured: `'[customer_id]'` → `["customer_id"]`).
 - `duckdb_tables().estimated_size` is a row count rather than a byte size, but it is an **estimate**
-  and is never published as the row count (§3.5). The sixth statement counts instead: one
-  `UNION ALL` arm per table, `SELECT '<schema>' , '<table>', count(*) FROM "<schema>"."<table>"`,
-  issued once for the whole catalog. DuckDB answers `count(*)` out of row-group metadata, so this is
-  affordable where it is not on the other engines here. A table that cannot be counted — dropped
-  between the two reads, for instance — is simply absent from the map rather than published as `0`.
+  and is never published as the row count (§3.5). DuckDB answers `count(*)` out of row-group
+  metadata, so counting is affordable here where it is not on the other engines. A table that cannot
+  be counted — dropped between two reads, for instance — is absent from the map rather than
+  published as `0`.
 
 ### The object surface (#789)
 
-The flat list above is what `getSchema()` answers. Alongside it the provider implements the lazy,
-container-aware object surface: `listContainers()`, `countObjects()`, `listObjects()` and
-`describeObject(path, kind)`, in
+The lazy, container-aware object surface: `listContainers()`, `countObjects()`, `listObjects()`,
+`describeObject(path, kind)` and `describeObjects(container, kind, limit?)`, in
 [`objects.ts`](../../src/lib/db/providers/sql/duckdb/objects.ts) and
-[`index.ts`](../../src/lib/db/providers/sql/duckdb/index.ts). The two surfaces are both live through
-Phase 1 and they answer different questions: `getSchema()` is scoped to `current_database()`, while
-the object surface reaches every `ATTACH`ed catalog.
+[`index.ts`](../../src/lib/db/providers/sql/duckdb/index.ts). It reaches every `ATTACH`ed catalog,
+which the deleted flat reading could not.
 
 #### Two container levels, and both are real
 
@@ -701,8 +661,8 @@ two other providers in #789 broke on their first pass.
   unlike SQL Server's.
 - **A foreign key never crosses a schema**: `Binder Error: Creating foreign keys across different
   schemas or catalogs is not supported`. So `referencedTable` is always in the reading object's own
-  schema, and it is spelled exactly as `getSchema()` spells it (bare in `main`, qualified anywhere
-  else), because `ForeignKeySchema` carries one string and both surfaces are live through Phase 1.
+  schema, and it is spelled bare in `main` and qualified anywhere else, because `ForeignKeySchema`
+  carries one string.
 - **A relation with no column row is a relation that is not there.** `CREATE TABLE t ()` is
   `Parser Error: Table must have at least one column!`, and a view over an empty selection list is a
   parser error too, so zero column rows raises rather than rendering a dropped table as a table with
@@ -744,8 +704,8 @@ The five decisions this engine had to make for itself, each measured rather than
 
 **Which catalog.** The same `duckdb_columns()`, `duckdb_constraints()` and `duckdb_indexes()` the single
 read uses, and the target from the same `duckdb_tables()` / `duckdb_views()` the listing uses, through
-the same `objectSource()` and `kindFilter()`. It is NOT `getSchema()`'s reading: that one filters
-`NOT internal AND database_name = current_database()`, so it cannot see an ATTACHed catalog at all,
+the same `objectSource()` and `kindFilter()`. It is NOT the deleted flat reading: that one filtered
+`NOT internal AND database_name = current_database()`, so it could not see an ATTACHed catalog at all,
 while the object surface binds the catalog the CALLER asked for. MEMBERSHIP comes from the target read
 and never from the column read, so an object the four detail reads answer nothing for comes back with
 three empty lists rather than missing.
@@ -798,7 +758,7 @@ listed DuckDB object carries no `rowCount` at all.
 
 - The `temp` catalog, and therefore TEMP tables. `duckdb_databases()` marks `temp` `internal = true`
   alongside `system`, and both are excluded together. A session-scoped table is invisible in the
-  tree; `getSchema()` does not show it either.
+  tree.
 - Secrets, for the reason above.
 - Object SOURCE, which is Phase 2's. `duckdb_views().sql`, `duckdb_sequences().sql` and
   `duckdb_functions().macro_definition` all publish it, so the data is there when that phase arrives.
@@ -1029,8 +989,7 @@ to a database login.
 | No `SERIAL`, no `IDENTITY`, no `AUTOINCREMENT` | None of the three exists; `GENERATED … AS IDENTITY` parses and is refused at execution | The engine's — the create-table form defaults from a sequence instead (§3.13) |
 | ~140 MB of bindings on a Linux tree | glibc and musl packages both install | Ours to prune in the AppImage build (§9) |
 | MotherDuck / `md:` / Quack / DuckLake unsupported | Different products, different authentication | Ours — out of scope for v1 (§4.3) |
-| `ATTACH`-ed catalogs are absent from `getSchema()` | That read is scoped to `current_database()` | Ours (§4.3). The object surface DOES reach them: `listContainers()` is `duckdb_databases()` |
-| TEMP tables are absent from the object tree | `duckdb_databases()` marks `temp` `internal`, alongside `system` | Ours, §6, and `getSchema()` does not show them either |
+| TEMP tables are absent from the object tree | `duckdb_databases()` marks `temp` `internal`, alongside `system` | Ours, §6 |
 | Secrets are not an object kind | A secret has no catalog and no schema, so nothing in the model can hold it | Ours, out of Phase 1's scope (§6) |
 | A listed object carries no row count | `estimated_size` is an estimate, and `count(*)` per object is an N+1 | Ours, §6 and §3.5 |
 

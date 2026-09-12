@@ -81,7 +81,11 @@ classDiagram
         +connect()
         +disconnect()
         +executeQuery()
-        +getSchema()
+        +listContainers()
+        +countObjects()
+        +listObjects()
+        +describeObject()
+        +describeObjects()
         +getHealth()
         +getCapabilities() ProviderCapabilities
         +getLabels() ProviderLabels

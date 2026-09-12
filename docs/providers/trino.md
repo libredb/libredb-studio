@@ -57,7 +57,7 @@ ordinary JSON API teaches:
 |---|---|---|
 | "Database" (the connection's `database` field) | One **catalog**, pinned for the connection | `X-Trino-Catalog` on every request ([§3.2](#32-the-connections-database-field-pins-one-catalog)) |
 | "Schema" | A schema inside that catalog | `information_schema.tables.table_schema` |
-| "Table" (`TableSchema`) | A table, always displayed `schema.table` | `<catalog>.information_schema.tables` |
+| "Table" (the relation kind) | A table, always displayed `schema.table` | `<catalog>.information_schema.tables` |
 | "Row" | One result row | A positional `data` array element, keyed by the page's column declaration |
 | Columns | The connector's declared columns, types rendered verbatim (`varchar(25)`, `array(integer)`, `row(x integer, y varchar)`) | `<catalog>.information_schema.columns` |
 | Primary key | **Nothing.** Trino declares none, anywhere | — ([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)) |
@@ -164,7 +164,7 @@ catalog only supplies the default for names that are not fully qualified. What t
 which catalog the *tree* shows.
 
 A connection that names no catalog still connects and still runs every fully qualified statement,
-plus the whole of `system.runtime`. What it cannot do is show a tree, and `getSchema()` says so:
+plus the whole of `system.runtime`. What it cannot do is show a tree, and the object surface says so:
 *"This connection pins no Trino catalog, so there is no schema to list."*
 
 ### 3.3 A failed statement arrives as HTTP 200
@@ -312,7 +312,7 @@ What that produces, deliberately and consistently:
 | Surface | Answer | Why |
 |---|---|---|
 | `getIndexStats()` | `[]`, and **no statement is sent** | The answer cannot vary with the connection, so there is nothing to ask |
-| `TableSchema.indexes` / `.foreignKeys` | `[]` | Empty by construction, not by omission |
+| `ObjectDetail.indexes` / `.foreignKeys` | `[]` | Empty by construction, not by omission |
 | `ColumnSchema.isPrimary` | `false` | No key is declared for any column |
 | `declaresForeignKeys` | `false` | So the ER diagram draws boxes and no edges *as the engine's answer*, not as a schema that happens to be empty (#414) |
 | `supportsInlineRowEdit` | `false` | The inline editor builds `UPDATE … WHERE <pk> = <val>`. With no column that identifies one row, an edit would silently rewrite every row that matches, so the control is not offered |
@@ -596,9 +596,9 @@ A table's name is `schema.table`, always qualified
 ([§3.2](#32-the-connections-database-field-pins-one-catalog)). `indexes` and `foreignKeys` are `[]`
 by construction ([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)).
 
-`getSchemaList()` and `getSchemaRelations()` are **deliberately not implemented**. That split exists
+The two-phase flat schema split no longer exists anywhere. That split exists
 so a slow relationship read cannot block the table list, and Trino has no relationship read at all: a
-list would be byte-identical to `getSchema()` and a relations read would spend a round trip to answer
+list would be byte-identical to the object surface and a relations read would spend a round trip to answer
 two empty arrays per table.
 
 Measured against `tpch`: 72 tables, `column_default` projected and null for every connector probed
@@ -607,12 +607,12 @@ nothing).
 
 ### The object surface (#789)
 
-The flat list above is what `getSchema()` answers. Alongside it the provider implements the lazy,
+The flat list above is what the object surface answers. Alongside it the provider implements the lazy,
 container-aware object surface: `listContainers()`, `countObjects()`, `listObjects()` and
 `describeObject(path, kind)`, in
 [`objects.ts`](../../src/lib/db/providers/sql/trino/objects.ts) and
 [`index.ts`](../../src/lib/db/providers/sql/trino/index.ts). Both surfaces are live through Phase 1
-and they answer different questions: `getSchema()` is scoped to the one catalog the connection pins
+and they answer different questions: the object surface is scoped to the one catalog the connection pins
 ([§3.2](#32-the-connections-database-field-pins-one-catalog)), while the object surface reaches
 **every catalog the coordinator can see**, including the ones this connection did not name.
 
@@ -644,7 +644,7 @@ consequences a reader has to carry:
 `system` and `jmx` are **listed like any other catalog** rather than filtered out. Trino publishes no
 flag that separates a plumbing catalog from a data one, both are genuinely queryable, and a name
 denylist is a boundary this repo has already found unmaintainable. `information_schema` IS excluded
-from the schema list, which is the same exclusion `getSchema()` already makes: every catalog carries
+from the schema list, which is the same exclusion the object surface already makes: every catalog carries
 one, and it holds only the tree's own plumbing. Measured with the exclusion removed, `memory` answers
 `["app", "default", "information_schema"]`.
 
@@ -800,7 +800,7 @@ from whichever of the two catalogs publishes that kind: `information_schema.tabl
 view, `system.metadata.materialized_views` for a materialized view. The COLUMNS always come from
 `information_schema.columns`, including for a materialized view, which answers there while being
 reported as a `BASE TABLE` (measured on 476) - which is also why the relation target keeps its
-anti-join. It is not `getSchema()`'s reading: that one spans the pinned catalog with no anti-join at
+anti-join. It is not the object surface's reading: that one spans the pinned catalog with no anti-join at
 all, so it counts a materialized view as a table. MEMBERSHIP comes from the target read and never from
 the column read, so an object the column read answered nothing for comes back with an empty column list
 rather than missing, and this read does not repeat the single read's zero-column throw - there an empty
@@ -1319,7 +1319,7 @@ await provider.connect();
 const result = await provider.query("SELECT nationkey, name FROM tpch.tiny.nation ORDER BY 1");
 console.log(result.fields, result.rows.length, result.executionTime);
 
-const tables = await provider.getSchema(); // named "schema.table"
+const tables = await provider.listObjects(['tpch', 'sf1'], 'table');
 await provider.disconnect();
 ```
 

@@ -85,11 +85,11 @@ Score a candidate before writing code. Each criterion you fail becomes code you 
 |---|----------|----------------|
 | 1 | **Is HTTP a first-class interface?** Do the vendor's own tools use it, or is it a bolt-on? | A bolt-on API lags the real protocol and loses features |
 | 2 | **Is the query language SQL-shaped?** | `queryLanguage: "sql"` gives Monaco highlighting, the `sql` tab type and saved queries at no cost. The shared query limiter is separate — it comes from `SQLBaseProvider.prepareQuery()`, or you override `prepareQuery()` yourself; the base class default is a pass-through |
-| 3 | **Is there catalog introspection over the same surface?** | Otherwise `getSchema()` has nothing to read |
+| 3 | **Is there catalog introspection over the same surface?** | Otherwise the object surface has nothing to read |
 | 4 | **Is there monitoring data over the same surface?** | Decides how much of the monitoring panel is real rather than honestly empty |
 | 5 | **Is there an EXPLAIN?** | Decides `supportsExplain` and whether a strategy is needed |
 | 6 | **How complex is auth?** | Basic auth is three lines. SigV4, OAuth2 refresh or Kerberos is a library — and that is usually where the no-dependency promise ends |
-| 7 | **Does the data model flatten into `TableSchema`?** | The schema explorer renders a flat list, so a deeper hierarchy has to be flattened into the display name |
+| 7 | **Does the data model map onto containers, kinds and objects?** | The object surface addresses an object by a path of segments, so a hierarchy is declared through `containerLevels` and `objectKinds` rather than flattened into a display name |
 
 A good sanity check for criterion 1: **can a browser talk to it?** Couchbase's own Web Console and
 the Capella UI are browser applications, so every service had to be reachable over HTTP for the
@@ -218,7 +218,8 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 | Embedded (in-process, no wire protocol) | `BaseDatabaseProvider` | `embedded/libredb.ts` | [libredb.md](./providers/libredb.md) |
 
 **Implement the abstract methods** from the `DatabaseProvider` interface: `connect`, `disconnect`,
-`query`, `getSchema`, `getHealth`, `runMaintenance`, plus the monitoring set (`getOverview`,
+`query`, the five object methods (`listContainers`, `countObjects`, `listObjects`, `describeObject`,
+`describeObjects`), `getHealth`, `runMaintenance`, plus the monitoring set (`getOverview`,
 `getPerformanceMetrics`, `getSlowQueries`, `getActiveSessions`, `getTableStats`, `getIndexStats`,
 `getStorageStats`). None can be omitted, but a method whose data your engine does not expose returns
 a neutral value rather than throwing. Mind the return types: the list-valued ones
@@ -244,7 +245,6 @@ for worked, code-verified examples see each provider's **Design decisions** sect
 | Method | What it does |
 |--------|-------------|
 | `isConnected()` | Returns `this.state.connected` |
-| `getTables()` | Calls `getSchema()` and extracts table names |
 | `getMonitoringData()` | Orchestrates `getOverview`, `getPerformanceMetrics`, etc. |
 | `validate()` | Checks that `config.type` and `config.id` exist |
 | `ensureConnected()` | Throws if not connected |
@@ -600,8 +600,8 @@ Every field and what it controls:
 | `supportsCreateTable` | `boolean` | "Create Table" button in SchemaExplorer |
 | `supportsInlineRowEdit` | `boolean?` | Whether the results grid offers inline row editing. `false` hides the EDIT toggle and every editable cell — set it where the engine has no `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` statement, which is what `use-inline-editing.ts` builds. Optional only because the interface is published and a required addition breaks external implementers; every provider here declares it, and an absent flag reads as unsupported |
 | `supportsTransactions` | `boolean?` | Whether THIS PROVIDER implements the interactive transaction session `POST /api/db/transaction` drives (`beginTransaction`/`commitTransaction`/`rollbackTransaction` over one held connection). `false` withholds the editor toolbar's BEGIN/COMMIT/ROLLBACK trio **and** the SANDBOX toggle, which auto-rolls-back through the same route. It is about the provider's surface, not the engine: SQLite has `BEGIN` and still declares `false`. Optional for the published-interface reason above; the UI gates on `=== true`, so an absent flag and an unresolved metadata fetch both read as no transactions (#464) |
-| `declaresForeignKeys` | `boolean?` | Whether this engine has foreign keys in its model at all. `false` says an empty `TableSchema.foreignKeys` means "no such constraint exists here", not "this schema declares none" — set it on every engine without referential constraints. Optional for the published-interface reason above; consumers gate on `=== false`, so an absent flag reads as "may declare them" |
-| `tablesAreDerivedGroupings` | `boolean?` | Whether `getSchema()`'s rows are objects the engine holds, or groupings this server derived from a bounded scan. `true` on Redis and LibreDB only. Where it is true the schema explorer hides every menu item that *addresses* the row — `Profile Table`, `Generate Test Data`, and both per-row maintenance items, all of which name the row to a route that needs a real object — and keeps the ones that merely name it (`Select`, `Generate`, `Copy Name`, `Generate Code`). The agent layer states it to a plan run in one sentence. Consumers gate on `=== true`, so an absent flag reads as "ordinary objects" |
+| `declaresForeignKeys` | `boolean?` | Whether this engine has foreign keys in its model at all. `false` says an empty foreign-key list means "no such constraint exists here", not "this schema declares none" — set it on every engine without referential constraints. Optional for the published-interface reason above; consumers gate on `=== false`, so an absent flag reads as "may declare them" |
+| `tablesAreDerivedGroupings` | `boolean?` | Whether this provider's relation-shaped rows are objects the engine holds, or groupings this server derived from a bounded scan. `true` on Redis and LibreDB only. Where it is true the schema explorer hides every menu item that *addresses* the row — `Profile Table`, `Generate Test Data`, and both per-row maintenance items, all of which name the row to a route that needs a real object — and keeps the ones that merely name it (`Select`, `Generate`, `Copy Name`, `Generate Code`). The agent layer states it to a plan run in one sentence. Consumers gate on `=== true`, so an absent flag reads as "ordinary objects" |
 | `supportsMaintenance` | `boolean` | Whether maintenance API accepts requests for this provider |
 | `maintenanceOperations` | `MaintenanceType[]` | Which global cards and per-table buttons the admin Operations tab renders. `/api/db/maintenance` rejects anything not in this list, so a surface that ignored it could only offer a control answering HTTP 400. The schema explorer's row menu does **not** read it — its per-row maintenance items are gated on `isAdmin` and on `tablesAreDerivedGroupings`; see #496 for the mismatches that leaves |
 | `supportsConnectionString` | `boolean` | Used for future connection validation logic |

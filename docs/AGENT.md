@@ -397,21 +397,21 @@ nothing further.
 **There are TWO readings, and which one runs is the dialect's decision** (#414). On the dialects
 `CATALOG_PLANS` serves — PostgreSQL and SQLite — the server composes catalog statements and executes
 them under `agent-read-only`. On every other dialect it invokes `db.schema.read`, a sixth operation
-descriptor whose whole input is empty: it acquires `agent-operations`, calls the connection's own
-`provider.getSchema()` — the inspection the sidebar performs when it lists your tables — and returns
-the structure rather than rows to reassemble. Both go through `runAuditedAgentCall`, so both meet the
+descriptor whose whole input is empty: it acquires `agent-operations`, walks the connection's own
+object surface — the same reading the sidebar performs when it lists your objects — and returns the
+structure rather than rows to reassemble. Both go through `runAuditedAgentCall`, so both meet the
 same mode check, deadline admission, budget clamp, audit and artifact; there is no second, unaudited
 path to an engine. The two do NOT converge, and that asymmetry is structural: the composed path is
 audited statement by statement, carries foreign keys the provider path cannot on an engine that
 declares none, and SQLite's inventory is parsed out of stored DDL the provider does not expose the
 same way.
 
-**There is a THIRD reading, and it is the one that says what each entry IS** (#789). Both readings
-above answer one flat list of names: an `information_schema.columns` read returns a view's columns
-beside a table's with nothing to tell them apart, and `getSchema()` answers one list on every engine.
-So a run was handed a view, a materialized view, a Redis key grouping and a Druid datasource under one
-word, and #414 measured what a model does with that: it drafted `KEYS user:*` against a row nobody
-had named. `readObjectInventoryForGrounding` asks the provider's own object surface instead:
+**The provider path IS the object surface, and that is what says what each entry IS** (#789). The
+flat reading it replaced answered one list of names, the way a composed `information_schema.columns`
+read still returns a view's columns beside a table's with nothing to tell them apart. So a run was
+handed a view, a materialized view, a Redis key grouping and a Druid datasource under one word, and
+#414 measured what a model does with that: it drafted `KEYS user:*` against a row nobody had named.
+`readObjectInventoryForGrounding` asks the provider's own object surface instead:
 `listContainers` down to the declared depth, then `countObjects` per container, then `listObjects` for
 each kind the count did not answer zero for. It runs under the SAME `db.schema.read` descriptor, with
 its own fingerprint source, because it is a schema read and an operator denying that descriptor means
@@ -481,7 +481,7 @@ named, so no command can be addressed to one. An absence the model was not told 
 absence in the database, which is #414 in one sentence.
 
 **What the provider path costs, and what it cannot promise.** One statement of the run's budget, where
-PostgreSQL costs three and SQLite two. `getSchema()` takes no budget on any provider, so the call is
+PostgreSQL costs three and SQLite two. No object method takes a budget on any provider, so the call is
 raced against the timeout this call was granted — which bounds THE RUN and not the database: the driver
 call is not cancelled, this run simply stops waiting, and the capture is then `unavailable` whole
 rather than partial. And the reading is BOUNDED by the provider itself — MongoDB stops at 200
@@ -674,8 +674,8 @@ Three consequences worth stating plainly, because each is easy to assume the oth
 ### What the inventory is an inventory OF
 
 Grounding a plan on nine more engines exposed something the two-engine version could not: this
-product records every schema in one shape, `TableSchema`, and the prompts had been using that shape's
-name as a **noun**. A plan run on a seeded local Redis read 17 real key prefixes through the provider
+product recorded every schema in one flat shape, and the prompts had been using that shape's name as
+a **noun**. A plan run on a seeded local Redis read 17 real key prefixes through the provider
 — the grounding worked — and, under a block headed *"Schema inventory for this run — 17 table(s)"*,
 drafted `KEYS user:*` in one run and `ZCARD user:*` in another. Neither names anything: `user:*` is a
 grouping this server computed by SCANning a bounded slice of the keyspace and collapsing everything
@@ -1116,7 +1116,7 @@ What differs is the **packing** (`packOperationsInventory`, `context-snapshot.ts
   the identifier list *is* the payload and the run is told to match what the engine reports against
   it — so an unquoted table name carrying a newline, or an index named `a, b_unique`, would add an
   entry nobody created and the run could recommend action on it.
-- **What it CALLS them is the provider's word, not `TableSchema`'s.** The header, the omission notice
+- **What it CALLS them is the provider's word, not this repo's.** The header, the omission notice
   and the note above it take their noun from `ProviderLabels.entityName` (#414), so a Redis Operate
   run reads "key pattern(s)" rather than "table(s)" — and where those rows are groupings this server
   derived rather than objects the engine holds, the plan rules say so in one sentence. See
@@ -2069,7 +2069,7 @@ model passed the capability probe**; for anybody else the answer is that there i
 | **A free-form markdown report**, opening with a performance score out of 100 and closing with configuration advice. | A report is claims, each citing an artifact this run read or the snapshot it captured, verified against the run's own ledger before it is recorded. A number cited to nothing cannot be reported — the citation is what is checked, never the claim's text, so a fabricated score citing a real artifact would be accepted. | `src/lib/agent/tools.ts` (`composeReportTool`); `tests/evals/legacy-surface-coverage.test.ts` — an invented correlation id is refused and the run ends `unanswered (no-report)`. |
 | **Maintenance tasks** — `VACUUM`, `ANALYZE`, reindexing — in the same report. | Nothing proposes them: the `change` card has two members and neither is maintenance. It stays where it was before the panels — the monitoring surface, and the user's own editor. | `src/lib/agent/tools.ts` (`recommendationSchema`). |
 | **Multi-turn conversation.** NL2SQL replayed the whole exchange on every request, so "and how many in the second one?" was answerable. | **Largely restored, and differently.** A follow-up is still a NEW run — a run's objective is fixed when it starts, and no ledger event records a later question — but it now belongs to a CONVERSATION and is told about it: every earlier step's objective, and the most recent step's report, derived server-side from those runs' own ledgers and fenced before the model reads it. What is not restored is the replay: NL2SQL re-sent the whole exchange verbatim, while a conversation carries a bounded account of it, and only the newest step's findings. Two other differences are deliberate — the run still re-reads the catalog, because its inventory is its own evidence; and `LIBREDB_AGENT_THREAD_CONTEXT=false` turns the whole thing off, which no panel offered. See [the conversation a run belongs to](#the-conversation-a-run-belongs-to). | `src/lib/agent/thread-context.ts`; `src/app/api/agent/runs/route.ts`; `tests/evals/thread-context.test.ts` — a three-step conversation, and the fence the block arrives inside. |
-| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is never guessed at — since #414 it is read a different way instead of being refused. **A run whose workflow sends statements is refused on another engine before it opens**: `POST /api/agent/runs` answers 400 with the posture's own sentence when the mode is agent and `AGENT_WORKFLOW_SENDS_STATEMENTS` holds for the requested workflow, so no run id and no model turn are spent on a refusal the connection's type already decided. What an engine that IS admitted can then do differs by MODE. **Agent mode is still the two dialects**: its read-class tools reach the database through `provider.queryReadOnly`, which is the same fact the refusal reads. **Plan mode is now every engine**: its grounding acquires `agent-operations` and calls `provider.getSchema()` (`db.schema.read`), so a plan run on MongoDB is ordinarily grounded and is asked for one statement or command **in that engine's own language**, in a block still tagged with the canonical type-id. What the engine decides is no longer whether a plan is grounded but HOW — a composed catalog statement or a provider inventory, and whether estimated statistics exist at all — and the four prefaces say which. Where the reading itself fails, the run is steered to the `NO STATEMENT:` refusal with the capture's own diagnosis. **The `operations` workflow reaches every engine in both modes**, because it composes no SQL at all, and since #411 it is grounded under the same rule as everything else. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`, `captureFromProvider`, `packOperationsInventory`), `src/lib/db/operations/descriptors.ts` (`db.schema.read`); `tests/unit/lib/agent/context-snapshot.test.ts` — the provider path, its timeout and its refusals; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts` — a plan run whose provider cannot describe itself runs no statement and says it is ungrounded; `tests/isolated/agent-investigation.test.ts` — a plan run grounded through the engine's own schema inspection. |
+| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is never guessed at — since #414 it is read a different way instead of being refused. **A run whose workflow sends statements is refused on another engine before it opens**: `POST /api/agent/runs` answers 400 with the posture's own sentence when the mode is agent and `AGENT_WORKFLOW_SENDS_STATEMENTS` holds for the requested workflow, so no run id and no model turn are spent on a refusal the connection's type already decided. What an engine that IS admitted can then do differs by MODE. **Agent mode is still the two dialects**: its read-class tools reach the database through `provider.queryReadOnly`, which is the same fact the refusal reads. **Plan mode is now every engine**: its grounding acquires `agent-operations` and walks the provider's object surface (`db.schema.read`), so a plan run on MongoDB is ordinarily grounded and is asked for one statement or command **in that engine's own language**, in a block still tagged with the canonical type-id. What the engine decides is no longer whether a plan is grounded but HOW — a composed catalog statement or a provider inventory, and whether estimated statistics exist at all — and the four prefaces say which. Where the reading itself fails, the run is steered to the `NO STATEMENT:` refusal with the capture's own diagnosis. **The `operations` workflow reaches every engine in both modes**, because it composes no SQL at all, and since #411 it is grounded under the same rule as everything else. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`, `captureFromProvider`, `packOperationsInventory`), `src/lib/db/operations/descriptors.ts` (`db.schema.read`); `tests/unit/lib/agent/context-snapshot.test.ts` — the provider path, its timeout and its refusals; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts` — a plan run whose provider cannot describe itself runs no statement and says it is ungrounded; `tests/isolated/agent-investigation.test.ts` — a plan run grounded through the engine's own schema inspection. |
 
 One of these has since been restored under its own workflow (the monitoring row, which closed both
 deferrals that tracked it), and the first row is Phase 1's own boundary rather than a defect, and its one

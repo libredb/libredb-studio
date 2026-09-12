@@ -271,8 +271,9 @@ a refusal — nothing of the schema leaves and a server-written note says so in 
 
 **Two readings produce it, and which one runs is the dialect's decision** (#414). On PostgreSQL and
 SQLite the server composes a catalog statement per kind and executes it read-only. On the other
-fifteen it invokes `db.schema.read`, which calls the connection's own `provider.getSchema()` — the
-inspection the sidebar performs when it lists your tables — and composes no statement at all.
+fifteen it invokes `db.schema.read`, which walks the connection's own OBJECT SURFACE — the same
+`listContainers`, `countObjects`, `listObjects` and `describeObjects` the sidebar walks when it lists
+your objects — and composes no statement at all.
 **Fifteen counts type-ids the factory can build, not engines a user would name**: `SHIPPED` holds
 seventeen, `CATALOG_PLANS` serves two of them, and the remainder is what this second reading covers.
 Every other count said about grounding in these docs counts the same thing. libSQL is one of the
@@ -302,7 +303,7 @@ two properties differ and are stated here rather than left to be discovered:
   rather than read from a catalog, and that is a different claim from every other line in this
   document — worth its own sentence for exactly that reason, and the reason `db.schema.read` is an
   operation id of its own rather than a detail of the capture.
-- **On Redis and LibreDB the names are not names anything holds.** `getSchema()` scans a bounded
+- **On Redis and LibreDB the names are not names anything holds.** The object walk scans a bounded
   slice of the keyspace and groups the real key names it found under their common prefix, so what
   leaves the process is one row per prefix — `user:*`, `order:*` — and each is a summary this server
   computed from your key names rather than an object the engine declares. The names it summarises are

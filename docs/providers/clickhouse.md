@@ -54,7 +54,7 @@ from:
 
 | `DatabaseProvider` slot | ClickHouse realisation | Mechanism |
 |-------------------------|-------------------------|-----------|
-| "Table" (`TableSchema`) | A table, displayed as `name` or `database.name` | `system.tables`, filtered to non-system databases |
+| "Table" (the relation kind) | A table, displayed as `name` or `database.name` | `system.tables`, filtered to non-system databases |
 | "Row" | One result row | JSON `data` array element |
 | Columns | The declared column list, types verbatim | `system.columns` / the query response `meta` |
 | Primary key | The MergeTree sparse primary index | `system.tables.primary_key`, `is_in_primary_key` |
@@ -516,7 +516,7 @@ does **not** pin one:
 - One HTTP request per statement keeps the provider stateless and safely concurrent — nothing to
   coordinate, nothing to leak across users of a shared connection.
 - A pinned session serializes requests server-side: ClickHouse rejects concurrent use of one
-  `session_id`, which would break parallel schema introspection (`getSchema()` reads three catalogs
+  `session_id`, which would break parallel schema introspection (the object surface reads three catalogs
   at once with `Promise.all`).
 - `SET` and temp tables are the only things lost to this, and neither is reachable from the editor's
   one-statement-per-execution model regardless.
@@ -737,15 +737,15 @@ Load-bearing details:
   failure propagates rather than degrading — an empty tree standing in for a real error would hide
   it forever.
 
-`getSchemaList()` defers the index catalog entirely so a third catalog read never blocks the table
-list, exactly as the SQL providers' two-phase loading does; `getSchemaRelations()` reads it and
+the deleted flat list read defers the index catalog entirely so a third catalog read never blocks the table
+list, exactly as the SQL providers' two-phase loading does; the deleted flat relations read reads it and
 returns an entry — empty list included — for every table, so the client can merge indexes in
 without losing a table that legitimately has none.
 
 
 ### 6.1 The object surface (#789)
 
-`getSchema()` above answers one flat table list. The object surface answers a lazy,
+The object surface answers a lazy,
 container-aware, kind-tagged tree through four methods, and it lives in
 [`objects.ts`](../../src/lib/db/providers/sql/clickhouse/objects.ts) rather than in the provider
 class: the statements and every derivation over the declaration are there, the connection check and
@@ -926,7 +926,7 @@ enforces nothing by it, and `system.*` holds no constraint catalog to read one b
 Zero columns **raises**: `CREATE TABLE t ()` is a syntax error (code 62), so every table-backed object
 has at least one column and an empty answer means the object is not there under that name.
 
-The index read here **does not degrade to empty**, unlike `getSchema()`'s.
+The index read here **does not degrade to empty**, unlike the object surface's.
 `system.data_skipping_indices` needs its own grant and answers code `497` without it, and "this
 object has no skipping index" is a different fact from "you may not see its indexes". A detail panel
 showing the first when the second is true is a claim nobody measured.
@@ -1269,9 +1269,8 @@ const provider = await createDatabaseProvider({
 await provider.connect();
 
 const result = await provider.query('SELECT id, email FROM users LIMIT 50');
-const schema = await provider.getSchema();           // tables + columns + indexes, one round trip
-const list = await provider.getSchemaList();          // fast: tables + columns, no index catalog
-const relations = await provider.getSchemaRelations(); // indexes to merge in
+const objects = await provider.listObjects(container, 'table');
+const { details } = await provider.describeObjects(container, 'table');
 
 await provider.disconnect();
 ```
@@ -1354,7 +1353,7 @@ database-wide statistics. Transaction and cancel routes do not apply — see
   is displayed and generated as `database.table`, so `a.b` + `c` renders as `a.b.c` and every consumer
   that splits on the dot reads it as three parts. Introspection is internally safe — the grouping key
   joins on `NUL`, not a dot — so only the *display name* is ambiguous. This is the same limitation
-  `postgres.ts` carries for schema-qualified names; removing it means giving `TableSchema` structured
+  `postgres.ts` carries for schema-qualified names; removing it means giving the object shape structured
   segments instead of one string, which is a cross-provider change rather than a ClickHouse one.
   Dotted database names are vanishingly rare in practice.
 

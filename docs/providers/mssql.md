@@ -193,15 +193,12 @@ a trailing `#` run under the dialect-less reading, a quote behind an odd backsla
 comment or bracket. It has nowhere to append; the `TOP` branch, which splices into the head, keeps
 bounding such a statement unless the rule above applies to it.
 
-### 3.3 Five-query schema introspection, cross-schema
+### 3.3 Schema introspection, cross-schema
 
-`getSchema()` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) runs **five bulk queries**
-(tables via `sys.tables`/`sys.partitions`, columns via `INFORMATION_SCHEMA.COLUMNS`, primary keys,
-foreign keys via `sys.foreign_keys`, indexes via `sys.indexes`) over the connected database, then
-groups them in memory keyed by `schema.table`. Tables in the **`dbo`** schema are shown by bare
-name; tables in any other schema are prefixed (`sales.orders`). There is no
-`getSchemaList()`/`getSchemaRelations()` (no two-phase split) and no `size` field on the returned
-tables. Row counts come from `SUM(sys.partitions.rows)`.
+Every reading of this engine's objects goes through the object surface ([§7](#the-object-surface-789)).
+The flat reading that came before it ran five bulk queries over the connected database and grouped
+them in memory keyed by `schema.table`, showing `dbo` tables by bare name and prefixing every other
+schema; it is deleted. Row counts still come from `SUM(sys.partitions.rows)`.
 
 ### 3.4 `rowsAffected` is surfaced
 
@@ -439,11 +436,10 @@ No two-phase split; `dbo` tables are bare, other schemas prefixed.
 
 ### The object surface (#789)
 
-`getSchema()` above is the flat model: five bulk reads, tables only, one flat list of names. The
-object surface replaces it with four container-aware methods (`listContainers`, `countObjects`,
-`listObjects`, `describeObject`) declared in [`types.ts`](../../src/lib/db/types.ts) and implemented
-in [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts). Both surfaces are live through Phase 1; the
-phase that removes `getSchema()` is #789's last task.
+The flat reading this replaced was five bulk reads, tables only, one flat list of names. The
+object surface is five container-aware methods (`listContainers`, `countObjects`,
+`listObjects`, `describeObject`, `describeObjects`) declared in [`types.ts`](../../src/lib/db/types.ts) and implemented
+in [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts). The flat reading it replaced is deleted.
 
 Everything measured below was measured against **SQL Server 2022 CU26 (16.0.4265.3)** on Linux with
 the fixture in [`docker/mssql-init/01-object-fixture.sql`](../../docker/mssql-init/01-object-fixture.sql).
@@ -1157,7 +1153,7 @@ canned `{ recordset, rowsAffected }` results, exercising the same code paths as 
 ### 12.2 Coverage
 
 The suite covers: validation, connect/disconnect, query, capabilities, **labels override**,
-**`prepareQuery` TOP / OFFSET-FETCH**, `getSchema` (columns/PKs/FKs/indexes grouping), health,
+**`prepareQuery` TOP / OFFSET-FETCH**, the object surface (columns/PKs/FKs/indexes), health,
 maintenance (analyze/check/optimize/kill + SPID validation), pool stats, the transaction lifecycle,
 query cancellation, overview, performance metrics, slow queries, active sessions (incl. blocked),
 table/index/storage stats, and error mapping.
@@ -1219,12 +1215,13 @@ const provider = await createDatabaseProvider({
 
 await provider.connect();
 const res = await provider.query('SELECT id, email FROM users WHERE active = @p1', [1]);
-const schema = await provider.getSchema();   // 5 sys.* queries, grouped in memory
+const tables = await provider.listObjects(['mydb', 'dbo'], 'table');
+const { details } = await provider.describeObjects(['mydb', 'dbo'], 'table');
 await provider.disconnect();
 ```
 
 Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/cancel`,
-`POST /api/db/maintenance` (admin), `POST /api/db/schema/list` (falls back to `getSchema()`).
+`POST /api/db/maintenance` (admin), `POST /api/db/objects/inventory`.
 
 ---
 
@@ -1298,7 +1295,6 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   ([§7](#the-object-surface-789)). *Future:* a server-scoped container level, which every other
   engine would then have to answer for.
 - **SQL authentication only** — Windows Integrated / Azure AD auth is not wired.
-- **No two-phase schema loading** — `/api/db/schema/list` falls back to the full `getSchema()`.
 - **DMV monitoring needs `VIEW SERVER STATE`** (`VIEW SERVER PERFORMANCE STATE` on SQL Server 2022
   and later, which `VIEW SERVER STATE` implies — [§7.2](#72-when-the-connection-count-is-not-measurable));
   a least-privilege user silently gets `N/A`/`[]` and,

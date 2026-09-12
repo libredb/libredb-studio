@@ -39,7 +39,7 @@ generic components render Redis-appropriate wording.
 
 | `DatabaseProvider` slot | Redis realisation | Redis primitive used |
 |-------------------------|-------------------|----------------------|
-| "Table" (`TableSchema`) | A **key prefix** (e.g. `user:*`) | `SCAN` + prefix grouping |
+| "Table" (the relation kind) | A **key prefix** (e.g. `user:*`) | `SCAN` + prefix grouping |
 | "Row" | A **key** | — |
 | `query(sql)` | A Redis command (plain text or JSON) | generic `client.call()` |
 | `getHealth()` / `getOverview()` | Server stats | `INFO` |
@@ -188,7 +188,7 @@ These are the non-obvious choices. Read this section before changing the provide
 ### 3.1 `SCAN`, never `KEYS *`
 
 Schema discovery uses cursor-based `SCAN` with `COUNT 100`, **not** `KEYS *` in
-`getSchema()` ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts)). `KEYS *` is O(N) and blocks the
+the object surface ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts)). `KEYS *` is O(N) and blocks the
 entire Redis server until it completes — catastrophic on a production instance with millions of
 keys. `SCAN` is incremental and non-blocking. The scan is also capped at `maxScan = 1000` keys so
 schema introspection stays bounded regardless of keyspace size.
@@ -202,7 +202,7 @@ before the first `:` and appends `:*` — so `user:123` and `user:456` both coll
 grouped it differently would be two different answers about one server. Keys without a colon are their own group. For each prefix the provider probes
 keys with `TYPE` until it has observed up to **3 distinct** value-types — it may inspect more than
 3 keys when they share a type — to populate the synthetic column metadata. The resulting
-`TableSchema` list is sorted by descending key count so the busiest prefixes surface first.
+object list is sorted by descending key count so the busiest prefixes surface first.
 
 ### 3.3 Generic command dispatch via `call()`
 
@@ -476,7 +476,7 @@ the strength of `queryLanguage: 'json'` alone and every action emitted a
 for that reason.
 
 Both generators are **type-aware**: they read the sampled Redis type off the synthetic `type`
-column that `getSchema()` builds (§6). A prefix that sampled a single type resolves; one that
+column that the object surface builds (§6). A prefix that sampled a single type resolves; one that
 sampled several (`string, hash`) or none does not, and falls into the unknown bucket.
 
 **Scan Keys** (`generateTableQuery`) inserts one runnable command and executes it immediately:
@@ -552,7 +552,7 @@ Shape rules:
   cursor and the reply's first row is the next cursor; re-run with that value in place of `0` until
   it comes back `0`. On a large keyspace an iteration can legitimately return a **non-zero cursor and
   no keys**, so "Scan Keys" may show a cursor and nothing else while the schema tree reports the
-  prefix has keys — the tree's count comes from `getSchema()`, which loops the cursor over up to
+  prefix has keys — the tree's count comes from the object surface, which loops the cursor over up to
   1000 keys (§6) rather than stopping at one page. A one-line command cannot loop, so the cheatsheet
   documents the continuation instead of hiding it.
 
@@ -582,8 +582,8 @@ intact so a non-ASCII key prefix does not collide with another one.
 
 ## 6. Schema introspection
 
-`getSchema()` ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts)) returns one
-`TableSchema` per key prefix:
+the object surface ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts)) returns one
+object per key prefix:
 
 ```
 1. cursor = "0"
@@ -596,16 +596,16 @@ intact so a non-ASCII key prefix does not collide with another one.
            (one blocking round-trip per key until the 3rd distinct type — a
             uniform prefix pays it for every key the scan cap allows)
    until cursor == "0"  OR  totalScanned >= 1000
-3. emit TableSchema per prefix, sorted by rowCount desc
+3. emit one object per prefix, sorted by rowCount desc
 ```
 
-Each synthetic `TableSchema` has three columns: `key` (string, primary), `value` (typed by the
+Each synthetic object has three columns: `key` (string, primary), `value` (typed by the
 sampled Redis types, e.g. `string/hash`), and `type`. `indexes` is always empty (`getIndexStats()`
 and `getTableStats()` return `[]` — Redis has no indexes or table statistics).
 
 ### 6.1 The object surface (#789)
 
-`getSchema()` above answers one flat key-prefix list. The object surface answers a lazy,
+the object surface above answers one flat key-prefix list. The object surface answers a lazy,
 container-aware, kind-tagged tree through four methods, and on this engine they live in the provider
 class, because there is no statement layer to split out: the catalog here is a command.
 
@@ -713,7 +713,7 @@ The tree badges that folder **`3+`** and titles it *"At least 3: counted from th
 one SCAN walk"*, while the exact count beside it stays `1` with no title
 ([`flatten.ts`](../../src/components/object-tree/flatten.ts)). A completed walk is NOT marked: `2` and
 `2+` are different claims, and marking a number this provider measured exactly would teach a reader
-to discount every badge. The same bound already governs `getSchema()`, so the flat list and the tree
+to discount every badge. The same bound already governs the object surface, so the flat list and the tree
 are consistent about which walk they read; what is new is that the tree can now say what the number
 is.
 
@@ -757,7 +757,7 @@ level, the numbered database, so there is no server level to hang the folder on,
 libraries under one chosen database would invent a home the engine does not have while making the
 other fifteen lie about what the server holds.
 
-A key grouping describes to the same three columns `getSchema()` emits, from one shared helper, so
+A key grouping describes to the same three columns the object surface emits, from one shared helper, so
 the flat model and the object model cannot describe the same grouping differently while both surfaces
 are live. A grouping the CURRENT scan no longer holds raises rather than answering an empty shape: on
 this engine a prefix disappears the moment its last key is deleted.
@@ -801,7 +801,7 @@ refuses with: "this kind has no columns" and "this file has no reader for this k
 not arrive as the same empty answer.
 
 **One mapper, shared with the single read.** `keyspaceDetail()` builds both, over
-`keyGroupColumns()`, which is also what `getSchema()` builds its rows from. Every column set
+`keyGroupColumns()`, which is also what the object surface builds its rows from. Every column set
 the bulk read answers is byte-identical to `describeObject()` for the same path, checked for
 every grouping in the fixture and re-checked live.
 
@@ -931,7 +931,7 @@ no control offers it.
 | `supportsInlineRowEdit` | `false` — Redis commands are not SQL, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
 | `supportsTransactions` | `false` — `MULTI`/`EXEC` exists in Redis and is not exposed through this provider, so the transaction trio and SANDBOX are not offered (#464) |
 | `declaresForeignKeys` | `false` — Redis has no constraints at all, and the "tables" here are key prefixes this provider grouped rather than objects anyone declared |
-| `tablesAreDerivedGroupings` | `true` — `getSchema()` SCANs a bounded slice of the keyspace and groups the real key names it found by their prefix, so a `user:*` row is this server's own summary and not a key any command can be given. The agent layer states this to a plan run, in one sentence, so a grounded run does not draft a command against a grouping. In the object tree it is what withholds Profile from a `keyspace` row ([§6.1](#61-the-object-surface-789)) |
+| `tablesAreDerivedGroupings` | `true` — the object surface SCANs a bounded slice of the keyspace and groups the real key names it found by their prefix, so a `user:*` row is this server's own summary and not a key any command can be given. The agent layer states this to a plan run, in one sentence, so a grounded run does not draft a command against a grouping. In the object tree it is what withholds Profile from a `keyspace` row ([§6.1](#61-the-object-surface-789)) |
 | `containerLevels` | one level, `schema`, labelled Database ([§6.1](#61-the-object-surface-789)) |
 | `objectKinds` | `keyspace` (relation) and `function` (routine, `hasSource`, Lua). Three further candidates are absent rather than declared and zero ([§6.1](#61-the-object-surface-789)) |
 | `supportsMaintenance` | `true` |
@@ -1119,7 +1119,8 @@ await provider.connect();
 await provider.query('SET greeting "hello"');     // → OK
 await provider.query('GET greeting');             // → hello
 await provider.query('{ "command": "HGETALL", "args": ["user:1"] }');
-const schema = await provider.getSchema();        // → key prefixes as "tables"
+const objects = await provider.listObjects(container, 'table');
+const { details } = await provider.describeObjects(container, 'table');
 await provider.disconnect();
 ```
 
@@ -1187,7 +1188,7 @@ request/response contract.
 This Redis provider is a good template for a non-relational backend. To add another provider:
 
 1. **Create** `src/lib/db/providers/<family>/<name>.ts` extending `BaseDatabaseProvider`.
-2. **Implement** the abstract methods (`connect`, `disconnect`, `query`, `getSchema`, `getHealth`,
+2. **Implement** the abstract methods (`connect`, `disconnect`, `query`, the five object methods, `getHealth`,
    `runMaintenance`, and the seven monitoring methods). Return `[]` from the ones that don't apply.
 3. **Override** `getCapabilities()`, `getLabels()`, and `prepareQuery()` so the shared UI renders
    the right wording and feature flags.

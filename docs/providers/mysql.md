@@ -36,7 +36,7 @@ which is the SQL reference implementation. The headline differences:
 
 | Aspect | PostgreSQL | MySQL |
 |--------|------------|-------|
-| Schema introspection | One `MATERIALIZED`-CTE round-trip + two-phase (`getSchemaList`/`getSchemaRelations`) | Single `getSchema()`, **N+1** (1 + 3 queries per table), **no** two-phase split |
+| Schema introspection | One set of shared `MATERIALIZED` CTEs behind the object surface | `information_schema` behind the object surface; the bulk column read is four statements per folder ([§7.1](#71-the-object-surface-789)) |
 | Schema scope | All non-system schemas, cross-schema FKs | **Single database** (`TABLE_SCHEMA = <db>`), bare table names, lifted by the object surface ([§7.1](#71-the-object-surface-789)) |
 | Maintenance ops | `vacuum`, `analyze`, `reindex`, `kill` | `analyze`, `optimize`, `check`, `kill` |
 | Query timeout | `statement_timeout` from `queryTimeout` | **Not wired** — no server-side query timeout |
@@ -119,18 +119,16 @@ case 'mysql': {
 
 ## 3. Design decisions
 
-### 3.1 N+1 schema introspection (no MATERIALIZED CTEs, no two-phase split)
+### 3.1 No MATERIALIZED CTEs
 
-Unlike PostgreSQL, `getSchema()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)) runs one
-query for the table list and then **three queries per table** (columns, foreign keys, indexes) —
-the classic `1 + N*3` pattern. MySQL also does **not** implement `getSchemaList()` /
-`getSchemaRelations()`, so the two-phase fast-tree loading that PostgreSQL uses is unavailable; the
-`/api/db/schema/list` route falls back to the single `getSchema()`. On a very large schema this is
-more round-trips than the Postgres approach — see [Known limitations](#14-known-limitations--future-work).
+Unlike PostgreSQL, this provider composes no `MATERIALIZED` CTEs: MySQL has no such hint, and
+`information_schema` is a set of views over the data dictionary rather than the materialised copies it
+was through 5.7. The object surface's bulk column read is four statements per folder
+([§7.1](#71-the-object-surface-789)) whatever the folder holds.
 
-### 3.2 Single-database scope
+### 3.2 Single-database scope, and how the object surface lifts it
 
-Every `getSchema()` query is parameterized with `TABLE_SCHEMA = ?` bound to `config.database`. MySQL
+The deleted flat reading parameterized every query with `TABLE_SCHEMA = ?` bound to `config.database`. MySQL
 "schemas" *are* databases, so that surface only ever sees the connected database, and table display
 names are bare (no `schema.table` prefixing). There is no cross-schema FK resolution to worry about.
 
@@ -183,8 +181,8 @@ module-local helper, `runStatement(queryable, sql, params?)`
 | carries none (or an empty array) | `conn.query(sql)` | text |
 
 Parameterised statements are unchanged: the placeholders are what the prepared protocol is for, and
-binding is what keeps a value out of the SQL text. So `getSchema()` and every `information_schema`
-read that names the database stay prepared, while `SHOW STATUS`, `SHOW VARIABLES`, `SELECT VERSION()`,
+binding is what keeps a value out of the SQL text. So every `information_schema` read that names the
+database stays prepared, while `SHOW STATUS`, `SHOW VARIABLES`, `SELECT VERSION()`,
 `SHOW BINARY LOGS`, the maintenance statement, `KILL`, and a parameterless statement from the editor —
 `EXPLAIN FORMAT=JSON …` among them — go over the text protocol.
 
@@ -249,7 +247,7 @@ against three live servers:
 | `getOverview` | ok | **recovered** (reads MySQL 5.7.32, the wire version) | **recovered** (reads MySQL 5.1.0, the fictitious `version()`) |
 | `getPerformanceMetrics` | ok | answers `{}` — nothing measured rather than a fabricated number | answers `{}` |
 | `getStorageStats` | ok | **recovered** | **recovered** |
-| `getSchema`, table/index stats, editor query, transactions | ok | ok | ok |
+| object reads, table/index stats, editor query, transactions | ok | ok | ok |
 | maintenance `analyze` / `optimize` / `check` | all three ok (`check` **recovered**) | all three ok (`optimize`, `check` **recovered**) | n/a |
 | Explain | ok, `EXPLAIN FORMAT=JSON` (the connect probe measures `mysql-json`) | **Explain tab renders the text plan, browser, 2026-09-06**: the probe measures `mysql-text`, the panel sends plain `EXPLAIN`, and one row came back for a constant `SELECT` ([§5.5](#55-the-explain-grammar-is-measured-at-connect)) | **Explain tab renders the text plan, browser, 2026-09-06**: the same probe and statement, 14 rows drawn as a 13-node tree |
 
@@ -566,27 +564,16 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 
 ## 7. Schema introspection
 
-`getSchema()` returns one `TableSchema` per `BASE TABLE` in the connected database. Per table it
-issues three follow-up queries:
-
-| Data | Source | Notes |
-|------|--------|-------|
-| Tables | `information_schema.TABLES` | `TABLE_ROWS` (engine estimate), `DATA_LENGTH + INDEX_LENGTH` |
-| Columns | `information_schema.COLUMNS` | first 100 (`LIMIT 100`); `isPrimary` = `COLUMN_KEY = 'PRI'` |
-| Foreign keys | `information_schema.KEY_COLUMN_USAGE` | rows where `REFERENCED_TABLE_NAME IS NOT NULL` |
-| Indexes | `information_schema.STATISTICS` | `GROUP_CONCAT` columns by `SEQ_IN_INDEX`; `unique` = `NOT NON_UNIQUE` |
-
-There is no `getSchemaList()`/`getSchemaRelations()` — see [§3.1](#31-n1-schema-introspection-no-materialized-ctes-no-two-phase-split).
+Every reading of this engine's objects goes through the object surface. The flat reading that came
+before it was one query for the table list plus three per table, and on MySQL it was also a cage:
+every one of its reads bound `TABLE_SCHEMA = config.database` ([§3.2](#32-single-database-scope-and-how-the-object-surface-lifts-it)),
+so the app showed exactly one database with no way to reach another. It is deleted.
 
 ### 7.1 The object surface (#789)
 
-`getSchema()` above is the flat model, and on MySQL it is also a cage: every one of its four reads
-binds `TABLE_SCHEMA = config.database` ([§3.2](#32-single-database-scope)), so the app has shown
-exactly one database with no way to reach another. The object surface replaces it with four
-container-aware methods (`listContainers`, `countObjects`, `listObjects`, `describeObject`) declared
-in [`types.ts`](../../src/lib/db/types.ts) and implemented in
-[`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts). Both surfaces are live through Phase 1; the
-phase that removes `getSchema()` is #789's last task.
+Five container-aware methods (`listContainers`, `countObjects`, `listObjects`, `describeObject`,
+`describeObjects`) declared in [`types.ts`](../../src/lib/db/types.ts) and implemented in
+[`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts).
 
 `information_schema` answers for every kind here, which is the OPPOSITE of
 [PostgreSQL's](./postgres.md) "read the native catalog" reasoning and is deliberate: MySQL 8's data
@@ -806,9 +793,9 @@ one (`next_not_cached_value`, `minimum_value`, `maximum_value`, `start_value`, `
 `cache_size`, `cycle_option`, `cycle_count`), because a sequence is a table underneath. Its role is
 `config` rather than `relation` because nobody selects rows from it.
 
-Three differences from the `getSchema()` reads over the same views, all deliberate:
+Three differences from the deleted flat reads over the same views, all deliberate:
 
-- **No `LIMIT`.** `SCHEMA_COLUMNS_SQL` stops at 100 columns, which a flat tree can live with and a
+- **No `LIMIT`.** The flat column read stopped at 100 columns, which a flat tree could live with and a
   detail panel cannot: nothing downstream can tell a cap from a count, so a 140-column table would
   report 100 columns as a fact.
 - **No `GROUP_CONCAT` for the index columns.** `group_concat_max_len` is 1024 by default on both
@@ -830,8 +817,7 @@ disagree in both directions. A nullable MariaDB column with no default reads as 
 `NULL`, and the string `NULL` means opposite things on the two servers; less visibly, MariaDB keeps
 the quotes, so `DEFAULT 'abc'` reads back as `'abc'` there and `abc` on MySQL. A repair that
 special-cases only `NULL` therefore leaves every string default wrong by two characters.
-`getSchema()` has the same read over the same view, and repairing one surface alone would make the
-two disagree about one column. Measured both ways and filed as **#795**, whose comment carries the
+Measured both ways and filed as **#795**, whose comment carries the
 full measurement table and what "done" looks like.
 
 #### `describeObjects()` describes a whole folder in four statements (#789)
@@ -872,8 +858,8 @@ is accepted.
 The provider binds `limit + 1`, so a saturated read is told from an exact one with no second count, drops the
 extra object, and reports the CALLER's limit in `truncated`.
 An unbounded call runs a statement with no `LIMIT` clause and can never report truncation.
-Neither the columns nor the indexes are capped: `getSchema()`'s `LIMIT 100` is an unreported bound and is the
-defect `truncated` exists to prevent.
+Neither the columns nor the indexes are capped: the deleted flat reading's `LIMIT 100` was an
+unreported bound and is the defect `truncated` exists to prevent.
 
 **What orders the cut, and under whose collation.**
 `ORDER BY TABLE_NAME` in the target statement, which runs under the SERVER's collation, and **the two servers
@@ -1405,7 +1391,7 @@ And the mock connection answers **both `query` and `execute`**, recording which 
 went through. A mock that only answered `execute` could not tell a statement routed to the text
 protocol from one left on the prepared protocol, which is what
 [§3.4](#34-which-wire-protocol-a-statement-takes) turns on: the `MySQLProvider wire protocol` block
-pins the method for `getHealth`, `getOverview`, `getPerformanceMetrics`, `getSchema`,
+pins the method for `getHealth`, `getOverview`, `getPerformanceMetrics`, the object reads,
 `getStorageStats`, each maintenance statement, `cancelQuery`, the editor's own path (with and without
 parameters), the Explain statement `mysqlJsonStrategy` builds, and the transaction path.
 
@@ -1418,7 +1404,7 @@ parameters), the Explain statement `mysqlJsonStrategy` builds, and the transacti
 ### 12.2 Coverage
 
 20+ describe blocks cover: validation (incl. connection-string bypass), connect/disconnect,
-capabilities, `getSchema()` (columns/FKs/indexes, primary-key detection), health, maintenance (all
+capabilities, the object surface (columns/FKs/indexes, primary-key detection), health, maintenance (all
 types + kill validation), the full transaction lifecycle, `queryInTransaction`, query cancellation,
 overview, performance metrics, slow queries, active sessions, table/index/storage stats, every SSL
 branch, `prepareQuery`, error mapping (`ER_ACCESS_DENIED`, `ECONNREFUSED`), the non-SELECT envelope
@@ -1486,12 +1472,13 @@ const provider = await createDatabaseProvider({
 
 await provider.connect();
 const res = await provider.query('SELECT id, email FROM users WHERE active = ?', [1]);
-const schema = await provider.getSchema();   // single call (no two-phase split)
+const tables = await provider.listObjects(['app'], 'table');
+const { details } = await provider.describeObjects(['app'], 'table');   // 4 statements
 await provider.disconnect();
 ```
 
 Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/cancel`,
-`POST /api/db/maintenance` (admin), and `POST /api/db/schema/list` (falls back to `getSchema()`).
+`POST /api/db/maintenance` (admin), and `POST /api/db/objects/inventory`.
 
 ---
 
@@ -1501,9 +1488,6 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   auto-killed (only explicit `cancelQuery()`/`KILL QUERY`). *Future:* derive a per-statement
   `MAX_EXECUTION_TIME` (the SELECT execution limit) from `queryTimeout`. (Note `wait_timeout` is
   unrelated — it bounds idle connections, not query execution.)
-- **N+1 schema introspection, no two-phase loading.** `getSchema()` issues `1 + 3×tables` queries
-  and there is no `getSchemaList()`/`getSchemaRelations()`, so large schemas are slower than the
-  Postgres MATERIALIZED-CTE path and the tree cannot stream relationships in.
 - **Pool tuning is limited** to `max` (`connectionLimit`); `min`/`idleTimeout`/`acquireTimeout` are
   ignored.
 - **Index `scans` is `CARDINALITY`**, an estimate of distinct values — not a real index-usage/scan

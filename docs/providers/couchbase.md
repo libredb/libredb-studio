@@ -46,7 +46,7 @@ The two things that *are* Couchbase-shaped, and which every design decision belo
 
 | `DatabaseProvider` slot | Couchbase realisation | Mechanism |
 |-------------------------|-----------------------|-----------|
-| "Table" (`TableSchema`) | A **collection**, displayed as `collection` or `scope.collection` | `system:keyspaces` LEFT JOIN `system:scopes` |
+| "Table" (the relation kind) | A **collection**, displayed as `collection` or `scope.collection` | `system:keyspaces` LEFT JOIN `system:scopes` |
 | "Row" | A **document** | SQL++ result row |
 | Columns | **Inferred** field types from a 100-document sample | `INFER <keyspace> WITH {"sample_size": 100}` |
 | Primary key | The document key, projected as `__id` | `META(d).id` |
@@ -334,7 +334,7 @@ No index available on keyspace `travel`.`inventory`.`hotel` that matches your qu
 Create one first: CREATE PRIMARY INDEX ON `travel`.`inventory`.`hotel`
 ```
 
-In both cases `getSchemaRelations()` reads `system:indexes`, so an un-indexed collection shows an
+In both cases the deleted flat relations read reads `system:indexes`, so an un-indexed collection shows an
 empty index list in the explorer before anything is run. Documents whose key is known are reachable
 without any index on every supported version
 ([§5.3](#53-use-keys-reads-a-document-with-no-index-at-all)).
@@ -353,7 +353,7 @@ async function degradeTo<T>(operation: () => Promise<T>, fallback: T): Promise<T
 ```
 
 A source the connected user cannot read yields the fallback instead of breaking an otherwise working
-connection. `getSchemaRelations()` is the deliberate exception: an empty index list *is* the
+connection. the deleted flat relations read is the deliberate exception: an empty index list *is* the
 un-indexed signal of §3.8, so degrading a failed catalog read to empty would fabricate that signal
 for the whole bucket ([`introspect.ts`](../../src/lib/db/providers/document/couchbase/introspect.ts)).
 
@@ -551,14 +551,15 @@ direct action and the background pre-warm show the estimated plan.
 
 ## 6. Schema introspection
 
-`getSchemaList()` is the primary path used by `/api/db/schema/list`, so columns are produced there
-([`introspect.ts`](../../src/lib/db/providers/document/couchbase/introspect.ts)):
+Every reading of this engine's objects goes through the object surface
+([`objects.ts`](../../src/lib/db/providers/document/couchbase/objects.ts)), over the same catalogs the
+deleted flat reading used:
 
 | Data | Source |
 |------|--------|
 | Collections | `system:keyspaces` LEFT JOIN `system:scopes`, filtered to the pinned bucket |
 | Columns | `INFER <keyspace> WITH {"sample_size": 100}` per collection, 4 at a time, 5 s server-side timeout each |
-| Indexes | `system:indexes` (via `getSchemaRelations()`) |
+| Indexes | `system:indexes` |
 | Foreign keys | always `[]` — Couchbase has none and none are invented |
 
 Three details are load-bearing:
@@ -575,7 +576,7 @@ Three details are load-bearing:
   schema loading in hand (`mapWithConcurrency()`,
   [`introspect.ts`](../../src/lib/db/providers/document/couchbase/introspect.ts)).
 
-`getSchema()` merges both halves. A primary index carries no `index_key`, so it is reported with the
+the object surface merges both halves. A primary index carries no `index_key`, so it is reported with the
 synthetic column `META().id`; `unique` is true only for primary indexes, because no secondary GSI
 enforces uniqueness.
 
@@ -583,7 +584,7 @@ enforces uniqueness.
 
 ## 6a. The object surface (#789)
 
-`getSchema()` above flattens the bucket into one list of collections. The object browser is the
+the object surface above flattens the bucket into one list of collections. The object browser is the
 other surface: it walks the engine's own hierarchy, so a bucket holds scopes and a scope holds
 collections, functions and indexes. Both surfaces are live through Phase 1 and they read the same
 catalogs.
@@ -717,7 +718,7 @@ The **kind** decides, and nothing reads the name to work out what it is holding.
 
 | Kind | Columns | Indexes | Foreign keys |
 |------|---------|---------|--------------|
-| `collection` | `INFER`, 100-document sample, the same bound `getSchema()` uses | that collection's `system:indexes` rows, scope and collection both matched | always `[]` |
+| `collection` | `INFER`, 100-document sample, the same bound the deleted flat reading used | that collection's `system:indexes` rows, scope and collection both matched | always `[]` |
 | `function` | `[]` | `[]` | `[]` |
 | `index` | `[]` | `[]` | `[]` |
 
@@ -783,7 +784,7 @@ bucket in one round trip each, so the target set is complete before anything is 
 comparison is exact. The cut is applied in code, after `comparePaths`, which makes a bounded read's
 membership **ours** rather than the server's — the server never orders this read. `INFER`'s own
 `sample_size` is deliberately **not** reported as truncation: it bounds the documents a column list
-is inferred from, exactly as in the single read and in `getSchema()`, and no object is dropped by
+is inferred from, exactly as in the single read and in the object surface, and no object is dropped by
 it, so reporting it would claim the batch left objects out when it left none out.
 
 **Collation, for the record.** SQL++ `ORDER BY` over `["\ue000", "😀"]` answers `U+E000` first,
@@ -1124,7 +1125,8 @@ const rows = await provider.query(
 const byKey = await provider.query(
   'SELECT d.* FROM `travel`.`inventory`.`hotel` AS d USE KEYS ["hotel::1"]',
 );
-const schema = await provider.getSchema();   // collections + inferred fields + indexes
+const objects = await provider.listObjects(container, 'table');
+const { details } = await provider.describeObjects(container, 'table');
 
 await provider.disconnect();
 ```
@@ -1194,7 +1196,7 @@ Everything else:
   per-index series under `@index-<bucket>`, and the provider does not guess: an unpublished size is
   `N/A` with no byte count, while `scans` reports `0` only because the field is required.
 - **One bucket per connection.** Multi-bucket browsing from a single connection is out of scope;
-  `getSchemaList()` and every monitoring read are scoped to `config.database`.
+  the deleted flat list read and every monitoring read are scoped to `config.database`.
 - **Analytics/Columnar, Full-Text Search, Eventing and Capella management APIs** (allowed-IP
   administration, cluster provisioning) are not covered.
 - **Monitoring needs privileges.** Without the Query System Catalog role, slow queries and active

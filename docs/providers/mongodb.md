@@ -36,7 +36,7 @@ accepting queries as JSON rather than SQL.
 
 | `DatabaseProvider` slot | MongoDB realisation |
 |-------------------------|---------------------|
-| "Table" (`TableSchema`) | A **collection** |
+| "Table" (the relation kind) | A **collection** |
 | "Row" | A **document** |
 | Columns | **Inferred** field types from a 100-document sample |
 | `query(sql)` | A JSON **MQL** command (`{collection, operation, …}`) |
@@ -117,7 +117,7 @@ may render poorly ([Known limitations](#13-known-limitations--future-work)).
 
 ### 3.3 Sampling-based schema inference, nested to three levels
 
-MongoDB has no fixed schema, so `getSchema()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
+MongoDB has no fixed schema, so the object surface ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
 **infers** one: it lists collections (skipping `system.*`, capped at 200), and for each samples the
 first **100 documents** to derive field types ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)).
 Caveats baked into this approach:
@@ -285,7 +285,7 @@ injection, no transactions, and no `cancelQuery`. `EXPLAIN` is not supported
 
 ## 6. Schema introspection
 
-`getSchema()` returns one `TableSchema` per collection:
+the object surface answers one object per collection:
 
 | Data | Source |
 |------|--------|
@@ -313,7 +313,7 @@ the collection underneath it.
 
 ### The object surface (#789)
 
-`getSchema()` above answers one flat collection list, for the connected database only. The object
+The deleted flat reading answered one flat collection list, for the connected database only. The object
 surface answers a lazy, per-kind tree across **every** database the connection can see, through four
 methods: `listContainers`, `countObjects`, `listObjects` and `describeObject(path, kind)`.
 
@@ -428,7 +428,7 @@ The **kind** decides, and nothing reads the name to work out what it is holding:
 the catalog row to classify as the kind that was asked for, so `describeObject(["app",
 "active_customers"], "collection")` is a miss rather than a view described as a collection.
 
-- **Columns** are inferred from a 100-document sample, exactly as `getSchema()` infers them and with
+- **Columns** are inferred from a 100-document sample, exactly as the deleted flat reading inferred them and with
   the same bound ([§3.3](#33-sampling-based-schema-inference-nested-to-three-levels)), because
   MongoDB stores no schema to read. This works on a view exactly as it works on a collection, which
   is why a view is worth listing at all.
@@ -436,7 +436,7 @@ the catalog row to classify as the kind that was asked for, so `describeObject([
   measured, not defensive: `listIndexes` on a view is refused with `CommandNotSupportedOnView` (code
   166), and the indexes its pipeline actually uses belong to the collection underneath it, so
   claiming them here would misattribute them — the same reading [§6](#views-are-listed-and-are-asked-less)
-  already applies to `getSchema()`.
+  already applies to the object surface.
 - **`foreignKeys`** is always `[]`, because MongoDB has no foreign key constraint at all. The same
   measurement is behind `declaresForeignKeys: false`.
 
@@ -526,7 +526,7 @@ anything is cut and the comparison is exact. The driver's cursor could not be bo
 a bounded read's membership `comparePaths`' rather than the server's. The bound reaches the
 expensive half: only the objects that will be returned are sampled and only their indexes are read.
 
-`getSchema()`'s silent `.slice(0, 200)` is **not** carried here. That is the reference's first "do
+the object surface's silent `.slice(0, 200)` is **not** carried here. That is the reference's first "do
 not copy": an unreported bound is the defect `truncated` exists to prevent.
 
 #### Paths are derived, never indexed positionally
@@ -831,7 +831,7 @@ serialization, schema inference, monitoring, and maintenance.
 ### Coverage
 
 Validation, connect/disconnect, capabilities, labels, `prepareQuery`, every `query` operation
-(find/aggregate/count/distinct/insert/update/delete), `getSchema` inference, health, maintenance,
+(find/aggregate/count/distinct/insert/update/delete), column inference, health, maintenance,
 overview, performance, slow queries, active sessions, table/index/storage stats, **BSON
 serialization** (ObjectId/Binary/Decimal128/Date/nested), `getMonitoringData`, and **every `ssl.mode`
 branch** asserted against the options object the `MongoClient` constructor received.
@@ -891,7 +891,8 @@ await provider.connect();
 const res = await provider.query(JSON.stringify({
   collection: 'users', operation: 'find', filter: { active: true }, options: { limit: 50 },
 }));
-const schema = await provider.getSchema();   // collections + inferred fields
+const objects = await provider.listObjects(container, 'table');
+const { details } = await provider.describeObjects(container, 'table');
 await provider.disconnect();
 ```
 
@@ -949,7 +950,7 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 - **The `unlimited` query option is ignored.** `prepareQuery()` always returns `limit:
   options.limit || 100`; combined with the route's `hasMore = rows.length === prepared.limit`, an
   "unlimited" request can report an incorrect `hasMore`.
-- **`getSchema()` issues serial round-trips** — up to ~4 calls (count + `collStats` + 100-doc sample
+- **the object surface issues serial round-trips** — up to ~4 calls (count + `collStats` + 100-doc sample
   + `indexes()`) per collection, across up to 200 collections, with no batching/timeout; the schema
   panel can be slow on a large or remote/loaded cluster. A view costs one call (the sample), since
   the other three are the ones MongoDB refuses on a view ([§6](#6-schema-introspection)).

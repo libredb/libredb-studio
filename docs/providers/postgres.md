@@ -129,9 +129,8 @@ large schema (100+ tables/constraints/indexes) that explodes into minutes of pla
 
 If you edit these queries, keep `MATERIALIZED` or you reintroduce the timeout.
 
-**Fallback chain for engines that reject part of this query (#38680).** `getSchema()`,
-`getSchemaList()`, and `getSchemaRelations()` all route their query through
-`queryWithMaterializedFallback()` ([postgres.ts](../../src/lib/db/providers/sql/postgres.ts)), which
+**Fallback chain for engines that reject part of this query (#38680).** The object surface's
+container and detail reads all route their query through `queryWithMaterializedFallback()` ([postgres.ts](../../src/lib/db/providers/sql/postgres.ts)), which
 recovers real object-browser data on four independent gaps instead of failing outright:
 
 1. **The `MATERIALIZED` keyword itself.** Materialize and RisingWave reserve it for their own
@@ -197,7 +196,7 @@ those round trips are latency the object browser pays on every refresh.
 `tables_info` reads `pg_class.reltuples`, which is an **estimate**, and PostgreSQL 14+ writes
 **-1** there for a relation nothing has vacuumed or analysed yet. That is "I have not counted
 this", not "this has no rows". `estimatedRowCount()` maps it — and a NULL from a pg_class join
-that matched nothing — to `undefined`; `TableSchema.rowCount` is optional and both
+that matched nothing — to `undefined`; the row count is optional on an object and both
 [TableItem.tsx](../../src/components/schema-explorer/TableItem.tsx) and `DatabaseDocs.tsx`
 already gate on that, so no badge is drawn rather than a number nobody produced.
 
@@ -281,9 +280,9 @@ directions because the two readers use different catalogs:
   engine. The index count still reads `pg_indexes`, which has no equivalent second reader.
 
 Every CTE in the schema queries carries the filter, not just some: `pk_info` and `fk_info` were
-missing it while `tables_info`, `columns_info` and `index_info` had it, which let
-`getSchemaRelations()` keep listing `_timescaledb_catalog` and `google_ml` relations through the FK
-side of its `FULL OUTER JOIN` after the browser had stopped showing them.
+missing it while `tables_info`, `columns_info` and `index_info` had it, which let the deleted
+relations read keep listing `_timescaledb_catalog` and `google_ml` relations through the FK side of
+its `FULL OUTER JOIN` after the browser had stopped showing them.
 
 Extension-created schemas are excluded by **ownership**, not by name. A hardcoded
 `google_ml` would have hidden a real schema from anyone who happened to name one that -
@@ -375,20 +374,19 @@ no row at all for a materialized view or a sequence. On the seeded `postgres:18`
 (`'S'`), while `pg_attribute` answered 2 and 3. Reusing it would have shipped the browser's headline
 new folder, the materialized view #710 is about, with an empty column list. The primary key, foreign
 key and index CTEs *are* reused, so a fork that needs `withoutForeignKeyCatalog()` or
-`withoutJsonAggFunctions()` gets the same repair here that `getSchema()` gets.
+`withoutJsonAggFunctions()` gets the same repair here that the container read gets.
 
 The type text matches on every column but one shape. `format_type(a.atttypid, NULL)` is passed NULL
 rather than `a.atttypmod` because that is what `information_schema.columns.data_type` says:
 `character varying` and `numeric`, not `character varying(50)` and `numeric(12,2)`. Verified column
-by column on `app.orders`, so the object surface and the flat schema tree name a column's type
-identically while both are live.
+by column on `app.orders`, so `describeObject()` and `describeObjects()` name a column's type
+identically.
 
-The exception is an ARRAY column, measured on `postgres:18` while the bulk read below was being
-reshaped from this statement. `app.products.tags` is `text[]`: `format_type` answers `text[]` and
-both object-model surfaces show that, while `information_schema.columns.data_type` answers the bare
-word `ARRAY` and puts the element type in `information_schema.element_types`, so `getSchema()` shows
-`ARRAY`. The two disagree on exactly those columns and the object model has the better half of the
-disagreement, so this is recorded rather than repaired; it disappears when `getSchema()` does.
+One measurement is kept from the deleted flat reading, because it is why the type text is read this
+way. `app.products.tags` is `text[]`: `format_type` answers `text[]` and both object-model surfaces
+show that, while `information_schema.columns.data_type` answered the bare word `ARRAY` and put the
+element type in `information_schema.element_types`. The object model had the better half of that
+disagreement, and it is the only reading left.
 
 `OBJECT_DETAIL_SQL` also strips the `AS MATERIALIZED` hints, which is the opposite of what
 [§3.1](#31-materialized-ctes-for-schema-introspection) wants and for the opposite reason. There the
@@ -493,8 +491,8 @@ with its columns, primary key, foreign keys and indexes. The lineage is `SCHEMA_
 purpose: those bodies carry which catalog answers which fact and which schemas are excluded, all of
 it measured, and the shared PK, FK and index CTEs bring their fallback repairs with them.
 
-Why it exists at all: `src/lib/agent/tools.ts` reads the agent's whole column, index and foreign-key
-grounding through `getSchema()`, and the four methods above cannot answer that. The inventory route
+Why it exists at all: `src/lib/agent/tools.ts` read the agent's whole column, index and foreign-key
+grounding through the flat schema reading, and the four methods above cannot answer that. The inventory route
 tried, as one `describeObject` per object, and removed it as an N+1 of up to 5000 sequential round
 trips. Measured here on a 200-table schema: **33 ms for one `describeObjects()` against 4,135 ms for
 200 `describeObject()` calls**, both answering the same 600 columns, 200 indexes and 200 foreign keys.
@@ -520,9 +518,9 @@ Three properties it holds to:
    distinguishable from an exact one without a second count; the extra row is dropped and
    `truncated` carries the caller's own limit with the one sentence every provider reports a
    caller's bound with, `callerBoundTruncationReason()` in `src/lib/db/object-kinds.ts`. An
-   unbounded call runs without a `LIMIT` clause and can never report truncation. `getSchema()`'s
-   `FILTER (WHERE c.ordinal_position <= 100)` column cap is deliberately NOT carried over, because an
-   unreported bound is the defect this field exists to prevent.
+   unbounded call runs without a `LIMIT` clause and can never report truncation. The deleted flat
+   reading's `FILTER (WHERE c.ordinal_position <= 100)` column cap is deliberately NOT carried over,
+   because an unreported bound is the defect this field exists to prevent.
 
 **The `AS MATERIALIZED` hints are stripped here too, and the measurement is the other way round from
 the plan estimate.** `EXPLAIN (ANALYZE)` on `postgres:18` against the seeded `app` schema, ten
@@ -556,13 +554,12 @@ describeObjects(app, table, limit 10):   10 details, truncated=undefined
 ```
 
 Every detail path was found in that kind's own `listObjects()` answer, and every column list matched
-`describeObject()` for the same table column for column. Against `getSchema()` the ten tables agree
-on every column, index and foreign key except `app.products.tags`, which is the ARRAY spelling above.
+`describeObject()` for the same table column for column.
 
 ### 3.2 Schema SQL hoisted to module scope
 
-`SCHEMA_FULL_SQL`, `SCHEMA_LIST_SQL`, and `SCHEMA_RELATIONS_SQL` are module-level `const`s, not
-inline template literals inside the methods ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)).
+The object surface's statements are module-level `const`s, not inline template literals inside the
+methods ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)).
 This is a **coverage** workaround: `bun`'s coverage instruments the interior lines of a multi-line
 template literal *in a function body* as 0-hit in any test process that imports the file but does
 not exercise that method, and the merged lcov then reports those SQL lines as uncovered. Evaluated
@@ -570,19 +567,13 @@ once at module load, these consts are reported as covered everywhere. The CTE fr
 (`CTE_TABLES_INFO`, `CTE_COLUMNS_INFO`, …) are also single-sourced and composed into the three
 queries so the shared CTEs aren't duplicated (which would otherwise trip the duplication gate).
 
-### 3.3 Two-phase schema loading
+### 3.3 The two-phase schema load, and why it is gone
 
-The schema tree is loaded in two independent calls so a slow or failing relationship query never
-blocks the table list:
-
-- **`getSchemaList()`** — tables + columns + primary keys + row counts/sizes. Renders the tree
-  immediately. Excludes the expensive FK/index joins; returns `indexes: []`, `foreignKeys: []`.
-- **`getSchemaRelations()`** — foreign keys + indexes only, keyed by table display name, merged
-  into the tree asynchronously by the client.
-
-`getSchema()` remains available as the single-round-trip "everything" query (it replaced an old
-N+1 pattern of `1 + N*4` queries). The two-phase split is the path the UI actually uses (via
-`/api/db/schema/list` and `/api/db/schema/relations`).
+The schema tree used to be loaded in two independent calls, the deleted flat list read for tables, columns and
+primary keys and the deleted flat relations read for foreign keys and indexes, so a slow relationship query
+could not block the table list. Both are deleted with the flat reading (#789). The object browser
+reads counts before names and names before columns, so the cost the split was managing is now bounded
+by what the reader actually opened rather than by a second query.
 
 ### 3.4 Cross-schema display names & FK references
 
@@ -604,8 +595,8 @@ seeded from `docker/postgres-init/`: a fresh connection reports `search_path` as
 and `current_schema()` as `public`, and a connection that sets `search_path` moves it.
 
 Without the mark the object browser's flat join had no tie-breaker. §3.4 above drops the `public`
-qualifier and keeps every other one, so `getSchema()` answers `app.orders` for one table and a bare
-`orders` for another; a bare name is a valid suffix of BOTH addresses, and with no container marked
+qualifier and keeps every other one, so the deleted flat reading answered `app.orders` for one table
+and a bare `orders` for another; a bare name is a valid suffix of BOTH addresses, and with no container marked
 as the session's own the shared address rule refused it as ambiguous rather than reading it as the
 schema the connection is actually in. `docker/postgres-init/03-object-fixture.sql` creates
 `public.orders` beside the seeded `app.orders` so that case exists in the fixture rather than in a
@@ -955,19 +946,16 @@ reconstructing. `columnTypes` is consumed by the results grid's column labels, b
 
 ## 6. Schema introspection
 
-Three queries, one set of shared `MATERIALIZED` CTEs:
-
-| Method | SQL const | Returns | Used by |
-|--------|-----------|---------|---------|
-| `getSchema()` | `SCHEMA_FULL_SQL` | tables + columns + PKs + FKs + indexes (one round-trip) | direct/full loads |
-| `getSchemaList()` | `SCHEMA_LIST_SQL` | tables + columns + PKs (fast, no FK/index) | `/api/db/schema/list` |
-| `getSchemaRelations()` | `SCHEMA_RELATIONS_SQL` | FKs + indexes keyed by table | `/api/db/schema/relations` |
+One surface, the object surface ([§3.1.1](#311-the-object-surface-789)): `listContainers()`,
+`countObjects()`, `listObjects()`, `describeObject()` and `describeObjects()`, over one set of shared
+`MATERIALIZED` CTEs.
 
 Common behaviour:
-- System schemas (`pg_catalog`, `information_schema`, `pg_toast`) are excluded; only `BASE TABLE`s.
-- Row counts come from `pg_class.reltuples` (planner estimate, fast) and are clamped to ≥ 0
-  (`reltuples` is `-1` on never-analyzed tables).
-- Column lists are capped at the first 100 columns (`ordinal_position <= 100`).
+- System schemas (`pg_catalog`, `information_schema`, `pg_toast`) are excluded, by ownership rather
+  than by name where an extension owns the schema.
+- Row counts come from `pg_class.reltuples` (planner estimate, fast); `-1` means never analysed and
+  is reported as no count rather than as zero.
+- Column lists are NOT capped, and a bulk read that a caller bounded says so in `truncated`.
 - Sizes use `pg_total_relation_size` formatted by `formatBytes()`.
 - Display names follow the public/qualified rule from [§3.4](#34-cross-schema-display-names--fk-references).
 
@@ -1517,15 +1505,16 @@ const provider = await createDatabaseProvider({
 
 await provider.connect();
 const res = await provider.query('SELECT id, email FROM users WHERE active = $1', [true]);
-const tree = await provider.getSchemaList();          // fast structural tree
-const rels = await provider.getSchemaRelations();      // FKs + indexes to merge in
+const schemas = await provider.listContainers();                        // the schemas
+const tables = await provider.listObjects(['app'], 'table');            // names only
+const { details } = await provider.describeObjects(['app'], 'table');   // columns, one round trip
 await provider.disconnect();
 ```
 
 ### 14.2 Over the API
 
 - `POST /api/db/query` — run SQL (see [`API_DOCS.md`](../API_DOCS.md#post-apidbquery)).
-- `POST /api/db/schema/list` and `POST /api/db/schema/relations` — two-phase schema.
+- `POST /api/db/objects/inventory` — objects, and their columns with `includeColumns`.
 - `POST /api/db/transaction` — begin/commit/rollback/query-in-tx.
 - `POST /api/db/cancel` — cancel a running query by id.
 - `POST /api/db/maintenance` — vacuum/analyze/reindex/kill (admin only).

@@ -58,7 +58,7 @@ Three things are OpenSearch-shaped:
 
 | `DatabaseProvider` slot | OpenSearch realisation | Mechanism |
 |---|---|---|
-| "Table" (`TableSchema`) | An **index**, displayed by its bare name | `GET /_cat/indices?format=json&bytes=b` |
+| "Table" (the relation kind) | An **index**, displayed by its bare name | `GET /_cat/indices?format=json&bytes=b` |
 | "Row" | A **document** | One positional array element in `datarows` |
 | Columns | The index's **mapped fields**, flattened to dotted paths, mapping types verbatim | `GET /<index>/_mapping` |
 | Primary key | none — nothing a mapping declares is unique. `_id` *is* selectable here (measured, unlike upstream) but it is metadata rather than a mapped field | `isPrimary: false` on every column |
@@ -224,7 +224,7 @@ product difference is data:
 > every source in the directory with the TypeScript compiler API — not a grep — and fails the build the
 > moment any of it appears elsewhere. This fork forces the guard to be narrower than Couchbase's or
 > Druid's, because its envelope keys are ordinary English that the **neutral** seam legitimately uses:
-> `schema` and `size` are simultaneously wire keys here and `options.schema` / `TableSchema.size`
+> `schema` and `size` are simultaneously wire keys here and `options.schema` / `DatabaseObject.sizeBytes`
 > everywhere else, so those words are matched only as exact **string literals** — the spelling envelope
 > *parsing* produces — and a bare property access is left alone.
 
@@ -688,7 +688,7 @@ seam does not expose.
 
 ## 6. Schema introspection
 
-`getSchema()` ([introspect.ts:355](../../src/lib/db/providers/sql/search/introspect.ts)) makes one
+the object surface ([introspect.ts:355](../../src/lib/db/providers/sql/search/introspect.ts)) makes one
 index listing plus **one mapping read per index**, at most
 `SEARCH_MAPPING_CONCURRENCY = 4` at a time
 ([introspect.ts:102](../../src/lib/db/providers/sql/search/introspect.ts)) — the number Couchbase's
@@ -734,7 +734,7 @@ inference wants `.plugins-ml-config` in the tree, and a developer writing a quer
 thirds of the sidebar to be indices they have never heard of.
 
 Note also that `top_queries-2026.08.18-74305` carries hyphens and dots, so it is a name SQL needs
-quoted. `TableSchema.name` is the index name **verbatim** — quoting belongs to whoever builds a
+quoted. `DatabaseObject.name` is the index name **verbatim** — quoting belongs to whoever builds a
 statement, not to the inventory ([introspect.ts:324-336](../../src/lib/db/providers/sql/search/introspect.ts)) —
 and on this product the quote character is a **backtick** ([§5.4](#54-dialect-traps-a-user-will-hit)).
 
@@ -782,7 +782,7 @@ declaration order to preserve, because documents are unordered JSON. Sorting by 
 **A closed index is kept, and reads honestly**: its `_cat` row reports the status word **`close`** (not
 "closed") with `docs.count` and `pri.store.size` as JSON `null`, while `_mapping` still answers in
 full. So it is described completely with `rowCount` and `size` **omitted** rather than zeroed —
-`TableSchema` makes both optional, which is what preserves the distinction.
+The object shape makes both optional, which is what preserves the distinction.
 
 **A per-index failure costs one index's columns, not the tree.** Only `auth` and `unknown-object`
 degrade to an empty column list
@@ -797,8 +797,8 @@ says `IndexNotFoundException`, and both are in the fault table
 engine fault by introspection, i.e. propagating and blanking the whole tree instead of degrading one
 index.
 
-`getSchemaList()` and `getSchemaRelations()` are deliberately **not implemented**: both are optional
-and the client falls back to `getSchema()`; here both halves are empty by construction, so a list would
+The two-phase flat schema split no longer exists anywhere.: both are optional
+and the client falls back to the object surface; here both halves are empty by construction, so a list would
 be byte-identical and a relations pass would re-read every mapping to return the same empty arrays.
 
 ### The object surface (#789)
@@ -1090,7 +1090,7 @@ The honest empties, each with its reason:
 `TableStats.rowCount`, `totalSize` and `totalSizeBytes` are required numbers, so for those three a
 closed index has nowhere to read but zero. `tableSize` and `tableSizeBytes` are *optional*, so they
 are **absent** rather than `0`: a zero there would be a fabricated measurement rather than a forced
-one. The schema tree makes the same distinction with its own optional `TableSchema.rowCount` and
+one. The schema tree makes the same distinction with its own optional `DatabaseObject.rowCount` and
 `size` (the comment over `toTableStats()` in
 [`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts)).
 
@@ -1223,7 +1223,7 @@ These are not decoration. `inventory-noun.ts` lowercases `entityName` into the n
 reasons with, so a cluster described as holding "tables" of "rows" invites statements written for a
 relational engine. "Indices" rather than "Indexes" because that is the plural this product's own API and
 documentation use — and because "indexes" is the word this codebase already uses for the
-secondary-index objects an index does **not** have (`TableSchema.indexes`, empty by construction here).
+secondary-index objects an index does **not** have (`ObjectDetail.indexes`, empty by construction here).
 
 The two maintenance actions are named even though `supportsMaintenance` is false, because they are
 still rendered **where an engine has maintenance to run**, and their global descriptions say in words
@@ -1412,7 +1412,8 @@ await provider.connect();                              // proves the port AND th
 const rows   = await provider.query('SELECT * FROM probe_orders LIMIT 50;');   // ';' is fine here
 const page2  = await provider.query('SELECT customer FROM probe_orders LIMIT 50 OFFSET 50');
 const quoted = await provider.query('SELECT customer FROM `top_queries-2026.08.18-74305`');
-const schema = await provider.getSchema();             // indices + mapped fields; indexes always []
+const objects = await provider.listObjects(container, 'table');
+const { details } = await provider.describeObjects(container, 'table');
 const stats  = await provider.getTableStats();         // documents and primary bytes per index
 
 await provider.disconnect();

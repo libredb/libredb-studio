@@ -58,7 +58,7 @@ Three things are Druid-shaped, and nearly every decision below flows from one of
 
 | `DatabaseProvider` slot | Druid realisation | Mechanism |
 |---|---|---|
-| "Table" (`TableSchema`) | A **datasource**, displayed by its bare name | `INFORMATION_SCHEMA.TABLES` where `TABLE_SCHEMA = 'druid'` |
+| "Table" (the relation kind) | A **datasource**, displayed by its bare name | `INFORMATION_SCHEMA.TABLES` where `TABLE_SCHEMA = 'druid'` |
 | "Row" | One result row | One positional array element behind the header rows |
 | Columns | The datasource's column list, SQL types verbatim | `INFORMATION_SCHEMA.COLUMNS` / the query response's header rows |
 | Primary key | none — nothing in a datasource is unique | `isPrimary: false` on every column, `__time` included ([§6](#6-schema-introspection)) |
@@ -949,7 +949,7 @@ Druid's planner publishes none.
 
 ## 6. Schema introspection
 
-`getSchema()` ([`introspect.ts`](../../src/lib/db/providers/sql/druid/introspect.ts)) makes **two**
+the object surface ([`introspect.ts`](../../src/lib/db/providers/sql/druid/introspect.ts)) makes **two**
 `INFORMATION_SCHEMA` reads in parallel with `Promise.all`, both through the transport seam:
 
 | Data | Source |
@@ -974,7 +974,7 @@ The schema predicate is the entire mechanism that keeps all of that out of the s
 excluded stays **queryable by typing SQL** — the monitoring panels read `sys` themselves — so nothing
 is lost, only unlisted.
 
-**`TableSchema.name` is the bare datasource name.** `druid` is the default schema, so
+**`DatabaseObject.name` is the bare datasource name.** `druid` is the default schema, so
 `SELECT * FROM "libredb_demo"` resolves without qualification. No prefix is added and none is needed.
 
 **No column is primary — `__time` included.** It is mandatory in every datasource, it is the
@@ -1055,17 +1055,17 @@ found"* and disappears from the schema tree, suspect availability before suspect
 segments. Nothing in this provider can improve the message — Druid owns both the classification and
 the wording — so this paragraph is the mitigation.
 
-`getSchemaList()` and `getSchemaRelations()` are deliberately **not implemented**. Both are optional
-and the client falls back to `getSchema()`; the split exists so a slow relationship read cannot block
+The two-phase flat schema split no longer exists anywhere. Both are optional
+and the client falls back to the object surface; the split exists so a slow relationship read cannot block
 the table list, and Druid has neither half of that problem — a list would be byte-identical to
-`getSchema()`, and a relations read would spend a round trip to answer two empty arrays per
+the object surface, and a relations read would spend a round trip to answer two empty arrays per
 datasource.
 
 ---
 
 ### 6.1 The object surface (#789)
 
-`getSchema()` above answers one flat datasource list. The object surface answers a lazy,
+The object surface answers a lazy,
 container-aware, kind-tagged tree through four methods, and it lives in
 [`objects.ts`](../../src/lib/db/providers/sql/druid/objects.ts) rather than in the provider class:
 the statements and every derivation over the declaration are there, the connection check and the
@@ -1156,7 +1156,7 @@ build produces.
 
 `sys` holds six tables and `INFORMATION_SCHEMA` holds four, and `TABLE_TYPE = 'SYSTEM_TABLE'` is the
 engine's own word for them. Without the kind, both of those containers would open onto nothing at
-all while `sys.segments` is right there to be selected from. `getSchema()`'s sidebar deliberately
+all while `sys.segments` is right there to be selected from. the object surface's sidebar deliberately
 filters them out ([§6](#6-schema-introspection)); the object tree does not need to, because a tree
 addresses by container and the two system schemas are containers of their own.
 
@@ -1211,12 +1211,12 @@ the other half of the rule.
 One statement, `INFORMATION_SCHEMA.COLUMNS`, answers for all three kinds - a datasource's dimensions
 and metrics, a lookup's `k` and `v`, and a system table's own columns - so there is no per-kind
 branch and no kind that answers three empty arrays. The rows go through the same `readColumn()` that
-`getSchema()` uses, which is what keeps the detail panel and the sidebar from ever describing one
+the object surface uses, which is what keeps the detail panel and the sidebar from ever describing one
 datasource two different ways: the type fallback, the nullable reading, and `isPrimary: false` for
 every column including `__time`, are all stated once (§6 above).
 
 `indexes` and `foreignKeys` are always `[]`, by construction rather than by omission, for the same
-two reasons `getSchema()` gives. Zero columns **raises**: every object of every declared kind has at
+two reasons the object surface gives. Zero columns **raises**: every object of every declared kind has at
 least one column, so an empty answer means the object is not there under that name in this schema.
 
 `DatabaseObject` carries no `rowCount` and no `sizeBytes` here. Both would have to come from
@@ -1247,9 +1247,9 @@ Five decisions, each measured on Apache Druid 37.0.0 rather than reasoned about.
 
 1. **The catalog is the same one the single read uses**, `INFORMATION_SCHEMA.COLUMNS`, and the same
    `readColumn()` maps a row for both: one mapper, so the batch cannot spell a column's type
-   differently from the single read of the same datasource. It is also the catalog `getSchema()`
+   differently from the single read of the same datasource. It is also the catalog the object surface
    reads, unlike most engines in this epic - the difference there is SCOPE, not source:
-   `getSchema()` is pinned to `TABLE_SCHEMA = 'druid'` (`DATASOURCE_SCHEMA_FILTER`), so it cannot
+   the object surface is pinned to `TABLE_SCHEMA = 'druid'` (`DATASOURCE_SCHEMA_FILTER`), so it cannot
    see a lookup or a system table at all, and the bulk read answers for every schema the cluster
    publishes.
 2. **No kind answers an empty batch without a round trip**, which is what makes Druid unlike the
@@ -1764,7 +1764,8 @@ const rows = await provider.query('SELECT * FROM "libredb_demo" LIMIT 50');
 const one = await provider.query(
   'SELECT COUNT(*) AS "c" FROM "libredb_demo" WHERE region = ?', ['emea'],
 );
-const schema = await provider.getSchema();      // datasources + columns, indexes always []
+const objects = await provider.listObjects(container, 'table');
+const { details } = await provider.describeObjects(container, 'table');
 const tasks  = await provider.getActiveSessions(); // RUNNING/PENDING ingestion tasks
 
 await provider.disconnect();

@@ -40,7 +40,7 @@ generic components render LibreDB-appropriate wording.
 
 | `DatabaseProvider` slot | LibreDB realisation | Mechanism |
 |-------------------------|---------------------|-----------|
-| "Table" (`TableSchema`) | A **cataloged namespace** (relational table / document collection) or, for uncataloged keys, a **key prefix** (e.g. `user:*`) | `catalog(db)` for cataloged kinds; `kv.range` scan + prefix grouping for raw kv |
+| "Table" (the relation kind) | A **cataloged namespace** (relational table / document collection) or, for uncataloged keys, a **key prefix** (e.g. `user:*`) | `catalog(db)` for cataloged kinds; `kv.range` scan + prefix grouping for raw kv |
 | "Row" | A **key** | — |
 | `query(input)` | A command (`get`/`put`/`delete`/`prefix`/`range`) | `kv` lens methods |
 | `getHealth()` / `getOverview()` | File stats | `fs.statSync` + prefix count |
@@ -144,7 +144,7 @@ path and throws rather than silently opening an in-memory database.
 
 Since `@libredb/libredb` 0.0.2 a `.libredb` file carries a persisted **catalog**: the lenses
 record, under a reserved key prefix, which lens (`document` / `relational`) each namespace belongs
-to and — for a relational table — its declared column schema. `getSchema()` reads `catalog(db)`
+to and — for a relational table — its declared column schema. the object surface reads `catalog(db)`
 and renders a faithful per-kind view:
 
 - **Relational** namespace: the table's **real columns** and types from the catalog schema, with
@@ -156,7 +156,7 @@ and renders a faithful per-kind view:
 - **Uncataloged** (raw kv) namespace: the historical `key` (string, primary) + `value` (string,
   nullable) columns.
 
-Studio's `TableSchema` has no dedicated "kind" field, so the kind is signalled by the columns
+The object shape has no dedicated "kind" field, so the kind is signalled by the columns
 themselves: real columns ⇒ relational, `id`/`document` ⇒ document, `key`/`value` ⇒ raw kv.
 
 `groupName()` ([`libredb.ts`](../../src/lib/db/providers/embedded/libredb.ts)) still drives the raw
@@ -171,8 +171,8 @@ the `user:*` group, and a key with no colon (e.g. `config`) becomes its own sing
 upgrades the group to its catalog-aware columns. Cataloged namespaces with no scanned rows yet
 (an empty table/collection) are still emitted, with `rowCount: 0`.
 
-`getSchema()` scans up to `MAX_SCAN = 10000` keys via `kv.range('', '\u{10FFFF}')` — a half-open
-interval that covers the entire keyspace. The resulting `TableSchema` list is sorted by descending
+the object surface scans up to `MAX_SCAN = 10000` keys via `kv.range('', '\u{10FFFF}')` — a half-open
+interval that covers the entire keyspace. The resulting object list is sorted by descending
 row count so the largest groups appear first.
 
 ### 3.3.1 Reserved namespace is excluded from every user-facing view
@@ -180,7 +180,7 @@ row count so the largest groups appear first.
 The database stores internal metadata (the catalog, and any future internal sub-namespace) under a
 reserved key prefix — `RESERVED_MARKER` (U+0000, the lowest byte). Because U+0000 sorts below all
 user data, those keys fall inside the provider's full-keyspace scan. They are internal, so the
-provider filters them out in **both** `getSchema()` grouping **and** the `range`/`prefix` query
+provider filters them out in **both** the object surface grouping **and** the `range`/`prefix` query
 result rendering (`toRows`). Without the filter, a file written via `doc()`/`table()` would leak a
 junk `\x00libredb:*` pseudo-table and catalog rows into results.
 
@@ -286,7 +286,7 @@ condition as a clear `ConnectionError` (see [§10](#10-error-handling)):
     lost its schema capture to the lock. A `ConnectionError` becomes an *unavailable* capture rather
     than a failure, so every plan run on a LibreDB connection was silently ungrounded from the
     moment anyone browsed it in the sidebar.
-  - `POST /api/db/schema-snapshot` answered HTTP 503 with the same message, so the Schema Diff tab's
+  - `POST /api/db/objects/inventory` answered HTTP 503 with the same message, so the Schema Diff tab's
     **Snapshot** button — its only caller — could not read a schema the sidebar was listing at that
     moment. Measured in the browser against the released 0.13.4 image on 2026-08-25.
 
@@ -369,7 +369,7 @@ Rules:
 JSON values in the `value` column are pretty-printed with two-space indentation when they parse
 successfully. Non-JSON strings are left as-is.
 
-The command grammar is **unchanged** by the catalog work — only the schema *view* (`getSchema()`)
+The command grammar is **unchanged** by the catalog work — only the schema *view* (the object surface)
 became catalog-aware. `get`/`put`/`delete`/`prefix`/`range` still operate on the raw kv keyspace
 exactly as before. The one behavioural refinement: `prefix` and `range` results filter out any key in the reserved
 namespace (via the package's `isReservedKey` predicate), so a full-keyspace `range` no longer leaks
@@ -449,7 +449,7 @@ is legal in every target language (`users:*` -> `User`), keeping Unicode letters
 
 ## 6. Schema introspection
 
-`getSchema()` returns one `TableSchema` per namespace, made catalog-aware:
+the object surface answers one object per namespace, made catalog-aware:
 
 ```
 1. registry = catalog(db)                  <- which namespaces are relational / document, + schemas
@@ -486,7 +486,7 @@ were written through the raw `kv` lens are never cataloged, so they keep the hon
 
 ### 6.1 The object surface (#789)
 
-`getSchema()` above answers one flat namespace list. The object surface answers a lazy,
+the object surface above answers one flat namespace list. The object surface answers a lazy,
 kind-tagged tree through four methods, and on this engine they live in the provider class:
 there is no statement layer to split out, because the catalog here is a `Map` the package
 hands over.
@@ -591,7 +591,7 @@ seam is a method**. `enumerate()` reads the catalog and walks the keyspace once,
 `countObjects()`, `listObjects()` and `describeObject()` all read what it returned and nothing
 else. A count is the LENGTH of the array its own kind was given, so there is no second scan with
 a different bound for the badge and the folder to disagree in. It reads through `scanGroups()`,
-the same pass `getSchema()` and `getTableStats()` make, so the flat model and the object model
+the same pass the object surface and `getTableStats()` make, so the flat model and the object model
 cannot report different inventories of one file while both surfaces are live.
 
 #### One count is a sample, and the type says so
@@ -650,7 +650,7 @@ tells them apart by the key pattern: `prefix employees:` reaches the table's row
 employees` reads a key of that exact name.
 
 It also makes the two readings agree on every object rather than on the derived ones alone.
-`getSchema()` spells a cataloged namespace `employees:*`, so under the old address no cataloged
+the object surface spells a cataloged namespace `employees:*`, so under the old address no cataloged
 object's flat spelling could resolve to its own path, and the row menu's `flatTargetName` lookup
 (#518, and see [§5.3](#53-schema-explorer-menu-actions)) is a lookup by that same string.
 
@@ -670,7 +670,7 @@ what it is holding: a group is mapped to a kind by the CATALOG, never by its spe
 
 #### What `describeObject()` answers
 
-The kind decides, and the columns come from `schemaForGroup()`, the same builder `getSchema()`
+The kind decides, and the columns come from `schemaForGroup()`, the same builder the object surface
 uses, so the flat model and the object model cannot describe one object two ways. The column
 shapes are the table in [§6](#6-schema-introspection) above.
 
@@ -794,7 +794,7 @@ through the `this.db` / `this.kv` handle `connect()` already holds, and nothing 
 surface calls `open` at all. A second handle for an object read would lock the session out of its
 own database (`findOpenSingleWriterProvider`). The suite pins it: it asserts that a second `open`
 of the fixture throws while the provider holds it, then drives all four object methods and a
-`getSchema()` through the held handle.
+the object surface through the held handle.
 
 ---
 
@@ -814,7 +814,7 @@ There is no embedded stats API.
 | `getTableStats()` | the schema tree's scan | one row per namespace: lens as `schemaName`, key count as `rowCount`, no bytes |
 | `getIndexStats()` | — | **throws** `LIBREDB_INDEX_STATS_REFUSAL` — no index object exists |
 
-`getOverview().tableCount` calls `getSchema()` internally — it is a full scan, so it honors the
+`getOverview().tableCount` calls the object surface internally — it is a full scan, so it honors the
 10 000-key cap and may undercount for very large files.
 
 Because `getPerformanceMetrics()` returns an empty object, every card on the Overview and Performance
@@ -843,7 +843,7 @@ it reported *zero tables* on a database with tables. Measured before the change,
 separately:
 
 - **`getTableStats()` — implemented.** A namespace's rows *are* its keys (`employees:1`,
-  `articles:a1`), which is exactly what `getSchema()` already counts, so the panel now reports one
+  `articles:a1`), which is exactly what the object surface already counts, so the panel now reports one
   row per namespace from that same scan (`scanGroups()` is shared, so the tree and the panel can
   never disagree). `schemaName` carries the namespace's **lens** — `relational` / `document` / `kv`
   — because LibreDB has no schema namespace and the lens is the one thing the catalog declares about
@@ -1013,7 +1013,7 @@ cross-contamination.
 ### 11.2 Coverage
 
 The suite covers: validation (missing path), connect/disconnect (real file + idempotent
-disconnect), capabilities, labels, `getSchema` (prefix grouping, column definition, sort order),
+disconnect), capabilities, labels, the object reads (prefix grouping, column definition, sort order),
 all five query commands (`get` found, `get` missing, `prefix`, `range`, `put`, `delete`),
 multi-word values, error paths (unknown verb, unmatched quote), and monitoring (`getOverview` file
 size + group count, `getStorageStats` path + size, `runMaintenance` unsupported).
@@ -1028,7 +1028,7 @@ and `getIndexStats()` reject with their own sentences while `getHealth()` still 
 `errors`, the Tables panel populated.
 
 A dedicated **catalog-aware schema** suite seeds a file with a relational table (`table()`) and a
-document collection (`doc()`) alongside the raw kv keys, then asserts: (a) `getSchema()` and
+document collection (`doc()`) alongside the raw kv keys, then asserts: (a) the object surface and
 `range`/`prefix` queries never surface the reserved catalog prefix; (b) the relational table shows
 its real declared columns with the primary key marked (the relational signal); (c) the document
 collection shows the generic `id`/`document` columns (the document signal); and (d) raw kv
@@ -1163,7 +1163,8 @@ await provider.query('delete session:abc');
 // -> { rows: [{ changed: 1 }], rowCount: 1, fields: ['changed'] }
 
 // Browse the schema (prefix groups as tables)
-const schema = await provider.getSchema();
+const objects = await provider.listObjects(container, 'table');
+const { details } = await provider.describeObjects(container, 'table');
 // -> [{ name: 'user:*', rowCount: 3, columns: [{name:'key',...},{name:'value',...}] }, ...]
 
 await provider.disconnect();
@@ -1183,10 +1184,10 @@ await provider.disconnect();
   command grammar in v1. Deferred to a future release.
 - **No in-memory connections.** A missing `database` path throws rather than silently opening an
   ephemeral in-memory store, which would be discarded on disconnect and offer no durable value.
-- **Catalog-aware views are now live (since `@libredb/libredb` 0.0.2).** `getSchema()` reads
+- **Catalog-aware views are now live (since `@libredb/libredb` 0.0.2).** the object surface reads
   `catalog(db)` and presents real relational tables (with their declared columns) and document
   collections; only namespaces written through the raw `kv` lens fall back to the prefix-grouped
-  `key`/`value` view. Studio's `TableSchema` has no dedicated "kind" field, so the kind is
+  `key`/`value` view. The object shape has no dedicated "kind" field, so the kind is
   signalled by the columns rather than a label. The reserved catalog namespace is excluded from
   all user-facing views (schema and query results).
 - **Schema scan capped at 10 000 keys.** Prefix groups that only appear beyond the cap won't show

@@ -348,10 +348,9 @@ Degradation is per reading, not per tree:
 ### 6.1 The object surface (#789)
 
 The table above is the flat model: one list of tables, no views, no indexes as objects, no triggers at
-all. The object surface replaces it with four container-aware methods (`listContainers`, `countObjects`,
-`listObjects`, `describeObject`) declared in [`types.ts`](../../src/lib/db/types.ts) and implemented in
-[`objects.ts`](../../src/lib/db/providers/sql/libsql/objects.ts). The phase that removes `getSchema()` is
-#789's last task; both surfaces are live through Phase 1.
+all. The object surface replaces it with five container-aware methods (`listContainers`, `countObjects`,
+`listObjects`, `describeObject`, `describeObjects`) declared in [`types.ts`](../../src/lib/db/types.ts) and implemented in
+[`objects.ts`](../../src/lib/db/providers/sql/libsql/objects.ts). The flat reading it replaced is deleted.
 
 Everything below was measured on 2026-09-11 against `ghcr.io/tursodatabase/libsql-server:v0.24.33`, the
 image [`database-compose.yml`](../../database-compose.yml) pins, which embeds **SQLite 3.45.1** (§0's
@@ -481,7 +480,7 @@ nothing to ask, and an empty batch touches no network at all.
 |---|---|
 | Columns | `table_xinfo` and NOT `table_info`, which DROPS a generated column: measured, `table_info('orders')` answers four columns where `table_xinfo` answers five. `hidden = 1` is the other direction, a virtual table module's own interface columns (`notes` and `rank` on an FTS5 table), which the table does not declare |
 | `isPrimary` | `pk > 0`. `pk` is a 1-BASED RANK and not a flag, so `= 1` reports the second column of a composite primary key as ordinary |
-| `type` | as answered, which is the EMPTY STRING on a virtual table's columns. `getSchema()` writes `"TEXT"` there, which is a guess about affinity |
+| `type` | as answered, which is the EMPTY STRING on a virtual table's columns. The deleted flat reading wrote `"TEXT"` there, which is a guess about affinity |
 | Indexes | same `sqlite_` exclusion as the Indexes folder, so the two surfaces agree about what an index is. An index on an EXPRESSION publishes a null column name (`cid = -2`) and is left out rather than labelled |
 | Foreign keys | `referencedTable` is a bare name: a foreign key's parent is resolved inside the same database |
 

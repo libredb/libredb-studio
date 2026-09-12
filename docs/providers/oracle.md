@@ -36,7 +36,7 @@ providers, with several Oracle-isms that are worth knowing before reading the co
 |--------|------------|--------|
 | Driver mode | `pg` | `oracledb` **Thin** by default (Thick opt-in via `ORACLE_CLIENT_LIB_DIR`) |
 | Pagination | `LIMIT … OFFSET` | `FETCH FIRST n ROWS ONLY` / `OFFSET m ROWS FETCH NEXT n` |
-| Schema scope | all non-system schemas | `getSchema()`: the connecting **user's** schema (`OWNER = USER`). The object surface: every owner in `ALL_USERS` ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)) |
+| Schema scope | all non-system schemas | every owner in `ALL_USERS` ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)); the deleted flat reading saw only the connecting user's |
 | Schema queries | 1 `MATERIALIZED`-CTE round-trip | **5 bulk** `ALL_*` queries grouped in memory |
 | Maintenance | vacuum / analyze / reindex / kill | `analyze` (DBMS_STATS) / `optimize` (rebuild one table's indexes, or the schema's) / `kill` |
 | Transaction timeout | 5-minute auto-rollback | **none** |
@@ -154,20 +154,14 @@ deliberately stricter than node-oracledb's tokenizer, which opens a q-string at 
 `q`/`Q` whatever comes before it; the strict side is the one whose mistake costs a bound — and, since
 #297, a confirmation prompt on that statement — rather than a misplaced clause.
 
-### 3.3 Owner-scoped, five-query schema introspection
+### 3.3 Schema introspection reads the `ALL_*` views, and is not owner-scoped
 
-`getSchema()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) runs **five bulk queries**
-over the `ALL_*` data-dictionary views — tables, columns, primary keys, foreign keys, indexes —
-all filtered by `OWNER = :1` (the connecting user, upper-cased) and then **grouped in memory** by
-table. This is neither the Postgres single-CTE approach nor MySQL's per-table N+1: it is a fixed
-5 round-trips regardless of table count. There is no `getSchemaList()`/`getSchemaRelations()`
-(no two-phase split), and the returned `TableSchema` has **no `size` field** (only `rowCount` from
-`NUM_ROWS`, an optimizer estimate that can be stale/`NULL`).
-
-Both of those are what the object surface replaces (#765): it loads in two phases by construction,
-and it is not owner-scoped. See
-[§7](#the-object-surface-789-and-the-confinement-it-lifts-765). `getSchema()` stays until #789's
-last task removes it.
+Every reading of this engine's objects goes through the object surface
+([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)). The flat reading that came before it
+ran five bulk queries over the `ALL_*` data-dictionary views, all filtered by
+`OWNER = :1` (the connecting user, upper-cased) and grouped in memory by table, so the app showed
+exactly one schema on Oracle with no way to reach another. It is deleted (#765). Row counts still come
+from `NUM_ROWS`, an optimizer estimate that can be stale or `NULL`.
 
 ### 3.4 No transaction auto-rollback timeout
 
@@ -561,7 +555,7 @@ in **18 ms** — and the ceiling is the runtime's own and fails loudly: a string
 failed query rather than as a value that has quietly lost its tail.
 
 The handler is deliberately **per-call**, not the process-wide `oracledb.fetchAsString` /
-`fetchAsBuffer` globals: those would also change every schema and monitoring read (`getSchema` reads
+`fetchAsBuffer` globals: those would also change every schema and monitoring read (the catalog reads read
 `ALL_TAB_COLUMNS.DATA_DEFAULT`, a `LONG`), and they outlive the provider — the embeddable library
 surface runs inside a host application that may have its own oracledb consumers.
 
@@ -837,8 +831,7 @@ Surfaced via `POST /api/db/transaction`.
 
 ## 7. Schema introspection
 
-`getSchema()` returns one `TableSchema` per table owned by the connecting user. Five `ALL_*` queries
-(`OWNER = :user`), grouped client-side:
+The dictionary views every object read draws on:
 
 | Data | Source view(s) |
 |------|----------------|
@@ -848,17 +841,15 @@ Surfaced via `POST /api/db/transaction`.
 | Foreign keys | `ALL_CONSTRAINTS` (type `'R'`) joined to the referenced constraint's columns |
 | Indexes | `ALL_INDEXES` + `ALL_IND_COLUMNS` (`unique` = `UNIQUENESS = 'UNIQUE'`) |
 
-No `getSchemaList()`/`getSchemaRelations()`; no `size` on the returned tables (see [§3.3](#33-owner-scoped-five-query-schema-introspection)).
-
 ### The object surface (#789), and the confinement it lifts (#765)
 
-`getSchema()` above is the flat model, and on Oracle it is also a cage: every one of its five reads
-is bound to `OWNER = <connecting user>`, so the app has shown exactly one schema on Oracle with no
-way to reach another. The object surface replaces it with four container-aware methods
-(`listContainers`, `countObjects`, `listObjects`, `describeObject`) declared in
+The flat reading this replaced was bound to `OWNER = <connecting user>` on every one of its five
+reads, so the app showed exactly one schema on Oracle with no way to reach another. The object
+surface is five container-aware methods
+(`listContainers`, `countObjects`, `listObjects`, `describeObject`, `describeObjects`) declared in
 [`types.ts`](../../src/lib/db/types.ts) and implemented in
 [`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts). Both surfaces are live through Phase 1;
-the phase that removes `getSchema()` is #789's last task.
+the flat reading it replaced is deleted.
 
 #### Nine kinds, and the dictionary that answers for each
 
@@ -946,8 +937,9 @@ missing column was `USERNAME`. Both halves of that key survive a non-English `NL
 Oracle translates the sentence, never the `ORA-` prefix and never the quoted identifier.
 
 A container path is passed to the other three methods verbatim and is never upper-cased.
-`getSchema()` upper-cases `connection.user` because it is reading what a person typed into a form;
-a container segment came out of `ALL_USERS`, so it is already the dictionary's own spelling, and
+The deleted flat reading upper-cased `connection.user` because it was reading what a person typed
+into a form; a container segment came out of `ALL_USERS`, so it is already the dictionary's own
+spelling, and
 `CREATE USER "app"` is legal.
 
 #### `countObjects()` is one statement that reads no column of any table
@@ -957,7 +949,7 @@ which is the nearest thing on a laptop to the reporter's PeopleSoft instance:
 
 | | statements | rows materialised | wall clock |
 |---|---|---|---|
-| `getSchema()`, today, on connect | 5 | 121,462 | 1,490 ms |
+| the deleted flat reading, on connect | 5 | 121,462 | 1,490 ms |
 | `listContainers()` + `countObjects()` | 2 | 12 | 72 ms |
 
 Verified from the server side rather than from the client: after a flushed shared pool, a connect
@@ -976,8 +968,8 @@ the Packages badge.
 and a `TABLE` of the same name for its container, with `GENERATED = 'N'` on both, so nothing about
 the table row says it is not a table somebody created. Left in, an owner with 100 materialized
 views reports 100 tables nobody wrote, and each one opens onto the materialized view's own columns.
-`getSchema()` has that defect today, and it is visible on the fixture: it returns three tables for
-an owner holding two.
+The deleted flat reading had that defect, and it was visible on the fixture: it returned three
+tables for an owner holding two.
 
 The rule needs no second dictionary view, and that is measured rather than assumed. A table and a
 materialized view cannot share a name in one owner, because they share Oracle's schema-object
@@ -1106,19 +1098,18 @@ breaks: these statements key the last path segment against `TABLE_NAME`, and a t
 `APP_ORDERS` on table `APP_CUSTOMERS` is legal, so it would have been handed `APP_ORDERS`'s columns
 as if they were its own.
 
-Two of the four statements differ from their `getSchema()` counterparts on purpose:
+Two of the four statements differ from the deleted flat reading's counterparts on purpose:
 
 - The foreign-key read pairs columns with `rcc.POSITION = acc.POSITION`. Without it a two-column
   foreign key joins every referencing column to every referenced one and reports four pairs for two.
-  `SCHEMA_FOREIGN_KEYS_SQL` still has that defect.
+  The flat foreign-key statement had that defect and is gone with it.
 - The index read is keyed by `ai.TABLE_OWNER`, not `ai.OWNER`. An index one user owns on another
   user's table belongs to the table when a person is looking at the table, and an index this owner
   holds on somebody else's table does not.
 
-`ForeignKeySchema.referencedTable` is one string while both surfaces are live, so it is spelled the
-way `getSchema()` spells it: bare within the same owner, `OWNER.TABLE` outside it. Qualifying the
-cross-owner case is not cosmetic, since a bare name there addresses a table in the wrong schema.
-The phase that removes `getSchema()` is where that string becomes a path.
+`ForeignKeySchema.referencedTable` is one string, so it is spelled bare within the same owner and
+`OWNER.TABLE` outside it. Qualifying the cross-owner case is not cosmetic, since a bare name there
+addresses a table in the wrong schema. Turning that string into a path is Phase 2's.
 
 #### `describeObjects()` describes a whole folder in five statements (#789)
 
@@ -1575,11 +1566,11 @@ caught by a live probe, not by `tsc`.
 ### 12.2 Coverage
 
 The suite covers: validation, connect/disconnect, query, capabilities, **labels override**,
-**`prepareQuery` FETCH FIRST / OFFSET-FETCH**, `getSchema` (columns/PKs/FKs/indexes grouping),
+**`prepareQuery` FETCH FIRST / OFFSET-FETCH**, the object surface (columns/PKs/FKs/indexes),
 health, maintenance (analyze/optimize/kill), pool stats, the transaction lifecycle, query
 cancellation (`break()`), overview, performance metrics, slow queries, active sessions,
-table/index/storage stats, **the LOB fetch type handler** (per type, plus that `getSchema` is left
-alone and that a `BLOB` reaches `asBytes` in both its live and its serialized shape), **the
+table/index/storage stats, **the LOB fetch type handler** (per type, plus that the catalog reads are
+left alone and that a `BLOB` reaches `asBytes` in both its live and its serialized shape), **the
 `INTERVAL` literals** (both types, positive/negative/zero, a nine-digit year count, nanosecond
 precision, `NULL`, both query paths, and that a result with no interval column keeps the driver's own
 rows array), error mapping,
@@ -1634,12 +1625,13 @@ const provider = await createDatabaseProvider({
 
 await provider.connect();
 const res = await provider.query('SELECT id, email FROM users WHERE active = :1', [1]);
-const schema = await provider.getSchema();   // 5 ALL_* queries, grouped in memory
+const tables = await provider.listObjects(['APP'], 'table');
+const { details } = await provider.describeObjects(['APP'], 'table');
 await provider.disconnect();
 ```
 
 Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/cancel`,
-`POST /api/db/maintenance` (admin), `POST /api/db/schema/list` (falls back to `getSchema()`), and
+`POST /api/db/maintenance` (admin), `POST /api/db/objects/inventory`, and
 the object tree's own routes under `POST /api/db/objects/*`
 ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)).
 
@@ -1714,12 +1706,6 @@ the object tree's own routes under `POST /api/db/objects/*`
   string to decide silently.
 - **No transaction auto-rollback timeout** (unlike Postgres/MySQL) — an abandoned transaction holds
   its connection/locks until committed, rolled back, or pool-reclaimed.
-- **`getSchema()` is owner-scoped** to the connecting user (`OWNER = USER`), tables carry no size
-  field, and it has no `getSchemaList()`/`getSchemaRelations()` split, so `/api/db/schema/list`
-  falls back to the whole thing. None of that is a limitation of the object browser any more: the
-  object surface reaches every owner and loads in two phases by construction
-  (#765, [§7](#the-object-surface-789-and-the-confinement-it-lifts-765)). It is what the flat
-  schema route still does, and it goes when #789's last task removes `getSchema()`.
 - **`getIndexStats().scans` is always `0`** and `isPrimary` always `false` — Oracle index usage
   counters aren't read here.
 - **Row counts (`NUM_ROWS`) are optimizer estimates** populated by `DBMS_STATS`; they can be stale
@@ -1738,11 +1724,6 @@ the object tree's own routes under `POST /api/db/objects/*`
 - **A package's members are not browsable.** The `package` kind declares
   `childKinds: ['procedure', 'function']`, which is true of the engine, but Phase 1's provider
   surface is container-scoped end to end and nothing lists an object's children. Phase 2 owns it.
-- **A materialized view still shows as a table in `getSchema()`.** Oracle writes a `TABLE` row for
-  every materialized view's container and `ALL_TABLES` lists it, so the flat schema tree reports one
-  table per materialized view that nobody created. The object surface excludes them
-  ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)); `getSchema()` is left alone
-  because it is being removed.
 
 ---
 

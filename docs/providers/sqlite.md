@@ -310,33 +310,18 @@ pinned by tests rather than left to be discovered.
 
 ## 6. Schema introspection
 
-`getSchema()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) reads `sqlite_master`
-(excluding `sqlite_*` internal objects) and, per table, runs the SQLite PRAGMAs:
-
-| Data | Source |
-|------|--------|
-| Tables | `sqlite_master` (`type = 'table'`) |
-| Row count | `SELECT COUNT(*)` per table |
-| Columns | `PRAGMA table_info` (`isPrimary` = `pk = 1`, `nullable` = `notnull = 0`) |
-| Foreign keys | `PRAGMA foreign_key_list` |
-| Indexes | `PRAGMA index_list` + `PRAGMA index_info` (skips `sqlite_*` auto-indexes) |
-| Size | `pragma_page_count * pragma_page_size` (whole-DB, not per-table) |
-
-There is one schema (`main`); no schema prefixing, no two-phase split.
-
-Two defects in that table are real and filed as `D52` in [`docs/BACKLOG.md`](../BACKLOG.md): `PRAGMA
-table_info` drops generated columns, and `pk = 1` demotes the second column of a composite primary
-key. The object surface below reads neither of those ways. Both surfaces are live through Phase 1 of
-#789.
+There was a flat reading here until #789's last task: one list of tables, no views, no indexes as
+objects, no triggers at all, columns from `PRAGMA table_info` and `isPrimary` from `pk = 1`. It is
+deleted, and the two defects it carried went with it: `PRAGMA table_info` DROPS a generated column,
+and `pk = 1` demotes the second column of a composite primary key. The object surface reads
+`pragma_table_xinfo` and `pk > 0` and has neither.
 
 ### 6.1 The object surface (#789)
 
-`getSchema()` above is the flat model: one list of tables, no views, no indexes as objects, no
-triggers at all. The object surface replaces it with four container-aware methods
-(`listContainers`, `countObjects`, `listObjects`, `describeObject`) declared in
-[`types.ts`](../../src/lib/db/types.ts) and implemented in
-[`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts). The phase that removes `getSchema()` is
-#789's last task.
+The five container-aware methods (`listContainers`, `countObjects`, `listObjects`, `describeObject`,
+`describeObjects`) are declared in [`types.ts`](../../src/lib/db/types.ts) and implemented in
+[`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts). They are the only reading of this engine's
+objects.
 
 #### SQLite is the ZERO-CONTAINER engine, and `[]` is an answer
 
@@ -460,7 +445,7 @@ For a `table` and a `view`:
 | --- | --- | --- |
 | Columns | `pragma_table_xinfo(?, ?)` where `hidden <> 1` | `table_xinfo` and not `table_info`, which DROPS a generated column in both spellings (`VIRTUAL` is `hidden = 2`, `STORED` is `hidden = 3`). `hidden = 1` is the other direction: a virtual table module's own interface columns, which on an FTS5 table are the table's own name and `rank`, and which the table does not declare |
 | `isPrimary` | `pk > 0` | `pk` is a 1-BASED RANK and not a flag, so `= 1` reports the second column of a composite primary key as ordinary |
-| `type` | as answered | The empty string where a column declares no type and on a virtual table's columns. `getSchema()` writes `"TEXT"` there, which is a guess about affinity |
+| `type` | as answered | The empty string where a column declares no type and on a virtual table's columns. The deleted flat reading wrote `"TEXT"` there, which is a guess about affinity |
 | Indexes | `pragma_index_list(?, ?)` + `pragma_index_info(?, ?)` | Same `sqlite_` exclusion as the Indexes folder, so the two surfaces agree about what an index is. An expression key publishes a null column name and is left out rather than labelled |
 | Foreign keys | `pragma_foreign_key_list(?, ?)` | `referencedTable` is a bare name: SQLite resolves a foreign key's parent inside the same database, so there is no cross-schema case |
 
@@ -502,9 +487,9 @@ per target object inside ONE statement. Measured on `bun:sqlite` 3.53.2.
 The five decisions this engine had to make for itself, each measured rather than reasoned:
 
 **Which catalog.** The same pragmas `describeObject()` reads, and the same `PRAGMA table_list` target
-`listObjects()` reads. That matters in one direction: `getSchema()` reads `PRAGMA table_info`, which
-DROPS a generated column, so the flat surface and the object surface really do answer different column
-lists for `orders` and the bulk read inherits the object surface's. MEMBERSHIP comes from the target
+`listObjects()` reads. The deleted flat reading used `PRAGMA table_info`, which DROPS a generated
+column, so it really did answer a different column list for `orders`; the bulk read inherits the
+object surface's. MEMBERSHIP comes from the target
 read and never from the column read. Deriving it from the columns would drop an object whose every
 column is hidden, and the folder's listing would then name an object the batch does not carry, which
 is the class of absence standing ruling 5a is about. It is also why the bulk read does not repeat the
@@ -837,7 +822,7 @@ SQL execution, schema PRAGMAs, maintenance, and monitoring end-to-end.
 ### 11.2 Coverage
 
 Validation, connect/disconnect, path handling (NUL rejection, `..` acceptance), query (read +
-write), capabilities, `getSchema` (columns/PKs/FKs/indexes), health, maintenance
+write), capabilities, health, maintenance
 (vacuum/analyze/reindex/check), overview, performance, active sessions, slow queries,
 table/index/storage stats, `getMonitoringData`, `prepareQuery`, and labels. For the object surface
 ([§6.1](#61-the-object-surface-789)): the declared kinds, the conformance contract, the tree's root
@@ -1022,7 +1007,8 @@ const provider = await createDatabaseProvider({
 
 await provider.connect();      // works under Bun and Node (see Runtime & driver selection)
 const res = await provider.query('SELECT id, name FROM users');
-const schema = await provider.getSchema();
+const tables = await provider.listObjects([], 'table');
+const { details } = await provider.describeObjects([], 'table');
 await provider.disconnect();
 ```
 
