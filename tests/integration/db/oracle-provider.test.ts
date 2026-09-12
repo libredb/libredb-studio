@@ -3944,6 +3944,43 @@ describe("Oracle bulk column read", () => {
 });
 
 /**
+ * THE WHOLE STATEMENT of each source read, squashed to one line, and why it is the whole one.
+ *
+ * Round 1 pinned the tokens somebody had thought of: `toContain("DBMS_METADATA.GET_DDL")` on
+ * the first read and `toContain("FROM ALL_OBJECTS")` plus `not.toContain("DBA_OBJECTS")` on the
+ * second question. Everything else in both statements was unpinned, and this double does not
+ * execute SQL, so no assertion on `params` and none on the returned document can see a bind
+ * marker move or a predicate leave. Four mutants measured on 2026-09-13 then survived the whole
+ * suite at 202 pass, 0 fail:
+ *
+ * - `GET_DDL(:1, :2, :3)` rewritten to `GET_DDL(:2, :1, :3)`, which sends the object NAME as the
+ *   `object_type` argument. Live that is ORA-31600 on every kind, which is the exact failure the
+ *   metadata-vocabulary test below exists to prevent, reached one position to the left.
+ * - `OWNER = :1 AND OBJECT_NAME = :2` rewritten to `OWNER = :2 AND OBJECT_NAME = :1`, which asks
+ *   ALL_OBJECTS whether a schema called `REPORT_DAILY` holds an object called `REPORTING`. It
+ *   answers NO ROW for everything, so ruling C's refusal arm becomes a false claim of absence.
+ * - ` AND OBJECT_TYPE = :3` deleted, which makes a package that has a spec and no body answer a
+ *   PACKAGE row to a PACKAGE BODY question: the missing body stops being an absence and becomes
+ *   a refusal, which is the one shape standing ruling 4 says it is not.
+ * - `AS DDL` renamed to `AS DDL_TEXT`, while `readDefinition` still reads `rows[0].DDL`. Live
+ *   every one of the nine kinds answers `undefined` and every Source tab raises; the double
+ *   builds its row as `{ DDL: text }` whatever the statement says, so it sees nothing.
+ *
+ * One equality per read closes the class instead of the members of it somebody has thought of.
+ * Whitespace is squashed because indentation is not behaviour; every other byte is pinned.
+ */
+function squashSql(sql: string): string {
+  return sql.trim().replace(/\s+/g, " ");
+}
+
+/** All three values BINDS, so no identifier escaper is involved and no name reaches statement text. */
+const EXPECTED_OBJECT_DDL_SQL = "SELECT DBMS_METADATA.GET_DDL(:1, :2, :3) AS DDL FROM DUAL";
+
+/** Ruling C's second question, spelled out whole: ALL_OBJECTS, three predicates, three binds. */
+const EXPECTED_OBJECT_IS_VISIBLE_SQL =
+  "SELECT 1 AS SEEN FROM ALL_OBJECTS WHERE OWNER = :1 AND OBJECT_NAME = :2 AND OBJECT_TYPE = :3";
+
+/**
  * The source read (#789 Phase 2).
  *
  * Every definition text below is VERBATIM `DBMS_METADATA.GET_DDL` output captured from the
@@ -4035,7 +4072,12 @@ describe("Oracle object source", () => {
     // The binds, and the fetch handler the object surface's ordinary reader does not pass.
     expect(sent).toHaveLength(1);
     expect(sent[0].params).toEqual(["FUNCTION", "APP_ORDER_TOTAL", "APP"]);
-    expect(sent[0].sql).not.toContain("APP_ORDER_TOTAL");
+    // THE WHOLE STATEMENT AS TEXT, which is strictly more than the old `not.toContain(name)`:
+    // it says no name reaches statement text AND that the three bind markers sit where the
+    // three bound values mean what they are called AND that the column this read then reads by
+    // name is the column the statement names. See `EXPECTED_OBJECT_DDL_SQL` for the four
+    // mutants a token-by-token pin let through.
+    expect(squashSql(sent[0].sql)).toBe(EXPECTED_OBJECT_DDL_SQL);
     expect(sent[0].opts.fetchTypeHandler).toBeTypeOf("function");
     await provider.disconnect();
   });
@@ -4247,7 +4289,11 @@ describe("Oracle object source", () => {
     // The SECOND QUESTION itself: ALL_OBJECTS and never DBA_OBJECTS, bound with the DICTIONARY
     // spelling of the type rather than the metadata one, and with no interpolation anywhere.
     expect(sent).toHaveLength(2);
-    expect(sent[1].sql).toContain("FROM ALL_OBJECTS");
+    expect(squashSql(sent[0].sql)).toBe(EXPECTED_OBJECT_DDL_SQL);
+    // The WHOLE second question and not the two tokens that name the view it reads. Swapping
+    // the owner and name markers, or dropping the type predicate, leaves all three binds in
+    // place, keeps `FROM ALL_OBJECTS` in the text and survives every assertion on `params`.
+    expect(squashSql(sent[1].sql)).toBe(EXPECTED_OBJECT_IS_VISIBLE_SQL);
     expect(sent[1].sql).not.toContain("DBA_OBJECTS");
     expect(sent[1].params).toEqual(["REPORTING", "REPORT_DAILY", "TABLE"]);
 
@@ -4303,7 +4349,7 @@ describe("Oracle object source", () => {
     );
     // And the second question was never asked, because there was nothing ambiguous to settle.
     expect(sent).toHaveLength(1);
-    expect(sent[0].sql).toContain("DBMS_METADATA.GET_DDL");
+    expect(squashSql(sent[0].sql)).toBe(EXPECTED_OBJECT_DDL_SQL);
     await provider.disconnect();
   });
 
@@ -4399,7 +4445,7 @@ describe("Oracle object source", () => {
     await provider.disconnect();
   });
 
-  test("binds the GET_DDL METADATA spelling every one of the nine kinds needs", async () => {
+  test("sends the WHOLE GET_DDL statement, with the METADATA spelling every one of the nine kinds needs", async () => {
     // THE FIRST BIND'S VOCABULARY, pinned as a LITERAL and deliberately not derived from the
     // provider's own translation table. A test that reads `ORACLE_OBJECT_TYPES` to say what
     // `ORACLE_OBJECT_TYPES` should hold asserts nothing at all.
@@ -4440,6 +4486,7 @@ describe("Oracle object source", () => {
     );
 
     const bound: Record<string, string[]> = {};
+    const issued: Record<string, string[]> = {};
     for (const [kind] of expected) {
       sent = [];
       // `ddlValue` answers ANY type, so the double cannot decide the outcome by the bind
@@ -4448,9 +4495,9 @@ describe("Oracle object source", () => {
         ddlValue: '\n  CREATE OR REPLACE EDITIONABLE THING "APP"."APP_OBJ" IS BEGIN NULL; END;',
       });
       await provider.readObjectSource!(["APP", "APP_OBJ"], kind);
-      bound[kind] = sent
-        .filter((execute) => execute.sql.includes("DBMS_METADATA.GET_DDL"))
-        .map((execute) => String(execute.params[0]));
+      const reads = sent.filter((execute) => execute.sql.includes("DBMS_METADATA.GET_DDL"));
+      bound[kind] = reads.map((execute) => String(execute.params[0]));
+      issued[kind] = reads.map((execute) => squashSql(execute.sql));
     }
 
     // Non-vacuity, by NAME and BEFORE the equality: a kind whose read sent no GET_DDL at all
@@ -4463,6 +4510,14 @@ describe("Oracle object source", () => {
       );
     }
     expect(expected.map(([kind]) => [kind, bound[kind]])).toEqual(expected.map(([kind, types]) => [kind, [...types]]));
+    // And the WHOLE STATEMENT, per kind, not only the first bind of it. The statement is one
+    // constant for all nine, so this is nine assertions about one string on purpose: a kind is
+    // the unit a Source tab breaks in, and a mutant living in the SELECT expression or in the
+    // bind markers is invisible to every assertion this suite makes about `params` or about the
+    // document. The four that survived without it are on `EXPECTED_OBJECT_DDL_SQL`.
+    expect(expected.map(([kind]) => [kind, issued[kind]])).toEqual(
+      expected.map(([kind, types]) => [kind, types.map(() => EXPECTED_OBJECT_DDL_SQL)]),
+    );
     await provider.disconnect();
   });
 });
