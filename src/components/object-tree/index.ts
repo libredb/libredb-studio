@@ -9,4 +9,5 @@
  * everything cannot be read as a statement about what the outside uses.
  */
 export { ObjectTree } from "./ObjectTree";
+export type { ObjectSource } from "./use-tree-nodes";
 export { flatTargetName, type TreeRowActionHandlers } from "./row-actions";

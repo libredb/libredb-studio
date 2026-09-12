@@ -6,7 +6,7 @@ import type { DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { Plus, Zap, Layers, LoaderCircle } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ObjectTree, type TreeRowActionHandlers } from "@/components/object-tree";
+import { ObjectTree, type ObjectSource, type TreeRowActionHandlers } from "@/components/object-tree";
 import { GitHubRepoLink } from "@/components/github-repo-link";
 import { getAppVersion } from "@/lib/app-version";
 import { cn } from "@/lib/utils";
@@ -41,6 +41,14 @@ interface SidebarProps {
    * workspace passes the four it mounts a modal for.
    */
   objectActions?: TreeRowActionHandlers;
+  /**
+   * Who answers the object tree's reads, handed straight through (#789, B76).
+   *
+   * Absent is the standalone shell: the tree posts to this application's own object routes.
+   * The embedded workspace supplies one, because the published package carries no routes and the
+   * host is the only party that can reach the database.
+   */
+  objectSource?: ObjectSource;
 }
 
 export function Sidebar({
@@ -57,6 +65,7 @@ export function Sidebar({
   objectScanDeferred = false,
   onLoadObjects,
   objectActions,
+  objectSource,
 }: SidebarProps) {
   const appVersion = getAppVersion();
 
@@ -130,6 +139,7 @@ export function Sidebar({
               onLoad={onLoadObjects}
               onObjectClick={onObjectClick}
               actions={objectActions}
+              source={objectSource}
             />
           ) : (
             <div

@@ -30,7 +30,7 @@ FAIL=0
 # green summary line reported a group count no run had.
 # Drifted again before this line was touched: it read 30 while 32 `run_group` calls
 # existed, so every green run reported a group count no run had. 33 is the grep below.
-TOTAL_GROUPS=38
+TOTAL_GROUPS=39
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -341,6 +341,15 @@ run_group "Group 24: Object tree first paint" \
 # statement about the stub.
 run_group "Group 25: Object tree row menu" \
   tests/components/object-tree/row-menu.test.tsx
+
+# Group 26: the embedded workspace's object tree (#789, B76). Its own group for Group 23's
+# reason - it replaces globalThis.fetch to prove no route is asked - and separate from Group 17,
+# which mocks the sidebar and the workspace adapter hooks process-wide: this file exists to drive
+# the REAL adapter and the REAL sidebar from the published prop, which is exactly what those
+# mocks would replace. It mocks only the editor and the panel library, neither of which Group 17
+# asserts against.
+run_group "Group 26: Embedded workspace object tree" \
+  tests/components/studio/embedded-object-tree.test.tsx
 
 # Group 21: ui/scroll-area. Its own group for the same reason ui/resizable has one:
 # it is the only suite that renders the REAL @radix-ui/react-scroll-area, while

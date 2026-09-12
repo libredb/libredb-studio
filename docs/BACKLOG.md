@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B79 · 25
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B79 · 24
 
 ---
 
@@ -1892,35 +1892,6 @@ so), and none of them has been measured.
 
 **Done when:** a resume onto a repointed connection does one stated thing, and the run's own record
 says which.
-
-### B76. The npm package surface's object tree cannot read any catalog
-
-Measured in a real browser during task 28b, both engines tried, both failing the same way:
-`StudioWorkspace` mounts the same `Sidebar` and the same `ObjectTree` as the standalone shell, and
-that tree calls `/api/db/objects/*` through `buildConnectionPayload`. In the embedded shell that
-payload can never carry a database: `useConnectionAdapter` builds its `DatabaseConnection` from a
-hand-written field list (`id`, `name`, `type`, `createdAt`, `managed: true`, `skipObjectScan`) and
-never sets `seedId`, so `buildConnectionPayload` takes its `{ connection: conn }` branch and posts an
-object with no host, port, user or file path. `WorkspaceConnection` has no fields for any of those,
-so a host cannot supply them either.
-
-What a user of `@libredb/studio` sees is the tree's failure state on every connection: "The object
-list could not be read", over the provider's own sentence ("ClickHouse requires a host or a
-connection string", "Database file path is required for SQLite"), plus a Try again that fails
-identically.
-
-This is the seam the flat schema list used to cross and the tree does not: the old list was fed by
-the host through `onSchemaFetch`, which is still a required prop and still implemented by hosts. The
-tree has no equivalent, and `dist/workspace.js` ships it (grep `tree-row-badge`).
-
-Three plausible answers and none of them measured, which is why this is an entry rather than a fix:
-give the embedded contract its own object-surface seam (`onObjectsFetch`, mirroring `onSchemaFetch`);
-have the adapter set `seedId` so a host whose ids ARE this server's seed ids works and every other
-host still does not; or render the tree from what `onSchemaFetch` already returns and accept that an
-embedded tree has no lazy reads.
-
-**Done when:** the embedded shell lists objects for a connection its host declared, and a test drives
-that path through `StudioWorkspace` rather than through `ObjectTree` directly.
 
 ### B77. A model is told a bounded inventory "stopped at a limit of N" where N is not a limit
 

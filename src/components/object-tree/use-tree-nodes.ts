@@ -32,6 +32,40 @@ import { containerRowId, flattenTree, pathKey, type TreeRowModel } from "./flatt
 type ConnectionPayload = ReturnType<typeof buildConnectionPayload>;
 
 /**
+ * One read the tree wants, named rather than spelled as a route and a bag of fields.
+ *
+ * It is a union rather than `{ route, body }` because it is what crosses the seam below, and a
+ * source implementing that seam has to dispatch on it: a record would put a cast at every
+ * implementation, which is the shape `isRenderableShape` exists to keep out of the render.
+ */
+export type ObjectReadRequest =
+  | { readonly route: "containers"; readonly parent?: readonly string[] }
+  | { readonly route: "counts"; readonly container: readonly string[] }
+  | { readonly route: "list"; readonly container: readonly string[]; readonly kind: string };
+
+/**
+ * Who answers this tree's reads (#789, B76).
+ *
+ * The standalone shell posts them to its own `/api/db/objects/*`, which is the default and what
+ * `httpObjectSource` builds. The EMBEDDED shell cannot: this package ships no API routes at all
+ * (`package.json`'s `exports` map carries components and types), so that path belongs to whatever
+ * server the host mounted the workspace in, and the connection it is handed carries no host, port
+ * or file path for a route to open anyway. So the host answers instead, through
+ * `StudioWorkspaceProps.onObjectsFetch`, and every read stays LAZY: the seam is per read rather
+ * than one flat catalog, which is the whole point of the tree on a schema holding tens of
+ * thousands of objects.
+ *
+ * It takes the CONNECTION rather than closing over one, so a source is a stable value with no
+ * per-connection identity: a source rebuilt per render would change the effect's dependency on
+ * every pass and re-issue reads for ever.
+ *
+ * The answer is `unknown` on purpose. A host is ordinary JavaScript and its declared return type
+ * is not a runtime guarantee, so what it hands back goes through the same `isRenderableShape`
+ * check as a route's body rather than being trusted into the render.
+ */
+export type ObjectSource = (connection: DatabaseConnection, request: ObjectReadRequest) => Promise<unknown>;
+
+/**
  * A read that did not answer.
  *
  * One field, and it used to carry a second: a flag for HTTP 501
@@ -52,9 +86,7 @@ type ReadSlot =
   | { readonly kind: "objects"; readonly key: string; readonly containerKey: string };
 
 interface TreeRead {
-  readonly route: "containers" | "counts" | "list";
-  /** The request body, without the connection, which the poster adds. */
-  readonly body: Record<string, unknown>;
+  readonly request: ObjectReadRequest;
   readonly slot: ReadSlot;
 }
 
@@ -130,8 +162,8 @@ function emptyCache(connectionId: string): TreeCache {
  */
 function rootRead(depth: 0 | 1 | 2): TreeRead {
   return depth === 0
-    ? { route: "counts", body: { container: [] }, slot: { kind: "counts", key: "" } }
-    : { route: "containers", body: {}, slot: { kind: "containers", key: "" } };
+    ? { request: { route: "counts", container: [] }, slot: { kind: "counts", key: "" } }
+    : { request: { route: "containers" }, slot: { kind: "containers", key: "" } };
 }
 
 /**
@@ -141,18 +173,20 @@ function rootRead(depth: 0 | 1 | 2): TreeRead {
  * container-scoped, so nothing can list an object's children and nothing is asked for them.
  */
 function readFor(row: TreeRowModel, depth: 0 | 1 | 2): TreeRead | undefined {
-  if (row.kind === "folder") {
+  // A folder row always carries its kind id (`flatten.ts` builds it from the kind's spec); the
+  // field is optional on the row model because an object row's comes from the object instead.
+  // Reading it here rather than asserting it is what keeps the request's `kind` a plain string.
+  if (row.kind === "folder" && row.kindId !== undefined) {
     return {
-      route: "list",
-      body: { container: row.path, kind: row.kindId },
+      request: { route: "list", container: row.path, kind: row.kindId },
       slot: { kind: "objects", key: row.id, containerKey: pathKey(row.path) },
     };
   }
   if (row.kind === "container") {
     // A container above the deepest level holds containers; only the deepest one holds folders.
     return row.path.length < depth
-      ? { route: "containers", body: { parent: row.path }, slot: { kind: "containers", key: pathKey(row.path) } }
-      : { route: "counts", body: { container: row.path }, slot: { kind: "counts", key: pathKey(row.path) } };
+      ? { request: { route: "containers", parent: row.path }, slot: { kind: "containers", key: pathKey(row.path) } }
+      : { request: { route: "counts", container: row.path }, slot: { kind: "counts", key: pathKey(row.path) } };
   }
   return undefined;
 }
@@ -296,11 +330,37 @@ function isRenderableShape(read: TreeRead, data: unknown): boolean {
   return Array.isArray(data) && data.every((entry) => isRecord(entry) && Array.isArray(entry.path));
 }
 
-async function postRead(payload: ConnectionPayload, read: TreeRead): Promise<unknown> {
-  const response = await appFetch(`/api/db/objects/${read.route}`, {
+/**
+ * The request body a route takes, which is the read's own fields beside the connection.
+ *
+ * Written out per route rather than spread from the request, so the field names the routes parse
+ * are pinned here and a rename cannot pass silently. `parent` absent and `parent: undefined` are
+ * the same body once serialized, and the top-level containers read is the case that sends none.
+ */
+function requestBody(request: ObjectReadRequest): Record<string, unknown> {
+  switch (request.route) {
+    case "containers":
+      return { parent: request.parent };
+    case "counts":
+      return { container: request.container };
+    case "list":
+      return { container: request.container, kind: request.kind };
+  }
+}
+
+/**
+ * The default source: this application's own object routes.
+ *
+ * `buildConnectionPayload` sends a managed seed by id and anything else in full, which is how
+ * every other db route is called and the only way a connection the server has never heard of can
+ * be read at all.
+ */
+const httpObjectSource: ObjectSource = async (connection, request) => {
+  const payload: ConnectionPayload = buildConnectionPayload(connection);
+  const response = await appFetch(`/api/db/objects/${request.route}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...payload, ...read.body }),
+    body: JSON.stringify({ ...payload, ...requestBody(request) }),
   });
   // A route that answered with no body at all still answered something worth showing, so the
   // status stands in for the sentence rather than the read being reported as a parse error.
@@ -308,10 +368,17 @@ async function postRead(payload: ConnectionPayload, read: TreeRead): Promise<unk
   if (!response.ok) {
     throw new ObjectReadError(body.error ?? `The object read failed with HTTP ${response.status}`);
   }
-  if (!isRenderableShape(read, body)) {
-    throw new ObjectReadError(`/api/db/objects/${read.route} answered with a body this tree cannot render`);
-  }
   return body;
+};
+
+async function readThrough(source: ObjectSource, connection: DatabaseConnection, read: TreeRead): Promise<unknown> {
+  const data = await source(connection, read.request);
+  // Checked whoever answered: a route's body and a host callback's return are both ordinary
+  // values this tree is about to dereference, and only one of them has a type declaration.
+  if (!isRenderableShape(read, data)) {
+    throw new ObjectReadError(`The ${read.request.route} reading answered with a body this tree cannot render`);
+  }
+  return data;
 }
 
 function toFailure(error: unknown): TreeReadFailure {
@@ -337,14 +404,15 @@ export function useTreeNodes(
   connection: DatabaseConnection,
   capabilities: ProviderCapabilities,
   deferred = false,
+  source?: ObjectSource,
 ): TreeNodes {
   const connectionId = connection.id;
   const [stored, setStored] = useState<TreeCache>(() => emptyCache(connectionId));
   const connectionRef = useRef(connectionId);
   const inFlight = useRef(new Set<string>());
-  // Rebuilt whenever the connection object changes, so a read always carries the payload
-  // of the connection that asked for it rather than of whichever is current when it runs.
-  const payload = useMemo(() => buildConnectionPayload(connection), [connection]);
+  // Absent means this application's own routes, which is the standalone shell. Resolved here
+  // rather than defaulted in the signature so the two shells share one call path below.
+  const reader = source ?? httpObjectSource;
 
   const kinds = useMemo(() => declaredKinds(capabilities), [capabilities]);
   const depth = useMemo(() => containerDepth(capabilities), [capabilities]);
@@ -381,12 +449,14 @@ export function useTreeNodes(
   );
 
   const run = useCallback(
-    async (connId: string, connPayload: ConnectionPayload, read: TreeRead) => {
+    // The connection is passed rather than read from the closure, so a read that settles late
+    // was made against the connection that asked for it and not against whichever is current.
+    async (connId: string, conn: DatabaseConnection, connReader: ObjectSource, read: TreeRead) => {
       const key = `${connId}|${slotKey(read.slot)}`;
       if (inFlight.current.has(key)) return;
       inFlight.current.add(key);
       try {
-        const data = await postRead(connPayload, read);
+        const data = await readThrough(connReader, conn, read);
         applyFor(connId, (current) => store(current, read.slot, data));
       } catch (error) {
         applyFor(connId, (current) => withFailure(current, read.slot, toFailure(error)));
@@ -430,8 +500,8 @@ export function useTreeNodes(
   }, [cache, deferred, depth, root, rows]);
 
   useEffect(() => {
-    for (const read of pending) void run(connectionId, payload, read);
-  }, [connectionId, payload, pending, run]);
+    for (const read of pending) void run(connectionId, connection, reader, read);
+  }, [connection, connectionId, reader, pending, run]);
 
   const pendingKeys = useMemo(() => new Set(pending.map((read) => slotKey(read.slot))), [pending]);
 

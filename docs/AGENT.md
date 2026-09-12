@@ -2598,11 +2598,6 @@ the role's own grants are the whole boundary (A3).
   fix,
   left unmodelled because the user-index reader drops `COLLATE` too and honouring it in one reader
   only would make the inventory disagree with itself.
-- **B76** — the npm package surface mounts the same object tree and cannot read any catalog with it:
-  the embedded adapter builds a connection carrying no database and `WorkspaceConnection` has no
-  field a host could put one in, so every read answers the provider's own "requires a host" sentence.
-  The flat list it replaced was fed by the host through `onSchemaFetch`; the tree has no such seam,
-  and which seam it should get is the undecided part.
 - **B77** — a bounded inventory tells a model it "stopped at a limit of N" where N is the number of
   objects the read produced rather than any limit, on the two engines whose bound is a key walk. The
   contract beside `truncated.limit` already says a caller must not show that number as a cap; the

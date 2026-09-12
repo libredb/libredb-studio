@@ -21,7 +21,7 @@ import type { TreeRowModel } from "./flatten";
 import { RowMenu, type RowMenuAnchor } from "./RowMenu";
 import { rowActions, type TreeRowAction, type TreeRowActionHandlers } from "./row-actions";
 import { TREE_ROW_HEIGHT, TreeRow } from "./TreeRow";
-import { useTreeNodes } from "./use-tree-nodes";
+import { useTreeNodes, type ObjectSource } from "./use-tree-nodes";
 
 /** Rows kept mounted beyond each edge of the viewport, so a scroll does not flash empty. */
 const OVERSCAN = 4;
@@ -60,6 +60,13 @@ export interface ObjectTreeProps {
   readonly actions?: TreeRowActionHandlers;
   /** The engine's own wording. Only the menu's maintenance items read it. */
   readonly labels?: ProviderLabels;
+  /**
+   * Who answers this tree's reads (#789, B76). Absent means this application's own
+   * `/api/db/objects/*`, which is what the standalone shell wants and what it passes: nothing.
+   * The embedded workspace passes a source that calls back into its host, because the package
+   * ships no routes for those paths to reach.
+   */
+  readonly source?: ObjectSource;
 }
 
 /** An open menu: which row it belongs to, and where the reader asked for it. */
@@ -112,8 +119,9 @@ export function ObjectTree({
   onObjectClick,
   actions,
   labels,
+  source,
 }: ObjectTreeProps) {
-  const tree = useTreeNodes(connection, capabilities, deferred);
+  const tree = useTreeNodes(connection, capabilities, deferred, source);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [pinned, setPinned] = useState(false);

@@ -4,14 +4,20 @@ import { useState, useCallback, useMemo } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
-import type { WorkspaceConnection } from "@/workspace/types";
+import type { ObjectSource } from "@/components/object-tree";
+import type { WorkspaceConnection, WorkspaceObjectReader } from "@/workspace/types";
 
 interface UseConnectionAdapterParams {
   connections: WorkspaceConnection[];
   onSchemaFetch: (connectionId: string) => Promise<readonly DetailedObject[]>;
+  onObjectsFetch: WorkspaceObjectReader;
 }
 
-export function useConnectionAdapter({ connections: externalConnections, onSchemaFetch }: UseConnectionAdapterParams) {
+export function useConnectionAdapter({
+  connections: externalConnections,
+  onSchemaFetch,
+  onObjectsFetch,
+}: UseConnectionAdapterParams) {
   const connections: DatabaseConnection[] = useMemo(
     () =>
       externalConnections.map((c) => ({
@@ -113,6 +119,32 @@ export function useConnectionAdapter({ connections: externalConnections, onSchem
     void readSchema(activeConnection);
   }, [activeConnection, readSchema]);
 
+  /**
+   * What the object tree reads through, in this shell (#789, B76).
+   *
+   * The tree's own default posts to `/api/db/objects/*`, and this package ships no such route:
+   * that path belongs to whatever server the host mounted the workspace in, and the connection
+   * built above carries no host, port or file path for it to open anyway. So each read is
+   * translated into the host's own call, one lazy read at a time.
+   *
+   * The connection arrives as an ARGUMENT rather than through the closure, which is what keeps
+   * this value stable across renders: the tree re-issues its reads whenever its source changes
+   * identity, so a source rebuilt per render would read for ever.
+   */
+  const objectSource = useMemo<ObjectSource>(
+    () => (conn, request) => {
+      switch (request.route) {
+        case "containers":
+          return onObjectsFetch.listContainers(conn.id, request.parent);
+        case "counts":
+          return onObjectsFetch.countObjects(conn.id, request.container);
+        case "list":
+          return onObjectsFetch.listObjects(conn.id, request.container, request.kind);
+      }
+    },
+    [onObjectsFetch],
+  );
+
   const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
 
   // The embedded shell's stand-in for `useProviderMetadata`: it has no
@@ -145,6 +177,7 @@ export function useConnectionAdapter({ connections: externalConnections, onSchem
     /** Whether the active connection is holding its catalog reads back. */
     objectScanDeferred: activeConnection !== null && scanDeferred(activeConnection),
     loadObjects,
+    objectSource,
     schemaContext,
   };
 }

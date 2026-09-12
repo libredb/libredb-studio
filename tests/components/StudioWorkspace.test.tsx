@@ -313,6 +313,13 @@ const exportResult = {
 const mockOnQueryExecute = mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 }));
 const mockOnSchemaFetch = mock(async () => []);
 const mockOnSaveQuery = mock(async (_query: SavedQueryInput) => {});
+// The host's object reader (#789, B76). This file mocks the connection adapter away, so nothing
+// here reaches it; `tests/components/studio/embedded-object-tree.test.tsx` is where it is driven.
+const mockOnObjectsFetch = {
+  listContainers: mock(async () => []),
+  countObjects: mock(async () => ({})),
+  listObjects: mock(async () => []),
+};
 
 function renderWorkspace(props: Partial<StudioWorkspaceProps> = {}) {
   return render(
@@ -320,6 +327,7 @@ function renderWorkspace(props: Partial<StudioWorkspaceProps> = {}) {
       connections={workspaceConnections}
       onQueryExecute={mockOnQueryExecute}
       onSchemaFetch={mockOnSchemaFetch}
+      onObjectsFetch={mockOnObjectsFetch}
       onSaveQuery={mockOnSaveQuery}
       {...props}
     />,
@@ -450,10 +458,16 @@ describe("StudioWorkspace", () => {
         connections={workspaceConnections}
         onQueryExecute={mockOnQueryExecute}
         onSchemaFetch={mockOnSchemaFetch}
+        onObjectsFetch={mockOnObjectsFetch}
       />,
     );
     rerender(
-      <StudioWorkspace connections={[]} onQueryExecute={mockOnQueryExecute} onSchemaFetch={mockOnSchemaFetch} />,
+      <StudioWorkspace
+        connections={[]}
+        onQueryExecute={mockOnQueryExecute}
+        onSchemaFetch={mockOnSchemaFetch}
+        onObjectsFetch={mockOnObjectsFetch}
+      />,
     );
     expect(container.innerHTML.length).toBeGreaterThan(0);
   });

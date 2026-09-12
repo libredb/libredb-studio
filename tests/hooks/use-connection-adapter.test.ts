@@ -4,7 +4,7 @@ import { describe, test, expect, mock } from "bun:test";
 import { renderHook, act } from "@testing-library/react";
 
 import { useConnectionAdapter } from "@/workspace/hooks/use-connection-adapter";
-import type { WorkspaceConnection } from "@/workspace/types";
+import type { WorkspaceConnection, WorkspaceObjectReader } from "@/workspace/types";
 import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderCapabilities } from "@/lib/db/types";
 
@@ -16,6 +16,16 @@ const makeWorkspaceConnection = (overrides: Partial<WorkspaceConnection> = {}): 
   type: "postgres",
   ...overrides,
 });
+
+/**
+ * The host's object reader (#789, B76). Required on the hook, so every case supplies one; the
+ * cases that exercise it replace it with their own and assert what it was asked.
+ */
+const noObjectReads: WorkspaceObjectReader = {
+  listContainers: async () => [],
+  countObjects: async () => ({}),
+  listObjects: async () => [],
+};
 
 const makeSchema = (): DetailedObject[] => [
   {
@@ -55,7 +65,9 @@ describe("useConnectionAdapter", () => {
     ];
     const onSchemaFetch = mock(() => Promise.resolve([]));
 
-    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
 
     expect(result.current.activeConnection).not.toBeNull();
     expect(result.current.activeConnection!.id).toBe("c1");
@@ -68,7 +80,9 @@ describe("useConnectionAdapter", () => {
   test("returns null activeConnection when connections array is empty", () => {
     const onSchemaFetch = mock(() => Promise.resolve([]));
 
-    const { result } = renderHook(() => useConnectionAdapter({ connections: [], onSchemaFetch }));
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections: [], onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
 
     expect(result.current.connections).toEqual([]);
     expect(result.current.activeConnection).toBeNull();
@@ -86,7 +100,9 @@ describe("useConnectionAdapter", () => {
     ];
     const onSchemaFetch = mock(() => Promise.resolve([]));
 
-    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
 
     expect(result.current.activeConnection!.id).toBe("c1");
 
@@ -106,7 +122,9 @@ describe("useConnectionAdapter", () => {
 
     const connections = [makeWorkspaceConnection({ id: "c1" })];
 
-    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
 
     await act(async () => {
       await result.current.fetchSchema(result.current.connections[0]);
@@ -137,7 +155,9 @@ describe("useConnectionAdapter", () => {
 
     const connections = [makeWorkspaceConnection({ id: "c1" })];
 
-    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
 
     // Start fetching schema (don't await)
     let fetchPromise: Promise<void>;
@@ -166,7 +186,9 @@ describe("useConnectionAdapter", () => {
 
     const connections = [makeWorkspaceConnection({ id: "c1" })];
 
-    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
 
     await act(async () => {
       await result.current.fetchSchema(result.current.connections[0]);
@@ -182,9 +204,12 @@ describe("useConnectionAdapter", () => {
     const initialConnections = [makeWorkspaceConnection({ id: "c1", name: "DB One" })];
     const onSchemaFetch = mock(() => Promise.resolve([]));
 
-    const { result, rerender } = renderHook(({ connections }) => useConnectionAdapter({ connections, onSchemaFetch }), {
-      initialProps: { connections: initialConnections },
-    });
+    const { result, rerender } = renderHook(
+      ({ connections }) => useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      {
+        initialProps: { connections: initialConnections },
+      },
+    );
 
     expect(result.current.connections).toHaveLength(1);
     expect(result.current.connections[0].id).toBe("c1");
@@ -213,9 +238,12 @@ describe("useConnectionAdapter", () => {
     ];
     const onSchemaFetch = mock(() => Promise.resolve([]));
 
-    const { result, rerender } = renderHook(({ connections }) => useConnectionAdapter({ connections, onSchemaFetch }), {
-      initialProps: { connections: initialConnections },
-    });
+    const { result, rerender } = renderHook(
+      ({ connections }) => useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      {
+        initialProps: { connections: initialConnections },
+      },
+    );
 
     // Set active to c2
     act(() => {
@@ -241,9 +269,12 @@ describe("useConnectionAdapter", () => {
     const initialConnections = [makeWorkspaceConnection({ id: "c1", name: "DB One" })];
     const onSchemaFetch = mock(() => Promise.resolve([]));
 
-    const { result, rerender } = renderHook(({ connections }) => useConnectionAdapter({ connections, onSchemaFetch }), {
-      initialProps: { connections: initialConnections },
-    });
+    const { result, rerender } = renderHook(
+      ({ connections }) => useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      {
+        initialProps: { connections: initialConnections },
+      },
+    );
 
     expect(result.current.activeConnection!.id).toBe("c1");
 
@@ -275,7 +306,9 @@ describe("useConnectionAdapter", () => {
     ];
     const onSchemaFetch = mock(() => Promise.resolve([]));
 
-    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
 
     act(() => {
       result.current.setActiveConnection(result.current.connections[1]);
@@ -299,9 +332,12 @@ describe("useConnectionAdapter", () => {
   test("the active connection follows the host's latest object for that id", () => {
     const onSchemaFetch = mock(() => Promise.resolve([]));
 
-    const { result, rerender } = renderHook(({ connections }) => useConnectionAdapter({ connections, onSchemaFetch }), {
-      initialProps: { connections: [makeWorkspaceConnection({ id: "c1", name: "DB One" })] },
-    });
+    const { result, rerender } = renderHook(
+      ({ connections }) => useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      {
+        initialProps: { connections: [makeWorkspaceConnection({ id: "c1", name: "DB One" })] },
+      },
+    );
 
     expect(result.current.activeConnection!.name).toBe("DB One");
 
@@ -325,9 +361,12 @@ describe("useConnectionAdapter", () => {
     const a = makeWorkspaceConnection({ id: "c1", name: "DB One" });
     const b = makeWorkspaceConnection({ id: "c2", name: "DB Two" });
 
-    const { result, rerender } = renderHook(({ connections }) => useConnectionAdapter({ connections, onSchemaFetch }), {
-      initialProps: { connections: [a, b] },
-    });
+    const { result, rerender } = renderHook(
+      ({ connections }) => useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      {
+        initialProps: { connections: [a, b] },
+      },
+    );
 
     expect(result.current.activeConnection!.id).toBe("c1");
 
@@ -345,9 +384,12 @@ describe("useConnectionAdapter", () => {
     const c2 = makeWorkspaceConnection({ id: "c2", name: "DB Two" });
     const c3 = makeWorkspaceConnection({ id: "c3", name: "DB Three" });
 
-    const { result, rerender } = renderHook(({ connections }) => useConnectionAdapter({ connections, onSchemaFetch }), {
-      initialProps: { connections: [c1, c2, c3] },
-    });
+    const { result, rerender } = renderHook(
+      ({ connections }) => useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      {
+        initialProps: { connections: [c1, c2, c3] },
+      },
+    );
 
     act(() => {
       result.current.setActiveConnection(result.current.connections[2]);
@@ -369,7 +411,9 @@ describe("useConnectionAdapter", () => {
     const connections = [makeWorkspaceConnection({ id: "c1", name: "Platform DB", type: "mysql" })];
     const onSchemaFetch = mock(() => Promise.resolve([]));
 
-    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
 
     const mapped = result.current.connections[0];
     expect(mapped.id).toBe("c1");
@@ -385,7 +429,9 @@ describe("useConnectionAdapter", () => {
     const connections = [makeWorkspaceConnection({ id: "c1" })];
     const onSchemaFetch = mock(() => Promise.resolve([]));
 
-    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
 
     // Calling setConnections should not throw and should not change connections
     act(() => {
@@ -401,7 +447,9 @@ describe("useConnectionAdapter", () => {
     const connections = [makeWorkspaceConnection({ id: "c1" })];
     const onSchemaFetch = mock(() => Promise.resolve([]));
 
-    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
 
     expect(result.current.connectionPulse).toBeNull();
   });
@@ -421,7 +469,9 @@ describe("useConnectionAdapter", () => {
       const connections = [makeWorkspaceConnection({ id: "c1" })];
       const onSchemaFetch = mock(() => Promise.resolve([]));
 
-      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+      const { result } = renderHook(() =>
+        useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      );
 
       expect(result.current.metadata).toBeNull();
     });
@@ -433,7 +483,9 @@ describe("useConnectionAdapter", () => {
       ];
       const onSchemaFetch = mock(() => Promise.resolve([]));
 
-      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+      const { result } = renderHook(() =>
+        useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      );
 
       expect(result.current.metadata?.capabilities.queryDialect).toBe("redis");
     });
@@ -445,7 +497,9 @@ describe("useConnectionAdapter", () => {
       ];
       const onSchemaFetch = mock(() => Promise.resolve([]));
 
-      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+      const { result } = renderHook(() =>
+        useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      );
 
       act(() => {
         result.current.setActiveConnection(result.current.connections[1]);
@@ -461,7 +515,9 @@ describe("useConnectionAdapter", () => {
       ];
       const onSchemaFetch = mock(() => Promise.resolve([]));
 
-      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+      const { result } = renderHook(() =>
+        useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      );
 
       expect(result.current.metadata?.labels?.vacuumAction).toBe("Memory Doctor");
     });
@@ -473,7 +529,9 @@ describe("useConnectionAdapter", () => {
       const connections = [makeWorkspaceConnection({ id: "c1", type: "redis", capabilities: redisCapabilities })];
       const onSchemaFetch = mock(() => Promise.resolve([]));
 
-      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+      const { result } = renderHook(() =>
+        useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      );
 
       expect(result.current.metadata?.labels).toBeUndefined();
     });
@@ -490,7 +548,9 @@ describe("useConnectionAdapter", () => {
       const onSchemaFetch = mock(() => Promise.resolve(makeSchema()));
       const connections = [makeWorkspaceConnection({ id: "c1", skipObjectScan: true })];
 
-      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+      const { result } = renderHook(() =>
+        useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      );
 
       await act(async () => {
         await result.current.fetchSchema(result.current.connections[0]);
@@ -505,7 +565,9 @@ describe("useConnectionAdapter", () => {
       const onSchemaFetch = mock(() => Promise.resolve(makeSchema()));
       const connections = [makeWorkspaceConnection({ id: "c1" })];
 
-      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+      const { result } = renderHook(() =>
+        useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      );
 
       await act(async () => {
         await result.current.fetchSchema(result.current.connections[0]);
@@ -519,7 +581,9 @@ describe("useConnectionAdapter", () => {
       const onSchemaFetch = mock(() => Promise.resolve([]));
       const connections = [makeWorkspaceConnection({ id: "c1", skipObjectScan: true })];
 
-      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+      const { result } = renderHook(() =>
+        useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      );
 
       // The mapper writes a fixed field list, so a field it forgets is dropped silently -
       // and the tree would then read the catalog the host asked it not to.
@@ -530,7 +594,9 @@ describe("useConnectionAdapter", () => {
       const onSchemaFetch = mock(() => Promise.resolve(makeSchema()));
       const connections = [makeWorkspaceConnection({ id: "c1", skipObjectScan: true })];
 
-      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+      const { result } = renderHook(() =>
+        useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      );
 
       await act(async () => {
         await result.current.fetchSchema(result.current.connections[0]);
@@ -554,7 +620,9 @@ describe("useConnectionAdapter", () => {
         makeWorkspaceConnection({ id: "c2", skipObjectScan: true }),
       ];
 
-      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+      const { result } = renderHook(() =>
+        useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      );
 
       await act(async () => {
         await result.current.fetchSchema(result.current.connections[0]);
@@ -572,7 +640,9 @@ describe("useConnectionAdapter", () => {
     test("loadObjects with no active connection reads nothing", async () => {
       const onSchemaFetch = mock(() => Promise.resolve(makeSchema()));
 
-      const { result } = renderHook(() => useConnectionAdapter({ connections: [], onSchemaFetch }));
+      const { result } = renderHook(() =>
+        useConnectionAdapter({ connections: [], onSchemaFetch, onObjectsFetch: noObjectReads }),
+      );
 
       await act(async () => {
         result.current.loadObjects();
@@ -617,7 +687,9 @@ describe("useConnectionAdapter and the object model", () => {
     const connections = [makeWorkspaceConnection()];
     const onSchemaFetch = mock(() => Promise.resolve(hostObjects));
 
-    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
 
     await act(async () => {
       await result.current.fetchSchema(result.current.activeConnection!);
@@ -639,7 +711,9 @@ describe("useConnectionAdapter and the object model", () => {
     const connections = [makeWorkspaceConnection()];
     const onSchemaFetch = mock(() => Promise.resolve(makeSchema()));
 
-    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
 
     await act(async () => {
       await result.current.fetchSchema(result.current.activeConnection!);

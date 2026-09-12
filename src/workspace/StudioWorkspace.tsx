@@ -170,6 +170,7 @@ export function StudioWorkspace({
   currentUser,
   onQueryExecute,
   onSchemaFetch,
+  onObjectsFetch,
   onSaveQuery: onSaveQueryProp,
   // onLoadSavedQueries — reserved for future saved-queries panel integration
   features: featuresProp,
@@ -185,6 +186,7 @@ export function StudioWorkspace({
   const conn = useConnectionAdapter({
     connections: externalConnections,
     onSchemaFetch,
+    onObjectsFetch,
   });
 
   // 2. Tab Manager (pure UI state, reused as-is)
@@ -373,6 +375,7 @@ export function StudioWorkspace({
                 metadata={conn.metadata}
                 objectScanDeferred={conn.objectScanDeferred}
                 onLoadObjects={conn.loadObjects}
+                objectSource={conn.objectSource}
               />
             </ResizablePanel>
             <ResizableHandle className="w-1 bg-transparent hover:bg-brand-tint/30 transition-colors" />

@@ -1,7 +1,7 @@
 // src/workspace/types.ts
 import type { DatabaseType, SavedQuery, QueryWarning } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
-import type { ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import type { Container, DatabaseObject, KindCount, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 
 // === Connection (platform → studio) ===
 
@@ -41,6 +41,51 @@ export interface WorkspaceConnection {
    * exactly as it did before the field existed.
    */
   skipObjectScan?: boolean;
+}
+
+// === Object reading (studio → platform) ===
+
+/**
+ * The host's reading of one connection's OBJECT MODEL, one lazy read at a time (#789, B76).
+ *
+ * The three methods are `DatabaseProvider`'s own container-scoped surface with a connection id in
+ * front, so a host holding a provider (`@libredb/studio/providers` builds one) implements each in
+ * a line. They are what the object tree asks for, and nothing more: containers under a parent, the
+ * per-kind counts of one container, and the objects of one container-and-kind pair.
+ *
+ * Required, and this is the major that may add it. The embedded shell mounts the same tree as the
+ * standalone one, and that tree used to post to `/api/db/objects/*` - which cannot work here for
+ * two independent reasons. The package ships no API routes at all (`package.json`'s `exports` map
+ * carries components and types), so those paths belong to whatever server the host mounted the
+ * workspace in; and the connection this shell builds from `WorkspaceConnection` carries no host,
+ * port, user or file path, because the published interface has no field for one and a host would
+ * not want to hand credentials to a browser to post back. Measured before this prop existed, on
+ * every connection an adopter could declare: the tree showed "The object list could not be read"
+ * over the engine's own refusal ("ClickHouse requires a host or a connection string").
+ *
+ * A flat catalog handed over in one call would have closed it too, and is what `onSchemaFetch`
+ * already does. It is not what this is: the tree exists to open a 43,512-object schema without
+ * reading it, so the seam is per read and stays lazy.
+ */
+export interface WorkspaceObjectReader {
+  /**
+   * The containers under `parent`, or the top level when it is absent.
+   *
+   * A container level is a schema, a database, a keyspace: whatever the engine's own
+   * `ProviderCapabilities.containerLevels` declared for this connection. Mark the one the session
+   * is already in with `isSessionDefault`, and the workspace opens it on first paint.
+   */
+  listContainers(connectionId: string, parent?: readonly string[]): Promise<readonly Container[]>;
+  /**
+   * How many objects of each declared kind this container holds.
+   *
+   * The key is the kind id from the connection's declaration. A kind the engine refused to count
+   * answers `{ unavailable: <the engine's own sentence> }` rather than a zero, and a real number
+   * that stopped at a bound carries `sampledFrom`.
+   */
+  countObjects(connectionId: string, container: readonly string[]): Promise<Record<string, KindCount>>;
+  /** The objects of one container and one kind, which is one opened folder. */
+  listObjects(connectionId: string, container: readonly string[], kind: string): Promise<readonly DatabaseObject[]>;
 }
 
 // === User (platform → studio) ===
@@ -203,6 +248,16 @@ export interface StudioWorkspaceProps {
    * reads whatever the host returns.
    */
   onSchemaFetch: (connectionId: string) => Promise<readonly DetailedObject[]>;
+  /**
+   * The host's per-read object surface, which is what the object tree in the sidebar calls
+   * (#789, B76). See `WorkspaceObjectReader` for why it is required and why it is not
+   * `onSchemaFetch`.
+   *
+   * `onSchemaFetch` is NOT superseded by it and both are required: this one feeds the tree, and
+   * the flat reading still feeds the ER diagram, the profiler, the code and test-data generators,
+   * and the schema context the editor completes against.
+   */
+  onObjectsFetch: WorkspaceObjectReader;
 
   onTestConnection?: (config: {
     type: DatabaseType;
