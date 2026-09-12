@@ -950,10 +950,12 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 - **The `unlimited` query option is ignored.** `prepareQuery()` always returns `limit:
   options.limit || 100`; combined with the route's `hasMore = rows.length === prepared.limit`, an
   "unlimited" request can report an incorrect `hasMore`.
-- **the object surface issues serial round-trips** — up to ~4 calls (count + `collStats` + 100-doc sample
-  + `indexes()`) per collection, across up to 200 collections, with no batching/timeout; the schema
-  panel can be slow on a large or remote/loaded cluster. A view costs one call (the sample), since
-  the other three are the ones MongoDB refuses on a view ([§6](#6-schema-introspection)).
+- **A folder's columns are SAMPLED, and the sample is bounded per collection.** `describeObjects`
+  reads a whole container-and-kind folder in one `$unionWith` chain rather than one call per
+  collection, chunked at `SAMPLE_CHUNK_SIZE = 100` collections per pipeline so a wide folder cannot
+  outgrow MongoDB's own pipeline-length ceiling. So the round trips grow as the folder divided by
+  100, not with it. What the read still cannot tell you is a field no sampled document carried
+  ([§6](#6-schema-introspection)).
 
 ---
 

@@ -187,8 +187,6 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
   });
 });
 
-describe("LibreDBProvider — getSchema", () => {});
-
 describe("LibreDBProvider — catalog-aware schema", () => {
   let catalogFile: string;
 
@@ -728,8 +726,8 @@ describe("LibreDBProvider object surface (#789)", () => {
     expect(key.columns.map((column) => column.name)).toEqual(["key", "value"]);
     expect(collection.path).toEqual(["notes:*"]);
     expect(key.path).toEqual(["notes"]);
-    // The LABEL is unchanged and still the pattern `getSchema()` spells, so the row menu's
-    // `flatTargetName` lookup keeps finding it (#518).
+    // The LABEL is unchanged and is still the key pattern, which is what a generated
+    // command needs: `get notes` reads a key nobody stored (#518).
     const listed = await provider.listObjects([], "collection");
     expect(listed.find((object) => object.path[0] === "notes:*")?.name).toBe("notes:*");
   });

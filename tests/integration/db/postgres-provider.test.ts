@@ -975,13 +975,9 @@ describe("PostgresProvider", () => {
   // Schema
   // --------------------------------------------------------------------------
 
-  describe("getSchema()", () => {});
-
   // --------------------------------------------------------------------------
   // getSchemaList() — fast structural path (tables + columns + PKs only)
   // --------------------------------------------------------------------------
-
-  describe("getSchemaList()", () => {});
 
   // --------------------------------------------------------------------------
   // getSchemaRelations() — heavy FK/index path, keyed by table display name
@@ -1255,8 +1251,6 @@ describe("PostgresProvider", () => {
   // --------------------------------------------------------------------------
   // Materialized views, and statistics panels on an engine that has no sizes
   // --------------------------------------------------------------------------
-
-  describe("materialized views in the object browser", () => {});
 
   describe("statistics panels on an engine with no size functions", () => {
     // Measured on Materialize v26.37.0: getTableStats() dies on pg_table_size,

@@ -1060,11 +1060,10 @@ found"* and disappears from the schema tree, suspect availability before suspect
 segments. Nothing in this provider can improve the message — Druid owns both the classification and
 the wording — so this paragraph is the mitigation.
 
-The two-phase flat schema split no longer exists anywhere. Both are optional
-and the client falls back to the object surface; the split exists so a slow relationship read cannot block
-the table list, and Druid has neither half of that problem — a list would be byte-identical to
-the object surface, and a relations read would spend a round trip to answer two empty arrays per
-datasource.
+The two-phase flat schema split no longer exists anywhere (#789). It existed so a slow relationship
+read could not block the table list, and Druid had neither half of that problem: a list would have been
+byte-identical to the object surface, and a relations read would have spent a round trip to answer two
+empty arrays per datasource.
 
 ---
 

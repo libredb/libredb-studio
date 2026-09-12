@@ -1118,6 +1118,27 @@ describe("useTreeNodes", () => {
     expect(calls.filter((call) => call.route === "containers")).toHaveLength(2);
   });
 
+  /**
+   * The root retry on a CONTAINERLESS engine, where the root read is the counts of the one
+   * container there is rather than a container listing (#789). Both arms of the root slot's
+   * forget are real: an engine with levels forgets a containers slot, one without forgets a
+   * counts slot, and only the second is reachable from this shape.
+   */
+  test("loadContainers on an engine with no container level re-reads its counts", async () => {
+    let generation = 0;
+    const calls = installFetch({
+      counts: () => ({ table: { count: generation } }),
+    });
+    const { result } = renderHook(() => useTreeNodes(connectionOf("sqlite"), noContainers));
+
+    await waitFor(() => expect(result.current.rows.map((row) => row.badge)).toEqual(["0"]));
+
+    generation = 3;
+    act(() => result.current.loadContainers());
+    await waitFor(() => expect(result.current.rows.map((row) => row.badge)).toEqual(["3"]));
+    expect(calls.filter((call) => call.route === "counts")).toHaveLength(2);
+  });
+
   // The payload shape itself, both arms, is pinned in
   // `tests/components/object-tree/first-paint.test.tsx`: this connection is one the
   // server has never heard of, so it travels whole.

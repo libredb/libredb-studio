@@ -467,8 +467,9 @@ export class TrinoProvider extends SQLBaseProvider {
    * The catalog is NOT required, deliberately. A connection with no catalog still
    * runs every fully qualified statement - `SELECT * FROM tpch.sf1.nation` needs no
    * session catalog at all - and the whole of `system.runtime`, so refusing to
-   * connect without one would refuse a connection that works. What it cannot do is
-   * show a schema tree, and `getSchema()` says exactly that when asked.
+   * connect without one would refuse a connection that works. It also still shows a
+   * tree: `listContainers()` lists every catalog and the pin only decides which one is
+   * marked `isSessionDefault`, so with none pinned the tree opens nothing (#789).
    */
   public override validate(): void {
     super.validate();

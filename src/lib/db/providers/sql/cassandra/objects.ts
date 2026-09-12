@@ -87,6 +87,7 @@ import type {
   ColumnSchema,
   Container,
   ContainerLevelSpec,
+  ContainerLevels,
   DatabaseObject,
   IndexSchema,
   KindCount,
@@ -111,7 +112,7 @@ const PROVIDER = "cassandra" as const;
  * `ContainerLevelSpec` calls the innermost level on every engine; the LABEL is the
  * engine's own word, which is Keyspace.
  */
-export const CASSANDRA_CONTAINER_LEVELS: readonly ContainerLevelSpec[] = Object.freeze([
+export const CASSANDRA_CONTAINER_LEVELS: ContainerLevels = Object.freeze([
   { id: "schema", label: "Keyspace", labelPlural: "Keyspaces" },
 ] as const);
 

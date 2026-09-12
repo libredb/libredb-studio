@@ -688,12 +688,12 @@ seam does not expose.
 
 ## 6. Schema introspection
 
-the object surface ([introspect.ts:355](../../src/lib/db/providers/sql/search/introspect.ts)) makes one
-index listing plus **one mapping read per index**, at most
-`SEARCH_MAPPING_CONCURRENCY = 4` at a time
-([introspect.ts:102](../../src/lib/db/providers/sql/search/introspect.ts)) — the number Couchbase's
-per-collection inference settled on for the same trade-off, and `_mapping` is a cluster-state read
-rather than a search.
+Everything this provider knows about an index's contents is read through the OBJECT SURFACE, and this
+section describes the MAPPING decisions behind it; the surface itself is described below. The flat
+two-phase reading that used to open this section was deleted with `getSchema` (#789), and so was its
+cost model: a folder of indices is described in ONE `_mapping` request over a comma-joined list, split
+only on the cluster's own request-line limit, rather than one request per index at a fixed
+concurrency.
 
 | Data | Source |
 |---|---|
@@ -728,10 +728,10 @@ On an *empty* cluster two of three indices are the engine's. The dot convention 
 [http-transport.ts:264](../../src/lib/db/providers/sql/search/http-transport.ts)) — which makes this a
 judgement rather than a rule, and is why the seam exposes a **flag** the provider decides about
 (`isSystemIndex()`, [introspect.ts:156](../../src/lib/db/providers/sql/search/introspect.ts)) rather
-than a filter applied on the wire. Hiding them is the default; `SearchSchemaOptions.includeSystemIndices`
-exists because both answers are legitimate and the caller knows which — an operator debugging ML
-inference wants `.plugins-ml-config` in the tree, and a developer writing a query does not want two
-thirds of the sidebar to be indices they have never heard of.
+than a filter applied on the wire. Hiding them is what the object surface does: `isSystemIndex()` is consulted for every listing and
+count, so a folder's badge and its rows agree about what is shown. An operator debugging ML inference
+would want `.plugins-ml-config` in the tree and a developer writing a query would not, and nothing in
+the surface expresses that choice today; the flag is where it would be made.
 
 Note also that `top_queries-2026.08.18-74305` carries hyphens and dots, so it is a name SQL needs
 quoted. `DatabaseObject.name` is the index name **verbatim** — quoting belongs to whoever builds a
@@ -784,22 +784,16 @@ declaration order to preserve, because documents are unordered JSON. Sorting by 
 full. So it is described completely with `rowCount` and `size` **omitted** rather than zeroed —
 The object shape makes both optional, which is what preserves the distinction.
 
-**A per-index failure costs one index's columns, not the tree.** Only `auth` and `unknown-object`
-degrade to an empty column list
-([`DEGRADABLE_MAPPING_FAILURES`, introspect.ts:119](../../src/lib/db/providers/sql/search/introspect.ts)):
-the security plugin grants index privileges *per index*, so a role that lists twenty indices and may
-describe nineteen is an ordinary configuration; and an index deleted between the listing and its
-mapping read is a race, not a fault. **This is where the two fault vocabularies matter most**: a
-missing index reported by `_mapping` is snake_case `index_not_found_exception` while the SQL endpoint
-says `IndexNotFoundException`, and both are in the fault table
-([http-transport.ts:395-401](../../src/lib/db/providers/sql/search/http-transport.ts)). A live probe of
-`mapping()` is what caught that — the SQL fixtures alone would have left a missing index reported as an
-engine fault by introspection, i.e. propagating and blanking the whole tree instead of degrading one
-index.
-
-The two-phase flat schema split no longer exists anywhere.: both are optional
-and the client falls back to the object surface; here both halves are empty by construction, so a list would
-be byte-identical and a relations pass would re-read every mapping to return the same empty arrays.
+**A mapping the cluster did not answer for is REPORTED, not degraded to an empty column list**, and
+that is a change from the deleted reading (#789). A concrete `_mapping` request answers for every name
+it was given, a CLOSED index included, and refuses the whole request for a name that does not exist, so
+a name missing from a present answer cannot have come from the engine and `describeObjects` throws
+naming the index. **This is where the two fault vocabularies still matter**: a missing index reported
+by `_mapping` is snake_case `index_not_found_exception` while the SQL endpoint says
+`IndexNotFoundException`, and both are in the transport's fault table
+([http-transport.ts](../../src/lib/db/providers/sql/search/http-transport.ts)). A live probe of
+`mapping()` is what caught that; the SQL fixtures alone would have left a missing index reported as an
+engine fault.
 
 ### The object surface (#789)
 

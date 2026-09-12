@@ -27,6 +27,7 @@ import {
   type IndexStats,
   type StorageStats,
   type Container,
+  type ContainerLevels,
   type ContainerLevelSpec,
   type DatabaseObject,
   type KindCount,
@@ -221,7 +222,7 @@ const SUPPORTED_MAINTENANCE_TYPES: ReadonlySet<MaintenanceType> = new Set([
  * because that is what `ContainerLevelSpec` calls the innermost level on every engine;
  * the LABEL is the engine's own word, which is Database.
  */
-const MONGODB_CONTAINER_LEVELS: readonly ContainerLevelSpec[] = Object.freeze([
+const MONGODB_CONTAINER_LEVELS: ContainerLevels = Object.freeze([
   { id: "schema", label: "Database", labelPlural: "Databases" },
 ] as const);
 

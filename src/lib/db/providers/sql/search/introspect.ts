@@ -89,18 +89,6 @@ import { type SearchIndexInfo, type SearchMappingField } from "./transport";
  */
 export const SEARCH_CONTAINER_TYPES: readonly string[] = Object.freeze(["object", "nested"]);
 
-/**
- * How many mappings to read at once.
- *
- * One request per index is unavoidable - a mapping is per-index - so a cluster with
- * hundreds of indices decides between a serial crawl and a burst that the cluster
- * itself has to queue. Four is the number Couchbase's per-collection inference
- * settled on for the same trade-off (`INFER_CONCURRENCY`), and `_mapping` is a
- * cluster-state read rather than a search, so it is cheap per call and not worth
- * tuning past "not serial, not a flood".
- */
-export const SEARCH_MAPPING_CONCURRENCY = 4;
-
 // ============================================================================
 // Options
 // ============================================================================

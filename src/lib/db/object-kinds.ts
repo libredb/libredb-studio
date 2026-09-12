@@ -7,6 +7,15 @@
  */
 import type { KindCount, ObjectKindSpec, ProviderCapabilities } from "@/lib/db/types";
 
+/**
+ * How many container levels this engine declares, as the tree models them.
+ *
+ * `>= 2` rather than `=== 2` is the CEILING, and it is stated in the type as well: since #789
+ * `ContainerLevels` is a tuple union of nought, one or two levels, so a third one is a compile
+ * error where a provider would write it rather than a level that exists in the declaration and
+ * is read by nothing. This arm is what a cast past that type still meets, and what every
+ * two-level provider's own path validation already refuses independently.
+ */
 export function containerDepth(capabilities: ProviderCapabilities): 0 | 1 | 2 {
   const levels = capabilities.containerLevels?.length ?? 0;
   if (levels >= 2) return 2;

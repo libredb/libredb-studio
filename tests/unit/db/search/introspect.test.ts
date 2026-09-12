@@ -26,11 +26,7 @@
  * so the mapping is the only honest source.
  */
 import { describe, expect, test } from "bun:test";
-import {
-  isSystemIndex,
-  SEARCH_CONTAINER_TYPES,
-  SEARCH_MAPPING_CONCURRENCY,
-} from "@/lib/db/providers/sql/search/introspect";
+import { isSystemIndex, SEARCH_CONTAINER_TYPES } from "@/lib/db/providers/sql/search/introspect";
 import type {
   SearchClusterHealth,
   SearchIndexInfo,
@@ -189,13 +185,7 @@ describe("the container decision", () => {
   test("is frozen, so no caller can widen it at runtime", () => {
     expect(Object.isFrozen(SEARCH_CONTAINER_TYPES)).toBe(true);
   });
-
-  test("reads four at a time, the number Couchbase's per-collection inference settled on", () => {
-    expect(SEARCH_MAPPING_CONCURRENCY).toBe(4);
-  });
 });
-
-describe("the multi-field decision", () => {});
 
 // ============================================================================
 // System indices
@@ -228,8 +218,6 @@ describe("isSystemIndex", () => {
 // ============================================================================
 // Table shape
 // ============================================================================
-
-describe("getSchema table shape", () => {});
 
 // ============================================================================
 // Failures

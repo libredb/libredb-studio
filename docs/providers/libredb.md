@@ -649,10 +649,9 @@ apart by, the way a PostgreSQL routine's segment carries its argument type list.
 tells them apart by the key pattern: `prefix employees:` reaches the table's rows and `get
 employees` reads a key of that exact name.
 
-It also makes the two readings agree on every object rather than on the derived ones alone.
-the object surface spells a cataloged namespace `employees:*`, so under the old address no cataloged
-object's flat spelling could resolve to its own path, and the row menu's `flatTargetName` lookup
-(#518, and see [§5.3](#53-schema-explorer-menu-actions)) is a lookup by that same string.
+The object surface spells a cataloged namespace `employees:*`, and that spelling is what a generated
+command needs: `prefix employees:` reaches the table's rows while `get employees` reads a key nobody
+stored (#518, and see [§5.3](#53-schema-explorer-menu-actions)).
 
 **Two objects, one string, measured.** A cataloged collection `notes` and a bare key `notes`
 coexist in one file: `assertUserName` forbids a namespace name containing `:`, and nothing forbids

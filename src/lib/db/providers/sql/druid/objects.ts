@@ -66,6 +66,7 @@ import { comparePaths } from "@/lib/db/object-path";
 import type {
   Container,
   ContainerLevelSpec,
+  ContainerLevels,
   DatabaseObject,
   KindCount,
   ObjectDetail,
@@ -93,7 +94,7 @@ type DruidQueryRunner = Pick<DruidTransport, "query">;
  * is `schema` because that is what `ContainerLevelSpec` calls the innermost level on
  * every engine, and here the engine's own word is Schema as well.
  */
-export const DRUID_CONTAINER_LEVELS: readonly ContainerLevelSpec[] = Object.freeze([
+export const DRUID_CONTAINER_LEVELS: ContainerLevels = Object.freeze([
   { id: "schema", label: "Schema", labelPlural: "Schemas" },
 ] as const);
 

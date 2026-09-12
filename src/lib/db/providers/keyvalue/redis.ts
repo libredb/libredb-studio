@@ -37,6 +37,7 @@ import {
   type StorageStats,
   type ColumnSchema,
   type Container,
+  type ContainerLevels,
   type ContainerLevelSpec,
   type DatabaseObject,
   type KindCount,
@@ -96,7 +97,7 @@ function labelServerVersion(parsed: Record<string, string>): string {
  * mode". So the server's own reply already reflects the deployment and nothing here has to
  * read `cluster_enabled` to work it out.
  */
-const REDIS_CONTAINER_LEVELS: readonly ContainerLevelSpec[] = Object.freeze([
+const REDIS_CONTAINER_LEVELS: ContainerLevels = Object.freeze([
   { id: "schema", label: "Database", labelPlural: "Databases" },
 ] as const);
 

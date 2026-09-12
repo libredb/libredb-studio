@@ -31,11 +31,20 @@ export const dynamic = "force-dynamic";
  *
  * WHAT IS AND IS NOT BOUNDED, precisely, because an earlier version of this comment overstated it.
  * Bounded: the number of listings issued (`INVENTORY_PAIR_LIMIT`) and the number of objects
- * returned (`INVENTORY_LIMIT`). NOT bounded: one listing. The loop awaits the whole array
+ * returned (`INVENTORY_LIMIT`).
+ *
+ * NOT bounded, and there are two of them. One listing: the loop awaits the whole array
  * `listObjects` answers before it can truncate anything, so a single kind holding 43,000 objects is
  * fully materialised in the provider and in this process whatever these limits say. Bounding that
  * needs a limit argument on the provider method itself, which is not something this route can do
  * from the outside; it is Task 24's open item, alongside bulk column reading.
+ *
+ * And the CONTAINER ENUMERATION, which neither limit reaches. `enumerateContainers` walks every
+ * level before the first pair exists: one `listContainers()` at the top, then one call per parent
+ * at every level below, so a two-level engine with 5,000 catalogs issues 5,001 round trips and only
+ * then meets `INVENTORY_PAIR_LIMIT`. The pair limit truncates the SCAN, never the walk. Bounding
+ * the walk belongs in `container-walk.ts`, which the agent's grounding inventory shares, so it is
+ * one decision for both readers rather than a cap invented here. Filed rather than guessed at (#789).
  *
  * `includeColumns` is back, and it is a DIFFERENT read from the one that was removed. The first
  * spelling called `describeObject` once per object, up to 5000 sequential round trips, and was
@@ -81,8 +90,12 @@ export async function POST(req: NextRequest) {
     // mistake, and refusing to answer it at all is worse than answering part of it and saying so.
     // One answer shape for "this inventory is incomplete" is also the only thing its reader, the
     // agent, has to handle.
-    let truncated: ObjectInventory["truncated"] =
+    const pairBound: ObjectInventory["truncated"] =
       pairs.length > scanned.length ? { limit: INVENTORY_PAIR_LIMIT, reason: PAIR_TRUNCATION_REASON } : undefined;
+    /** Set when the object budget ran out, which is the bound the caller can see for itself. */
+    let objectBound: ObjectInventory["truncated"];
+    /** The provider's own bound on a column read, in the provider's own words. */
+    let columnBound: ObjectInventory["truncated"];
 
     const includeColumns = optionalBoolean(body, "includeColumns");
     const describeObjects = provider.describeObjects.bind(provider);
@@ -91,16 +104,13 @@ export async function POST(req: NextRequest) {
     const details: ObjectDetail[] = [];
     for (const pair of scanned) {
       if (objects.length >= INVENTORY_LIMIT) {
-        // Overwrites a pair-limit reason where both bit. The object limit is the one the reader can
-        // see reflected in `objects.length`, so it is the one that explains what they are holding;
-        // either way the answer says the inventory is incomplete, which is what a reader must act on.
-        truncated = { limit: INVENTORY_LIMIT, reason: INVENTORY_TRUNCATION_REASON };
+        objectBound = { limit: INVENTORY_LIMIT, reason: INVENTORY_TRUNCATION_REASON };
         break;
       }
       const before = objects.length;
       for (const object of await listObjects(pair.container, pair.kind)) {
         if (objects.length >= INVENTORY_LIMIT) {
-          truncated = { limit: INVENTORY_LIMIT, reason: INVENTORY_TRUNCATION_REASON };
+          objectBound = { limit: INVENTORY_LIMIT, reason: INVENTORY_TRUNCATION_REASON };
           break;
         }
         objects.push(object);
@@ -114,10 +124,27 @@ export async function POST(req: NextRequest) {
         // The provider's own bound, kept in the provider's own words. It is reported even when the
         // listing above fitted, because a complete list of objects whose columns were cut is still
         // an incomplete answer, and a reader that trusted it would read a missing column as an
-        // absent one.
-        if (batch.truncated !== undefined) truncated = batch.truncated;
+        // absent one. The LAST one wins among column bounds: they are all the same statement about
+        // the same read, and only the precedence below decides whether any of them is reported.
+        if (batch.truncated !== undefined) columnBound = batch.truncated;
       }
     }
+
+    /**
+     * Which bound is REPORTED when more than one bit, in one expression rather than by whichever
+     * assignment ran last (#789).
+     *
+     * A missing OBJECT outranks a missing COLUMN, and the reason is what the reader does with the
+     * answer: the agent treats an object it was not shown as an object the database does not hold
+     * (#414), while a short column read still names every object it holds. So the object limit
+     * first, because it is the one the caller can see reflected in `objects.length`; then the pair
+     * limit, which also means objects are missing, whole containers and kinds of them; then the
+     * provider's own column bound, which costs columns only.
+     *
+     * Either way the answer says the inventory is incomplete, which is the one thing a reader must
+     * act on; the precedence decides only which sentence explains it.
+     */
+    const truncated = objectBound ?? pairBound ?? columnBound;
 
     // `truncated` is reported when a limit lands exactly on a boundary with work still unread: what
     // was not scanned cannot be claimed as absent, and over-reporting incompleteness is the only

@@ -44,6 +44,26 @@ describe("containerDepth", () => {
     } as unknown as ProviderCapabilities;
     expect(containerDepth(oneLevel)).toBe(1);
   });
+
+  /**
+   * The CEILING, pinned rather than left implicit (#789). `ContainerLevels` is a tuple union
+   * of nought, one or two levels, so this declaration is a compile error where a provider
+   * would write one and has to be cast in here. What the cast reaches is the clamp, and the
+   * clamp answers two rather than three: the tree models two levels, and every two-level
+   * provider's own path validation refuses a three-segment container independently
+   * (`tests/integration/db/duckdb-provider.test.ts`, `.../trino-provider.test.ts`).
+   */
+  test("a third declared level is clamped to two, which is the deepest tree this phase models", () => {
+    const threeLevels = {
+      ...base,
+      containerLevels: [
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+        { id: "schema", label: "Sub-schema", labelPlural: "Sub-schemas" },
+      ],
+    } as unknown as ProviderCapabilities;
+    expect(containerDepth(threeLevels)).toBe(2);
+  });
 });
 
 describe("declaredKinds", () => {

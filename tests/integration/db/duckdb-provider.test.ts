@@ -2167,11 +2167,14 @@ describe("DuckDB object paths are derived from the declaration, never from a pos
       // third entry must therefore widen nothing - not the accepted container shapes, not
       // the segment lookup, not the object path. Behaviour-identical to the cut version on
       // every real declaration in the fleet, which is exactly why it needs pinning here.
+      // Cast, because `ContainerLevels` is a two-level tuple union since #789 and a third
+      // level is now a compile error where a provider would write one. The RUNTIME rule is
+      // what this pins, and it has to be reachable from a declaration the type forbids.
       withLevels(provider, [
         { id: "catalog", label: "Database", labelPlural: "Databases" },
         { id: "schema", label: "Schema", labelPlural: "Schemas" },
         { id: "schema", label: "Sub-schema", labelPlural: "Sub-schemas" },
-      ]);
+      ] as unknown as ProviderCapabilities["containerLevels"]);
 
       await expect(provider.countObjects(["alpha", "beta", "extra"])).rejects.toThrow(
         'A DuckDB container path is [database] or [database, schema], received ["alpha","beta","extra"]',

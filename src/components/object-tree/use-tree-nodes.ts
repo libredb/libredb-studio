@@ -90,6 +90,13 @@ interface TreeRead {
   readonly slot: ReadSlot;
 }
 
+/** The root read, whose slot is never an objects slot: the tree's top holds no folder. */
+type RootSlot = Extract<ReadSlot, { kind: "containers" | "counts" }>;
+
+interface RootRead extends TreeRead {
+  readonly slot: RootSlot;
+}
+
 interface TreeCache {
   readonly connectionId: string;
   /** Every container known so far, at every level, flat. `flattenTree` nests them by path. */
@@ -151,7 +158,7 @@ function emptyCache(connectionId: string): TreeCache {
  * `src/lib/api/object-route.ts` applies server-side, and calling `/containers` there instead would
  * ask five engines for a method they have no reason to implement.
  */
-function rootRead(depth: 0 | 1 | 2): TreeRead {
+function rootRead(depth: 0 | 1 | 2): RootRead {
   return depth === 0
     ? { request: { route: "counts", container: [] }, slot: { kind: "counts", key: "" } }
     : { request: { route: "containers" }, slot: { kind: "containers", key: "" } };
@@ -262,26 +269,25 @@ function withoutFailure(cache: TreeCache, slot: ReadSlot): TreeCache {
   return { ...cache, failures };
 }
 
-/** Empty the slot as well as its failure, which is what makes the reconciler read it again. */
-function forget(cache: TreeCache, slot: ReadSlot): TreeCache {
+/**
+ * Empty the ROOT slot as well as its failure, which is what makes the reconciler read it again.
+ *
+ * Only the root, and the type says so: `rootRead` answers a containers slot on an engine with
+ * container levels and a counts slot on one without, and `loadContainers` is the only caller.
+ * Every other re-read goes through `refresh`, which ISSUES the read rather than emptying the slot,
+ * so that the rows stay on screen while it is in flight. A general `forget` had a third arm for an
+ * objects slot that nothing could reach after that change.
+ */
+function forgetRoot(cache: TreeCache, slot: RootSlot): TreeCache {
   const emptied = withoutFailure(cache, slot);
-  switch (slot.kind) {
-    case "containers": {
-      const containersRead = new Set(emptied.containersRead);
-      containersRead.delete(slot.key);
-      return { ...emptied, containersRead };
-    }
-    case "counts": {
-      const counts = { ...emptied.counts };
-      delete counts[slot.key];
-      return { ...emptied, counts };
-    }
-    case "objects": {
-      const objects = { ...emptied.objects };
-      delete objects[slot.key];
-      return { ...emptied, objects };
-    }
+  if (slot.kind === "containers") {
+    const containersRead = new Set(emptied.containersRead);
+    containersRead.delete(slot.key);
+    return { ...emptied, containersRead };
   }
+  const counts = { ...emptied.counts };
+  delete counts[slot.key];
+  return { ...emptied, counts };
 }
 
 class ObjectReadError extends Error {
@@ -590,7 +596,7 @@ export function useTreeNodes(
     for (const read of reads) void run(connectionId, connection, reader, read);
   }, [connection, connectionId, deferred, depth, reader, root, rows, run]);
 
-  const loadContainers = useCallback(() => apply((current) => forget(current, root.slot)), [apply, root]);
+  const loadContainers = useCallback(() => apply((current) => forgetRoot(current, root.slot)), [apply, root]);
 
   return {
     rows,

@@ -112,6 +112,7 @@ import { comparePaths } from "@/lib/db/object-path";
 import type {
   ColumnSchema,
   ContainerLevelSpec,
+  ContainerLevels,
   DatabaseObject,
   IndexSchema,
   ObjectDetail,
@@ -134,7 +135,7 @@ import type { CouchbaseRow, Keyspace } from "./transport";
  * Nothing in this file reads a level by position, so the ids are what every derivation
  * addresses and the labels only ever reach a person.
  */
-export const COUCHBASE_CONTAINER_LEVELS: readonly ContainerLevelSpec[] = Object.freeze([
+export const COUCHBASE_CONTAINER_LEVELS: ContainerLevels = Object.freeze([
   { id: "catalog", label: "Bucket", labelPlural: "Buckets" },
   { id: "schema", label: "Scope", labelPlural: "Scopes" },
 ] as const);

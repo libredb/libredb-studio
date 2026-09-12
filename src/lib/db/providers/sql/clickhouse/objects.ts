@@ -65,6 +65,7 @@ import type {
   ColumnSchema,
   Container,
   ContainerLevelSpec,
+  ContainerLevels,
   DatabaseObject,
   IndexSchema,
   KindCount,
@@ -98,7 +99,7 @@ const PROVIDER = "clickhouse" as const;
  * is `schema` because that is what `ContainerLevelSpec` calls the innermost level on
  * every engine; the LABEL is the engine's own word, which is Database.
  */
-export const CLICKHOUSE_CONTAINER_LEVELS: readonly ContainerLevelSpec[] = Object.freeze([
+export const CLICKHOUSE_CONTAINER_LEVELS: ContainerLevels = Object.freeze([
   { id: "schema", label: "Database", labelPlural: "Databases" },
 ] as const);
 

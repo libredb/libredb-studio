@@ -698,12 +698,12 @@ not expose.
 
 ## 6. Schema introspection
 
-the object surface ([introspect.ts:355](../../src/lib/db/providers/sql/search/introspect.ts)) makes one
-index listing plus **one mapping read per index**, at most
-`SEARCH_MAPPING_CONCURRENCY = 4` at a time
-([introspect.ts:102](../../src/lib/db/providers/sql/search/introspect.ts)) — the same trade-off
-Couchbase's per-collection inference settled on, and `_mapping` is a cluster-state read rather than a
-search, so it is cheap per call and not worth tuning past "not serial, not a flood".
+Everything this provider knows about an index's contents is read through the OBJECT SURFACE, and this
+section describes the MAPPING decisions behind it; the surface itself is described below. The flat
+two-phase reading that used to open this section was deleted with `getSchema` (#789), and so was its
+cost model: a folder of indices is described in ONE `_mapping` request over a comma-joined list, split
+only on the cluster's own request-line limit, rather than one request per index at a fixed
+concurrency.
 
 | Data | Source |
 |---|---|
@@ -788,22 +788,16 @@ which matches the fork's date-suffixed query-insights shape
 the product decides what to do with the flag. A stock Elasticsearch node ships none of these — the
 measured cluster listed only the three probe indices — but the same code hides two of three on a stock
 OpenSearch node, which is why the rule is a flag rather than a filter applied on the wire.
-`SearchSchemaOptions.includeSystemIndices` exists because both answers are legitimate and the caller
-knows which; the object surface on the provider passes `{}`, i.e. hidden.
+Hiding them is what the object surface does: `isSystemIndex()` is consulted for every listing and
+count, so a folder's badge and its rows agree about what is shown.
 
-**A per-index failure costs one index's columns, not the tree.** Only `auth` and `unknown-object`
-degrade to an empty column list
-([`DEGRADABLE_MAPPING_FAILURES`, introspect.ts:119](../../src/lib/db/providers/sql/search/introspect.ts)):
-a security plugin grants index privileges *per index*, so a role that lists twenty indices and may
-describe nineteen is an ordinary configuration; and an index deleted between the listing and its
-mapping read is a race, not a fault. Everything else propagates, because an unreachable cluster
-rendering every index with zero columns reads as "these indices have no fields" — a fabricated schema,
-and the failure mode that hides the real error forever.
-
-The two-phase flat schema split no longer exists anywhere. Both are optional
-and the client falls back to the object surface; the split exists so a slow relationship read cannot block
-the table list, and here both halves are empty by construction, so a list would be byte-identical and
-a relations pass would re-read every mapping to return the same empty arrays.
+**A mapping the cluster did not answer for is REPORTED, not degraded to an empty column list**, and
+that is a change from the deleted reading (#789). The bulk read asks one concrete request for a whole
+folder, and a concrete request answers for every name it was given, a CLOSED index included (measured),
+and refuses the whole request for a name that does not exist. So a name missing from a present answer
+cannot have come from the engine, and `describeObjects` throws naming the index rather than reporting
+it with no columns: an index with no mapping is an ordinary state, and spelling a failure the same way
+would be a fabricated schema that hides the real error forever.
 
 ### The object surface (#789)
 

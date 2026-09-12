@@ -1058,8 +1058,6 @@ describe("TrinoProvider query preparation", () => {
 // Schema
 // ============================================================================
 
-describe("TrinoProvider schema", () => {});
-
 // ============================================================================
 // Monitoring
 // ============================================================================
@@ -2385,11 +2383,14 @@ describe("Trino object paths are derived from the declaration, never from a posi
     // goes (standing ruling 1, #789): `containerLevels.length` is not. A third entry must
     // widen nothing - not the accepted container shapes, not the segment lookup, not the
     // object path.
+    // Cast, because `ContainerLevels` is a two-level tuple union since #789 and a third level
+    // is now a compile error where a provider would write one. The RUNTIME rule is what this
+    // pins, and it has to be reachable from a declaration the type forbids.
     withLevels(provider, [
       { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
       { id: "schema", label: "Schema", labelPlural: "Schemas" },
       { id: "schema", label: "Sub-schema", labelPlural: "Sub-schemas" },
-    ]);
+    ] as unknown as ProviderCapabilities["containerLevels"]);
 
     await expect(provider.countObjects!(["alpha", "beta", "extra"])).rejects.toThrow(
       'A Trino container path is [catalog] or [catalog, schema], received ["alpha","beta","extra"]',

@@ -191,6 +191,22 @@ export type ExplainFormat =
   | "trino-json"
   | "duckdb-json";
 
+/**
+ * How deep an engine's container chain is, in the TYPE rather than only in a derivation.
+ *
+ * Phase 1's tree models zero, one or two levels and `containerDepth()` answers `0 | 1 | 2`, so a
+ * provider declaring a third level used to have it silently clamped away: the level would exist in
+ * the declaration, `ContainerLevelSpec.level` indices would still point at it, and nothing would
+ * read it. Spelling the ceiling as a tuple union makes that declaration a compile error at the
+ * provider that writes it, which is where the person who meant to add it is standing. No engine in
+ * this repository declares three; the first one that needs to is a Phase 2 question about the tree,
+ * not a number to widen here (#789).
+ */
+export type ContainerLevels =
+  | readonly []
+  | readonly [ContainerLevelSpec]
+  | readonly [ContainerLevelSpec, ContainerLevelSpec];
+
 export interface ProviderCapabilities {
   queryLanguage: "sql" | "json";
   /**
@@ -417,7 +433,7 @@ export interface ProviderCapabilities {
    * (`src/exports/types.ts`): a required field added after the fact stops every external
    * implementer compiling.
    */
-  containerLevels?: readonly ContainerLevelSpec[];
+  containerLevels?: ContainerLevels;
   /**
    * Every object kind this engine has, each declared in full by the provider that has
    * it (#789).

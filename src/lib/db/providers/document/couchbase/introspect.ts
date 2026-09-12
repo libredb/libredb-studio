@@ -25,15 +25,12 @@
  */
 
 import type { ColumnSchema } from "@/lib/types";
-import { COUCHBASE_DEFAULT_SCOPE, keyspaceDisplayName, keyspacePath } from "./keyspace";
+import { keyspacePath } from "./keyspace";
 import type { CouchbaseRow, CouchbaseTransport, Keyspace } from "./transport";
 
 // ============================================================================
 // Constants
 // ============================================================================
-
-/** Collection every bucket has, and the one a bucket-level catalog row means. */
-const DEFAULT_COLLECTION = "_default";
 
 /** Documents INFER samples per collection. Mirrors the MongoDB provider. */
 const INFER_SAMPLE_SIZE = 100;
@@ -63,36 +60,12 @@ export const INFER_TIMEOUT_MS = 5000;
 /** Server-side timeout for the `system:*` catalog reads. */
 export const CATALOG_TIMEOUT_MS = 15000;
 
-/**
- * Collections of the pinned bucket.
- *
- * The LEFT JOIN is deliberate. `system:scopes` does not list `_default` on
- * Server 8.0.2, so an inner join silently drops every collection in the default
- * scope. The second predicate is equally deliberate: the bucket-level row
- * (name = bucket, no `bucket`/`scope` fields) IS the pre-collections default
- * collection, and dropping it would hide every document written before scopes
- * existed.
- */
-const COLLECTION_LIST_SQL = [
-  "SELECT k.`bucket` AS bucket_name, k.`scope` AS scope_name, k.name AS collection_name",
-  "FROM system:keyspaces AS k",
-  "LEFT JOIN system:scopes AS s ON k.`bucket` = s.`bucket` AND k.`scope` = s.name",
-  "WHERE k.`bucket` = $1 OR (k.`bucket` IS MISSING AND k.name = $1)",
-  "ORDER BY scope_name, collection_name",
-].join(" ");
-
 /** A single backtick-quoted identifier, with embedded backticks doubled. */
 const QUOTED_IDENTIFIER = /^`((?:[^`]|``)*)`$/;
 
 // ============================================================================
 // Types
 // ============================================================================
-
-/** A collection and the name the flat schema explorer shows for it. */
-export interface CouchbaseCollection {
-  keyspace: Keyspace;
-  displayName: string;
-}
 
 /** What the sampled documents say about one field. */
 interface FieldStats {
@@ -109,23 +82,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-/**
- * Catalog row -> keyspace, shared by both catalogs because their projections
- * are aliased onto the same field names. Returns null for a row that cannot be
- * placed, so one malformed row cannot take the whole listing down.
- */
-function resolveKeyspace(bucket: string, row: CouchbaseRow): Keyspace | null {
-  if (typeof row.bucket_name !== "string") {
-    return { bucket, scope: COUCHBASE_DEFAULT_SCOPE, collection: DEFAULT_COLLECTION };
-  }
-  if (typeof row.collection_name !== "string") return null;
-  return {
-    bucket,
-    scope: typeof row.scope_name === "string" ? row.scope_name : COUCHBASE_DEFAULT_SCOPE,
-    collection: row.collection_name,
-  };
 }
 
 /** Type names an INFER property carries: one string, or a JSON-schema array. */
@@ -238,19 +194,6 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item
 /** The INFER statement for one collection. The path is quoted, never inlined raw. */
 function inferStatement(keyspace: Keyspace): string {
   return `INFER ${keyspacePath(keyspace)} WITH {"sample_size": ${INFER_SAMPLE_SIZE}}`;
-}
-
-/** Collections of the pinned bucket, with their flat display names. */
-export async function listCollections(transport: CouchbaseTransport, bucket: string): Promise<CouchbaseCollection[]> {
-  const result = await transport.query(COLLECTION_LIST_SQL, { args: [bucket], timeoutMs: CATALOG_TIMEOUT_MS });
-
-  const collections: CouchbaseCollection[] = [];
-  for (const row of result.rows) {
-    const keyspace = resolveKeyspace(bucket, row);
-    if (!keyspace) continue;
-    collections.push({ keyspace, displayName: keyspaceDisplayName(keyspace.scope, keyspace.collection) });
-  }
-  return collections;
 }
 
 /**

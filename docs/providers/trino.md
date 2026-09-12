@@ -146,26 +146,28 @@ between the two products and nothing else does.
 
 ### 3.2 The connection's `database` field pins one catalog
 
-Trino's hierarchy is **catalog → schema → table**, one level deeper than the schema tree's
-database → schema → table. The mapping chosen here is the PostgreSQL one: the connection's
-`database` field holds **the catalog**, exactly as a PostgreSQL connection pins one database, and
-the schemas inside it are the schema level. The tree is two levels, and a table's display name is
-always `schema.table`.
+Trino's hierarchy is **catalog → schema → table**, and the connection's `database` field holds **the
+catalog**, exactly as a PostgreSQL connection pins one database.
 
-The alternative — fanning `information_schema` out across every catalog — is **unbounded in
-practice**: `jmx.current` alone publishes one table per MBean, and one sidebar refresh would depend
-on every connector the cluster has configured being reachable. `SHOW CATALOGS` is still useful, and
-it is exposed where it belongs: the Storage panel lists one row per catalog with its connector
-([§7](#7-monitoring--health)).
+**What the pin decides is the SESSION DEFAULT, and nothing else.** It supplies the catalog for names
+a statement does not fully qualify, and the object tree marks it `isSessionDefault` so it is the
+container the tree opens on first paint. It does not decide what the tree SHOWS: the tree declares
+two container levels, catalog and schema, and `listContainers()` lists every catalog `SHOW CATALOGS`
+answers, `system` and `jmx` included ([§6](#6-schema-introspection)).
+
+That is a change #789 made deliberately, and it retired the argument this section used to carry: the
+old flat tree fanned `information_schema` out across the pinned catalog eagerly, so listing every
+catalog would have been unbounded, with `jmx.current` alone publishing one table per MBean and every
+configured connector having to be reachable for one refresh. The object tree reads LAZILY, one
+container at a time, so listing catalog names costs one `SHOW CATALOGS` and nothing under a catalog
+is touched until a reader opens it.
 
 **Cross-catalog queries still work.** Nothing about this pin constrains the editor: `SELECT * FROM
-other_catalog.some_schema.t JOIN tpch.tiny.nation ON …` runs exactly as typed, because the pinned
-catalog only supplies the default for names that are not fully qualified. What the pin decides is
-which catalog the *tree* shows.
+other_catalog.some_schema.t JOIN tpch.tiny.nation ON …` runs exactly as typed.
 
-A connection that names no catalog still connects and still runs every fully qualified statement,
-plus the whole of `system.runtime`. What it cannot do is show a tree, and the object surface says so:
-*"This connection pins no Trino catalog, so there is no schema to list."*
+A connection that names no catalog still connects, still runs every fully qualified statement plus
+the whole of `system.runtime`, and now still shows a tree: with no catalog pinned nothing is marked
+as the session default, so the tree lists the catalogs and opens none of them.
 
 ### 3.3 A failed statement arrives as HTTP 200
 
@@ -596,9 +598,9 @@ A table's name is `schema.table`, always qualified
 ([§3.2](#32-the-connections-database-field-pins-one-catalog)). `indexes` and `foreignKeys` are `[]`
 by construction ([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)).
 
-The two-phase flat schema split no longer exists anywhere. That split exists
-so a slow relationship read cannot block the table list, and Trino has no relationship read at all: a
-list would be byte-identical to the object surface and a relations read would spend a round trip to answer
+The two-phase flat schema split no longer exists anywhere (#789). It existed so a slow relationship
+read could not block the table list, and Trino never had a relationship read at all: a list would have
+been byte-identical to the object surface, and a relations read would have spent a round trip to answer
 two empty arrays per table.
 
 Measured against `tpch`: 72 tables, `column_default` projected and null for every connector probed

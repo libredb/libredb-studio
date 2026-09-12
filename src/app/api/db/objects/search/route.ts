@@ -8,6 +8,13 @@ export const dynamic = "force-dynamic";
 /**
  * Name search across every container and every declared kind (#789).
  *
+ * NO PRODUCT CALLER TODAY, stated rather than left for the next reader to discover. The tree's
+ * filter box is Phase 2; this route is the half that cannot be built in the browser, and it was
+ * landed with the rest of the surface in Task 4 so the four routes share one request shape, one
+ * error vocabulary and one test file. It is exercised by `tests/api/db-objects.test.ts` and by
+ * nothing else, so its cost claims below are reasoned rather than measured against a real
+ * consumer, and the Phase 2 task that wires it owes that measurement.
+ *
  * Server side, because a lazily loaded tree has nothing local to filter: a search for
  * `order_summary` before the Views folder was ever expanded would answer nothing and read as
  * "not found", and a false-negative search is worse than no search at all.

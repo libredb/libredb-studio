@@ -235,10 +235,10 @@ export interface SearchIndexInfo {
    * decides what to do with, rather than a filter applied here.
    *
    * NOTE what this list does NOT contain: aliases and data streams. They are a
-   * different endpoint, and `getSchema()` still describes indices alone - so a
-   * queryable alias does not appear in the SCHEMA tree. Since #789 it does appear in
-   * the OBJECT tree, through {@link SearchTransport.aliases} and
-   * {@link SearchTransport.dataStreams}, which is where that limitation was answered.
+   * different endpoint, and this listing describes indices alone. They reach the tree
+   * through {@link SearchTransport.aliases} and {@link SearchTransport.dataStreams},
+   * each declaring a kind of its own (#789); the flat reading that could not show a
+   * queryable alias at all is gone with `getSchema`.
    */
   isSystem: boolean;
 }

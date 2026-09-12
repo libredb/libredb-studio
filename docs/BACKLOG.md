@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B79 · 23
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B80 · 24
 
 ---
 
@@ -1918,6 +1918,24 @@ otherwise disappear: it is not one edit but a small sweep, and
 
 **Done when:** no emitted line in that file carries an em or en dash, and its tests assert the new
 wording.
+
+### B80. The inventory's two bounds do not reach the container enumeration
+
+`POST /api/db/objects/inventory` bounds the listings it issues (`INVENTORY_PAIR_LIMIT`) and the
+objects it returns (`INVENTORY_LIMIT`), and its own docblock says so. Neither reaches the walk that
+produces the containers in the first place. `enumerateContainers`
+(`src/lib/db/container-walk.ts`) calls `listContainers()` once at the top level and then once per
+parent at every level below, with no cap: a two-level engine holding 5,000 catalogs issues 5,001
+round trips before the first pair exists, and only then meets a limit. The pair limit truncates the
+SCAN, never the walk.
+
+Not invented here, because `container-walk.ts` has a second reader: the agent's grounding inventory
+(`src/lib/agent/tools.ts`) performs the same walk from its run context. A cap belongs to both or to
+neither, and it needs the `truncated` shape the route already publishes, so it is one decision
+rather than a number chosen at one call site. The route's docblock states the gap where it bites.
+
+**Done when:** the walk reports a bound the same way a saturated scan does, both readers carry it,
+and a test drives an engine whose top level exceeds the cap.
 
 ### B79. A connection switch reads the new connection with the old engine's container depth
 

@@ -15,6 +15,7 @@ setupFramerMotionMock();
 
 // ---- Module-level prop capture for child components ----
 let capturedSidebarProps: Record<string, unknown> = {};
+let capturedQueryExecParams: Record<string, unknown> = {};
 let capturedBottomPanelProps: Record<string, unknown> = {};
 let capturedQueryToolbarProps: Record<string, unknown> = {};
 let capturedConnectionModalProps: Record<string, unknown> = {};
@@ -179,7 +180,7 @@ mock.module("@/hooks/use-transaction-control", () => ({
 }));
 
 mock.module("@/hooks/use-query-execution", () => ({
-  useQueryExecution: mock(() => ({
+  useQueryExecution: mock((params: Record<string, unknown>) => ({
     bottomPanelMode: "results",
     setBottomPanelMode: mockSetBottomPanelMode,
     historyKey: 0,
@@ -193,7 +194,7 @@ mock.module("@/hooks/use-query-execution", () => ({
     setUnlimitedWarningOpen: mock(() => {}),
     handleUnlimitedQuery: mockHandleUnlimitedQuery,
     handleLoadMore: mockHandleLoadMore,
-    ...queryExecOverride,
+    ...((capturedQueryExecParams = params), queryExecOverride),
   })),
 }));
 
@@ -776,6 +777,24 @@ describe("Studio", () => {
     const onSave = capturedSaveQueryModalProps.onSave as (name: string, desc: string, tags: string[]) => void;
     act(() => onSave("Noop", "", []));
     expect(mockStorageSaveQuery).not.toHaveBeenCalled();
+  });
+
+  /**
+   * MAJOR 1, #789. The wire between the two halves that are pinned separately: the DDL
+   * detection in `use-query-execution` calls `onObjectsChanged`, and the object tree acts on a
+   * token it has not seen before. Studio is the only thing that joins them.
+   */
+  test("a catalog-changing statement bumps the token the sidebar hands the tree", () => {
+    connMgrOverride = { activeConnection: pgConn, connections: [pgConn] };
+    render(<Studio />);
+
+    const before = capturedSidebarProps.objectRefreshToken as number;
+    expect(typeof before).toBe("number");
+
+    const objectsChanged = capturedQueryExecParams.onObjectsChanged as () => void;
+    act(() => objectsChanged());
+
+    expect(capturedSidebarProps.objectRefreshToken).toBe(before + 1);
   });
 
   // --- handleDeleteConnection ---

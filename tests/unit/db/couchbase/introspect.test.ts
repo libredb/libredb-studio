@@ -13,7 +13,6 @@ import {
   INFER_CONCURRENCY,
   INFER_TIMEOUT_MS,
   inferColumns,
-  listCollections,
 } from "@/lib/db/providers/document/couchbase/introspect";
 import {
   CouchbaseError,
@@ -97,12 +96,6 @@ function inferRows(...flavours: Record<string, unknown>[]): CouchbaseRow[] {
   return [flavours as unknown as CouchbaseRow];
 }
 
-function collectionRow(scope: string | undefined, collection: string): CouchbaseRow {
-  const row: CouchbaseRow = { bucket_name: "travel", collection_name: collection };
-  if (scope !== undefined) row.scope_name = scope;
-  return row;
-}
-
 const HOTEL: Keyspace = { bucket: "travel", scope: "inventory", collection: "hotel" };
 
 function createGate() {
@@ -121,77 +114,6 @@ function flushPending(): Promise<void> {
 function columnNames(columns: { name: string }[]): string[] {
   return columns.map((column) => column.name);
 }
-
-// ============================================================================
-// Collection listing
-// ============================================================================
-
-describe("listCollections", () => {
-  test("restricts the catalog query to the pinned bucket and quotes the reserved words", async () => {
-    const { transport, calls } = createTransport();
-
-    await listCollections(transport, "travel");
-
-    expect(calls).toHaveLength(1);
-    expect(calls[0].statement).toContain("system:keyspaces");
-    expect(calls[0].statement).toContain("system:scopes");
-    // Verified on Server 8.0.2: unquoted bucket/scope fail with error 3000.
-    expect(calls[0].statement).toContain("k.`bucket`");
-    expect(calls[0].statement).toContain("k.`scope`");
-    // The bucket travels as a positional argument, never concatenated in.
-    expect(calls[0].statement).not.toContain("travel");
-    expect(calls[0].opts?.args).toEqual(["travel"]);
-    expect(calls[0].opts?.timeoutMs).toBe(CATALOG_TIMEOUT_MS);
-  });
-
-  test("renders a _default scope collection bare and any other scope qualified", async () => {
-    const { transport } = createTransport({
-      collections: [collectionRow("_default", "airline"), collectionRow("inventory", "hotel")],
-    });
-
-    const collections = await listCollections(transport, "travel");
-
-    expect(collections).toEqual([
-      { keyspace: { bucket: "travel", scope: "_default", collection: "airline" }, displayName: "airline" },
-      { keyspace: HOTEL, displayName: "inventory.hotel" },
-    ]);
-  });
-
-  test("maps the bucket-level catalog row onto the default collection", async () => {
-    // Verified on Server 8.0.2: the pre-collections default collection is
-    // represented by a row carrying the bucket name and no bucket/scope field.
-    // Dropping it would hide every document written before scopes existed.
-    const { transport } = createTransport({ collections: [{ collection_name: "travel" }] });
-
-    const collections = await listCollections(transport, "travel");
-
-    expect(collections).toEqual([
-      { keyspace: { bucket: "travel", scope: "_default", collection: "_default" }, displayName: "_default" },
-    ]);
-  });
-
-  test("defaults a collection row with no scope to the default scope", async () => {
-    const { transport } = createTransport({ collections: [collectionRow(undefined, "airline")] });
-
-    const collections = await listCollections(transport, "travel");
-
-    expect(collections[0].keyspace.scope).toBe("_default");
-    expect(collections[0].displayName).toBe("airline");
-  });
-
-  test("skips a catalog row whose collection name is not a string", async () => {
-    const { transport } = createTransport({
-      collections: [
-        { bucket_name: "travel", scope_name: "inventory", collection_name: 42 },
-        collectionRow("inventory", "hotel"),
-      ],
-    });
-
-    const collections = await listCollections(transport, "travel");
-
-    expect(collections).toEqual([{ keyspace: HOTEL, displayName: "inventory.hotel" }]);
-  });
-});
 
 // ============================================================================
 // Column inference
@@ -378,10 +300,6 @@ describe("inferColumns", () => {
 // getSchemaList
 // ============================================================================
 
-describe("getSchemaList", () => {});
-
 // ============================================================================
 // getSchemaRelations
 // ============================================================================
-
-describe("getSchemaRelations", () => {});

@@ -629,9 +629,11 @@ export interface AgentContextSnapshot extends AgentInventory {
  * said nothing happened would contradict the ledger.
  *
  * The grounding schema read (#414) adds no third code. A provider that cannot describe
- * itself is not a state that exists — `getSchema()` is required on `DatabaseProvider`
- * — and the reachable failure, a `getSchema()` that rejects, is a database error the
- * reading path already reports as one.
+ * itself is not a state that exists — the four object-surface methods are required on
+ * `DatabaseProvider` (#789) — and the reachable failure, one of them rejecting, is a
+ * database error the reading path already reports as one. The declaration-shaped
+ * absence, an engine with no `objectKinds`, is answered before anything is charged, so
+ * it never reaches a settlement either.
  */
 export type AgentReadingDenyCode = "KIND_UNSUPPORTED_BY_PROVIDER" | "READING_OVER_BUDGET";
 

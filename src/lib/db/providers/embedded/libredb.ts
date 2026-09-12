@@ -856,8 +856,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // The GROUP name is unique within the parent by construction rather than by luck:
       // every group comes from one grouping pass over one keyspace, and the injected
       // `<name>:*` for a cataloged namespace the scan never reached is only pushed when
-      // that group is absent. It is also the spelling `getSchema()` answers, so the two
-      // readings now agree on every object rather than on the derived ones alone.
+      // that group is absent.
       //
       // This is ruling 2's routine precedent rather than an exception to it: where an
       // engine's bare name is not unique within its parent, the path carries the
@@ -868,18 +867,17 @@ export class LibreDBProvider extends BaseDatabaseProvider {
         object: {
           path: [...container, segment],
           // The LABEL is the group, deliberately, and it is allowed to differ from the
-          // last path segment (standing ruling 2). Everything the row menu still reaches
-          // through `flatTargetName` looks an object up in `getSchema()`'s list BY NAME,
-          // and that list spells a cataloged namespace `employees:*`; naming the object
-          // `employees` here would miss that lookup, and the generated command would then
-          // be `get employees`, an exact-key read of a key nobody stored, which answers
-          // zero rows and no error (#518). The path already carries the real identity, so
-          // when the flat narrowing goes the label can follow with no identity change.
+          // last path segment (standing ruling 2). The label spells a cataloged namespace
+          // `employees:*` rather than `employees`, and that is the spelling a generated
+          // command needs: `get employees` is an exact-key read of a key nobody stored,
+          // which answers zero rows and no error (#518). It used to matter for a second
+          // reason as well, a name-based lookup through `flatTargetName` into the flat
+          // reading's list; both are gone (#789), and the label is still the group because
+          // the group is what this engine names.
           name: groupName,
           kind,
           // The keys this bounded walk SAW under the namespace, which is a sample rather
-          // than a total on a file larger than `LIBREDB_MAX_KEY_SCAN`. It is the same
-          // number `getSchema()` reports for the same namespace, from the same pass.
+          // than a total on a file larger than `LIBREDB_MAX_KEY_SCAN`.
           rowCount,
         },
         entry,

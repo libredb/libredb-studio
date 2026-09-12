@@ -2,11 +2,12 @@ import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 import { createMockProvider } from "../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
-import { INVENTORY_PAIR_LIMIT } from "@/lib/api/object-route";
+import { INVENTORY_LIMIT, INVENTORY_PAIR_LIMIT } from "@/lib/api/object-route";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { QueryError } from "@/lib/db/errors";
 import type {
   Container,
+  ContainerLevels,
   ContainerLevelSpec,
   DatabaseObject,
   DatabaseProvider,
@@ -114,7 +115,7 @@ const VIEW_KIND: ObjectKindSpec = { id: "view", role: "relation", label: "View",
 
 interface ProviderShape {
   type?: DatabaseProvider["type"];
-  containerLevels?: readonly ContainerLevelSpec[];
+  containerLevels?: ContainerLevels;
   objectKinds?: readonly ObjectKindSpec[];
   listContainers?: DatabaseProvider["listContainers"];
   countObjects?: DatabaseProvider["countObjects"];
@@ -900,6 +901,69 @@ describe("POST /api/db/objects/inventory", () => {
     expect(body.truncated).toEqual({
       limit: 1,
       reason: "the bulk column read was bounded at 1 object by its caller",
+    });
+  });
+
+  /**
+   * The precedence, stated because the code used to have none: the last describe bound simply
+   * overwrote whatever was recorded before it, a pair limit and an object limit included.
+   *
+   * A MISSING OBJECT outranks a missing COLUMN. The reader of this answer, the agent, treats an
+   * object it was not shown as an object the database does not hold (#414), while a short column
+   * read still names every object. So the object limit wins, then the pair limit, then the
+   * provider's own column bound.
+   */
+  test("an object overflow outranks a column bound reported in the same pair", async () => {
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
+      listObjects: mock(async () =>
+        Array.from({ length: INVENTORY_LIMIT + 1 }, (_unused, index) => object(["app", `t${index}`], "table")),
+      ),
+      describeObjects: mock(async () => ({
+        details: [],
+        truncated: { limit: 1, reason: "the bulk column read was bounded at 1 object by its caller" },
+      })),
+    });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, includeColumns: true },
+      }) as never,
+    );
+
+    const body = await parseResponseJSON<{ truncated?: { limit: number; reason: string } }>(response);
+    expect(body.truncated).toEqual({ limit: INVENTORY_LIMIT, reason: "inventory limit reached" });
+  });
+
+  test("a pair overflow outranks a column bound, because both objects and columns are missing", async () => {
+    const containers = Array.from({ length: INVENTORY_PAIR_LIMIT + 1 }, (_unused, index) => ({
+      path: [`c${index}`],
+      name: `c${index}`,
+      level: 0,
+    }));
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async () => containers),
+      listObjects: mock(async (container: readonly string[]) => [object([container[0], "orders"], "table")]),
+      describeObjects: mock(async () => ({
+        details: [],
+        truncated: { limit: 1, reason: "the bulk column read was bounded at 1 object by its caller" },
+      })),
+    });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, includeColumns: true },
+      }) as never,
+    );
+
+    const body = await parseResponseJSON<{ truncated?: { limit: number; reason: string } }>(response);
+    expect(body.truncated).toEqual({
+      limit: INVENTORY_PAIR_LIMIT,
+      reason: "container and kind pair limit reached",
     });
   });
 

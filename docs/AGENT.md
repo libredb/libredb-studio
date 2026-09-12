@@ -2605,6 +2605,10 @@ the role's own grants are the whole boundary (A3).
   new connection under the old engine's declaration, which answers 400 and is then re-read
   correctly. A one-commit prop skew rather than a tree defect: the metadata hook clears itself in an
   effect, and a child's effects run before its parent's.
+- **B80** — the object inventory route bounds its listings and its objects, and neither bound reaches
+  the container walk underneath them, which is unbounded at every level. Not capped at the call site
+  because the agent's own grounding inventory walks the same code, so the cap and the way it is
+  reported belong to both readers.
 - **B59** — per-model WORDING has nowhere to go. A sentence is a measured value here (twice a shared
   change won cells and lost others, and had to be reverted whole), and the per-model override is
   gone: the document refuses wording and nothing else can populate it. Refusing unsigned prompt text

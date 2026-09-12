@@ -213,8 +213,12 @@ export const dbOperationsReadDescriptor: RegistrableOperationDescriptor = {
  * no catalog statement is composed (#414). Until then a run's inventory came only
  * from `sql.query.read` statements the server wrote per dialect, which is why the set
  * served two engines. This one names the other way the product already reads a
- * schema — `provider.getSchema()` — so that reading can be audited, budgeted and
- * cited exactly like a statement instead of happening beside the pipeline.
+ * schema — the provider's OBJECT SURFACE, walked by `readObjectInventoryForGrounding`
+ * — so that reading can be audited, budgeted and cited exactly like a statement instead
+ * of happening beside the pipeline. It named `provider.getSchema()` until #789 deleted
+ * that method, and the descriptor did not move: what it governs is "the product reads
+ * this database's schema without composing a statement", which is the same operation an
+ * operator means to allow or deny.
  *
  * **R0/`metadata-read`, on `db.operations.read`'s own argument.** R1 requires a
  * `RiskVerification` naming the database-native mechanism that bounds the operation,
@@ -224,12 +228,14 @@ export const dbOperationsReadDescriptor: RegistrableOperationDescriptor = {
  * reaches an engine on this path at all.
  *
  * **`heavy`, unlike the curated reading it is modelled on**, and that is a cost claim
- * rather than caution. A provider schema read is N+1 round trips on most engines —
- * MySQL spends three per table, SQLite counts every row of every table — and on
- * MongoDB and Couchbase it reads a sample of documents. A few engines answer it in one
- * or two catalog queries, PostgreSQL among them, but the cost is declared for the
- * expensive shape rather than the cheapest one: calling it `light` would tell the
- * budget that the single call this path makes is always the cheap kind.
+ * rather than caution. One charge buys a WALK, not a call: a `listContainers` per
+ * container level, a `countObjects` per container, then a `listObjects` and a
+ * `describeObjects` per container-and-kind pair, up to the pair bound. On a many-schema
+ * database that is tens of round trips for one budgeted statement, and on the document
+ * engines `describeObjects` reads a sample of documents. A one-container engine answers
+ * it in a handful of catalog queries, but the cost is declared for the expensive shape
+ * rather than the cheapest one: calling it `light` would tell the budget that the single
+ * charge this path makes is always the cheap kind.
  *
  * The honest edge, stated rather than glossed, as `db.operations.read` states its
  * own: on the document engines the FIELD NAMES in the resulting inventory are
@@ -245,14 +251,19 @@ export const dbSchemaReadDescriptor: RegistrableOperationDescriptor = {
   id: "db.schema.read",
   riskClass: 0,
   accessLevel: "metadata-read",
-  // None: `getSchema()` is declared on the `DatabaseProvider` interface for every
-  // engine, so there is no capability whose absence would make this call impossible.
+  // None: `listContainers`, `countObjects`, `listObjects` and `describeObjects` are all
+  // declared on the `DatabaseProvider` interface for every engine, so there is no
+  // capability whose absence would make this call impossible. The one absence that does
+  // exist is a DECLARATION rather than a capability - an engine declaring no
+  // `objectKinds` has nothing to answer - and `readObjectInventoryForGrounding` answers
+  // that before anything is acquired, charged or audited.
   requiredCapabilities: [],
   resourceCost: "heavy",
   supportsDryRun: false,
   requiresApproval: false,
-  // Empty, and strict: `getSchema()` takes no argument, so there is no selector to
-  // validate. `z.strictObject({})` refuses every key rather than ignoring unknown
+  // Empty, and strict: the server chooses the containers and the kinds from the
+  // provider's own declaration, so there is no selector to validate.
+  // `z.strictObject({})` refuses every key rather than ignoring unknown
   // ones, so a caller that believes it can narrow this reading is told it cannot
   // instead of being handed the whole schema silently.
   inputSchema: z.strictObject({}),

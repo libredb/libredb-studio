@@ -708,55 +708,38 @@ direct action and the background pre-warm show the same estimated plan.
 
 ## 6. Schema introspection
 
-Three separate reads of the `system.*` catalogs, run in parallel with `Promise.all`, all through the
-transport seam:
+Everything this provider knows about a database's contents is read through the OBJECT SURFACE, in
+[`objects.ts`](../../src/lib/db/providers/sql/clickhouse/objects.ts), and §6.1 below is the whole of
+it. The flat three-catalog reading that used to sit here was deleted with `getSchema` (#789); four
+of its decisions outlived it and are recorded here because they are container-level facts rather than
+per-object ones.
 
-| Data | Source |
-|------|--------|
-| Tables | `system.tables` — name, `total_rows`, `total_bytes`, `sorting_key`, `primary_key`, filtered to non-system databases |
-| Columns | `system.columns` — name, type, `is_in_primary_key`, `default_kind`/`default_expression`, ordered by declaration `position` |
-| Indexes | `system.data_skipping_indices` — the nearest thing ClickHouse has to a secondary index object |
-| Foreign keys | always `[]` — ClickHouse has no foreign-key concept anywhere: no engine, no table setting, no DDL declares one |
+**Which databases are listed.** `system`, `information_schema` and `INFORMATION_SCHEMA` are excluded.
+The last exists as its own separate row in `system.databases`, live-verified, so excluding only one
+leaves a duplicate ANSI catalog in the tree. `default` is deliberately **kept**: it is an ordinary
+writable database and the one a connection that names none lands in, so hiding it would empty the
+commonest setup. The session's own database comes from `currentDatabase()`, the server's answer,
+rather than from the string a person typed into the connection form.
 
-Non-system databases are `system`, `information_schema`, and `INFORMATION_SCHEMA` (the last exists
-as its own separate row in `system.databases`, live-verified, so excluding only one leaves a
-duplicate ANSI catalog in the tree). `default` is deliberately **kept** — it is an ordinary writable
-database and the one a connection that names none lands in, so hiding it would empty the commonest
-setup.
+**A key expression is a comma-separated list that can itself contain commas**,
+`a, b, cityHash64(c, c)`, so splitting is parenthesis-depth-aware, never a naive `.split(',')`. The
+parser strips exactly one wrapping pair when the whole expression is parenthesized.
 
-Load-bearing details:
+**The primary key and the sorting key are NOT reported as index entries, and that is a change the
+flat reading's deletion made.** That reading synthesized a `PRIMARY KEY` entry out of
+`system.tables.primary_key`, and an `ORDER BY` entry beside it where the sorting key extended it. The
+object surface reads `system.data_skipping_indices` and nothing else, so a MergeTree table with no
+skipping index reports no index at all. What the primary key still decides is the COLUMNS:
+`system.columns.is_in_primary_key` is what `isPrimary` reads, and the sorting key's trailing columns
+are correctly not primary. Whether the sparse primary index deserves an entry of its own is a product
+question for Phase 2 rather than something to reinstate silently.
 
-- **`total_rows` / `total_bytes` are `Nullable(UInt64)` and really are null** for a view and for
-  every non-MergeTree engine (live-verified). Null is reported as `undefined` — unknown — never
-  coerced to zero; a table shown as "0 rows" when the server never said so is a number the explorer
-  would have invented.
-- **A key expression is a comma-separated list that can itself contain commas** —
-  `a, b, cityHash64(c, c)` — so splitting is parenthesis-depth-aware, never a naive `.split(',')`.
-  A one-element key renders as `(a)` while a multi-element one renders as `a, b`; the parser strips
-  exactly one wrapping pair when the whole expression is parenthesized.
-- **The primary key and the sorting key are NOT reported as index entries, and that is a change
-  the flat reading's deletion made (#789).** That reading synthesized a `PRIMARY KEY` entry out of
-  `system.tables.primary_key`, and an `ORDER BY` entry beside it where the sorting key extended it.
-  The object surface reads `system.data_skipping_indices` and nothing else, so a MergeTree table
-  with no skipping index now reports no index at all. What the primary key still decides is the
-  COLUMNS: `system.columns.is_in_primary_key` is what `isPrimary` reads, and the sorting key's
-  trailing columns are correctly not primary. Whether the sparse primary index deserves an entry of
-  its own is a product question for Phase 2 rather than something to reinstate silently.
-- **No index ClickHouse reports is unique** — not the data-skipping indexes, which only prune
-  granules, and not the primary key either: live-verified, three identical values were accepted into
-  a table declared `PRIMARY KEY (a)`.
-- **Each catalog degrades independently.** `system.tables` and `system.columns` are pre-filtered to
-  what the connected user may read and answer `200`; `system.data_skipping_indices` needs its own
-  grant and answers `500` / code `497` without it (live-verified). A denied index catalog still
-  yields a full table-and-column tree; only the data-skipping-index list is empty. Any *other*
-  failure propagates rather than degrading — an empty tree standing in for a real error would hide
-  it forever.
+**No index ClickHouse reports is unique**: not the data-skipping indexes, which only prune granules,
+and not the primary key either. Live-verified, three identical values were accepted into a table
+declared `PRIMARY KEY (a)`.
 
-the deleted flat list read defers the index catalog entirely so a third catalog read never blocks the table
-list, exactly as the SQL providers' two-phase loading does; the deleted flat relations read reads it and
-returns an entry — empty list included — for every table, so the client can merge indexes in
-without losing a table that legitimately has none.
-
+**Foreign keys are always `[]`.** ClickHouse has no foreign-key concept anywhere: no engine, no table
+setting, no DDL declares one.
 
 ### 6.1 The object surface (#789)
 
