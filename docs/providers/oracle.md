@@ -1022,14 +1022,22 @@ fixture ships the second one because it is the state Oracle is in most often:
 
 | Specification | Body | Rendered |
 |---|---|---|
-| `VALID` | `VALID` | `VALID` |
+| `VALID` | `VALID` | nothing |
 | `VALID` | `INVALID` | `INVALID` |
 | `INVALID` | `VALID` | `INVALID` |
-| `VALID` | absent | `VALID` |
+| `VALID` | absent | nothing |
 
 A successful `CREATE OR REPLACE PACKAGE BODY` can leave an `INVALID` body behind rather than
 failing, which is why `docker/oracle-init/01-object-fixture.sql` contains a package whose body
 deliberately does not compile. Do not "fix" it.
+
+**`status` is set only where `ALL_OBJECTS` says `INVALID`, for every kind.** Until #789 this
+provider published `STATUS` on every object, which put a `VALID` badge beside every table in the
+tree: `VALID` is what nearly every row in a real schema says, so the badge carried no information
+and taught a reader to skip the field. The field's contract is now that its PRESENCE is the signal
+and Oracle's own word is the content, and absence means ordinary rather than unknown. The decision
+stays in this provider because only it knows which of Oracle's words is the ordinary one; a
+renderer that knew the string `VALID` would be a branch on the engine moved up a layer.
 
 `STATUS` is `ALL_OBJECTS`'s `VALID`/`INVALID` for every kind, triggers included. `ALL_TRIGGERS` has
 a `STATUS` column of its own that says `ENABLED`/`DISABLED`, which is a different fact about a

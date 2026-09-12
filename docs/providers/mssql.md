@@ -518,7 +518,7 @@ they are counted at the database level only, which is also the depth their addre
 | `view` | `relation` | `V` | `sys.objects` ⋈ `sys.schemas` | not a row-write target; no `rowCount` key at all |
 | `procedure` | `routine` | `P`, `PC`, `X` | `sys.objects` ⋈ `sys.schemas` | SQL, CLR and extended |
 | `function` | `routine` | `FN`, `IF`, `TF`, `FS`, `FT`, `AF` | `sys.objects` ⋈ `sys.schemas` | one kind, six spellings |
-| `trigger` | `attached` | **none** | `sys.triggers`, with `sys.objects` OUTER joined for the parent | `attachedTo: 'table'`; carries `status` |
+| `trigger` | `attached` | **none** | `sys.triggers`, with `sys.objects` OUTER joined for the parent | `attachedTo: 'table'`; carries `status` when DISABLED |
 | `synonym` | `config` | `SN` | `sys.objects` ⋈ `sys.schemas` | |
 | `sequence` | `config` | `SO` | `sys.objects` ⋈ `sys.schemas` | |
 
@@ -590,11 +590,16 @@ object segment is there because `attachedTo: 'table'` says the object hangs off 
 uniqueness needs it. The base object may also be a VIEW (an `INSTEAD OF` trigger), which the `table`
 in `attachedTo` does not distinguish.
 
-**`status` carries `ENABLED` / `DISABLED` for a trigger and nothing for any other kind.**
+**`status` carries `DISABLED` for a disabled trigger and NOTHING otherwise, for any kind.**
 `sys.triggers.is_disabled` is the only state SQL Server publishes about an object of any declared
 kind: there is no VALID / INVALID here, so there is no second vocabulary for the field to collide
 with, which is why Oracle deliberately keeps ENABLED / DISABLED out of the same field and this
-provider carries it.
+provider carries it. `ENABLED` was published here until #789 and is not any more: it is the state
+nearly every trigger is in, so it put a badge on a row that told a reader nothing, and the field's
+contract is now that its PRESENCE is the signal. Absence means ordinary, not unknown. Deciding
+which of the two words is the ordinary one belongs to this provider, because only it knows SQL
+Server's vocabulary; a renderer that knew the string `ENABLED` would be a branch on the engine
+moved up a layer.
 
 **A SERVER-level DDL trigger is not addressable in Phase 1.** `sys.server_triggers` is server-wide
 and visible from every database, so counting its rows under a database would report one trigger

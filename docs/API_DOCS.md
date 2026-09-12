@@ -1241,7 +1241,9 @@ interface DatabaseObject {
   path: readonly string[]; // Container segments, then the object's own identifier
   name: string;            // Display label, NOT required to equal the last path segment
   kind: string;            // The declared kind id this object was listed under
-  status?: string;         // Only where the engine publishes one: Oracle's VALID / INVALID
+  status?: string;         // Present only where the engine reports something worth acting on,
+                           // in the engine's own word: Oracle's INVALID, SQL Server's DISABLED.
+                           // Absent means ordinary, not unknown.
   rowCount?: number;       // Relations only, and only where the engine counts
   sizeBytes?: number;
 }

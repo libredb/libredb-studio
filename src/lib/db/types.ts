@@ -1208,7 +1208,23 @@ export interface DatabaseObject {
    */
   readonly name: string;
   readonly kind: string;
-  /** Only where the engine publishes one: Oracle's VALID / INVALID. */
+  /**
+   * The engine's own word for a state a reader should act on, and PRESENT ONLY THEN (#789).
+   *
+   * Absence means ordinary, not unknown. Oracle publishes `VALID` for nearly every row in
+   * a real schema and SQL Server calls almost every trigger `ENABLED`, so a provider that
+   * set this field on every object put a badge beside every name that carried no
+   * information, and a reader learns to skip a field that is always there. What survives
+   * is `INVALID` on an Oracle object and `DISABLED` on a SQL Server trigger: the cases
+   * somebody has something to do about.
+   *
+   * The decision belongs to the PROVIDER and cannot be moved to a reader. Only the
+   * provider knows which of its engine's words is the ordinary one, and a renderer that
+   * knew the strings `VALID` and `ENABLED` would be a branch on the database type moved up
+   * a layer, which this codebase refuses inside `src/lib/db` for the same reason. So a new
+   * provider sets this field where its engine reports something notable, in the engine's
+   * own vocabulary rather than a normalised one, and leaves it unset otherwise.
+   */
   readonly status?: string;
   /** Relations only, and only where the engine counts. */
   readonly rowCount?: number;

@@ -2727,21 +2727,21 @@ describe("SQL Server object containers, listings and detail", () => {
     // base object, so [database, name] is its whole address, while a DML trigger takes the
     // table segment its `attachedTo: "table"` declaration states.
     expect(triggers).toEqual([
-      {
-        path: ["libredb_objects", "app", "orders", "stamp_order"],
-        name: "stamp_order",
-        kind: "trigger",
-        status: "ENABLED",
-      },
-      { path: ["libredb_objects", "ddl_audit"], name: "ddl_audit", kind: "trigger", status: "ENABLED" },
-      { path: ["libredb_objects", "orders"], name: "orders", kind: "trigger", status: "ENABLED" },
+      { path: ["libredb_objects", "app", "orders", "stamp_order"], name: "stamp_order", kind: "trigger" },
+      { path: ["libredb_objects", "ddl_audit"], name: "ddl_audit", kind: "trigger" },
+      { path: ["libredb_objects", "orders"], name: "orders", kind: "trigger" },
       {
         path: ["libredb_objects", "reporting", "daily", "stamp_order"],
         name: "stamp_order",
         kind: "trigger",
+        // #789: only the state a reader acts on is published, in SQL Server's own word.
+        // An enabled trigger is the ordinary case and says nothing, so it carries no
+        // `status` key at all - asserted on the KEY below, because `toEqual` ignores a
+        // property whose value is `undefined` and would pass `status: undefined`.
         status: "DISABLED",
       },
     ]);
+    for (const enabled of triggers.slice(0, 3)) expect(Object.hasOwn(enabled, "status")).toBe(false);
 
     // One schema's folder holds only the triggers whose BASE OBJECT is in that schema, and
     // the two schemas each hold a `stamp_order`: measured, a trigger name is unique per

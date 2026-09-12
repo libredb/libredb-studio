@@ -589,6 +589,23 @@ interface ObjectRow {
   OBJECT_TYPE?: string;
 }
 
+/** The one `ALL_OBJECTS.STATUS` value a reader has anything to do about. */
+const INVALID_STATUS = "INVALID";
+
+/**
+ * `DatabaseObject.status`, published only where Oracle's answer is worth a reader's attention (#789).
+ *
+ * `ALL_OBJECTS.STATUS` is `VALID` for nearly every row in a real schema, so publishing it
+ * put a `VALID` badge beside every table in the tree and taught a reader to ignore the
+ * field entirely. The field's contract is that its PRESENCE is the signal and the engine's
+ * own word is the content, which keeps the decision here: this provider is the only thing
+ * that knows which of Oracle's words is ordinary, and a renderer that knew the string
+ * `VALID` would be a branch on the engine moved up a layer.
+ */
+function notableStatus(status: string): { status?: string } {
+  return status === INVALID_STATUS ? { status } : {};
+}
+
 /**
  * The one owner a container path names on this engine.
  *
@@ -716,6 +733,8 @@ function objectListingStatement(owner: string, kind: string): { sql: string; par
  * The status is INVALID when EITHER half is, because "the package works" is false if
  * either half does not compile - and a successful `CREATE OR REPLACE PACKAGE BODY` leaves
  * an INVALID body behind rather than failing, which is the state Oracle is in most often.
+ * A package whose halves both compiled carries NO status at all: only the state a reader
+ * would act on is published (#789).
  * Neither row is privileged: a body can exist with no specification (a specification
  * dropped out from under it), and a specification usually exists with no body while it is
  * being written.
@@ -724,8 +743,9 @@ function collapsePackages(container: readonly string[], rows: readonly ObjectRow
   const byName = new Map<string, DatabaseObject>();
   for (const row of rows) {
     const seen = byName.get(row.NAME);
-    const status = seen?.status === "INVALID" ? "INVALID" : row.STATUS;
-    byName.set(row.NAME, { path: [...container, row.NAME], name: row.NAME, kind: "package", status });
+    const invalid = seen?.status === INVALID_STATUS || row.STATUS === INVALID_STATUS;
+    const status = invalid ? { status: INVALID_STATUS } : {};
+    byName.set(row.NAME, { path: [...container, row.NAME], name: row.NAME, kind: "package", ...status });
   }
   return [...byName.values()];
 }
@@ -1579,7 +1599,12 @@ export class OracleProvider extends SQLBaseProvider {
       const objects =
         kind === "package"
           ? collapsePackages(container, rows)
-          : rows.map((row) => ({ path: objectPath(container, row), name: row.NAME, kind, status: row.STATUS }));
+          : rows.map((row) => ({
+              path: objectPath(container, row),
+              name: row.NAME,
+              kind,
+              ...notableStatus(row.STATUS),
+            }));
       // Sorted by ADDRESS, segment by segment. This used to key on `JSON.stringify(path)`,
       // which standing ruling 5g refuses for two reasons that both bite on this engine: at the
       // MIXED DEPTH ruling 5f gives Oracle's triggers the serialised deeper path sorts above

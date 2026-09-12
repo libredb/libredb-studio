@@ -10,7 +10,7 @@
  * a leaf must not claim to be closed, and a folder whose count the engine refused is a leaf.
  */
 
-import { ChevronDown, ChevronRight, Database, Folder, LoaderCircle, Table2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Database, Folder, LoaderCircle, Table2, TriangleAlert } from "lucide-react";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { TreeRowModel } from "./flatten";
 import type { TreeReadFailure } from "./use-tree-nodes";
@@ -76,12 +76,18 @@ export function TreeRow({ row, object, active, selected, busy, failure, hasActio
       <span data-testid="tree-row-label" className="truncate">
         {row.label}
       </span>
+      {/*
+        An ICON, because a status reaches this row only when the engine reported something
+        worth acting on: the provider publishes `status` for `INVALID` and `DISABLED` and
+        leaves it unset for the ordinary case, so a row that shows nothing is the normal
+        row. The engine's OWN WORD is what is shown, never a sentence written here, and it
+        is readable rather than only hoverable: the title attribute serves a pointer and
+        the text serves a screen reader, which a tooltip alone does not.
+      */}
       {object?.status !== undefined && (
-        <span
-          data-testid="tree-row-status"
-          className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground"
-        >
-          {object.status}
+        <span data-testid="tree-row-status" title={object.status} className="shrink-0 text-warning">
+          <TriangleAlert aria-hidden="true" strokeWidth={1.5} className="w-3.5 h-3.5" />
+          <span className="sr-only">{object.status}</span>
         </span>
       )}
       {busy && <LoaderCircle aria-hidden="true" className="w-3 h-3 shrink-0 animate-spin text-muted-foreground" />}

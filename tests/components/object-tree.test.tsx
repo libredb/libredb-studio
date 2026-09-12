@@ -497,7 +497,7 @@ describe("ObjectTree object rows", () => {
       routesFor(
         {
           table: [
-            { path: ["app", "orders"], name: "orders", kind: "table", rowCount: 1234, status: "VALID" },
+            { path: ["app", "orders"], name: "orders", kind: "table", rowCount: 1234, status: "INVALID" },
             { path: ["app", "order_total(integer)"], name: "order_total", kind: "table" },
           ],
         },
@@ -526,10 +526,24 @@ describe("ObjectTree object rows", () => {
     withObjects();
     await openTables();
 
-    expect(within(row(/orders/)).getByTestId("tree-row-status").textContent).toBe("VALID");
+    const status = within(row(/orders/)).getByTestId("tree-row-status");
+    // An ICON, not a word laid out in the row: the word is there for a reader who needs it.
+    expect(status.querySelector("svg")).not.toBeNull();
+    expect(status.getAttribute("title")).toBe("INVALID");
     expect(within(row(/orders/)).getByTestId("tree-row-count").textContent).toBe("1,234");
     expect(within(row(/order_total/)).queryByTestId("tree-row-status")).toBeNull();
     expect(within(row(/order_total/)).queryByTestId("tree-row-count")).toBeNull();
+  });
+
+  test("the engine's own word for a notable status reaches the accessible name, not only the tooltip", async () => {
+    withObjects();
+    await openTables();
+
+    // `jsx-a11y` is a hard gate here and an icon with no name is what it exists to catch. The
+    // word is Oracle's, never a sentence this renderer wrote: the engine names its own states.
+    expect(screen.getByRole("treeitem", { name: /INVALID/ })).toBe(row(/orders/));
+    expect(within(row(/orders/)).getByTestId("tree-row-status").textContent).toBe("INVALID");
+    expect(row(/order_total/).textContent).not.toContain("INVALID");
   });
 
   test("clicking an object hands the caller the object, path and kind included", async () => {
@@ -539,7 +553,7 @@ describe("ObjectTree object rows", () => {
 
     await userEvent.click(row(/orders/));
     expect(clicked).toEqual([
-      { path: ["app", "orders"], name: "orders", kind: "table", rowCount: 1234, status: "VALID" },
+      { path: ["app", "orders"], name: "orders", kind: "table", rowCount: 1234, status: "INVALID" },
     ]);
   });
 

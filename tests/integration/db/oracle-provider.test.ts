@@ -2677,11 +2677,16 @@ describe("object surface", () => {
 
     const packages = await provider.listObjects(["APP"], "package");
     expect(packages).toHaveLength(3);
+    // Both directions of #789's status contract in one fixture. A package with an INVALID
+    // half carries Oracle's own word; a package whose halves both compiled carries NO
+    // `status` KEY AT ALL, which is the fact `toEqual` cannot see on its own because it
+    // ignores a property whose value is `undefined`.
     expect(packages).toEqual([
       { path: ["APP", "APP_BROKEN_PKG"], name: "APP_BROKEN_PKG", kind: "package", status: "INVALID" },
       { path: ["APP", "APP_LEGACY_PKG"], name: "APP_LEGACY_PKG", kind: "package", status: "INVALID" },
-      { path: ["APP", "APP_ORDERS_PKG"], name: "APP_ORDERS_PKG", kind: "package", status: "VALID" },
+      { path: ["APP", "APP_ORDERS_PKG"], name: "APP_ORDERS_PKG", kind: "package" },
     ]);
+    expect(Object.hasOwn(packages[2], "status")).toBe(false);
     await provider.disconnect();
   });
 
@@ -2928,9 +2933,7 @@ describe("Oracle object listing and detail", () => {
 
     const objects = await provider.listObjects(["REPORTING"], "table");
     expect(bound[0][0]).toBe("REPORTING");
-    expect(objects).toEqual([
-      { path: ["REPORTING", "REPORT_DAILY"], name: "REPORT_DAILY", kind: "table", status: "VALID" },
-    ]);
+    expect(objects).toEqual([{ path: ["REPORTING", "REPORT_DAILY"], name: "REPORT_DAILY", kind: "table" }]);
 
     bound.length = 0;
     await provider.countObjects(["REPORTING"]);
@@ -3054,10 +3057,10 @@ describe("Oracle object listing and detail", () => {
     await provider.connect();
 
     expect(await provider.listObjects(["APP"], "trigger")).toEqual([
-      { path: ["APP", "APP_HIDDEN_BASE_TRG"], name: "APP_HIDDEN_BASE_TRG", kind: "trigger", status: "VALID" },
-      { path: ["APP", "APP_LOGON_TRG"], name: "APP_LOGON_TRG", kind: "trigger", status: "VALID" },
-      { path: ["APP", "APP_ORDERS", "APP_ORDERS_TRG"], name: "APP_ORDERS_TRG", kind: "trigger", status: "VALID" },
-      { path: ["APP", "REPORT_DAILY", "REPORT_DAILY_TRG"], name: "REPORT_DAILY_TRG", kind: "trigger", status: "VALID" },
+      { path: ["APP", "APP_HIDDEN_BASE_TRG"], name: "APP_HIDDEN_BASE_TRG", kind: "trigger" },
+      { path: ["APP", "APP_LOGON_TRG"], name: "APP_LOGON_TRG", kind: "trigger" },
+      { path: ["APP", "APP_ORDERS", "APP_ORDERS_TRG"], name: "APP_ORDERS_TRG", kind: "trigger" },
+      { path: ["APP", "REPORT_DAILY", "REPORT_DAILY_TRG"], name: "REPORT_DAILY_TRG", kind: "trigger" },
     ]);
     await provider.disconnect();
   });
@@ -3089,9 +3092,37 @@ describe("Oracle object listing and detail", () => {
     await provider.connect();
 
     expect(await provider.listObjects(["APP"], "trigger")).toEqual([
-      { path: ["APP", "AUDIT"], name: "AUDIT", kind: "trigger", status: "VALID" },
-      { path: ["APP", "AUDIT", "AUDIT_ROW_TRG"], name: "AUDIT_ROW_TRG", kind: "trigger", status: "VALID" },
+      { path: ["APP", "AUDIT"], name: "AUDIT", kind: "trigger" },
+      { path: ["APP", "AUDIT", "AUDIT_ROW_TRG"], name: "AUDIT_ROW_TRG", kind: "trigger" },
     ]);
+    await provider.disconnect();
+  });
+
+  test("a listed object carries STATUS only when Oracle says INVALID", async () => {
+    // #789: the provider is the only thing that knows which of its own words a reader
+    // should act on, so `status` is absent for the ordinary case rather than carrying the
+    // word `VALID` that nearly every row in a real schema has. Both directions in one
+    // fixture: deleting either arm of the producer's condition fails this test.
+    mockExecuteFn = async (_sql: string, params?: unknown[]) => {
+      if ((params ?? [])[1] !== "TABLE") return { rows: [] };
+      return {
+        rows: [
+          { NAME: "APP_ORDERS", STATUS: "VALID" },
+          { NAME: "APP_BROKEN_TAB", STATUS: "INVALID" },
+        ],
+      };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    const tables = await provider.listObjects(["APP"], "table");
+    expect(tables).toEqual([
+      { path: ["APP", "APP_BROKEN_TAB"], name: "APP_BROKEN_TAB", kind: "table", status: "INVALID" },
+      { path: ["APP", "APP_ORDERS"], name: "APP_ORDERS", kind: "table" },
+    ]);
+    // `toEqual` ignores a property whose value is `undefined`, so the absence is asserted
+    // on the KEY: a producer writing `status: undefined` would pass the line above.
+    expect(Object.hasOwn(tables[1], "status")).toBe(false);
     await provider.disconnect();
   });
 

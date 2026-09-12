@@ -1102,7 +1102,11 @@ function listedTrigger(catalog: string, kind: string, row: TriggerRow): Database
     row.parent_schema === null || row.parent_name === null
       ? [catalog, row.name]
       : [catalog, row.parent_schema, row.parent_name, row.name];
-  return { path, name: row.name, kind, status: row.is_disabled ? "DISABLED" : "ENABLED" };
+  // `status` is published only for the state a reader would act on (#789). An enabled
+  // trigger is the ordinary case and says nothing, so the field is ABSENT for it rather
+  // than carrying `ENABLED`; a disabled one carries SQL Server's own word. The choice of
+  // which word is ordinary belongs here, where the engine's vocabulary is known.
+  return { path, name: row.name, kind, ...(row.is_disabled ? { status: "DISABLED" } : {}) };
 }
 
 /** One bulk row, whichever of the four detail reads produced it, with the object it is about. */
