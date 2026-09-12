@@ -49,4 +49,8 @@ export type {
   KindCount,
   ObjectDetail,
   ObjectDetailBatch,
+  ObjectSourceForm,
+  ObjectSourceOrigin,
+  ObjectSourcePart,
+  ObjectSourceDocument,
 } from "../lib/db/types";

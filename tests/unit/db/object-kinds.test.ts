@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import type { ObjectSourcePart, ProviderCapabilities } from "@/lib/db/types";
 import {
   containerDepth,
   declaredKinds,
@@ -8,6 +8,12 @@ import {
   relationKindIds,
   isCountSampled,
   isCountUnavailable,
+  kindHasSource,
+  isSourcePartUnavailable,
+  applySourceBound,
+  sourceBoundTruncationReason,
+  SOURCE_CHARACTER_LIMIT,
+  SOURCE_PART_LIMIT,
 } from "@/lib/db/object-kinds";
 
 const base = { queryLanguage: "sql" } as unknown as ProviderCapabilities;
@@ -138,5 +144,79 @@ describe("isCountSampled", () => {
     // Narrowing is the point: a caller holding the union cannot reach `sampledFrom` at all
     // until the predicate has answered, which is what keeps the renderer honest.
     expect(isCountSampled(count) ? count.sampledFrom : "").toBe("the first 1,000 keys of one SCAN walk");
+  });
+});
+
+describe("kindHasSource", () => {
+  test("an absent flag reads as false, so an undeclared kind never offers a Source tab", () => {
+    expect(kindHasSource(withKinds, "view")).toBe(false);
+  });
+
+  test("a kind this engine never declared reads as false rather than throwing", () => {
+    expect(kindHasSource(withKinds, "package")).toBe(false);
+  });
+
+  test("a declared flag reads as true", () => {
+    const caps = {
+      ...withKinds,
+      objectKinds: [{ id: "function", role: "routine", label: "F", labelPlural: "Fs", hasSource: true }],
+    } as unknown as ProviderCapabilities;
+    expect(kindHasSource(caps, "function")).toBe(true);
+  });
+});
+
+describe("isSourcePartUnavailable", () => {
+  const refused: ObjectSourcePart = { id: "definition", label: "Definition", unavailable: "Encrypted." };
+  const readable: ObjectSourcePart = {
+    id: "definition",
+    label: "Definition",
+    text: "SELECT 1",
+    language: "sql",
+    form: "complete",
+    origin: "stored",
+  };
+
+  test("narrows a refusal", () => {
+    expect(isSourcePartUnavailable(refused)).toBe(true);
+  });
+
+  test("narrows a readable part in the other direction, so the caller reaches text", () => {
+    expect(isSourcePartUnavailable(readable)).toBe(false);
+    if (isSourcePartUnavailable(readable)) throw new Error("unreachable");
+    // This line is the whole point of the `readonly` spelling: without it the false branch
+    // still holds the union and `.text` does not exist.
+    expect(readable.text).toBe("SELECT 1");
+  });
+});
+
+describe("applySourceBound", () => {
+  test("an unbounded call marks nothing, because marking an exact answer teaches a reader to discount every mark", () => {
+    expect(applySourceBound("SELECT 1", undefined)).toEqual({ text: "SELECT 1" });
+  });
+
+  test("a text that fits its bound is not marked either", () => {
+    expect(applySourceBound("SELECT 1", 8)).toEqual({ text: "SELECT 1" });
+  });
+
+  test("a text over its bound is sliced and marked with the one sentence", () => {
+    const bounded = applySourceBound("SELECT 1", 6);
+    expect(bounded.text).toBe("SELECT");
+    expect(bounded.truncated).toEqual({ limit: 6, reason: sourceBoundTruncationReason(6) });
+  });
+});
+
+describe("the source bounds", () => {
+  test("the character bound is the one number the route applies", () => {
+    expect(SOURCE_CHARACTER_LIMIT).toBe(1_000_000);
+  });
+
+  test("the part bound is four times the largest shape any engine in the fleet produces", () => {
+    expect(SOURCE_PART_LIMIT).toBe(8);
+  });
+
+  test("the bound sentence names the number and the caller", () => {
+    expect(sourceBoundTruncationReason(1_000_000)).toBe(
+      "the source read was bounded at 1,000,000 characters by its caller",
+    );
   });
 });

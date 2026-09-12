@@ -5,7 +5,7 @@
  * is answered here, in one place, so the defaults cannot drift: an absent
  * `acceptsRowWrites` reads as false in every caller because there is only one caller.
  */
-import type { KindCount, ObjectKindSpec, ProviderCapabilities } from "@/lib/db/types";
+import type { KindCount, ObjectKindSpec, ObjectSourcePart, ProviderCapabilities } from "@/lib/db/types";
 
 /**
  * How many container levels this engine declares, as the tree models them.
@@ -128,4 +128,74 @@ export function isCountSampled(count: KindCount): count is { readonly count: num
  */
 export function callerBoundTruncationReason(limit: number): string {
   return `the bulk column read was bounded at ${limit} object${limit === 1 ? "" : "s"} by its caller`;
+}
+
+/**
+ * Whether THIS KIND has a readable definition (#789 Phase 2).
+ *
+ * Absent and undeclared both read as FALSE, and the name says the scope so a caller cannot
+ * inline the default. It is NOT conjoined with anything, for the same reason
+ * `kindAcceptsRowWrites` is not: the per-object question is a different one, and only the READ
+ * can answer it. Four kinds in the fleet are readable for some of their objects and not
+ * others, and this answers for the kind.
+ */
+export function kindHasSource(capabilities: ProviderCapabilities, id: string): boolean {
+  return findKind(capabilities, id)?.hasSource === true;
+}
+
+/**
+ * The narrowing predicate for a refused part (#789 Phase 2).
+ *
+ * The `readonly` on every member is LOAD-BEARING and measured against TypeScript 6.0.3: a
+ * predicate written without it narrows the true branch and NOTHING on the false branch, so
+ * every caller is left holding the whole union with no `.text` on it. The one-property spelling
+ * `isCountUnavailable` uses does not compile here at all, because `ObjectSourcePart` has three
+ * required members on the refused arm, and that red build is the safe direction.
+ */
+export function isSourcePartUnavailable(
+  part: ObjectSourcePart,
+): part is { readonly id: string; readonly label: string; readonly unavailable: string } {
+  return "unavailable" in part;
+}
+
+/** The default per-part character bound the source route applies when a caller names none. */
+export const SOURCE_CHARACTER_LIMIT = 1_000_000;
+
+/**
+ * The most parts one document may carry before the route refuses it.
+ *
+ * The tuple type has no upper bound and the shipped maximum is two (an Oracle or MariaDB
+ * package), but the embedded seam takes its document from a HOST outside our compiler, so the
+ * real response size is `SOURCE_CHARACTER_LIMIT` times `parts.length` unless something bounds
+ * the count. Four times the largest shape any engine produces, so no correct provider can
+ * reach it.
+ */
+export const SOURCE_PART_LIMIT = 8;
+
+/**
+ * The ONE sentence a caller's source bound is reported with (#789 Phase 2).
+ *
+ * A function beside `callerBoundTruncationReason` rather than a reuse of it: the two bound
+ * different things and the existing sentence names objects. One place for the same reason that
+ * one records, which is that eleven implementers wrote three unrelated phrasings for one event
+ * before it was written down.
+ */
+export function sourceBoundTruncationReason(limit: number): string {
+  return `the source read was bounded at ${limit.toLocaleString("en-US")} characters by its caller`;
+}
+
+/**
+ * One part's text under a caller's bound, with the mark the bound owes (#789 Phase 2).
+ *
+ * Hoisted here rather than written sixteen times, on the evidence that `comparePaths` was
+ * written four times before anyone owned it. An exact answer is NEVER marked, which is the
+ * rule `sampledFrom` already follows verbatim, because marking one teaches a reader to
+ * discount every mark.
+ */
+export function applySourceBound(
+  text: string,
+  limit: number | undefined,
+): { readonly text: string; readonly truncated?: { readonly limit: number; readonly reason: string } } {
+  if (limit === undefined || text.length <= limit) return { text };
+  return { text: text.slice(0, limit), truncated: { limit, reason: sourceBoundTruncationReason(limit) } };
 }

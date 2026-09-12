@@ -727,6 +727,31 @@ export interface DatabaseProvider {
   describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch>;
 
   /**
+   * The definition text of ONE object, as a document of named parts (#789 Phase 2).
+   *
+   * OPTIONAL, unlike the five object methods above, and the asymmetry is argued rather than
+   * inherited. Those five are required because a provider that does not implement them
+   * answers nothing at all about what a database holds. A provider that does not implement
+   * this one answers everything about what the database holds and simply declares no
+   * source-bearing kind, which is the TRUE and measured state of `druid` and `libredb`:
+   * neither has a kind with a definition text anywhere, so a required method would put an
+   * unreachable throw in each, which is precisely the shape that got the 501 deleted.
+   *
+   * `kind` is required for the reason `describeObject`'s is: measured on MySQL, MariaDB and
+   * DuckDB, one name addresses more than one object of different kinds in one container, so a
+   * path alone reads the wrong object.
+   *
+   * `limit` bounds ONE PART's character count. Absent means unbounded. A provider may apply a
+   * bound of its own, and must then set `truncated` on the part it bounded and never on a part
+   * it read whole.
+   *
+   * The declaration and the method cannot disagree: `assertObjectSurface` asserts, in BOTH
+   * directions, that a provider declares a kind with `hasSource` exactly when it implements
+   * this method.
+   */
+  readObjectSource?(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument>;
+
+  /**
    * Get health and performance metrics
    */
   getHealth(): Promise<HealthInfo>;
@@ -1328,4 +1353,82 @@ export interface ObjectDetailBatch {
   readonly details: readonly ObjectDetail[];
   /** Absent when every object of that kind in that container was described. */
   readonly truncated?: { readonly limit: number; readonly reason: string };
+}
+
+/**
+ * What this text IS, so a reader is never shown a fragment that looks like a statement (#789).
+ *
+ * CLOSED: two arms, both with producers in the shipped fleet. `complete` runs as given;
+ * `partial` is a body or a bare SELECT that does not. PostgreSQL's `pg_get_viewdef`, DuckDB's
+ * `macro_definition` and Couchbase's `definition.text` are the measured `partial` producers.
+ */
+export type ObjectSourceForm = "complete" | "partial";
+
+/**
+ * Where this text came from, so a reader is never shown a reconstruction as an original (#789).
+ *
+ * CLOSED: three arms, each with at least one producer. `stored` is the author's own bytes
+ * (SQL Server modules, SQLite's `sqlite_schema.sql`); `regenerated` is the engine rebuilding
+ * from its catalog, which PostgreSQL documents as "a decompiled reconstruction, not the
+ * original text of the command"; `rendered` is a structured definition this product prints as
+ * JSON (a MongoDB view, a search pipeline or template).
+ */
+export type ObjectSourceOrigin = "stored" | "regenerated" | "rendered";
+
+/**
+ * One text belonging to one object, or the engine's own reason there is none (#789).
+ *
+ * A UNION and not one shape with an optional `text`, for the reason `KindCount` is a union: a
+ * refusal and an empty answer are different facts, and a shape carrying `text?: string` makes
+ * them the same value at every call site. The refused arm has NO `text` key at all, so there is
+ * no path from a refusal to an editor buffer. That composition is what DBeaver gets wrong:
+ * measured in its source, an unreadable definition reaches a WRITABLE editor holding one
+ * comment line.
+ *
+ * `id` is provider-local. Core reads it as an identity WITHIN ONE DOCUMENT and for nothing
+ * else: the part switcher's selection key, and the Source tab's remembered selection. Core
+ * never compares it against a literal, never branches on it, and never carries it between two
+ * documents.
+ *
+ * `text` is never empty and never whitespace only. TypeScript cannot express that, so it is a
+ * runtime invariant asserted in `assertObjectSurface` for our own providers and in the client's
+ * shape check for a host's answer. Where an engine answers empty, the provider emits a REFUSAL
+ * carrying the engine's own fact instead.
+ */
+export type ObjectSourcePart =
+  | {
+      readonly id: string;
+      /** The engine's own word: "Package body", "Specification". Rendered as-is. */
+      readonly label: string;
+      readonly text: string;
+      /** A Monaco language id the installed bundle registers. `plsql`, `tsql` and `cql` are not. */
+      readonly language: string;
+      readonly form: ObjectSourceForm;
+      readonly origin: ObjectSourceOrigin;
+      readonly truncated?: { readonly limit: number; readonly reason: string };
+    }
+  | {
+      readonly id: string;
+      readonly label: string;
+      /** The engine's own sentence, unprefixed, never a rewrite of it. */
+      readonly unavailable: string;
+    };
+
+/**
+ * One object's definition, as its provider reads it (#789).
+ *
+ * `parts` is a NON-EMPTY tuple, which makes a zero-part document a compile error at every
+ * provider: there is no shape in which the renderer is handed a document and has nothing to
+ * draw. Two spellings satisfy it and no third is accepted: an array literal, and
+ * `const parts: [ObjectSourcePart, ...ObjectSourcePart[]] = [first]` plus a conditional push.
+ * `rows.map(...)` does not, and casting past it defeats the whole invariant.
+ *
+ * More than one part is not a special case for one engine: an Oracle package and a MariaDB
+ * package are each ONE node over two texts, and core branches on `parts.length` and on nothing
+ * else.
+ */
+export interface ObjectSourceDocument {
+  readonly path: readonly string[];
+  readonly kind: string;
+  readonly parts: readonly [ObjectSourcePart, ...ObjectSourcePart[]];
 }
