@@ -184,6 +184,17 @@ export function ObjectTree({
     [actions, capabilities, labels, tree],
   );
 
+  /**
+   * Is there anything to open on this row?
+   *
+   * ONE predicate, read by every entry point: the right click, the ContextMenu key and
+   * Shift+F10 through `openMenu`, and the row's visible trigger and `aria-haspopup` through
+   * `TreeRow`. Two predicates could drift, and the drift has a direction that matters - a
+   * visible control that opens an empty menu is worse than the undiscoverable menu it
+   * replaced.
+   */
+  const hasRowMenu = useCallback((row: TreeRowModel): boolean => actionsFor(row).length > 0, [actionsFor]);
+
   const closeMenu = useCallback(
     (restoreFocus: boolean) => {
       // Read from the closure rather than from a `setMenu` updater: an updater must stay
@@ -197,12 +208,12 @@ export function ObjectTree({
   /** A row with nothing to offer opens nothing, so the gesture is left to the browser. */
   const openMenu = useCallback(
     (row: TreeRowModel, anchor: RowMenuAnchor): boolean => {
-      if (actionsFor(row).length === 0) return false;
+      if (!hasRowMenu(row)) return false;
       selectRow(row.id);
       setMenu({ rowId: row.id, anchor });
       return true;
     },
-    [actionsFor, selectRow],
+    [hasRowMenu, selectRow],
   );
 
   /**
@@ -215,6 +226,19 @@ export function ObjectTree({
       const element = mounted.find((candidate) => candidate.dataset.rowId === row.id);
       const box = element?.getBoundingClientRect();
       openMenu(row, { x: box?.left ?? 0, top: box?.top ?? 0, bottom: box?.bottom ?? 0 });
+    },
+    [openMenu],
+  );
+
+  /**
+   * The trigger's anchor is its own box rather than a point, for the reason the keyboard
+   * path uses the row's: a menu that has to flip sits beside the button instead of over it,
+   * which is what the last row of a scrolled sidebar needs.
+   */
+  const openMenuOnTrigger = useCallback(
+    (row: TreeRowModel, element: HTMLElement): void => {
+      const box = element.getBoundingClientRect();
+      openMenu(row, { x: box.left, top: box.top, bottom: box.bottom });
     },
     [openMenu],
   );
@@ -450,7 +474,9 @@ export function ObjectTree({
               selected={row.id === activeId}
               busy={tree.isBusy(row)}
               failure={tree.failureFor(row)}
-              hasActions={actionsFor(row).length > 0}
+              hasActions={hasRowMenu(row)}
+              menuOpen={menu?.rowId === row.id}
+              onOpenMenu={openMenuOnTrigger}
               top={(start + offset) * TREE_ROW_HEIGHT}
             />
           ))}

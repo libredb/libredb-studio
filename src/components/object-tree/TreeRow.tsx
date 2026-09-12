@@ -10,13 +10,37 @@
  * a leaf must not claim to be closed, and a folder whose count the engine refused is a leaf.
  */
 
-import { ChevronDown, ChevronRight, Database, Folder, LoaderCircle, Table2, TriangleAlert } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Database,
+  EllipsisVertical,
+  Folder,
+  LoaderCircle,
+  Table2,
+  TriangleAlert,
+} from "lucide-react";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { TreeRowModel } from "./flatten";
 import type { TreeReadFailure } from "./use-tree-nodes";
 
 /** Fixed, because the window is a slice and a slice needs one arithmetic for every row. */
 export const TREE_ROW_HEIGHT = 28;
+
+/**
+ * The trigger's slot, reserved on EVERY row by the row's own right padding: 20px for the
+ * button and 8px of the gutter the row already had.
+ *
+ * Reserved rather than shared, which is the whole of the design. The flat explorer put the
+ * ellipsis and the row count in ONE absolutely positioned box and swapped them on hover
+ * (`git show main:src/components/schema-explorer/TableItem.tsx`), so reaching for the menu
+ * hid the number the reader was reaching past. Pushing the count leftward on hover instead
+ * is the same defect in another form: row content that moves under the pointer makes the
+ * target harder to hit. A constant ~20px of row width buys a row where nothing moves and
+ * nothing is hidden, and it is constant on rows that HAVE no trigger too, so a routine's
+ * number lines up with a table's.
+ */
+const ROW_PADDING_RIGHT = "pr-7";
 
 const ROW_ICONS = { container: Database, folder: Folder, object: Table2 } as const;
 
@@ -42,11 +66,29 @@ export interface TreeRowProps {
    * rather than promising a menu that opens empty.
    */
   readonly hasActions?: boolean;
+  /** The row menu is open on THIS row, which the trigger reflects as `aria-expanded`. */
+  readonly menuOpen?: boolean;
+  /**
+   * Open the row menu against the trigger, whose element is handed over so the menu can be
+   * placed against its real rect rather than against a pointer that was never pressed.
+   */
+  readonly onOpenMenu: (row: TreeRowModel, trigger: HTMLElement) => void;
   /** Absolute offset inside the scroll spacer, in pixels. */
   readonly top: number;
 }
 
-export function TreeRow({ row, object, active, selected, busy, failure, hasActions, top }: TreeRowProps) {
+export function TreeRow({
+  row,
+  object,
+  active,
+  selected,
+  busy,
+  failure,
+  hasActions,
+  menuOpen,
+  onOpenMenu,
+  top,
+}: TreeRowProps) {
   const Icon = ROW_ICONS[row.kind];
   return (
     <div
@@ -61,7 +103,7 @@ export function TreeRow({ row, object, active, selected, busy, failure, hasActio
       aria-haspopup={hasActions === true ? "menu" : undefined}
       tabIndex={active ? 0 : -1}
       style={{ top, height: TREE_ROW_HEIGHT, paddingLeft: 8 + row.depth * 12 }}
-      className={`absolute inset-x-0 flex items-center gap-1.5 pr-2 text-xs cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-brand ${
+      className={`group absolute inset-x-0 flex items-center gap-1.5 ${ROW_PADDING_RIGHT} text-xs cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-brand ${
         selected ? "bg-muted" : "hover:bg-muted/60"
       }`}
     >
@@ -134,6 +176,46 @@ export function TreeRow({ row, object, active, selected, busy, failure, hasActio
         >
           {row.badge}
         </span>
+      )}
+      {/*
+        The visible way in (Task 33). `hasActions` is the SAME answer the right click asks
+        and the same one `aria-haspopup` above announces, so a row that offers nothing shows
+        no trigger and the two entry points cannot drift apart. Every action is gated on
+        `role === "relation"` today, which is why a routine, a trigger and a sequence have
+        none; Phase 3's source editing gives routines actions, and this trigger then appears
+        on them with no change here.
+      */}
+      {hasActions === true && (
+        <button
+          type="button"
+          data-testid="tree-row-menu-trigger"
+          // Named after its row rather than "More", because a screen reader reads a list of
+          // these and "More" repeated forty times names nothing.
+          aria-label={`Actions for ${row.label}`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen === true}
+          // The tree is one composite widget with a roving tabindex, so only the row that
+          // holds the tab stop offers its trigger to Tab. Every mounted row offering one
+          // would put thirty tab stops inside a widget the pattern gives one.
+          tabIndex={active ? 0 : -1}
+          onClick={(event) => {
+            // The tree delegates click AND keydown at its root. Without stopping here a
+            // press would also activate the row, opening the object in a tab behind the
+            // menu it just opened, or collapsing the folder the menu belongs to.
+            event.stopPropagation();
+            onOpenMenu(row, event.currentTarget);
+          }}
+          onKeyDown={(event) => event.stopPropagation()}
+          className={`absolute right-1 flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-brand ${
+            menuOpen === true
+              ? "opacity-100"
+              : // Shown on hover, on focus anywhere in the row, and always where there is no
+                // hover to have: a touch reader cannot reveal anything by pointing at it.
+                "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+          }`}
+        >
+          <EllipsisVertical aria-hidden="true" strokeWidth={1.5} className="w-3.5 h-3.5" />
+        </button>
       )}
     </div>
   );

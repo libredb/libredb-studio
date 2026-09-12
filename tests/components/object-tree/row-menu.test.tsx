@@ -52,7 +52,9 @@ function connectionOf(): DatabaseConnection {
 const realFetch = globalThis.fetch;
 
 const objects: Record<string, DatabaseObject[]> = {
-  table: [{ path: ["app", "orders"], name: "orders", kind: "table" }],
+  // A row count, because the trigger sits beside one: the defect the flat explorer's version
+  // had was that reaching for the menu HID the number, and only a row that has one can pin it.
+  table: [{ path: ["app", "orders"], name: "orders", kind: "table", rowCount: 1234 }],
   view: [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }],
   function: [{ path: ["app", "order_total(integer)"], name: "order_total", kind: "function" }],
 };
@@ -85,9 +87,20 @@ function row(name: string | RegExp): HTMLElement {
 }
 
 /** Opens the tree down to the three object rows, with every handler wired. */
-async function openTree(record: string[] = [], handlers?: TreeRowActionHandlers): Promise<void> {
+async function openTree(
+  record: string[] = [],
+  handlers?: TreeRowActionHandlers,
+  onObjectClick?: (object: DatabaseObject) => void,
+): Promise<void> {
   installFetch();
-  render(<ObjectTree connection={connectionOf()} capabilities={oneLevel} actions={handlers ?? allHandlers(record)} />);
+  render(
+    <ObjectTree
+      connection={connectionOf()}
+      capabilities={oneLevel}
+      actions={handlers ?? allHandlers(record)}
+      onObjectClick={onObjectClick}
+    />,
+  );
   await screen.findByRole("treeitem", { name: /Tables/ });
   await userEvent.click(row(/Tables/));
   await waitFor(() => expect(screen.getByText("orders")).toBeTruthy());
@@ -469,5 +482,151 @@ describe("the row menu and the rows under it", () => {
     await userEvent.click(row(/Tables/));
     await waitFor(() => expect(screen.queryByText("orders")).toBeNull());
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+});
+
+/**
+ * The visible trigger (Task 33).
+ *
+ * Right click, the ContextMenu key and Shift+F10 are all the menu had, and none of the three
+ * is discoverable: a reader who does not try them never learns the six actions exist. The
+ * flat explorer had an ellipsis button and the tree did not carry it over, with no recorded
+ * decision behind dropping it.
+ *
+ * Two things are asserted here that the design turns on. The trigger appears EXACTLY where
+ * the right click already opens something, because a visible control that opens nothing is
+ * worse than no control at all. And the row count is still there while the trigger is
+ * showing: the flat explorer's version shared one box with the count and swapped the two on
+ * hover, so reaching for the menu hid the number, which is the regression this must not
+ * reproduce.
+ */
+function trigger(name: string | RegExp): HTMLElement {
+  return screen.getByRole("button", { name });
+}
+
+describe("the row menu has a visible trigger", () => {
+  test("a row with actions carries one, and a row with nothing to offer carries none", async () => {
+    await openTree();
+    expect(within(row(/orders/)).getByTestId("tree-row-menu-trigger")).toBeTruthy();
+    expect(within(row(/Tables/)).getByTestId("tree-row-menu-trigger")).toBeTruthy();
+    // The three gate outcomes that have no action today. A trigger here would open an
+    // empty menu, which is the one state worse than the undiscoverable one.
+    expect(within(row(/order_total/)).queryByTestId("tree-row-menu-trigger")).toBeNull();
+    expect(within(row(/order_summary/)).getByTestId("tree-row-menu-trigger")).toBeTruthy();
+    expect(within(row(/app/)).queryByTestId("tree-row-menu-trigger")).toBeNull();
+  });
+
+  test("a shell that handed over nothing gets no trigger either", async () => {
+    // The same predicate the right click reads: this is the case where the DECLARATION
+    // offers plenty and the SHELL offers none.
+    await openTree([], {});
+    expect(screen.queryAllByTestId("tree-row-menu-trigger")).toHaveLength(0);
+  });
+
+  test("the trigger is named after its own row rather than a bare More", async () => {
+    await openTree();
+    expect(trigger("Actions for orders")).toBe(within(row(/orders/)).getByTestId("tree-row-menu-trigger"));
+    expect(trigger("Actions for Tables")).toBe(within(row(/Tables/)).getByTestId("tree-row-menu-trigger"));
+    expect(trigger("Actions for orders").getAttribute("aria-haspopup")).toBe("menu");
+  });
+
+  test("clicking it opens the same menu the right click opens", async () => {
+    await openTree();
+    fireEvent.contextMenu(row(/orders/));
+    const byPointer = menuItems();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+
+    await userEvent.click(trigger("Actions for orders"));
+    expect(menuItems()).toEqual(byPointer);
+  });
+
+  test("clicking it opens the menu and NOT the row it sits in", async () => {
+    // The tree delegates click at its root, so without the gesture stopping at the button a
+    // press would open the table in a tab behind the menu it just opened.
+    const opened: string[] = [];
+    await openTree([], undefined, (object) => opened.push(object.name));
+    await userEvent.click(trigger("Actions for orders"));
+    expect(screen.queryByRole("menu")).not.toBeNull();
+    expect(opened).toEqual([]);
+  });
+
+  test("it says whether the menu it owns is open", async () => {
+    await openTree();
+    expect(trigger("Actions for orders").getAttribute("aria-expanded")).toBe("false");
+    await userEvent.click(trigger("Actions for orders"));
+    expect(trigger("Actions for orders").getAttribute("aria-expanded")).toBe("true");
+  });
+
+  test("Tab from the active row reaches the trigger, and Enter opens the menu there", async () => {
+    // Reachable without a pointer, and without a second tab stop per mounted row: only the
+    // row holding the tree's roving tabindex offers its trigger to Tab.
+    const opened: string[] = [];
+    await openTree([], undefined, (object) => opened.push(object.name));
+    await keyboardToOrders();
+    await userEvent.tab();
+    expect(document.activeElement).toBe(trigger("Actions for orders"));
+
+    await userEvent.keyboard("{Enter}");
+    expect(menuItems()).toHaveLength(4);
+    expect(document.activeElement?.textContent).toBe("Generate Query");
+    // The keydown stopped at the button: the tree's own Enter would have opened the table.
+    expect(opened).toEqual([]);
+  });
+
+  test("only the active row offers its trigger to Tab", async () => {
+    await openTree();
+    await keyboardToOrders();
+    const tabbable = screen
+      .getAllByTestId("tree-row-menu-trigger")
+      .filter((button) => button.getAttribute("tabindex") === "0");
+    expect(tabbable).toHaveLength(1);
+    expect(tabbable[0]).toBe(trigger("Actions for orders"));
+  });
+
+  test("the row count is still there, and still where it was, while the trigger is showing", async () => {
+    await openTree();
+    const orders = row(/orders/);
+    expect(within(orders).getByTestId("tree-row-count").textContent).toBe("1,234");
+    // The flat explorer's defect, pinned: the count must not be tied to the hover state that
+    // reveals the trigger, in either direction - hidden, or pushed leftward under the pointer.
+    expect(within(orders).getByTestId("tree-row-count").className).not.toContain("group-hover");
+    expect(within(orders).getByTestId("tree-row-menu-trigger")).toBeTruthy();
+    // The slot is reserved by the ROW, on every row, so a row that has no trigger lines its
+    // number up with a row that has one.
+    expect(orders.className).toContain("pr-7");
+    expect(row(/order_total/).className).toContain("pr-7");
+  });
+
+  test("the trigger is revealed by hover, by focus, and unconditionally where there is no hover", async () => {
+    // happy-dom applies no stylesheet, so the reveal is asserted as the classes that carry
+    // it. All three matter separately: hover is the pointer reader's, focus-within is what
+    // makes a keyboard reader able to SEE the control they just tabbed to, and a touch
+    // device can point at nothing, so there the trigger is simply always there.
+    await openTree();
+    const button = trigger("Actions for orders");
+    expect(button.className).toContain("opacity-0");
+    expect(button.className).toContain("group-hover:opacity-100");
+    expect(button.className).toContain("group-focus-within:opacity-100");
+    expect(button.className).toContain("[@media(hover:none)]:opacity-100");
+
+    // While its own menu is open it stays put rather than fading as the pointer leaves.
+    await userEvent.click(button);
+    expect(trigger("Actions for orders").className).not.toContain("opacity-0");
+  });
+
+  test("a trigger on the last row opens its menu upward, anchored on the button's own box", async () => {
+    // The button is an ELEMENT rather than a pointer position, so the anchor is its rect. In
+    // a scrolled sidebar the bottom row's menu has to flip, and happy-dom measures every box
+    // as zero, so the rect is supplied here.
+    await openTree();
+    const button = trigger("Actions for orders");
+    const box = { x: 220, y: 700, top: 700, bottom: 720, left: 220, right: 240, width: 20, height: 20 };
+    button.getBoundingClientRect = () => ({ ...box, toJSON: () => box }) as DOMRect;
+    await userEvent.click(button);
+
+    const menu = screen.getByRole("menu");
+    expect(menu.style.top).toBe("");
+    expect(menu.style.bottom).toBe(`${VIEWPORT.height - box.top}px`);
+    expect(menu.style.left).toBe(`${box.left}px`);
   });
 });
