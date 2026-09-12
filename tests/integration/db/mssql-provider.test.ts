@@ -1996,6 +1996,17 @@ function objectRead(sql: string): string {
     if (upper.includes("SYS.COLUMNS")) return "bulk-columns";
     return "bulk-target";
   }
+  // The FLAT reading's five statements, after the bulk block and before the single-object
+  // arms (#789). Each of them collides with one of the
+  // object-surface arms below - `SCHEMA_TABLES_SQL` reaches `sys.partitions`,
+  // `SCHEMA_PRIMARY_KEYS_SQL` reaches `is_primary_key = 1`, `SCHEMA_INDEXES_SQL` reaches
+  // `is_primary_key = 0` - and answering one with the other's recordset is what made
+  // `getSchema()` throw through `mapDatabaseError` here rather than answer.
+  if (upper.includes("SUM(P.ROWS) AS ROW_COUNT") && upper.includes("GROUP BY S.NAME, T.NAME")) return "flat-tables";
+  if (upper.includes("FROM INFORMATION_SCHEMA.COLUMNS")) return "flat-columns";
+  if (upper.includes("WHERE I.IS_PRIMARY_KEY = 1") && upper.includes("T.NAME AS TABLE_NAME")) return "flat-pk";
+  if (upper.includes("OBJECT_SCHEMA_NAME(FK.PARENT_OBJECT_ID)")) return "flat-fks";
+  if (upper.includes("I.IS_PRIMARY_KEY = 0") && upper.includes("IC.KEY_ORDINAL")) return "flat-indexes";
   if (upper.includes("SYS.DATABASES")) return "databases";
   if (upper.includes("SYS.DATABASE_PRINCIPALS")) return "schemas";
   if (upper.includes("GROUP BY KIND")) return "counts";
@@ -2213,6 +2224,80 @@ function fixtureRead(read: string, inputs: Record<string, unknown>, sql: string)
         }));
       return { recordset: rows, rowsAffected: [rows.length] };
     }
+    // The FLAT reading, over the SAME objects the object surface lists (#789).
+    //
+    // The guard inside `assertObjectSurface` joins `getSchema()`'s names to the object
+    // paths with the app's own rule, and it had nothing to join: these five statements were
+    // misrouted into the object-surface arms above, whose recordsets carry different column
+    // names, so the read threw through `mapDatabaseError` instead of answering.
+    //
+    // The rows are the DRIVER'S rows and the naming is left to `mssql.ts`, which spells a
+    // name `schema.table` and strips `dbo` (`mssql.ts:1798`). A fixture that returned
+    // finished names would assert its own spelling rather than the engine's.
+    //
+    // DISCLOSED: the `dbo` strip is not exercised, and inventing a row for it would be
+    // worse than leaving it. `docker/mssql-init/01-object-fixture.sql` creates `app`,
+    // `reporting`, `warehouse` and `db_owner` and no user table in `dbo`, so a `dbo` row
+    // here would be a row the seeded fixture does not hold, and standing ruling 5i makes
+    // that fixture the deliverable. `SCHEMA_TABLES_SQL` also reads `sys.tables` alone, so
+    // the view `app.order_summary` is correctly absent from the flat reading while the
+    // object surface lists it: the join has to survive a flat reading NARROWER than the
+    // listing, and that asymmetry is real on this engine rather than arranged here.
+    case "flat-tables":
+      return {
+        recordset: FIXTURE_TABLES.map((table) => ({
+          schema_name: table.schema_name,
+          table_name: table.name,
+          row_count: table.row_count,
+        })),
+        rowsAffected: [FIXTURE_TABLES.length],
+      };
+    case "flat-columns": {
+      const rows = FIXTURE_TABLES.flatMap((table) =>
+        (FIXTURE_COLUMNS[table.name] ?? []).map((column, index) => ({
+          TABLE_SCHEMA: table.schema_name,
+          TABLE_NAME: table.name,
+          COLUMN_NAME: column.name,
+          DATA_TYPE: column.data_type,
+          IS_NULLABLE: column.is_nullable === true ? "YES" : "NO",
+          COLUMN_DEFAULT: column.default_definition,
+          ORDINAL_POSITION: index + 1,
+        })),
+      );
+      return { recordset: rows, rowsAffected: [rows.length] };
+    }
+    case "flat-pk": {
+      const rows = FIXTURE_TABLES.filter((table) => FIXTURE_COLUMNS[table.name] !== undefined).map((table) => ({
+        schema_name: table.schema_name,
+        table_name: table.name,
+        column_name: "id",
+      }));
+      return { recordset: rows, rowsAffected: [rows.length] };
+    }
+    case "flat-fks": {
+      const rows = FIXTURE_TABLES.filter((table) => FIXTURE_COLUMNS[table.name] !== undefined).map((table) => ({
+        schema_name: table.schema_name,
+        table_name: table.name,
+        column_name: "customer_id",
+        ref_table: "customers",
+        ref_column: "id",
+      }));
+      return { recordset: rows, rowsAffected: [rows.length] };
+    }
+    case "flat-indexes":
+      return {
+        recordset: [
+          {
+            schema_name: "app",
+            table_name: "orders",
+            index_name: "app_orders_total_ix",
+            is_unique: false,
+            column_name: "total",
+            key_ordinal: 1,
+          },
+        ],
+        rowsAffected: [1],
+      };
     case "pk":
       return { recordset: [{ name: "id" }], rowsAffected: [1] };
     case "fks":

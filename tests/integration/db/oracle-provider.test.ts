@@ -2766,6 +2766,75 @@ describe("object surface", () => {
         }
         return { rows: [] };
       }
+      // The FLAT reading, over the SAME objects the object surface lists (#789).
+      //
+      // The guard inside `assertObjectSurface` joins `getSchema()`'s names to the object
+      // paths with the app's own rule, and this double answered `getSchema()` nothing at
+      // all: none of its five statements matched an arm, so every one fell through to the
+      // per-type block below, which keys on a parameter they do not bind, and the flat
+      // reading reached the guard EMPTY.
+      //
+      // After the bulk block, because `SCHEMA_COLUMNS_SQL` also reads `ALL_TAB_COLUMNS`.
+      //
+      // The rows are the DRIVER'S rows and the naming is left to `oracle.ts`, which spells
+      // a flat name BARE: the read is scoped to the connection owner by `WHERE OWNER = :1`
+      // (`oracle.ts:1516`), so the owner is a fact about the statement rather than a
+      // qualifier on the answer, and every name comes back unqualified against a
+      // `[owner, name]` path. A fixture that returned `APP.APP_ORDERS` would assert a
+      // spelling this provider never produces.
+      //
+      // `ALL_TABLES` holds tables alone, so the view `APP_ORDER_SUMMARY` is correctly
+      // absent from the flat reading while the object surface lists it. The join has to
+      // survive a flat reading NARROWER than the listing, and that is real here rather
+      // than arranged.
+      if (sql.includes("FROM ALL_TABLES")) {
+        return {
+          rows: [
+            { TABLE_NAME: "APP_ORDERS", NUM_ROWS: 2 },
+            { TABLE_NAME: "APP_CUSTOMERS", NUM_ROWS: 1 },
+          ],
+        };
+      }
+      if (sql.includes("ALL_TAB_COLUMNS")) {
+        return {
+          rows: ["APP_ORDERS", "APP_CUSTOMERS"].map((TABLE_NAME) => ({
+            TABLE_NAME,
+            COLUMN_NAME: "ID",
+            DATA_TYPE: "NUMBER",
+            NULLABLE: "N",
+            DATA_DEFAULT: null,
+            COLUMN_ID: 1,
+          })),
+        };
+      }
+      if (sql.includes("CONSTRAINT_TYPE = 'P'")) {
+        return { rows: [{ TABLE_NAME: "APP_ORDERS", COLUMN_NAME: "ID" }] };
+      }
+      if (sql.includes("CONSTRAINT_TYPE = 'R'")) {
+        return {
+          rows: [
+            {
+              TABLE_NAME: "APP_ORDERS",
+              COLUMN_NAME: "CUSTOMER_ID",
+              REF_TABLE: "APP_CUSTOMERS",
+              REF_COLUMN: "ID",
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM ALL_INDEXES")) {
+        return {
+          rows: [
+            {
+              TABLE_NAME: "APP_ORDERS",
+              INDEX_NAME: "APP_ORDERS_PK",
+              UNIQUENESS: "UNIQUE",
+              COLUMN_NAME: "ID",
+              COLUMN_POSITION: 1,
+            },
+          ],
+        };
+      }
       // One row set per bound dictionary type, and they must be DISTINCT: the shared
       // helper lists every counted kind and requires paths unique within each of them.
       const type = (params ?? [])[1];

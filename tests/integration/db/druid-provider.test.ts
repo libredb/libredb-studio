@@ -1874,6 +1874,45 @@ function engineKind(row: { schema: string; type: string }): string {
 }
 
 function objectReply(sql: string): Reply {
+  // The FLAT reading's two statements, FIRST (#789).
+  //
+  // `DRUID_COLUMN_LIST_SQL` carries `columnName`, so without this arm it fell into the
+  // single-object column read below, whose `boundTable()` found no `TABLE_NAME` literal in
+  // it and threw `QueryError: no TABLE_NAME literal in: SELECT TABLE_NAME ...` - which is
+  // the loudest way a double can fail to serve `getSchema()` and is what left the join with
+  // nothing to check.
+  //
+  // Both statements are scoped by the provider to `TABLE_SCHEMA = 'druid'`
+  // (`DATASOURCE_SCHEMA_FILTER`), so the flat reading is the DATASOURCES and nothing else:
+  // a lookup and a system table are queryable and are not in it. The rows come from the
+  // same `CATALOG_TABLE_ROWS` the counts and the listings are derived from, so the fixture
+  // cannot make the two readings disagree where the engine would not.
+  //
+  // The names come back BARE. Druid's flat reading carries no schema qualifier at all,
+  // against a `[schema, name]` path, which is the spelling the address rule resolves by
+  // suffix; a fixture that answered `druid.libredb_objects_orders` would assert a spelling
+  // this provider never produces.
+  if (sql.includes("FROM INFORMATION_SCHEMA.TABLES") && sql.includes('AS "tableName"')) {
+    return ok(
+      druidBody(
+        ["tableName"],
+        CATALOG_TABLE_ROWS.filter((row) => row.schema === "druid").map((row) => [row.name]),
+      ),
+    );
+  }
+  // `AND TABLE_NAME =` is what tells the two apart: the single-object read projects the
+  // same four columns and narrows to one name, and the flat read narrows to the schema.
+  if (sql.includes("FROM INFORMATION_SCHEMA.COLUMNS") && !sql.includes("AND TABLE_NAME =")) {
+    const rows = CATALOG_TABLE_ROWS.filter((row) => row.schema === "druid").flatMap((row) =>
+      (CATALOG_COLUMN_ROWS[`druid.${row.name}`] ?? []).map(([name, type, nullable]) => [
+        row.name,
+        name,
+        type,
+        nullable,
+      ]),
+    );
+    return ok(druidBody(["tableName", "columnName", "dataType", "isNullable"], rows));
+  }
   if (sql.includes("containerName")) {
     return ok(
       druidBody(
@@ -1957,17 +1996,22 @@ describe("object surface", () => {
     installObjectReplies();
     const provider = await connectProvider();
 
-    // The helper reads `containers[0]`, and the server orders the schemas by name, so
-    // the container under test is `INFORMATION_SCHEMA` rather than the one a person
-    // cares most about. That is not a shortcoming to route around: the four system
-    // tables in it are real objects of a declared kind, and `druid` and `lookup` are
-    // each exercised end to end - count, listing and describe - in the internals block
-    // below, which is also where the two counted-zero kinds here are proven non-empty
-    // in the containers that do hold them.
+    // The server orders the schemas by name, so the FIRST container it answers is
+    // `INFORMATION_SCHEMA` and the contract used to run against four system tables while
+    // the datasources a person came for sat in `druid`. That was already the open concern
+    // this task's report raised, and the flat-reading join is what made it a red rather
+    // than a preference: `getSchema()` is scoped to `TABLE_SCHEMA = 'druid'`
+    // (`DATASOURCE_SCHEMA_FILTER`), so the two readings named nothing in common and the
+    // join was reported vacuous on a provider whose join is correct.
+    //
+    // The expectation names its container instead. `INFORMATION_SCHEMA`, `lookup` and
+    // `sys` are each still exercised end to end - count, listing and describe - in the
+    // internals block below, so nothing stops being measured.
     await assertObjectSurface(provider, {
       containers: SCHEMATA_NAMES.map((name) => [name]),
-      kinds: { datasource: 0, lookup: 0, system_table: 4 },
-      sampleObject: { path: ["INFORMATION_SCHEMA", "TABLES"], kind: "system_table" },
+      container: ["druid"],
+      kinds: { datasource: 4, lookup: 0, system_table: 0 },
+      sampleObject: { path: ["druid", "libredb_objects_orders"], kind: "datasource" },
     });
     await provider.disconnect();
   });
