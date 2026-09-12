@@ -33,11 +33,19 @@ import {
   type ObjectDetail,
   type ObjectDetailBatch,
   type ObjectKindSpec,
+  type ObjectSourceDocument,
+  type ObjectSourcePart,
   type ColumnSchema,
   type IndexSchema,
   type ForeignKeySchema,
 } from "../../types";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+} from "../../object-kinds";
 import { comparePaths } from "../../object-path";
 import {
   DatabaseConfigError,
@@ -224,6 +232,27 @@ const ORACLE_OBJECT_TYPES: Record<string, { dictionary: string; metadata: string
  * vocabularies disagreeing, which is why it is written down at all.
  */
 const PACKAGE_BODY_OBJECT_TYPE = { dictionary: "PACKAGE BODY", metadata: "PACKAGE_BODY" };
+
+/**
+ * The source declaration every Oracle kind carries, written once (#789 Phase 2).
+ *
+ * ALL NINE declared kinds have a definition text, and that is a fact about Oracle rather
+ * than a convenience: `DBMS_METADATA.GET_DDL` answers a runnable CREATE statement for every
+ * metadata type in `ORACLE_OBJECT_TYPES` above, including the three kinds no other engine in
+ * this fleet publishes text for (a synonym, a sequence and a materialized view). So there is
+ * no "declares nothing" list for this provider, and the integration suite asserts that
+ * emptiness in both directions so a tenth kind cannot quietly gain a Source tab.
+ *
+ * `sql` and NOT `plsql`. MEASURED on the installed monaco-editor 0.56.0: `plsql` is not
+ * among the 89 language ids the bundle registers, and an unregistered id degrades to plain
+ * text SILENTLY, with no throw and nothing observable. A PL/SQL body therefore renders under
+ * the SQL grammar, which highlights the DML and misses `IS`/`BEGIN`/`EXCEPTION`. That is a
+ * limitation this provider states rather than hides; `docs/providers/oracle.md` carries it.
+ *
+ * One constant rather than nine copies, so a kind cannot be added with a different language
+ * id by accident. It is spread into each declaration, so every kind still states it.
+ */
+const ORACLE_SOURCE_DECLARATION = { hasSource: true, sourceLanguage: "sql" } as const;
 
 /**
  * The one dictionary spelling a statement needs inside its TEXT rather than as a bind.
@@ -480,6 +509,265 @@ const OBJECT_INDEXES_SQL = `SELECT ai.INDEX_NAME, ai.UNIQUENESS, aic.COLUMN_NAME
  * this: its fake dispatches on statement text and never counted the binds (standing ruling
  * 5b), so it was found against a live 21c XE and is pinned by an argument assertion now.
  */
+/**
+ * ONE object's definition text, as Oracle's own metadata API writes it (#789 Phase 2).
+ *
+ * `DBMS_METADATA.GET_DDL` takes the metadata-vocabulary type, the object name and the owner,
+ * all three as BINDS, so nothing on this path is interpolated into statement text and no
+ * identifier escaper is involved. That is worth stating because the source route is the first
+ * place in the object surface where a caller-supplied name reaches a read on some engines; on
+ * Oracle it does not reach statement text at all.
+ *
+ * `FROM DUAL` rather than a PL/SQL block, because the value has to come back as a column the
+ * driver can apply `lobFetchTypeHandler` to. GET_DDL answers a CLOB and the object surface's
+ * ordinary reader passes no fetch handler, so this read has its own execute.
+ */
+const OBJECT_DDL_SQL = `SELECT DBMS_METADATA.GET_DDL(:1, :2, :3) AS DDL FROM DUAL`;
+
+/**
+ * The SECOND question ORA-31603 forces, and `ALL_OBJECTS` by name (#789, ruling C).
+ *
+ * ORA-31603's documented cause is "The specified object was not found in the database", and
+ * Oracle raises it for an object the caller merely LACKS PRIVILEGE on. #765 made the tree list
+ * every owner, so reading another schema's object is the ORDINARY path here rather than an
+ * edge case, and shipping that sentence unqualified would tell a user their objects are gone.
+ *
+ * `ALL_OBJECTS` and never `DBA_OBJECTS`. `ALL_OBJECTS` is privilege-filtered, so it answers
+ * "can THIS caller see it", which is the question being asked. `DBA_OBJECTS` would answer
+ * "does it exist anywhere", turning this disambiguation into a cross-schema existence oracle
+ * over objects the caller has no grant on at all, and it needs a catalog role most callers do
+ * not hold, so it would also fail for the very sessions this path exists to serve.
+ *
+ * The type is bound in the DICTIONARY vocabulary (`MATERIALIZED VIEW`, `PACKAGE BODY`), which
+ * is the column `ALL_OBJECTS` publishes, and not the metadata vocabulary GET_DDL takes. The
+ * two spellings are the reason `ORACLE_OBJECT_TYPES` carries both.
+ */
+const OBJECT_IS_VISIBLE_SQL = `SELECT 1 AS SEEN FROM ALL_OBJECTS WHERE OWNER = :1 AND OBJECT_NAME = :2 AND OBJECT_TYPE = :3`;
+
+/**
+ * The wrap format marker a wrapped unit's second physical line carries.
+ *
+ * MEASURED on Oracle XE 21.3.0.0.0 (probe 7, #789): `a000000`. The pattern is deliberately
+ * wider than that one literal, because the marker names the ENCODER's format version and a
+ * later Oracle writes a different letter or number there; pinning the literal would report
+ * every future release's wrapped unit as plain text.
+ */
+const WRAP_FORMAT_MARKER = /^[a-z][0-9]{6}$/;
+
+/**
+ * One object's name as `DBMS_METADATA` writes it into a `GET_DDL` header.
+ *
+ * Both parts are always quoted and an embedded quote is doubled, which is Oracle's own
+ * identifier quoting. This string is NEVER sent to the server: it is built only to find the
+ * closing quote of the name inside text the server already returned, which is why the
+ * doubling here is a READ rule rather than an escaper.
+ */
+function quotedMetadataName(owner: string, name: string): string {
+  const quote = (value: string) => `"${value.replace(/"/g, '""')}"`;
+  return `${quote(owner)}.${quote(name)}`;
+}
+
+/**
+ * The wrap format marker this `GET_DDL` text carries, or `undefined` when it is not wrapped.
+ *
+ * THE RULE, established by probe 7 on Oracle XE 21.3.0.0.0 (#789) and documented nowhere
+ * Oracle publishes: a unit is wrapped if and only if the token immediately following the
+ * CLOSING DOUBLE QUOTE of its quoted name is the bare keyword `wrapped`, case-insensitive,
+ * AND the next physical line is the wrap format marker.
+ *
+ * The rule is a POSITION and not a text search, and that distinction is the whole of it. The
+ * fixture commits three plain, COMPILING functions built to defeat the naive textual rule:
+ * `APP_FIRST_LINE_WRAPPED` ends its first source line with the word `wrapped`,
+ * `APP_SECOND_LINE_MARKER` has exactly `a000000` on its second line, and `APP_CONJ_DEFEATER`
+ * does both at once. All three fail here, because `GET_DDL` writes the object name inside
+ * double quotes and what follows it is decided by the PARSER: a plain unit admits only `(`, a
+ * RETURN clause, IS or AS in that position, and `APP_ZERO_ARG` is the fixture's control for
+ * the closest plain shape there is, a zero-argument function whose token there is `return`.
+ *
+ * The name is located by the exact quoted spelling rather than by `lastIndexOf('"')`, because
+ * a plain unit's header can carry a later double quote of its own (a quoted default, a quoted
+ * type name) and the last quote in the line is then not the name's.
+ *
+ * A SECOND independent signal exists and is deliberately NOT used: `ALL_SOURCE` holds a whole
+ * wrapped unit in ONE row with embedded newlines where a plain unit is one row per line, and
+ * that shape is not forgeable from source text at all. It is not used because it costs a
+ * second round trip on every PL/SQL read, it answers nothing for the five kinds that are not
+ * PL/SQL, and the header predicate survived the three units built to break it. It is written
+ * down in `docs/providers/oracle.md` so a future defect in this predicate has a measured
+ * alternative rather than a research problem.
+ *
+ * The MARKER is returned rather than a bare boolean, so the refusal sentence can quote
+ * ORACLE'S OWN TOKEN back to the reader instead of this file's idea of what it should be. A
+ * refusal that names `a000000` when the server wrote something else would be this product
+ * describing the engine rather than reporting it.
+ */
+function wrapFormatMarker(ddl: string, owner: string, name: string): string | undefined {
+  const quoted = quotedMetadataName(owner, name);
+  const at = ddl.indexOf(quoted);
+  if (at < 0) return undefined;
+  const rest = ddl.slice(at + quoted.length);
+  const firstBreak = rest.indexOf("\n");
+  if (firstBreak < 0) return undefined;
+  // The whole REMAINDER of the header line, trimmed, and not a `startsWith` or an `endsWith`:
+  // `wrapped` has to be the ONLY thing left on that line, which is what "the token
+  // immediately following" means and what every one of the three defeaters fails.
+  if (rest.slice(0, firstBreak).trim().toLowerCase() !== "wrapped") return undefined;
+  const after = rest.slice(firstBreak + 1);
+  const secondBreak = after.indexOf("\n");
+  const marker = (secondBreak < 0 ? after : after.slice(0, secondBreak)).trim();
+  return WRAP_FORMAT_MARKER.test(marker) ? marker : undefined;
+}
+
+/**
+ * Whether this driver error is Oracle reporting the object as not found (#789, ruling C).
+ *
+ * ORA-31603 is the ONE code this path treats specially, and it is matched on the code rather
+ * than on the sentence because the sentence is localised and the code is not. Every other
+ * failure, including ORA-31600 for a metadata type this provider spelled wrongly, goes
+ * through `mapDatabaseError` and raises, because only this one code is ambiguous between an
+ * absence and a refusal.
+ */
+function isObjectNotFoundError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("ORA-31603");
+}
+
+/**
+ * The engine's own sentence for a refusal, with `DBMS_METADATA`'s internal backtrace dropped.
+ *
+ * MEASURED verbatim on Oracle XE 21.3.0.0.0 (#789). `GET_DDL('TABLE','REPORT_DAILY','REPORTING')`
+ * as a caller holding only `SELECT` on that table raises a TEN-LINE message: one
+ * `ORA-31603: object "REPORT_DAILY" of type TABLE not found in schema "REPORTING"` followed by
+ * nine `ORA-06512: at "SYS.DBMS_METADATA", line 6781` frames. The first line is the error the
+ * server raised ABOUT THIS OBJECT; the nine are a PL/SQL backtrace of line numbers inside
+ * Oracle's own package, and they say nothing about the object at all.
+ *
+ * This is a SELECTION and never a rewrite, and the distinction is the whole point: not one word
+ * of Oracle's is changed, reordered, paraphrased or prefixed, and what is dropped is a stack
+ * trace of Oracle's internals. It matters because the refusal pane renders the engine's sentence
+ * in full, and burying the disambiguation this provider appends under nine frames of
+ * `SYS.DBMS_METADATA` line numbers would hide the one fact ruling C exists to put in front of a
+ * reader: that their object is THERE and the read was refused.
+ *
+ * Only the ORA-31603 path is filtered. Every other failure is raised through `mapDatabaseError`
+ * with its message untouched, because only this one code is ambiguous between an absence and a
+ * refusal and only this one is composed for a reader rather than for a log.
+ */
+function oracleErrorSentence(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const kept = message
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("ORA-06512:"))
+    .join("\n")
+    .trim();
+  // An error that is NOTHING BUT a backtrace keeps its whole message rather than becoming an
+  // empty refusal, because a refusal with no sentence a person can read is the one shape
+  // `assertObjectSurface` refuses by name.
+  return kept === "" ? message : kept;
+}
+
+/**
+ * What one `GET_DDL` call answered: a text, the engine's refusal, or nothing at all.
+ *
+ * THREE outcomes and not two, because the caller does different things with the third. A
+ * missing package BODY is an ABSENCE and emits no part at all, while a missing object at the
+ * head of the document RAISES. Collapsing absence into a refusal would put "not found" in a
+ * Source pane as this object's own reason, and collapsing it into a raise would take a
+ * readable package specification away from a reader because nobody ever wrote its body.
+ */
+type OracleDefinitionRead =
+  | { readonly outcome: "text"; readonly text: string }
+  | { readonly outcome: "refused"; readonly unavailable: string }
+  | { readonly outcome: "absent" };
+
+/**
+ * One part of one object's source document, and the PLAN that produced it.
+ *
+ * `optional` is the package body and nothing else today: a part whose absence is a legal
+ * state of the object rather than a failure to read it.
+ */
+interface OracleSourcePartPlan {
+  readonly id: string;
+  readonly label: string;
+  readonly type: { readonly dictionary: string; readonly metadata: string };
+  readonly optional?: boolean;
+}
+
+/**
+ * The kinds that read as MORE THAN ONE part, and what the extra part is.
+ *
+ * A package is ONE tree node over TWO dictionary rows, and this design reads it through
+ * `PACKAGE_SPEC` and `PACKAGE_BODY` rather than through the bare `PACKAGE` type even though
+ * the bare type retrieves both in one CLOB. Three measured reasons, none of which one CLOB can
+ * express: a body may be ABSENT and a concatenation cannot say so; a body may be WRAPPED while
+ * the specification is not, which `APP_WRAPPED_PKG` in the fixture exists to exhibit; and the
+ * two halves carry independent `STATUS` values, which `APP_BROKEN_PKG` exhibits. The cost is
+ * two round trips for a package instead of one, on the slowest engine in the fleet, and it is
+ * paid deliberately (#789).
+ *
+ * Every other kind reads as exactly one part, so this table has one entry and the derivation
+ * below builds the rest from `ORACLE_OBJECT_TYPES`. Nothing here is a branch on a kind id in
+ * the sense `CLAUDE.md` forbids: that rule is about the DATABASE TYPE id, and a kind id is
+ * this provider's own declaration, which only this provider can interpret.
+ */
+const ORACLE_SOURCE_PART_PLANS: Record<string, readonly [OracleSourcePartPlan, ...OracleSourcePartPlan[]]> = {
+  package: [
+    { id: "spec", label: "Package specification", type: { dictionary: "PACKAGE", metadata: "PACKAGE_SPEC" } },
+    { id: "body", label: "Package body", type: PACKAGE_BODY_OBJECT_TYPE, optional: true },
+  ],
+};
+
+/**
+ * The parts one kind's source document is built from, head first.
+ *
+ * Derived from the translation table every other read already derives from, so a kind cannot
+ * gain a source read here without also having a metadata type there. `Object.hasOwn` and never
+ * `in`, per standing ruling 5g: `in` walks the prototype chain, so a kind id spelled
+ * `constructor` would otherwise pick up a function.
+ */
+function sourcePartPlans(kind: string): readonly [OracleSourcePartPlan, ...OracleSourcePartPlan[]] {
+  if (Object.hasOwn(ORACLE_SOURCE_PART_PLANS, kind)) return ORACLE_SOURCE_PART_PLANS[kind];
+  return [{ id: "definition", label: "Definition", type: ORACLE_OBJECT_TYPES[kind] }];
+}
+
+/**
+ * One plan and one read, as the part a document carries.
+ *
+ * The two arms are built as WHOLE LITERALS and neither is spread from the other, which is the
+ * point. A part carrying both `text` and `unavailable` COMPILES as an `ObjectSourcePart`,
+ * because TypeScript's excess-property check on a union admits any property declared on ANY
+ * member, and `isSourcePartUnavailable` then narrows such a part to the refusal arm and drops
+ * a definition the engine really returned. A provider that spread a conditional
+ * `{ unavailable }` onto a bounded text would build exactly that part; this one cannot.
+ *
+ * `form: "complete"` on every kind: GET_DDL answers a statement that runs as given, never a
+ * body or a bare SELECT. `origin: "regenerated"` on every kind, and it is a measurement rather
+ * than a default: DBMS_METADATA rebuilds the statement from the dictionary, so the fixture's
+ * `CREATE OR REPLACE FUNCTION app.app_order_total(p_id NUMBER)` comes back as
+ * `CREATE OR REPLACE EDITIONABLE FUNCTION "APP"."APP_ORDER_TOTAL" (p_id NUMBER)`, with a
+ * keyword the author never typed and a qualification the author never wrote. It is not the
+ * author's bytes, and a reader must never be shown a reconstruction as an original.
+ */
+function sourcePart(
+  plan: OracleSourcePartPlan,
+  read: OracleDefinitionRead & { outcome: "text" | "refused" },
+  language: string,
+  limit: number | undefined,
+): ObjectSourcePart {
+  if (read.outcome === "refused") {
+    return { id: plan.id, label: plan.label, unavailable: read.unavailable };
+  }
+  const bounded = applySourceBound(read.text, limit);
+  return {
+    id: plan.id,
+    label: plan.label,
+    text: bounded.text,
+    language,
+    form: "complete",
+    origin: "regenerated",
+    ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+  };
+}
+
 function describedSql(kind: string, bounded: boolean): string {
   const containerRule =
     kind === "table"
@@ -670,6 +958,42 @@ function ownerSegment(capabilities: ProviderCapabilities, path: readonly string[
     );
   }
   return segment;
+}
+
+/**
+ * That `path` has a shape this kind can legally take, refused by NAME when it does not.
+ *
+ * Derived, not counted. The depth is read through `containerDepth()` so absent and empty
+ * cannot be answered differently here than anywhere else, and the segment NAMES are the
+ * declared labels sliced to that same depth, so the message and the check cannot disagree.
+ * An attached kind takes EITHER depth, because a trigger's base object may be a table, a
+ * view, or - for a SCHEMA or DATABASE trigger - nothing at all, and standing ruling 5f
+ * settles that the listing wins and the path shape gives way (#789).
+ *
+ * ONE writer for `describeObject` and `readObjectSource` both. Two copies of a rule about
+ * path shape is how the two methods come to disagree about one engine, and the second copy
+ * would have been written the day the source read landed.
+ */
+function assertObjectPathShape(
+  capabilities: ProviderCapabilities,
+  spec: ObjectKindSpec,
+  path: readonly string[],
+): void {
+  const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
+  const shapes =
+    spec.attachedTo === undefined
+      ? [[...levels, "name"]]
+      : [
+          [...levels, spec.attachedTo, "name"],
+          [...levels, "name"],
+        ];
+  if (!shapes.some((shape) => shape.length === path.length)) {
+    throw new QueryError(
+      `An Oracle "${spec.id}" path is ${shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ")}, ` +
+        `received ${JSON.stringify(path)}`,
+      "oracle",
+    );
+  }
 }
 
 /**
@@ -1100,20 +1424,28 @@ export class OracleProvider extends SQLBaseProvider {
       // TABLE_NAME and an index cannot exist without them - so it belongs in
       // `describeObject`'s output, where it is, rather than in a folder of its own.
       objectKinds: [
-        { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+        {
+          id: "table",
+          role: "relation",
+          label: "Table",
+          labelPlural: "Tables",
+          acceptsRowWrites: true,
+          ...ORACLE_SOURCE_DECLARATION,
+        },
         // No `acceptsRowWrites` on either view kind. Oracle takes an UPDATE against a
         // key-preserved view and refuses it against the rest, which is a per-OBJECT fact
         // this per-kind declaration cannot state; a materialized view takes no row write
         // at all, since its rows come from its query.
-        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views", ...ORACLE_SOURCE_DECLARATION },
         {
           id: "materialized_view",
           role: "relation",
           label: "Materialized View",
           labelPlural: "Materialized Views",
+          ...ORACLE_SOURCE_DECLARATION,
         },
-        { id: "synonym", role: "config", label: "Synonym", labelPlural: "Synonyms" },
-        { id: "sequence", role: "config", label: "Sequence", labelPlural: "Sequences" },
+        { id: "synonym", role: "config", label: "Synonym", labelPlural: "Synonyms", ...ORACLE_SOURCE_DECLARATION },
+        { id: "sequence", role: "config", label: "Sequence", labelPlural: "Sequences", ...ORACLE_SOURCE_DECLARATION },
         // A package is ONE node holding routines, not two and not a routine itself: the
         // dictionary carries a PACKAGE row and a PACKAGE BODY row, and a user wrote one
         // package. `listObjects` collapses them; `countObjects` counts only the first.
@@ -1123,10 +1455,24 @@ export class OracleProvider extends SQLBaseProvider {
           label: "Package",
           labelPlural: "Packages",
           childKinds: ["procedure", "function"],
+          ...ORACLE_SOURCE_DECLARATION,
         },
-        { id: "procedure", role: "routine", label: "Procedure", labelPlural: "Procedures" },
-        { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
-        { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table" },
+        {
+          id: "procedure",
+          role: "routine",
+          label: "Procedure",
+          labelPlural: "Procedures",
+          ...ORACLE_SOURCE_DECLARATION,
+        },
+        { id: "function", role: "routine", label: "Function", labelPlural: "Functions", ...ORACLE_SOURCE_DECLARATION },
+        {
+          id: "trigger",
+          role: "attached",
+          label: "Trigger",
+          labelPlural: "Triggers",
+          attachedTo: "table",
+          ...ORACLE_SOURCE_DECLARATION,
+        },
       ],
     };
   }
@@ -1646,28 +1992,7 @@ export class OracleProvider extends SQLBaseProvider {
       throw new QueryError(`Oracle declares no object kind "${kind}"`, "oracle");
     }
 
-    // Derived, not counted. The depth is read through `containerDepth()` so absent and
-    // empty cannot be answered differently here than anywhere else, and the segment NAMES
-    // are the declared labels sliced to that same depth, so the message and the check
-    // cannot disagree. An attached kind takes either depth, because a trigger's base
-    // object may be a table, a view, or - for a SCHEMA or DATABASE trigger - nothing.
-    const levels = (capabilities.containerLevels ?? [])
-      .slice(0, containerDepth(capabilities))
-      .map((level) => level.label.toLowerCase());
-    const shapes =
-      spec.attachedTo === undefined
-        ? [[...levels, "name"]]
-        : [
-            [...levels, spec.attachedTo, "name"],
-            [...levels, "name"],
-          ];
-    if (!shapes.some((shape) => shape.length === path.length)) {
-      throw new QueryError(
-        `An Oracle "${kind}" path is ${shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ")}, ` +
-          `received ${JSON.stringify(path)}`,
-        "oracle",
-      );
-    }
+    assertObjectPathShape(capabilities, spec, path);
 
     if (spec.role !== "relation") {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
@@ -1793,6 +2118,164 @@ export class OracleProvider extends SQLBaseProvider {
     } finally {
       await conn.close();
     }
+  }
+
+  /**
+   * ONE object's definition text, through `DBMS_METADATA.GET_DDL` (#789 Phase 2).
+   *
+   * ALL NINE declared kinds answer here, which is why there is no "declares nothing" arm:
+   * Oracle publishes a runnable CREATE statement for a synonym, a sequence and a materialized
+   * view as readily as for a package body. The metadata type comes from the translation table
+   * this file already ships, never from a second table, so a kind cannot gain a Source tab
+   * without also having the type every other read binds.
+   *
+   * FOUR THINGS THIS METHOD DOES THAT NO OTHER OBJECT READ HERE DOES.
+   *
+   * 1. IT PASSES `lobFetchTypeHandler`. GET_DDL answers a CLOB, oracledb answers a CLOB with a
+   *    `Lob` stream by default, and serialising one throws `TypeError: Converting circular
+   *    structure to JSON`. The handler is a PER-CALL option and `runObjectQuery` passes none,
+   *    so this read has its own execute rather than reusing that one. A value that still comes
+   *    back as something other than a string RAISES by name instead of being coerced: a
+   *    stringified `Lob` in an editor is worse than a failed read.
+   * 2. IT ASKS ORA-31603 A SECOND QUESTION. See `OBJECT_IS_VISIBLE_SQL`: Oracle words a
+   *    privilege refusal as "not found in schema", #765 made reading another owner's object
+   *    the ordinary path, and shipping that sentence unqualified tells a user their objects
+   *    are gone. The refusal keeps ORACLE'S OWN SENTENCE whole and appends the fact that
+   *    settles which of the two it is; nothing is prefixed and nothing is rewritten.
+   * 3. IT DETECTS WRAPPED PL/SQL, which raises nothing at all. See `isWrappedDefinition`. A
+   *    wrapped unit's part is a REFUSAL beside a readable sibling, which is the whole reason
+   *    unreadability is a per-part field rather than a raise: `APP_WRAPPED_PKG` in the fixture
+   *    has a readable specification and a wrapped body, and raising would take the readable
+   *    half away with the unreadable one.
+   * 4. IT EMITS TWO PARTS FOR A PACKAGE, and ONE for a package with no body. The missing body
+   *    is an ABSENCE and not a refusal: nobody ever wrote it, so there is nothing to refuse,
+   *    and the ALL_OBJECTS question above is what tells that absence apart from a body Oracle
+   *    declined to hand over. `APP_SPEC_ONLY_PKG` in the fixture is that state.
+   *
+   * An object the read cannot find RAISES a `QueryError` naming the object's last segment. It
+   * never answers a document and never answers a refusal part, because a dropped object is
+   * the engine's silence and a refusal is the engine's answer.
+   *
+   * NOTHING IS INTERPOLATED. The metadata type, the object name and the owner are all three
+   * BINDS, so a caller-supplied name never reaches statement text here and no identifier
+   * escaper is involved. The security review asks; `docs/providers/oracle.md` records it.
+   *
+   * Neither the owner nor the name is positional (standing ruling 5g). The owner is the
+   * segment the DECLARATION assigns to the `schema` level and the name is the LAST segment,
+   * so a two-level engine copying this file does not silently bind a catalog as an owner. The
+   * integration suite pins both by swapping a two-level declaration in.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec?.hasSource !== true) {
+      throw new QueryError(`Oracle declares no readable source for the kind "${kind}"`, "oracle");
+    }
+    assertObjectPathShape(capabilities, spec, path);
+    const owner = ownerSegment(capabilities, path);
+    const name = path[path.length - 1];
+    const language = spec.sourceLanguage ?? "sql";
+    const [head, ...rest] = sourcePartPlans(kind);
+
+    const conn = await this.pool!.getConnection();
+    try {
+      const first = await this.readDefinition(conn, head.type, owner, name);
+      if (first.outcome === "absent") {
+        throw new QueryError(
+          `Oracle holds no ${spec.label.toLowerCase()} called "${name}" in ${owner}: GET_DDL reported it missing ` +
+            "and ALL_OBJECTS shows no such object for this session either",
+          "oracle",
+        );
+      }
+      // The tuple's HEAD is an array literal and every later part is a conditional push,
+      // which is the one spelling besides a whole literal that satisfies the non-empty tuple.
+      // `rest.map(...)` does not compile against it and the cast that rescues it is forbidden,
+      // because the cast is exactly what would let a zero-part document reach a renderer.
+      const parts: [ObjectSourcePart, ...ObjectSourcePart[]] = [sourcePart(head, first, language, limit)];
+      for (const plan of rest) {
+        const read = await this.readDefinition(conn, plan.type, owner, name);
+        // An optional part that is not there emits NOTHING. A package specification with no
+        // body is a complete and legal object, so a refusal here would report a state nobody
+        // is in as a failure to read.
+        if (read.outcome === "absent") continue;
+        parts.push(sourcePart(plan, read, language, limit));
+      }
+      return { path: [...path], kind, parts };
+    } finally {
+      await conn.close();
+    }
+  }
+
+  /**
+   * One `GET_DDL` call, with the CLOB handler, the ORA-31603 disambiguation and the wrapped
+   * check, answering which of the three outcomes the engine gave (#789 Phase 2).
+   *
+   * A method rather than an inline block so the refusal and absence arms can be driven
+   * without reaching into oracledb, and so the fetch handler has ONE caller to lose.
+   */
+  private async readDefinition(
+    conn: oracledb.Connection,
+    type: { readonly dictionary: string; readonly metadata: string },
+    owner: string,
+    name: string,
+  ): Promise<OracleDefinitionRead> {
+    let value: unknown;
+    try {
+      const result = await conn.execute(OBJECT_DDL_SQL, [type.metadata, name, owner], {
+        outFormat: oracledb.OUT_FORMAT_OBJECT,
+        fetchTypeHandler: lobFetchTypeHandler,
+      });
+      value = ((result.rows ?? []) as Record<string, unknown>[])[0]?.DDL;
+    } catch (error) {
+      if (!isObjectNotFoundError(error)) throw mapDatabaseError(error, "oracle", OBJECT_DDL_SQL);
+      // RULING C. ORA-31603 alone cannot tell an absence from a privilege refusal, and this
+      // is the question that can. The answer decides between a part a reader can act on and a
+      // raise, so it is asked on every ORA-31603 and never guessed from the message.
+      const seen = await this.runObjectQuery(conn, OBJECT_IS_VISIBLE_SQL, [owner, name, type.dictionary]);
+      if ((seen.rows ?? []).length === 0) return { outcome: "absent" };
+      return {
+        outcome: "refused",
+        // Oracle's own sentence FIRST and whole, then the fact that settles which of the two
+        // it is. Appended and never prefixed: the engine's words are what the reader needs to
+        // search for, and rewriting them would put this product's account in front of the
+        // server's.
+        unavailable:
+          `${oracleErrorSentence(error)}\n` +
+          `ALL_OBJECTS shows ${owner}.${name} is there and visible to this session, so ORA-31603 above reports ` +
+          "a privilege this session does not hold for reading the definition, not a missing object.",
+      };
+    }
+    if (typeof value !== "string") {
+      // NOT a refusal and not an empty text. A non-string here means the CLOB fetch handler
+      // did not reach the driver, which is a defect in this file rather than a fact about the
+      // object, and reporting a defect of ours as the engine's answer is how a reader comes
+      // to believe their database is broken.
+      throw new QueryError(
+        `Oracle answered the definition of ${owner}.${name} as ${typeof value} rather than a string, so the CLOB ` +
+          "fetch handler did not reach the driver",
+        "oracle",
+      );
+    }
+    const marker = wrapFormatMarker(value, owner, name);
+    if (marker !== undefined) {
+      return {
+        outcome: "refused",
+        unavailable:
+          `Oracle returned this definition WRAPPED: DBMS_METADATA wrote the keyword "wrapped" where a plain unit ` +
+          `carries its parameter list, RETURN, IS or AS, and the wrap format marker "${marker}" on the next line. ` +
+          "The original PL/SQL text is not in the database; only the DBMS_DDL encoder's output is.",
+      };
+    }
+    if (value.trim() === "") {
+      // An empty definition is not a definition, and an empty editor over one is the hazard
+      // the whole source surface exists to remove.
+      return {
+        outcome: "refused",
+        unavailable: `DBMS_METADATA.GET_DDL('${type.metadata}', ...) answered an empty definition for ${owner}.${name}.`,
+      };
+    }
+    return { outcome: "text", text: value };
   }
 
   // ============================================================================

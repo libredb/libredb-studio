@@ -144,6 +144,99 @@ GRANT ADMINISTER DATABASE TRIGGER TO app;
 CREATE OR REPLACE TRIGGER app.app_logon_trg AFTER LOGON ON app.SCHEMA BEGIN NULL; END;
 /
 
+-- ---------------------------------------------------------------------------
+-- Wrapped PL/SQL, and the three plain units built to imitate it (#789).
+-- ---------------------------------------------------------------------------
+--
+-- Measured on Oracle XE 21.3.0.0.0 (gvenzl/oracle-xe): EXECUTE ON DBMS_DDL is already
+-- granted to PUBLIC on this image, so APP needs no extra grant to run CREATE_WRAPPED.
+--
+-- WHY THESE OBJECTS EXIST. DBMS_METADATA.GET_DDL answers a wrapped unit with the
+-- encoder's obfuscated bytes and raises nothing, so a provider that hands that text to an
+-- editor shows something that is not a definition and cannot say so. The detection rule is
+-- the header POSITION: the token immediately after the closing double quote of the object's
+-- quoted name is the bare keyword `wrapped`, and the next physical line is the wrap format
+-- marker matching ^[a-z][0-9]{6}$ (`a000000` on 21.3.0.0.0).
+--
+-- The three plain units below are the point of this block and must not be "tidied". Each
+-- one is a VALID, COMPILING function built to defeat one half of the naive TEXTUAL rule,
+-- and APP_CONJ_DEFEATER defeats both halves at once: its first source line ends with the
+-- token `wrapped` and its second line is exactly the wrap format marker. What none of them
+-- can imitate is the header position, because GET_DDL writes the object name inside double
+-- quotes and what follows it is decided by the PARSER: a plain unit admits only `(`,
+-- RETURN, IS or AS there. A test that reads only a wrapped unit certifies nothing; these
+-- three are what make the predicate non-vacuous, and if a future Oracle ever admits
+-- `wrapped` in that position for a plain unit, the assertion over them fails by name.
+--
+-- APP_ZERO_ARG is the closest PLAIN shape to a wrapped header there is, a zero-argument
+-- function whose header carries no parameter list at all, so the token after the quoted
+-- name is the bare word `return`. It is the control for the position itself.
+
+BEGIN
+  DBMS_DDL.CREATE_WRAPPED(
+    'CREATE OR REPLACE FUNCTION app.app_wrapped_multi(p NUMBER) RETURN NUMBER IS' || CHR(10) ||
+    '  v NUMBER := 2;' || CHR(10) ||
+    'BEGIN' || CHR(10) ||
+    '  RETURN p * v;' || CHR(10) ||
+    'END;');
+END;
+/
+
+CREATE OR REPLACE FUNCTION app.app_first_line_wrapped(p NUMBER) RETURN NUMBER IS -- wrapped
+BEGIN
+  RETURN p;
+END;
+/
+
+CREATE OR REPLACE FUNCTION app.app_second_line_marker(p NUMBER) RETURN NUMBER IS /*
+a000000
+*/
+BEGIN
+  RETURN p;
+END;
+/
+
+CREATE OR REPLACE FUNCTION app.app_conj_defeater(p NUMBER) RETURN NUMBER IS /* wrapped
+a000000
+*/
+BEGIN
+  RETURN p;
+END;
+/
+
+CREATE OR REPLACE FUNCTION app.app_zero_arg RETURN NUMBER IS
+BEGIN
+  RETURN 1;
+END;
+/
+
+-- A package whose SPEC is plain and whose BODY is wrapped, which is the whole argument for
+-- reading PACKAGE_SPEC and PACKAGE_BODY as two parts instead of the bare PACKAGE type. One
+-- concatenated CLOB would give a reader neither half honestly: the spec is readable and the
+-- body is not, and only two parts can say so.
+CREATE OR REPLACE PACKAGE app.app_wrapped_pkg IS
+  FUNCTION total(p NUMBER) RETURN NUMBER;
+END app_wrapped_pkg;
+/
+
+BEGIN
+  DBMS_DDL.CREATE_WRAPPED(
+    'CREATE OR REPLACE PACKAGE BODY app.app_wrapped_pkg IS' || CHR(10) ||
+    '  FUNCTION total(p NUMBER) RETURN NUMBER IS BEGIN RETURN p; END;' || CHR(10) ||
+    'END app_wrapped_pkg;');
+END;
+/
+
+-- A package with a SPECIFICATION AND NO BODY, which is legal on Oracle and is the shape
+-- that decides how many parts a package emits. Its missing body is an ABSENCE and not a
+-- refusal: there is nothing to refuse, because nobody ever wrote one. The provider emits
+-- ONE part for it, and the ALL_OBJECTS second question is what tells that absence apart
+-- from a body ORA-31603 refuses to hand over.
+CREATE OR REPLACE PACKAGE app.app_spec_only_pkg IS
+  FUNCTION total(p NUMBER) RETURN NUMBER;
+END app_spec_only_pkg;
+/
+
 -- Explicit, rather than relying on SQL*Plus committing on EXIT. Measured on gvenzl/oracle-xe
 -- 21.3.0: EXIT does commit, so this line changes nothing today, and it is here because the
 -- INSERTs above are the only DML in the file and a fixture whose data survives on a client
