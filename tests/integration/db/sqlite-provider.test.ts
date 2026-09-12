@@ -7,7 +7,7 @@
  *   forced deterministically via LIBREDB_SQLITE_DRIVER=node
  */
 
-import { describe, test, expect, afterEach, beforeAll, afterAll } from "bun:test";
+import { describe, test, expect, afterEach, beforeAll, afterAll, spyOn } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,11 +19,22 @@ import {
   readDbstatSizes,
 } from "@/lib/db/providers/sql/sqlite";
 import { resolveSQLiteDriverName } from "@/lib/db/providers/sql/sqlite-driver";
+import { containerDepth, declaredKinds, isCountUnavailable } from "@/lib/db/object-kinds";
+import { flattenTree } from "@/components/object-tree/flatten";
+import type { SQLiteDatabase, SQLiteStatement } from "@/lib/db/providers/sql/sqlite-driver";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { rowBudgetIn } from "@/lib/agent/context-snapshot";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
-import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import {
+  ConnectionError,
+  DatabaseConfigError,
+  DatabaseError,
+  ExecutionProfileError,
+  QueryError,
+} from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
+import { comparePaths } from "@/lib/db/object-path";
 
 // ============================================================================
 // Helpers
@@ -329,69 +340,6 @@ describe("SQLiteProvider", () => {
   // --------------------------------------------------------------------------
   // Schema
   // --------------------------------------------------------------------------
-
-  describe("getSchema()", () => {
-    test("returns correct schema after CREATE TABLE", async () => {
-      provider = new SQLiteProvider(makeSQLiteConfig());
-      await provider.connect();
-
-      await provider.query(`
-        CREATE TABLE users (
-          id INTEGER PRIMARY KEY,
-          name TEXT NOT NULL,
-          email TEXT,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      await provider.query("CREATE INDEX idx_users_email ON users(email)");
-
-      const schema = await provider.getSchema();
-      expect(schema.length).toBe(1);
-
-      const table = schema[0];
-      expect(table.name).toBe("users");
-      expect(table.columns.length).toBe(4);
-
-      // Check column properties
-      const idCol = table.columns.find((c) => c.name === "id")!;
-      expect(idCol.type).toBe("INTEGER");
-      expect(idCol.isPrimary).toBe(true);
-
-      const nameCol = table.columns.find((c) => c.name === "name")!;
-      expect(nameCol.nullable).toBe(false);
-
-      const emailCol = table.columns.find((c) => c.name === "email")!;
-      expect(emailCol.nullable).toBe(true);
-
-      // Check indexes
-      expect(table.indexes.length).toBeGreaterThanOrEqual(1);
-      const emailIdx = table.indexes.find((i) => i.name === "idx_users_email");
-      expect(emailIdx).toBeDefined();
-      expect(emailIdx!.columns).toContain("email");
-    });
-
-    test("schema includes foreign keys", async () => {
-      provider = new SQLiteProvider(makeSQLiteConfig());
-      await provider.connect();
-
-      await provider.query("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT)");
-      await provider.query(`
-        CREATE TABLE books (
-          id INTEGER PRIMARY KEY,
-          title TEXT,
-          author_id INTEGER REFERENCES authors(id)
-        )
-      `);
-
-      const schema = await provider.getSchema();
-      const books = schema.find((t) => t.name === "books")!;
-      expect(books.foreignKeys).toBeDefined();
-      expect(books.foreignKeys!.length).toBe(1);
-      expect(books.foreignKeys![0].columnName).toBe("author_id");
-      expect(books.foreignKeys![0].referencedTable).toBe("authors");
-      expect(books.foreignKeys![0].referencedColumn).toBe("id");
-    });
-  });
 
   // --------------------------------------------------------------------------
   // Health
@@ -1030,6 +978,1063 @@ describe("SQLiteProvider", () => {
 });
 
 // ============================================================================
+// Object surface (#789)
+//
+// SQLite is the first ZERO-CONTAINER engine in this epic: `containerLevels` is
+// `[]`, `containerDepth()` answers 0, and `listContainers()` answers `[]`. The
+// fixture below is built by DDL against a real :memory: database, so every
+// assertion is measured against the engine rather than a mock.
+// ============================================================================
+
+/**
+ * One instance of every declared kind, plus every case the reads have to survive.
+ *
+ * Built to hold all four values of `PRAGMA table_list.type` - `table`, `view`,
+ * `shadow` and `virtual` - because the vocabulary is derived from SQLite's own
+ * documentation and a rule nothing exercises is a rule nobody measured (standing
+ * ruling 5a). The FTS5 table contributes the `virtual` row and five `shadow` rows,
+ * and a naive `sqlite_schema` scan types all six as `table`.
+ *
+ * The `temp` and `attached` objects deliberately SHADOW names in `main`: a listing
+ * that did not restrict itself to `main` would answer two objects with one path,
+ * which is the invariant the conformance helper checks and the tree relies on.
+ */
+const OBJECT_FIXTURE_DDL: readonly string[] = [
+  // A UNIQUE column, so SQLite also creates `sqlite_autoindex_customers_1`.
+  "CREATE TABLE customers (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL)",
+  // Two foreign keys of the two shapes SQLite publishes differently, and a generated
+  // column, which `PRAGMA table_info` drops and `table_xinfo` publishes.
+  `CREATE TABLE orders (
+     id INTEGER PRIMARY KEY,
+     customer_id INTEGER REFERENCES customers,
+     customer_email TEXT REFERENCES customers(email),
+     total INTEGER NOT NULL DEFAULT 0,
+     total_with_tax INTEGER GENERATED ALWAYS AS (total * 2) VIRTUAL
+   )`,
+  // A composite primary key, so `table_info.pk` carries the ranks 1 and 2.
+  "CREATE TABLE archive (region TEXT, year INTEGER, PRIMARY KEY (region, year)) WITHOUT ROWID",
+  // AUTOINCREMENT, so the engine adds `sqlite_sequence` to `PRAGMA table_list`.
+  "CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT)",
+  "INSERT INTO audit_log (note) VALUES ('seed')",
+  // A user table the UNESCAPED `LIKE 'sqlite_%'` would also exclude, because `_` is
+  // LIKE's single-character wildcard. SQLite reserves only the `sqlite_` prefix, so this
+  // name is one a user can really have.
+  "CREATE TABLE sqliteXledger (id INTEGER PRIMARY KEY)",
+  // One `virtual` row and five `shadow` rows in `PRAGMA table_list`.
+  "CREATE VIRTUAL TABLE notes USING fts5(body)",
+  "CREATE VIEW order_summary AS SELECT id, total FROM orders",
+  "CREATE INDEX idx_orders_customer ON orders(customer_id)",
+  // An index on an EXPRESSION, whose key publishes a null column name.
+  "CREATE INDEX idx_orders_doubled ON orders(total * 2)",
+  "CREATE TRIGGER orders_stamp AFTER INSERT ON orders BEGIN UPDATE orders SET total = total; END",
+  // SQLite allows an INSTEAD OF trigger on a VIEW, so a trigger's parent segment is
+  // not always a table even though the kind declares `attachedTo: "table"`.
+  "CREATE TRIGGER order_summary_guard INSTEAD OF INSERT ON order_summary BEGIN SELECT 1; END",
+  // Session scratch that shadows `main`, and must never reach the tree. The temp
+  // `orders` carries ONE column, so a detail read that forgot the schema is visible
+  // as a different column list rather than as an error.
+  "CREATE TEMP TABLE orders (id INTEGER)",
+  "CREATE TEMP VIEW order_summary AS SELECT 1 AS x",
+  "CREATE TEMP TRIGGER orders_stamp_temp AFTER INSERT ON orders BEGIN SELECT 1; END",
+  "CREATE INDEX temp.idx_orders_customer_temp ON orders(id)",
+  // Another database file entirely, which the connection was not configured for.
+  "ATTACH DATABASE ':memory:' AS attached",
+  "CREATE TABLE attached.orders (id INTEGER)",
+  "CREATE VIEW attached.order_summary AS SELECT 1 AS x",
+  "CREATE INDEX attached.idx_orders_customer_attached ON orders(id)",
+  "CREATE TRIGGER attached.orders_stamp_attached AFTER INSERT ON orders BEGIN SELECT 1; END",
+];
+
+/** Every kind, and how many of it `main` holds. Derived nowhere: counted by hand off the DDL. */
+const EXPECTED_COUNTS = { table: 6, view: 1, index: 2, trigger: 2 } as const;
+
+/**
+ * Swaps the provider's own database handle for one that intercepts a named statement.
+ *
+ * Every other assertion in this block runs against the real engine, which is how a
+ * provider test should be written; these three cases cannot be. A build without
+ * `PRAGMA table_list` is a build, not a schema, and SQLite's catalog cannot be made to
+ * answer a row whose kind reads `toString`. The handle is the smallest seam that reaches
+ * them, and everything not matched still goes to the real database, so each test keeps a
+ * live control beside the intercepted read.
+ */
+function interceptReads(provider: SQLiteProvider, match: string, intercept: (sql: string) => SQLiteStatement): void {
+  const holder = provider as unknown as { db: SQLiteDatabase };
+  const real = holder.db;
+  holder.db = {
+    exec: (sql: string) => real.exec(sql),
+    close: () => real.close(),
+    prepare: (sql: string) => (sql.includes(match) ? intercept(sql) : real.prepare(sql)),
+  };
+}
+
+/** The named statement fails the way a missing catalog does: at prepare, with a message. */
+function failReadsMatching(provider: SQLiteProvider, match: string, message: string): void {
+  interceptReads(provider, match, () => {
+    throw new Error(message);
+  });
+}
+
+/** The named statement throws something that is not an Error at all. */
+function throwFromReadsMatching(provider: SQLiteProvider, match: string, thrown: string): void {
+  interceptReads(provider, match, () => {
+    throw thrown;
+  });
+}
+
+/** The named statement answers rows of the test's choosing. */
+function answerReadsMatching(provider: SQLiteProvider, match: string, rows: readonly unknown[]): void {
+  interceptReads(provider, match, () => ({
+    all: () => [...rows],
+    get: () => rows[0] ?? null,
+    run: () => ({ changes: 0 }),
+  }));
+}
+
+/** A connected provider holding the fixture above, in memory. */
+async function connectedWithObjects(): Promise<SQLiteProvider> {
+  const opened = new SQLiteProvider(makeSQLiteConfig());
+  await opened.connect();
+  for (const statement of OBJECT_FIXTURE_DDL) await opened.query(statement);
+  return opened;
+}
+
+describe("SQLiteProvider object surface (#789)", () => {
+  let objects: SQLiteProvider;
+
+  afterEach(async () => {
+    if (objects?.isConnected()) await objects.disconnect();
+  });
+
+  test("declares the four kinds SQLite has, at zero container levels", async () => {
+    objects = await connectedWithObjects();
+    const capabilities = objects.getCapabilities();
+    const kinds = capabilities.objectKinds ?? [];
+
+    expect(kinds.map((kind) => kind.id)).toEqual(["table", "view", "index", "trigger"]);
+    expect(kinds.find((kind) => kind.id === "table")?.role).toBe("relation");
+    expect(kinds.find((kind) => kind.id === "table")?.acceptsRowWrites).toBe(true);
+    // A view is not a row-write target: SQLite refuses a write to one outright unless
+    // an INSTEAD OF trigger carries it, which is a per-OBJECT fact this per-kind
+    // declaration cannot state.
+    expect(kinds.find((kind) => kind.id === "view")?.role).toBe("relation");
+    expect(kinds.find((kind) => kind.id === "view")?.acceptsRowWrites).toBeUndefined();
+    // Declared, unlike on postgres, mysql, mssql and oracle: `sqlite_schema` models an
+    // index as a first-class named row beside its tables (standing ruling 4).
+    expect(kinds.find((kind) => kind.id === "index")?.role).toBe("config");
+    expect(kinds.find((kind) => kind.id === "trigger")?.role).toBe("attached");
+    expect(kinds.find((kind) => kind.id === "trigger")?.attachedTo).toBe("table");
+    // No routine kind of any spelling. An application-defined SQLite function is
+    // registered by the HOST PROCESS and never stored in the file, so there is nothing
+    // to list, and a kind an engine does not have is ABSENT rather than counted zero.
+    for (const absent of ["procedure", "function", "routine", "sequence", "package", "event"]) {
+      expect(kinds.find((kind) => kind.id === absent)).toBeUndefined();
+    }
+    // The headline of this task: zero container levels, which `containerDepth()` reads.
+    expect(capabilities.containerLevels).toEqual([]);
+    expect(containerDepth(capabilities)).toBe(0);
+  });
+
+  test("satisfies the object-surface conformance contract", async () => {
+    objects = await connectedWithObjects();
+
+    await assertObjectSurface(objects, {
+      // No container level, so there is no container path to name. `[]` here is the
+      // engine answering "I have none", never a refusal.
+      containers: [],
+      kinds: { ...EXPECTED_COUNTS },
+      sampleObject: { path: ["orders"], kind: "table" },
+    });
+  });
+
+  test("the TREE draws the kind folders at the ROOT, which nothing before this task exercised", async () => {
+    // The headline risk of the first zero-container engine, and the reason a provider
+    // test asserts a UI derivation. `flatten.ts` originally read `containerLevels?.length
+    // ?? 1`, which rendered an engine with no container level as an EMPTY TREE with no
+    // error at all - a Critical in Task 5's review. Every engine landed since has had at
+    // least one container, so this is the first time the 0 arm is driven by a real
+    // provider rather than by a hand-written declaration.
+    //
+    // Everything below comes from the PROVIDER: the kinds are its declaration, the depth
+    // is `containerDepth()` over that declaration, and the counts and objects are its own
+    // reads. Nothing about the zero case is typed in here.
+    objects = await connectedWithObjects();
+    const capabilities = objects.getCapabilities();
+    const containers = await objects.listContainers();
+    const counts = await objects.countObjects([]);
+    const tables = await objects.listObjects([], "table");
+
+    const rows = flattenTree({
+      kinds: declaredKinds(capabilities),
+      containers,
+      // The folder row id at depth 0 is the bare kind id, because the container path it
+      // hangs under is empty.
+      expanded: new Set(["table"]),
+      // Keyed by the container path joined with "/", so the root container's key is "".
+      counts: { "": counts },
+      objects: { table: tables },
+      containerDepth: containerDepth(capabilities),
+    });
+
+    // No container row anywhere: the engine has no container level, so there is nothing
+    // above the folders. A tree that drew a synthetic "main" row would fail here.
+    expect(rows.filter((row) => row.kind === "container")).toEqual([]);
+
+    // The four folders ARE the top-level sibling group, in declaration order, each
+    // badged from `countObjects` rather than from a listing's length.
+    const folders = rows.filter((row) => row.kind === "folder");
+    expect(folders.map((row) => ({ id: row.id, label: row.label, depth: row.depth, badge: row.badge }))).toEqual([
+      { id: "table", label: "Tables", depth: 0, badge: "6" },
+      { id: "view", label: "Views", depth: 0, badge: "1" },
+      { id: "index", label: "Indexes", depth: 0, badge: "2" },
+      { id: "trigger", label: "Triggers", depth: 0, badge: "2" },
+    ]);
+    // ARIA position is computed per sibling group, and at depth 0 that group is the four
+    // folders and nothing else.
+    expect(folders.map((row) => `${row.posInSet}/${row.setSize}`)).toEqual(["1/4", "2/4", "3/4", "4/4"]);
+
+    // And the expanded folder really opens onto the provider's own objects, one level in.
+    const objectRows = rows.filter((row) => row.kind === "object");
+    expect(objectRows.map((row) => row.label)).toEqual([
+      "archive",
+      "audit_log",
+      "customers",
+      "notes",
+      "orders",
+      "sqliteXledger",
+    ]);
+    expect(objectRows.every((row) => row.depth === 1 && row.kindId === "table")).toBe(true);
+    expect(objectRows.map((row) => row.id)).toEqual([
+      "archive/table",
+      "audit_log/table",
+      "customers/table",
+      "notes/table",
+      "orders/table",
+      "sqliteXledger/table",
+    ]);
+  });
+
+  test("listContainers answers an empty array, which is an answer and not a refusal", async () => {
+    objects = await connectedWithObjects();
+
+    // `[]` is SQLite saying it has no container level. It must not raise, and it must not
+    // invent a `main` row to make the shape match the other sixteen engines.
+    await expect(objects.listContainers()).resolves.toEqual([]);
+    // Still a catalog method: it is not answerable off a closed handle.
+    await expect(new SQLiteProvider(makeSQLiteConfig()).listContainers()).rejects.toThrow();
+  });
+
+  // --------------------------------------------------------------------------
+  // What the counts and the listings enumerate
+  // --------------------------------------------------------------------------
+
+  test("a shadow table is not an object, and a virtual table is", async () => {
+    // The whole reason `PRAGMA table_list` is read here rather than `sqlite_schema`. The
+    // FTS5 table `notes` contributes one `virtual` row and five `shadow` rows, and
+    // `sqlite_schema` types every one of the six `table`.
+    objects = await connectedWithObjects();
+
+    const naive = (await objects.query("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")).rows;
+    const listed = (await objects.listObjects([], "table")).map((object) => object.name);
+
+    // The control: the naive scan really does see the shadow tables, so the assertion
+    // below is a difference rather than an empty comparison.
+    expect(naive.map((row) => row.name)).toContain("notes_data");
+    expect(naive).toHaveLength(12);
+
+    expect(listed).toEqual(["archive", "audit_log", "customers", "notes", "orders", "sqliteXledger"]);
+    for (const shadow of ["notes_data", "notes_idx", "notes_content", "notes_docsize", "notes_config"]) {
+      expect(listed).not.toContain(shadow);
+    }
+    // `notes` itself IS listed: a user selects from a virtual table, and it accepts row
+    // writes, so dropping it with its shadows would lose a real object.
+    expect(listed).toContain("notes");
+  });
+
+  test("every value PRAGMA table_list can answer has a rule, checked against the engine", async () => {
+    // Standing ruling 5a: the vocabulary is derived from SQLite's documentation, not from
+    // a `SELECT DISTINCT` over whatever the fixture happens to hold. This guard is the
+    // other half - it fails the day the engine answers a fifth value, which would
+    // otherwise fall out of BOTH the count and the listing and be invisible in the tree.
+    //
+    // Non-vacuous by construction: the fixture is built to contain all four, and that is
+    // asserted first. A guard run against data that never holds the case it exists to
+    // catch is a guard that has never run.
+    objects = await connectedWithObjects();
+
+    const answered = (await objects.query("SELECT DISTINCT type FROM pragma_table_list ORDER BY type")).rows.map(
+      (row) => row.type,
+    );
+
+    expect(answered).toEqual(["shadow", "table", "view", "virtual"]);
+    // `shadow` is the one value with no kind, and it is dropped on purpose. The other
+    // three are covered by the two relation kinds.
+    expect(answered.filter((type) => type !== "shadow")).toEqual(["table", "view", "virtual"]);
+  });
+
+  test("the names SQLite reserves for itself are not objects", async () => {
+    objects = await connectedWithObjects();
+
+    const tables = (await objects.listObjects([], "table")).map((object) => object.name);
+    const indexes = (await objects.listObjects([], "index")).map((object) => object.name);
+
+    // Controls: each of these really is in the catalog this listing reads.
+    const raw = (await objects.query("SELECT name FROM pragma_table_list WHERE schema = 'main'")).rows.map(
+      (row) => row.name,
+    );
+    expect(raw).toContain("sqlite_schema");
+    expect(raw).toContain("sqlite_sequence");
+    const rawIndexes = (await objects.query("SELECT name FROM sqlite_schema WHERE type = 'index'")).rows.map(
+      (row) => row.name,
+    );
+    expect(rawIndexes).toContain("sqlite_autoindex_customers_1");
+
+    expect(tables).not.toContain("sqlite_schema");
+    // `sqlite_sequence` is the one an AUTOINCREMENT column adds without being asked for.
+    expect(tables).not.toContain("sqlite_sequence");
+    // And the other direction, which is what makes `ESCAPE` load-bearing rather than
+    // decoration: `sqliteXledger` is a name a user can really have, and the unescaped
+    // `LIKE 'sqlite_%'` excludes it too, because `_` matches any single character.
+    expect(tables).toContain("sqliteXledger");
+    expect(indexes).toEqual(["idx_orders_customer", "idx_orders_doubled"]);
+  });
+
+  test("temp and attached objects are not in this file, so they are not in the tree", async () => {
+    // `PRAGMA table_list` spans every attached schema AND `temp`, and the fixture puts an
+    // `orders` in all three. Without the schema restriction the table folder would answer
+    // three objects with ONE path, which is the uniqueness the tree addresses rows by.
+    objects = await connectedWithObjects();
+
+    const everywhere = (await objects.query("SELECT schema, name FROM pragma_table_list WHERE name = 'orders'")).rows;
+    // The control: all three really are visible on this handle.
+    expect(everywhere.map((row) => row.schema).sort()).toEqual(["attached", "main", "temp"]);
+
+    const counts = await objects.countObjects([]);
+    expect(counts).toEqual({
+      table: { count: EXPECTED_COUNTS.table },
+      view: { count: EXPECTED_COUNTS.view },
+      index: { count: EXPECTED_COUNTS.index },
+      trigger: { count: EXPECTED_COUNTS.trigger },
+    });
+    for (const kind of ["table", "view", "index", "trigger"]) {
+      const paths = (await objects.listObjects([], kind)).map((object) => object.path.join("/"));
+      expect(new Set(paths).size).toBe(paths.length);
+    }
+    // Named, so a regression says which schema leaked rather than only that a number moved.
+    expect((await objects.listObjects([], "index")).map((o) => o.name)).not.toContain("idx_orders_customer_temp");
+    expect((await objects.listObjects([], "trigger")).map((o) => o.name)).not.toContain("orders_stamp_attached");
+  });
+
+  test("the listing contains exactly what the count counted, for every declared kind", async () => {
+    // Standing ruling 5f from this provider's side: a badge that disagrees with its own
+    // folder is worse than either being wrong alone. The two reads go to different
+    // statements, so this is a real cross-check rather than a restatement.
+    objects = await connectedWithObjects();
+    const counts = await objects.countObjects([]);
+
+    for (const kind of declaredKinds(objects.getCapabilities())) {
+      const count = counts[kind.id];
+      expect(isCountUnavailable(count)).toBe(false);
+      const listed = await objects.listObjects([], kind.id);
+      expect({ kind: kind.id, n: listed.length }).toEqual({
+        kind: kind.id,
+        n: isCountUnavailable(count) ? -1 : count.count,
+      });
+    }
+  });
+
+  test("a trigger nests under the object it fires on, view or table", async () => {
+    objects = await connectedWithObjects();
+
+    const triggers = await objects.listObjects([], "trigger");
+
+    // Sorted by PATH, so a trigger sits under its parent's name. The INSTEAD OF trigger's
+    // parent is a VIEW, which the `attachedTo: "table"` declaration does not forbid and
+    // which the count includes, so the listing has to as well.
+    expect(triggers.map((trigger) => trigger.path)).toEqual([
+      ["order_summary", "order_summary_guard"],
+      ["orders", "orders_stamp"],
+    ]);
+    expect(triggers.map((trigger) => trigger.name)).toEqual(["order_summary_guard", "orders_stamp"]);
+    expect(triggers.every((trigger) => trigger.kind === "trigger")).toBe(true);
+  });
+
+  test("a listing is sorted by path, and by segments rather than by one joined string", async () => {
+    objects = await connectedWithObjects();
+
+    const tables = await objects.listObjects([], "table");
+
+    // Neither catalog answers in name order: `PRAGMA table_list` walks its own hash.
+    const raw = (
+      await objects.query(
+        "SELECT name FROM pragma_table_list WHERE schema = 'main' AND type IN ('table','virtual') AND name NOT LIKE 'sqlite@_%' ESCAPE '@'",
+      )
+    ).rows.map((row) => row.name);
+    expect(raw).not.toEqual([...raw].sort());
+
+    expect(tables.map((table) => table.name)).toEqual([
+      "archive",
+      "audit_log",
+      "customers",
+      "notes",
+      "orders",
+      "sqliteXledger",
+    ]);
+  });
+
+  // --------------------------------------------------------------------------
+  // describeObject
+  // --------------------------------------------------------------------------
+
+  test("describes a table from `main` even when temp holds a different table of that name", async () => {
+    // The measurement behind MAIN_SCHEMA. A one-argument `pragma_table_info('orders')`
+    // answers about the TEMP table, which has one column; the schema-bound read answers
+    // about the file, which has five. Both are non-empty, so a read that lost the schema
+    // would not raise - it would quietly describe a different object.
+    objects = await connectedWithObjects();
+
+    const shadow = (await objects.query("SELECT name FROM pragma_table_info('orders')")).rows.map((row) => row.name);
+    expect(shadow).toEqual(["id"]);
+
+    const described = await objects.describeObject(["orders"], "table");
+    expect(described.columns.map((column) => column.name)).toHaveLength(5);
+  });
+
+  test("describes a view, which has columns and neither indexes nor foreign keys", async () => {
+    objects = await connectedWithObjects();
+
+    const view = await objects.describeObject(["order_summary"], "view");
+
+    expect(view.columns.map((column) => column.name)).toEqual(["id", "total"]);
+    expect(view.indexes).toEqual([]);
+    expect(view.foreignKeys).toEqual([]);
+  });
+
+  test("a virtual table describes its declared columns and not the module's own", async () => {
+    // `table_xinfo` publishes an FTS5 table's interface columns `notes` and `rank` at
+    // hidden = 1. They are the module's handles rather than columns the table declares,
+    // and the `hidden <> 1` filter is what keeps them out while keeping generated
+    // columns in.
+    objects = await connectedWithObjects();
+
+    const raw = (await objects.query("SELECT name, hidden FROM pragma_table_xinfo('notes', 'main')")).rows;
+    expect(raw.map((row) => row.name)).toEqual(["body", "notes", "rank"]);
+
+    const notes = await objects.describeObject(["notes"], "table");
+    expect(notes.columns.map((column) => column.name)).toEqual(["body"]);
+  });
+
+  test("a table's indexes exclude the implicit ones, and an expression key has no column name", async () => {
+    objects = await connectedWithObjects();
+
+    const orders = await objects.describeObject(["orders"], "table");
+
+    // BY NAME, which is this read's own `ORDER BY` and not `pragma_index_list`'s: measured,
+    // that pragma answers in reverse creation order, so it would put `idx_orders_doubled`
+    // first. The bulk read has to order by the object to group its rows, and two different
+    // orders over one table's indexes is a disagreement between the two surfaces (#789).
+    expect(orders.indexes).toEqual([
+      { name: "idx_orders_customer", columns: ["customer_id"], unique: false },
+      // The expression index keys `total * 2`, which publishes a null column name, so it
+      // carries no columns rather than a fabricated label.
+      { name: "idx_orders_doubled", columns: [], unique: false },
+    ]);
+    // The control for the null filter: SQLite really does answer a null name here.
+    const keys = (await objects.query("SELECT name FROM pragma_index_info('idx_orders_doubled', 'main')")).rows;
+    expect(keys).toEqual([{ name: null }]);
+
+    // An implicit `sqlite_autoindex_*` serves a UNIQUE constraint, cannot be dropped, and
+    // is not in the Indexes folder either, so the two surfaces agree about what an index is.
+    const customers = await objects.describeObject(["customers"], "table");
+    expect(customers.indexes).toEqual([]);
+    const raw = (await objects.query("SELECT name FROM pragma_index_list('customers', 'main')")).rows;
+    expect(raw).toEqual([{ name: "sqlite_autoindex_customers_1" }]);
+  });
+
+  test("a foreign key that names no column resolves to the parent's primary key", async () => {
+    objects = await connectedWithObjects();
+
+    const orders = await objects.describeObject(["orders"], "table");
+
+    // The control: SQLite publishes a null for the implicit one, so this is a resolution
+    // rather than a pass-through.
+    const raw = (await objects.query("SELECT \"from\", \"to\" FROM pragma_foreign_key_list('orders', 'main')")).rows;
+    expect(raw).toContainEqual({ from: "customer_id", to: null });
+
+    expect(orders.foreignKeys).toEqual([
+      { columnName: "customer_email", referencedTable: "customers", referencedColumn: "email" },
+      { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
+    ]);
+  });
+
+  test("a foreign key whose parent has no primary key carries no referenced column", async () => {
+    // SQLite accepts this schema and rejects it only on INSERT ("foreign key mismatch"),
+    // so `pragma_table_info` answers no key column to resolve. `ForeignKeySchema` carries
+    // a string, and the empty one says there is nothing to name.
+    objects = new SQLiteProvider(makeSQLiteConfig());
+    await objects.connect();
+    await objects.query("CREATE TABLE no_pk (x INTEGER, y INTEGER)");
+    await objects.query("CREATE TABLE broken_ref (a INTEGER REFERENCES no_pk)");
+
+    const detail = await objects.describeObject(["broken_ref"], "table");
+
+    expect(detail.foreignKeys).toEqual([{ columnName: "a", referencedTable: "no_pk", referencedColumn: "" }]);
+  });
+
+  test("an index and a trigger describe as three empty arrays, without a round trip", async () => {
+    objects = await connectedWithObjects();
+
+    // A true fact about those kinds rather than a failed read: `pragma_table_xinfo`
+    // answers nothing for either name, which is the control below.
+    for (const name of ["idx_orders_customer", "orders_stamp"]) {
+      expect((await objects.query(`SELECT name FROM pragma_table_xinfo('${name}', 'main')`)).rows).toEqual([]);
+    }
+
+    expect(await objects.describeObject(["idx_orders_customer"], "index")).toEqual({
+      path: ["idx_orders_customer"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    expect(await objects.describeObject(["orders", "orders_stamp"], "trigger")).toEqual({
+      path: ["orders", "orders_stamp"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+  });
+
+  test("an object that is not there is a failed read and says so", async () => {
+    objects = await connectedWithObjects();
+
+    // Zero columns cannot mean an empty table: SQLite refuses `CREATE TABLE t()`, so an
+    // empty answer means nothing of that name is in `main`. The temp and attached
+    // `orders` are reachable on this handle and deliberately do not rescue this.
+    await expect(objects.describeObject(["no_such_table"], "table")).rejects.toThrow(
+      /No SQLite table named no_such_table in main/,
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // Refusals and the declaration
+  // --------------------------------------------------------------------------
+
+  test("a kind the file holds none of still draws its folder, badged zero", async () => {
+    // The three states of `KindCount` are three different facts. Building the record from
+    // the GROUP BY rows alone would leave an empty kind OUT, and an absent kind already
+    // means something stronger: the engine has no such concept, so the tree draws no
+    // folder. Seeding is what keeps "SQLite has views and this file has none" renderable.
+    objects = new SQLiteProvider(makeSQLiteConfig());
+    await objects.connect();
+    await objects.query("CREATE TABLE only_a_table (id INTEGER PRIMARY KEY)");
+
+    const counts = await objects.countObjects([]);
+
+    expect(counts).toEqual({
+      table: { count: 1 },
+      view: { count: 0 },
+      index: { count: 0 },
+      trigger: { count: 0 },
+    });
+    // Every declared kind is present, which is what stops a folder vanishing from the tree.
+    expect(Object.keys(counts).sort()).toEqual(
+      declaredKinds(objects.getCapabilities())
+        .map((kind) => kind.id)
+        .sort(),
+    );
+  });
+
+  test("a kind SQLite does not declare is refused by name, in both methods", async () => {
+    objects = await connectedWithObjects();
+
+    await expect(objects.listObjects([], "procedure")).rejects.toThrow(/declares no object kind "procedure"/);
+    await expect(objects.describeObject(["x"], "sequence")).rejects.toThrow(/declares no object kind "sequence"/);
+  });
+
+  test("a kind that is declared but has no listing statement says so, not that it is undeclared", async () => {
+    // Two questions, and only the declaration answers the first. Deciding "declared" from
+    // whether a statement exists would report "declares no object kind" about a kind
+    // `objectKinds` does declare, which is a different defect with the same symptom.
+    objects = await connectedWithObjects();
+    const real = objects.getCapabilities();
+    spyOn(objects, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [...(real.objectKinds ?? []), { id: "tablespace", role: "config", label: "T", labelPlural: "Ts" }],
+    });
+
+    await expect(objects.listObjects([], "tablespace")).rejects.toThrow(
+      /declares the kind "tablespace" but has no statement that lists it/,
+    );
+  });
+
+  test("a container path of another engine's shape is refused rather than read", async () => {
+    objects = await connectedWithObjects();
+
+    // The message names the shape the DECLARATION describes, which here is no shape at all.
+    for (const call of [objects.countObjects(["main"]), objects.listObjects(["main"], "table")]) {
+      await expect(call).rejects.toThrow(/A SQLite container path is empty, received \["main"\]/);
+    }
+    await expect(objects.describeObject(["main", "orders"], "table")).rejects.toThrow(
+      /A SQLite "table" path is \[name\], received \["main","orders"\]/,
+    );
+    await expect(objects.describeObject(["orders_stamp"], "trigger")).rejects.toThrow(
+      /A SQLite "trigger" path is \[table, name\], received \["orders_stamp"\]/,
+    );
+  });
+
+  test("the container depth, the object path and the name bind are DERIVED, which a two-level declaration shows", async () => {
+    // Standing ruling 5g, and on a ZERO-container engine this test is the only thing that
+    // can tell a derivation from a literal: `container.length !== 0` and `path[0]` for the
+    // object name are behaviour-identical to the derived forms at depth 0, which is
+    // exactly why the same defect has now shipped three times, each instance found one
+    // review later than the last. The declaration below is synthetic for SQLite; the
+    // derivations under test are the shared ones every provider copies.
+    //
+    // It is driven all the way to a BOUND VALUE and not to a refusal. A test that stops at
+    // the refusal is how the third instance survived two providers and a review round.
+    objects = await connectedWithObjects();
+    const real = objects.getCapabilities();
+    spyOn(objects, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Database", labelPlural: "Databases" },
+      ],
+    });
+
+    // The refusal half. The depth comes from `containerDepth()`, so the EMPTY container
+    // path - the only one this engine really accepts - is now wrong, and the message names
+    // both declared levels. A hardcoded `!== 0` would accept it.
+    await expect(objects.countObjects([])).rejects.toThrow(
+      /A SQLite container path is \[catalog, database\], received \[\]/,
+    );
+    await expect(objects.listObjects([], "table")).rejects.toThrow(
+      /A SQLite container path is \[catalog, database\], received \[\]/,
+    );
+    await expect(objects.describeObject(["orders"], "table")).rejects.toThrow(
+      /A SQLite "table" path is \[catalog, database, name\], received \["orders"\]/,
+    );
+    await expect(objects.describeObject(["cat", "sch", "orders", "orders_stamp"], "table")).rejects.toThrow(
+      /A SQLite "table" path is \[catalog, database, name\]/,
+    );
+
+    // The bound-value half, which a refusal-only test cannot see.
+    //
+    // A two-segment container is now the valid one, and the reads still answer.
+    expect(await objects.countObjects(["cat", "sch"])).toEqual({
+      table: { count: EXPECTED_COUNTS.table },
+      view: { count: EXPECTED_COUNTS.view },
+      index: { count: EXPECTED_COUNTS.index },
+      trigger: { count: EXPECTED_COUNTS.trigger },
+    });
+
+    // Every listed path starts with the container it was asked for, because `objectPath`
+    // prefixes the container rather than knowing this engine's depth. A `[row.name]`
+    // literal would answer `["orders"]` here and break the tree's addressing.
+    const tables = await objects.listObjects(["cat", "sch"], "table");
+    expect(tables.map((table) => table.path)).toContainEqual(["cat", "sch", "orders"]);
+    const triggers = await objects.listObjects(["cat", "sch"], "trigger");
+    expect(triggers.map((trigger) => trigger.path)).toEqual([
+      ["cat", "sch", "order_summary", "order_summary_guard"],
+      ["cat", "sch", "orders", "orders_stamp"],
+    ]);
+
+    // AND THE BIND. `path[path.length - 1]` is `orders` at this depth and `path[0]` is the
+    // CATALOG, `path[1]` the schema. Both literals are depth-identical at 0, so only this
+    // declaration can tell them apart: binding either would ask `pragma_table_xinfo` for
+    // an object called `cat` or `sch`, which answers nothing and raises by name.
+    const detail = await objects.describeObject(["cat", "sch", "orders"], "table");
+    expect(detail.path).toEqual(["cat", "sch", "orders"]);
+    expect(detail.columns.map((column) => column.name)).toEqual([
+      "id",
+      "customer_id",
+      "customer_email",
+      "total",
+      "total_with_tax",
+    ]);
+    expect(detail.foreignKeys.map((fk) => fk.columnName).sort()).toEqual(["customer_email", "customer_id"]);
+    expect(detail.indexes.map((index) => index.name).sort()).toEqual(["idx_orders_customer", "idx_orders_doubled"]);
+  });
+
+  // --------------------------------------------------------------------------
+  // A read the engine refuses
+  // --------------------------------------------------------------------------
+
+  test("a refused count carries SQLite's own sentence, for every kind at once", async () => {
+    // `PRAGMA table_list` arrived in SQLite 3.37 and a build below it answers "no such
+    // table: pragma_table_list" for the whole statement, so one failure covers all four
+    // kinds. A refused read is never 0: the two are different facts and `KindCount` is the
+    // type that keeps them apart.
+    objects = await connectedWithObjects();
+    failReadsMatching(objects, "pragma_table_list", "no such table: pragma_table_list");
+
+    const counts = await objects.countObjects([]);
+
+    expect(counts).toEqual({
+      table: { unavailable: "no such table: pragma_table_list" },
+      view: { unavailable: "no such table: pragma_table_list" },
+      index: { unavailable: "no such table: pragma_table_list" },
+      trigger: { unavailable: "no such table: pragma_table_list" },
+    });
+    // Verbatim, with no product prefix in front of the engine's words.
+    for (const count of Object.values(counts)) {
+      expect(isCountUnavailable(count) ? count.unavailable : "").not.toContain("SQLite");
+    }
+  });
+
+  test("a thrown non-Error still reaches the folder as a sentence", async () => {
+    objects = await connectedWithObjects();
+    throwFromReadsMatching(objects, "pragma_table_list", "a driver that threw a string");
+
+    const counts = await objects.countObjects([]);
+
+    expect(counts.table).toEqual({ unavailable: "a driver that threw a string" });
+  });
+
+  test("a refused LISTING raises against the statement SQLite received", async () => {
+    // A listing has no third state to report: a folder the user opened has to say why it
+    // could not be filled, so this raises where `countObjects` degrades.
+    objects = await connectedWithObjects();
+    failReadsMatching(objects, "pragma_table_list", "no such table: pragma_table_list");
+
+    // Typed, and carrying THE STATEMENT SQLITE RECEIVED rather than a bare driver error:
+    // a raw rethrow arrives as a plain Error with no provider and no query, so whoever
+    // reads the message cannot tell which of the four listings failed.
+    const refusal = await objects.listObjects([], "table").then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(refusal).toBeInstanceOf(DatabaseError);
+    expect((refusal as DatabaseError).message).toContain("no such table: pragma_table_list");
+    expect((refusal as DatabaseError).provider).toBe("sqlite");
+    expect((refusal as DatabaseError).query).toContain("pragma_table_list");
+
+    // The kinds that read `sqlite_schema` are untouched, which is the control.
+    await expect(objects.listObjects([], "index")).resolves.toHaveLength(EXPECTED_COUNTS.index);
+  });
+
+  test("a catalog row whose kind names a prototype member draws no folder", async () => {
+    // `Object.hasOwn` and not `in`, which is what makes the declared-kind guard ABSOLUTE
+    // rather than nearly so. `"toString" in counts` is true on any object literal, so the
+    // `in` spelling would write a folder for a kind the provider never declared. SQLite's
+    // own catalog cannot produce such a row, which is exactly why it is handed one here:
+    // the guard's docblock claims the declaration decides, with no exceptions.
+    objects = await connectedWithObjects();
+    answerReadsMatching(objects, "pragma_table_list", [
+      { kind: "table", n: 3 },
+      { kind: "toString", n: 9 },
+      { kind: "constructor", n: 9 },
+      { kind: "__proto__", n: 9 },
+    ]);
+
+    const counts = await objects.countObjects([]);
+
+    // The control, so this is not a test of an empty read: the declared kind DID take its
+    // count from the same rows.
+    expect(counts.table).toEqual({ count: 3 });
+    expect(Object.keys(counts).sort()).toEqual(["index", "table", "trigger", "view"]);
+  });
+});
+
+describe("SQLiteProvider bulk column read (#789)", () => {
+  let objects: SQLiteProvider;
+
+  afterEach(async () => {
+    if (objects?.isConnected()) await objects.disconnect();
+  });
+
+  /**
+   * Every statement the provider prepared from here on, in order.
+   *
+   * The only way to assert "no round trip at all", which is the claim a kind with no
+   * columns makes, and the only way to assert that the round trips are CONSTANT in the
+   * number of objects rather than one per object - the property this method exists for.
+   * Everything still reaches the real database, so the assertions beside the count are
+   * live answers and not a double's.
+   */
+  function recordPrepares(provider: SQLiteProvider): string[] {
+    const holder = provider as unknown as { db: SQLiteDatabase };
+    const real = holder.db;
+    const seen: string[] = [];
+    holder.db = {
+      exec: (sql: string) => real.exec(sql),
+      close: () => real.close(),
+      prepare: (sql: string) => {
+        seen.push(sql);
+        return real.prepare(sql);
+      },
+    };
+    return seen;
+  }
+
+  test("describes every table in the folder, and each detail is what describeObject answers for the same object", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "table");
+
+    expect(batch.truncated).toBeUndefined();
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["archive"],
+      ["audit_log"],
+      ["customers"],
+      ["notes"],
+      ["orders"],
+      ["sqliteXledger"],
+    ]);
+    // The two readings of the same object, compared whole. One mapper serves both, so a
+    // divergence here is the bulk read spelling a column, an index or a foreign key
+    // differently from the single read of the same table - the defect two mappers cause.
+    for (const detail of batch.details) {
+      expect(detail).toEqual(await objects.describeObject(detail.path, "table"));
+    }
+  });
+
+  test("every described path is one listObjects produced", async () => {
+    objects = await connectedWithObjects();
+
+    const listed = await objects.listObjects([], "table");
+    const batch = await objects.describeObjects([], "table");
+
+    // Both sides come from the provider; nothing here is a path this test typed.
+    expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+  });
+
+  test("a view is described from the same statements a table is", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "view");
+
+    expect(batch.details).toHaveLength(1);
+    expect(batch.details[0]!.path).toEqual(["order_summary"]);
+    expect(batch.details[0]!.columns.map((column) => column.name)).toEqual(["id", "total"]);
+    // Measured: `pragma_index_list` and `pragma_foreign_key_list` both answer zero rows
+    // for a view, so the two reads happen and find nothing rather than being skipped.
+    expect(batch.details[0]!.indexes).toEqual([]);
+    expect(batch.details[0]!.foreignKeys).toEqual([]);
+  });
+
+  test("an index and a trigger answer an empty batch with no round trip at all", async () => {
+    objects = await connectedWithObjects();
+    const prepared = recordPrepares(objects);
+
+    await expect(objects.describeObjects([], "index")).resolves.toEqual({ details: [] });
+    await expect(objects.describeObjects([], "trigger")).resolves.toEqual({ details: [] });
+
+    // Not "no rows came back": no statement was sent. Neither kind has columns on this
+    // engine - measured, `pragma_table_xinfo` answers zero rows for an index name and for
+    // a trigger name - and that is a fact about the KIND, so it is answered from the
+    // declaration and never from the catalog.
+    expect(prepared).toEqual([]);
+    // The control: a kind that DOES have columns still reaches the database.
+    await objects.describeObjects([], "view");
+    expect(prepared.length).toBeGreaterThan(0);
+  });
+
+  test("an undeclared kind raises, naming the engine and the kind", async () => {
+    objects = await connectedWithObjects();
+
+    // Never an empty batch. An undeclared kind is a fact about SQLite and an empty answer
+    // would be a claim about the file.
+    await expect(objects.describeObjects([], "sequence")).rejects.toThrow(/SQLite declares no object kind "sequence"/);
+  });
+
+  test("a container path of the wrong shape raises through the declaration, not a literal depth", async () => {
+    objects = await connectedWithObjects();
+
+    await expect(objects.describeObjects(["main"], "table")).rejects.toThrow(/A SQLite container path is empty/);
+  });
+
+  test("a two-level declaration is accepted and reaches the produced path", async () => {
+    // Standing ruling 5g, driven to a VALUE and not to a refusal. SQLite declares no
+    // container level, so the hardcoded spellings this rule forbids - `container.length
+    // !== 0` here, `[row.name]` in the path builder - are behaviour-identical on the real
+    // engine and only a differently shaped declaration can tell them apart.
+    objects = await connectedWithObjects();
+    spyOn(objects, "getCapabilities").mockReturnValue({
+      ...objects.getCapabilities(),
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+
+    const batch = await objects.describeObjects(["warehouse", "app"], "table");
+
+    // Every path carries both container segments, so the prefix is derived from the
+    // declaration rather than assumed empty.
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["warehouse", "app", "archive"],
+      ["warehouse", "app", "audit_log"],
+      ["warehouse", "app", "customers"],
+      ["warehouse", "app", "notes"],
+      ["warehouse", "app", "orders"],
+      ["warehouse", "app", "sqliteXledger"],
+    ]);
+    // And the shape that WAS valid a moment ago is refused, with the declared level
+    // labels in the sentence.
+    await expect(objects.describeObjects([], "table")).rejects.toThrow(
+      /A SQLite container path is \[catalog, schema\]/,
+    );
+  });
+
+  test("a limit that is not a positive whole number raises rather than clamping", async () => {
+    objects = await connectedWithObjects();
+
+    for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(objects.describeObjects([], "table", limit)).rejects.toThrow(
+        /A SQLite bulk column read limit must be a positive whole number/,
+      );
+    }
+    // Not clamped and not ignored: a 0 would answer nothing while reporting a truncation
+    // the caller never asked for.
+    expect(true).toBe(true);
+  });
+
+  test("a bound that bites reports the caller's own limit, and one that does not never reports", async () => {
+    objects = await connectedWithObjects();
+
+    const bounded = await objects.describeObjects([], "table", 2);
+    expect(bounded.details).toHaveLength(2);
+    expect(bounded.truncated?.limit).toBe(2);
+    expect(bounded.truncated?.reason.length).toBeGreaterThan(0);
+
+    // Exactly as many as the folder holds. `limit + 1` is what the statement carries, so
+    // a saturated read is told from an exact one without a second count.
+    const exact = await objects.describeObjects([], "table", EXPECTED_COUNTS.table);
+    expect(exact.details).toHaveLength(EXPECTED_COUNTS.table);
+    expect(exact.truncated).toBeUndefined();
+
+    const unbounded = await objects.describeObjects([], "table");
+    expect(unbounded.details).toHaveLength(EXPECTED_COUNTS.table);
+    expect(unbounded.truncated).toBeUndefined();
+  });
+
+  test("the bound cuts the engine's own order, and the answer is sorted by path", async () => {
+    objects = await connectedWithObjects();
+
+    const bounded = await objects.describeObjects([], "table", 3);
+
+    // `ORDER BY t.name` in the target, which on SQLite runs under BINARY, the UTF-8 byte
+    // order: measured, `pragma_table_list` answers in no useful order at all without it,
+    // so the bound would otherwise keep an arbitrary three of the six.
+    expect(bounded.details.map((detail) => detail.path)).toEqual([["archive"], ["audit_log"], ["customers"]]);
+    expect(bounded.truncated).toEqual({ limit: 3, reason: bounded.truncated!.reason });
+  });
+
+  test("the engine cuts under BINARY and the answer is sorted by path, and those are two different orders", async () => {
+    // The one probe that can tell the two apart on this engine, and it is a real
+    // disagreement rather than a contrived one. SQLite's `ORDER BY name` runs under
+    // BINARY, the UTF-8 BYTE order, where U+E000 (EE 80 80) sorts below U+1F600
+    // (F0 9F 98 80); JavaScript compares UTF-16 CODE UNITS, where the surrogate 0xD83D
+    // sorts below 0xE000. So the engine's order and `comparePaths`' order are opposite
+    // here, which is why the membership of a bounded cut is the server's and the ORDER of
+    // the answer is ours.
+    const named = new SQLiteProvider(makeSQLiteConfig());
+    await named.connect();
+    try {
+      await named.query('CREATE TABLE "\u{1F600}" (x INTEGER)');
+      await named.query('CREATE TABLE "\uE000" (x INTEGER)');
+
+      const engineOrder = (
+        await named.query(
+          "SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'table'" +
+            " AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name",
+        )
+      ).rows as { name: string }[];
+      expect(engineOrder.map((row) => row.name)).toEqual(["\uE000", "\u{1F600}"]);
+
+      const batch = await named.describeObjects([], "table");
+      expect(batch.details.map((detail) => detail.path)).toEqual([["\u{1F600}"], ["\uE000"]]);
+
+      // And the cut keeps the engine's first, which is the other one.
+      const bounded = await named.describeObjects([], "table", 1);
+      expect(bounded.details.map((detail) => detail.path)).toEqual([["\uE000"]]);
+      expect(bounded.truncated?.limit).toBe(1);
+    } finally {
+      await named.disconnect();
+    }
+  });
+
+  test("the round trips are constant in the number of objects", async () => {
+    objects = await connectedWithObjects();
+    const prepared = recordPrepares(objects);
+
+    const batch = await objects.describeObjects([], "table");
+
+    // Six objects, five statements: the target plus the four detail reads. The whole
+    // reason this method exists is that the caller's alternative was one describeObject
+    // per object, which is 6 x (1 column read + 1 index list + N index reads + 1 foreign
+    // key list) here.
+    expect(batch.details).toHaveLength(6);
+    expect(prepared).toHaveLength(5);
+  });
+
+  test("a generated column survives the bulk read, as it does the single one", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "table");
+    const orders = batch.details.find((detail) => detail.path[0] === "orders")!;
+
+    // `pragma_table_xinfo` and not `pragma_table_info`, which DROPS a generated column in
+    // both spellings. `getSchema()` still reads `table_info` and still loses it; the bulk
+    // read inherits the object model's catalog and not the flat surface's.
+    expect(orders.columns.map((column) => column.name)).toContain("total_with_tax");
+  });
+
+  test("an expression index publishes no fabricated column name", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "table");
+    const orders = batch.details.find((detail) => detail.path[0] === "orders")!;
+
+    // `idx_orders_doubled` keys `total * 2`, whose `index_info` row carries a null name.
+    // A null there is not a column of this object, so it is left out rather than rendered
+    // as a label - and the index itself still appears, with an empty column list.
+    expect(orders.indexes).toEqual([
+      { name: "idx_orders_customer", columns: ["customer_id"], unique: false },
+      { name: "idx_orders_doubled", columns: [], unique: false },
+    ]);
+  });
+
+  test("a foreign key naming no column resolves the parent's primary key", async () => {
+    objects = await connectedWithObjects();
+
+    const batch = await objects.describeObjects([], "table");
+    const orders = batch.details.find((detail) => detail.path[0] === "orders")!;
+
+    // `REFERENCES customers` with no column list answers `to = NULL`, which SQLite reads
+    // as the parent's PRIMARY KEY. `ForeignKeySchema.referencedColumn` is a string, so
+    // the alternative to resolving it is a null in a typed string field.
+    // In `pragma_foreign_key_list`'s own order, which is by its `id` and is the reverse of
+    // the declaration order: both reads carry the same `ORDER BY id, seq`.
+    expect(orders.foreignKeys).toEqual([
+      { columnName: "customer_email", referencedTable: "customers", referencedColumn: "email" },
+      { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
+    ]);
+  });
+});
+
+describe("comparePaths", () => {
+  // Exported for the same reason `readDbstatSizes` is: the ordering rule is shared with
+  // every other provider in #789, and the cases that separate it from `JSON.stringify`
+  // cannot arise on an engine whose paths within one kind are all the same length.
+  test("orders by segments, so a prefix sorts above what nests under it", () => {
+    // The `JSON.stringify` spelling gets this backwards: `,` (0x2C) is below `]` (0x5D),
+    // so the deeper path would sort first and a trigger would sit above its own table.
+    expect(comparePaths(["orders"], ["orders", "orders_stamp"])).toBeLessThan(0);
+    expect(comparePaths(["orders", "orders_stamp"], ["orders"])).toBeGreaterThan(0);
+    expect(comparePaths(["orders"], ["orders"])).toBe(0);
+  });
+
+  test("orders by code point, so an escaped name is not reordered by its escape", () => {
+    // `JSON.stringify(["a\\"b"])` is `["a\\\\"b"]`, whose third character is a backslash
+    // (0x5C) rather than the quote (0x22) the name actually holds.
+    expect(comparePaths(['a"b'], ["a\\b"])).toBeLessThan(0);
+    expect(comparePaths(["a", "z"], ["b", "a"])).toBeLessThan(0);
+  });
+});
+
+// ============================================================================
 // Agent read-only execution profile (#328) — bun driver, in-process
 //
 // The security boundary asserted here is the DATABASE's own read-only open,
@@ -1520,14 +2525,16 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
     // Schema introspection
     const schema = report.schema as Array<{
       name: string;
-      rowCount: number;
       columns: Array<{ name: string; isPrimary: boolean; nullable: boolean }>;
       indexes: string[];
       foreignKeys: Array<{ columnName: string; referencedTable: string; referencedColumn: string }>;
     }>;
     const users = schema.find((t) => t.name === "users")!;
     expect(users).toBeDefined();
-    expect(users.rowCount).toBe(1);
+    // No row count here, and that is SQLite`s own answer rather than a gap in the harness:
+    // the object listing publishes none, because there is no catalog estimate on this
+    // engine and a COUNT(*) per object would be a full table scan per row of the tree.
+    // The counted figure has its own read, asserted below through `getTableStats`.
     expect(users.columns.find((c) => c.name === "id")!.isPrimary).toBe(true);
     expect(users.columns.find((c) => c.name === "name")!.nullable).toBe(false);
     expect(users.indexes).toContain("idx_users_email");
@@ -1572,6 +2579,53 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
     // Error mapping (same mapDatabaseError path as the bun driver)
     expect(report.queryErrorName).toBe("DatabaseError");
     expect(report.queryErrorMessage).toContain("no such table");
+
+    // ------------------------------------------------------------------
+    // The object surface (#789) on the node:sqlite adapter.
+    //
+    // node:sqlite is a DIFFERENT SQLite build behind the same adapter, and this surface
+    // needs `PRAGMA table_list` (3.37+) and a bound schema argument on the pragma
+    // table-valued functions. Neither is provable from the bun run: measured here,
+    // node:sqlite is 3.51.2 where bun:sqlite is 3.53.2.
+    // ------------------------------------------------------------------
+    expect(report.objectContainers).toEqual([]);
+    // `users`, `books` and the FTS5-free fixture's two tables, plus the view and the
+    // trigger this section adds. The TEMP `users` created beside them is excluded, which
+    // is the schema restriction working on this driver too.
+    expect(report.objectCounts).toEqual({
+      table: { count: 2 },
+      view: { count: 1 },
+      index: { count: 1 },
+      trigger: { count: 1 },
+    });
+    expect(report.objectList_table).toEqual([
+      { path: ["books"], name: "books", kind: "table" },
+      { path: ["users"], name: "users", kind: "table" },
+    ]);
+    expect(report.objectList_view).toEqual([{ path: ["user_names"], name: "user_names", kind: "view" }]);
+    expect(report.objectList_index).toEqual([{ path: ["idx_users_email"], name: "idx_users_email", kind: "index" }]);
+    expect(report.objectList_trigger).toEqual([
+      { path: ["users", "users_stamp"], name: "users_stamp", kind: "trigger" },
+    ]);
+    // The file's `users`, not the one-column TEMP table shadowing it: the schema is bound
+    // into `pragma_table_xinfo` on this adapter as well.
+    expect(report.objectDetail).toEqual({
+      path: ["users"],
+      columns: [
+        { name: "id", isPrimary: true },
+        { name: "name", isPrimary: false },
+        { name: "email", isPrimary: false },
+      ],
+      indexes: [{ name: "idx_users_email", columns: ["email"] }],
+    });
+    expect(report.objectDetailTrigger).toEqual({
+      path: ["users", "users_stamp"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    expect(report.objectMissingRefused).toBe(true);
+    expect(report.objectBadContainerRefused).toBe(true);
 
     // ------------------------------------------------------------------
     // Agent read-only execution profile (#328) on the node:sqlite adapter.

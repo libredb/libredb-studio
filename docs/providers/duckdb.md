@@ -70,7 +70,10 @@ Studio replicas pointed at one file is not a degraded configuration, it is a bro
 | Schema (`main`, `analytics`, …) | Schema | The default is `main`, and it is flagged `internal` (§3.3) |
 | Table | Table | `duckdb_tables()` |
 | View | View | `duckdb_views()` |
-| Index | Index | `duckdb_indexes()` |
+| Index | Index | `duckdb_indexes()`; an attribute of a table here, not an object kind |
+| Macro (`CREATE MACRO`) | Routine | `duckdb_functions()` filtered on `function_type`; both the scalar and the table form |
+| Sequence | Sequence | `duckdb_sequences()` |
+| Secret | (none) | Outside the catalog hierarchy; not in the object tree (§6) |
 | — | Credential | None exists. The file's permissions are the only access control |
 | — | Session, slow-query log | Neither exists (§3.7) |
 
@@ -503,50 +506,13 @@ form; the strategy publishes no timings and fabricates none. See §3.6 for the f
 
 ## 6. Schema introspection
 
-`getSchema()` issues **five catalog statements plus one counting statement**, and no per-object
-sweep. The five are the exported constants in
-[`introspect.ts`](../../src/lib/db/providers/sql/duckdb/introspect.ts) — copied here verbatim, so a
-change to one side is visible against the other:
+Every reading of this engine's objects goes through the object surface below. The flat reading that
+came before it issued five catalog statements over `duckdb_tables()`, `duckdb_views()`,
+`duckdb_columns()`, `duckdb_constraints()` and `duckdb_indexes()` plus one counting statement, all
+filtered `NOT internal AND database_name = current_database()`. It is deleted, and the filter is why
+that matters: scoped to `current_database()`, it could not see an `ATTACH`ed catalog at all.
 
-```sql
--- TABLES_SQL
-SELECT schema_name, table_name, estimated_size
-FROM duckdb_tables()
-WHERE NOT internal AND database_name = current_database()
-ORDER BY schema_name, table_name;
-
--- VIEWS_SQL
-SELECT schema_name, view_name
-FROM duckdb_views()
-WHERE NOT internal AND database_name = current_database()
-ORDER BY schema_name, view_name;
-
--- COLUMNS_SQL  (duckdb_columns() covers VIEWS as well as tables, so one read serves both)
-SELECT schema_name, table_name, column_name, data_type, is_nullable, column_default
-FROM duckdb_columns()
-WHERE NOT internal AND database_name = current_database()
-ORDER BY schema_name, table_name, column_index;
-
--- CONSTRAINTS_SQL  (primary keys AND foreign keys in one read)
-SELECT schema_name, table_name, constraint_type,
-       constraint_column_names, referenced_table, referenced_column_names
-FROM duckdb_constraints()
-WHERE database_name = current_database()
-  AND constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY');
-
--- INDEXES_SQL
-SELECT schema_name, table_name, index_name, is_unique, is_primary,
-       expressions::VARCHAR[] AS index_columns
-FROM duckdb_indexes()
-WHERE database_name = current_database()
-ORDER BY schema_name, table_name, index_name;
-```
-
-**No schema query is issued.** The `duckdb_schemas()` statement in §3.3 is the measurement that
-decided how the five above are filtered; it is not part of the object tree, which takes its schema
-names from the `schema_name` column every one of them already carries.
-
-Four shapes to know:
+Four shapes to know, all of which the object surface inherits:
 
 - `duckdb_constraints()` is filtered by `constraint_type` rather than by `NOT internal`, because it
   publishes every NOT NULL and UNIQUE constraint as its own row too. On a `PRIMARY KEY` row
@@ -558,11 +524,247 @@ Four shapes to know:
 - `duckdb_indexes().expressions` is declared `VARCHAR` and prints as `"[a, b]"`. The `::VARCHAR[]`
   cast makes the engine produce the real list (measured: `'[customer_id]'` → `["customer_id"]`).
 - `duckdb_tables().estimated_size` is a row count rather than a byte size, but it is an **estimate**
-  and is never published as the row count (§3.5). The sixth statement counts instead: one
-  `UNION ALL` arm per table, `SELECT '<schema>' , '<table>', count(*) FROM "<schema>"."<table>"`,
-  issued once for the whole catalog. DuckDB answers `count(*)` out of row-group metadata, so this is
-  affordable where it is not on the other engines here. A table that cannot be counted — dropped
-  between the two reads, for instance — is simply absent from the map rather than published as `0`.
+  and is never published as the row count (§3.5). DuckDB answers `count(*)` out of row-group
+  metadata, so counting is affordable here where it is not on the other engines. A table that cannot
+  be counted — dropped between two reads, for instance — is absent from the map rather than
+  published as `0`.
+
+### The object surface (#789)
+
+The lazy, container-aware object surface: `listContainers()`, `countObjects()`, `listObjects()`,
+`describeObject(path, kind)` and `describeObjects(container, kind, limit?)`, in
+[`objects.ts`](../../src/lib/db/providers/sql/duckdb/objects.ts) and
+[`index.ts`](../../src/lib/db/providers/sql/duckdb/index.ts). It reaches every `ATTACH`ed catalog,
+which the deleted flat reading could not.
+
+#### Two container levels, and both are real
+
+```ts
+containerLevels: [
+  { id: "catalog", label: "Database", labelPlural: "Databases" },
+  { id: "schema",  label: "Schema",   labelPlural: "Schemas" },
+]
+```
+
+DuckDB is the second two-level engine in #789, after SQL Server. The outer level is not the
+connection's own file restated: `ATTACH '<file>' AS warehouse` puts another whole catalog in the same
+session and a three-part name reaches into it, so one connection genuinely holds databases holding
+schemas holding objects. `ATTACH ':memory:' AS name` works too, which is what the tests use.
+
+#### Four kinds, and one `duckdb_*` function behind each
+
+| Kind | Role | Catalog function | Note |
+|---|---|---|---|
+| `table` | relation | `duckdb_tables()` | `acceptsRowWrites: true` |
+| `view` | relation | `duckdb_views()` | No row writes: measured, `INSERT INTO <view>` answers `Catalog Error: <view> is not an table` |
+| `macro` | routine | `duckdb_functions()` filtered on `function_type` | One kind for BOTH macro forms |
+| `sequence` | config | `duckdb_sequences()` | |
+
+**No trigger and no stored procedure**: DuckDB has neither, and `CREATE TRIGGER` / `CREATE PROCEDURE`
+are parser errors on 1.5.5. A declared kind draws a folder, and a folder for something the engine
+cannot have is a lie its zero badge makes look like a fact.
+
+**No `index` kind**: `duckdb_indexes()` is keyed by `table_oid` and an index cannot exist without a
+table, so an index belongs in `describeObject`'s output, where it is.
+
+**No `secret` kind, and this is the omission worth stating rather than leaving implicit.**
+`duckdb_secrets()` is real and answers `name, type, provider, persistent, storage, scope,
+secret_string`. A secret has no `database_name` and no `schema_name`: it lives outside the catalog
+hierarchy entirely, so there is no container in this model it could hang under. Out of Phase 1's
+scope.
+
+There is **no `duckdb_macros()`**, despite what the naming of the other functions suggests, and
+`information_schema` is partial here: it has no `.views` and no `.routines`. `duckdb_functions()`
+filtered on `function_type` is the only route to a macro.
+
+#### The macro vocabulary is the ENGINE's, and it is guarded against a live read
+
+`function_type` is the whole discriminator between a macro and a built-in, and between the two macro
+forms. The vocabulary is derived from **DuckDB's documented macro forms** (`CREATE MACRO f(x) AS
+<expression>` is a scalar macro and `CREATE MACRO f(x) AS TABLE <select>` is a table macro), and the
+fixture is built to hold **one of each**, rather than from a `SELECT DISTINCT` over whatever the
+fixture happened to contain.
+
+`FUNCTION_TYPE_RULES` in `objects.ts` carries both halves: the two macro spellings, and every other
+`function_type` with the reason it is excluded. The engine is embedded, so the guard needs no
+separate live script the way MySQL's does: `duckdb-provider.test.ts` asks the running engine for its
+own `SELECT DISTINCT function_type` (2951 built-in rows plus the fixture's two user macros) and fails
+NAMING anything the record does not account for.
+
+| `function_type` | Decision |
+|---|---|
+| `macro` | A scalar macro, written with `CREATE MACRO … AS <expression>` |
+| `table_macro` | A table macro, written with `CREATE MACRO … AS TABLE <select>` |
+| `scalar`, `aggregate`, `table`, `pragma` | Built into the engine; nobody wrote them in this database |
+
+Measured and load-bearing: **every built-in function lives in the `system` catalog** (`system.main`
+and `system.pg_catalog`), so the `database_name = $1` filter already excludes all 2949 of them. DuckDB
+has no `CREATE FUNCTION`, so a macro is the only user-defined function there is, and the
+`function_type` predicate therefore changes no count this engine can produce. It is kept because it
+is the vocabulary: it is what would keep a future non-macro user function out of the Macros folder,
+and what makes the two macro forms explicit. It is asserted on the STATEMENT rather than on a
+row count, because no fixture on this engine can distinguish it.
+
+#### The statements
+
+Every container is a bound STRING, never an interpolated identifier: each `duckdb_*` function
+publishes its container as a COLUMN. That removes the whole class of quoting defect a three-part name
+brings, and it is why this provider needs no `escapeIdentifier` anywhere in the object surface. The
+placeholders are NUMBERED (`$1`, `$2`) rather than positional, so one catalog is bound once across a
+`UNION ALL` of any number of arms.
+
+```sql
+-- CATALOGS_SQL: listContainers()
+SELECT database_name, database_name = current_database() AS is_session_default
+FROM duckdb_databases()
+WHERE NOT internal
+ORDER BY database_name;
+
+-- SCHEMAS_SQL: listContainers([catalog])
+SELECT schema_name,
+       database_name = current_database() AND schema_name = current_schema() AS is_session_default
+FROM duckdb_schemas()
+WHERE database_name = $1
+ORDER BY schema_name;
+
+-- countObjects(): one UNION ALL arm per DECLARED kind, built from the same table as the listings
+SELECT 'table' AS kind, COUNT(*) AS n FROM duckdb_tables() WHERE database_name = $1 [AND schema_name = $2]
+UNION ALL SELECT 'view', COUNT(*) FROM duckdb_views() WHERE …
+UNION ALL SELECT 'macro', COUNT(*) FROM duckdb_functions() WHERE … AND function_type IN ('macro', 'table_macro')
+UNION ALL SELECT 'sequence', COUNT(*) FROM duckdb_sequences() WHERE …;
+
+-- listObjects(container, kind)
+SELECT schema_name, <name column> AS name FROM <catalog function> WHERE <the same filter>;
+
+-- describeObject(path, kind), for a relation only
+SELECT column_name, data_type, is_nullable, column_default FROM duckdb_columns()
+  WHERE database_name = $1 AND schema_name = $2 AND table_name = $3 ORDER BY column_index;
+SELECT constraint_column_names FROM duckdb_constraints()
+  WHERE … AND constraint_type = 'PRIMARY KEY';
+SELECT constraint_column_names, referenced_table, referenced_column_names FROM duckdb_constraints()
+  WHERE … AND constraint_type = 'FOREIGN KEY';
+SELECT index_name, is_unique, expressions::VARCHAR[] AS index_columns FROM duckdb_indexes()
+  WHERE … ORDER BY index_name;
+```
+
+The count and the listing for one kind are built from ONE record, `DUCKDB_OBJECT_SOURCES`, so the
+listing holds exactly what the count counted by construction rather than by care. That is the rule
+two other providers in #789 broke on their first pass.
+
+#### Four measured shapes behind those statements
+
+- **`duckdb_schemas().internal` is TRUE for `main` in a USER database** (§3.3). `NOT internal` on the
+  schema listing would drop the default schema and with it most of the objects in the tree. The
+  catalog filter is what keeps `system` and `temp` out instead, and there `internal` means what a
+  reader expects.
+- **A DuckDB PRIMARY KEY writes NO `duckdb_indexes()` row.** The index listing needs no exclusion,
+  unlike SQL Server's.
+- **A foreign key never crosses a schema**: `Binder Error: Creating foreign keys across different
+  schemas or catalogs is not supported`. So `referencedTable` is always in the reading object's own
+  schema, and it is spelled bare in `main` and qualified anywhere else, because `ForeignKeySchema`
+  carries one string.
+- **A relation with no column row is a relation that is not there.** `CREATE TABLE t ()` is
+  `Parser Error: Table must have at least one column!`, and a view over an empty selection list is a
+  parser error too, so zero column rows raises rather than rendering a dropped table as a table with
+  no columns.
+
+#### `describeObject` takes the KIND, and on this engine that is not theoretical
+
+Measured on v1.5.5, in ONE schema: `CREATE SEQUENCE overlap` and `CREATE MACRO overlap(x)` both
+succeed while the table `overlap` exists, and only `CREATE VIEW overlap` is refused
+(`Catalog Error: Table with name "overlap" already exists!`). So the relation namespace is shared
+between a table and a view, while a sequence and a macro each have their own, and a table, a sequence
+and a macro really can share one name. A detail read keyed on the name alone would hand the sequence
+the table's columns.
+
+The same measurement is why `tests/helpers/object-surface-conformance.ts` keeps its uniqueness
+invariant inside a kind: a cross-kind assertion would report this correct provider as broken.
+
+**Macros are NOT overloaded on this engine.** `CREATE MACRO f(x, y)` after `CREATE MACRO f(x)`
+answers `Catalog Error: Macro Function with name "f" already exists!`, measured, so a macro's own
+name is its unique identifier within its schema and the path segment needs no disambiguated form of
+the kind a PostgreSQL routine needs.
+
+#### `describeObjects()` describes a whole folder in five statements (#789)
+
+`describeObjects(container, kind, limit?)` answers columns, indexes and foreign keys for EVERY object
+of one kind in one container, in FIVE round trips whatever the folder holds: the target read plus the
+four detail reads. The single read is four statements PER OBJECT, so a folder of 200 tables cost 800.
+Measured on DuckDB v1.5.5 against a 200-table schema, each table carrying three columns, a primary key
+and an index: **26 ms for one `describeObjects()` against 1,300 ms for 200 `describeObject()` calls**,
+the same 600 columns and 200 indexes.
+
+Each of the four detail statements is its `describeObject()` counterpart with the
+`schema_name = $2 AND table_name = $3` pair replaced by a join against the target set, and nothing else
+changed: the same catalog function, the same predicates, the same `::VARCHAR[]` cast. They are built by
+one function rather than hand-copied four times, because a rewritten statement is the one thing this
+file could get wrong that no fixture shows.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.** The same `duckdb_columns()`, `duckdb_constraints()` and `duckdb_indexes()` the single
+read uses, and the target from the same `duckdb_tables()` / `duckdb_views()` the listing uses, through
+the same `objectSource()` and `kindFilter()`. It is NOT the deleted flat reading: that one filtered
+`NOT internal AND database_name = current_database()`, so it could not see an ATTACHed catalog at all,
+while the object surface binds the catalog the CALLER asked for. MEMBERSHIP comes from the target read
+and never from the column read, so an object the four detail reads answer nothing for comes back with
+three empty lists rather than missing.
+
+**Which kinds have no columns.** `macro` and `sequence`, which answer `{ details: [] }` with NO round
+trip at all. Measured on v1.5.5: `duckdb_columns()` holds rows for `customers`, `orders`, `t` and
+`v_orders` in a database that also holds `app.seq_a` and `app.m_a`, and none at all for the sequence or
+the macro. That is the same fact `describeObject()` answers as three empty arrays, and it is keyed on
+`role !== "relation"` here because on this engine the two coincide - which is NOT the general rule, as
+a PostgreSQL sequence has three columns and a MariaDB one has eight.
+
+**What bounds the read on the wire.** `LIMIT $n` inside the target, the placeholder BOUND rather than
+interpolated and carrying `limit + 1`, so a saturated read is told from an exact one with no second
+count. Measured accepted inside a CTE on v1.5.5. The placeholder NUMBER is derived from the container
+depth rather than written, because the container filter is `$1` alone at catalog level and `$1, $2` at
+schema level; DuckDB reuses a numbered parameter, which is what lets the same bind array serve the
+target and all four detail statements. The extra object is dropped in code and `truncated` carries the
+CALLER's limit. Nothing here caps the columns of an object.
+
+**What orders the cut, and under whose collation.** `ORDER BY schema_name, name` in the target.
+`schema_name` leads because a CATALOG-level container spans every schema under it, so `(schema, name)`
+is what is unique there. Two things about it were measured rather than assumed. First, no data this
+engine can hold separates the ordered statement from the unordered one: five tables created as
+`main.zz, main.aa, analytics.mm, analytics.bb, main.cc` come back from a bare
+`SELECT ... FROM duckdb_tables()` already sorted, because DuckDB walks its catalog's sorted maps. That
+fixture was built specifically to disprove the pin (standing ruling 5a) and did not, so the `ORDER BY`
+is pinned by statement TEXT and kept, since the natural order is an implementation detail of the
+catalog rather than a promise. Second, that sort runs under the UTF-8 BYTE order, which is NOT the order
+`comparePaths` produces: measured, a schema holding `U+E000` and `U+1F600` comes back from DuckDB as
+`U+E000, U+1F600` and from a JavaScript sort as `U+1F600, U+E000`, because JavaScript compares UTF-16
+code units. So the MEMBERSHIP of a bounded cut is the engine's and the ORDER of the answer is ours.
+
+**Mixed path depth (ruling 5f).** Not in this engine's relation set. Every DuckDB object of every
+declared kind sits in a schema, `objectShapes()` refuses a kind declaring `attachedTo`, and there are
+no triggers at all, so `table` and `view` are both `[catalog, schema, name]` at either container depth.
+
+The join is on BOTH `schema_name` and the name, never on the name alone, and the outer read keeps
+`database_name = $1` as well: the fixture holds `customers` in two schemas of one catalog with
+different columns AND in two catalogs with the same schema name, so a join on the name alone answers
+one table with another's columns rather than an error anybody would notice.
+
+#### No row count on a listed object, deliberately
+
+`estimated_size` is the only per-table cardinality DuckDB publishes and it is an ESTIMATE (§3.5), so
+publishing it as `rowCount` would put a wrong number on a folder row. The honest alternative, a
+`count(*)` per object, is the N+1 the inventory route already had `includeColumns` removed for. So a
+listed DuckDB object carries no `rowCount` at all.
+
+#### What is not carried
+
+- The `temp` catalog, and therefore TEMP tables. `duckdb_databases()` marks `temp` `internal = true`
+  alongside `system`, and both are excluded together. A session-scoped table is invisible in the
+  tree.
+- Secrets, for the reason above.
+- Object SOURCE, which is Phase 2's. `duckdb_views().sql`, `duckdb_sequences().sql` and
+  `duckdb_functions().macro_definition` all publish it, so the data is there when that phase arrives.
+- A macro's parameters. `duckdb_functions().parameters` is a `VARCHAR[]` of names, and a routine has
+  no columns, so `describeObject` answers three empty arrays for a macro and a sequence without a
+  round trip.
 
 `information_schema.tables` / `information_schema.columns` also answer, Postgres-shaped, with
 `table_type` of `BASE TABLE` or `VIEW`. They are **not** used: they carry no `internal` flag, so they
@@ -664,6 +866,20 @@ sibling test files.
 
 Two things the tests deliberately do **not** assert, both from §3.5 and §7: `memory_limit` (80% of
 host RAM, machine-dependent) and any absolute byte figure parsed from a formatted size string.
+
+The object-surface tests (§6) are the same shape and it matters more there: because the engine is
+in-process, every claim about `duckdb_databases()`, `duckdb_schemas()` and `function_type` in this
+document is re-measured against a REAL DuckDB on every test run, and the fixture `ATTACH`es a second
+`:memory:` catalog so the two container levels are exercised live. Two facts are asserted on the
+STATEMENT rather than on rows, because no fixture on this engine can distinguish them: the macro
+`function_type` predicate, and `ORDER BY column_index` on the column read.
+
+A refused count is driven with `SET max_expression_depth=1`, which is pure configuration and so
+always takes effect. `SET memory_limit='1KB'` was the obvious alternative and is not usable: measured,
+the SET itself starts failing with *could not free up enough memory for the new limit* once the
+fixture holds enough, so the refusal would come and go with the fixture's size. The control for it
+has to be a second handle, because once the depth is 1 even `SET max_expression_depth=1000` and
+`RESET` are refused by the same limit.
 
 ### Verifying by hand
 
@@ -773,7 +989,9 @@ to a database login.
 | No `SERIAL`, no `IDENTITY`, no `AUTOINCREMENT` | None of the three exists; `GENERATED … AS IDENTITY` parses and is refused at execution | The engine's — the create-table form defaults from a sequence instead (§3.13) |
 | ~140 MB of bindings on a Linux tree | glibc and musl packages both install | Ours to prune in the AppImage build (§9) |
 | MotherDuck / `md:` / Quack / DuckLake unsupported | Different products, different authentication | Ours — out of scope for v1 (§4.3) |
-| `ATTACH`-ed catalogs are not in the tree | Catalog reads are scoped to `current_database()` | Ours (§4.3) |
+| TEMP tables are absent from the object tree | `duckdb_databases()` marks `temp` `internal`, alongside `system` | Ours, §6 |
+| Secrets are not an object kind | A secret has no catalog and no schema, so nothing in the model can hold it | Ours, out of Phase 1's scope (§6) |
+| A listed object carries no row count | `estimated_size` is an estimate, and `count(*)` per object is an N+1 | Ours, §6 and §3.5 |
 
 ---
 

@@ -57,7 +57,7 @@ Three things are Elasticsearch-shaped, and most decisions below flow from one of
 
 | `DatabaseProvider` slot | Elasticsearch realisation | Mechanism |
 |---|---|---|
-| "Table" (`TableSchema`) | An **index**, displayed by its bare name | `GET /_cat/indices?format=json&bytes=b` |
+| "Table" (the relation kind) | An **index**, displayed by its bare name | `GET /_cat/indices?format=json&bytes=b` |
 | "Row" | A **document** | One positional array element in `rows` |
 | Columns | The index's **mapped fields**, flattened to dotted paths, mapping types verbatim | `GET /<index>/_mapping` |
 | Primary key | none — nothing a mapping declares is unique, and `_id` is not even selectable here (measured: `SELECT _id` → "Unknown column [_id]") | `isPrimary: false` on every column |
@@ -224,7 +224,7 @@ rule that no method branches on `this.dialect` at all — it reads `this.spec`.
 > every source in the directory with the TypeScript compiler API — not a grep — and fails the build
 > the moment any of it appears elsewhere. It needs narrower treatment than Couchbase's or Druid's
 > guard did, because the **neutral** seam deliberately reuses the wire's own English:
-> `SearchQueryResult.rows`, `columnTypes`, `TableSchema.size`, `getSchema` and
+> `SearchQueryResult.rows`, `columnTypes`, `DatabaseObject.sizeBytes`, the object reads and
 > `SEARCH_CONTAINER_TYPES = ["object", "nested"]` are all legitimate, so `rows` / `schema` / `size`
 > are matched only as exact **string literals** — the spelling envelope *parsing* produces — and a
 > bare property access is left alone. HTTP **200** is deliberately outside the status set: it is the
@@ -698,12 +698,12 @@ not expose.
 
 ## 6. Schema introspection
 
-`getSchema()` ([introspect.ts:355](../../src/lib/db/providers/sql/search/introspect.ts)) makes one
-index listing plus **one mapping read per index**, at most
-`SEARCH_MAPPING_CONCURRENCY = 4` at a time
-([introspect.ts:102](../../src/lib/db/providers/sql/search/introspect.ts)) — the same trade-off
-Couchbase's per-collection inference settled on, and `_mapping` is a cluster-state read rather than a
-search, so it is cheap per call and not worth tuning past "not serial, not a flood".
+Everything this provider knows about an index's contents is read through the OBJECT SURFACE, and this
+section describes the MAPPING decisions behind it; the surface itself is described below. The flat
+two-phase reading that used to open this section was deleted with `getSchema` (#789), and so was its
+cost model: a folder of indices is described in ONE `_mapping` request over a comma-joined list, split
+only on the cluster's own request-line limit, rather than one request per index at a fixed
+concurrency.
 
 | Data | Source |
 |---|---|
@@ -777,7 +777,7 @@ Sorting by path also keeps `address.city` next to its siblings once the containe
 
 The status word is **`close`**, not "closed"; the counts are JSON `null`; and the mapping still
 answers in full. So the index is described completely with `rowCount` and `size` **omitted** rather
-than zeroed — `TableSchema` makes both optional, which is what preserves the distinction. Dropping the
+than zeroed — The object shape makes both optional, which is what preserves the distinction. Dropping the
 index would tell the user it is gone when it is merely closed, and a query against it gets the
 engine's own refusal, which says exactly what happened.
 
@@ -788,22 +788,212 @@ which matches the fork's date-suffixed query-insights shape
 the product decides what to do with the flag. A stock Elasticsearch node ships none of these — the
 measured cluster listed only the three probe indices — but the same code hides two of three on a stock
 OpenSearch node, which is why the rule is a flag rather than a filter applied on the wire.
-`SearchSchemaOptions.includeSystemIndices` exists because both answers are legitimate and the caller
-knows which; `getSchema()` on the provider passes `{}`, i.e. hidden.
+Hiding them is what the object surface does: `isSystemIndex()` is consulted for every listing and
+count, so a folder's badge and its rows agree about what is shown.
 
-**A per-index failure costs one index's columns, not the tree.** Only `auth` and `unknown-object`
-degrade to an empty column list
-([`DEGRADABLE_MAPPING_FAILURES`, introspect.ts:119](../../src/lib/db/providers/sql/search/introspect.ts)):
-a security plugin grants index privileges *per index*, so a role that lists twenty indices and may
-describe nineteen is an ordinary configuration; and an index deleted between the listing and its
-mapping read is a race, not a fault. Everything else propagates, because an unreachable cluster
-rendering every index with zero columns reads as "these indices have no fields" — a fabricated schema,
-and the failure mode that hides the real error forever.
+**A mapping the cluster did not answer for is REPORTED, not degraded to an empty column list**, and
+that is a change from the deleted reading (#789). The bulk read asks one concrete request for a whole
+folder, and a concrete request answers for every name it was given, a CLOSED index included (measured),
+and refuses the whole request for a name that does not exist. So a name missing from a present answer
+cannot have come from the engine, and `describeObjects` throws naming the index rather than reporting
+it with no columns: an index with no mapping is an ordinary state, and spelling a failure the same way
+would be a fabricated schema that hides the real error forever.
 
-`getSchemaList()` and `getSchemaRelations()` are deliberately **not implemented**. Both are optional
-and the client falls back to `getSchema()`; the split exists so a slow relationship read cannot block
-the table list, and here both halves are empty by construction, so a list would be byte-identical and
-a relations pass would re-read every mapping to return the same empty arrays.
+### The object surface (#789)
+
+The schema reader above describes **indices and nothing else**. The object browser's four methods -
+`listContainers`, `countObjects`, `listObjects`, `describeObject` - read four further REST endpoints,
+and **none of these objects is reachable from the SQL endpoint at all**: neither product's grammar has
+a `CREATE` statement for any of them, and OpenSearch's has none of any kind. This is the first
+provider in #789 whose objects come from REST rather than from a catalog query.
+
+**Zero container levels.** An index is not inside anything, and both products' own SQL surfaces say
+so: OpenSearch answers `TABLE_SCHEM` **null** and Elasticsearch reports only a `catalog` that is the
+cluster name and is not addressable in a statement (both measured, [§3](#3-design-decisions)). So
+`listContainers()` answers `[]` without a round trip and the tree opens straight onto the kind
+folders; first paint costs one `countObjects` and no container walk.
+
+| Kind | Role | Source | Filter |
+|---|---|---|---|
+| `index` | relation, accepts row writes | `GET /_cat/indices?format=json&bytes=b` | dot prefix, plus OpenSearch's date-suffixed `top_queries-*` |
+| `alias` | relation | `GET /_alias`, flattened and deduplicated | dot prefix or `_meta.managed` |
+| `stream` | relation | `GET /_data_stream` | dot prefix or `_meta.managed` |
+| `pipeline` | config | `GET /_ingest/pipeline` | dot prefix or `_meta.managed` |
+| `template` | config | `GET /_index_template` | dot prefix or `_meta.managed` |
+
+The last four all run the same predicate, `isEngineOwned()` in
+[`http-transport.ts`](../../src/lib/db/providers/sql/search/http-transport.ts): a dot prefix **or**
+`_meta.managed`, on every one of them. Only the `index` row is different, and only because `_cat`
+publishes no `_meta` at all, so a name shape is the only signal there is. An alias and a data stream
+carry no `_meta` on either product today, which makes the second half of the rule inert for those two
+rather than absent - and writing "dot prefix" for them would describe a filter the code does not run.
+
+**An alias and a data stream are RELATIONS, not config objects, and that is measured.** Both answer
+rows through the SQL endpoint on both products: `SELECT customer FROM probe_orders_alias` returns the
+row and `SELECT * FROM probe_stream` returns the column list (2026-09-11). Neither declares
+`acceptsRowWrites`: an alias may span several indices and has no single write target, a data stream is
+append-only through its own API, and in any case no statement this provider can send writes anything.
+
+**A data stream is a kind rather than a property of an index, and the reason is that the alternative
+hides it completely.** Its backing indices are `.ds-`-prefixed, which the index listing's own system
+rule already removes, so without this kind a data stream's data is reachable through nothing in the
+tree at all - and, the other half of the same fact, declaring both kinds counts nothing twice. Both
+`_cat/indices` fixtures carry a `.ds-` backing-index row so that premise is asserted rather than
+argued: the `index` folder does not list it and the `stream` folder holds one object.
+
+**The count and the listing are the same call.** Standing ruling 5f says the listing must contain
+exactly what the count counted; on a SQL engine those drift apart in a second `WHERE` clause, and here
+there is no `WHERE` clause, so the place they could stop being the same call is **the HTTP request
+itself**. `readKind()` in [`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts) is the
+only place a REST listing becomes objects: `countObjects` is its length per kind and `listObjects` is
+its result for one kind, through the same read, the same system filter, the same path construction and
+the same sort. A refusal is **per kind**, not per cluster - these are four separate endpoints and a
+security plugin grants privileges per endpoint - so one refused folder carries the engine's own
+sentence and the other four still count.
+
+**An alias listing is keyed by INDEX and has to be flattened and deduplicated.** The payload is
+`{"<index>":{"aliases":{"<alias>":{}}}}`, an index with no alias is still listed with an empty map,
+and one alias over several indices is named once per index (measured: adding `shared_alias` to two
+indices lists it twice). The tree addresses an alias by name, so without the dedupe that folder holds
+two rows at one path. An alias can never collide with an index or a data stream: `POST /_aliases`
+adding an alias called `probe_orders` while that index exists is refused with *"an index or data
+stream exists with the same name as the alias"* on both products.
+
+**The engine's own objects are filtered on two signals, because neither is sufficient.** Measured on a
+stock Elasticsearch 9.1.4 node on 2026-09-11: 21 ingest pipelines, all `_meta.managed: true` and
+**none** dot-prefixed; 61 composable index templates, 57 managed and the remaining four
+(`.monitoring-*-mb`) dotted and unmanaged. A dot-only rule leaves every pipeline in, a managed-only
+rule leaves four templates in. The cost is the one the index listing already pays and it is stated
+rather than hidden: a user **can** create a dot-prefixed alias or template (measured, acknowledged),
+and this hides it. Elasticsearch's data streams also carry a `system` boolean and OpenSearch's carry
+none; it is deliberately **not** read, because every engine-owned data stream that could be measured
+is dot-prefixed and a second rule no fixture can distinguish from the first is a line nothing proves.
+
+**`GET /_ingest/pipeline` answers HTTP 404 with `{}` when the cluster holds no pipeline**, and the
+transport reads that as an empty set rather than a failure. It is the one status outside the 401/403
+pair that decides anything here, and it is not generalised: `_alias`, `_index_template` and
+`_data_stream` all answer HTTP 200 with an empty collection when they hold nothing, so a 404 from
+those really would be something else.
+
+Measured on **both** products on 2026-09-11, and upstream the state had to be made rather than found.
+A stock Elasticsearch node ships 21 managed ingest pipelines, so `DELETE /_ingest/pipeline/*` was sent
+first (HTTP 200, `{"acknowledged":true}`); `GET /_ingest/pipeline` then answered HTTP 404 with `{}` on
+Elasticsearch 9.1.4 exactly as it does on a stock OpenSearch 3.8.0 node, which ships none and reaches
+the state on its first run. Elasticsearch re-registers its built-ins within about twenty seconds, so
+the state is transient there and ordinary on the fork - but it is reachable on both, which is what
+licenses one rule for one implementation serving two type-ids.
+
+**A status alone cannot tell an empty set from a refusal, so the body decides.** A missing plugin, an
+endpoint a security role may not read and an index-shaped 404 all answer 404 too, and each of those
+would badge the folder **0** where the truth is a refusal - the exact confusion `KindCount` carries
+both a `count` and an `unavailable` state to prevent. The distinguishing signal is already on the wire:
+an empty set carries `{}` and nothing else, while a genuine failure carries the error envelope the
+transport categorises everywhere else (measured on both, `GET /_data_stream/nope` answers HTTP 404
+with `index_not_found_exception`, *"no such index [nope]"*). So the request helper reads the body
+before it trusts the status, and a 404 carrying that envelope reaches the folder as the engine's own
+sentence rather than as a zero.
+
+**A listing entry this client cannot read is refused, never dropped.** An entry that is not an object,
+an entry naming itself in no member, and an alias payload member with no alias map all raise rather
+than being skipped. A drop would remove the object from the count and from the listing together, so
+the two would still agree (ruling 5f) while the badge is short by exactly the objects nobody can see.
+The measured licence to refuse is that both products always send the list key (`{"index_templates":[]}`
+and `{"data_streams":[]}` on an empty cluster) and always name every entry, and that an index carrying
+no alias is listed with a **present**, empty map.
+
+**What is absent, and why each absence is a fact rather than a gap.**
+
+- **No view, function, procedure or trigger.** Neither product's SQL surface has `CREATE VIEW`, and
+  OpenSearch's grammar contains no `CREATE` statement of any kind (`CREATE TABLE t (id BIGINT)`
+  answers `SQLFeatureNotSupportedException`, *"Query must start with SELECT, DELETE, SHOW or
+  DESCRIBE"*). Elasticsearch 9.4 adds an **ES|QL views API as a technical preview**; a preview surface
+  gets no folder, and Phase 2 is where it is revisited.
+- **No stored script.** Both products have them and neither has a list-all API: `GET /_scripts` is
+  refused outright (*"Invalid index name [_scripts]"*), only get-by-id exists. An object that cannot be
+  enumerated cannot be a tree node - the same call Redis's `EVAL` scripts got.
+- **No legacy index template.** `_template` is a separate namespace whose names may **collide** with
+  the composable ones: measured on both products, `PUT _template/probe_template` succeeds while a
+  composable `probe_template` already exists, so one kind fed by both endpoints would hold two
+  different objects at one path.
+- **No secondary-index kind** in the relational sense. Every mapped field is inverted-indexed as a
+  property of being mapped, so there is nothing a user declared and nothing to name; `index` here is
+  the engine's own word for what a table is.
+
+`describeObject(path, kind)` answers the **mapping** for an `index`, an `alias` and a `stream` - an
+alias resolves to the index behind it and a data stream to its current backing index, both keyed by
+the concrete index name - and **no columns** for a `pipeline` or a `template`, which is the right
+answer rather than a gap: they are JSON documents with no field list, exactly as a routine, a trigger
+and a sequence have no columns on the SQL engines. `indexes` and `foreignKeys` are always empty, for
+the reasons in the table above.
+
+#### `describeObjects`, the bulk column read (#789)
+
+`describeObjects(container, kind, limit?)` answers columns for every object of one kind, and **which
+call it uses depends on the kind**, measured on Elasticsearch 9.1.4 on 2026-09-12 rather than assumed:
+
+- An **index** is concrete, so `_mapping` over a comma-joined list comes back keyed by the name that
+  was asked for. One request serves a whole folder.
+- An **alias** and a **data stream** resolve to the index behind them and come back keyed by **that**
+  index. Measured: `GET /probe_orders_alias,alias_two/_mapping`, two aliases on one index, answers a
+  single `probe_orders` key, and the fixture's alias answers under the same key as the index itself.
+  Nothing in that payload attributes a mapping back to the alias it was asked for, so those stay one
+  request per object, issued in parallel and cut by the caller's `limit` first.
+- A **pipeline** and a **template** answer `{ details: [] }` with no round trip at all, the same
+  fact `describeObject` states by answering three empty arrays.
+
+**The bulk request is chunked, and the bound is the cluster's own.** Measured on Elasticsearch 9.1.4: a `_mapping`
+request whose index list is 3,999 characters answers HTTP 200 and one of 4,499 answers HTTP 400,
+`too_long_http_line_exception`, "An HTTP line is larger than 4096 bytes." The limit is on the whole
+request line, so the transport splits the names into request-line-sized chunks by BYTES rather than
+by a count - an index name may be up to 255 bytes - and issues as many requests as that needs.
+Splitting drops nothing, so it is **not** reported as truncation.
+
+| Shape | Requests | Time |
+| --- | --- | --- |
+| One `describeObjects` over 261 indices | 3 | 9 ms |
+| The 261 `describeObject` calls it replaces | 522 | 1,381 ms |
+
+**One mapper, shared with the single read.** `searchObjectDetail()` builds both, so a batch cannot
+spell an object differently from `describeObject` on the same name. Verified live on both products:
+for every index, alias and data stream, the batch's detail is identical to the single read's.
+
+**A name the cluster answered nothing for is named, never described as empty.** A concrete `_mapping`
+request answers for every name it was given - a closed index included, measured - and refuses the
+whole request for one that does not exist, so a name missing from a present answer cannot come from
+the engine. Reporting it as a mapping-less index would spell it exactly like an index that really has
+no mapping, which is an ordinary state.
+
+**The bound is the caller's, and there is no `limit + 1`.** Every listing is one REST call answering
+the cluster's whole set, so the target set is complete before anything is cut and the comparison is
+exact. The cut is applied in code after the shared `comparePaths` sort, which makes a bounded read's
+membership this provider's rather than the server's: no listing endpoint here takes an order or a
+limit at all.
+
+**The fixture is `docker/search-init/01-object-fixture.sh` and it applies unchanged to both
+products.** Neither image has an init-script directory, so it is a script rather than a file the
+entrypoint runs. `database-compose.yml` mounts the directory read-only into both services at
+`/opt/search-init`, so it is applied either from the repo or from inside the container:
+
+```bash
+SEARCH_URL=http://localhost:9200 bash docker/search-init/01-object-fixture.sh
+docker exec libredb-elasticsearch bash /opt/search-init/01-object-fixture.sh
+docker exec libredb-opensearch    bash /opt/search-init/01-object-fixture.sh
+```
+
+It creates one instance of every declared kind: the index `probe_orders`, the alias
+`probe_orders_alias`, the ingest pipeline `probe_pipeline`, the composable index templates
+`probe_template` and `probe_stream_template`, and the data stream `probe_stream`.
+
+**The one measured difference between the two products, and it is not in the declaration.** The
+object surface's five kinds, their roles, their paths and their columns were driven against a live
+Elasticsearch 9.1.4 node and a live OpenSearch 3.8.0 node on 2026-09-11 with the same fixture applied,
+and the output was identical kind for kind, path for path and column for column. What differs is what
+a **stock** cluster already holds: this product ships 21 ingest pipelines and 61 composable index
+templates of its own, so the filter above is doing real work here from the first run, and the
+empty-pipeline case (HTTP 404) is TRANSIENT here rather than unreachable: it is reached by deleting
+the built-ins, measured, and they come back about twenty seconds later (the object surface section
+above records that run). On OpenSearch it is the ordinary first-run state. See
+[opensearch.md](opensearch.md) for the other half of that sentence.
 
 ---
 
@@ -888,7 +1078,7 @@ The honest empties, each with its reason:
 `TableStats.rowCount`, `totalSize` and `totalSizeBytes` are required numbers, so for those three a
 closed index has nowhere to read but zero. `tableSize` and `tableSizeBytes` are *optional*, so they
 are **absent** rather than `0`: a zero there would be a fabricated measurement rather than a forced
-one. The schema tree makes the same distinction with its own optional `TableSchema.rowCount` and
+one. The schema tree makes the same distinction with its own optional `DatabaseObject.rowCount` and
 `size` (the comment over `toTableStats()` in
 [`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts)).
 
@@ -983,6 +1173,8 @@ difference — `OFFSET` — has no field in `ProviderCapabilities` to declare it
 | `defaultPort` | `9200` | Both schemes ([§4.3](#43-tls)) |
 | `identifierQuoting` | **`double`** | Declared because the port cannot say: the fork ships on 9200 too and quotes differently, and a wrong guess there returns **no rows** rather than an error ([opensearch.md §5.4](./opensearch.md#54-dialect-traps-a-user-will-hit)) |
 | `statementTerminator` | **`none`** | This grammar has no `;`, and the generated `SELECT * FROM probe_orders LIMIT 50;` was refused — the schema tree's first click ([§5.4](#54-dialect-traps-a-user-will-hit)) |
+| `containerLevels` | **`[]`** | An index is not inside anything, and both products' own SQL surfaces say so ([§6](#the-object-surface-789)) |
+| `objectKinds` | `index`, `alias`, `stream`, `pipeline`, `template` | The five objects a search cluster publishes over REST; `index` is the only one that accepts row writes ([§6](#the-object-surface-789)) |
 | `schemaRefreshPattern` | `\b(DELETE)\b` | Can never fire on this product — its grammar has no DELETE. It is there for the fork ([§5.6](#56-this-grammar-does-not-write)) |
 
 `isGroupedKeyspace` is deliberately **absent**: an index is a real object the cluster holds, named by
@@ -1022,7 +1214,7 @@ These are not decoration. `inventory-noun.ts` lowercases `entityName` into the n
 reasons with, so a cluster described as holding "tables" of "rows" invites statements written for a
 relational engine. "Indices" rather than "Indexes" because that is the plural the product's own API and
 documentation use — and because "indexes" is the word this codebase already uses for the
-secondary-index objects an index does **not** have (`TableSchema.indexes`, empty by construction
+secondary-index objects an index does **not** have (`ObjectDetail.indexes`, empty by construction
 here).
 
 The two maintenance actions are named even though `supportsMaintenance` is false, because they are
@@ -1207,7 +1399,8 @@ await provider.connect();                              // proves the port AND th
 
 const rows   = await provider.query('SELECT * FROM probe_orders LIMIT 50');   // no trailing ';'
 const groups = await provider.query('SELECT k, COUNT(*) AS c FROM probe_buckets GROUP BY k');
-const schema = await provider.getSchema();             // indices + mapped fields; indexes always []
+const objects = await provider.listObjects(container, 'table');
+const { details } = await provider.describeObjects(container, 'table');
 const stats  = await provider.getTableStats();         // documents and primary bytes per index
 
 await provider.disconnect();

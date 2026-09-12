@@ -31,11 +31,12 @@
  *   second page cannot be served at all and is refused rather than silently
  *   turned back into page one.
  */
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
-import type { DatabaseProvider } from "@/lib/db/types";
+import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { ElasticsearchProvider } from "@/lib/db/providers/sql/search";
 import { generateTableQuery } from "@/lib/query-generators";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import {
   AuthenticationError,
   ConnectionError,
@@ -199,8 +200,28 @@ const ROOT_BODY = JSON.stringify({
  * Every number is QUOTED even though `bytes=b` was asked for, which is the trap the
  * seam records: the default listing formats them ("5.6kb") and even the
  * machine-readable form arrives as a string.
+ *
+ * The last row is the data stream's BACKING INDEX, and it is here because the whole
+ * argument for declaring `stream` as its own kind rests on it: a backing index is
+ * `.ds-`-prefixed, so the index listing's own dot rule already hides it, which is why
+ * a data stream is reachable through nothing in the tree without that kind AND why
+ * counting both kinds double-counts nothing. Without this row that premise is prose;
+ * with it, `index` is still 3 and `stream` is still 1.
  */
 const CAT_INDICES_BODY = JSON.stringify([
+  {
+    health: "yellow",
+    status: "open",
+    index: ".ds-probe_stream-2026.09.11-000001",
+    uuid: "hVj2mS9dQ1O3hQxhIlP9Aw",
+    pri: "1",
+    rep: "1",
+    "docs.count": "1",
+    "docs.deleted": "0",
+    "store.size": "6284",
+    "pri.store.size": "6284",
+    "dataset.size": "6284",
+  },
   {
     health: "yellow",
     status: "open",
@@ -486,6 +507,19 @@ const DIVIDE_BY_ZERO = engineFault(500, "arithmetic_exception", "/ by zero");
 const MAPPING_NOT_FOUND = engineFault(404, "index_not_found_exception", "no such index [nope_missing]");
 
 /**
+ * A 404 that is a REFUSAL and not an empty set (#789).
+ *
+ * The pipeline endpoint's 404 means "there are none" only while the body is `{}`.
+ * Measured on both products 2026-09-11, a genuine 404 on an object endpoint carries
+ * the full error envelope - `GET /_data_stream/nope` answers
+ * `index_not_found_exception`, "no such index [nope]" - so the body is what separates
+ * a folder that holds nothing from a folder nobody may read. This one wears the same
+ * fault name against the pipeline store, which is what a cluster missing that backing
+ * index answers.
+ */
+const MISSING_PIPELINE_INDEX = engineFault(404, "index_not_found_exception", "no such index [nope_pipeline_store]");
+
+/**
  * `POST /_plugins/_sql` against THIS product - HTTP 400 and `error` as a STRING.
  *
  * This is what an `opensearch` connection pointed at an Elasticsearch node
@@ -503,6 +537,152 @@ const NO_SUCH_HANDLER = '{"error":"no handler found for uri [/_plugins/_sql] and
  * rather than invented.
  */
 const NO_BODY = "";
+
+// ============================================================================
+// Object-surface payloads (#789)
+// ============================================================================
+
+/**
+ * The four REST listings the object surface reads, captured from a live
+ * Elasticsearch 9.1.4 node on 2026-09-11 with `docker/search-init/01-object-fixture.sh`
+ * applied.
+ *
+ * The SQL endpoint is NOT where these objects live, and that is the reason this task
+ * is separate from the SQL engines: neither product's SQL grammar has a CREATE
+ * statement of any kind, so nothing here has a catalog query behind it. Every body
+ * below is one GET.
+ *
+ * Each payload carries the engine's own bookkeeping beside the fixture's objects,
+ * because the filter that removes it is the part a fixture-shaped test cannot see:
+ * a stock node really does ship 21 pipelines and 61 index templates, all managed, and
+ * a count that included them would report a user's single pipeline as 22.
+ */
+const ALIAS_BODY = JSON.stringify({
+  // Keyed by INDEX, with an inner map of that index's aliases. An index carrying no
+  // alias is still listed, with an empty map.
+  probe_orders: { aliases: { probe_orders_alias: {}, shared_alias: {} } },
+  probe_shapes: { aliases: {} },
+  // The SAME alias on a second index. Measured: the listing names it under both, and
+  // the tree addresses an alias by name, so the listing has to deduplicate or the
+  // folder holds one object at two identical paths.
+  probe_buckets: { aliases: { shared_alias: {} } },
+  // A dot-prefixed alias, which a user CAN create (measured, `POST /_aliases` adding
+  // `.dot_alias` answers acknowledged) and which the dot convention hides anyway -
+  // the same cost the index listing already pays, recorded in both provider docs.
+  ".probe_internal": { aliases: { ".probe_internal_alias": {} } },
+});
+
+/**
+ * `GET /_ingest/pipeline`, trimmed to the members that decide anything.
+ *
+ * `_meta.managed` is the whole filter here: all 21 built-ins carry it and NONE of
+ * them carries a dot, so a dot-only rule would show every one of them.
+ */
+const PIPELINES_BODY = JSON.stringify({
+  "apm@pipeline": { version: 12, _meta: { managed: true }, processors: [] },
+  "logs-apm.app@default-pipeline": { version: 101, _meta: { managed: true }, processors: [] },
+  probe_pipeline: { description: "libredb object-surface fixture (#789)", processors: [] },
+});
+
+/**
+ * `GET /_index_template`.
+ *
+ * Four of the 61 built-ins are NOT managed - `.monitoring-beats-mb`,
+ * `.monitoring-kibana-mb`, `.monitoring-logstash-mb`, `.monitoring-es-mb` - and carry
+ * a dot instead, which is why the rule reads both signals and one of them is here.
+ */
+const TEMPLATES_BODY = JSON.stringify({
+  index_templates: [
+    // Managed AND dot-free, which is what makes `_meta.managed` load-bearing: 43 of
+    // the 61 built-ins carry no dot, so a dot-only rule leaves every one of them in.
+    // The marker lives one level down, under `index_template`, not on the entry.
+    {
+      name: "logs-apm.error@template",
+      index_template: { index_patterns: ["logs-apm.error-*"], _meta: { managed: true } },
+    },
+    { name: ".monitoring-es-mb", index_template: { index_patterns: [".monitoring-es-8-mb-*"] } },
+    { name: "probe_template", index_template: { index_patterns: ["probe-template-*"] } },
+    { name: "probe_stream_template", index_template: { index_patterns: ["probe_stream*"], data_stream: {} } },
+  ],
+});
+
+/**
+ * `GET /_data_stream`.
+ *
+ * The backing index is `.ds-`-prefixed, so the index listing hides it under the same
+ * dot rule that hides an engine's own indices: without this listing a data stream is
+ * reachable through nothing in the tree. Elasticsearch marks its own with
+ * `"system": true`, which OpenSearch's payload omits entirely - and NEITHER member is
+ * read: the dot rule already removes every engine-owned data stream that could be
+ * measured, so the flag is carried here as the shape of the live payload and decides
+ * nothing.
+ */
+const DATA_STREAMS_BODY = JSON.stringify({
+  data_streams: [
+    {
+      name: "probe_stream",
+      timestamp_field: { name: "@timestamp" },
+      indices: [{ index_name: ".ds-probe_stream-2026.09.11-000001" }],
+      generation: 1,
+      status: "YELLOW",
+      template: "probe_stream_template",
+      hidden: false,
+      system: false,
+    },
+    {
+      name: ".fleet-actions-results",
+      timestamp_field: { name: "@timestamp" },
+      indices: [{ index_name: ".ds-.fleet-actions-results-2026.09.11-000001" }],
+      generation: 1,
+      status: "GREEN",
+      template: ".fleet-actions-results",
+      hidden: true,
+      system: true,
+    },
+  ],
+});
+
+/** The mapping the alias and the data stream resolve to, both keyed by the concrete index. */
+const ALIAS_MAPPING_BODY = JSON.stringify({
+  probe_orders: { mappings: { properties: { customer: { type: "keyword" }, id: { type: "long" } } } },
+});
+/**
+ * `GET /shared_alias/_mapping`, the SECOND alias, resolving to a DIFFERENT index.
+ *
+ * The two aliases of this fixture point at different indices here, which is what lets a
+ * test tell an alias described from its own mapping from one handed the first alias's.
+ */
+const SHARED_ALIAS_MAPPING_BODY = JSON.stringify({
+  probe_buckets: { mappings: { properties: { k: { type: "keyword" } } } },
+});
+
+/**
+ * `GET /probe_buckets,probe_orders,probe_shapes/_mapping`, the whole index folder in one
+ * request (#789).
+ *
+ * Keyed by the concrete index name, which for the INDEX kind is the name that was asked
+ * for - that is the property the bulk read rests on, and the property an alias and a data
+ * stream do not have.
+ *
+ * COMPOSED from the three single-index bodies rather than written again, so the bulk read
+ * and the single read cannot be compared against two different servers: a fixture that
+ * quietly gave the batch a smaller mapping would make "the two answers agree" pass while
+ * they described different indices.
+ */
+function bulkMappingBody(...names: string[]): string {
+  const single: Record<string, string> = {
+    probe_buckets: BUCKETS_MAPPING_BODY,
+    probe_orders: ORDERS_MAPPING_BODY,
+    probe_shapes: SHAPES_MAPPING_BODY,
+  };
+  return JSON.stringify(Object.assign({}, ...names.map((name) => JSON.parse(single[name]) as Record<string, unknown>)));
+}
+
+const STREAM_MAPPING_BODY = JSON.stringify({
+  ".ds-probe_stream-2026.09.11-000001": {
+    mappings: { _data_stream_timestamp: { enabled: true }, properties: { "@timestamp": { type: "date" } } },
+  },
+});
 
 // ============================================================================
 // fetch harness
@@ -571,6 +751,21 @@ const PATH_BODIES: Record<string, string> = {
   "/probe_shapes2/_mapping": NESTED_MAPPING_BODY,
   "/probe_closed/_mapping": EMPTY_MAPPING_BODY,
   "/.probe_internal/_mapping": ORDERS_MAPPING_BODY,
+  // The object-surface listings (#789). Each is one GET, and the key is the exact
+  // path the transport builds, so a changed path cannot silently be served another
+  // endpoint's payload.
+  "/_alias": ALIAS_BODY,
+  "/_ingest/pipeline": PIPELINES_BODY,
+  "/_index_template": TEMPLATES_BODY,
+  "/_data_stream": DATA_STREAMS_BODY,
+  "/probe_orders_alias/_mapping": ALIAS_MAPPING_BODY,
+  "/shared_alias/_mapping": SHARED_ALIAS_MAPPING_BODY,
+  "/probe_stream/_mapping": STREAM_MAPPING_BODY,
+  // The bulk column read (#789): ONE `_mapping` request naming every index of the
+  // folder, keyed by the concrete index name. The key is the exact path the transport
+  // builds, so a changed separator or a changed order cannot be served this payload.
+  "/probe_buckets,probe_orders,probe_shapes/_mapping": bulkMappingBody("probe_buckets", "probe_orders", "probe_shapes"),
+  "/probe_buckets,probe_orders/_mapping": bulkMappingBody("probe_buckets", "probe_orders"),
 };
 
 function defaultReply(request: SentRequest): Reply {
@@ -716,6 +911,19 @@ describe("ElasticsearchProvider metadata", () => {
       // answered "extraneous input ';' expecting <EOF>" and the schema tree's first
       // click failed. OpenSearch declares it too - see the shared-answer test there.
       statementTerminator: "none",
+      // ZERO container levels and five object kinds (#789). Spelled out here rather
+      // than only in the object-surface block, because this is the test that fails
+      // when a capability is ADDED without a decision: an index is not inside
+      // anything, and the kinds are the four REST-listed objects plus the index
+      // itself. The roles are asserted where they were measured.
+      containerLevels: [],
+      objectKinds: [
+        { id: "index", role: "relation", label: "Index", labelPlural: "Indices", acceptsRowWrites: true },
+        { id: "alias", role: "relation", label: "Alias", labelPlural: "Aliases" },
+        { id: "stream", role: "relation", label: "Data Stream", labelPlural: "Data Streams" },
+        { id: "pipeline", role: "config", label: "Ingest Pipeline", labelPlural: "Ingest Pipelines" },
+        { id: "template", role: "config", label: "Index Template", labelPlural: "Index Templates" },
+      ],
       schemaRefreshPattern: "\\b(DELETE)\\b",
     });
   });
@@ -728,7 +936,7 @@ describe("ElasticsearchProvider metadata", () => {
     const capabilities = new ElasticsearchProvider(makeConnection()).getCapabilities();
 
     expect(capabilities.statementTerminator).toBe("none");
-    expect(generateTableQuery("orders", capabilities)).toBe("SELECT * FROM orders LIMIT 50");
+    expect(generateTableQuery(["orders"], capabilities)).toBe("SELECT * FROM orders LIMIT 50");
   });
 
   test("declares no explain format at all, which is what hides the button and the tab", () => {
@@ -1025,18 +1233,6 @@ describe("ElasticsearchProvider lifecycle", () => {
     await provider.disconnect();
 
     expect(provider.isConnected()).toBe(false);
-  });
-
-  test("every read before connect is refused rather than answered", async () => {
-    const provider = new ElasticsearchProvider(makeConnection());
-
-    await expect(provider.query(CONNECT_PROBE)).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getSchema()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getOverview()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getTableStats()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getStorageStats()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getHealth()).rejects.toBeInstanceOf(DatabaseConfigError);
-    expect(sent).toEqual([]);
   });
 
   test("the four constant reads answer without a connection, because they read nothing", async () => {
@@ -1647,250 +1843,6 @@ describe("ElasticsearchProvider query preparation", () => {
 // ============================================================================
 
 describe("ElasticsearchProvider schema", () => {
-  test("getSchema lists every index with its MAPPED fields as columns", async () => {
-    // The schema is the MAPPING, not SQL. `SELECT *` describes the statement rather
-    // than the index - measured, an index mapping `flattened` and `nested` answers
-    // `SELECT *` with `{"columns":[],"rows":[[]]}`, a table with no columns at all -
-    // and `DESCRIBE` is a SQL surface whose availability is the very thing the tree
-    // must not depend on.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.map((table) => table.name)).toEqual(["probe_buckets", "probe_shapes", "probe_orders"]);
-    expect(schema[2].columns.map((column) => column.name)).toEqual(["created", "customer", "id", "note", "total"]);
-    expect(schema[2].columns[1]).toEqual({
-      name: "customer",
-      // The engine's own mapping type, not a SQL type name: the grid labels the same
-      // field `keyword` too, so the tree and the results speak one vocabulary.
-      type: "keyword",
-      nullable: true,
-      isPrimary: false,
-    });
-  });
-
-  test("getSchema reads the mapping of each index and nothing else", async () => {
-    const provider = await connectProvider();
-    sent = [];
-
-    await provider.getSchema();
-
-    expect(pathsSent().sort()).toEqual(
-      [
-        "/_cat/indices?format=json&bytes=b",
-        "/probe_buckets/_mapping",
-        "/probe_orders/_mapping",
-        "/probe_shapes/_mapping",
-      ].sort(),
-    );
-  });
-
-  test("getSchema arms one deadline for the whole tree, not one per index", async () => {
-    // One signal per OPERATION: a sidebar that renders half its indices after a stall
-    // is not a better answer than one that reports the stall.
-    const provider = await connectProvider();
-    armedDeadlines = [];
-
-    await provider.getSchema();
-
-    expect(armedDeadlines).toEqual([60_000]);
-  });
-
-  test("getSchema drops a container and a multi-field, keeps the parent and the leaf", async () => {
-    // Two measurements pulling in opposite directions. A container breaks the WHOLE
-    // statement: `SELECT address FROM probe_shapes` is HTTP 400, "Cannot use field
-    // [address] type [object] only its subfields", and `query-generators.ts` builds its
-    // starter query by enumerating every declared column - so listing `address` would
-    // hand the user a query that cannot run at all. But a multi-field PARENT is not a
-    // container: `SELECT note` answers the text here, so "has sub-fields" is the wrong
-    // test and the field's own type is the test.
-    //
-    // The multi-field CHILD is nonetheless dropped, and this is the one place the
-    // provider offers less than Elasticsearch can do. `SELECT note.keyword` works here;
-    // OpenSearch 3.8.0 refuses it in every spelling (`SemanticCheckException`, "can't
-    // resolve Symbol(namespace=FIELD_NAME, name=note.keyword) in type env"), and
-    // dynamic mapping creates such a child for EVERY text field - so one
-    // implementation serving both type-ids either leaves it out or hands OpenSearch
-    // users a starter query that fails on nearly every index. The loss is recorded in
-    // `introspect.ts` rather than hidden, and typing `note.keyword` here still works.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-    const shapes = schema.find((table) => table.name === "probe_shapes");
-
-    expect(shapes?.columns.map((column) => column.name)).toEqual(["address.city", "note"]);
-    expect(shapes?.columns.map((column) => column.type)).toEqual(["keyword", "text"]);
-  });
-
-  test("getSchema addresses an object sub-field by the dotted path SQL accepts", async () => {
-    // The dotted path is an identifier, not a display convenience: `SELECT address.city
-    // FROM probe_shapes` returns the column, measured on BOTH products. This assertion
-    // deliberately names an object sub-field rather than `k.keyword`, because the
-    // multi-field kind is dropped for a portability reason (see the test above) and
-    // asserting on it would conflate the two decisions.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.find((table) => table.name === "probe_buckets")?.columns.map((column) => column.name)).toEqual(["k"]);
-  });
-
-  test("getSchema drops a nested container but still lists a type SQL cannot read", async () => {
-    // `nested` is refused by name with the same wording as `object`, so it is not a
-    // column. `flattened` IS listed even though `SELECT blob` is refused with "Cannot
-    // use field [blob] with unsupported type [flattened]" - a recorded limitation, not
-    // an oversight: the mapping does not say which types SQL supports, and enumerating
-    // them would be a per-version list this code cannot verify, which would hide fields
-    // a future version reads perfectly well.
-    const provider = await connectProvider();
-    overridePath("/_cat/indices?format=json&bytes=b", ok(JSON.stringify([{ index: "probe_shapes2", status: "open" }])));
-
-    const schema = await provider.getSchema();
-
-    expect(schema[0].columns.map((column) => column.name)).toEqual(["blob", "items.sku"]);
-    expect(schema[0].columns.map((column) => column.type)).toEqual(["flattened", "keyword"]);
-  });
-
-  test("getSchema marks every column nullable and none of them primary", async () => {
-    // Both are measurements rather than hedges. A mapping declares how a field is
-    // indexed IF a document carries it - there is no NOT NULL in the model, and a
-    // document indexed without the field really comes back as `null`. And nothing a
-    // mapping declares is unique: the only unique thing in an index is the document
-    // `_id`, which is metadata rather than a mapped field and which this product's SQL
-    // does not even expose ("Unknown column [_id]", measured, while OpenSearch's
-    // returns it). `isPrimary` is stated as FACT wherever it is read - autocomplete
-    // appends "(PK)", the agent's schema context puts " PK" into what a model reasons
-    // from - so a key invented here becomes a key the product asserts.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-    const columns = schema.flatMap((table) => table.columns);
-
-    expect(columns.every((column) => column.nullable)).toBe(true);
-    expect(columns.filter((column) => column.isPrimary)).toEqual([]);
-    expect(columns.every((column) => column.defaultValue === undefined)).toBe(true);
-  });
-
-  test("getSchema reports no indexes and no foreign keys, both empty by construction", async () => {
-    // The word collision is the trap: an Elasticsearch index is the TABLE here. Every
-    // mapped field is inverted-indexed as a property of being mapped, so there is
-    // nothing a user declared and nothing to name - and no DDL exists that could
-    // declare a reference.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.every((table) => table.indexes.length === 0)).toBe(true);
-    expect(schema.every((table) => table.foreignKeys?.length === 0)).toBe(true);
-  });
-
-  test("getSchema carries the document count and the primary store size per index", async () => {
-    // Documents are the rows on this surface, and the counts arrive as STRINGS even
-    // under `bytes=b` - so a caller seeing numbers here is the parsing working.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.map((table) => table.rowCount)).toEqual([1500, 2, 1]);
-    expect(schema.map((table) => table.size)).toEqual(["67.24 KB", "9.7 KB", "5.77 KB"]);
-  });
-
-  test("getSchema keeps a closed index and omits the counts it has none of", async () => {
-    // Measured: a closed index is listed by the default `_cat` call, its status is the
-    // word "close", and every count arrives as JSON `null` - while its mapping still
-    // answers in full. So it can be described completely and honestly, with the counts
-    // ABSENT rather than zero; dropping it would tell the user their index is gone when
-    // it is merely closed, and a zero would claim it holds nothing.
-    const provider = await connectProvider();
-    overridePath("/_cat/indices?format=json&bytes=b", ok(CAT_INDICES_CLOSED_BODY));
-
-    const schema = await provider.getSchema();
-
-    expect(schema).toHaveLength(1);
-    expect(schema[0].name).toBe("probe_closed");
-    expect(schema[0].rowCount).toBeUndefined();
-    expect(schema[0].size).toBeUndefined();
-    expect("rowCount" in schema[0]).toBe(false);
-  });
-
-  test("getSchema reports an index with no mapping as having no fields, not as an error", async () => {
-    // An index created without a mapping answers a present, EMPTY `mappings` object.
-    // That is a fact about the index - a brand-new index really has no fields - so an
-    // empty column list is the honest answer.
-    const provider = await connectProvider();
-    overridePath("/_cat/indices?format=json&bytes=b", ok(CAT_INDICES_CLOSED_BODY));
-
-    const schema = await provider.getSchema();
-
-    expect(schema[0].columns).toEqual([]);
-  });
-
-  test("getSchema hides the indices the engine keeps for itself", async () => {
-    // Hiding them is the default because a developer writing a query does not want two
-    // thirds of the sidebar to be indices they have never heard of - measured on a
-    // stock OpenSearch node, two of three indices on an EMPTY cluster are the engine's
-    // own bookkeeping.
-    const provider = await connectProvider();
-    overridePath("/_cat/indices?format=json&bytes=b", ok(CAT_INDICES_SYSTEM_BODY));
-
-    expect(await provider.getSchema()).toEqual([]);
-    // And no mapping was read for an index that was never going to be shown.
-    expect(pathsSent()).not.toContain("/.probe_internal/_mapping");
-  });
-
-  test("getTables lists the index names", async () => {
-    const provider = await connectProvider();
-
-    expect(await provider.getTables()).toEqual(["probe_buckets", "probe_shapes", "probe_orders"]);
-  });
-
-  test("an index that vanished between the listing and its mapping costs its columns only", async () => {
-    // The listing is a snapshot, so an index deleted in between is a race that happens
-    // on a live cluster rather than a fault - and this is the second vocabulary the one
-    // product speaks: the SQL endpoint reports Java class names while the CORE REST
-    // layer keeps Elasticsearch's snake_case lineage, so `index_not_found_exception` has
-    // to be classified for the mapping endpoint too.
-    const provider = await connectProvider();
-    replyFor = (request) =>
-      request.path === "/probe_shapes/_mapping" ? fail(404, MAPPING_NOT_FOUND) : defaultReply(request);
-
-    const schema = await provider.getSchema();
-
-    expect(schema.map((table) => table.name)).toEqual(["probe_buckets", "probe_shapes", "probe_orders"]);
-    expect(schema[1].columns).toEqual([]);
-    expect(schema[2].columns).toHaveLength(5);
-  });
-
-  test("a per-index denial costs that index's columns and not the sidebar", async () => {
-    // A security plugin grants index privileges PER INDEX, so a role that lists twenty
-    // indices and may describe nineteen is an ordinary configuration; failing the whole
-    // sidebar over the twentieth would punish a perfectly usable connection.
-    const provider = await connectProvider();
-    replyFor = (request) => (request.path === "/probe_orders/_mapping" ? fail(403, NO_BODY) : defaultReply(request));
-
-    const schema = await provider.getSchema();
-
-    expect(schema).toHaveLength(3);
-    expect(schema[2].columns).toEqual([]);
-  });
-
-  test("an unreachable cluster fails the tree instead of reporting empty indices", async () => {
-    // Everything but `auth` and `unknown-object` propagates on purpose: rendering every
-    // index with zero columns reads as "these indices have no fields", which is a
-    // fabricated schema and the failure mode that hides the real error forever.
-    const provider = await connectProvider();
-    networkFailure = Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
-
-    await expect(provider.getSchema()).rejects.toBeInstanceOf(ConnectionError);
-  });
-
-  test("a denied index listing fails rather than presenting an empty cluster", async () => {
-    const provider = await connectProvider();
-    overridePath("/_cat/indices?format=json&bytes=b", fail(403, NO_BODY));
-
-    await expect(provider.getSchema()).rejects.toBeInstanceOf(AuthenticationError);
-  });
-
   test("declares neither getSchemaList nor getSchemaRelations", async () => {
     // Both are optional and the split exists so a slow relationship read cannot block
     // the table list - which this engine has neither half of: a list would be
@@ -2270,4 +2222,576 @@ describe("ElasticsearchProvider maintenance", () => {
       expect(sent).toEqual([]);
     },
   );
+});
+
+// ============================================================================
+// The object surface (#789)
+// ============================================================================
+
+/**
+ * What the fixture holds once the engine's own objects are filtered out.
+ *
+ * `index` is 3 because `CAT_INDICES_BODY` holds three user indices; the other four
+ * come from the bodies above. Every number here is a COUNT of what the listing
+ * returns, which is the same read - see the provider's `readKind`.
+ */
+const FIXTURE_OBJECT_COUNTS = { index: 3, alias: 2, pipeline: 1, template: 2, stream: 1 };
+
+describe("object surface", () => {
+  test("declares the kinds a search cluster has, at zero container levels", () => {
+    const capabilities = new ElasticsearchProvider(makeConnection()).getCapabilities();
+    const kinds = capabilities.objectKinds ?? [];
+
+    expect(kinds.map((kind) => kind.id).sort()).toEqual(["alias", "index", "pipeline", "stream", "template"]);
+    // An index takes a document write through the document APIs, which is the per-KIND
+    // half and is deliberately not conjoined with the engine-wide
+    // `supportsInlineRowEdit: false` this provider declares for a grammar with no
+    // UPDATE in it.
+    expect(kinds.find((kind) => kind.id === "index")?.acceptsRowWrites).toBe(true);
+    // An alias is a RELATION and not config, and that is measured rather than
+    // classified by intuition: `SELECT customer FROM probe_orders_alias` answers rows
+    // on both products. It takes no row write, because an alias over several indices
+    // has no single write target and the engine refuses an index request against one.
+    expect(kinds.find((kind) => kind.id === "alias")?.role).toBe("relation");
+    expect(kinds.find((kind) => kind.id === "alias")?.acceptsRowWrites).toBeUndefined();
+    // A data stream is a relation for the same measured reason, and is append-only:
+    // the engine refuses a plain index request against one.
+    expect(kinds.find((kind) => kind.id === "stream")?.role).toBe("relation");
+    expect(kinds.find((kind) => kind.id === "stream")?.acceptsRowWrites).toBeUndefined();
+    expect(kinds.find((kind) => kind.id === "pipeline")?.role).toBe("config");
+    expect(kinds.find((kind) => kind.id === "template")?.role).toBe("config");
+
+    // Absent, not declared-and-zero. Neither product's SQL surface has CREATE VIEW,
+    // OpenSearch's grammar has no CREATE statement at all, and neither has a
+    // user-defined function, a stored procedure or a trigger. Elasticsearch 9.4's
+    // ES|QL views API is a technical preview and gets no folder either.
+    for (const absent of ["view", "function", "procedure", "trigger", "script"]) {
+      expect(kinds.find((kind) => kind.id === absent)).toBeUndefined();
+    }
+
+    // Zero container levels: an index is not inside anything. Both products' own SQL
+    // surfaces say so - OpenSearch answers `TABLE_SCHEM` null and Elasticsearch reports
+    // only a cluster name that is not addressable in a statement.
+    expect(capabilities.containerLevels).toEqual([]);
+  });
+
+  test("satisfies the shared object surface contract", async () => {
+    const provider = await connectProvider();
+
+    await assertObjectSurface(provider, {
+      // A zero-level engine lists NO containers, and the helper addresses every object
+      // at the root container. `[[]]` would assert that `listContainers()` answers one
+      // container whose path is empty, which is a different and untrue claim.
+      containers: [],
+      kinds: FIXTURE_OBJECT_COUNTS,
+      sampleObject: { path: ["probe_orders_alias"], kind: "alias" },
+    });
+  });
+});
+
+/**
+ * The listings, the detail row and the refusals, kept out of the block above so
+ * `-t "object surface"` still runs the shared contract on its own.
+ */
+describe("Elasticsearch object listings and detail", () => {
+  test("there is no container level, so the tree opens straight onto the kind folders", async () => {
+    const provider = await connectProvider();
+    sent = [];
+
+    // Empty rather than one root container, and answered without a round trip: a
+    // search cluster has nothing above an index, so first paint costs one
+    // `countObjects` and no container walk at all.
+    expect(await provider.listContainers()).toEqual([]);
+    // A nested call is the same statement about the same engine, not a different one.
+    expect(await provider.listContainers(["anything"])).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  test("the count and the listing are the same read, filtered the same way", async () => {
+    const provider = await connectProvider();
+
+    const counts = await provider.countObjects([]);
+    expect(counts).toEqual({
+      index: { count: 3 },
+      alias: { count: 2 },
+      stream: { count: 1 },
+      pipeline: { count: 1 },
+      template: { count: 2 },
+    });
+
+    // Every number above is the length of the listing below, kind by kind. That is
+    // ruling 5f held on a REST surface: both go through `readKind`.
+    for (const [kind, count] of Object.entries(counts)) {
+      const listed = await provider.listObjects([], kind);
+      expect(listed).toHaveLength((count as { count: number }).count);
+      expect(listed.every((object) => object.kind === kind)).toBe(true);
+      expect(listed.every((object) => object.path.length === 1)).toBe(true);
+    }
+  });
+
+  test("the engine's own objects are removed, and a dot is not the only signal", async () => {
+    const provider = await connectProvider();
+
+    // 21 managed ingest pipelines ship on a stock node and NONE of them carries a dot,
+    // so a dot-only rule would report this user's single pipeline as a folder of 22.
+    expect((await provider.listObjects([], "pipeline")).map((object) => object.name)).toEqual(["probe_pipeline"]);
+    // And the reverse: `.monitoring-es-mb` is one of the four built-in templates that
+    // carry NO managed marker, so a managed-only rule would leave it in.
+    expect((await provider.listObjects([], "template")).map((object) => object.name)).toEqual([
+      "probe_stream_template",
+      "probe_template",
+    ]);
+    // `.fleet-actions-results` is removed by the DOT rule alone. Its `"system": true`
+    // member is deliberately not read - `DATA_STREAM_FIELDS` says so, because M4
+    // measured that no fixture can distinguish the two rules - so this assertion is
+    // about the dot, and the payload's system flag is inert vocabulary beside it.
+    expect((await provider.listObjects([], "stream")).map((object) => object.name)).toEqual(["probe_stream"]);
+  });
+
+  test("one alias on two indices is one object, and a dot-prefixed alias is the engine's", async () => {
+    const provider = await connectProvider();
+
+    // `shared_alias` is listed under `probe_orders` AND `probe_buckets` in the same
+    // payload. The tree addresses an alias by name, so without the dedupe this folder
+    // holds two rows at one identical path, which the conformance helper refuses.
+    const aliases = await provider.listObjects([], "alias");
+
+    expect(aliases.map((object) => object.name)).toEqual(["probe_orders_alias", "shared_alias"]);
+    expect(new Set(aliases.map((object) => JSON.stringify(object.path))).size).toBe(aliases.length);
+  });
+
+  test("an index, an alias and a data stream are described from their mapping", async () => {
+    const provider = await connectProvider();
+
+    // An alias resolves to the index behind it and a data stream to its backing index,
+    // and both come back keyed by the CONCRETE index name - which is why the detail
+    // read cannot look the payload up by the name it asked for.
+    const alias = await provider.describeObject(["probe_orders_alias"], "alias");
+    expect(alias.path).toEqual(["probe_orders_alias"]);
+    expect(alias.columns.map((column) => column.name)).toEqual(["customer", "id"]);
+
+    const stream = await provider.describeObject(["probe_stream"], "stream");
+    expect(stream.columns.map((column) => column.name)).toEqual(["@timestamp"]);
+
+    // Empty by construction on every kind: every mapped field is inverted-indexed as a
+    // property of being mapped, so no secondary-index object exists to name, and the
+    // engine has no foreign key constraint in its model at all.
+    expect(alias.indexes).toEqual([]);
+    expect(alias.foreignKeys).toEqual([]);
+  });
+
+  // --------------------------------------------------------------------------
+  // describeObjects, the bulk column read (#789)
+  // --------------------------------------------------------------------------
+
+  test("reads a whole index folder's mappings in ONE request", async () => {
+    const provider = await connectProvider();
+    sent = [];
+
+    const batch = await provider.describeObjects!([], "index");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([["probe_buckets"], ["probe_orders"], ["probe_shapes"]]);
+    expect(batch.truncated).toBeUndefined();
+    // Each index carries ITS OWN fields, taken from the key the cluster answered under.
+    // `k.keyword` is a multi-field and is dropped by the SAME rule the single read
+    // applies, because OpenSearch cannot select one - so the two answers agree here too.
+    expect(batch.details.map((detail) => detail.columns.map((column) => column.name))).toEqual([
+      ["k"],
+      ["created", "customer", "id", "note", "total"],
+      ["address.city", "note"],
+    ]);
+    // ONE mapping request for the three, and it names all three: a loop over
+    // `describeObject` would send three, each preceded by its own `_cat/indices` read.
+    expect(pathsSent().filter((path) => path.endsWith("/_mapping"))).toEqual([
+      "/probe_buckets,probe_orders,probe_shapes/_mapping",
+    ]);
+  });
+
+  test("chunks the request so a wide folder cannot outgrow the cluster's request-line limit", async () => {
+    // Measured on 9.1.4: a `_mapping` request whose index list is 3,999 characters answers
+    // 200 and one of 4,499 answers HTTP 400, `too_long_http_line_exception`, "An HTTP line
+    // is larger than 4096 bytes." So the whole folder in one URL is not an option, and the
+    // chunking is bounded by BYTES rather than by a count of names, because an index name
+    // may be up to 255 bytes.
+    const wide = Array.from({ length: 60 }, (_, index) => `bench_${String(index).padStart(3, "0")}_${"x".repeat(80)}`);
+    const provider = await connectProvider();
+    // Every index has a mapping of its own, synthesised from whatever names the URL
+    // carries, so the chunk boundaries are the only thing under test here.
+    replyFor = (request) => {
+      if (request.path === "/_cat/indices?format=json&bytes=b") {
+        return ok(JSON.stringify(wide.map((index) => ({ index, status: "open", "docs.count": "1" }))));
+      }
+      if (request.path.endsWith("/_mapping")) {
+        const names = decodeURIComponent(request.path.slice(1, -"/_mapping".length)).split(",");
+        return ok(
+          JSON.stringify(
+            Object.fromEntries(names.map((name) => [name, { mappings: { properties: { a: { type: "long" } } } }])),
+          ),
+        );
+      }
+      return defaultReply(request);
+    };
+    sent = [];
+
+    const batch = await provider.describeObjects!([], "index");
+
+    expect(batch.details.map((detail) => detail.path[0])).toEqual([...wide].sort());
+    const mappingPaths = pathsSent().filter((path) => path.endsWith("/_mapping"));
+    expect(mappingPaths.length).toBeGreaterThan(1);
+    // Every request stays well under the 4,096-byte line, and no name is asked for twice.
+    for (const path of mappingPaths) expect(path.length).toBeLessThan(4000);
+    const asked = mappingPaths.flatMap((path) => decodeURIComponent(path.slice(1, -"/_mapping".length)).split(","));
+    expect(asked).toEqual([...wide].sort());
+  });
+
+  test("an alias and a data stream are read one at a time, because the answer is keyed by the INDEX", async () => {
+    const provider = await connectProvider();
+    sent = [];
+
+    const aliases = await provider.describeObjects!([], "alias");
+
+    expect(aliases.details.map((detail) => detail.path)).toEqual([["probe_orders_alias"], ["shared_alias"]]);
+    expect(aliases.details.map((detail) => detail.columns.map((column) => column.name))).toEqual([
+      ["customer", "id"],
+      ["k"],
+    ]);
+    // TWO requests, one per alias, and that is measured rather than lazy: an alias
+    // resolves to the index behind it, so a combined request comes back keyed by the
+    // CONCRETE index and two aliases on one index answer ONE key (measured on 9.1.4,
+    // `GET /probe_orders_alias,alias_two/_mapping` answers `{"probe_orders": ...}`).
+    // There is nothing in that answer to attribute a mapping back to an alias with.
+    expect(pathsSent().filter((path) => path.endsWith("/_mapping"))).toEqual([
+      "/probe_orders_alias/_mapping",
+      "/shared_alias/_mapping",
+    ]);
+
+    sent = [];
+    const streams = await provider.describeObjects!([], "stream");
+    expect(streams.details.map((detail) => detail.columns.map((column) => column.name))).toEqual([["@timestamp"]]);
+    expect(pathsSent().filter((path) => path.endsWith("/_mapping"))).toEqual(["/probe_stream/_mapping"]);
+  });
+
+  test("the bulk read spells an object exactly as the single read does", async () => {
+    const provider = await connectProvider();
+
+    for (const kind of ["index", "alias", "stream"]) {
+      const listed = await provider.listObjects([], kind);
+      const batch = await provider.describeObjects!([], kind);
+      expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+      for (const detail of batch.details) {
+        expect(detail).toEqual(await provider.describeObject(detail.path, kind));
+      }
+    }
+  });
+
+  test("the caller's bound cuts the sorted objects and reaches the mapping request", async () => {
+    const provider = await connectProvider();
+    sent = [];
+
+    const batch = await provider.describeObjects!([], "index", 2);
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([["probe_buckets"], ["probe_orders"]]);
+    expect(batch.truncated).toEqual({
+      limit: 2,
+      reason: "the bulk column read was bounded at 2 objects by its caller",
+    });
+    // The bound reaches the WIRE: the third index is not in the URL at all.
+    expect(pathsSent().filter((path) => path.endsWith("/_mapping"))).toEqual(["/probe_buckets,probe_orders/_mapping"]);
+  });
+
+  test("a bound the folder fits inside reports nothing, on either side of the boundary", async () => {
+    const provider = await connectProvider();
+
+    expect((await provider.describeObjects!([], "index", 3)).truncated).toBeUndefined();
+    expect((await provider.describeObjects!([], "index", 4)).truncated).toBeUndefined();
+  });
+
+  test("a kind with no columns answers an empty batch with no round trip at all", async () => {
+    const provider = await connectProvider();
+
+    for (const kind of ["pipeline", "template"]) {
+      sent = [];
+      expect(await provider.describeObjects!([], kind)).toEqual({ details: [] });
+      expect(sent).toEqual([]);
+    }
+  });
+
+  test("an index the cluster answered nothing for is named, never described as empty", async () => {
+    // A concrete `_mapping` request answers for every name it was given - a closed index
+    // included, measured on 9.1.4 - and 404s outright for one that does not exist. So a
+    // present answer with a name missing from it cannot come from the engine, and the
+    // honest response is to say which index rather than to report it as a mapping-less
+    // index, which is a real and different state.
+    const provider = await connectProvider();
+    overridePath(
+      "/probe_buckets,probe_orders,probe_shapes/_mapping",
+      ok(JSON.stringify({ probe_buckets: { mappings: {} }, probe_orders: { mappings: {} } })),
+    );
+
+    await expect(provider.describeObjects!([], "index")).rejects.toThrow(
+      /answered no mapping for the index probe_shapes/,
+    );
+  });
+
+  test("an undeclared kind is refused by the DECLARATION, naming the engine and the kind", async () => {
+    const provider = await connectProvider();
+
+    await expect(provider.describeObjects!([], "view")).rejects.toThrow(/declares no object kind "view"/);
+  });
+
+  test("a container path of the wrong shape is refused before anything is read", async () => {
+    const provider = await connectProvider();
+    sent = [];
+
+    await expect(provider.describeObjects!(["nope"], "index")).rejects.toThrow(/container path has 0 segment\(s\)/);
+    expect(sent).toEqual([]);
+  });
+
+  test("a limit that is not a positive whole number is refused, never clamped", async () => {
+    const provider = await connectProvider();
+
+    for (const limit of [0, -1, 1.5, Number.NaN]) {
+      await expect(provider.describeObjects!([], "index", limit)).rejects.toThrow(
+        /bulk column read limit must be a positive whole number/,
+      );
+    }
+    // Guard ORDER: the declaration, then the container, then the limit.
+    await expect(provider.describeObjects!([], "view", 0)).rejects.toThrow(/declares no object kind/);
+    await expect(provider.describeObjects!(["nope"], "index", 0)).rejects.toThrow(/container path has 0 segment/);
+  });
+
+  test("a refused listing raises rather than answering an empty folder", async () => {
+    const provider = await connectProvider();
+    denyEverything();
+
+    // The cluster's own refusal, mapped to this repo's class for it, and never an empty
+    // folder: "nobody may read this" and "there is nothing here" are different facts.
+    await expect(provider.describeObjects!([], "index")).rejects.toThrow(/refused the credentials/);
+  });
+
+  test("a pipeline and a template have no columns, and that is the right answer", async () => {
+    const provider = await connectProvider();
+    sent = [];
+
+    const pipeline = await provider.describeObject(["probe_pipeline"], "pipeline");
+
+    expect(pipeline).toEqual({ path: ["probe_pipeline"], columns: [], indexes: [], foreignKeys: [] });
+    // And no mapping was read for it: a pipeline is a JSON document with no field list,
+    // so a `_mapping` request would be asking the wrong endpoint about the wrong thing.
+    expect(pathsSent().some((path) => path.endsWith("/_mapping"))).toBe(false);
+  });
+
+  test("the KIND decides what is looked up, not the name", async () => {
+    const provider = await connectProvider();
+
+    // `probe_orders` is a real index. Asking for it as a pipeline is a miss, because
+    // the lookup runs against the PIPELINE listing.
+    await expect(provider.describeObject(["probe_orders"], "pipeline")).rejects.toThrow(
+      /No Elasticsearch pipeline named probe_orders/,
+    );
+    await expect(provider.describeObject(["probe_orders"], "pipeline")).rejects.toBeInstanceOf(QueryError);
+  });
+
+  test("an undeclared kind is refused by name, on both methods", async () => {
+    const provider = await connectProvider();
+
+    await expect(provider.listObjects([], "view")).rejects.toThrow(/declares no object kind "view"/);
+    await expect(provider.describeObject(["anything"], "view")).rejects.toThrow(/declares no object kind "view"/);
+  });
+
+  test("a backing index is hidden by the dot rule, so a data stream is counted once", async () => {
+    // The premise the `stream` kind rests on, asserted rather than argued: the listing
+    // carries `.ds-probe_stream-2026.09.11-000001` and the index folder does not, so
+    // the stream's data is reachable through the `stream` kind and through nothing
+    // else, and the two kinds do not count the same bytes twice.
+    const provider = await connectProvider();
+
+    const indices = (await provider.listObjects([], "index")).map((object) => object.name);
+
+    expect(indices).toEqual(["probe_buckets", "probe_orders", "probe_shapes"]);
+    expect(indices.some((name) => name.startsWith(".ds-"))).toBe(false);
+    expect(await provider.countObjects([])).toMatchObject({ index: { count: 3 }, stream: { count: 1 } });
+  });
+
+  test("a 404 carrying the engine's own error envelope is a refusal, not an empty folder", async () => {
+    // The status alone cannot tell an empty set from a refusal, and both reach this
+    // endpoint. Measured on both products 2026-09-11: the empty set carries `{}` and
+    // nothing else, while a genuine 404 carries the error envelope this transport
+    // categorises everywhere else (`GET /_data_stream/nope` answers 404 with
+    // `index_not_found_exception`). A missing plugin, a denied endpoint and an
+    // index-shaped 404 would all badge this folder 0 if the status were trusted alone.
+    const provider = await connectProvider();
+    overridePath("/_ingest/pipeline", fail(404, MISSING_PIPELINE_INDEX));
+
+    const counts = await provider.countObjects([]);
+
+    expect(counts.pipeline).toEqual({ unavailable: "no such index [nope_pipeline_store]" });
+    expect(counts.pipeline).not.toEqual({ count: 0 });
+    await expect(provider.listObjects([], "pipeline")).rejects.toThrow(/no such index \[nope_pipeline_store\]/);
+    // And the other four folders are untouched: one endpoint's refusal is one kind's.
+    expect(counts.index).toEqual({ count: 3 });
+  });
+
+  test("a 404 whose body is the empty set is still zero, on this product too", async () => {
+    // The control for the test above, and it is not hypothetical upstream: a stock
+    // node ships 21 managed pipelines, and after `DELETE /_ingest/pipeline/*` (HTTP
+    // 200, acknowledged) `GET /_ingest/pipeline` answered HTTP 404 `{}` on
+    // Elasticsearch 9.1.4, measured 2026-09-11. The two tests differ only in the body.
+    const provider = await connectProvider();
+    overridePath("/_ingest/pipeline", fail(404, "{}"));
+
+    expect((await provider.countObjects([])).pipeline).toEqual({ count: 0 });
+    expect(await provider.listObjects([], "pipeline")).toEqual([]);
+  });
+
+  test("a listing entry with no readable name is refused, never dropped", async () => {
+    // Ruling 5a's failure shape reached from the payload: a dropped entry leaves the
+    // count and the listing agreeing with each other (ruling 5f) and both short by
+    // exactly the objects nobody can see, which is an absence that passes every gate.
+    const provider = await connectProvider();
+    overridePath("/_index_template", ok(JSON.stringify({ index_templates: [{ index_template: {} }] })));
+
+    await expect(provider.listObjects([], "template")).rejects.toThrow(
+      /Elasticsearch answered an index template listing the client could not read/,
+    );
+    expect((await provider.countObjects([])).template).toMatchObject({
+      unavailable: expect.stringContaining("an index template listing"),
+    });
+  });
+
+  test("a listing entry that is not an object, and a list key that is not an array, are refused too", async () => {
+    const provider = await connectProvider();
+    overridePath("/_data_stream", ok(JSON.stringify({ data_streams: ["probe_stream"] })));
+    await expect(provider.listObjects([], "stream")).rejects.toThrow(/a data stream listing/);
+
+    overridePath("/_data_stream", ok(JSON.stringify({ data_streams: { probe_stream: {} } })));
+    await expect(provider.listObjects([], "stream")).rejects.toThrow(/a data stream listing/);
+  });
+
+  test("an alias payload member that is not an object is refused, never skipped", async () => {
+    // Measured on both: an index carrying no alias is still listed, with a PRESENT and
+    // empty map. So a member with no readable alias map is a body this client does not
+    // understand, and skipping it would silently lose that index's aliases.
+    const provider = await connectProvider();
+    overridePath(
+      "/_alias",
+      ok(JSON.stringify({ probe_orders: { aliases: { probe_orders_alias: {} } }, probe_shapes: 7 })),
+    );
+
+    await expect(provider.listObjects([], "alias")).rejects.toThrow(/an alias listing/);
+  });
+
+  test("a declared kind with no reader fails the read instead of badging the folder", async () => {
+    // Two defects in one shape. `SEARCH_OBJECT_READERS[kind]` indexes a plain object
+    // literal, so a kind id spelled `toString` resolves up the prototype chain to a
+    // function the provider then calls; and a per-kind catch that swallows everything
+    // renders the resulting JS message on a folder badge, presented as the engine's
+    // own sentence. Neither is something the cluster said.
+    const provider = await connectProvider();
+    const real = new ElasticsearchProvider(makeConnection()).getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [
+        ...(real.objectKinds ?? []),
+        { id: "toString", role: "config", label: "Stringifier", labelPlural: "Stringifiers" },
+      ],
+    });
+
+    await expect(provider.countObjects([])).rejects.toThrow(/declares the object kind "toString" and has no reader/);
+  });
+
+  test("one kind's refusal is one kind's badge, and the other four still count", async () => {
+    const provider = await connectProvider();
+    // A security plugin grants privileges per endpoint, so a role that lists indices
+    // and cannot read templates is an ordinary configuration - and losing the whole
+    // tree over it would punish a usable connection.
+    overridePath("/_index_template", fail(403, NO_BODY));
+
+    const counts = await provider.countObjects([]);
+
+    expect(counts.template).toMatchObject({ unavailable: expect.stringContaining("Elasticsearch") });
+    expect(counts.index).toEqual({ count: 3 });
+    expect(counts.pipeline).toEqual({ count: 1 });
+    // The same refusal reaches `listObjects` as an error rather than an empty folder:
+    // a caller that opened the folder must not be told it is empty.
+    await expect(provider.listObjects([], "template")).rejects.toBeInstanceOf(AuthenticationError);
+  });
+});
+
+/**
+ * Standing ruling 5g (#789): every derivation over the declaration, pinned by handing
+ * the provider a declaration its engine does not have.
+ *
+ * This engine declares ZERO container levels, which makes all three forbidden spellings
+ * - a hardcoded length comparison, a positional bind for the object name, and
+ * `path[0]` for the container - behaviour-identical here. That is exactly how they
+ * survived three providers. So the derivations are driven with a TWO-LEVEL declaration
+ * swapped in through `spyOn`, all the way to a BOUND VALUE rather than to a refusal:
+ * the paths the listing constructs, the container the detail read slices off, and the
+ * name it takes from the end.
+ */
+describe("Elasticsearch object paths are derived from the declaration, never from a position", () => {
+  const TWO_LEVELS: ProviderCapabilities["containerLevels"] = [
+    { id: "catalog", label: "Cluster", labelPlural: "Clusters" },
+    { id: "schema", label: "Namespace", labelPlural: "Namespaces" },
+  ];
+
+  /** The real declaration, with `containerLevels` replaced and nothing else. */
+  function withLevels(provider: ElasticsearchProvider, containerLevels: ProviderCapabilities["containerLevels"]): void {
+    const real = new ElasticsearchProvider(makeConnection()).getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({ ...real, containerLevels });
+  }
+
+  test("the real zero-level declaration refuses a container that has segments", async () => {
+    const provider = await connectProvider();
+
+    // The control. A hardcoded `container.length !== 0` would pass this too, which is
+    // why it is the control and not the assertion.
+    await expect(provider.countObjects(["nope"])).rejects.toThrow(/has 0 segment\(s\), received \["nope"\]/);
+    await expect(provider.listObjects(["nope"], "index")).rejects.toThrow(/has 0 segment\(s\)/);
+    await expect(provider.describeObject(["a", "b"], "index")).rejects.toThrow(/has 1 segment\(s\)/);
+  });
+
+  test("a two-level declaration moves every read with it, to a bound value", async () => {
+    const provider = await connectProvider();
+    withLevels(provider, TWO_LEVELS);
+
+    // The depth check is DERIVED: a two-level declaration must now accept exactly two
+    // segments and refuse zero, which is the opposite of what this engine accepts.
+    await expect(provider.countObjects([])).rejects.toThrow(/has 2 segment\(s\)/);
+    expect(await provider.countObjects(["prod", "search"])).toMatchObject({ index: { count: 3 } });
+
+    // The listing CONSTRUCTS the path, which is the one position ruling 5g allows to be
+    // written rather than derived - and it has to be written in the declared order or
+    // the detail read cannot read it back.
+    const listed = await provider.listObjects(["prod", "search"], "alias");
+    expect(listed.map((object) => object.path)).toEqual([
+      ["prod", "search", "probe_orders_alias"],
+      ["prod", "search", "shared_alias"],
+    ]);
+
+    // And the round trip closes on a BOUND VALUE rather than a refusal: the container
+    // is the first two segments by DEPTH and the name is the LAST segment, so the
+    // detail read finds the same object and answers its real columns. A provider
+    // reading `path[0]` as the name asks for a mapping of `prod` and finds nothing.
+    const detail = await provider.describeObject(listed[0].path, "alias");
+    expect(detail.path).toEqual(["prod", "search", "probe_orders_alias"]);
+    expect(detail.columns.map((column) => column.name)).toEqual(["customer", "id"]);
+    // The mapping was asked for by the object's own name, not by a container segment.
+    expect(pathsSent()).toContain("/probe_orders_alias/_mapping");
+  });
+
+  test("a one-level declaration is a third depth, so nothing is pinned to two", async () => {
+    const provider = await connectProvider();
+    withLevels(provider, [{ id: "schema", label: "Namespace", labelPlural: "Namespaces" }]);
+
+    expect(await provider.countObjects(["search"])).toMatchObject({ stream: { count: 1 } });
+    expect((await provider.listObjects(["search"], "stream")).map((object) => object.path)).toEqual([
+      ["search", "probe_stream"],
+    ]);
+    expect((await provider.describeObject(["search", "probe_stream"], "stream")).path).toEqual([
+      "search",
+      "probe_stream",
+    ]);
+  });
 });

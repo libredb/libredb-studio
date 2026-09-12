@@ -30,7 +30,7 @@ FAIL=0
 # green summary line reported a group count no run had.
 # Drifted again before this line was touched: it read 30 while 32 `run_group` calls
 # existed, so every green run reported a group count no run had. 33 is the grep below.
-TOTAL_GROUPS=35
+TOTAL_GROUPS=39
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -319,6 +319,37 @@ run_group "Group 19: ThemeProvider" \
 # engine-count assertions and ConnectionModal's own hint render a two-entry stub registry.
 run_group "Group 20: WireCompatibilityHint" \
   tests/components/WireCompatibilityHint.test.tsx
+
+# Group 23: The object tree (#789). Its own group: it replaces globalThis.fetch for every test
+# and restores it afterwards, and a file that assigns the global at MODULE scope (the pattern
+# tests/components/monitoring/PoolTab.test.tsx uses) would be captured as this file's "real" fetch
+# when the two share a process. It mocks no module, so nothing else needs isolating from it.
+run_group "Group 23: Object tree" \
+  tests/components/object-tree.test.tsx
+
+# Group 24: First paint (#789, #765). Its own group for Group 23's reason, and separate from
+# it because it counts EVERY request by pathname: sharing a process with a file that answers
+# other routes from the same global would make "exactly two catalog reads" count somebody
+# else's reads. It renders the real tree against a fetch double rather than a mocked module.
+run_group "Group 24: Object tree first paint" \
+  tests/components/object-tree/first-paint.test.tsx
+
+# Group 25: The object tree's row menu (U22, #789). Its own group for Group 23's reason -
+# it replaces globalThis.fetch for every test and restores it afterwards - and separate from
+# 23 and 24 because it renders the REAL menu against the real tree: a file sharing its
+# process that replaced a menu primitive with mock.module would make every assertion in it a
+# statement about the stub.
+run_group "Group 25: Object tree row menu" \
+  tests/components/object-tree/row-menu.test.tsx
+
+# Group 26: the embedded workspace's object tree (#789, B76). Its own group for Group 23's
+# reason - it replaces globalThis.fetch to prove no route is asked - and separate from Group 17,
+# which mocks the sidebar and the workspace adapter hooks process-wide: this file exists to drive
+# the REAL adapter and the REAL sidebar from the published prop, which is exactly what those
+# mocks would replace. It mocks only the editor and the panel library, neither of which Group 17
+# asserts against.
+run_group "Group 26: Embedded workspace object tree" \
+  tests/components/studio/embedded-object-tree.test.tsx
 
 # Group 21: ui/scroll-area. Its own group for the same reason ui/resizable has one:
 # it is the only suite that renders the REAL @radix-ui/react-scroll-area, while

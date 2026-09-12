@@ -54,14 +54,20 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import {
   type ActiveSessionDetails,
+  type Container,
   type DatabaseConnection,
+  type DatabaseObject,
   type DatabaseOverview,
   type HealthInfo,
   type IndexStats,
+  type KindCount,
   type MaintenanceResult,
   type MaintenanceType,
+  type ObjectDetail,
+  type ObjectDetailBatch,
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
@@ -72,27 +78,52 @@ import {
   type QueryWarning,
   type SlowQueryStats,
   type StorageStats,
-  type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
 import { TrinoHttpTransport } from "./http-transport";
 import {
+  TRINO_CATALOG_LIST_SQL,
   getActiveSessions as readActiveSessions,
   getHealth as readHealth,
   getIndexStats as readIndexStats,
   getOverview as readOverview,
   getPerformanceMetrics as readPerformanceMetrics,
-  getSchema as readSchema,
   getSlowQueries as readSlowQueries,
   getStorageStats as readStorageStats,
   getTableStats as readTableStats,
   trinoKillQuerySql,
 } from "./introspect";
 import {
+  TRINO_FUNCTION_COLUMNS,
+  TRINO_FUNCTION_KIND,
+  TRINO_MATERIALIZED_VIEW_KIND,
+  type KindCountRow,
+  type TrinoContainer,
+  applyKindCounts,
+  objectDetailFromRows,
+  objectKey,
+  trinoBulkColumnsSql,
+  trinoObjectTargetSql,
+  containerRead,
+  functionSegment,
+  listedObject,
+  objectRead,
+  readIdentifier as readObjectIdentifier,
+  seedZeroCounts,
+  trinoFunctionListSql,
+  trinoMaterializedViewListSql,
+  trinoObjectColumnsSql,
+  trinoObjectCountsSql,
+  trinoRelationListSql,
+  trinoSchemaListSql,
+} from "./objects";
+import { comparePaths } from "@/lib/db/object-path";
+import {
   TRINO_DIALECTS,
   type TrinoDialect,
   type TrinoDialectId,
   type TrinoQueryResult,
+  type TrinoRow,
   type TrinoTransport,
   TrinoTransportError,
 } from "./transport";
@@ -301,6 +332,55 @@ export class TrinoProvider extends SQLBaseProvider {
       // grammar, so the generators must not emit one.
       statementTerminator: "none",
       schemaRefreshPattern: SCHEMA_REFRESH_PATTERN,
+      // TWO levels, and the outer one is not a database (#789). A Trino CATALOG is a
+      // named CONNECTOR CONFIGURATION: `iceberg.properties` makes the catalog `iceberg`,
+      // and the same cluster reaches an Iceberg lake, a PostgreSQL server and a generated
+      // `tpch` dataset side by side, each holding schemas holding objects. The engine's own
+      // word for the outer level is "catalog" and for the inner one "schema", which is what
+      // the labels say. `information_schema` is PER CATALOG here, so a read against one
+      // catalog's copy says nothing whatsoever about another's.
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+      // Four kinds (`objects.ts`), and the two connector-gated ones are declared because
+      // the ENGINE has them rather than because every catalog does.
+      //
+      // NO trigger, NO stored procedure and NO index, because Trino has none of the three
+      // anywhere in its model: `information_schema` holds eight views and neither
+      // `table_constraints` nor `key_column_usage` is among them, and there is no index
+      // catalog at all (#414). A declared kind draws a folder, and a folder for something
+      // the engine cannot have is a lie its zero badge makes look like a fact.
+      objectKinds: [
+        // A row write reaches whatever the CONNECTOR allows - measured on 476, an INSERT
+        // into `memory.app.customers` succeeds while `tpch` answers that its connector does
+        // not support modifying table rows. The declaration is about the engine's model, and
+        // the connector's own refusal is the better message for the case it cannot.
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+        // No `acceptsRowWrites` on either view kind, measured on 476: an INSERT answers
+        // "Inserting into views is not supported" and "Inserting into materialized views is
+        // not supported" respectively, on every connector.
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+        // Supported by SOME connectors only, Iceberg among them, and declared anyway: the
+        // kind exists in the engine's model and `system.metadata.materialized_views` is an
+        // engine-level catalog, so a catalog holding none answers an honest 0 rather than a
+        // folder for something that cannot exist. The two facts are different and #789's
+        // `KindCount` keeps them apart.
+        {
+          id: "materialized_view",
+          role: "relation",
+          label: "Materialized View",
+          labelPlural: "Materialized Views",
+        },
+        // Catalog-stored SQL functions, from release 431 and on the Hive and Memory
+        // connectors only. Declared because it was CONFIRMED on the build
+        // `database-compose.yml` runs: measured on 476, `CREATE FUNCTION
+        // memory.app.plus_one(x bigint) RETURNS bigint RETURN x + 1` succeeds and
+        // `SHOW FUNCTIONS FROM memory.app` lists it. Leaving the kind out would make a
+        // function somebody wrote invisible in the tree, which is a worse absence than an
+        // empty folder.
+        { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+      ],
     };
   }
 
@@ -387,8 +467,9 @@ export class TrinoProvider extends SQLBaseProvider {
    * The catalog is NOT required, deliberately. A connection with no catalog still
    * runs every fully qualified statement - `SELECT * FROM tpch.sf1.nation` needs no
    * session catalog at all - and the whole of `system.runtime`, so refusing to
-   * connect without one would refuse a connection that works. What it cannot do is
-   * show a schema tree, and `getSchema()` says exactly that when asked.
+   * connect without one would refuse a connection that works. It also still shows a
+   * tree: `listContainers()` lists every catalog and the pin only decides which one is
+   * marked `isSessionDefault`, so with none pinned the tree opens nothing (#789).
    */
   public override validate(): void {
     super.validate();
@@ -587,19 +668,365 @@ export class TrinoProvider extends SQLBaseProvider {
   // Schema
   // ==========================================================================
 
+  // ==========================================================================
+  // The object surface (#789)
+  // ==========================================================================
+
+  /** One catalog read, with Trino's own refusal mapped and the statement carried with it. */
+  private async runObjectRows(sql: string): Promise<TrinoRow[]> {
+    try {
+      const result = await this.requireTransport().query(sql);
+      return result.rows;
+    } catch (error) {
+      throw this.mapTrinoError(error, sql);
+    }
+  }
+
   /**
-   * The tables of the pinned catalog, from `information_schema` alone.
+   * Why a function count or listing cannot be answered for a whole catalog.
    *
-   * `getSchemaList` and `getSchemaRelations` are deliberately NOT implemented. The
-   * split exists so a slow relationship read cannot block the table list, and Trino
-   * has no relationship read at all: there are no indexes and no foreign keys in the
-   * model, so a list would be byte-identical to this and a relations read would spend
-   * a round trip to answer two empty arrays per table.
+   * Carried as one sentence because both methods owe the same explanation, and because it
+   * is a fact about the ENGINE rather than about this connection: `SHOW FUNCTIONS` takes a
+   * schema, and measured on 476 it cannot be wrapped in a subquery, so there is nothing to
+   * aggregate over a catalog without one full exchange per schema in it.
    */
-  public async getSchema(): Promise<TableSchema[]> {
-    const transport = this.requireTransport();
-    const catalog = this.requireCatalog();
-    return this.guarded(() => readSchema(transport, catalog));
+  private functionScopeRefusal(): string {
+    return `${this.dialect.displayName} lists catalog functions only with SHOW FUNCTIONS FROM <catalog>.<schema>, which takes one schema and cannot be aggregated, so a whole catalog has no function count. Open a schema to see its functions.`;
+  }
+
+  /**
+   * The containers at `parent`: every catalog the coordinator can reach, or one catalog's
+   * schemas.
+   *
+   * The top level is the CLUSTER's catalog list and not the connection's pinned catalog,
+   * which is the whole point of the level here: a Trino catalog is a named connector
+   * configuration, so one session addresses an Iceberg lake, a PostgreSQL server and a
+   * generated dataset side by side. `requireCatalog()` deliberately does not guard this -
+   * a connection that pins no catalog still has a tree, it just has no marked row in it.
+   *
+   * `system` and `jmx` are listed rather than filtered. Trino publishes no flag that would
+   * separate a plumbing catalog from a data one, both are genuinely queryable, and a name
+   * denylist is a boundary this repo has already found unmaintainable (#424).
+   *
+   * Below the last declared level the answer is `[]` rather than a refusal, because
+   * "nothing nests under a schema" is a true statement about Trino and not a caller
+   * mistake. The depth is `containerDepth()` for the reason standing ruling 5g gives.
+   */
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
+    const capabilities = this.getCapabilities();
+    const parentPath = parent ?? [];
+    // `Container.level` is the index into `containerLevels`, so a container listed under a
+    // parent of depth d sits at level d. Derived from the parent rather than written twice
+    // as a literal 0 and 1.
+    const level = parentPath.length;
+
+    if (level === 0) {
+      const rows = await this.runObjectRows(TRINO_CATALOG_LIST_SQL);
+      return rows.flatMap((row) => {
+        const name = readObjectIdentifier(row.catalogName);
+        if (name === null) return [];
+        return [{ path: [name], name, level, isSessionDefault: name === this.config.database }];
+      });
+    }
+    if (level >= containerDepth(capabilities)) return [];
+
+    const { catalog } = containerRead(capabilities, parentPath);
+    const rows = await this.runObjectRows(trinoSchemaListSql(catalog));
+    return rows.flatMap((row) => {
+      const name = readObjectIdentifier(row.schemaName);
+      if (name === null) return [];
+      return [
+        {
+          path: [...parentPath, name],
+          name,
+          level,
+          // Marked at THIS level too, not only at the catalog. Standing ruling 5a2 (#789):
+          // first paint walks the chain to the session default at the DEEPEST declared
+          // level, so a two-level engine that marked only its catalogs would open a catalog
+          // and stop, having read no counts at all.
+          //
+          // BOTH halves of the predicate are load-bearing. The connection's schema names a
+          // schema in the connection's catalog, so comparing the schema alone would mark a
+          // same-named schema in every catalog on the cluster - and on Trino `default` is a
+          // schema name several connectors create, so that is the ordinary case rather than
+          // an exotic one.
+          isSessionDefault: catalog === this.config.database && name === this.config.schema,
+        },
+      ];
+    });
+  }
+
+  /**
+   * How many objects of each declared kind one container holds.
+   *
+   * Two reads rather than one, and they are caught SEPARATELY. The relation kinds come from
+   * a `UNION ALL` over `information_schema.tables` and `system.metadata.materialized_views`;
+   * the functions come from `SHOW FUNCTIONS`, which is a statement rather than a relation
+   * and cannot join the union. Their failure modes are independent - one is the
+   * coordinator's own metadata, the other is a per-connector feature - so a refusal of one
+   * must not erase the other's honest answer.
+   *
+   * Three outcomes, and `KindCount` keeps all three apart. A kind the statement answered for
+   * carries its count; a kind it did not carries `{ count: 0 }`, because every declared kind
+   * is seeded before the read; a kind whose read was refused carries the engine's own
+   * sentence, so the object browser can say why a folder has no number instead of showing a
+   * zero nobody measured.
+   *
+   * A FOURTH outcome is not a `KindCount` at all: this method RAISES when a row names a kind
+   * the declaration does not hold. That is a defect in this provider rather than an answer
+   * about a container, and the three states above have no spelling for it.
+   */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    const capabilities = this.getCapabilities();
+    const read = containerRead(capabilities, container);
+    const declared = declaredKinds(capabilities);
+    const counts = seedZeroCounts(declared);
+
+    const relationKinds = declared.filter((kind) => kind.id !== TRINO_FUNCTION_KIND);
+    if (relationKinds.length > 0) {
+      const sql = trinoObjectCountsSql(read, findKind(capabilities, TRINO_MATERIALIZED_VIEW_KIND) !== undefined);
+      // The catch wraps the READ and nothing else. `applyKindCounts` is deliberately outside
+      // it, because its raise is the guard behind TRINO_TABLE_TYPE_KINDS and it must reach
+      // the caller as itself: a spelling this provider has no kind for is a DECLARATION
+      // defect, and rewriting it as `{ unavailable }` filed that defect in a folder badge
+      // and told the reader the engine had refused a read it answered perfectly.
+      //
+      // It also erased more than it touched. Every relation kind was blanked, so one
+      // unmodelled `table_type` from `information_schema` also wiped the materialized-view
+      // count, which comes from `system.metadata.materialized_views` on the other arm of the
+      // `UNION ALL`. Only the statement failing genuinely loses every relation kind, and
+      // that is the one case still caught here.
+      let rows: KindCountRow[] | undefined;
+      try {
+        rows = (await this.runObjectRows(sql)) as unknown as KindCountRow[];
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        for (const kind of relationKinds) counts[kind.id] = { unavailable: reason };
+      }
+      if (rows !== undefined) applyKindCounts(counts, rows);
+    }
+
+    if (findKind(capabilities, TRINO_FUNCTION_KIND) !== undefined) {
+      counts[TRINO_FUNCTION_KIND] = await this.countFunctions(read);
+    }
+    return counts;
+  }
+
+  /** One schema's function count, or the engine's reason there is no catalog-wide one. */
+  private async countFunctions(read: TrinoContainer): Promise<KindCount> {
+    if (read.schema === undefined) return { unavailable: this.functionScopeRefusal() };
+    try {
+      return { count: (await this.runObjectRows(trinoFunctionListSql(read.catalog, read.schema))).length };
+    } catch (error) {
+      return { unavailable: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
+   * The objects of one kind in one container, names only.
+   *
+   * Ordering is done here rather than with an `ORDER BY`, so one rule covers four kinds read
+   * from three different sources: `information_schema.tables`, `system.metadata` and a
+   * `SHOW` statement cannot be given one comparable sort clause, and a code-point sort over
+   * the produced PATH is what keeps a catalog-level listing grouped by schema.
+   */
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    const capabilities = this.getCapabilities();
+    const read = containerRead(capabilities, container);
+    // Two questions, asked in order, and only the DECLARATION answers the first. Deciding
+    // "is this kind declared" from whether a statement exists would make the two methods
+    // disagree, and would report "declares no object kind" about a kind `objectKinds` does
+    // declare.
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`${this.dialect.displayName} declares no object kind "${kind}"`, this.type);
+    }
+
+    const objects =
+      kind === TRINO_FUNCTION_KIND
+        ? await this.listFunctions(capabilities, read)
+        : await this.listRelations(capabilities, read, kind);
+
+    return objects.sort((left, right) => comparePaths(left.path, right.path));
+  }
+
+  /** Every relation of one kind, from whichever catalog publishes that kind. */
+  private async listRelations(
+    capabilities: ProviderCapabilities,
+    read: TrinoContainer,
+    kind: string,
+  ): Promise<DatabaseObject[]> {
+    const sql =
+      kind === TRINO_MATERIALIZED_VIEW_KIND ? trinoMaterializedViewListSql(read) : trinoRelationListSql(read, kind);
+    const rows = await this.runObjectRows(sql);
+    return rows.flatMap((row) => {
+      const schema = readObjectIdentifier(row.schemaName);
+      const name = readObjectIdentifier(row.objectName);
+      if (schema === null || name === null) return [];
+      return [listedObject(capabilities, read.catalog, kind, schema, name, name)];
+    });
+  }
+
+  /**
+   * One schema's catalog-stored functions, each addressed by name AND argument types.
+   *
+   * A catalog-level call is REFUSED rather than fanned out over the catalog's schemas: the
+   * fan-out is one full HTTP exchange per schema, unbounded on a Hive or Iceberg catalog,
+   * and `SHOW FUNCTIONS` is the only surface there is - `information_schema` holds no
+   * routine catalog on this engine and `system.jdbc.procedures` answers zero rows for a
+   * schema holding three functions (measured on 476).
+   */
+  private async listFunctions(capabilities: ProviderCapabilities, read: TrinoContainer): Promise<DatabaseObject[]> {
+    if (read.schema === undefined) throw new QueryError(this.functionScopeRefusal(), this.type);
+
+    const schema = read.schema;
+    const rows = await this.runObjectRows(trinoFunctionListSql(read.catalog, schema));
+    return rows.flatMap((row) => {
+      const name = readObjectIdentifier(row[TRINO_FUNCTION_COLUMNS.name]);
+      const argumentTypes = row[TRINO_FUNCTION_COLUMNS.argumentTypes];
+      if (name === null || typeof argumentTypes !== "string") return [];
+      // `path` addresses and `name` labels, and here they differ: the segment carries the
+      // overload's argument types and the label stays the bare name a person reads.
+      return [
+        listedObject(
+          capabilities,
+          read.catalog,
+          TRINO_FUNCTION_KIND,
+          schema,
+          functionSegment(name, argumentTypes),
+          name,
+        ),
+      ];
+    });
+  }
+
+  /**
+   * Columns for one object of one KIND, and two empty arrays that are facts rather than
+   * failed reads.
+   *
+   * There are NO indexes and NO foreign keys to read, in any catalog of any connector:
+   * Trino's `information_schema` holds eight views and neither `table_constraints` nor
+   * `key_column_usage` is among them, which is the same measurement `declaresForeignKeys:
+   * false` rests on (#414).
+   *
+   * The kind decides everything and nothing here reads the name to work out what it is
+   * holding. A function answers three empty arrays without a round trip, which is true of
+   * the kind rather than of the object: a routine legitimately has no columns.
+   */
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`${this.dialect.displayName} declares no object kind "${kind}"`, this.type);
+    }
+
+    const read = objectRead(capabilities, spec, path);
+    if (spec.role !== "relation") return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
+
+    const sql = trinoObjectColumnsSql(read.catalog, read.schema, read.name);
+    const rows = await this.runObjectRows(sql);
+    if (rows.length === 0) {
+      // Measured: `CREATE TABLE t ()` is a parser error on this engine, so a relation with
+      // no column row is a relation that is not there. Answering `{ columns: [] }` would
+      // render a dropped table as a table with no columns.
+      throw new QueryError(`No column row for ${path.join(".")}`, this.type, sql);
+    }
+
+    return objectDetailFromRows(path, rows);
+  }
+
+  /**
+   * Columns for EVERY object of one kind in one container (#789).
+   *
+   * TWO round trips for a whole folder, constant in the number of objects: the target read
+   * plus the column read, which is `describeObject()`'s own statement with the
+   * schema-and-name equality replaced by a join against the target. The caller's alternative
+   * was one `describeObject` per object, which is one statement each.
+   *
+   * The four guards are asked in the same order the reference implementation asks them:
+   *   1. a kind Trino does not declare RAISES, naming the engine and the kind. An empty
+   *      batch would be a claim about the container; an undeclared kind is a fact about the
+   *      engine.
+   *   2. the container path goes through `containerRead`, the same reader `listObjects`
+   *      uses, so the depth and the segment-to-level mapping come from the declaration and
+   *      never from a position (standing ruling 5g).
+   *   3. a `limit` that is not a positive whole number raises rather than clamping. Here that
+   *      guard also protects the STATEMENT: the value is interpolated into a `LIMIT` clause,
+   *      because this transport sends text and has no parameter channel at all.
+   *   4. a kind with no columns answers `{ details: [] }` with NO round trip. On this engine
+   *      that is `function` alone, the one non-relation kind, and it answers so at EITHER
+   *      container depth - `listObjects` refuses a catalog-level function read because
+   *      `SHOW FUNCTIONS` would have to be fanned out per schema, and there is no fan-out
+   *      here because a routine has no columns to read.
+   *
+   * The bound is the CALLER's. `limit + 1` reaches the target's `LIMIT`, the extra object is
+   * dropped and `truncated` carries the caller's own limit; an unbounded call can never
+   * report truncation, and nothing here caps the columns of an object.
+   *
+   * MEMBERSHIP comes from the target read and never from the column read, which is what lets
+   * an object the column read answered nothing for come back with an empty list rather than
+   * missing. It is also why this read does not repeat the single read's zero-column throw:
+   * there an empty answer means the object is not there under that name, here the listing
+   * has just said it is.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`${this.dialect.displayName} declares no object kind "${kind}"`, this.type);
+    }
+    const read = containerRead(capabilities, container);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      throw new QueryError(
+        `A Trino bulk column read limit must be a positive whole number, received ${limit}`,
+        this.type,
+      );
+    }
+    if (spec.role !== "relation") return { details: [] };
+
+    // One row more than the bound, so the read itself says whether it stopped short.
+    const bound = limit === undefined ? undefined : limit + 1;
+    const targetRows = await this.runObjectRows(trinoObjectTargetSql(read, kind, bound));
+    const targets = targetRows.flatMap((row) => {
+      const schema = readObjectIdentifier(row.schemaName);
+      const name = readObjectIdentifier(row.objectName);
+      return schema === null || name === null ? [] : [{ schema, name }];
+    });
+    // From the READ and never from `targets`, which is what survived `readObjectIdentifier`.
+    // A row this cluster answered that cannot be read back would otherwise both drop the
+    // object and suppress the flag: the caller would get `limit` details and a claim of
+    // completeness while `limit + 1` objects exist.
+    const truncated = limit !== undefined && targetRows.length > limit;
+    // The extra object the `limit + 1` bound brought back is dropped here, so its rows in
+    // the grouping below are simply never read.
+    const described = truncated ? targets.slice(0, limit) : targets;
+
+    const columnRows = await this.runObjectRows(trinoBulkColumnsSql(read, kind, bound));
+    const grouped = new Map<string, TrinoRow[]>();
+    for (const row of columnRows) {
+      // A column row with no usable address is not guarded away, it is keyed away: the empty
+      // string is a key no TARGET can produce, because a target is only kept when both its
+      // segments read as non-empty identifiers. So such a row lands in a group nothing asks
+      // for, and the alternative - an explicit `continue` - would be a line no data can
+      // reach while raw lcov reports it as covered (standing ruling 5b).
+      const key = objectKey(readObjectIdentifier(row.schemaName) ?? "", readObjectIdentifier(row.objectName) ?? "");
+      const existing = grouped.get(key);
+      if (existing === undefined) grouped.set(key, [row]);
+      else existing.push(row);
+    }
+
+    const details = described
+      .map((target) =>
+        objectDetailFromRows(
+          listedObject(capabilities, read.catalog, kind, target.schema, target.name, target.name).path,
+          grouped.get(objectKey(target.schema, target.name)) ?? [],
+        ),
+      )
+      // Sorted by PATH, which is what every caller joins the two answers on, and not by the
+      // name the statement ordered by: that order is the cluster's and decides only which
+      // objects a bound keeps.
+      .sort((left, right) => comparePaths(left.path, right.path));
+
+    return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
   }
 
   // ==========================================================================

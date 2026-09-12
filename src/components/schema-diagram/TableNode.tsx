@@ -3,6 +3,7 @@
 import React, { memo, useEffect } from "react";
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
 import { Database, Hash, Key, Link2, Type } from "lucide-react";
+import { objectPathLabel } from "@/lib/db/object-path";
 import type { ColumnSchema } from "@/lib/types";
 import { TABLE_SOURCE_HANDLE, TABLE_TARGET_HANDLE, type TableFlowNode } from "./graph";
 import { useDiagramActions } from "./diagram-context";
@@ -122,7 +123,12 @@ export const TableNode = memo(function TableNode({ id, data }: NodeProps<TableFl
           style={{ opacity: 0, right: -5 }}
         />
         <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-blue" />
-        <span className="text-xs font-medium text-fg">{table.name}</span>
+        {/* The LABEL is what a person reads on the card, and the dotted ADDRESS is the
+            tooltip: two objects in two containers carry one label, and the card that says
+            only `customers` cannot say which (#789). */}
+        <span className="text-xs font-medium text-fg" title={objectPathLabel(table.path)}>
+          {table.name}
+        </span>
         <span className="text-[0.625rem] text-fg-subtle ml-auto">{table.columns?.length || 0} cols</span>
       </div>
       {!compact && (
@@ -140,7 +146,7 @@ export const TableNode = memo(function TableNode({ id, data }: NodeProps<TableFl
             <button
               type="button"
               className="w-full text-left px-2 py-1 text-[0.625rem] text-fg-muted hover:text-fg-secondary transition-colors"
-              onClick={() => toggleExpand(table.name)}
+              onClick={() => toggleExpand(id)}
             >
               +{hiddenCount} more
             </button>

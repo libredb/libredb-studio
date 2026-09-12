@@ -60,7 +60,6 @@ import type {
   TableStats,
 } from "@/lib/db/types";
 import { formatBytes, formatDuration } from "@/lib/db/utils/pool-manager";
-import type { ColumnSchema, TableSchema } from "@/lib/types";
 import { type TrinoRow, type TrinoTransport, TrinoTransportError } from "./transport";
 
 // ============================================================================
@@ -358,12 +357,6 @@ export const TRINO_SLOW_QUERY_SQL = [
  */
 export type TrinoQueryRunner = Pick<TrinoTransport, "query">;
 
-/** A column row placed against the table that owns it. */
-interface OwnedColumn {
-  key: string;
-  column: ColumnSchema;
-}
-
 /** One table, addressed the way `SHOW STATS` needs it addressed. */
 interface TableAddress {
   schema: string;
@@ -434,17 +427,6 @@ function nonNegative(value: number | undefined): number {
   return value === undefined || value < 0 ? 0 : value;
 }
 
-/**
- * The grouping key for a table, joined with NUL rather than a dot.
- *
- * A dot is ambiguous - a Trino schema or table name may legally contain one, so
- * `"a.b" + "c"` and `"a" + "b.c"` would land in the same bucket, exactly as
- * `clickhouse/introspect.ts` found.
- */
-function tableKey(schema: string, table: string): string {
-  return `${schema}\u0000${table}`;
-}
-
 // ============================================================================
 // Reads
 // ============================================================================
@@ -478,56 +460,6 @@ async function readOptionalRow(runner: TrinoQueryRunner, sql: string): Promise<T
 // Schema
 // ============================================================================
 
-/**
- * One column of the tree.
- *
- * `isPrimary` is hardwired false, and that is a statement about TRINO rather than
- * about this catalog: its `information_schema` publishes no `table_constraints`
- * and no `key_column_usage` at all (shape 4), so no connector can declare a key
- * through it and there is no reading of any kind that would return one. The same
- * fact is why `indexes` and `foreignKeys` are empty by construction below.
- */
-function readColumn(row: TrinoRow): OwnedColumn | null {
-  const schema = readIdentifier(row.schemaName);
-  const table = readIdentifier(row.tableName);
-  const name = readIdentifier(row.columnName);
-  if (schema === null || table === null || name === null) return null;
-
-  const columnDefault = readIdentifier(row.columnDefault);
-
-  return {
-    key: tableKey(schema, table),
-    column: {
-      name,
-      // The rendered type - `varchar(25)`, `array(integer)`, `row(x integer)` -
-      // which is the vocabulary the user's own DDL uses.
-      type: readText(row.dataType),
-      // `YES`/`NO`, and anything unreadable reads as nullable: a wrongly-mandatory
-      // marker on a column that accepts nulls is the more misleading mistake.
-      nullable: readText(row.isNullable) !== "NO",
-      isPrimary: false,
-      ...(columnDefault === null ? {} : { defaultValue: columnDefault }),
-    },
-  };
-}
-
-/**
- * Bucket the column rows by the table that owns them. A row the decoder cannot
- * place is dropped rather than fatal, so one malformed row costs one column
- * instead of the whole tree.
- */
-function groupColumns(rows: TrinoRow[]): Map<string, ColumnSchema[]> {
-  const grouped = new Map<string, ColumnSchema[]>();
-  for (const row of rows) {
-    const owned = readColumn(row);
-    if (owned === null) continue;
-    const columns = grouped.get(owned.key) ?? [];
-    columns.push(owned.column);
-    grouped.set(owned.key, columns);
-  }
-  return grouped;
-}
-
 /** The tables of the pinned catalog, in the order the server listed them. */
 function readTableAddresses(rows: TrinoRow[]): TableAddress[] {
   return rows.flatMap((row) => {
@@ -535,39 +467,6 @@ function readTableAddresses(rows: TrinoRow[]): TableAddress[] {
     const table = readIdentifier(row.tableName);
     return schema === null || table === null ? [] : [{ schema, table }];
   });
-}
-
-/**
- * Every table of the pinned catalog, with its columns.
- *
- * The tree is TWO levels inside ONE catalog, which is the whole catalog decision
- * of this provider stated in code: the connection's `database` field pins a
- * catalog exactly the way a PostgreSQL connection pins a database, and the schemas
- * inside it are the schema level. Fanning `information_schema` out across every
- * catalog was the alternative and is unbounded - `jmx.current` alone publishes one
- * table per MBean - and it would make one sidebar refresh depend on every connector
- * the cluster has configured being reachable.
- *
- * A table's display name is therefore `schema.table`, always qualified: Trino
- * lists tables across every schema in the catalog, regardless of the optional
- * session schema pinned on the connection. Qualifying names keeps tree-generated
- * statements targeting the selected table even when it is outside that schema.
- */
-export async function getSchema(runner: TrinoQueryRunner, catalog: string): Promise<TableSchema[]> {
-  const [tableRows, columnRows] = await Promise.all([
-    readRows(runner, trinoTableListSql(catalog)),
-    readRows(runner, trinoColumnListSql(catalog)),
-  ]);
-
-  const columns = groupColumns(columnRows);
-
-  return readTableAddresses(tableRows).map((address) => ({
-    name: `${address.schema}.${address.table}`,
-    columns: columns.get(tableKey(address.schema, address.table)) ?? [],
-    // Empty by construction, not by omission (shape 4).
-    indexes: [],
-    foreignKeys: [],
-  }));
 }
 
 // ============================================================================

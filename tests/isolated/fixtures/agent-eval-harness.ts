@@ -61,7 +61,7 @@ import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptor
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { TABLE_LABELS } from "../../fixtures/provider-labels";
-import type { DatabaseConnection, QueryResult, TableSchema } from "@/lib/types";
+import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { type ScriptedTurn, modelOver, scriptedModel } from "./agent-scripted-model";
 
 // ─── the two Phase 1 engines ────────────────────────────────────────────────
@@ -287,7 +287,16 @@ export const EVAL_ENGINES: Readonly<Record<EvalEngine, EvalEnginePreset>> = Obje
    */
   mysql: {
     connection: { id: "conn_eval", name: "Company (MySQL)", type: "mysql", createdAt: new Date(0) },
-    capabilities: { ...POSTGRES_CAPABILITIES, explainFormat: "mysql-json", defaultPort: 3306 },
+    // The kind is DECLARED so the grounding walk reaches the provider and is refused by
+    // it, which is the state this preset exists to express. A preset declaring no kind
+    // would be refused one step earlier, by this server rather than by the database, and
+    // the run would be told something true about the declaration instead of the engine.
+    capabilities: {
+      ...POSTGRES_CAPABILITIES,
+      explainFormat: "mysql-json",
+      defaultPort: 3306,
+      objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+    },
     catalogReads: [],
     // None, and that is the honest limit rather than an omission: grounding is served
     // for the dialects `CATALOG_COMPOSERS` covers, so a run here — plan or agent —
@@ -511,13 +520,25 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
     // somebody might later delete as redundant.
     const provider = {
       ...(engine.servesReadOnlyStatements ? { queryReadOnly } : {}),
-      // `getSchema` is a REQUIRED member of `DatabaseProvider`, so a preset without one
-      // is a provider shape that cannot exist and an eval driven against it would prove
-      // nothing about a run. What a provider that cannot describe this database really
-      // does is REJECT, so that is what this one does: the grounding read on a dialect
-      // with no catalog plan (#414) then fails the way it fails in production, and the
-      // ungrounded plan path these evals exercise is reached through a real state.
-      getSchema: async (): Promise<readonly TableSchema[]> => {
+      // The object surface is REQUIRED on `DatabaseProvider`, so a preset without it is a
+      // provider shape that cannot exist and an eval driven against it would prove nothing
+      // about a run. What a provider that cannot describe this database really does is
+      // REJECT, so that is what this one does: the grounding read on a dialect with no
+      // catalog plan (#414) then fails the way it fails in production, and the ungrounded
+      // plan path these evals exercise is reached through a real state.
+      listContainers: async (): Promise<never> => {
+        throw new QueryError("this database refused to describe its own schema");
+      },
+      countObjects: async (): Promise<never> => {
+        throw new QueryError("this database refused to describe its own schema");
+      },
+      listObjects: async (): Promise<never> => {
+        throw new QueryError("this database refused to describe its own schema");
+      },
+      describeObject: async (): Promise<never> => {
+        throw new QueryError("this database refused to describe its own schema");
+      },
+      describeObjects: async (): Promise<never> => {
         throw new QueryError("this database refused to describe its own schema");
       },
       ...DEFAULT_CURATED,

@@ -93,6 +93,8 @@ export function ConnectionModal({
     setSchema,
     queryTimeout,
     setQueryTimeout,
+    skipObjectScan,
+    setSkipObjectScan,
     connectionString,
     setConnectionString,
     mongoConnectionMode,
@@ -307,6 +309,29 @@ export function ConnectionModal({
             />
             <p id="queryTimeout-hint" className="text-xs text-fg-muted">
               Leave blank to use the default of 60 seconds.
+            </p>
+          </div>
+
+          {/*
+            The no-scan escape hatch (#765). Beside the timeout rather than behind the
+            Advanced accordion, and not gated on the engine: every engine has a catalog,
+            and the connection that holds tens of thousands of objects is the one that
+            knows it does.
+          */}
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                id="skipObjectScan"
+                type="checkbox"
+                checked={skipObjectScan}
+                onChange={(e) => setSkipObjectScan(e.target.checked)}
+                aria-describedby="skipObjectScan-hint"
+                className="rounded border-edge bg-panel"
+              />
+              <span className="text-xs font-mediumr text-fg-muted">Do not read the object list on connect</span>
+            </label>
+            <p id="skipObjectScan-hint" className="text-xs text-fg-muted">
+              The editor still works. The object panel offers a load action instead.
             </p>
           </div>
 

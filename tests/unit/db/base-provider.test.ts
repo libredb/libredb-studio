@@ -5,7 +5,11 @@ import { AuthenticationError, ConnectionError, DatabaseConfigError, DatabaseErro
 import type {
   DatabaseConnection,
   QueryResult,
-  TableSchema,
+  Container,
+  DatabaseObject,
+  KindCount,
+  ObjectDetail,
+  ObjectDetailBatch,
   HealthInfo,
   MaintenanceType,
   MaintenanceResult,
@@ -42,11 +46,24 @@ class TestProvider extends BaseDatabaseProvider {
     return { rows: [], fields: [], rowCount: 0, executionTime: 0 };
   }
 
-  async getSchema(): Promise<TableSchema[]> {
-    return [
-      { name: "users", columns: [], indexes: [], foreignKeys: [] },
-      { name: "orders", columns: [], indexes: [], foreignKeys: [] },
-    ];
+  async listContainers(): Promise<Container[]> {
+    return [];
+  }
+
+  async countObjects(): Promise<Record<string, KindCount>> {
+    return {};
+  }
+
+  async listObjects(): Promise<DatabaseObject[]> {
+    return [];
+  }
+
+  async describeObject(path: readonly string[]): Promise<ObjectDetail> {
+    return { path, columns: [], indexes: [], foreignKeys: [] };
+  }
+
+  async describeObjects(): Promise<ObjectDetailBatch> {
+    return { details: [] };
   }
 
   async getHealth(): Promise<HealthInfo> {
@@ -342,17 +359,6 @@ describe("BaseDatabaseProvider", () => {
 
       expect(result.limit).toBe(100);
       expect(result.offset).toBe(50);
-    });
-  });
-
-  // ─── getTables ────────────────────────────────────────────────────────
-
-  describe("getTables", () => {
-    test("calls getSchema and returns table names", async () => {
-      const provider = new TestProvider(makeConfig());
-      const tables = await provider.getTables();
-
-      expect(tables).toEqual(["users", "orders"]);
     });
   });
 

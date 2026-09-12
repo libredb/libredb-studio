@@ -1713,7 +1713,7 @@ describe("grounding a plan run while the writable provider holds the file (B49)"
     expect(capture.kind).toBe("captured");
     if (capture.kind !== "captured") throw new Error("unreachable");
     expect(capture.snapshot.readVia).toBe("provider-inventory");
-    expect(capture.snapshot.tables.map((t) => t.name).sort()).toEqual(["config", "order:*", "user:*"]);
+    expect(capture.snapshot.objects.map((t) => t.name).sort()).toEqual(["config", "order:*", "user:*"]);
     // The handle was BORROWED: the profiled cache owns nothing, so no eviction there
     // can close the file under the editor's own session.
     expect(getExecutionProfileCacheStats()).toEqual({ size: 0, connections: [] });

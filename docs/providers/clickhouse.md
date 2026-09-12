@@ -54,16 +54,30 @@ from:
 
 | `DatabaseProvider` slot | ClickHouse realisation | Mechanism |
 |-------------------------|-------------------------|-----------|
-| "Table" (`TableSchema`) | A table, displayed as `name` or `database.name` | `system.tables`, filtered to non-system databases |
+| "Table" (the relation kind) | A table, displayed as `name` or `database.name` | `system.tables`, filtered to non-system databases |
 | "Row" | One result row | JSON `data` array element |
 | Columns | The declared column list, types verbatim | `system.columns` / the query response `meta` |
 | Primary key | The MergeTree sparse primary index | `system.tables.primary_key`, `is_in_primary_key` |
 | `query(sql)` | One SQL statement | `POST /?default_format=JSON` |
-| Indexes | The primary key, the sorting key (when it differs), and data-skipping indexes | `system.tables` + `system.data_skipping_indices` |
+| Indexes | Data-skipping indexes, and nothing else ([below](#indexes-are-only-the-skipping-indexes)) | `system.data_skipping_indices` |
 | Foreign keys | none (ClickHouse has none) | always `[]` |
 | `getOverview()` / storage | Server identity, connection counts, part sizes | `version()`, `uptime()`, `system.metrics`, `system.parts`, `system.disks` |
 | `getSlowQueries()` / `getActiveSessions()` | Finished and in-flight statements | `system.query_log`, `system.processes` |
 | Maintenance | `optimize` / `analyze` / `kill` | `OPTIMIZE TABLE ... FINAL`, a `system.parts` summary, `KILL QUERY ... SYNC` |
+
+#### Indexes are only the skipping indexes
+
+A MergeTree table with no data-skipping index reports **no index at all**, and that is a change from
+the flat schema reading this replaced. That reading synthesized two entries out of the table's
+engine clause, one labelled `PRIMARY KEY` and one `ORDER BY`, so every MergeTree table appeared to
+carry two indexes. Neither is an index object: ClickHouse's primary index is a sparse mark file the
+sorting key defines, it has no name of its own, and `system.data_skipping_indices` - the one catalog
+of named index objects on this engine - holds no row for it.
+
+The key columns are still reported, where they belong: a column that is part of the primary key is
+marked `isPrimary` from `system.columns.is_in_primary_key`, which is the catalog's own answer rather
+than a parse of the DDL. So nothing was measured and then dropped; what went was a pair of rows that
+named a structure ClickHouse does not model as an index.
 
 ---
 
@@ -516,7 +530,7 @@ does **not** pin one:
 - One HTTP request per statement keeps the provider stateless and safely concurrent — nothing to
   coordinate, nothing to leak across users of a shared connection.
 - A pinned session serializes requests server-side: ClickHouse rejects concurrent use of one
-  `session_id`, which would break parallel schema introspection (`getSchema()` reads three catalogs
+  `session_id`, which would break parallel schema introspection (the object surface reads three catalogs
   at once with `Promise.all`).
 - `SET` and temp tables are the only things lost to this, and neither is reachable from the editor's
   one-statement-per-execution model regardless.
@@ -694,53 +708,302 @@ direct action and the background pre-warm show the same estimated plan.
 
 ## 6. Schema introspection
 
-Three separate reads of the `system.*` catalogs, run in parallel with `Promise.all`, all through the
-transport seam:
+Everything this provider knows about a database's contents is read through the OBJECT SURFACE, in
+[`objects.ts`](../../src/lib/db/providers/sql/clickhouse/objects.ts), and §6.1 below is the whole of
+it. The flat three-catalog reading that used to sit here was deleted with `getSchema` (#789); four
+of its decisions outlived it and are recorded here because they are container-level facts rather than
+per-object ones.
 
-| Data | Source |
-|------|--------|
-| Tables | `system.tables` — name, `total_rows`, `total_bytes`, `sorting_key`, `primary_key`, filtered to non-system databases |
-| Columns | `system.columns` — name, type, `is_in_primary_key`, `default_kind`/`default_expression`, ordered by declaration `position` |
-| Indexes | `system.data_skipping_indices` — the nearest thing ClickHouse has to a secondary index object, plus the synthesized `PRIMARY KEY` / `ORDER BY` entries |
-| Foreign keys | always `[]` — ClickHouse has no foreign-key concept anywhere: no engine, no table setting, no DDL declares one |
+**Which databases are listed.** `system`, `information_schema` and `INFORMATION_SCHEMA` are excluded.
+The last exists as its own separate row in `system.databases`, live-verified, so excluding only one
+leaves a duplicate ANSI catalog in the tree. `default` is deliberately **kept**: it is an ordinary
+writable database and the one a connection that names none lands in, so hiding it would empty the
+commonest setup. The session's own database comes from `currentDatabase()`, the server's answer,
+rather than from the string a person typed into the connection form.
 
-Non-system databases are `system`, `information_schema`, and `INFORMATION_SCHEMA` (the last exists
-as its own separate row in `system.databases`, live-verified, so excluding only one leaves a
-duplicate ANSI catalog in the tree). `default` is deliberately **kept** — it is an ordinary writable
-database and the one a connection that names none lands in, so hiding it would empty the commonest
-setup.
+**A key expression is a comma-separated list that can itself contain commas**,
+`a, b, cityHash64(c, c)`, so splitting is parenthesis-depth-aware, never a naive `.split(',')`. The
+parser strips exactly one wrapping pair when the whole expression is parenthesized.
 
-Load-bearing details:
+**The primary key and the sorting key are NOT reported as index entries, and that is a change the
+flat reading's deletion made.** That reading synthesized a `PRIMARY KEY` entry out of
+`system.tables.primary_key`, and an `ORDER BY` entry beside it where the sorting key extended it. The
+object surface reads `system.data_skipping_indices` and nothing else, so a MergeTree table with no
+skipping index reports no index at all. What the primary key still decides is the COLUMNS:
+`system.columns.is_in_primary_key` is what `isPrimary` reads, and the sorting key's trailing columns
+are correctly not primary. Whether the sparse primary index deserves an entry of its own is a product
+question for Phase 2 rather than something to reinstate silently.
 
-- **`total_rows` / `total_bytes` are `Nullable(UInt64)` and really are null** for a view and for
-  every non-MergeTree engine (live-verified). Null is reported as `undefined` — unknown — never
-  coerced to zero; a table shown as "0 rows" when the server never said so is a number the explorer
-  would have invented.
-- **A key expression is a comma-separated list that can itself contain commas** —
-  `a, b, cityHash64(c, c)` — so splitting is parenthesis-depth-aware, never a naive `.split(',')`.
-  A one-element key renders as `(a)` while a multi-element one renders as `a, b`; the parser strips
-  exactly one wrapping pair when the whole expression is parenthesized.
-- **The primary key and the sorting key are reported as separate index entries only when they
-  differ.** ClickHouse's primary index is a real sparse index over the sort order — reporting no
-  index at all on a MergeTree table would be misleading — but `ORDER BY` may extend `PRIMARY KEY`
-  with trailing columns that genuinely shape the on-disk order and the query plan, so those are
-  surfaced as a second `ORDER BY` entry when they add anything the primary key entry does not
-  already say (comparing the split element lists, because the server renders the same one-element
-  key as `(a)` in one column and `a` in the other).
-- **No index ClickHouse reports is unique** — not the data-skipping indexes, which only prune
-  granules, and not the primary key either: live-verified, three identical values were accepted into
-  a table declared `PRIMARY KEY (a)`.
-- **Each catalog degrades independently.** `system.tables` and `system.columns` are pre-filtered to
-  what the connected user may read and answer `200`; `system.data_skipping_indices` needs its own
-  grant and answers `500` / code `497` without it (live-verified). A denied index catalog still
-  yields a full table-and-column tree; only the data-skipping-index list is empty. Any *other*
-  failure propagates rather than degrading — an empty tree standing in for a real error would hide
-  it forever.
+**No index ClickHouse reports is unique**: not the data-skipping indexes, which only prune granules,
+and not the primary key either. Live-verified, three identical values were accepted into a table
+declared `PRIMARY KEY (a)`.
 
-`getSchemaList()` defers the index catalog entirely so a third catalog read never blocks the table
-list, exactly as the SQL providers' two-phase loading does; `getSchemaRelations()` reads it and
-returns an entry — empty list included — for every table, so the client can merge indexes in
-without losing a table that legitimately has none.
+**Foreign keys are always `[]`.** ClickHouse has no foreign-key concept anywhere: no engine, no table
+setting, no DDL declares one.
+
+### 6.1 The object surface (#789)
+
+The object surface answers a lazy,
+container-aware, kind-tagged tree through four methods, and it lives in
+[`objects.ts`](../../src/lib/db/providers/sql/clickhouse/objects.ts) rather than in the provider
+class: the statements and every derivation over the declaration are there, the connection check and
+the error mapping stay on the class.
+
+Everything below was measured on **ClickHouse 26.7.1.1315**, the build `database-compose.yml` pins.
+
+#### The declaration
+
+One container level, and there is no second one to add: ClickHouse has no schema level below a
+database, and `CREATE SCHEMA` is not an alias for anything. The level's structural `id` is `schema`
+because that is what `ContainerLevelSpec` calls the innermost level on every engine; the **label** is
+the engine's own word, Database.
+
+| Kind | Role | Catalog |
+|---|---|---|
+| `table` | `relation` | `system.tables`, the DEFAULT arm |
+| `view` | `relation` | `system.tables`, `engine = 'View'` |
+| `materialized_view` | `relation` | `system.tables`, `engine = 'MaterializedView'` |
+| `dictionary` | `config` | `system.tables` joined to `system.dictionaries`, plus a union arm for the config-file ones |
+| `function` | `routine` | `system.functions`, `origin != 'System'` |
+
+Two kinds are **absent rather than declared and zero**: ClickHouse has no trigger and no stored
+procedure. A declared kind draws a folder, and a folder for a concept the engine does not have is a
+lie its 0 badge makes look like a fact.
+
+No kind declares `acceptsRowWrites`. A row mutation here is spelled `ALTER TABLE ... UPDATE`, which
+is the same measurement behind `supportsInlineRowEdit: false` (section 13).
+
+#### The vocabulary comes from the ENGINE, not from the fixture
+
+`system.tables.engine` is an **open** set: 129 distinct values on a bare server, one per storage
+engine. So `table` is the DEFAULT arm and only three engine names are diverted off it. An inclusion
+list of engine names would make every engine this code has never heard of invisible, and invisible is
+the worst shape of absence, because the count and the listing lose it together and the badge keeps
+agreeing with its own folder.
+
+`system.functions.origin` needs no list at all, because **the column type IS the vocabulary**:
+
+```
+Enum8('System' = 0, 'SQLUserDefined' = 1, 'ExecutableUserDefined' = 2, 'WasmUserDefined' = 3)
+```
+
+So the filter is written as `origin != 'System'`. That admits all three user-defined origins ClickHouse
+has today - SQL, executable and WASM - and a fourth one a later build adds to the enum, rather than
+losing it silently.
+
+One consequence worth stating plainly: a **dictionary is a row of `system.tables` too**, so counting
+everything in that catalog as a table counts each dictionary twice. The kind expression diverts it.
+
+#### A dictionary is published in TWO catalogs, and neither one holds all of them
+
+Measured on a server carrying both flavours:
+
+| Dictionary | `system.dictionaries` | `system.tables` | `system.columns` |
+|---|---|---|---|
+| `demo.dict_customers`, created by `CREATE DICTIONARY` | Yes, `database = 'demo'` | Yes, engine `Dictionary` | Yes |
+| `dict_regions_config`, declared in `/etc/clickhouse-server/regions_dictionary.xml` | Yes, `database = ''` | **No row at all** | **No row at all** |
+
+So sourcing dictionaries from `system.tables` alone loses every config-file dictionary from the count
+and the listing **together**. That is standing ruling 5a's exact absence: invisible in the tree while
+the badge keeps agreeing with its own folder, so ruling 5f still holds and nothing detects it.
+
+`system.dictionaries` is therefore unioned into the same kind-tagged subquery, on the arm
+`WHERE d.database = ''`, which is the config-file dictionary's whole address: a database cannot be
+named the empty string, so that arm can never duplicate a DDL dictionary, and the count and the
+listing still read **one text**. Like a function, such a dictionary is server-global: it appears under
+every database, and its path records the container it was reached through.
+
+The engine name is not what identifies a dictionary either. Measured:
+
+| Statement | Answer |
+|---|---|
+| `CREATE TABLE demo.dict_customers_proxy (id UInt64, name String) ENGINE = Dictionary(demo.dict_customers)` | accepted |
+
+That produces a `system.tables` row with engine `Dictionary` and **no** `system.dictionaries` row. It
+is a table that reads a dictionary, and `engine = 'Dictionary'` would file it under Dictionaries,
+where its detail read would then find nothing. So the kind expression asks `system.dictionaries` for
+**membership**, `(t.database, t.name) IN (SELECT database, name FROM system.dictionaries)`, and that
+proxy table stays a table. `docker/clickhouse-init/01-object-fixture.sql` carries all three shapes, so
+the rule can be re-measured rather than re-argued.
+
+#### The implicit inner table, and why the obvious rule is wrong
+
+A materialised view declared without a `TO` clause owns an implicit inner table holding its state.
+Measured: `CREATE MATERIALIZED VIEW probe.mv_inner ENGINE = MergeTree ... AS SELECT` produces
+``probe.`.inner_id.0ec1eae5-fa15-41b8-98bb-9a0a01d5df45` `` with engine `MergeTree`, and that suffix
+is the view's own `uuid`. Such a table must appear in neither the count nor the listing: it is
+storage the server created, not an object a person named.
+
+The obvious rule is a name pattern, and it is **refuted rather than merely unattractive**. Measured:
+
+| Statement | Answer |
+|---|---|
+| ``CREATE TABLE probe.`.inner_id.fake` (x UInt8) ENGINE = MergeTree ORDER BY x`` | accepted |
+
+So `name LIKE '.inner%'` would hide a table a person created. The rule used instead is structural and
+reads only columns the server publishes: a table is an implicit inner table exactly when some
+MaterializedView's `(target_database, target_table)` names it **and** that view's `target_table` is
+`concat('.inner_id.', toString(uuid))`. The uuid equality is the half that separates an inner table
+from an explicit `TO` target, which is an ordinary user table.
+
+Measured against a fixture built to break it:
+
+| Object | In the listing |
+|---|---|
+| `.inner_id.<mv_inner's uuid>`, the implicit inner table | No |
+| `.inner_id.fake`, created by a person under the same prefix | Yes |
+| `mv_target`, the explicit `TO` target of `mv_to` | Yes |
+
+The Ordinary-database era spelling `.inner.<view name>` is unreachable on this build:
+`CREATE DATABASE ... ENGINE = Ordinary` answers code 336 `UNKNOWN_DATABASE_ENGINE`.
+
+#### `countObjects()` and `listObjects()` read ONE subquery
+
+The kind-tagged subquery is built once. The count `GROUP BY`s it and the listing `WHERE`s it. That is
+how the listing is guaranteed to contain exactly what the count counted: there is no second `WHERE`
+clause for the two to drift apart in, and no seam where a count over one catalog meets a listing over
+another.
+
+`total_rows` / `total_bytes` are `Nullable(UInt64)` and really are null for a view, for a dictionary
+and for a materialised view with a `TO` clause (measured). Null is reported as `undefined` - unknown -
+never coerced to zero.
+
+A refused count is reported per kind as `{ unavailable }` carrying **the server's own sentence**,
+verbatim and unprefixed, because that text is rendered to a person as the reason a folder has no
+number. It is a live case rather than a defensive arm: `system.functions` needs its own grant and a
+restricted user sees `500` / code `497`.
+
+#### What the last path segment carries
+
+The last segment of a `DatabaseObject.path` is the object's **bare name**, for every one of the five
+kinds, and it is unique within its parent. Nothing is appended to disambiguate it, because there is
+nothing to disambiguate: **ClickHouse has no routine overloading**. `CREATE FUNCTION f AS (x) -> x`
+followed by a second `CREATE FUNCTION f AS (x, y) -> x` answers code 609 `FUNCTION_ALREADY_EXISTS`,
+so a name identifies one function and an argument-type list in the segment - the form PostgreSQL needs
+(standing ruling 2) - would carry no information here and would change identity whenever a parameter
+list changed.
+
+The one qualification is which parent a bare name is unique within, and two kinds answer it
+differently. A `table`, `view`, `materialized_view` or DDL `dictionary` is unique within its
+**database**, which is the container segment above it. A `function`, and a config-file `dictionary`,
+is unique within the **server**: neither has a database, and the container segment of its path records
+where it was reached from. The next section is that measurement.
+
+#### Functions are SERVER-GLOBAL, and the path says where they were reached
+
+`system.functions` has no database column, and that is the engine: `CREATE FUNCTION` takes no
+qualified name and the function resolves from any database. So the Functions folder holds the same
+objects under every database, and the container segment of a function's path records the container it
+was **reached through**, not one that owns it. The alternative - showing functions under one chosen
+database - would leave the folder empty everywhere else while the functions are callable there.
+
+#### `describeObject()` takes the KIND, and only the table-backed kinds read a catalog
+
+The kind decides everything and nothing reads the name to work out what it is holding. The four
+`system.tables` kinds read columns and data-skipping indexes; a `function` answers three empty arrays
+with **no round trip**, which is a true fact about the kind rather than a failed read.
+
+A **dictionary does describe**, out of `system.dictionaries` rather than `system.columns`. That is the
+only catalog both flavours are in: `system.columns` answers a DDL dictionary's columns (measured) and
+holds nothing at all for a config-file one. The catalog publishes the columns as four parallel arrays,
+`key.names` / `key.types` / `attribute.names` / `attribute.types`, which the statement zips and
+flattens in SQL so the transport still reads scalar columns; a key column is reported `isPrimary`,
+which is the catalog's own split rather than a guess. A dictionary reports no index, because its
+LAYOUT is not one and `system.data_skipping_indices` holds nothing for it. The branch is keyed on the
+CATALOG rather than on `role === 'relation'` - a dictionary is declared `config` - and a declared kind
+with no catalog entry **raises in both `listObjects` and `describeObject`**, so a kind added to the
+declaration alone cannot draw a real-looking empty detail panel. The kind is checked before the path
+in both methods, so one bad call reports the same thing either way.
+
+An empty column answer raises for a dictionary too, for the same reason as for a table: a dictionary
+always declares at least a key, so nothing there under that name is the only way to read it.
+
+`foreignKeys` is always `[]`, the same fact as in section 6: ClickHouse parses `REFERENCES` and
+enforces nothing by it, and `system.*` holds no constraint catalog to read one back from.
+
+Zero columns **raises**: `CREATE TABLE t ()` is a syntax error (code 62), so every table-backed object
+has at least one column and an empty answer means the object is not there under that name.
+
+The index read here **does not degrade to empty**, unlike the object surface's.
+`system.data_skipping_indices` needs its own grant and answers code `497` without it, and "this
+object has no skipping index" is a different fact from "you may not see its indexes". A detail panel
+showing the first when the second is true is a claim nobody measured.
+
+#### `describeObjects()` describes a whole folder in three statements (#789)
+
+`describeObjects(container, kind, limit?)` answers columns and indexes for EVERY object of one kind in
+one database, in THREE round trips for a table-backed folder and TWO for a dictionary folder, whatever
+the folder holds. The single read is two statements per table-backed object and one per dictionary, so a
+folder of 200 tables cost 400. Measured on clickhouse-server 26.7.1.1315 against a 200-table database:
+**42 ms for one `describeObjects()` against 614 ms for 200 `describeObject()` calls**, the same 600
+columns and 200 skipping indexes.
+
+Each detail statement is its `describeObject()` counterpart with the name equality replaced by
+membership of the target set, and nothing else changed.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.** The same three the single read uses - `system.columns`,
+`system.data_skipping_indices` and `system.dictionaries` - and the target is the same kind-tagged
+subquery the count GROUPs and the listing FILTERs, so all three cannot disagree about which rows are in
+scope. That is also what keeps the implicit inner table out of the batch: it is excluded structurally,
+by the view's own uuid, in the one place all three read. MEMBERSHIP comes from the target read and never
+from the column read, so an object the detail reads answer nothing for comes back with empty lists
+rather than missing, and this read does not repeat the single read's zero-column throw - there an empty
+answer means the object is not there under that name, here the catalog has just said it is.
+
+**Which kinds have no columns.** `function` alone, which answers `{ details: [] }` with no round trip.
+A ClickHouse UDF is server-global and resolves in no column catalog at all. A DICTIONARY is NOT one of
+them - `system.dictionaries` carries its key and attribute columns - which is why the rule is keyed on
+the CATALOG map and not on `role === "relation"`: a dictionary is declared `config`.
+
+**What bounds the read on the wire.** `LIMIT n` inside the target, carrying `limit + 1` so a saturated
+read is told from an exact one with no second count. The value is INTERPOLATED rather than bound,
+because this transport binds named `{name:Type}` parameters and nothing else; it is safe by
+construction, since the caller's value is refused unless it is a positive whole number, so nothing that
+reaches the template can be anything but digits. That guard therefore protects the STATEMENT here as
+well as the answer: a fractional limit would reach the server as a syntax error. The extra object is
+dropped in code and `truncated` carries the CALLER's limit.
+
+**What orders the cut, and under whose collation.** `ORDER BY objectName ASC` in the target, which runs
+under ClickHouse's own String comparison. Measured: that comparison is the UTF-8 BYTE order, so a
+database holding `U+E000` and `U+1F600` answers `U+E000` first, where a JavaScript sort answers the
+reverse because it compares UTF-16 code units and the surrogate `0xD83D` sorts below `0xE000`. So the
+MEMBERSHIP of a bounded cut is the server's and the ORDER of the answer is ours.
+
+**Mixed path depth (ruling 5f).** Not in this engine's relation set, and there is nothing here that
+could produce one: no kind declares `attachedTo`, and every object of every declared kind is addressed
+`[database, name]`. A function's database segment records the container it was REACHED through rather
+than one that owns it, which is unchanged from the listing.
+
+**The dictionary folder needed its own shape, and the reason is a PER NAME choice.** The single read
+prefers a DDL dictionary over a config-file one of the same name with `ORDER BY database DESC LIMIT 1`.
+A bulk read over many names cannot use a `LIMIT` at all, so it groups by name and takes each of the four
+parallel arrays with `argMax(..., database)`. Measured on 26.7.1.1315, and the collision really is
+creatable: `CREATE DICTIONARY demo.dict_regions_config` beside the config-file one of that name gives
+`system.dictionaries` two rows, and both readings then answer the DDL one's columns, column for column.
+Dropping `argMax` is not a wrong answer on this engine, it is a server error - code 215,
+*"Column 'system.dictionaries.`key.names`' is not under aggregate function and not in GROUP BY keys"* -
+which is why the clause is pinned by statement TEXT in the suite. The four `key.*` and `attribute.*`
+names are backtick-quoted inside `argMax`, where a dotted name would otherwise parse as tuple access.
+
+The index read is NOT degraded to empty on a refusal, for the reason the single read gives:
+`system.data_skipping_indices` needs its own grant and answers code 497 without it, and "these objects
+have no skipping index" is a different fact from "you may not see their indexes".
+
+#### Paths are derived, never indexed positionally
+
+The container depth comes from `containerDepth()`, the database segment from the declared level whose
+`id` is `schema`, and the object's own name from the last segment. None of those is a literal index.
+On a one-level engine all three are behaviour-identical to the positional spellings, which is exactly
+why three spellings of that defect shipped elsewhere in #789 before being caught, so the suite hands
+this provider a synthetic **two-level** declaration through `spyOn` and drives it all the way to the
+bound database and the bound object name, not merely to the refusal.
+
+Sorting is over the path segment by segment and never over `JSON.stringify(path)`, which is wrong
+twice: at mixed depth the deeper path sorts first, because `,` (0x2C) is below `]` (0x5D), and JSON
+escaping reorders names holding a quote or a backslash - all of which ClickHouse accepts in a
+backquoted identifier.
 
 ---
 
@@ -974,6 +1237,16 @@ docker compose -f database-compose.yml up clickhouse
 Port `9000` (the native protocol) is deliberately not exposed — there is no native-protocol
 transport in this codebase to connect with it.
 
+Two mounts seed the object surface's own fixture, and the service is useless for #789 without them:
+
+| Mount | Holds |
+|---|---|
+| `docker/clickhouse-init/01-object-fixture.sql` | one object of every declared kind, plus the three shapes the exclusion rules are measured against: a materialized view with an implicit inner table, one with a `TO` target, a user table named `.inner_id.fake`, and a table whose engine is `Dictionary`. It also seeds rows: two in `reporting.regions`, two in `demo.customers`, two in `demo.orders` and one in ``demo.`.inner_id.fake` ``, the last so that the dotted name a generated statement must quote as ONE segment can be shown returning a row rather than an empty result either spelling produces |
+| `docker/clickhouse-config/regions_dictionary.xml` | the config-file dictionary, which SQL cannot create and which has no `system.tables` row |
+
+Both run on a **fresh data directory only**, so an already-initialized container has to be recreated
+(`docker compose -f database-compose.yml rm -sfv clickhouse`) before an edit to either takes effect.
+
 ---
 
 ## 12. Usage examples
@@ -994,9 +1267,8 @@ const provider = await createDatabaseProvider({
 await provider.connect();
 
 const result = await provider.query('SELECT id, email FROM users LIMIT 50');
-const schema = await provider.getSchema();           // tables + columns + indexes, one round trip
-const list = await provider.getSchemaList();          // fast: tables + columns, no index catalog
-const relations = await provider.getSchemaRelations(); // indexes to merge in
+const objects = await provider.listObjects(container, 'table');
+const { details } = await provider.describeObjects(container, 'table');
 
 await provider.disconnect();
 ```
@@ -1079,7 +1351,7 @@ database-wide statistics. Transaction and cancel routes do not apply — see
   is displayed and generated as `database.table`, so `a.b` + `c` renders as `a.b.c` and every consumer
   that splits on the dot reads it as three parts. Introspection is internally safe — the grouping key
   joins on `NUL`, not a dot — so only the *display name* is ambiguous. This is the same limitation
-  `postgres.ts` carries for schema-qualified names; removing it means giving `TableSchema` structured
+  `postgres.ts` carries for schema-qualified names; removing it means giving the object shape structured
   segments instead of one string, which is a cross-provider change rather than a ClickHouse one.
   Dotted database names are vanishingly rare in practice.
 

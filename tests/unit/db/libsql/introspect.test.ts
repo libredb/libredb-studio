@@ -13,9 +13,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   readHealth,
+  readNumber,
   readIndexStats,
   readOverview,
-  readSchema,
   readStorageStats,
   readTableStats,
 } from "@/lib/db/providers/sql/libsql/introspect";
@@ -151,116 +151,35 @@ function twoTableTransport(overrides: [RegExp, Answer][] = []): FakeTransport {
 // Schema
 // ============================================================================
 
-describe("readSchema", () => {
-  test("reads columns, indexes, foreign keys and row counts for every table", async () => {
-    const schema = await readSchema(twoTableTransport());
-
-    expect(schema.map((t) => t.name)).toEqual(["probe_customers", "probe_orders"]);
-    expect(schema[0]?.rowCount).toBe(3);
-    expect(schema[0]?.columns).toEqual([
-      { name: "id", type: "INTEGER", nullable: false, isPrimary: true },
-      { name: "country", type: "TEXT", nullable: true, isPrimary: false, defaultValue: "'tr'" },
-    ]);
-    expect(schema[0]?.indexes).toEqual([{ name: "idx_country", columns: ["country"], unique: true }]);
-    expect(schema[1]?.foreignKeys).toEqual([
-      { columnName: "customer_id", referencedTable: "probe_customers", referencedColumn: "id" },
-    ]);
+/**
+ * `readNumber` is the ONE rule for reading a statistic as a number in this provider
+ * directory, and it is exported so both the stats tabs and the object surface read a
+ * figure the same way. Two spellings of "a statistic as a number" in one directory is how
+ * two surfaces come to disagree about one value, which is why it is pinned here directly
+ * rather than only through whichever caller happens to exercise it.
+ */
+describe("readNumber", () => {
+  test("a number passes through, and a non-finite one is an absence", () => {
+    expect(readNumber(0)).toBe(0);
+    expect(readNumber(12)).toBe(12);
+    expect(readNumber(Number.NaN)).toBeUndefined();
+    expect(readNumber(Number.POSITIVE_INFINITY)).toBeUndefined();
   });
 
-  test("drops SQLite's own internal indexes, which are not objects a user made", async () => {
-    const schema = await readSchema(twoTableTransport());
-
-    expect(schema[0]?.indexes.map((i) => i.name)).not.toContain("sqlite_autoindex_probe_customers_1");
+  test("a NUMERIC STRING is read, which is the shape Hrana sends a large integer in", () => {
+    expect(readNumber("12")).toBe(12);
+    expect(readNumber(" 12 ")).toBe(12);
   });
 
-  test("gives each table its OWN measured size rather than the whole database's", async () => {
-    const schema = await readSchema(twoTableTransport());
-
-    // 8192 of table pages + 4096 of index pages for probe_customers, and the
-    // SQLite provider's own reading of "the database file size, once per table"
-    // is what this deliberately does not do.
-    expect(schema[0]?.size).toBe("12 KB");
-    expect(schema[1]?.size).toBe("264 KB");
-  });
-
-  test("omits the size entirely when dbstat is not compiled in", async () => {
-    const schema = await readSchema(twoTableTransport([[/FROM dbstat/, REFUSED]]));
-
-    expect(schema[0]?.size).toBeUndefined();
-    // The rows are still real: an absent size costs the size and nothing else.
-    expect(schema[0]?.rowCount).toBe(3);
-  });
-
-  test("keeps a table whose column read failed, with its row count and no invented columns", async () => {
-    const schema = await readSchema(twoTableTransport([[/pragma_table_info\('probe_customers'\)/, REFUSED]]));
-
-    expect(schema.map((t) => t.name)).toEqual(["probe_customers", "probe_orders"]);
-    expect(schema[0]?.columns).toEqual([]);
-    expect(schema[0]?.rowCount).toBe(3);
-    expect(schema[1]?.columns).toHaveLength(1);
-  });
-
-  test("omits a row count the engine refused rather than reporting zero rows", async () => {
-    const schema = await readSchema(twoTableTransport([[/COUNT\(\*\) AS row_count FROM "probe_customers"/, REFUSED]]));
-
-    expect(schema[0]?.rowCount).toBeUndefined();
-    expect(schema[1]?.rowCount).toBe(2000);
-  });
-
-  test("reads a count the transport kept as a wide decimal string, and refuses one that is not a number", async () => {
-    // The transport hands back a decimal STRING for an integer past 2^53 rather than
-    // a rounded number. For a display statistic that string is parsed; anything
-    // unreadable stays absent rather than becoming 0.
-    const schema = await readSchema(
-      twoTableTransport([
-        [/COUNT\(\*\) AS row_count FROM "probe_customers"/, rows(["row_count"], [["9007199254740993"]])],
-        [/COUNT\(\*\) AS row_count FROM "probe_orders"/, rows(["row_count"], [["not-a-number"]])],
-      ]),
-    );
-
-    expect(schema[0]?.rowCount).toBe(9007199254740992);
-    expect(schema[1]?.rowCount).toBeUndefined();
-  });
-
-  test("answers an empty schema without asking a single per-table question", async () => {
-    const transport = new FakeTransport([[/FROM sqlite_master\s+WHERE type = 'table'/, rows(["name"], [])]]);
-
-    expect(await readSchema(transport)).toEqual([]);
-    expect(transport.batchSizes).toEqual([]);
-  });
-
-  test("raises when the table list itself cannot be read, because there is nothing to show", async () => {
-    const transport = new FakeTransport([[/FROM sqlite_master/, REFUSED]]);
-
-    await expect(readSchema(transport)).rejects.toThrow(/no such table: dbstat/);
-  });
-
-  test("quotes the notnull column, which is a SQLite keyword and a parse error unquoted", async () => {
-    // Live-probe regression (sqld 0.24.33): `SELECT cid, name, type, notnull, ... FROM
-    // pragma_table_info(...)` is "near NOTNULL: syntax error", and the failure costs
-    // the COLUMNS of every table while leaving the rest of the tree intact - so the
-    // object browser listed both tables and showed each as having none. A fake
-    // transport cannot parse SQL, so what is pinned here is the statement text.
-    const transport = twoTableTransport();
-    await readSchema(transport);
-
-    const columnReads = transport.asked.filter((sql) => sql.includes("pragma_table_info"));
-    expect(columnReads).toHaveLength(2);
-    for (const sql of columnReads) {
-      expect(sql).toContain('"notnull"');
-      expect(sql).not.toMatch(/,\s*notnull\s*,/);
-    }
-  });
-
-  test("asks the per-table questions in ONE round trip rather than four per table", async () => {
-    const transport = twoTableTransport();
-    await readSchema(transport);
-
-    // Two tables: four reads each in one batch, then one batch for the single
-    // user index's columns. A libSQL server is across a network, so a read that
-    // costs four round trips per table is the difference between a schema tree
-    // that opens and one that times out.
-    expect(transport.batchSizes[0]).toBe(8);
+  test("text that is not a number is an absence rather than a zero", () => {
+    // A zero here would publish a measurement nobody took: the stats tabs draw the figure
+    // they are given, so an unparseable value has to reach them as no value at all.
+    expect(readNumber("wal")).toBeUndefined();
+    expect(readNumber("")).toBeUndefined();
+    expect(readNumber("   ")).toBeUndefined();
+    expect(readNumber(null)).toBeUndefined();
+    expect(readNumber(undefined)).toBeUndefined();
+    expect(readNumber(true)).toBeUndefined();
   });
 });
 

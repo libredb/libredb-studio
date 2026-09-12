@@ -90,6 +90,10 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // selects the comparison rather than a term in it.
   managed: "cosmetic",
   seedId: "cosmetic",
+  // WHEN this browser reads the catalog, not which catalog it reads or as whom. Two
+  // copies of a seed differing only here reach the same database with the same
+  // credentials, so a run may still be started on the seed's id.
+  skipObjectScan: "cosmetic",
   type: "resolution",
   host: "resolution",
   port: "resolution",

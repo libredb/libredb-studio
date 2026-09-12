@@ -31,7 +31,14 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { KEY_PATTERN_LABELS, SEARCH_INDEX_LABELS, TABLE_LABELS } from "../fixtures/provider-labels";
 import { LLMAuthError, LLMStreamError } from "@/lib/llm/types";
-import type { ColumnSchema, DatabaseConnection, DatabaseType, QueryResult, TableSchema } from "@/lib/types";
+import type {
+  ColumnSchema,
+  DatabaseConnection,
+  DatabaseType,
+  ForeignKeySchema,
+  IndexSchema,
+  QueryResult,
+} from "@/lib/types";
 import {
   type Turn,
   answersProse,
@@ -94,6 +101,27 @@ const CAPABILITIES: ProviderCapabilities = {
   schemaRefreshPattern: "manual",
 };
 
+/** One object as a grounding fixture declares it, before the walk addresses it. */
+interface GroundedObject {
+  readonly name: string;
+  readonly columns: readonly ColumnSchema[];
+  readonly indexes: readonly IndexSchema[];
+  readonly foreignKeys?: readonly ForeignKeySchema[];
+}
+
+/**
+ * The capabilities a run grounded through the OBJECT surface needs.
+ *
+ * A kind has to be DECLARED before anything can be listed under it (standing ruling 4), so
+ * a fixture that declares none is an engine with nothing to read and the walk says so.
+ * Kept apart from `CAPABILITIES` rather than folded into it: the composed catalog path
+ * reads declared kinds too, and every dialect it serves would start composing them.
+ */
+const OBJECT_CAPABILITIES: ProviderCapabilities = {
+  ...CAPABILITIES,
+  objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+};
+
 const OBJECTIVE = "Why is the orders report slow?";
 
 function queryResult(overrides: Partial<QueryResult> = {}): QueryResult {
@@ -135,25 +163,42 @@ interface BootOptions {
   /**
    * What the provider says when asked to describe its own schema (#414).
    *
-   * Absent means a `getSchema()` that REJECTS, which is the shape a provider that
-   * cannot describe this database really has: `getSchema` is a required member of
-   * `DatabaseProvider`, so no provider reaching this path is missing it, and the
+   * Absent means an object read that REJECTS, which is the shape a provider that cannot
+   * describe this database really has: the five object methods are required members of
+   * `DatabaseProvider`, so no provider reaching this path is missing them, and the
    * reachable failure is a rejection. Supplying one is how a run on a dialect with no
    * catalog plan becomes GROUNDED, which is the case #414 exists for.
+   *
+   * One container and one kind, which is what a zero-level engine has: the walk reads the
+   * empty container path, asks for the kinds `OBJECT_CAPABILITIES` declares, and joins the
+   * bulk column read onto the listing by path.
    */
-  readonly describesSchema?: () => Promise<readonly TableSchema[]>;
+  readonly describesSchema?: () => Promise<readonly GroundedObject[]>;
 }
 
 function boot(dataDir: string, options: BootOptions = {}): Boot {
   const answer = options.answer ?? (async () => queryResult());
   const queryReadOnly = mock((sql: string) => answer(sql));
+  const describes =
+    options.describesSchema ??
+    ((): Promise<readonly GroundedObject[]> => {
+      throw new QueryError("this database refused to describe its own objects");
+    });
   const provider = {
     queryReadOnly,
-    getSchema:
-      options.describesSchema ??
-      (async (): Promise<readonly TableSchema[]> => {
-        throw new QueryError("this database refused to describe its own schema");
-      }),
+    listContainers: async () => [],
+    countObjects: async () => ({ table: { count: (await describes()).length } }),
+    listObjects: async () =>
+      (await describes()).map((object) => ({ path: [object.name], name: object.name, kind: "table" })),
+    describeObject: async (path: readonly string[]) => ({ path, columns: [], indexes: [], foreignKeys: [] }),
+    describeObjects: async () => ({
+      details: (await describes()).map((object) => ({
+        path: [object.name],
+        columns: object.columns,
+        indexes: object.indexes,
+        foreignKeys: object.foreignKeys ?? [],
+      })),
+    }),
   } as unknown as DatabaseProvider;
   const acquireProvider = mock(async () => {
     const failure = options.acquireFails?.();
@@ -1313,7 +1358,14 @@ describe("planning mode runs no statement of the user's", () => {
       await runInvestigation(run.runId, {
         service: b.service,
         model: await modelOver(script.fetch),
-        resources: { ...b.resources, connection: { ...CONNECTION, type: "mongodb" } },
+        // `OBJECT_CAPABILITIES` so the walk REACHES the provider and is refused by it. With no
+        // kind declared it would be refused one step earlier, by this server, and the run would
+        // be told something true about the declaration instead of about the database.
+        resources: {
+          ...b.resources,
+          connection: { ...CONNECTION, type: "mongodb" },
+          capabilities: OBJECT_CAPABILITIES,
+        },
       });
 
       const rules = rulesOf(script.turns[0] as Turn);
@@ -1332,9 +1384,9 @@ describe("planning mode runs no statement of the user's", () => {
       // dialect only decides which of two readings is taken, and what this run is told
       // is the thing that actually stopped it — the same forwarding `operations` has
       // done since #411, for the reason #411 recorded. What stopped it is a
-      // `getSchema()` that rejected, which is the only shape "this provider cannot
-      // describe the database" has: the method is required on `DatabaseProvider`.
-      expect(script.turns[0]?.transcript).toContain("this database refused to describe its own schema");
+      // an object read that rejected, which is the only shape "this provider cannot describe
+      // the database" has: the five object methods are required on `DatabaseProvider`.
+      expect(script.turns[0]?.transcript).toContain("this database refused to describe its own objects");
       expect(script.turns[0]?.transcript).not.toContain("inspect_schema");
       // Since #414 the capture DOES acquire a provider here, under the operations
       // profile, and asks it to describe itself; this fixture's provider carries only
@@ -1357,7 +1409,7 @@ describe("planning mode runs no statement of the user's", () => {
     */
     describe("a plan run grounded through the engine's own schema inspection", () => {
       const column = (name: string): ColumnSchema => ({ name, type: "string", nullable: true, isPrimary: false });
-      const PROVIDER_INVENTORY: readonly TableSchema[] = [
+      const PROVIDER_INVENTORY: readonly GroundedObject[] = [
         { name: "orders", columns: [column("customerId")], indexes: [], foreignKeys: [] },
         { name: "customers", columns: [column("name")], indexes: [], foreignKeys: [] },
       ];
@@ -1376,7 +1428,7 @@ describe("planning mode runs no statement of the user's", () => {
           resources: {
             ...b.resources,
             connection: { ...CONNECTION, type: "mongodb" },
-            capabilities: { ...CAPABILITIES, queryLanguage: language, declaresForeignKeys: false },
+            capabilities: { ...OBJECT_CAPABILITIES, queryLanguage: language, declaresForeignKeys: false },
             ...(labels === undefined ? {} : { labels }),
           },
         });
@@ -1620,7 +1672,7 @@ describe("planning mode runs no statement of the user's", () => {
       that these rows are this product's own summary of a bounded reading.
     */
     describe("a plan run on an engine whose inventory rows are groupings this server derived", () => {
-      const KEY_PREFIXES: readonly TableSchema[] = [
+      const KEY_PREFIXES: readonly GroundedObject[] = [
         { name: "user:*", columns: [], indexes: [], foreignKeys: [] },
         { name: "order:*", columns: [], indexes: [], foreignKeys: [] },
       ];
@@ -1647,7 +1699,7 @@ describe("planning mode runs no statement of the user's", () => {
             ...b.resources,
             connection: { ...CONNECTION, type: "redis" },
             capabilities: {
-              ...CAPABILITIES,
+              ...OBJECT_CAPABILITIES,
               queryLanguage: "json",
               declaresForeignKeys: false,
               tablesAreDerivedGroupings: true,
@@ -2161,7 +2213,11 @@ describe("planning mode runs no statement of the user's", () => {
       await runInvestigation(run.runId, {
         service: b.service,
         model: await modelOver(script.fetch),
-        resources: { ...b.resources, connection: { ...CONNECTION, type: "mongodb" } },
+        resources: {
+          ...b.resources,
+          connection: { ...CONNECTION, type: "mongodb" },
+          capabilities: OBJECT_CAPABILITIES,
+        },
       });
 
       const rules = rulesOfTurn(script.turns[0] as Turn);
@@ -2172,7 +2228,7 @@ describe("planning mode runs no statement of the user's", () => {
       // thing that knows WHY. Until #414 what it knew here was the DIALECT; now the
       // dialect only decides which of the two readings is taken, and what it knows is
       // that this connection's provider rejected the request to describe the database.
-      expect(script.turns[0]?.transcript).toContain("this database refused to describe its own schema");
+      expect(script.turns[0]?.transcript).toContain("this database refused to describe its own objects");
       // And never the capture's own ADVICE, which sends a model to a tool no operations
       // run holds in either mode (#350).
       expect(script.turns[0]?.transcript).not.toContain("Use inspect_schema");
@@ -2350,6 +2406,7 @@ describe("planning mode runs no statement of the user's", () => {
       const operationsPlanRulesOn = async (
         type: DatabaseType,
         options: BootOptions = {},
+        capabilities: ProviderCapabilities = CAPABILITIES,
       ): Promise<{ readonly rules: string; readonly transcript: string }> => {
         const b = boot(freshDataDir(), options);
         const run = await startRun(b, "planning", "operations");
@@ -2358,7 +2415,7 @@ describe("planning mode runs no statement of the user's", () => {
         await runInvestigation(run.runId, {
           service: b.service,
           model: await modelOver(script.fetch),
-          resources: { ...b.resources, connection: { ...CONNECTION, type } },
+          resources: { ...b.resources, connection: { ...CONNECTION, type }, capabilities },
         });
 
         const turn = script.turns[0] as Turn;
@@ -2400,7 +2457,9 @@ describe("planning mode runs no statement of the user's", () => {
         specific about, so everything it can be specific about is the mechanism it names.
       */
       test("an ungrounded operations plan on Redis is told the engine as well as that it saw nothing", async () => {
-        const { rules, transcript } = await operationsPlanRulesOn("redis");
+        // `OBJECT_CAPABILITIES` so the walk reaches this fixture's provider and is refused BY
+        // IT, which is what "this server cannot ground this engine" means here.
+        const { rules, transcript } = await operationsPlanRulesOn("redis", {}, OBJECT_CAPABILITIES);
 
         expect(rules).toContain("No schema inventory is available to this run");
         expect(rules).toContain("This database is redis and nothing else");
@@ -2408,8 +2467,8 @@ describe("planning mode runs no statement of the user's", () => {
         expect(rules).not.toContain("inspect_operations");
         // The capture's own diagnosis still reaches the model, unchanged by this rule.
         // It names the reading rather than the dialect since #414: Redis takes the
-        // provider path now, and this fixture's `getSchema()` rejects.
-        expect(transcript).toContain("this database refused to describe its own schema");
+        // provider path now, and this fixture's object reads reject.
+        expect(transcript).toContain("this database refused to describe its own objects");
       });
 
       /*
@@ -4999,7 +5058,7 @@ describe("agent mode is no wider than it was, on an engine grounding now reaches
         resources: {
           ...b.resources,
           connection: { ...CONNECTION, type: "mongodb" },
-          capabilities: { ...CAPABILITIES, queryLanguage: "json", declaresForeignKeys: false },
+          capabilities: { ...OBJECT_CAPABILITIES, queryLanguage: "json", declaresForeignKeys: false },
         },
       }),
     ).rejects.toThrow(ExecutionProfileError);

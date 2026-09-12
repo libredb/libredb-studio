@@ -1,10 +1,10 @@
 /**
  * Drift guard for the four public type blocks in `docs/API_DOCS.md` (#567).
  *
- * The Data Types section restates `DatabaseConnection`, `QueryResult`, `TableSchema`
+ * The Data Types section restates `DatabaseConnection`, `QueryResult`, `DatabaseObject`
  * and `HealthInfo`. Nothing compared those restatements to the interfaces, which is
- * how `DatabaseConnection` and `QueryResult` fell behind `src/lib/types.ts` while
- * `TableSchema` and `HealthInfo` stayed in lockstep. The route-family guard in
+ * how `DatabaseConnection` and `QueryResult` fell behind `src/lib/types.ts` while the
+ * other two stayed in lockstep. The route-family guard in
  * `tests/unit/agent-documentation.test.ts` never looks at shapes (`docs/BACKLOG.md`,
  * B32).
  *
@@ -25,7 +25,7 @@ const DATA_TYPES = API_DOCS.split(/^## Data Types\s*$/m)[1] ?? "";
 const SHAPES = [
   { name: "DatabaseConnection", source: "src/lib/types.ts" },
   { name: "QueryResult", source: "src/lib/types.ts" },
-  { name: "TableSchema", source: "src/lib/types.ts" },
+  { name: "DatabaseObject", source: "src/lib/db/types.ts" },
   { name: "HealthInfo", source: "src/lib/db/types.ts" },
 ] as const;
 

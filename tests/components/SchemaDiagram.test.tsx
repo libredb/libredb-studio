@@ -177,16 +177,47 @@ import {
 } from "@/components/schema-diagram/highlight-store";
 import { mockToastError } from "../helpers/mock-sonner";
 import { mockSchema, emptySchema } from "../fixtures/schemas";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
+import { pathKey } from "@/lib/db/object-path";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
 // =============================================================================
 // Test Data
 // =============================================================================
 
+// Two objects carrying ONE label in two containers, as the live SQL Server on 1433 holds
+// them, plus the cross-container foreign key that names its target qualified (#789, Task 36).
+const sameLabelSchema: DetailedObject[] = [
+  {
+    name: "customers",
+    kind: "table",
+    path: ["libredb_objects", "app", "customers"],
+    columns: [
+      { name: "id", type: "integer", nullable: false, isPrimary: true },
+      { name: "name", type: "varchar(255)", nullable: true, isPrimary: false },
+    ],
+    indexes: [],
+    foreignKeys: [],
+  },
+  {
+    name: "customers",
+    kind: "table",
+    path: ["shop", "dbo", "customers"],
+    columns: [
+      { name: "id", type: "integer", nullable: false, isPrimary: true },
+      { name: "email", type: "varchar(255)", nullable: true, isPrimary: false },
+    ],
+    indexes: [],
+    foreignKeys: [],
+  },
+];
+
 // Schema with NO foreign keys at all (triggers heuristic fallback)
-const schemaNoFK: TableSchema[] = [
+const schemaNoFK: DetailedObject[] = [
   {
     name: "users",
+    kind: "table",
+    path: ["users"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "name", type: "varchar(255)", nullable: false, isPrimary: false },
@@ -197,6 +228,8 @@ const schemaNoFK: TableSchema[] = [
   },
   {
     name: "posts",
+    kind: "table",
+    path: ["posts"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "title", type: "text", nullable: false, isPrimary: false },
@@ -208,9 +241,11 @@ const schemaNoFK: TableSchema[] = [
 ];
 
 // Schema with heuristic _id column (no FK data, but column ends with _id)
-const schemaHeuristic: TableSchema[] = [
+const schemaHeuristic: DetailedObject[] = [
   {
     name: "users",
+    kind: "table",
+    path: ["users"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "email", type: "varchar", nullable: true, isPrimary: false },
@@ -221,6 +256,8 @@ const schemaHeuristic: TableSchema[] = [
   },
   {
     name: "comments",
+    kind: "table",
+    path: ["comments"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "user_id", type: "integer", nullable: false, isPrimary: false },
@@ -233,9 +270,11 @@ const schemaHeuristic: TableSchema[] = [
 ];
 
 // Schema with heuristic _id column matching singular table name (no plural 's')
-const schemaHeuristicSingular: TableSchema[] = [
+const schemaHeuristicSingular: DetailedObject[] = [
   {
     name: "author",
+    kind: "table",
+    path: ["author"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "name", type: "varchar(255)", nullable: false, isPrimary: false },
@@ -246,6 +285,8 @@ const schemaHeuristicSingular: TableSchema[] = [
   },
   {
     name: "books",
+    kind: "table",
+    path: ["books"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "author_id", type: "integer", nullable: false, isPrimary: false },
@@ -258,22 +299,26 @@ const schemaHeuristicSingular: TableSchema[] = [
 ];
 
 // Schema with foreignKeys field omitted (tests `|| []` guards)
-const schemaUndefinedFK: TableSchema[] = [
+const schemaUndefinedFK: DetailedObject[] = [
   {
     name: "items",
+    kind: "table",
+    path: ["items"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "label", type: "text", nullable: true, isPrimary: false },
     ],
     indexes: [],
     rowCount: 20,
-  } as TableSchema,
+  } as DetailedObject,
 ];
 
 // Multi-FK schema for highlighting tests
-const schemaMultiFK: TableSchema[] = [
+const schemaMultiFK: DetailedObject[] = [
   {
     name: "users",
+    kind: "table",
+    path: ["users"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "name", type: "varchar(255)", nullable: false, isPrimary: false },
@@ -284,6 +329,8 @@ const schemaMultiFK: TableSchema[] = [
   },
   {
     name: "orders",
+    kind: "table",
+    path: ["orders"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "user_id", type: "integer", nullable: false, isPrimary: false },
@@ -295,6 +342,8 @@ const schemaMultiFK: TableSchema[] = [
   },
   {
     name: "items",
+    kind: "table",
+    path: ["items"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "order_id", type: "integer", nullable: false, isPrimary: false },
@@ -306,10 +355,12 @@ const schemaMultiFK: TableSchema[] = [
   },
 ];
 
-// Single table schema
-const singleTableSchema: TableSchema[] = [
+// A single relation, used wherever a test needs exactly one node
+const singleTableFixture: DetailedObject[] = [
   {
     name: "settings",
+    kind: "table",
+    path: ["settings"],
     columns: [
       { name: "key", type: "text", nullable: false, isPrimary: true },
       { name: "value", type: "text", nullable: true, isPrimary: false },
@@ -445,7 +496,7 @@ describe("SchemaDiagram", () => {
   });
 
   test("shows single table count", () => {
-    const props = createDefaultProps({ schema: singleTableSchema });
+    const props = createDefaultProps({ schema: singleTableFixture });
     const { container } = render(<SchemaDiagram {...props} />);
     const view = within(container);
 
@@ -640,9 +691,11 @@ describe("SchemaDiagram", () => {
   test("shows warning when FK data exists but the displayed graph is heuristic", () => {
     // invoices HAS FK data, but it references a table outside the schema -
     // the diagram falls back to dashed heuristic edges and must explain them.
-    const unusableFk: TableSchema[] = [
+    const unusableFk: DetailedObject[] = [
       {
         name: "customer",
+        kind: "table",
+        path: ["customer"],
         columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
         indexes: [],
         foreignKeys: [],
@@ -650,6 +703,8 @@ describe("SchemaDiagram", () => {
       },
       {
         name: "invoices",
+        kind: "table",
+        path: ["invoices"],
         columns: [
           { name: "id", type: "integer", nullable: false, isPrimary: true },
           { name: "customer_id", type: "integer", nullable: false, isPrimary: false },
@@ -755,7 +810,7 @@ describe("SchemaDiagram", () => {
     const view = within(container);
     expect(view.queryByText("3 tables")).not.toBeNull();
 
-    rerender(<SchemaDiagram schema={singleTableSchema} onClose={onClose} />);
+    rerender(<SchemaDiagram schema={singleTableFixture} onClose={onClose} />);
     expect(view.queryByText("1 tables")).not.toBeNull();
   });
 
@@ -786,8 +841,10 @@ describe("SchemaDiagram", () => {
   // ── Schema with many tables ─────────────────────────────────────────
 
   test("schema with many tables renders correct count", () => {
-    const manyTables: TableSchema[] = Array.from({ length: 10 }, (_, i) => ({
+    const manyTables: DetailedObject[] = Array.from({ length: 10 }, (_, i) => ({
       name: `table_${i}`,
+      kind: "table",
+      path: [`table_${i}`],
       columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
       indexes: [],
       foreignKeys: [],
@@ -841,7 +898,7 @@ describe("SchemaDiagram", () => {
     });
 
     test("displays column names", () => {
-      const props = createDefaultProps({ schema: singleTableSchema });
+      const props = createDefaultProps({ schema: singleTableFixture });
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
 
@@ -850,7 +907,7 @@ describe("SchemaDiagram", () => {
     });
 
     test("displays column type text", () => {
-      const props = createDefaultProps({ schema: singleTableSchema });
+      const props = createDefaultProps({ schema: singleTableFixture });
       const { container } = render(<SchemaDiagram {...props} />);
 
       // Column types should be rendered in uppercase
@@ -860,7 +917,7 @@ describe("SchemaDiagram", () => {
     });
 
     test("shows NN for NOT NULL columns", () => {
-      const props = createDefaultProps({ schema: singleTableSchema });
+      const props = createDefaultProps({ schema: singleTableFixture });
       const { container } = render(<SchemaDiagram {...props} />);
 
       // 'key' column has nullable: false
@@ -870,7 +927,7 @@ describe("SchemaDiagram", () => {
     });
 
     test("compact mode hides column details", () => {
-      const props = createDefaultProps({ schema: singleTableSchema });
+      const props = createDefaultProps({ schema: singleTableFixture });
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
 
@@ -900,16 +957,16 @@ describe("SchemaDiagram", () => {
       const props = createDefaultProps();
       const { container } = render(<SchemaDiagram {...props} />);
 
-      expect(container.querySelector('[data-node-id="users"]')).not.toBeNull();
-      expect(container.querySelector('[data-node-id="orders"]')).not.toBeNull();
-      expect(container.querySelector('[data-node-id="products"]')).not.toBeNull();
+      expect(container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)).not.toBeNull();
+      expect(container.querySelector(`[data-node-id="${pathKey(["public", "orders"])}"]`)).not.toBeNull();
+      expect(container.querySelector(`[data-node-id="${pathKey(["public", "products"])}"]`)).not.toBeNull();
     });
 
     test("node with empty/null data returns nothing", () => {
       // Schema with a valid table ensures at least one node renders
       // The guard `if (!data) return null; if (!table) return null;` is tested
       // by the fact that the enhanced mock passes correct data through
-      const props = createDefaultProps({ schema: singleTableSchema });
+      const props = createDefaultProps({ schema: singleTableFixture });
       const { container } = render(<SchemaDiagram {...props} />);
 
       const nodeEl = container.querySelector('[data-node-id="settings"]');
@@ -933,7 +990,7 @@ describe("SchemaDiagram", () => {
       expect(view.queryByText("Selected:")).toBeNull();
 
       // Click the users node
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
       fireEvent.click(usersNode);
 
       // Selection should appear with selected node name and clear button
@@ -941,7 +998,7 @@ describe("SchemaDiagram", () => {
       // The selected table name appears in a font-mono span
       const selectedSpan = container.querySelector(".font-mono.font-medium");
       expect(selectedSpan).not.toBeNull();
-      expect(selectedSpan!.textContent).toBe("users");
+      expect(selectedSpan!.textContent).toBe("public.users");
       expect(view.queryByText("clear")).not.toBeNull();
     });
 
@@ -950,7 +1007,7 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
 
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
 
       // Select
       fireEvent.click(usersNode);
@@ -967,7 +1024,7 @@ describe("SchemaDiagram", () => {
       const view = within(container);
 
       // Select a node
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
       fireEvent.click(usersNode);
       expect(view.queryByText("Selected:")).not.toBeNull();
 
@@ -982,7 +1039,7 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
 
-      fireEvent.click(container.querySelector('[data-node-id="users"]')!);
+      fireEvent.click(container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!);
       expect(view.queryByText("Selected:")).not.toBeNull();
 
       // Filtering "users" out of the graph must clear the stale selection.
@@ -991,14 +1048,35 @@ describe("SchemaDiagram", () => {
 
       expect(view.queryByText("Selected:")).toBeNull();
       // ...and the surviving table does not inherit any highlight.
-      const ordersNode = container.querySelector('[data-node-id="orders"]')!;
+      const ordersNode = container.querySelector(`[data-node-id="${pathKey(["public", "orders"])}"]`)!;
       expect(ordersNode.querySelector(".border-brand-tint\\/60")).toBeNull();
 
       // The drop is permanent: clearing the filter brings the table back to
       // the canvas but must NOT resurrect a selection the user already lost.
       fireEvent.change(searchInput, { target: { value: "" } });
-      expect(container.querySelector('[data-node-id="users"]')).not.toBeNull();
+      expect(container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)).not.toBeNull();
       expect(view.queryByText("Selected:")).toBeNull();
+    });
+
+    test("two objects sharing a label in different containers are two selectable nodes", () => {
+      // The live SQL Server on 1433 holds both of these. Keyed on the label they were one
+      // React Flow node id, so one card was dropped and the readout named neither (#789).
+      const props = createDefaultProps({ schema: sameLabelSchema });
+      const { container } = render(<SchemaDiagram {...props} />);
+      const view = within(container);
+
+      expect(container.querySelectorAll("[data-node-id]").length).toBe(2);
+      const shopNode = container.querySelector(`[data-node-id="${pathKey(["shop", "dbo", "customers"])}"]`);
+      expect(shopNode).not.toBeNull();
+      expect(
+        container.querySelector(`[data-node-id="${pathKey(["libredb_objects", "app", "customers"])}"]`),
+      ).not.toBeNull();
+
+      fireEvent.click(shopNode!);
+      expect(view.queryByText("Selected:")).not.toBeNull();
+      // The readout is for a PERSON, so it is the dotted address and never the key's own
+      // control character.
+      expect(container.querySelector(".font-mono.font-medium")!.textContent).toBe("shop.dbo.customers");
     });
 
     test("clicking pane background clears selection", () => {
@@ -1007,7 +1085,7 @@ describe("SchemaDiagram", () => {
       const view = within(container);
 
       // Select a node
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
       fireEvent.click(usersNode);
       expect(view.queryByText("Selected:")).not.toBeNull();
 
@@ -1029,7 +1107,7 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
 
       // Click users node
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
       fireEvent.click(usersNode);
 
       // The TableNode's root div inside the data-node-id div should carry the brand-tint highlight border
@@ -1042,11 +1120,11 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
 
       // Select 'orders' which has FK to 'users'
-      const ordersNode = container.querySelector('[data-node-id="orders"]')!;
+      const ordersNode = container.querySelector(`[data-node-id="${pathKey(["public", "orders"])}"]`)!;
       fireEvent.click(ordersNode);
 
       // The 'users' table should also be highlighted (FK target)
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
       const usersInner = usersNode.querySelector(".border-brand-tint\\/60");
       expect(usersInner).not.toBeNull();
     });
@@ -1056,11 +1134,11 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
 
       // Select 'users' — orders has FK pointing to users
-      const usersNode = container.querySelector('[data-node-id="users"]')!;
+      const usersNode = container.querySelector(`[data-node-id="${pathKey(["public", "users"])}"]`)!;
       fireEvent.click(usersNode);
 
       // The 'orders' table should be highlighted (it references users via FK)
-      const ordersNode = container.querySelector('[data-node-id="orders"]')!;
+      const ordersNode = container.querySelector(`[data-node-id="${pathKey(["public", "orders"])}"]`)!;
       const ordersInner = ordersNode.querySelector(".border-brand-tint\\/60");
       expect(ordersInner).not.toBeNull();
     });
@@ -1070,11 +1148,11 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
 
       // Select 'orders' (related to users via FK, not related to products)
-      const ordersNode = container.querySelector('[data-node-id="orders"]')!;
+      const ordersNode = container.querySelector(`[data-node-id="${pathKey(["public", "orders"])}"]`)!;
       fireEvent.click(ordersNode);
 
       // Products should NOT be highlighted
-      const productsNode = container.querySelector('[data-node-id="products"]')!;
+      const productsNode = container.querySelector(`[data-node-id="${pathKey(["public", "products"])}"]`)!;
       const productsInner = productsNode.querySelector(".border-brand-tint\\/60");
       expect(productsInner).toBeNull();
       // Products should have default border
@@ -1493,8 +1571,10 @@ describe("SchemaDiagram", () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   describe("Large schemas", () => {
-    const bigSchema: TableSchema[] = Array.from({ length: 150 }, (_, i) => ({
+    const bigSchema: DetailedObject[] = Array.from({ length: 150 }, (_, i) => ({
       name: `table_${i}`,
+      kind: "table",
+      path: [`table_${i}`],
       columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
       indexes: [],
       foreignKeys: [],
@@ -1550,7 +1630,7 @@ describe("SchemaDiagram", () => {
       expect(container.querySelector('[data-node-id="posts"]')!.querySelector(".border-brand-tint\\/60")).toBeNull();
 
       // Relations arrive: posts now references users
-      const withFk: TableSchema[] = [
+      const withFk: DetailedObject[] = [
         schemaNoFK[0],
         {
           ...schemaNoFK[1],
@@ -1586,7 +1666,7 @@ describe("SchemaDiagram", () => {
 
       // FK arrival adds handles -> React Flow must be told to re-measure,
       // otherwise the new edges never attach.
-      const withFk: TableSchema[] = [
+      const withFk: DetailedObject[] = [
         schemaNoFK[0],
         {
           ...schemaNoFK[1],
@@ -1607,9 +1687,11 @@ describe("SchemaDiagram", () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   describe("Layout failure", () => {
-    const wideTable: TableSchema[] = [
+    const wideTable: DetailedObject[] = [
       {
         name: "wide",
+        kind: "table",
+        path: ["wide"],
         columns: Array.from({ length: 30 }, (_, i) => ({
           name: `col_${i}`,
           type: "integer",
@@ -1732,9 +1814,11 @@ describe("SchemaDiagram", () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   describe("Column capping", () => {
-    const wideTable: TableSchema[] = [
+    const wideTable: DetailedObject[] = [
       {
         name: "wide",
+        kind: "table",
+        path: ["wide"],
         columns: Array.from({ length: 30 }, (_, i) => ({
           name: `col_${i}`,
           type: "integer",
@@ -1781,6 +1865,38 @@ describe("SchemaDiagram", () => {
       fireEvent.click(view.getByTestId("probe-toggle-expand"));
       expect(view.queryByText("col_29")).toBeNull();
       expect(view.queryByText(/\+\d+ more/)).not.toBeNull();
+    });
+
+    test("the expander expands the card it sits in, not its namesake in another container", () => {
+      // Both cards are wide and both are labelled `customers`. Keyed on the label, one click
+      // expanded whichever the set answered for, which is the collision a one-object fixture
+      // cannot see (#789, Task 36).
+      const wideAt = (path: readonly string[], prefix: string): DetailedObject => ({
+        name: path[path.length - 1],
+        kind: "table",
+        path: [...path],
+        columns: Array.from({ length: 30 }, (_, i) => ({
+          name: `${prefix}_${i}`,
+          type: "integer",
+          nullable: true,
+          isPrimary: i === 0,
+        })),
+        indexes: [],
+        foreignKeys: [],
+      });
+      const props = createDefaultProps({
+        schema: [wideAt(["libredb_objects", "app", "customers"], "app"), wideAt(["shop", "dbo", "customers"], "shop")],
+      });
+      const { container } = render(<SchemaDiagram {...props} />);
+      const view = within(container);
+
+      const shopCard = container.querySelector<HTMLElement>(
+        `[data-node-id="${pathKey(["shop", "dbo", "customers"])}"]`,
+      )!;
+      fireEvent.click(within(shopCard).getByText(/\+\d+ more/));
+
+      expect(view.queryByText("shop_29")).not.toBeNull();
+      expect(view.queryByText("app_29")).toBeNull();
     });
 
     test("dragged node positions are recorded and survive cosmetic rebuilds", async () => {
@@ -1864,5 +1980,78 @@ describe("SchemaDiagram", () => {
 
       expect(view.queryByText(/No FK data available/)).not.toBeNull();
     });
+  });
+});
+
+// =============================================================================
+// The object model: which kinds this canvas draws (#789)
+// =============================================================================
+
+describe("SchemaDiagram kind filtering", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  // Two relation kinds and one routine. WHICH of them is drawn is a filter over what the
+  // engine declared, not a constant in the component, so an engine declaring a third
+  // relation kind is drawn with no change to this file.
+  const capabilities = {
+    queryLanguage: "sql",
+    objectKinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+      { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  const inventory: DetailedObject[] = [
+    {
+      name: "orders",
+      path: ["orders"],
+      kind: "table",
+      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+      indexes: [],
+      foreignKeys: [],
+    },
+    {
+      name: "order_summary",
+      path: ["order_summary"],
+      kind: "view",
+      columns: [{ name: "total", type: "numeric", nullable: true, isPrimary: false }],
+      indexes: [],
+      foreignKeys: [],
+    },
+    {
+      name: "order_total",
+      path: ["order_total"],
+      kind: "function",
+      columns: [{ name: "result", type: "numeric", nullable: true, isPrimary: false }],
+      indexes: [],
+      foreignKeys: [],
+    },
+  ];
+
+  test("both declared relation kinds are drawn and the routine is not", () => {
+    const { container } = render(<SchemaDiagram schema={inventory} capabilities={capabilities} onClose={() => {}} />);
+
+    expect(container.querySelector('[data-testid="node-orders"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="node-order_summary"]')).not.toBeNull();
+    // It has columns, so the flat model drew it as a card with a fabricated shape.
+    expect(container.querySelector('[data-testid="node-order_total"]')).toBeNull();
+  });
+
+  test("an inventory of nothing but routines renders no canvas at all", () => {
+    const routinesOnly = inventory.filter((object) => object.kind === "function");
+    const { container } = render(
+      <SchemaDiagram schema={routinesOnly} capabilities={capabilities} onClose={() => {}} />,
+    );
+
+    expect(container.querySelector('[data-testid="mock-react-flow"]')).toBeNull();
+  });
+
+  test("with no declaration yet, every entry is drawn", () => {
+    const { container } = render(<SchemaDiagram schema={inventory} onClose={() => {}} />);
+
+    expect(container.querySelector('[data-testid="node-order_total"]')).not.toBeNull();
   });
 });

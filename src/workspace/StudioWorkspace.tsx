@@ -4,6 +4,8 @@ import type { CsvDelimiter } from "@/lib/export/csv";
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Sidebar } from "@/components/sidebar";
+import { type TreeRowActionHandlers } from "@/components/object-tree";
+import { objectAtPath } from "@/lib/db/detailed-object";
 // MobileNav and mobile tab panels excluded in embedded mode — platform provides its own navigation
 import { QueryEditor, QueryEditorRef } from "@/components/QueryEditor";
 import { DataImportModal } from "@/components/DataImportModal";
@@ -14,6 +16,8 @@ import { TestDataGenerator } from "@/components/TestDataGenerator";
 import { SaveQueryModal } from "@/components/SaveQueryModal";
 import { StudioTabBar, QueryToolbar, BottomPanel } from "@/components/studio/index";
 import type { MaskingConfig } from "@/lib/data-masking";
+import type { DatabaseObject } from "@/lib/db/types";
+import { relationKindIds } from "@/lib/db/object-kinds";
 import { useToast } from "@/hooks/use-toast";
 import { useTabManager } from "@/hooks/use-tab-manager";
 import { useConnectionAdapter } from "@/workspace/hooks/use-connection-adapter";
@@ -167,6 +171,7 @@ export function StudioWorkspace({
   currentUser,
   onQueryExecute,
   onSchemaFetch,
+  onObjectsFetch,
   onSaveQuery: onSaveQueryProp,
   // onLoadSavedQueries — reserved for future saved-queries panel integration
   features: featuresProp,
@@ -182,6 +187,7 @@ export function StudioWorkspace({
   const conn = useConnectionAdapter({
     connections: externalConnections,
     onSchemaFetch,
+    onObjectsFetch,
   });
 
   // 2. Tab Manager (pure UI state, reused as-is)
@@ -225,9 +231,11 @@ export function StudioWorkspace({
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
   const [savedKey, setSavedKey] = useState(0);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [profilerTable, setProfilerTable] = useState<string | null>(null);
-  const [codeGenTable, setCodeGenTable] = useState<string | null>(null);
-  const [testDataTable, setTestDataTable] = useState<string | null>(null);
+  // ADDRESSES, not labels, for the reason `src/components/Studio.tsx` gives at the same
+  // three lines: a label is not unique within a connection (#789, Task 35).
+  const [profilerPath, setProfilerPath] = useState<readonly string[] | null>(null);
+  const [codeGenPath, setCodeGenPath] = useState<readonly string[] | null>(null);
+  const [testDataPath, setTestDataPath] = useState<readonly string[] | null>(null);
 
   // === Save query handler ===
   const handleSaveQuery = useCallback(
@@ -277,12 +285,58 @@ export function StudioWorkspace({
   );
 
   // === Table click handler ===
+  /** Open and run the statement for one object, addressed by its PATH (#789). */
   const onTableClick = useCallback(
-    (tableName: string) => {
-      tabMgr.handleTableClick(tableName, queryExec.executeQuery);
+    (path: readonly string[]) => {
+      tabMgr.handleTableClick(path, queryExec.executeQuery);
     },
     [tabMgr, queryExec.executeQuery],
   );
+
+  /**
+   * A row activated in the object tree (#789), gated on the kind's declared ROLE for the
+   * reason `src/components/Studio.tsx` gives: the click generates a query and executes
+   * it, and a routine is not a thing to select from.
+   *
+   * The host declares the capabilities per connection here, so `metadata` is null
+   * whenever it declared none, and a tree is not rendered at all in that case.
+   */
+  const onObjectClick = useCallback(
+    (object: DatabaseObject) => {
+      const capabilities = conn.metadata?.capabilities;
+      if (capabilities === undefined || !relationKindIds(capabilities).includes(object.kind)) return;
+      onTableClick(object.path);
+    },
+    [conn.metadata, onTableClick],
+  );
+
+  /**
+   * The row menu's actions in THIS shell, which is four of the six (U22, #789).
+   *
+   * The three modals below are mounted here and had nothing able to set their table once
+   * the tree replaced the flat explorer, and `handleGenerateSelect` had no caller left in
+   * this file at all. Each one follows the SAME feature flag as the modal it opens, so a
+   * host that turned a feature off is not offered a menu item that opens nothing - and the
+   * profiler follows `codeGenerator` because that is the flag its own mount is gated on.
+   *
+   * Per-table maintenance and creating a table are deliberately absent: this shell mounts
+   * neither destination, and passed `onOpenMaintenance={noop}` and
+   * `onCreateTableClick={undefined}` to the flat explorer before any of this. An absent
+   * handler is an item the tree does not draw.
+   *
+   * Built inline, the same way `src/components/Studio.tsx` builds its own, so the two shells
+   * do not disagree about one prop. A `useMemo` stood here and held nothing: `useTabManager`
+   * returns a fresh object literal on every render, so `tabMgr` in the dependency list made
+   * the memo recompute every time and the identity it was supposed to preserve changed
+   * anyway. Memoising this for real means memoising what it closes over first, in both
+   * shells, which is a change to those hooks rather than to this line.
+   */
+  const objectActions: TreeRowActionHandlers = {
+    onGenerateSelect: (object) => tabMgr.handleGenerateSelect(object.path),
+    onProfileObject: features.codeGenerator ? (object) => setProfilerPath(object.path) : undefined,
+    onGenerateCode: features.codeGenerator ? (object) => setCodeGenPath(object.path) : undefined,
+    onGenerateTestData: features.testDataGenerator ? (object) => setTestDataPath(object.path) : undefined,
+  };
 
   // === No-op callbacks for disabled features ===
   /** What the panel group may hold: below the breakpoint, only the body panel. */
@@ -315,23 +369,17 @@ export function StudioWorkspace({
               <Sidebar
                 connections={conn.connections}
                 activeConnection={conn.activeConnection}
-                schema={conn.schema}
-                isLoadingSchema={conn.isLoadingSchema}
                 onSelectConnection={conn.setActiveConnection}
                 onDeleteConnection={noop}
                 onEditConnection={noop}
                 onAddConnection={noop}
-                onTableClick={onTableClick}
-                onGenerateSelect={tabMgr.handleGenerateSelect}
-                onCreateTableClick={undefined}
+                onObjectClick={onObjectClick}
+                objectActions={objectActions}
                 onShowDiagram={features.schemaDiagram ? () => setShowDiagram(true) : undefined}
-                isAdmin={false}
-                onOpenMaintenance={noop}
-                databaseType={conn.activeConnection?.type}
                 metadata={conn.metadata}
-                onProfileTable={features.codeGenerator ? (name: string) => setProfilerTable(name) : undefined}
-                onGenerateCode={features.codeGenerator ? (name: string) => setCodeGenTable(name) : undefined}
-                onGenerateTestData={features.testDataGenerator ? (name: string) => setTestDataTable(name) : undefined}
+                objectScanDeferred={conn.objectScanDeferred}
+                onLoadObjects={conn.loadObjects}
+                objectSource={conn.objectSource}
               />
             </ResizablePanel>
             <ResizableHandle className="w-1 bg-transparent hover:bg-brand-tint/30 transition-colors" />
@@ -367,7 +415,11 @@ export function StudioWorkspace({
                       <React.Suspense
                         fallback={<ViewLoading label="Loading the diagram" className="absolute inset-0 z-20" />}
                       >
-                        <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />
+                        <SchemaDiagram
+                          schema={conn.schema}
+                          capabilities={conn.metadata?.capabilities}
+                          onClose={() => setShowDiagram(false)}
+                        />
                       </React.Suspense>
                     </ChunkBoundary>
                   )}
@@ -477,6 +529,7 @@ export function StudioWorkspace({
           onClose={() => setIsImportModalOpen(false)}
           onImport={(sql) => queryExec.executeQuery(sql)}
           tables={conn.schema}
+          capabilities={conn.metadata?.capabilities}
           databaseType={conn.activeConnection?.type}
         />
       )}
@@ -511,10 +564,10 @@ export function StudioWorkspace({
       {/* Data Profiler */}
       {features.codeGenerator && (
         <DataProfiler
-          isOpen={!!profilerTable}
-          onClose={() => setProfilerTable(null)}
-          tableName={profilerTable || ""}
-          tableSchema={conn.schema.find((t) => t.name === profilerTable) || null}
+          isOpen={profilerPath !== null}
+          onClose={() => setProfilerPath(null)}
+          tablePath={profilerPath ?? []}
+          tableSchema={objectAtPath(conn.schema, profilerPath)}
           connection={conn.activeConnection}
           schemaContext={conn.schemaContext}
           databaseType={conn.activeConnection?.type}
@@ -524,10 +577,10 @@ export function StudioWorkspace({
       {/* Code Generator */}
       {features.codeGenerator && (
         <CodeGenerator
-          isOpen={!!codeGenTable}
-          onClose={() => setCodeGenTable(null)}
-          tableName={codeGenTable || ""}
-          tableSchema={conn.schema.find((t) => t.name === codeGenTable) || null}
+          isOpen={codeGenPath !== null}
+          onClose={() => setCodeGenPath(null)}
+          tablePath={codeGenPath ?? []}
+          tableSchema={objectAtPath(conn.schema, codeGenPath)}
           databaseType={conn.activeConnection?.type}
         />
       )}
@@ -535,12 +588,12 @@ export function StudioWorkspace({
       {/* Test Data Generator */}
       {features.testDataGenerator && (
         <TestDataGenerator
-          isOpen={!!testDataTable}
-          onClose={() => setTestDataTable(null)}
-          tableName={testDataTable || ""}
-          tableSchema={conn.schema.find((t) => t.name === testDataTable) || null}
+          isOpen={testDataPath !== null}
+          onClose={() => setTestDataPath(null)}
+          tablePath={testDataPath ?? []}
+          tableSchema={objectAtPath(conn.schema, testDataPath)}
           databaseType={conn.activeConnection?.type}
-          queryLanguage={undefined}
+          capabilities={conn.metadata?.capabilities}
           onExecuteQuery={(q) => queryExec.executeQuery(q)}
         />
       )}

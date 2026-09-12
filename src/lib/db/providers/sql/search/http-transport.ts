@@ -75,6 +75,7 @@ import {
   type SearchErrorCategory,
   type SearchIndexInfo,
   type SearchMappingField,
+  type SearchObjectInfo,
   type SearchQueryResult,
   type SearchRow,
   type SearchTransport,
@@ -130,6 +131,148 @@ const CLUSTER_STATS_PATH = "/_cluster/stats";
 
 /** The mapping of one index (fixtures `es-mapping.json`, `os-mapping.json`). */
 const MAPPING_SUFFIX = "/_mapping";
+
+/**
+ * How many bytes of index names one bulk mapping request may carry (#789).
+ *
+ * The bound is the cluster's, not this client's, and it is measured: a `_mapping` request
+ * whose index list is 3,999 characters answers HTTP 200 on Elasticsearch 9.1.4, and one of
+ * 4,499 answers HTTP 400 with `too_long_http_line_exception`, "An HTTP line is larger than
+ * 4096 bytes." The limit is on the whole REQUEST LINE, so the budget below leaves room for
+ * the method, the `/_mapping` suffix and the HTTP version beside the names.
+ *
+ * A BYTE budget and not a count of names, because index names vary: both products cap a
+ * name at 255 bytes, so one name always fits on its own line and every list can be split.
+ *
+ * That is an INVARIANT and not a guard, deliberately, and Task 28a's sweep re-examined it
+ * rather than leaving the question in a comment (#789). A chunk is over budget only if ONE
+ * name is, and the names are not a caller's: they are the cluster's own, read back from
+ * `_cat/indices` on the same connection the mapping request goes out on. So the server that
+ * would refuse the long request line is the same server that enforces the 255-byte cap on
+ * every name it could have listed, and it enforces it at creation time. The headroom is
+ * large enough to be checked by hand: 255 bytes percent-encode to at most 765 characters,
+ * every one of them ASCII, which is four and a half times under this budget. A guard here
+ * would be a branch no fixture built from a real cluster can reach, and an unreachable
+ * branch is a line the 100 percent gate then has to be satisfied about by a fake that
+ * asserts the guard exists rather than that it is needed.
+ */
+const MAPPING_TARGETS_MAX_BYTES = 3500;
+
+/**
+ * The index names of one bulk mapping read, split into request-line-sized, comma-joined
+ * chunks.
+ *
+ * Names are percent-encoded FIRST and joined with a literal comma, because the comma is
+ * the separator the endpoint reads: encoding it would make one request for a list of
+ * indices into one request for an index whose name contains commas.
+ */
+function mappingChunks(indices: readonly string[]): string[] {
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const index of indices) {
+    const encoded = encodeURIComponent(index);
+    const joined = current === "" ? encoded : `${current},${encoded}`;
+    if (current !== "" && joined.length > MAPPING_TARGETS_MAX_BYTES) {
+      chunks.push(current);
+      current = encoded;
+      continue;
+    }
+    current = joined;
+  }
+  if (current !== "") chunks.push(current);
+  return chunks;
+}
+
+/**
+ * The four object listings the tree reads (#789), measured identical in shape on
+ * Elasticsearch 9.1.4 and OpenSearch 3.8.0 on 2026-09-11.
+ *
+ * None of them is reachable from the SQL endpoint: neither product's grammar has a
+ * CREATE statement for any of these, and OpenSearch's has no CREATE at all, so this
+ * is the only surface on which these objects exist.
+ *
+ * `_index_template` and NOT `_template`: the legacy templates API is a separate
+ * namespace whose names may COLLIDE with the composable ones (measured, creating
+ * `_template/probe_template` succeeds while the composable `probe_template` exists,
+ * on both products), so one kind fed by both would hold two objects at one path.
+ */
+const ALIAS_PATH = "/_alias";
+const INGEST_PIPELINE_PATH = "/_ingest/pipeline";
+const INDEX_TEMPLATE_PATH = "/_index_template";
+const DATA_STREAM_PATH = "/_data_stream";
+
+/**
+ * The alias listing's nesting. It is keyed by INDEX, and the aliases of that index
+ * are the KEYS of this member: `{"probe_orders":{"aliases":{"probe_orders_alias":{}}}}`.
+ * An index carrying no alias is still listed, with an empty object here.
+ */
+const ALIAS_FIELDS = Object.freeze({ ALIASES: "aliases" } as const);
+
+/** The index-template listing: an ARRAY under one key, each entry naming itself. */
+const TEMPLATE_FIELDS = Object.freeze({
+  LIST: "index_templates",
+  NAME: "name",
+  BODY: "index_template",
+} as const);
+
+/**
+ * The data-stream listing, the same array-under-one-key shape.
+ *
+ * Elasticsearch entries also carry `system` and `hidden` booleans and OpenSearch's
+ * carry neither (measured), and NEITHER is read: every data stream the engine owns
+ * that could be measured is dot-prefixed, so the convention already catches it, and a
+ * second rule that no fixture can distinguish from the first is a line nothing proves.
+ * If a non-dotted system data stream is ever measured, `isEngineOwned` is where it goes.
+ */
+const DATA_STREAM_FIELDS = Object.freeze({
+  LIST: "data_streams",
+  NAME: "name",
+} as const);
+
+/**
+ * Where a pipeline and a template say the engine owns them.
+ *
+ * `{"_meta":{"managed":true}}`, measured on all 21 built-in Elasticsearch ingest
+ * pipelines and on 57 of its 61 built-in index templates. The remaining four are
+ * `.monitoring-*-mb`, which carry a dot instead - so neither signal alone catches
+ * the engine's own objects and both are read.
+ */
+const META_FIELDS = Object.freeze({ META: "_meta", MANAGED: "managed" } as const);
+
+/**
+ * The status that means "there are none", on the ingest pipeline endpoint only.
+ *
+ * Measured on BOTH products on 2026-09-11, and on Elasticsearch the state had to be
+ * MADE rather than found: a stock node ships 21 managed ingest pipelines, so
+ * `DELETE /_ingest/pipeline/*` was sent first (HTTP 200, `{"acknowledged":true}`) and
+ * `GET /_ingest/pipeline` then answered **HTTP 404 with the body `{}`** on
+ * Elasticsearch 9.1.4 exactly as it does on a stock OpenSearch 3.8.0 node, which
+ * ships none and reaches the state on its first run. Elasticsearch re-registers its
+ * built-ins within about twenty seconds, so the state is transient upstream and
+ * ordinary on the fork - but it is REACHABLE on both, which is what licenses one rule
+ * for one implementation serving two type-ids. Classifying it as a failure would put
+ * the engine's own sentence on the Ingest Pipelines folder of every fresh OpenSearch
+ * cluster, where the truth is zero.
+ *
+ * It is a status and NOT a body, so on its own it cannot tell an empty set from a
+ * refusal, and both reach this endpoint: a missing plugin, an endpoint a security
+ * role may not read and an index-shaped 404 all answer 404 too. Measured on both
+ * products, `GET /_data_stream/nope` answers HTTP 404 carrying the full error
+ * envelope (`index_not_found_exception`, "no such index [nope]"), while the empty set
+ * carries `{}` and nothing else. So {@link SearchHttpTransport.request} reads the
+ * BODY before it trusts the status: a nominated status is "there is nothing here"
+ * only while the body is a payload, and a 404 carrying the envelope this file
+ * categorises everywhere else stays a refusal. A zero and a refusal are different
+ * facts - that is the whole reason `KindCount` has both states - and a status alone
+ * cannot tell them apart.
+ *
+ * Deliberately NOT generalised to the other three listings: `_alias`,
+ * `_index_template` and `_data_stream` all answer HTTP 200 with an empty collection
+ * when they hold nothing (measured on both), so a 404 from those really would be
+ * something else.
+ */
+const HTTP_NOT_FOUND = 404;
 
 /**
  * The paging token an engine attaches when it has not sent every row.
@@ -732,6 +875,23 @@ function requestFailure(spec: SearchDialectSpec, cause: unknown, signal?: AbortS
   return new SearchTransportError("unreachable", `${spec.label} could not be reached: ${detail}`);
 }
 
+/**
+ * Whether a body is a failure envelope rather than a payload.
+ *
+ * The one signal that separates an empty set from a refusal when the two answer the
+ * same HTTP status. Both products spell a failure as a member called `error` - an
+ * OBJECT for an engine fault, a STRING for a request that never reached the handler -
+ * and neither puts that member on a payload, so its PRESENCE is the discriminator and
+ * its type is what {@link responseFailure} then reads.
+ *
+ * `Object.hasOwn` and never `in`: `in` walks the prototype chain, and a body is a
+ * parsed JSON object whose prototype carries members of its own.
+ */
+function carriesFailureEnvelope(text: string): boolean {
+  const body = asRecord(parseJson(text));
+  return body !== null && Object.hasOwn(body, ERROR_FIELDS.ENVELOPE);
+}
+
 /** A body the server announced as JSON that is not the object this file parses. */
 function unreadableBody(spec: SearchDialectSpec, what: string): SearchTransportError {
   return new SearchTransportError("engine", `${spec.label} answered ${what} the client could not read`);
@@ -810,6 +970,80 @@ function flattenProperties(
       // Everything below `fields` is a multi-field, whatever it is nested in.
       multiFields === null ? [] : flattenProperties(multiFields, path, true),
     );
+  });
+}
+
+// ============================================================================
+// Object listings (#789)
+// ============================================================================
+
+/**
+ * Whether the engine says it owns this object.
+ *
+ * The NAME carries the convention both products use for their own things, and
+ * `_meta.managed` carries Elasticsearch's explicit marker. Both are read because
+ * neither is sufficient: all 21 built-in ingest pipelines are managed and dot-free,
+ * and four of the 61 built-in index templates (`.monitoring-*-mb`) are dotted and
+ * unmanaged - measured 2026-09-11, and both halves are pinned by a mutation.
+ *
+ * The cost is the same one the index listing already pays and it is recorded rather
+ * than hidden: a user CAN create a dot-prefixed alias or template (measured, adding
+ * `.dot_alias` answers `acknowledged: true`), and this hides it. The provider docs say
+ * so under the object-kinds section.
+ */
+function isEngineOwned(name: string, body: Record<string, unknown> | null): boolean {
+  if (DOT_PREFIXED.test(name)) return true;
+  return asRecord(body?.[META_FIELDS.META])?.[META_FIELDS.MANAGED] === true;
+}
+
+/**
+ * The names in a listing keyed BY NAME, each value carrying its own definition.
+ *
+ * This is the ingest pipeline shape: `{"<name>":{...}}`. A missing or non-object
+ * payload is an empty set rather than a throw, because the only way to reach it is a
+ * body the server announced as JSON and did not fill - the callers below decide.
+ */
+function namedObjects(payload: Record<string, unknown>): SearchObjectInfo[] {
+  return Object.entries(payload).map(([name, body]) => ({ name, isSystem: isEngineOwned(name, asRecord(body)) }));
+}
+
+/**
+ * The names in a listing that is an ARRAY under one key, each entry naming itself.
+ *
+ * This is the index-template and data-stream shape. `nameKey` is the member that
+ * entry names itself in - taken from the caller's OWN field table rather than from
+ * whichever table happens to be in scope, because the two spell it the same way today
+ * and a constant nothing reads is a cross-wiring nobody can mutate. `bodyKey` is where
+ * the entry keeps the definition the `_meta` marker lives in, or null when the entry
+ * IS the definition.
+ *
+ * Nothing here is DROPPED. An entry that is not an object, an entry with no readable
+ * name, and a list key that is not an array are all refused, because a drop takes the
+ * object out of the count and out of the listing together: the two still agree
+ * (ruling 5f) while the badge is short by exactly the objects nobody can see. That is
+ * ruling 5a's failure shape reached from the payload rather than from a `CASE` arm,
+ * and the measured licence to refuse is that both products always send the list key
+ * (`{"index_templates":[]}` / `{"data_streams":[]}` on an empty cluster, 2026-09-11)
+ * and always name every entry.
+ */
+function listedObjects(
+  spec: SearchDialectSpec,
+  what: string,
+  payload: Record<string, unknown>,
+  listKey: string,
+  nameKey: string,
+  bodyKey: string | null,
+): SearchObjectInfo[] {
+  const entries = payload[listKey];
+  if (!Array.isArray(entries)) throw unreadableBody(spec, what);
+
+  return (entries as unknown[]).map((raw) => {
+    const entry = asRecord(raw);
+    const name = entry === null ? null : textField(entry, nameKey);
+    if (entry === null || name === null) throw unreadableBody(spec, what);
+
+    const body = bodyKey === null ? entry : asRecord(entry[bodyKey]);
+    return { name, isSystem: isEngineOwned(name, body) };
   });
 }
 
@@ -971,6 +1205,107 @@ export class SearchHttpTransport implements SearchTransport {
     return properties === null ? [] : flattenProperties(properties, "");
   }
 
+  public async mappings(indices: readonly string[], signal?: AbortSignal): Promise<Map<string, SearchMappingField[]>> {
+    const byIndex = new Map<string, SearchMappingField[]>();
+
+    for (const chunk of mappingChunks(indices)) {
+      const payload = asRecord(await this.request(`/${chunk}${MAPPING_SUFFIX}`, signal));
+      if (payload === null) throw unreadableBody(this.spec, "a mapping");
+
+      for (const [name, entry] of Object.entries(payload)) {
+        const mappings = asRecord(asRecord(entry)?.[MAPPING_FIELDS.MAPPINGS]);
+        const properties = asRecord(mappings?.[MAPPING_FIELDS.PROPERTIES]);
+        byIndex.set(name, properties === null ? [] : flattenProperties(properties, ""));
+      }
+    }
+    return byIndex;
+  }
+
+  /**
+   * Every alias in the cluster (#789).
+   *
+   * The listing is keyed by INDEX and the alias names are the keys INSIDE each entry,
+   * so this is a flatten and a dedupe rather than a read: measured, adding
+   * `shared_alias` to two indices lists it under both, and the tree addresses an alias
+   * by name, so without the dedupe one alias would be two rows at one path. A `Map`
+   * rather than a `Set` because the first sighting's system verdict is kept and the
+   * verdict depends only on the name.
+   */
+  public async aliases(signal?: AbortSignal): Promise<SearchObjectInfo[]> {
+    const payload = asRecord(await this.request(ALIAS_PATH, signal));
+    if (payload === null) throw unreadableBody(this.spec, "an alias listing");
+
+    const byName = new Map<string, SearchObjectInfo>();
+    for (const entry of Object.values(payload)) {
+      const aliases = asRecord(asRecord(entry)?.[ALIAS_FIELDS.ALIASES]);
+      // Measured on both: an index carrying no alias is still listed, with a PRESENT
+      // and empty map - so a member with no readable alias map is a body this client
+      // does not understand, and it is refused rather than skipped. Skipping would
+      // drop that index's aliases from the count and the listing together, leaving a
+      // folder whose badge is short by exactly the objects nobody can see (ruling 5a).
+      if (aliases === null) throw unreadableBody(this.spec, "an alias listing");
+      for (const alias of namedObjects(aliases)) byName.set(alias.name, alias);
+    }
+    return [...byName.values()];
+  }
+
+  /**
+   * Every ingest pipeline in the cluster (#789).
+   *
+   * The one place a STATUS decides anything outside the 401/403 pair, and the reason
+   * is measured rather than defensive: an empty set answers HTTP 404 on both products,
+   * which is the first-run state of a stock OpenSearch node and was reproduced upstream
+   * by deleting the 21 built-ins. The status is not trusted alone - a 404 carrying the
+   * error envelope is still a refusal, so a missing plugin or a denied endpoint reaches
+   * the folder as the engine's own sentence instead of a zero. See
+   * {@link HTTP_NOT_FOUND}.
+   */
+  public async pipelines(signal?: AbortSignal): Promise<SearchObjectInfo[]> {
+    const body = await this.request(INGEST_PIPELINE_PATH, signal, undefined, HTTP_NOT_FOUND);
+    if (body === null) return [];
+
+    const payload = asRecord(body);
+    if (payload === null) throw unreadableBody(this.spec, "an ingest pipeline listing");
+
+    return namedObjects(payload);
+  }
+
+  /** Every composable index template in the cluster (#789). */
+  public async templates(signal?: AbortSignal): Promise<SearchObjectInfo[]> {
+    const payload = asRecord(await this.request(INDEX_TEMPLATE_PATH, signal));
+    if (payload === null) throw unreadableBody(this.spec, "an index template listing");
+
+    return listedObjects(
+      this.spec,
+      "an index template listing",
+      payload,
+      TEMPLATE_FIELDS.LIST,
+      TEMPLATE_FIELDS.NAME,
+      TEMPLATE_FIELDS.BODY,
+    );
+  }
+
+  /**
+   * Every data stream in the cluster (#789).
+   *
+   * `null` for the body key: a data stream entry IS its own definition - it carries
+   * `system` at the top level on Elasticsearch and nothing equivalent on OpenSearch -
+   * whereas a template nests its definition one level down.
+   */
+  public async dataStreams(signal?: AbortSignal): Promise<SearchObjectInfo[]> {
+    const payload = asRecord(await this.request(DATA_STREAM_PATH, signal));
+    if (payload === null) throw unreadableBody(this.spec, "a data stream listing");
+
+    return listedObjects(
+      this.spec,
+      "a data stream listing",
+      payload,
+      DATA_STREAM_FIELDS.LIST,
+      DATA_STREAM_FIELDS.NAME,
+      null,
+    );
+  }
+
   public async health(signal?: AbortSignal): Promise<SearchClusterHealth> {
     const health = asRecord(await this.request(CLUSTER_HEALTH_PATH, signal));
     if (health === null) throw unreadableBody(this.spec, "a cluster health payload");
@@ -1017,7 +1352,17 @@ export class SearchHttpTransport implements SearchTransport {
    * and a result envelope are read the same way - and so a non-OK response is
    * described by its body rather than by its status.
    */
-  private async request(path: string, signal?: AbortSignal, body?: string): Promise<unknown> {
+  private async request(
+    path: string,
+    signal?: AbortSignal,
+    body?: string,
+    /**
+     * A status this endpoint uses to say "there is nothing here", answered as `null`
+     * instead of a failure - but only when the body is a payload rather than the error
+     * envelope. Exactly one caller passes one; see {@link HTTP_NOT_FOUND}.
+     */
+    absentStatus?: number,
+  ): Promise<unknown> {
     let response: Response;
     let text: string;
     try {
@@ -1040,6 +1385,12 @@ export class SearchHttpTransport implements SearchTransport {
       throw requestFailure(this.spec, error, signal);
     }
 
+    // The BODY decides, not the status: an empty set carries `{}` while a refusal
+    // carries the error envelope this file categorises everywhere else, and both
+    // arrive with the same code (see {@link HTTP_NOT_FOUND}). A folder badged 0 where
+    // the truth is "the engine would not answer" is the exact confusion `KindCount`
+    // has two states to prevent.
+    if (response.status === absentStatus && !carriesFailureEnvelope(text)) return null;
     if (!response.ok) throw responseFailure(this.spec, response.status, text);
 
     return parseJson(text);

@@ -13,7 +13,7 @@
 | **Database type id** | `libsql` |
 | **Family** | SQL (`src/lib/db/providers/sql/libsql/`) |
 | **Driver** | None — HTTP only (`fetch`, a runtime built-in) |
-| **Query language** | `sql` (SQLite's dialect, 3.47.0 on both deployments measured) |
+| **Query language** | `sql` (SQLite's dialect. The embedded version depends on the BUILD, not on the version number: `:latest` and Turso Cloud answered 3.47.0 and the pinned `v0.24.33` answers 3.45.1 - see **Reproducible with** below) |
 | **Default port** | `8080` (sqld's own). `443` when TLS is on, which is how Turso Cloud serves every database |
 | **Connection pooling** | None — each statement is one stateless HTTP request |
 | **Connection string** | Supported (`libsql://<database>-<org>.turso.io?authToken=<jwt>`) |
@@ -25,7 +25,7 @@
 | **Tests** | [`tests/integration/db/libsql-provider.test.ts`](../../tests/integration/db/libsql-provider.test.ts) + [`tests/unit/db/libsql/`](../../tests/unit/db/libsql/) |
 | **Tracking issue** | [#424 — the database coverage map](https://github.com/libredb/libredb-studio/issues/424) |
 | **Probed against** | `ghcr.io/tursodatabase/libsql-server` reporting `sqld 0.24.33 (f8fb14f3 2026-08-11)`, and a Turso Cloud database in `aws-eu-west-1`, both on 2026-08-27 |
-| **Reproducible with** | `ghcr.io/tursodatabase/libsql-server:v0.24.33`, the tag `database-compose.yml` pins. It is a DIFFERENT build of the same version - `sqld 0.24.33 (40a151bd 2025-12-19)`, because `:latest` is a rolling rebuild - and it was re-probed surface by surface on 2026-08-27: the same 17 of 19, the same four refusals with byte-identical wording, and the same `"notnull"` behaviour. Every measurement below therefore holds on the pinned tag as well as on the build it was taken from. |
+| **Reproducible with** | `ghcr.io/tursodatabase/libsql-server:v0.24.33`, the tag `database-compose.yml` pins. It is a DIFFERENT build of the same version - `sqld 0.24.33 (40a151bd 2025-12-19)`, because `:latest` is a rolling rebuild - and it was re-probed surface by surface on 2026-08-27: the same 17 of 19, the same four refusals with byte-identical wording, and the same `"notnull"` behaviour. **One thing the two builds do NOT share is the embedded SQLite version**: `:latest` and Turso Cloud answer `3.47.0` and the pinned tag answers `3.45.1`, re-measured 2026-09-11 while building the object surface. Every measurement below holds on the pinned tag, and where a version floor matters the doc says which build it was taken from. |
 
 ---
 
@@ -224,6 +224,10 @@ reads:
 
 Neither is "Unknown", because in both cases the engine answered something.
 
+Both halves come from the deployment rather than from this product, which is why the pinned
+`v0.24.33` image reads `sqld 0.24.33 (40a151bd 2025-12-19) (SQLite 3.45.1)` instead: same version
+number, different build, different embedded engine.
+
 ### 3.11 No sessions, no uptime, no connection ceiling
 
 Hrana is stateless: a statement is a request. There is no session object anywhere, so
@@ -341,6 +345,273 @@ Degradation is per reading, not per tree:
 | One table's row count | No count for it; the others keep theirs |
 | `dbstat` | No sizes anywhere; every row count still real |
 
+### 6.1 The object surface (#789)
+
+The table above is the flat model: one list of tables, no views, no indexes as objects, no triggers at
+all. The object surface replaces it with five container-aware methods (`listContainers`, `countObjects`,
+`listObjects`, `describeObject`, `describeObjects`) declared in [`types.ts`](../../src/lib/db/types.ts) and implemented in
+[`objects.ts`](../../src/lib/db/providers/sql/libsql/objects.ts). The flat reading it replaced is deleted.
+
+Everything below was measured on 2026-09-11 against `ghcr.io/tursodatabase/libsql-server:v0.24.33`, the
+image [`database-compose.yml`](../../database-compose.yml) pins, which embeds **SQLite 3.45.1** (§0's
+**Reproducible with** row records why that differs from the 3.47.0 the `:latest` build and Turso Cloud
+answer). The floor that matters here is 3.37, and both builds are above it.
+
+#### libSQL is a ZERO-CONTAINER engine, and `[]` is an answer
+
+`containerLevels` is `[]`, `containerDepth()` answers 0, and `listContainers()` answers `[]`. A connection
+addresses one database and every object in it is addressed by a bare name, so `DatabaseObject.path` for a
+table is `['orders']` and for a trigger `['orders', 'orders_stamp']`. No synthetic `main` container is
+invented to make the shape match the other sixteen engines.
+
+#### The four kinds, and the one that is NOT declared
+
+| Kind | `role` | Catalog | Selector | Note |
+|---|---|---|---|---|
+| `table` | `relation` | `PRAGMA table_list` | `type IN ('table','virtual')` | `acceptsRowWrites: true` |
+| `view` | `relation` | `PRAGMA table_list` | `type = 'view'` | not a row-write target |
+| `index` | `config` | `sqlite_schema` | `type = 'index'` | first-class here, as on [sqlite](./sqlite.md) |
+| `trigger` | `attached` | `sqlite_schema` | `type = 'trigger'` | `attachedTo: 'table'`, path `[parent, name]` |
+
+**No `function` kind, and that is a measurement rather than an omission.** libSQL once advertised WASM
+user-defined functions, which would be a stored routine this surface could list. On the build this repo
+runs they do not exist:
+
+| Probe | Answer |
+|---|---|
+| `CREATE FUNCTION fib LANGUAGE wasm AS X'0061736d'` | `SQL string could not be parsed: syntax error around L1:16: FUNCTION` |
+| `SELECT * FROM libsql_wasm_func_table` | `SQLite error: no such table: libsql_wasm_func_table` |
+| `sqld --help` | no wasm option of any spelling |
+
+A kind an engine does not have is ABSENT from the declaration rather than declared and counted zero,
+because a folder badged 0 is a claim that the database holds none of something it could hold.
+
+A trigger's parent is not always a table: an `INSTEAD OF` trigger on a VIEW is accepted and
+`sqlite_schema.tbl_name` then names the view. The count and the listing both carry it rather than one of
+them dropping it.
+
+#### `PRAGMA table_list` answers over Hrana, so the shadow tables are separated the same way
+
+This was the open question for this provider and it is settled by measurement: `PRAGMA table_list` answers
+over the Hrana transport in both the statement and the table-valued form. It needs SQLite 3.37 and this
+build is 3.45.1.
+
+That matters because `sqlite_schema.type` is too coarse to count tables with. An FTS5 table is ONE object a
+user selects from plus five SHADOW tables the module owns; `sqlite_schema` types every one of them `table`.
+Measured on the fixture below, which holds nine ordinary tables and one FTS5 table, a naive `sqlite_schema`
+scan answers **16**.
+
+| `table_list.type` | Kind | Why |
+| --- | --- | --- |
+| `table` | `table` | an ordinary table, `WITHOUT ROWID` and `STRICT` included |
+| `virtual` | `table` | the FTS5 table itself: a user selects from it and writes rows to it |
+| `view` | `view` | |
+| `shadow` | none | storage a virtual-table module owns; nothing selects from it directly |
+
+That vocabulary is SQLite's own documented four values and NOT a `SELECT DISTINCT type` over a fixture,
+which would only ever enumerate the fixture. The fixture is built to contain all four.
+
+Bound parameters reach the `pragma_*` table-valued functions over Hrana (`pragma_table_xinfo(?, ?)`
+answers), so these statements bind where [`introspect.ts`](../../src/lib/db/providers/sql/libsql/introspect.ts)
+embeds object names as SQL literals.
+
+#### Only `main`, and here the engine enforces most of it
+
+Every count and every listing is restricted to `main`. On a file that restriction is a decision; here the
+server refuses most of what could produce a second schema:
+
+| Statement | sqld 0.24.33 |
+|---|---|
+| `ATTACH DATABASE ':memory:' AS side` | `unsupported statement` |
+| `CREATE TEMP TABLE t(x)` / `CREATE TEMPORARY TABLE` / `CREATE TABLE temp.t(x)` | `unsupported statement` |
+| `CREATE TEMP VIEW v AS SELECT 1` | `unsupported statement` |
+| **`CREATE VIEW temp.v AS SELECT 1`** | **accepted** |
+
+So one temp object IS reachable, and it is enough to make the restriction load-bearing rather than
+defensive: with `temp.orders` live, `PRAGMA table_list` publishes `orders` under both schemas and an
+unrestricted listing answers two objects with ONE path, which is the uniqueness the tree addresses rows by.
+The count and the listing apply the same predicate, so a badge can never disagree with its folder.
+
+`sqlite_schema` needs no schema bind: unqualified it always resolves to `main.sqlite_schema`, and a temp
+object would live in the separate `sqlite_temp_schema`.
+
+#### Names libSQL reserves for itself
+
+Every population excludes `name NOT LIKE 'sqlite\_%' ESCAPE '\'`. It can never hide a user's object: the
+engine refuses the name outright over Hrana too, `CREATE TABLE sqlite_foo` answering *"object name reserved
+for internal use: sqlite_foo"*. `ESCAPE` is load-bearing rather than decoration, because `_` is LIKE's
+single-character wildcard: measured on the fixture, the unescaped pattern answers nine tables where the
+engine holds ten, having swallowed `sqliteXledger`.
+
+What it removes, per population, because that decides where the rule can be tested:
+
+| Population | Rows the predicate removes |
+|---|---|
+| `PRAGMA table_list` (tables, views) | `sqlite_schema` on every database, `sqlite_sequence` once a table declares `AUTOINCREMENT` |
+| `sqlite_schema` (indexes) | `sqlite_autoindex_<table>_<n>`, the index behind a `UNIQUE` constraint |
+| `sqlite_schema` (triggers) | nothing that can exist. Measured, `CREATE TRIGGER sqlite_guard ...` is refused *"object name reserved for internal use"* and the engine creates no trigger of its own |
+| `pragma_index_list` (an object's detail) | the same `sqlite_autoindex_*` rows, so the folder and the detail agree |
+
+The index row is the one worth spelling out, because one table shape hides it. An implicit
+`sqlite_autoindex_*` on an ordinary ROWID table IS a row of `sqlite_schema` typed `index`, so it reaches
+the Indexes FOLDER and not only an object's detail: measured, `CREATE TABLE badges(id INTEGER PRIMARY KEY,
+code TEXT UNIQUE, label TEXT)` puts `sqlite_autoindex_badges_1` there. A `WITHOUT ROWID` table is the
+exception, and its autoindex appears in `pragma_index_list` while `sqlite_schema` omits it. A fixture
+holding only the second shape makes this predicate look untestable when it is not.
+
+#### `describeObject()` reads for the two relation kinds only, in TWO round trips
+
+An `index` and a `trigger` answer three empty arrays without touching the network, which is a true fact
+about those kinds rather than a failed read.
+
+For a `table` and a `view` the reads are batched, and that is where this provider stops being
+[sqlite.ts](../../src/lib/db/providers/sql/sqlite.ts): there every read is a call into a file handle, and
+here every read is an HTTP request.
+
+| Round trip | Statements |
+|---|---|
+| 1 | `pragma_table_xinfo(?, ?)` where `hidden <> 1`, `pragma_index_list(?, ?)`, `pragma_foreign_key_list(?, ?)` |
+| 2 | one `pragma_index_info(?, ?)` per index, plus one `pragma_table_info(?, ?)` per foreign-key parent that needs resolving |
+
+A table with four indexes costs two requests rather than seven. The second batch is empty when there is
+nothing to ask, and an empty batch touches no network at all.
+
+| Data | Note |
+|---|---|
+| Columns | `table_xinfo` and NOT `table_info`, which DROPS a generated column: measured, `table_info('orders')` answers four columns where `table_xinfo` answers five. `hidden = 1` is the other direction, a virtual table module's own interface columns (`notes` and `rank` on an FTS5 table), which the table does not declare |
+| `isPrimary` | `pk > 0`. `pk` is a 1-BASED RANK and not a flag, so `= 1` reports the second column of a composite primary key as ordinary |
+| `type` | as answered, which is the EMPTY STRING on a virtual table's columns. The deleted flat reading wrote `"TEXT"` there, which is a guess about affinity |
+| Indexes | same `sqlite_` exclusion as the Indexes folder, so the two surfaces agree about what an index is. An index on an EXPRESSION publishes a null column name (`cid = -2`) and is left out rather than labelled |
+| Foreign keys | `referencedTable` is a bare name: a foreign key's parent is resolved inside the same database |
+
+`REFERENCES customers` with no column list answers `to = NULL`, which SQLite reads as the parent's PRIMARY
+KEY, so the parent's key columns are read rather than a null being put in a typed string field. A parent
+with no primary key at all is a schema the engine accepts and rejects only on INSERT; there is nothing to
+name, and the field is empty.
+
+Zero columns IS a failed read and raises: the engine refuses `CREATE TABLE t()`, so every table and every
+view has at least one column.
+
+#### `describeObjects()` describes a whole folder in ONE round trip (#789)
+
+`describeObjects(container, kind, limit?)` answers columns, indexes and foreign keys for EVERY object
+of one kind in `main`, in ONE request whatever the folder holds. The five statements - the target read
+plus four detail reads - are independent of each other, each carrying its own copy of the target CTE,
+so they go in a single Hrana batch. Measured against
+`ghcr.io/tursodatabase/libsql-server:v0.24.33` holding the fixture below: **1 request for the ten-table
+folder against 12 for ten `describeObject()` calls**, and 1 ms against 8 ms over the loopback, where a
+round trip costs almost nothing. On a Turso Cloud database that ratio is the whole story.
+
+That is the engine-specific half of the decision. The SQLite provider issues the same five statements
+as five separate calls into a file handle, because there a round trip is a function call.
+
+Each detail statement joins a pragma table-valued function against the target set, which sqld accepts:
+measured, a TVF argument that references a column of the row being joined runs the pragma once per
+target object inside one statement.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.** The same pragmas `describeObject()` reads and the same `PRAGMA table_list` target
+`listObjects()` reads. It is not `readSchema()`'s: the flat surface reads `sqlite_master` and
+`PRAGMA table_info`, so it sees the FTS5 shadow tables as ordinary tables and DROPS a generated column,
+and its `NOT LIKE 'sqlite_%'` carries no `ESCAPE`, so it also drops `sqliteXledger`. MEMBERSHIP comes
+from the target read and never from the column read: deriving it from the columns would drop an object
+whose every column is hidden, and the folder's listing would then name an object the batch does not
+carry. It is also why this read does not repeat the single read's zero-column throw - there an empty
+answer means the object is not there under that name, here the catalog has just said it is.
+
+**Which kinds have no columns.** `index` and `trigger`, which answer `{ details: [] }` without touching
+the network: `pragma_table_xinfo` answers zero rows for an index name and for a trigger name. That is
+the same fact `describeObject()` answers as three empty arrays, and on this engine it coincides exactly
+with `role === "relation"` - which is not the general rule, since a MariaDB sequence is declared
+`config` and has eight real columns.
+
+**What bounds the read on the wire.** `LIMIT ?` inside the target CTE, the placeholder BOUND rather than
+interpolated and carrying `limit + 1`, so a saturated read is told from an exact one with no second
+count. Measured accepted on 0.24.33, which the flat surface does not rely on: `introspect.ts` embeds
+object names as SQL literals. The extra object is dropped in code and `truncated` carries the CALLER's
+limit. Nothing here caps the columns of an object.
+
+**What orders the cut, and under whose collation.** `ORDER BY t.name` in the target CTE, and it is
+load-bearing twice. Measured: `pragma_table_list` answers in no useful order without it, so a bounded
+read would keep an arbitrary subset. And that sort runs under BINARY, the UTF-8 BYTE order, which is not
+the order `comparePaths` produces: measured on the live server, a database holding the two names
+`U+E000` and `U+1F600` answers `ORDER BY t.name` as `U+E000, U+1F600` (bytes `EE 80 80` below
+`F0 9F 98 80`) where a JavaScript sort answers the reverse, because JavaScript compares UTF-16 code
+units and the surrogate `0xD83D` sorts below `0xE000`. So the MEMBERSHIP of a bounded cut is the
+server's and the ORDER of the answer is ours. The four detail statements repeat the same target CTE
+rather than joining a temporary of it, which is safe because a name is unique within a schema, so
+`ORDER BY t.name` is a TOTAL order and all five statements cut the same set.
+
+**Mixed path depth (ruling 5f).** Not in this engine's relation set. `table` and `view` are the kinds
+with columns and both are addressed `[name]` under a zero-level container; `trigger` is the one kind
+that nests, and it has no columns.
+
+**Two repairs the single read needed to make one mapper possible**, and both are improvements rather
+than accommodations. The foreign key statement now resolves an unnamed parent key in a correlated
+`(SELECT p.name FROM pragma_table_info(f."table", ?) AS p WHERE p.pk = f.seq + 1)`, so no foreign key
+costs a request of its own any more and the bulk read needs no statement per distinct parent; and
+`pragma_index_list` is ordered by name, because measured it answers in reverse creation order and the
+bulk read has to order by the object to group its rows.
+
+**One defect only the live run caught**, which is standing ruling 5b's trap exactly. The new foreign
+key statement carries THREE placeholders - the subquery's schema is first, because SQLite numbers
+placeholders by where they appear in the statement text and the select list is written before the FROM
+- and the single read was still passing the old two-value array. sqld answers
+`Arguments do not match SQL parameters: value for parameter 3 not found`. The fake server in the test
+file dispatches on statement text and never counted binds, so the suite was green while every
+`describeObject()` foreign key read would have failed against a real server. The bind arity is now
+pinned by an assertion in that suite.
+
+#### No `rowCount` and no `sizeBytes` on a listed object
+
+There is no catalog row estimate: `sqlite_stat1` exists only after an `ANALYZE` this server refuses
+outright, so a count per object would be a full scan per row of a listing and a round trip per row on top.
+`dbstat` does answer here (§3.9), but it scans the whole database to do it. A fabricated 0 in either field
+reads as an empty object.
+
+#### A refused read is not zero
+
+`countObjects()` answers `{ unavailable: "<the server's own sentence>" }` for every kind at once, with no
+product prefix in front of the server's words, and `listObjects()` raises. A failed statement is an HTTP
+200 carrying the engine's message (§3.2), so `response.ok` is never the verdict.
+
+#### The fixture, and running it
+
+The object-surface tests answer from the catalog below, captured live in the engine's own order; the fake
+server applies only the predicates each statement actually spells. To rebuild it, start the service and
+send this DDL (the object surface reads it and never writes):
+
+```sql
+CREATE TABLE customers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, country TEXT DEFAULT 'TR');
+CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers,
+                     total REAL NOT NULL, tax REAL GENERATED ALWAYS AS (total * 0.2) VIRTUAL, placed_at TEXT);
+CREATE TABLE regions (region TEXT NOT NULL, year INTEGER NOT NULL, revenue REAL,
+                      PRIMARY KEY (region, year)) WITHOUT ROWID;
+CREATE TABLE archive (id INTEGER PRIMARY KEY, body TEXT) STRICT;
+CREATE TABLE sqliteXledger (id INTEGER PRIMARY KEY, note TEXT);
+CREATE TABLE legacy (note TEXT);
+CREATE TABLE legacy_ref (id INTEGER PRIMARY KEY, note TEXT REFERENCES legacy);
+CREATE TABLE shipments (id INTEGER PRIMARY KEY, order_id INTEGER REFERENCES orders(id), carrier TEXT);
+CREATE TABLE badges (id INTEGER PRIMARY KEY, code TEXT UNIQUE, label TEXT);
+CREATE VIRTUAL TABLE notes USING fts5(title, body);
+CREATE VIEW order_summary AS SELECT c.name, o.total FROM orders o JOIN customers c ON c.id = o.customer_id;
+CREATE INDEX idx_orders_customer ON orders(customer_id);
+CREATE INDEX idx_orders_placed ON orders(date(placed_at));
+CREATE UNIQUE INDEX idx_customers_name ON customers(name);
+CREATE TRIGGER orders_stamp AFTER INSERT ON orders
+  BEGIN UPDATE orders SET placed_at = datetime('now') WHERE id = NEW.id; END;
+CREATE TRIGGER order_summary_guard INSTEAD OF INSERT ON order_summary
+  BEGIN SELECT RAISE(ABORT, 'read only'); END;
+```
+
+It holds one of every declared kind, all four `table_list.type` values, a generated column, a composite
+primary key on a `WITHOUT ROWID` table, an `AUTOINCREMENT` table, an expression index, BOTH implicit-index
+shapes (the `WITHOUT ROWID` one that only `pragma_index_list` publishes and the `UNIQUE`-on-a-ROWID-table
+one that is also a `sqlite_schema` row), an `INSTEAD OF` trigger on a view, a `sqliteXledger` table, a
+foreign key that names its column and two that do not, and a foreign-key parent with no primary key.
+Counts: `table 10, view 1, index 3, trigger 2`.
+
 ---
 
 ## 7. Monitoring & health
@@ -349,7 +620,7 @@ Measured through the provider against both deployments (fixture: 2 tables, 3 and
 
 | Panel | Reading |
 |---|---|
-| Version | `sqld 0.24.33 (f8fb14f3 2026-08-11) (SQLite 3.47.0)` / `SQLite 3.47.0` on Turso Cloud |
+| Version | `sqld 0.24.33 (f8fb14f3 2026-08-11) (SQLite 3.47.0)` / `SQLite 3.47.0` on Turso Cloud. The pinned `v0.24.33` image reads `(40a151bd 2025-12-19) (SQLite 3.45.1)`: the panel names the build it is talking to |
 | Database size | `64 KB` (65536 bytes), from `page_count × page_size` |
 | Database size unavailable | `databaseSize` is `"N/A"`; `databaseSizeBytes` is omitted, not zeroed |
 | Tables / indexes | 2 / 1 |
@@ -387,6 +658,11 @@ bun test tests/unit/db/libsql tests/integration/db/libsql-provider.test.ts
 docker compose -f database-compose.yml up -d libsql   # sqld on localhost:18080
 ```
 
+The object-surface block (§6.1) is answered by a CATALOG rather than by canned per-statement replies: the
+raw `PRAGMA table_list` and `sqlite_schema` contents as the live server returned them, with the fake
+applying only the predicates each statement spells. Dropping a predicate from the provider therefore
+widens the population the way it would against the real server.
+
 `globalThis.fetch` is replaced per test and restored afterwards; `mock.module()` is refused, being
 process-wide in bun. Every payload in the tests was captured from the two live deployments.
 
@@ -412,6 +688,8 @@ For Turso Cloud, create a database and a token with the `turso` CLI and paste th
 | No slow queries, no sessions, no uptime, no cache ratio | libSQL publishes none of them | The engine's |
 | No WAL size on the Storage tab | No statement reports it, and `PRAGMA wal_checkpoint` is refused | The engine's |
 | Turso Database (the Rust engine) is not reachable | It publishes no server image and ships in-process | Revisit when a server image exists |
+| No `function` object kind | `CREATE FUNCTION ... LANGUAGE wasm` is refused by the server's parser and `libsql_wasm_func_table` does not exist (§6.1) | The engine's. Declare the kind if a build ever accepts it |
+| The object surface reads `main` only | `ATTACH` is refused outright and a declaration is read off a provider that never connects | Ours, and Phase 1's scope |
 
 ---
 

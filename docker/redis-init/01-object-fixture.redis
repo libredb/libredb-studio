@@ -1,0 +1,14 @@
+SELECT 0
+DEL user:1 user:2 user:3 session:abc session:def queue:jobs standalone
+SET user:1 alice
+SET user:2 bob
+SET user:3 carol
+HSET session:abc user 1 ip 10.0.0.1
+HSET session:def user 2 ip 10.0.0.2
+RPUSH queue:jobs build test deploy
+SET standalone single-value
+SELECT 3
+DEL report:daily
+SET report:daily 42
+SELECT 0
+FUNCTION LOAD REPLACE "#!lua name=libredb_probe\nlocal function echo_key(keys, args)\n  return redis.call('GET', keys[1])\nend\nlocal function ping(keys, args)\n  return 'pong'\nend\nredis.register_function('libredb_echo_key', echo_key)\nredis.register_function('libredb_ping', ping)"

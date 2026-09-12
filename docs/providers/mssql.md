@@ -193,15 +193,12 @@ a trailing `#` run under the dialect-less reading, a quote behind an odd backsla
 comment or bracket. It has nowhere to append; the `TOP` branch, which splices into the head, keeps
 bounding such a statement unless the rule above applies to it.
 
-### 3.3 Five-query schema introspection, cross-schema
+### 3.3 Schema introspection, cross-schema
 
-`getSchema()` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) runs **five bulk queries**
-(tables via `sys.tables`/`sys.partitions`, columns via `INFORMATION_SCHEMA.COLUMNS`, primary keys,
-foreign keys via `sys.foreign_keys`, indexes via `sys.indexes`) over the connected database, then
-groups them in memory keyed by `schema.table`. Tables in the **`dbo`** schema are shown by bare
-name; tables in any other schema are prefixed (`sales.orders`). There is no
-`getSchemaList()`/`getSchemaRelations()` (no two-phase split) and no `size` field on the returned
-tables. Row counts come from `SUM(sys.partitions.rows)`.
+Every reading of this engine's objects goes through the object surface ([§7](#the-object-surface-789)).
+The flat reading that came before it ran five bulk queries over the connected database and grouped
+them in memory keyed by `schema.table`, showing `dbo` tables by bare name and prefixing every other
+schema; it is deleted. Row counts still come from `SUM(sys.partitions.rows)`.
 
 ### 3.4 `rowsAffected` is surfaced
 
@@ -436,6 +433,387 @@ Five bulk queries grouped in memory (see [§3.3](#33-five-query-schema-introspec
 | Indexes | `sys.indexes` (`is_primary_key = 0`) + `sys.index_columns` |
 
 No two-phase split; `dbo` tables are bare, other schemas prefixed.
+
+### The object surface (#789)
+
+The flat reading this replaced was five bulk reads, tables only, one flat list of names. The
+object surface is five container-aware methods (`listContainers`, `countObjects`,
+`listObjects`, `describeObject`, `describeObjects`) declared in [`types.ts`](../../src/lib/db/types.ts) and implemented
+in [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts). The flat reading it replaced is deleted.
+
+Everything measured below was measured against **SQL Server 2022 CU26 (16.0.4265.3)** on Linux with
+the fixture in [`docker/mssql-init/01-object-fixture.sql`](../../docker/mssql-init/01-object-fixture.sql).
+
+#### Two container levels, which is a first in #789
+
+```ts
+containerLevels: [
+  { id: 'catalog', label: 'Database', labelPlural: 'Databases' },
+  { id: 'schema',  label: 'Schema',   labelPlural: 'Schemas'   },
+]
+```
+
+An instance holds databases and each database holds schemas, and both are reachable from ONE
+connection: a three-part name (`[other_db].sys.schemas`) reads another database's catalog views, so
+the outer level is a real container here rather than a second connection. Every engine in #789
+before this one declared at most one level, so two consequences that no single-level provider can
+distinguish are pinned here for the whole fleet (standing ruling 5g):
+
+- `describeObject` binds **the last path segment** as the object's name, never `path[1]`. On a
+  one-level engine those are the same expression; here `path[1]` is the SCHEMA, and binding it as
+  the name reads a table called `app` and reports an object that exists as missing.
+- The container helpers read **`containerDepth()`** rather than comparing a length to a literal. A
+  `container.length !== 1` is correct on every single-level engine and refuses every schema-level
+  read on this one.
+- A path becomes **named segments** through `containerSegments()`, which cuts it to
+  `containerDepth()` and keys each segment by its declared `ContainerLevelSpec.id`. Nothing reads
+  `container[0]` or `path[0]` for the catalog or `path[1]` for the schema: this is the spelling that
+  survived two providers, because it is depth-identical wherever the schema really is at index 0.
+
+All three are pinned by assertions that reach the BIND rather than stopping at a refusal: the
+detail reads assert `{ schema, name }` for `app.orders` and again for `reporting.daily`, where the
+catalog, the schema and the object name are three different strings.
+
+A segment a declaration has no level for is a refusal and never an interpolated `undefined`: a copy
+of this provider declaring only a `schema` level would pass the length check and then have no
+catalog to three-part name with, and `[undefined].sys.objects` asks a real server about a database
+nobody has.
+
+Two smaller shapes come from the same ruling. A kind id is an open string, so the type lookup is
+`Object.hasOwn` and not a bare index, or `MSSQL_OBJECT_TYPES['toString']` would answer a function
+off the prototype chain and carry it into a statement. And paths are ordered **segment by segment**,
+never through `JSON.stringify`: this engine puts `[db, name]` and `[db, schema, table, name]` rows
+in one trigger folder, and a serialised key sorts the deeper path before its own prefix (`,` is
+0x2C, `]` is 0x5D) and re-orders exotic names on characters JSON invented - `a"b` serialises to
+`a\"b` and sorts after `a0b`, while the segments sort the other way. Both names are legal DDL
+trigger names, measured.
+
+A container path may be a database alone or a database and a schema, and both are true questions:
+the tree draws kind folders only at the deepest level
+([`flatten.ts`](../../src/components/object-tree/flatten.ts)), but `assertContainerDepth` in
+[`object-route.ts`](../../src/lib/api/object-route.ts) admits any path down to the declared depth and
+the shared conformance helper reads counts at the OUTER one. A database-level read answers for the
+whole database, and for every kind except `trigger` it equals the sum over the schemas
+`listContainers` lists. Measured on the fixture:
+
+| Read | table | view | procedure | function | trigger | synonym | sequence |
+|---|---|---|---|---|---|---|---|
+| `countObjects(['libredb_objects'])` | 5 | 1 | 1 | 3 | **4** | 1 | 1 |
+| `countObjects(['libredb_objects','app'])` | 4 | 1 | 1 | 3 | 1 | 1 | 1 |
+| `countObjects(['libredb_objects','reporting'])` | 1 | 0 | 0 | 0 | 1 | 0 | 0 |
+| sum over the listed schemas | 5 | 1 | 1 | 3 | **2** | 1 | 1 |
+
+Four of those five tables are in `app`, and two of the four are the halves of the temporal pair
+below: a table count of 3 here would be this table describing a fixture that no longer exists.
+The only column that does not add up is `trigger`, for the reason underneath.
+
+That trigger column is the engine: the two DATABASE-scoped DDL triggers belong to no schema, so
+they are counted at the database level only, which is also the depth their address has.
+
+#### Seven kinds, and the catalog that answers for each
+
+| Kind | `role` | `sys.objects.type` | Listing read | Note |
+|---|---|---|---|---|
+| `table` | `relation` | `U` | `sys.objects` ⋈ `sys.schemas` (+ `sys.partitions` for the row count) | `acceptsRowWrites: true` |
+| `view` | `relation` | `V` | `sys.objects` ⋈ `sys.schemas` | not a row-write target; no `rowCount` key at all |
+| `procedure` | `routine` | `P`, `PC`, `X` | `sys.objects` ⋈ `sys.schemas` | SQL, CLR and extended |
+| `function` | `routine` | `FN`, `IF`, `TF`, `FS`, `FT`, `AF` | `sys.objects` ⋈ `sys.schemas` | one kind, six spellings |
+| `trigger` | `attached` | **none** | `sys.triggers`, with `sys.objects` OUTER joined for the parent | `attachedTo: 'table'`; carries `status` when DISABLED |
+| `synonym` | `config` | `SN` | `sys.objects` ⋈ `sys.schemas` | |
+| `sequence` | `config` | `SO` | `sys.objects` ⋈ `sys.schemas` | |
+
+`MSSQL_OBJECT_TYPES` in [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts) holds that third
+column once; the counting statement's `CASE`, its `IN` list and every listing's `IN` list are all
+derived from it, so a kind added to `objectKinds` without an entry fails loudly instead of drawing a
+folder nothing can fill.
+
+#### The vocabulary is the ENGINE's, not the fixture's
+
+Standing ruling 5a (#789) asks which of the two a provider derived its type set from, so: **this one
+is derived from Microsoft's documented `sys.objects.type` list**, with a decision recorded in
+`MSSQL_OBJECT_TYPES` for every documented spelling. It is NOT a `SELECT DISTINCT` over a fixture,
+and the difference is measurable here: that query over this repo's fixture server answers eighteen
+spellings and **none of the six CLR ones**, because no assembly is registered on it. A vocabulary
+taken from what happened to be present would drop a CLR stored procedure out of the count AND the
+listing, invisible in the tree while ruling 5f still held, which is the defect task 10 found on
+MariaDB.
+
+Four documented spellings are user objects with no declared kind, and they are a **known gap**
+rather than an oversight: `R` (a rule), `PG` (a plan guide), `RF` (a replication filter procedure)
+and `TT` (a table type). The first three have no folder anywhere. `TT` is different and measured:
+`CREATE TYPE ... AS TABLE` writes a `sys.objects` row named `TT_<type>_<hex>` carrying
+`is_ms_shipped = 1`, so the predicate already drops it, and the object a person wrote lives in
+`sys.types` rather than in `sys.objects` at all.
+
+The table kind needed no widening for the variants that worry a reader, and that is measured rather
+than assumed: a graph node or edge table, a memory-optimized table, an external table and **both
+halves of a system-versioned temporal pair** are each `type = 'U'` with a flag beside it. The
+fixture carries a temporal pair for exactly that reason, and both halves are counted and listed:
+
+```
+libredb_objects / app / order_audit           SYSTEM_VERSIONED_TEMPORAL_TABLE
+libredb_objects / app / order_audit_history   HISTORY_TABLE
+```
+
+**No `index` kind**, on the same line PostgreSQL and Oracle are read against: `sys.indexes` is keyed
+by `object_id` and an index cannot exist without one, so an index stays in `describeObject()`'s
+output beside that object's columns rather than becoming a folder.
+
+**No materialized view either**, because SQL Server has none. An indexed view is a `VIEW` with a
+clustered index on it, so it is already in the Views folder with its index in the detail row.
+
+**`name` is the last path segment for every kind here.** SQL Server has no routine overloading at
+all - `CREATE FUNCTION app.order_total` with a second signature answers Msg 2714 - so no kind needs
+the disambiguated segment a PostgreSQL routine needs.
+
+#### A trigger is not in `sys.objects`, and that is the trap
+
+Measured on the fixture: **`sys.objects` holds 2 triggers and `sys.triggers` holds 4.** A DDL
+trigger is excluded from `sys.objects` entirely, so a count taken from `sys.objects` alone is short
+by exactly the DDL triggers, and no assertion written against `sys.objects` can see it. Both the
+count and the listing read `sys.triggers`, which is what standing ruling 5f requires: the listing
+holds exactly what the count counted.
+
+`sys.triggers` is the spine of the listing and `sys.objects` is OUTER joined for the parent, for the
+same reason. A DML trigger has `parent_class = 1` and `parent_id` pointing at its base object; a
+DATABASE-scoped DDL trigger has `parent_class = 0` and `parent_id = 0`, so there is no row to join
+and both parent columns arrive NULL together. The two therefore sit at two DEPTHS in one folder:
+
+```
+libredb_objects / app / orders / stamp_order      a DML trigger, under its base object
+libredb_objects / ddl_audit                       a DDL trigger, under the database
+```
+
+`describeObject` accepts both shapes. A trigger name is unique per SCHEMA on SQL Server rather than
+per table as on PostgreSQL - a second `stamp_order` in one schema answers Msg 2714 - so the base
+object segment is there because `attachedTo: 'table'` says the object hangs off it, not because
+uniqueness needs it. The base object may also be a VIEW (an `INSTEAD OF` trigger), which the `table`
+in `attachedTo` does not distinguish.
+
+**`status` carries `DISABLED` for a disabled trigger and NOTHING otherwise, for any kind.**
+`sys.triggers.is_disabled` is the only state SQL Server publishes about an object of any declared
+kind: there is no VALID / INVALID here, so there is no second vocabulary for the field to collide
+with, which is why Oracle deliberately keeps ENABLED / DISABLED out of the same field and this
+provider carries it. `ENABLED` was published here until #789 and is not any more: it is the state
+nearly every trigger is in, so it put a badge on a row that told a reader nothing, and the field's
+contract is now that its PRESENCE is the signal. Absence means ordinary, not unknown. Deciding
+which of the two words is the ordinary one belongs to this provider, because only it knows SQL
+Server's vocabulary; a renderer that knew the string `ENABLED` would be a branch on the engine
+moved up a layer.
+
+**A SERVER-level DDL trigger is not addressable in Phase 1.** `sys.server_triggers` is server-wide
+and visible from every database, so counting its rows under a database would report one trigger
+once per catalog and give it an address it does not have. The tree has no level above a database, so
+those triggers are absent from both the count and the listing. Tracked on #789.
+
+#### `listContainers()`: the databases this login can open, then one database's schemas
+
+```sql
+SELECT d.name, CASE WHEN d.database_id = DB_ID() THEN 1 ELSE 0 END AS is_session_default
+FROM sys.databases d
+WHERE HAS_DBACCESS(d.name) = 1
+  AND (SERVERPROPERTY('EngineEdition') <> 5 OR d.database_id = DB_ID())
+ORDER BY d.name
+```
+
+`HAS_DBACCESS` is the engine's own answer to "can this login use this database", and it covers more
+than permissions: measured, a database taken OFFLINE keeps its `sys.databases` row and answers 0
+here. Listing it would draw a container whose schemas can never be read. `DB_ID()` rather than the
+configured database name marks `Container.isSessionDefault`, because it is the server's own answer
+for which database the session is in.
+
+**Azure SQL Database (`EngineEdition = 5`) lists exactly the connected database.** It cannot run a
+cross-database query at all, so every other catalog would draw a container that opens onto an error,
+and answering an empty list there would be a lie about the database the caller is connected to. The
+arm lives in the statement rather than in TypeScript so one read serves both editions. Managed
+Instance (`8`) can query across databases and is deliberately NOT in that arm.
+
+> **UNVERIFIED against a live Azure SQL Database.** No Azure instance was available, so this is
+> implemented from the documented behaviour. What WAS measured is the arm itself: with the edition
+> it tests inverted to `3` - what this fixture server reports - `listContainers()` answered exactly
+> `libredb_objects` where the unmutated statement answers six databases.
+
+The nested read is three-part named at the **caller's** database rather than at the connected one. A
+database name cannot be bound as a parameter, so the catalog is interpolated through
+`escapeIdentifier` (the same `]` doubling `runMaintenance` uses); a provider that dropped the segment
+would answer the connected database's schemas under every catalog in the tree and look healthy doing
+it. Measured: `listContainers(['libredb_objects_two'])` answers `db_owner, dbo, guest, warehouse`
+while `listContainers(['libredb_objects'])` answers `app, dbo, guest, reporting`.
+
+**The schema level marks `isSessionDefault` too, for the connected database only.**
+
+```sql
+SELECT s.name,
+       CASE WHEN s.name = SCHEMA_NAME() THEN 1 ELSE 0 END AS is_session_schema,
+       DB_NAME() AS connected_database
+FROM [caller_db].sys.schemas s ...
+```
+
+`SCHEMA_NAME()` is the session's own default schema, `dbo` for a login that has not been given
+another, and it is evaluated in the database the session is IN whichever catalog the statement is
+three-part named at. So the flag is only about the connected database, and `DB_NAME()` travels back
+with the rows for the provider to apply that restriction against the catalog it asked for. Comparing
+in TypeScript rather than in SQL avoids interpolating a database NAME as a string literal beside the
+identifier that is already interpolated as a name.
+
+Why the level needs it at all: first paint walks the container chain down to the session default at
+the DEEPEST declared level and reads the counts there (#789). An engine that marks only its outer
+level opens a database and stops, with no folder and no count. This is the only two-level engine, so
+it is the only one where the distinction exists.
+
+> **UNVERIFIED against a live server.** The two columns are implemented from Microsoft's documented
+> behaviour of `SCHEMA_NAME()` and `DB_NAME()`; no SQL Server was available when they were added. The
+> fixture in `tests/integration/db/mssql-provider.test.ts` states what that behaviour produces, and
+> the restriction itself is pinned there in both directions: `dbo` is marked under
+> `libredb_objects` and no schema is marked under `libredb_objects_two`. Task 27 measures it live.
+
+Two schemas are excluded, and both exclusions are measured rather than tidied:
+
+| Excluded | Why | Measured |
+|---|---|---|
+| `sys`, `INFORMATION_SCHEMA` | can hold nothing a person wrote | `CREATE TABLE sys.probe` and `CREATE TABLE INFORMATION_SCHEMA.probe` both answer Msg 2760, and across every accessible database not one object in either schema has `is_ms_shipped = 0` |
+| the nine fixed-role schemas (`db_owner`, `db_datareader`, …) **unless one holds a user object** | they exist to own permissions | `is_fixed_role` on the owning principal is the engine's own answer, so there is no name list and no `schema_id >= 16384` magic number. `CREATE TABLE db_owner.t` IS legal, so the `EXISTS` arm brings such a schema back: the fixture's `libredb_objects_two` lists `db_owner` because `db_owner.audit_log` is in it |
+
+That `EXISTS` arm is also what keeps the sum rule above true: a schema this statement drops holds
+nothing to count.
+
+Below the last declared level the answer is `[]` rather than a refusal, because "nothing nests under
+a schema" is a true statement about SQL Server and not a caller mistake.
+
+#### `is_ms_shipped = 0` is load-bearing, not hygiene
+
+Measured, `msdb`: **476 stored procedures, 145 tables, 78 views, 38 triggers, 58 functions and 10
+synonyms, every one of them shipped by Microsoft.** A fresh user database holds 72 system tables, 36
+internal tables and 3 service queues in the same view. Both statement arms filter on
+`is_ms_shipped = 0`, and with the predicate dropped `countObjects(['msdb','dbo'])` answers 145
+tables, 78 views and 454 procedures where the truth is zero of each.
+
+#### `describeObject()`: the kind decides, and on this engine that is not theoretical
+
+Only the two `relation` kinds have columns, indexes or foreign keys. A routine, a synonym, a
+sequence and a trigger answer three empty arrays **without a round trip**, which is a true fact
+about those kinds rather than a failed read.
+
+Without the kind the same answer would come out by accident here, and the accident is reachable:
+measured, `CREATE TRIGGER orders ON DATABASE` succeeds while the table `app.orders` exists, because
+a DDL trigger is not in the schema namespace - while `CREATE PROCEDURE app.orders`,
+`CREATE SEQUENCE app.orders` and `CREATE TRIGGER app.orders ON app.customers` each answer Msg 2714.
+A detail read keyed on the name alone would hand that trigger the table's four columns.
+
+Four narrow reads, each bound to one schema and one object, on Oracle's precedent in this epic:
+
+| Read | Source | Note |
+|---|---|---|
+| columns | `sys.columns` ⋈ `sys.types` ⋈ `sys.default_constraints` | `sys.types.name` is the same spelling `INFORMATION_SCHEMA.COLUMNS.DATA_TYPE` gives, verified column by column on `app.orders`, so this surface and the flat tree name a type identically while both are live. `definition` matches `COLUMN_DEFAULT` including its parentheses (`((0))`) |
+| primary key | `sys.indexes` (`is_primary_key = 1`) ⋈ `sys.index_columns` | feeds `isPrimary` on the columns |
+| foreign keys | `sys.foreign_keys` ⋈ `sys.foreign_key_columns` | `sys.foreign_key_columns` already pairs both sides in one row, so there is no position join to get wrong |
+| indexes | `sys.indexes` (`is_primary_key = 0`, `name IS NOT NULL`) ⋈ `sys.index_columns` | the same rule `SCHEMA_INDEXES_SQL` uses, so one screen never shows an index the other hides |
+
+None of them uses `OBJECT_NAME()` or `COL_NAME()`, which the flat schema query does: those resolve
+in the CURRENT database and would answer for the connected one while this read is three-part named
+at another.
+
+`referencedTable` is bare within the object's own schema and QUALIFIED outside it, because
+`ForeignKeySchema` carries one string through Phase 1 and a bare name for the crossing case
+addresses a table in the wrong schema - which is what the flat query's `OBJECT_NAME()` answers for
+it. Measured on the fixture: `app.orders` reports `customers`, and `reporting.daily` reports
+`app.customers`. SQL Server has no cross-DATABASE foreign key, so the catalog never needs naming.
+
+**Zero column rows is a failed read, not an empty detail.** A table and a view each hold at least
+one column on SQL Server (`CREATE TABLE t ()` is a syntax error), so no rows means the object is not
+there, and `describeObject` raises rather than rendering a dropped table as a table with no columns.
+
+#### `describeObjects()` describes a whole folder in five statements (#789)
+
+`describeObjects(container, kind, limit?)` answers columns, indexes and foreign keys for EVERY object
+of one kind in one container, in FIVE round trips whatever the folder holds, against four per object
+for the single read.
+Measured on SQL Server 2022 CU26 against a 200-table database: **161 ms for one `describeObjects()`
+against 433 ms for 200 `describeObject()` calls**, the same 600 columns and 200 indexes.
+
+The container is either shape this engine accepts: a database-level call describes every schema's
+objects and binds no `@schema`, a schema-level one binds it.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.**
+The same `sys` views `describeObject()` reads, three-part named at the CALLER's database, and not
+`INFORMATION_SCHEMA`, for the reason the single read gives: `OBJECT_NAME()` and `COL_NAME()` resolve
+in the connected database.
+The five statements share one `described` CTE, and the four detail reads join it on `object_id`
+rather than on a name, so nothing here has to compare two strings under a collation to decide which
+rows belong to which object.
+
+**Which kinds have no columns.**
+Everything but `table` and `view`.
+Measured on the fixture server with
+`SELECT o.type, (SELECT COUNT(*) FROM sys.columns c WHERE c.object_id = o.object_id) FROM sys.objects o WHERE o.is_ms_shipped = 0`:
+`U` and `V` have column rows and a scalar function (`FN`), a procedure (`P`), a synonym (`SN`), a
+**sequence** (`SO`) and a trigger (`TR`) all have zero.
+A sequence having none is the contrast worth writing down, because it does not transfer: a
+PostgreSQL sequence has three columns and a MariaDB one has eight.
+The one case the rule does not carry is a TABLE-VALUED function: `IF` and `TF` do have `sys.columns`
+rows, 2 each on the fixture, and this surface reports none for the `function` kind because the kind
+also covers the scalar forms and a routine's result shape belongs to the phase that renders a
+routine, which is where `describeObject` leaves it too.
+
+**What bounds the read on the wire.**
+`TOP (@limit)` inside the CTE, the value BOUND rather than interpolated, at `limit + 1` so a
+saturated read is told from an exact one with no second count.
+The extra object is dropped and `truncated` carries the CALLER's limit.
+An unbounded call runs a statement with no `TOP` and can never report truncation.
+Nothing here caps a column list: an unreported bound is the defect `truncated` exists to prevent.
+
+**What orders the cut, and under whose collation.**
+`ORDER BY s.name, o.name`, and it appears ONLY in the bounded statement.
+The two travel together in both directions: SQL Server refuses an `ORDER BY` inside a CTE with no row
+bound (Msg 1033), and a bound with no order would cut an arbitrary set.
+That order runs under the DATABASE's collation, which is `SQL_Latin1_General_CP1_CI_AS` on the
+fixture server (measured) and is case-insensitive there, so a bounded read's membership is the
+server's rather than ours.
+`(schema, name)` is unique within a database, so the order is TOTAL and all five statements cut the
+same set.
+The ANSWER's order is ours: it is re-sorted by path, which sorts a database-level folder by schema
+first, and callers join the two readings on path rather than on position.
+
+**Mixed path depth (ruling 5f).**
+Not in this engine's relation set.
+`table` and `view` are addressed `[database, schema, name]` without exception; `trigger` is the kind
+that sits at two depths here, and it has no columns.
+
+An empty container costs ONE round trip rather than five.
+
+Rebuilding the 200-table database the timing above was measured on, so the number is re-runnable
+rather than asserted:
+
+```sql
+CREATE DATABASE bulk26a1;
+GO
+USE bulk26a1;
+GO
+DECLARE @i INT = 0, @s NVARCHAR(400);
+WHILE @i < 200
+BEGIN
+  SET @s = N'CREATE TABLE dbo.t' + RIGHT('000' + CAST(@i AS NVARCHAR(3)), 3) +
+           N' (id INT NOT NULL PRIMARY KEY, a NVARCHAR(20), b DECIMAL(10,2));';
+  EXEC sp_executesql @s;
+  SET @s = N'CREATE INDEX ix_a ON dbo.t' + RIGHT('000' + CAST(@i AS NVARCHAR(3)), 3) + N' (a);';
+  EXEC sp_executesql @s;
+  SET @i = @i + 1;
+END;
+```
+
+#### What is not carried
+
+- **No `sizeBytes`.** `DatabaseObject.sizeBytes` is optional and only carried where the engine
+  publishes one cheaply; a size here needs `sys.allocation_units` joined per object, which
+  `getTableStats()` already does for the monitoring screen.
+- **`rowCount` only for a table**, from `sys.partitions` with `index_id IN (0, 1)` - the same
+  expression `SCHEMA_TABLES_SQL` uses, so the number reads the same in both surfaces. It is the
+  approximation the engine maintains rather than a `COUNT(*)`.
+- **No `GO` anywhere in a provider statement.** `GO` is a client convention that never reaches the
+  server, and `node-mssql` takes one batch per `query()`: the fixture file uses it because sqlcmd is
+  what runs that file.
 
 ---
 
@@ -724,6 +1102,8 @@ render those words and send an operation SQL Server declares (#496).
 | `supportsConnectionString` | `true` (UI-only — see [§4.4](#44-connection-string-nuance)) |
 | `defaultPort` | `1433` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
+| `containerLevels` | **two**: `catalog` (Database) then `schema` - the first two-level engine in #789 ([§7](#the-object-surface-789)) |
+| `objectKinds` | seven: table, view, procedure, function, trigger, synonym, sequence. No `index` kind and no materialized view ([§7](#the-object-surface-789)) |
 
 ### Labels — overridden (`getLabels()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts))
 
@@ -778,10 +1158,17 @@ canned `{ recordset, rowsAffected }` results, exercising the same code paths as 
 ### 12.2 Coverage
 
 The suite covers: validation, connect/disconnect, query, capabilities, **labels override**,
-**`prepareQuery` TOP / OFFSET-FETCH**, `getSchema` (columns/PKs/FKs/indexes grouping), health,
+**`prepareQuery` TOP / OFFSET-FETCH**, the object surface (columns/PKs/FKs/indexes), health,
 maintenance (analyze/check/optimize/kill + SPID validation), pool stats, the transaction lifecycle,
 query cancellation, overview, performance metrics, slow queries, active sessions (incl. blocked),
 table/index/storage stats, and error mapping.
+
+It also covers **the object surface** (#789): the seven declared kinds and their roles, the shared
+conformance contract (`tests/helpers/object-surface-conformance.ts`), both container depths, the
+caller-named catalog, the trigger read that `sys.objects` cannot answer, the mixed-depth trigger
+listing, and the detail row. The object-surface mock answers per READ rather than per statement
+text, and it takes its schema filter from the statement rather than from the bound parameter:
+a mock that filtered on the bind kept passing for a listing that had lost its `WHERE` clause.
 
 ### 12.3 Run it
 
@@ -795,9 +1182,34 @@ bun run test:coverage                                   # CI coverage workflow �
 
 ```bash
 docker run --rm -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD='Str0ng!Passw0rd' \
-  -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+  -p 1433:1433 --cpus 4 mcr.microsoft.com/mssql/server:2022-latest
 # then connect to localhost:1433 (user sa) in the Studio UI
 ```
+
+`--cpus 4` is not decoration on a many-core host: SQL Server asserts on the processor topology in a
+container, which is the same reason `database-compose.yml` pins `2022-latest`.
+
+For the object surface, apply the fixture first. The image has **no init-script directory** (no
+`/docker-entrypoint-initdb.d`, no `/container-entrypoint-initdb.d`), so it cannot be mounted the way
+the PostgreSQL, MySQL and Oracle fixtures are:
+
+```bash
+docker cp docker/mssql-init/01-object-fixture.sql <container>:/tmp/fixture.sql
+docker exec <container> /opt/mssql-tools18/bin/sqlcmd \
+  -S localhost -U sa -P 'Str0ng!Passw0rd' -C -b -i /tmp/fixture.sql
+```
+
+It is idempotent (it drops and recreates every database it owns) and it seeds two databases with
+DIFFERENT schema sets, one object of every declared kind, a disabled trigger, two DDL triggers, one
+of them named exactly like a table, a cross-schema foreign key, a user table in a fixed-role schema
+and an OFFLINE database. Every one of those is there because some claim in
+[§7](#the-object-surface-789) cannot be measured without it.
+
+It also seeds ROWS, two each in `libredb_objects.app.customers`, `libredb_objects.dbo.audit_trail`
+and `libredb_objects_two.warehouse.stock`. Those three cover the three addresses a generated
+`SELECT TOP 50` has to write: the login's default schema, another schema in the connected database,
+and another database entirely. An empty table returns nothing for a correct address and for a wrong
+one, so the rows are what makes the click measurable at all.
 
 ---
 
@@ -814,12 +1226,13 @@ const provider = await createDatabaseProvider({
 
 await provider.connect();
 const res = await provider.query('SELECT id, email FROM users WHERE active = @p1', [1]);
-const schema = await provider.getSchema();   // 5 sys.* queries, grouped in memory
+const tables = await provider.listObjects(['mydb', 'dbo'], 'table');
+const { details } = await provider.describeObjects(['mydb', 'dbo'], 'table');
 await provider.disconnect();
 ```
 
 Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/cancel`,
-`POST /api/db/maintenance` (admin), `POST /api/db/schema/list` (falls back to `getSchema()`).
+`POST /api/db/maintenance` (admin), `POST /api/db/objects/inventory`.
 
 ---
 
@@ -877,8 +1290,22 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   `N/A`/`[]` where the shape can say "not measured", and, for the health connection count, nothing
   at all ([§7.2](#72-when-the-connection-count-is-not-measurable)). The monitoring Overview's
   `getOverview()` connection count is the exception and still degrades to `0`.
+- **The Azure SQL Database container list is UNVERIFIED against Azure.** `EngineEdition = 5` lists
+  exactly the connected database ([§7](#the-object-surface-789)), which is implemented from the
+  documented inability to run a cross-database query there and probed by inverting the edition the
+  statement tests, not by connecting to Azure. *Future:* run the object surface against an Azure SQL
+  Database and against a Managed Instance, which is edition `8` and deliberately not in that arm.
+- **Four user object types have no folder:** a rule (`R`), a plan guide (`PG`), a replication
+  filter procedure (`RF`) and a table type (`TT`, whose `sys.objects` row is Microsoft-shipped and
+  whose real home is `sys.types`). Each is a documented `sys.objects.type` this provider decides
+  about and declines to fold into a kind it is not
+  ([§7](#the-vocabulary-is-the-engines-not-the-fixtures)). *Future:* a Types folder, and a
+  Programmability folder for the other three, if a user asks for one.
+- **A SERVER-level DDL trigger is not addressable.** `sys.server_triggers` is server-wide, and the
+  object tree has no level above a database, so those triggers appear in no count and no listing
+  ([§7](#the-object-surface-789)). *Future:* a server-scoped container level, which every other
+  engine would then have to answer for.
 - **SQL authentication only** — Windows Integrated / Azure AD auth is not wired.
-- **No two-phase schema loading** — `/api/db/schema/list` falls back to the full `getSchema()`.
 - **DMV monitoring needs `VIEW SERVER STATE`** (`VIEW SERVER PERFORMANCE STATE` on SQL Server 2022
   and later, which `VIEW SERVER STATE` implies — [§7.2](#72-when-the-connection-count-is-not-measurable));
   a least-privilege user silently gets `N/A`/`[]` and,

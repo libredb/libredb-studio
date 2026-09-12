@@ -9,11 +9,15 @@ import {
   graphSignature,
   selectVisibleColumns,
 } from "@/components/schema-diagram/graph";
-import type { ColumnSchema, TableSchema } from "@/lib/types";
+import type { ColumnSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
+import { pathKey } from "@/lib/db/object-path";
 
-function makeTable(name: string, columns: Partial<ColumnSchema>[], foreignKeys: TableSchema["foreignKeys"] = []) {
+function makeTable(name: string, columns: Partial<ColumnSchema>[], foreignKeys: DetailedObject["foreignKeys"] = []) {
   return {
     name,
+    kind: "table",
+    path: [name],
     columns: columns.map((c, i) => ({
       name: c.name ?? `col_${i}`,
       type: c.type ?? "integer",
@@ -24,7 +28,7 @@ function makeTable(name: string, columns: Partial<ColumnSchema>[], foreignKeys: 
     indexes: [],
     foreignKeys,
     rowCount: 0,
-  } as TableSchema;
+  } as DetailedObject;
 }
 
 const users = makeTable("users", [
@@ -291,9 +295,10 @@ describe("buildGraph", () => {
   });
 
   test("undefined foreignKeys is tolerated", () => {
-    const bare = { ...makeTable("bare", [{ name: "id", isPrimary: true }]) };
-    delete (bare as Partial<TableSchema>).foreignKeys;
-    const { nodes, edgeCount } = buildGraph([bare as TableSchema], { compact: false });
+    // Built WITHOUT the key rather than by deleting it: `DetailedObject`'s fields are
+    // readonly, and the absence is the whole subject of the test.
+    const { foreignKeys: _absent, ...bare } = makeTable("bare", [{ name: "id", isPrimary: true }]);
+    const { nodes, edgeCount } = buildGraph([bare], { compact: false });
     expect(nodes.length).toBe(1);
     expect(edgeCount).toBe(0);
   });
@@ -324,5 +329,143 @@ describe("graphSignature", () => {
     expect(graphSignature(buildGraph([users, orders], { compact: true }), true)).not.toBe(base);
     const noFk = { ...orders, foreignKeys: [] };
     expect(graphSignature(buildGraph([users, noFk], { compact: false }), false)).not.toBe(base);
+  });
+});
+
+/**
+ * The collision the diagram shipped three rounds of one defect on (#789, Task 36).
+ *
+ * Every fixture above is one container deep, where a label and an address are the same
+ * string, which is exactly why the graph could key on the label for as long as it did. The
+ * shapes below are the live SQL Server on 1433: `libredb_objects.app.customers` beside
+ * `shop.dbo.customers`, and a foreign key that names its target QUALIFIED because it crosses
+ * a container while the referencing table's own keys name theirs bare.
+ */
+function makeAt(
+  path: readonly string[],
+  columns: Partial<ColumnSchema>[],
+  foreignKeys: DetailedObject["foreignKeys"] = [],
+): DetailedObject {
+  return {
+    ...makeTable(path[path.length - 1], columns, foreignKeys),
+    path,
+  } as DetailedObject;
+}
+
+const appCustomers = makeAt("libredb_objects/app/customers".split("/"), [
+  { name: "id", isPrimary: true },
+  { name: "name", type: "varchar" },
+]);
+const shopCustomers = makeAt("shop/dbo/customers".split("/"), [
+  { name: "id", isPrimary: true },
+  { name: "email", type: "varchar" },
+]);
+const shopOrders = makeAt(
+  "shop/dbo/orders".split("/"),
+  [{ name: "id", isPrimary: true }, { name: "customer_id" }],
+  [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
+);
+const shopDaily = makeAt(
+  "shop/dbo/daily".split("/"),
+  [{ name: "id", isPrimary: true }, { name: "customer_id" }],
+  [{ columnName: "customer_id", referencedTable: "app.customers", referencedColumn: "id" }],
+);
+const crossContainer = [appCustomers, shopCustomers, shopOrders, shopDaily];
+
+describe("addresses rather than labels", () => {
+  test("two objects sharing a label in different containers get distinct node ids", () => {
+    const { nodes } = buildGraph([appCustomers, shopCustomers], { compact: false });
+    expect(new Set(nodes.map((n) => n.id)).size).toBe(2);
+  });
+
+  test("a cross-container foreign key keeps its edge", () => {
+    const { edges } = buildGraph(crossContainer, { compact: false });
+    const daily = edges.find((e) => e.source === pathKey(shopDaily.path));
+    expect(daily).toBeDefined();
+    expect(daily?.target).toBe(pathKey(appCustomers.path));
+  });
+
+  test("a bare foreign key resolves in the referencing object's own container", () => {
+    const { edges } = buildGraph(crossContainer, { compact: false });
+    const orders = edges.find((e) => e.source === pathKey(shopOrders.path));
+    expect(orders?.target).toBe(pathKey(shopCustomers.path));
+  });
+
+  test("the anchor columns land on the referenced object and not on its namesake", () => {
+    const { sources, targets } = computeFkColumnMap(crossContainer);
+    expect(sources.get(pathKey(shopDaily.path))).toEqual(new Set(["customer_id"]));
+    expect(targets.get(pathKey(appCustomers.path))).toEqual(new Set(["id"]));
+    expect(targets.get(pathKey(shopCustomers.path))).toEqual(new Set(["id"]));
+  });
+
+  test("a spelling two objects answer to at the same rank draws no edge", () => {
+    // `customers` from a THIRD container: both namesakes answer it at the same rank and
+    // neither is the referencing object's own, so nothing says which was meant.
+    const elsewhere = makeAt(
+      "warehouse/etl/loads".split("/"),
+      [{ name: "id", isPrimary: true }, { name: "customer_id" }],
+      [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
+    );
+    // The whole edge list rather than the ones sourced at `loads`: an assertion filtered by
+    // the address passes vacuously while the graph is still keyed on the label, which is the
+    // shape standing ruling 5b calls a vacuous negative.
+    const { edges } = buildGraph([appCustomers, shopCustomers, elsewhere], { compact: false });
+    expect(edges).toEqual([]);
+  });
+
+  test("two namesakes referencing one object keep both edges", () => {
+    // The edge id is the DEDUP key. Built from labels, these two are one string and the
+    // second edge is silently swallowed by `seen`.
+    const hub = makeAt("hub/dbo/customers".split("/"), [{ name: "id", isPrimary: true }]);
+    const fk = [{ columnName: "customer_id", referencedTable: "hub.dbo.customers", referencedColumn: "id" }];
+    const shopOrdersHere = makeAt(
+      "shop/dbo/orders".split("/"),
+      [{ name: "id", isPrimary: true }, { name: "customer_id" }],
+      fk,
+    );
+    const warehouseOrders = makeAt(
+      "warehouse/dbo/orders".split("/"),
+      [{ name: "id", isPrimary: true }, { name: "customer_id" }],
+      fk,
+    );
+    const { edges } = buildGraph([hub, shopOrdersHere, warehouseOrders], { compact: false });
+    expect(edges.length).toBe(2);
+    expect(new Set(edges.map((e) => e.id)).size).toBe(2);
+    expect(edges.map((e) => e.source).sort()).toEqual(
+      [pathKey(shopOrdersHere.path), pathKey(warehouseOrders.path)].sort(),
+    );
+  });
+
+  test("the heuristic fallback resolves in the referencing object's own container", () => {
+    const bareApp = makeAt("libredb_objects/app/customers".split("/"), [{ name: "id", isPrimary: true }]);
+    const bareShop = makeAt("shop/dbo/customers".split("/"), [{ name: "id", isPrimary: true }]);
+    const posts = makeAt("shop/dbo/posts".split("/"), [{ name: "id", isPrimary: true }, { name: "customer_id" }]);
+    const { edges, usedHeuristic } = buildGraph([bareApp, bareShop, posts], { compact: false });
+    expect(usedHeuristic).toBe(true);
+    expect(edges.length).toBe(1);
+    expect(edges[0].target).toBe(pathKey(bareShop.path));
+  });
+
+  test("expandedTables is keyed by the address, so one namesake expands alone", () => {
+    const wideApp = makeAt(
+      "libredb_objects/app/customers".split("/"),
+      Array.from({ length: 30 }, (_, i) => ({ name: `c${i}`, isPrimary: i === 0 })),
+    );
+    const wideShop = makeAt(
+      "shop/dbo/customers".split("/"),
+      Array.from({ length: 30 }, (_, i) => ({ name: `c${i}`, isPrimary: i === 0 })),
+    );
+    const { nodes } = buildGraph([wideApp, wideShop], {
+      compact: false,
+      expandedTables: new Set([pathKey(wideShop.path)]),
+    });
+    expect(nodes.find((n) => n.id === pathKey(wideShop.path))?.data.visibleColumns.length).toBe(30);
+    expect(nodes.find((n) => n.id === pathKey(wideApp.path))?.data.visibleColumns.length).toBe(MAX_VISIBLE_COLUMNS);
+  });
+
+  test("the signature separates two schemas that differ only by container", () => {
+    const one = buildGraph([appCustomers], { compact: false });
+    const two = buildGraph([shopCustomers], { compact: false });
+    expect(graphSignature(one, false)).not.toBe(graphSignature(two, false));
   });
 });

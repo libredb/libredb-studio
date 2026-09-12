@@ -42,12 +42,17 @@
 import { SQLBaseProvider } from "../sql-base";
 import {
   type ActiveSessionDetails,
+  type Container,
   type DatabaseConnection,
+  type DatabaseObject,
   type DatabaseOverview,
   type HealthInfo,
   type IndexStats,
+  type KindCount,
   type MaintenanceResult,
   type MaintenanceType,
+  type ObjectDetail,
+  type ObjectDetailBatch,
   type PerformanceMetrics,
   type ProviderCapabilities,
   type ProviderExecutionContext,
@@ -57,9 +62,9 @@ import {
   type ReadOnlyStatementBudget,
   type SlowQueryStats,
   type StorageStats,
-  type TableSchema,
   type TableStats,
 } from "../../../types";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../../object-kinds";
 import {
   DatabaseConfigError,
   DatabaseError,
@@ -79,12 +84,43 @@ import {
   readHealth,
   readIndexStats,
   readOverview,
-  readSchema,
   readSlowQueries,
   readStorageStats,
   readTableStats,
 } from "./introspect";
-import { toQueryResult } from "./values";
+import {
+  CATALOGS_SQL,
+  type CatalogRow,
+  type ColumnRow,
+  type ForeignKeyRow,
+  type IndexRow,
+  type KindCountRow,
+  OBJECT_COLUMNS_SQL,
+  OBJECT_FOREIGN_KEYS_SQL,
+  OBJECT_INDEXES_SQL,
+  OBJECT_PRIMARY_KEY_SQL,
+  type ObjectRow,
+  type PrimaryKeyRow,
+  SCHEMAS_SQL,
+  type SchemaNameRow,
+  applyKindCounts,
+  bulkColumnsSql,
+  bulkForeignKeysSql,
+  bulkIndexesSql,
+  bulkPrimaryKeySql,
+  bulkTargetSql,
+  containerRead,
+  groupByObject,
+  objectDetailFromRows,
+  type OfObject,
+  countsSql,
+  listObjectsSql,
+  listedObject,
+  objectRead,
+  seedZeroCounts,
+} from "./objects";
+import { comparePaths } from "@/lib/db/object-path";
+import { readCount, toQueryResult } from "./values";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -361,6 +397,45 @@ export class DuckDBProvider extends SQLBaseProvider {
         analyze: { label: "Analyze Table", perEntity: true, global: true },
         optimize: { label: "Checkpoint Database", perEntity: false, global: true },
       },
+      // TWO levels, and both are real (#789). `ATTACH '<file>' AS warehouse` puts a
+      // second whole catalog in the same session and a three-part name reaches into it,
+      // so a DuckDB connection holds databases holding schemas - the outer level is not
+      // the connection's own file restated. The engine's own word for the outer one is
+      // "database" (`duckdb_databases()`, `ATTACH ... AS`), which is what the label says.
+      containerLevels: [
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+      // Four kinds, one `duckdb_*` table function behind each (`objects.ts`).
+      //
+      // NO trigger and NO stored procedure, because DuckDB has neither: `CREATE TRIGGER`
+      // and `CREATE PROCEDURE` are both parser errors on v1.5.5. A declared kind draws a
+      // folder, and a folder for something the engine cannot have is a lie its zero badge
+      // makes look like a fact.
+      //
+      // No `index` kind either: `duckdb_indexes()` is keyed by `table_oid` and an index
+      // cannot exist without a table, so it belongs in `describeObject`'s output, where it
+      // is. And no materialized view: DuckDB has no such object.
+      //
+      // A SECRET is deliberately absent and is the one omission worth stating rather than
+      // leaving implicit. `duckdb_secrets()` is real, but a secret lives outside the
+      // catalog hierarchy entirely - it has no `database_name` and no `schema_name`, so
+      // there is no container in this model it could hang under. Recorded in
+      // `docs/providers/duckdb.md` as out of Phase 1's scope.
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+        // No `acceptsRowWrites` on a view. Measured on v1.5.5: `INSERT INTO <view>`
+        // answers `Catalog Error: <view> is not an table`, so a view is never an import
+        // or inline-edit target here - not even the single-table case PostgreSQL takes.
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+        // ONE kind for both macro forms. A scalar macro (`AS <expression>`) and a table
+        // macro (`AS TABLE <select>`) are `function_type` 'macro' and 'table_macro', and
+        // both are something a person wrote with CREATE MACRO. There is no
+        // `duckdb_macros()`: `duckdb_functions()` filtered on `function_type` is the only
+        // route, and `information_schema` has no `.routines` on this engine.
+        { id: "macro", role: "routine", label: "Macro", labelPlural: "Macros" },
+        { id: "sequence", role: "config", label: "Sequence", labelPlural: "Sequences" },
+      ],
     };
   }
 
@@ -637,9 +712,277 @@ export class DuckDBProvider extends SQLBaseProvider {
   // Schema
   // ==========================================================================
 
-  public async getSchema(): Promise<TableSchema[]> {
+  // ==========================================================================
+  // The object surface (#789)
+  // ==========================================================================
+
+  /** One catalog read, with DuckDB's own refusal mapped and quoting the statement it sent. */
+  private async runObjectRows<T>(sql: string, params?: readonly (string | number)[]): Promise<T[]> {
+    try {
+      const result = params === undefined ? await this.client!.run(sql) : await this.client!.run(sql, [...params]);
+      return result.rows as unknown as T[];
+    } catch (error) {
+      throw mapDuckDBError(error, sql);
+    }
+  }
+
+  /**
+   * The containers at `parent`: the catalogs this connection can address, or one
+   * catalog's schemas.
+   *
+   * The top level is `duckdb_databases()` and not "the file this connection named", which
+   * is the whole point of the level: `ATTACH` puts another database in the same session
+   * and a three-part name reaches into it, so a DuckDB connection routinely holds more
+   * than one catalog. `system` and `temp` are excluded by the engine's own `internal`
+   * flag - see `CATALOGS_SQL`.
+   *
+   * The nested read binds the CALLER's catalog. It is a bound string here rather than a
+   * three-part name, so the failure a bad implementation gets is an empty folder rather
+   * than a syntax error: a provider that read `current_database()` instead would answer
+   * the connected catalog's schemas under every ATTACHed database and look healthy.
+   *
+   * Below the last declared level the answer is `[]` rather than a refusal, because
+   * "nothing nests under a schema" is a true statement about DuckDB and not a caller
+   * mistake. The depth is `containerDepth()` for the reason standing ruling 5g gives.
+   */
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
     this.ensureConnected();
-    return readSchema(this.client!);
+    const capabilities = this.getCapabilities();
+    const parentPath = parent ?? [];
+    // `Container.level` is the index into `containerLevels`, so a container listed under a
+    // parent of depth d sits at level d. Derived from the parent rather than written twice
+    // as a literal 0 and 1.
+    const level = parentPath.length;
+
+    if (level === 0) {
+      const rows = await this.runObjectRows<CatalogRow>(CATALOGS_SQL);
+      return rows.map((row) => ({
+        path: [row.database_name],
+        name: row.database_name,
+        level,
+        isSessionDefault: row.is_session_default === true,
+      }));
+    }
+    if (level >= containerDepth(capabilities)) return [];
+
+    const { catalog } = containerRead(capabilities, parentPath);
+    const rows = await this.runObjectRows<SchemaNameRow>(SCHEMAS_SQL, [catalog]);
+    return rows.map((row) => ({
+      path: [...parentPath, row.schema_name],
+      name: row.schema_name,
+      level,
+      // Marked at THIS level too, not only at the catalog. Standing ruling 5a2 (#789):
+      // first paint walks the chain to the session default at the DEEPEST declared level,
+      // so a two-level engine that marked only its catalogs would open a database and
+      // stop there, having read no counts at all. Only the session's own catalog carries
+      // a marked schema - `current_schema()` names a schema in `current_database()` - so
+      // an ATTACHed catalog answers false for every row, which is the truth.
+      isSessionDefault: row.is_session_default === true,
+    }));
+  }
+
+  /**
+   * How many objects of each declared kind one container holds, in one round trip.
+   *
+   * Three outcomes, and `KindCount` keeps all three apart. A kind the statement answered
+   * for carries its count. A kind it did not carries `{ count: 0 }`, because it was seeded
+   * before the read. A kind whose read was refused carries DuckDB's own sentence, so the
+   * object browser can say why a folder has no number instead of showing a zero nobody
+   * measured.
+   *
+   * A catalog-level count is the whole catalog and a schema-level one is that schema, and
+   * on this engine the first really is the sum of the second over the schemas
+   * `listContainers` lists: every DuckDB object of every declared kind belongs to a schema,
+   * so there is no base-less row of the sort an Oracle or SQL Server trigger has.
+   *
+   * The statement is built BEFORE the try. A kind declared with no catalog function behind
+   * it is a DECLARATION defect, and reporting it as `{ unavailable }` would render it as
+   * the engine refusing a read.
+   */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const read = containerRead(capabilities, container);
+    const declared = declaredKinds(capabilities);
+    const counts = seedZeroCounts(declared);
+    const sql = countsSql(declared, read.bySchema);
+
+    try {
+      const rows = await this.runObjectRows<KindCountRow>(sql, read.binds);
+      applyKindCounts(counts, rows, readCount);
+      return counts;
+    } catch (error) {
+      // A refused read is never 0. "Out of Memory Error: failed to allocate data of size
+      // 32.0 KiB" and "this schema holds no tables" are different facts, and `KindCount`
+      // is the type that keeps them apart, so the object browser can say WHY a folder has
+      // no number instead of showing a zero nobody measured. DuckDB's sentence is carried
+      // verbatim: `mapDuckDBError` has already given it this product's typing, and the
+      // text a person reads here is the engine's own.
+      const reason = error instanceof Error ? error.message : String(error);
+      return Object.fromEntries(declared.map((kind) => [kind.id, { unavailable: reason } as KindCount]));
+    }
+  }
+
+  /**
+   * The objects of one kind in one container, names only.
+   *
+   * Ordering is done here rather than with an `ORDER BY`, so one rule covers all four
+   * kinds: four `ORDER BY` clauses are four chances to disagree, and a code-point sort over
+   * the produced PATH is what keeps a catalog-level listing grouped by schema.
+   */
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const read = containerRead(capabilities, container);
+    // Two questions, asked in order, and only the DECLARATION answers the first. Deciding
+    // "is this kind declared" from whether a statement exists would make the two methods
+    // disagree, and would report "declares no object kind" about a kind `objectKinds` does
+    // declare.
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`DuckDB declares no object kind "${kind}"`, "duckdb");
+    }
+    const rows = await this.runObjectRows<ObjectRow>(listObjectsSql(kind, read.bySchema), read.binds);
+    return rows
+      .map((row) => listedObject(capabilities, read.catalog, kind, row))
+      .sort((left, right) => comparePaths(left.path, right.path));
+  }
+
+  /**
+   * Columns, indexes and foreign keys for one object of one KIND.
+   *
+   * The kind decides everything and nothing here reads the name to work out what it is
+   * holding. Only the two relation kinds have any of the three, so a macro and a sequence
+   * answer three empty arrays without a round trip - a true fact about those kinds rather
+   * than a failed read, and a macro's parameters are Phase 2's job.
+   *
+   * Without the kind the same answer would come out by accident, and on this engine that
+   * accident is reachable rather than theoretical. Measured on DuckDB v1.5.5, a table, a
+   * sequence and a macro can all be called `overlap` in one schema
+   * (`CREATE SEQUENCE overlap` and `CREATE MACRO overlap(x)` both succeed while the table
+   * exists; only `CREATE VIEW overlap` is refused), so a read keyed on the name alone would
+   * hand the sequence the table's columns.
+   */
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`DuckDB declares no object kind "${kind}"`, "duckdb");
+    }
+
+    const read = objectRead(capabilities, spec, path);
+
+    if (spec.role !== "relation") {
+      return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
+    }
+
+    const columnRows = await this.runObjectRows<ColumnRow>(OBJECT_COLUMNS_SQL, read.binds);
+    if (columnRows.length === 0) {
+      // Measured: `CREATE TABLE t ()` is `Parser Error: Table must have at least one
+      // column!` and a view over an empty selection list is a parser error too, so a
+      // relation with no column row is a relation that is not there. Answering
+      // `{ columns: [] }` would render a dropped table as a table with no columns.
+      throw new QueryError(`No column row for ${path.join(".")}`, "duckdb", OBJECT_COLUMNS_SQL);
+    }
+    const primaryKeyRows = await this.runObjectRows<PrimaryKeyRow>(OBJECT_PRIMARY_KEY_SQL, read.binds);
+    const foreignKeyRows = await this.runObjectRows<ForeignKeyRow>(OBJECT_FOREIGN_KEYS_SQL, read.binds);
+    const indexRows = await this.runObjectRows<IndexRow>(OBJECT_INDEXES_SQL, read.binds);
+
+    return objectDetailFromRows(path, read.schema, {
+      columns: columnRows,
+      primaryKey: primaryKeyRows,
+      foreignKeys: foreignKeyRows,
+      indexes: indexRows,
+    });
+  }
+
+  /**
+   * Columns, indexes and foreign keys for EVERY object of one kind in one container (#789).
+   *
+   * FIVE round trips for a whole folder, constant in the number of objects: the target read
+   * plus the four detail reads, each of which is `describeObject()`'s own statement with the
+   * schema-and-name pair replaced by a join against the target. The caller's alternative was
+   * one `describeObject` per object, which is four statements each.
+   *
+   * The four guards are asked in the same order the reference implementation asks them, and
+   * each one is a different fact:
+   *   1. a kind this engine does not declare RAISES, naming the engine and the kind. An
+   *      empty batch would be a claim about the container; an undeclared kind is a fact
+   *      about DuckDB.
+   *   2. the container path is resolved by `containerRead`, the same reader `listObjects`
+   *      uses, so both the depth and the segment-to-level mapping come from the declaration
+   *      (standing ruling 5g).
+   *   3. a `limit` that is not a positive whole number raises rather than clamping: a 0
+   *      would answer nothing while reporting a truncation nobody asked for.
+   *   4. a kind with no columns answers `{ details: [] }` with NO round trip. On DuckDB that
+   *      is `macro` and `sequence` - measured, `duckdb_columns()` holds no row for either -
+   *      which is the same fact `describeObject` answers as three empty arrays.
+   *
+   * The bound is the CALLER's. `limit + 1` reaches the target's `LIMIT`, the extra object is
+   * dropped and `truncated` carries the caller's own limit; an unbounded call can never
+   * report truncation, and nothing here caps the columns of an object.
+   *
+   * A CATALOG-level container spans every schema under it, so the target carries the SCHEMA
+   * of each object and the paths are built from the row rather than from the container -
+   * `listedObject` again, the same rule `listObjects` builds its paths with.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`DuckDB declares no object kind "${kind}"`, "duckdb");
+    }
+    const read = containerRead(capabilities, container);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      throw new QueryError(
+        `A DuckDB bulk column read limit must be a positive whole number, received ${limit}`,
+        "duckdb",
+      );
+    }
+    if (spec.role !== "relation") return { details: [] };
+
+    const bounded = limit !== undefined;
+    const binds = bounded ? [...read.binds, limit + 1] : read.binds;
+    const of = (row: { schema_name: string; table_name: string }): string =>
+      `${row.schema_name}\u0000${row.table_name}`;
+
+    const targets = await this.runObjectRows<ObjectRow>(bulkTargetSql(kind, read.bySchema, bounded), binds);
+    const truncated = bounded && targets.length > limit;
+    // The extra object the `limit + 1` bound brought back is dropped here, so its rows in
+    // the four maps below are simply never read.
+    const described = truncated ? targets.slice(0, limit) : targets;
+
+    const columns = groupByObject(
+      await this.runObjectRows<OfObject<ColumnRow>>(bulkColumnsSql(kind, read.bySchema, bounded), binds),
+      of,
+    );
+    const primaryKey = groupByObject(
+      await this.runObjectRows<OfObject<PrimaryKeyRow>>(bulkPrimaryKeySql(kind, read.bySchema, bounded), binds),
+      of,
+    );
+    const foreignKeys = groupByObject(
+      await this.runObjectRows<OfObject<ForeignKeyRow>>(bulkForeignKeysSql(kind, read.bySchema, bounded), binds),
+      of,
+    );
+    const indexes = groupByObject(
+      await this.runObjectRows<OfObject<IndexRow>>(bulkIndexesSql(kind, read.bySchema, bounded), binds),
+      of,
+    );
+
+    const details = described
+      .map((row) => {
+        const key = of({ schema_name: row.schema_name, table_name: row.name });
+        return objectDetailFromRows(listedObject(capabilities, read.catalog, kind, row).path, row.schema_name, {
+          columns: columns.get(key) ?? [],
+          primaryKey: primaryKey.get(key) ?? [],
+          foreignKeys: foreignKeys.get(key) ?? [],
+          indexes: indexes.get(key) ?? [],
+        });
+      })
+      .sort((left, right) => comparePaths(left.path, right.path));
+
+    return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
   }
 
   // ==========================================================================

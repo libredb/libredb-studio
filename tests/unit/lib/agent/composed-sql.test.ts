@@ -1093,6 +1093,62 @@ describe("the composers are reachable, which is the defect that put this file he
   });
 });
 
+/**
+ * The kind, selected by the statement rather than bought with a fourth read (#789).
+ *
+ * The fakes the agent suites drive dispatch on statement CONTENT, so a behavioural
+ * assertion cannot see a change to the statement itself (ruling 5b): a projection that
+ * stopped selecting `relkind` would leave every consumer's rows exactly as the fixture
+ * wrote them and every one of those suites green. These pin the text.
+ */
+describe("composeCatalogRead — the PostgreSQL column read carries what each relation IS", () => {
+  test("projects relkind, joined from pg_class by namespace and name", () => {
+    const sql = composeCatalogRead("postgres", {});
+
+    expect(sql).toContain("kc.relkind AS relkind");
+    expect(sql).toContain("LEFT JOIN pg_catalog.pg_class kc ON kc.relnamespace = kn.oid");
+    // Grouped by it as well, or the aggregate below refuses the statement outright.
+    expect(sql).toContain("GROUP BY table_schema, table_name, kc.relkind");
+  });
+
+  test("both joins are LEFT joins, so an engine without the row loses the KIND and not the table", () => {
+    // The driver serves PostgreSQL-wire engines nobody here has run. An inner join would
+    // drop a relation whose `pg_class` row is missing out of the whole inventory, and a
+    // missing table is the absence #414 measured; a missing relkind is an unknown kind,
+    // which this path already knows how to say.
+    const sql = composeCatalogRead("postgres", {});
+
+    expect(sql).toContain("LEFT JOIN pg_catalog.pg_namespace kn ON kn.nspname::text = table_schema::text");
+    // Nothing in the statement joins a catalog any other way.
+    expect(/(?<!LEFT )JOIN pg_catalog\./.test(sql)).toBe(false);
+  });
+
+  test("the join comparisons are cast to text, which is the one shape that holds either way", () => {
+    // `information_schema` identifiers are a domain over `name` on PostgreSQL 12 and
+    // later and over `character varying` before it.
+    const sql = composeCatalogRead("postgres", {});
+
+    expect(sql).toContain("kn.nspname::text = table_schema::text");
+    expect(sql).toContain("kc.relname::text = table_name::text");
+  });
+
+  test("the statement still satisfies the M1 input guard with the join in it", () => {
+    expect(guardAccepts(composeCatalogRead("postgres", { kind: "columns" }))).toBe(true);
+  });
+
+  test("and the extension-ownership rewrite still strips both tests from it", () => {
+    // `withoutExtensionOwnershipTest` anchors on the two subqueries by text. The join
+    // sits between the FROM and the WHERE, so it must survive a rewrite that removes
+    // them — and both of its own aliases must be left alone.
+    const repaired = withoutExtensionOwnershipTest(composeCatalogRead("postgres", {}));
+
+    expect(repaired).not.toContain("pg_depend");
+    expect(repaired).toContain("kc.relkind AS relkind");
+    expect(repaired).toContain("LEFT JOIN pg_catalog.pg_class kc");
+    expect(guardAccepts(repaired)).toBe(true);
+  });
+});
+
 describe("composeCatalogRead — the agent's exclusion set cannot drift from the provider's (B76)", () => {
   const quotedNames = (block: string | undefined): string[] =>
     block === undefined ? [] : [...block.matchAll(/"([^"]+)"/g)].map((match) => match[1]);

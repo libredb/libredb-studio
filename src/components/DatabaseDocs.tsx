@@ -4,14 +4,23 @@ import { appFetch } from "@/lib/config/base-path";
 import React, { useState } from "react";
 import { FileText, LoaderCircle, Search, Sparkles, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { TableSchema } from "@/lib/types";
+import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import { objectPathLabel, pathKey } from "@/lib/db/object-path";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import { renderInline } from "@/components/rich-text";
 import { downloadText } from "@/lib/export/download";
 
 interface DatabaseDocsProps {
-  schema: TableSchema[];
+  schema: readonly DetailedObject[];
   schemaContext: string;
   databaseType?: string;
+  /**
+   * The provider's own declaration, used to decide which of `schema`'s entries this page
+   * documents: a reference of columns is a statement about relations, and a routine or a
+   * trigger has none to print. Optional because the metadata read is asynchronous, and
+   * until it answers nothing has said any entry is not a relation (#789).
+   */
+  capabilities?: ProviderCapabilities;
 }
 
 interface ParsedSchemaTable {
@@ -20,15 +29,22 @@ interface ParsedSchemaTable {
   columns?: { name: string; type: string; isPrimary?: boolean; isNullable?: boolean }[];
 }
 
-export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDocsProps) {
+export function DatabaseDocs({ schema, schemaContext, databaseType, capabilities }: DatabaseDocsProps) {
   const [search, setSearch] = useState("");
   const [aiDocs, setAiDocs] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const filteredSchema = schema.filter(
+  // By the declared ROLE and never by a kind id, so a new engine's relation kind is
+  // documented without a change here (#789).
+  const relations = relationObjects(schema, capabilities);
+
+  // The search matches the label a person typed AND the address the card shows, so typing a
+  // container narrows to it and typing a bare name still finds every namesake (#789).
+  const filteredSchema = relations.filter(
     (t) =>
       t.name.toLowerCase().includes(search.toLowerCase()) ||
+      objectPathLabel(t.path).toLowerCase().includes(search.toLowerCase()) ||
       t.columns?.some((c) => c.name.toLowerCase().includes(search.toLowerCase())),
   );
 
@@ -95,7 +111,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
   const exportMarkdown = () => {
     let md = `# Database Documentation\n\n`;
     md += `**Type:** ${databaseType || "Unknown"}\n`;
-    md += `**Tables:** ${schema.length}\n\n`;
+    md += `**Tables:** ${relations.length}\n\n`;
 
     if (aiDocs) {
       md += `## AI Analysis\n\n${aiDocs}\n\n---\n\n`;
@@ -103,8 +119,11 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
 
     md += `## Table Reference\n\n`;
 
-    for (const table of schema) {
-      md += `### ${table.name}\n\n`;
+    for (const table of relations) {
+      // The ADDRESS, because this document is read away from the app: two objects in two
+      // containers share a label, and two identical headings say nothing about which is
+      // which (#789).
+      md += `### ${objectPathLabel(table.path)}\n\n`;
       if (table.rowCount !== undefined) md += `Rows: ${table.rowCount.toLocaleString()}\n\n`;
 
       if (table.columns && table.columns.length > 0) {
@@ -167,7 +186,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
             <FileText strokeWidth={1.5} className="w-3 h-3 text-hue-teal" />
           </div>
           <span className="text-xs font-medium text-hue-teal">Database Docs</span>
-          <span className="text-[0.625rem] text-fg-muted font-mono">{schema.length} tables</span>
+          <span className="text-[0.625rem] text-fg-muted font-mono">{relations.length} tables</span>
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -225,10 +244,10 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
 
         <h3 className="text-xs font-medium text-fg-tertiary">Table Reference</h3>
         {filteredSchema.map((table) => (
-          <div key={table.name} className="bg-surface border border-hairline rounded-lg overflow-hidden">
+          <div key={pathKey(table.path)} className="bg-surface border border-hairline rounded-lg overflow-hidden">
             <div className="px-3 py-2 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-fg">{table.name}</span>
+                <span className="text-xs font-medium text-fg">{objectPathLabel(table.path)}</span>
                 {table.rowCount !== undefined && (
                   <span className="text-xs text-fg-muted font-mono">{table.rowCount.toLocaleString()} rows</span>
                 )}

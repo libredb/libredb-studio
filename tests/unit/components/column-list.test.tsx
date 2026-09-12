@@ -2,41 +2,41 @@ import { describe, test, expect } from "bun:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ColumnList } from "@/components/schema-explorer/ColumnList";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
 // =============================================================================
 // Test Data
 // =============================================================================
 
-const primaryColumn: TableSchema["columns"][0] = {
+const primaryColumn: DetailedObject["columns"][0] = {
   name: "id",
   type: "integer",
   nullable: false,
   isPrimary: true,
 };
 
-const regularColumn: TableSchema["columns"][0] = {
+const regularColumn: DetailedObject["columns"][0] = {
   name: "email",
   type: "varchar(255)",
   nullable: false,
   isPrimary: false,
 };
 
-const nullableColumn: TableSchema["columns"][0] = {
+const nullableColumn: DetailedObject["columns"][0] = {
   name: "bio",
   type: "text",
   nullable: true,
   isPrimary: false,
 };
 
-const typedColumn: TableSchema["columns"][0] = {
+const typedColumn: DetailedObject["columns"][0] = {
   name: "price",
   type: "numeric(10,2)",
   nullable: false,
   isPrimary: false,
 };
 
-const indexes: TableSchema["indexes"] = [
+const indexes: DetailedObject["indexes"] = [
   { name: "users_pkey", columns: ["id"], unique: true },
   { name: "users_email_key", columns: ["email"], unique: true },
 ];

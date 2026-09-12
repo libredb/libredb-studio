@@ -3,7 +3,7 @@ import { getOrCreateProvider } from "@/lib/db/factory";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
-import { quoteIdentifier, quoteQualifiedName } from "@/lib/query-generators";
+import { objectSegment, quoteIdentifier, quoteObjectPath } from "@/lib/query-generators";
 import { quoteLiteral } from "@/lib/sql/values";
 
 export async function POST(req: NextRequest) {
@@ -14,13 +14,24 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { tableName, columns } = body;
+    const { tablePath, columns } = body;
 
     const connection = await resolveConnection(body, guard.session);
 
-    if (!tableName) {
-      return NextResponse.json({ error: "tableName is required" }, { status: 400 });
+    // The object's ADDRESS, one element per segment, and it is checked element by element
+    // rather than by `Array.isArray` alone: an array is not a path if it holds anything but
+    // strings, and the old body carried a dotted STRING that this route split on `.`, which
+    // is the defect `path` exists to retire (#789). Refused explicitly here so a caller that
+    // lost the address gets a 400 instead of a statement built around `undefined`.
+    if (!Array.isArray(tablePath) || tablePath.length === 0 || tablePath.some((s) => typeof s !== "string")) {
+      return NextResponse.json(
+        { error: "tablePath is required: the object address, one segment per element" },
+        { status: 400 },
+      );
     }
+    const path = tablePath as string[];
+    // The LABEL, for the response alone: the profiler names its export after it.
+    const tableName = objectSegment(path);
 
     const provider = await getOrCreateProvider(connection);
 
@@ -31,6 +42,8 @@ export async function POST(req: NextRequest) {
       if (!isSQL) {
         // MongoDB profiling
         const profileQuery = JSON.stringify({
+          // The collection's own segment: a collection path is [database, collection] and
+          // the driver is already connected to the database (standing ruling 2).
           collection: tableName,
           operation: "aggregate",
           pipeline: [
@@ -78,8 +91,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "No columns to profile" }, { status: 400 });
       }
 
-      // Quote the table once for the target dialect (mixed-case / special names)
-      const safeTable = quoteQualifiedName(tableName, capabilities);
+      // Quote the ADDRESS once for the target dialect, per segment and never by splitting a
+      // string: two containers may hold one label, and a name may itself contain a dot.
+      const safeTable = quoteObjectPath(path, capabilities);
 
       // Get total row count
       const countResult = await provider.query(`SELECT COUNT(*) as total FROM ${safeTable}`);

@@ -3,8 +3,10 @@
  *
  * One type-id for two deployments of the same engine: a self-hosted libSQL server
  * (`sqld`) and Turso Cloud, which is that server managed. Both speak Hrana, both
- * embed SQLite 3.47.0, and everything the provider asks is SQL - so this file is
- * the SQLite dialect over a network rather than a second engine.
+ * embed SQLite, and everything the provider asks is SQL - so this file is the SQLite
+ * dialect over a network rather than a second engine. WHICH SQLite depends on the build
+ * rather than on the version number: `:latest` and Turso Cloud answer 3.47.0 and the
+ * `v0.24.33` tag `database-compose.yml` pins answers 3.45.1 (docs/providers/libsql.md).
  *
  * It is NOT the SQLite provider with a different handle, and the differences are
  * measured rather than assumed (2026-08-27, sqld 0.24.33 and Turso Cloud):
@@ -32,11 +34,16 @@ import { SQLBaseProvider } from "../sql-base";
 import {
   type DatabaseConnection,
   type ActiveSessionDetails,
+  type Container,
+  type DatabaseObject,
   type DatabaseOverview,
   type HealthInfo,
   type IndexStats,
+  type KindCount,
   type MaintenanceResult,
   type MaintenanceType,
+  type ObjectDetail,
+  type ObjectDetailBatch,
   type PerformanceMetrics,
   type ProviderCapabilities,
   type ProviderLabels,
@@ -44,7 +51,6 @@ import {
   type QueryResult,
   type SlowQueryStats,
   type StorageStats,
-  type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
@@ -54,11 +60,19 @@ import {
   readHealth,
   readIndexStats,
   readOverview,
-  readSchema,
   readSlowQueries,
   readStorageStats,
   readTableStats,
 } from "./introspect";
+import {
+  countLibSQLObjects,
+  describeLibSQLObject,
+  describeLibSQLObjects,
+  LIBSQL_OBJECT_KINDS,
+  type LibSQLObjectReader,
+  listLibSQLObjects,
+  listObjectContainers,
+} from "./objects";
 import { type LibSQLStatementResult, type LibSQLTransport, LibSQLTransportError } from "./transport";
 
 // ============================================================================
@@ -195,6 +209,14 @@ export class LibSQLProvider extends SQLBaseProvider {
       // behaves exactly as it does against a file.
       supportsCreateTable: true,
       schemaRefreshPattern: "(CREATE|DROP|ALTER|TRUNCATE|REINDEX)\\b",
+      // Zero container levels (#789). A connection addresses one database and every
+      // object in it is addressed by a bare name, so `listContainers()` answers `[]` and
+      // the tree draws the kind folders at the root. `temp` is not a second level: sqld
+      // refuses `CREATE TEMP TABLE` and `ATTACH DATABASE` outright, and a declaration is
+      // read off a provider that never connects, so it could not describe session state
+      // in any case. See `objects.ts`.
+      containerLevels: [],
+      objectKinds: LIBSQL_OBJECT_KINDS,
     };
   }
 
@@ -281,13 +303,52 @@ export class LibSQLProvider extends SQLBaseProvider {
   // Schema
   // ==========================================================================
 
-  public async getSchema(): Promise<TableSchema[]> {
-    const transport = this.requireTransport();
-    try {
-      return await readSchema(transport);
-    } catch (error) {
-      throw this.mapLibSQLError(error);
-    }
+  // ==========================================================================
+  // Object surface (#789)
+  // ==========================================================================
+
+  /**
+   * What one object read needs, assembled once per call.
+   *
+   * The error mapping travels with it rather than being rebuilt in `objects.ts`, because
+   * only this class knows the host and port a connection failure has to name and only the
+   * STATUS separates a statement the engine rejected (an HTTP 200) from a credential that
+   * expired mid-session (a 4xx).
+   */
+  private objectReader(): LibSQLObjectReader {
+    return {
+      transport: this.requireTransport(),
+      capabilities: this.getCapabilities(),
+      mapError: (error: unknown, sql?: string) => this.mapLibSQLError(error, sql),
+    };
+  }
+
+  /**
+   * No containers, because libSQL declares no container level.
+   *
+   * `[]` is the engine answering, not a refusal: every object is addressed by a bare name.
+   * Still a catalog method rather than a declaration read, so it is not answerable off a
+   * provider that never connected - `requireTransport()` is what says so.
+   */
+  public async listContainers(): Promise<Container[]> {
+    this.requireTransport();
+    return listObjectContainers();
+  }
+
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    return countLibSQLObjects(this.objectReader(), container);
+  }
+
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    return listLibSQLObjects(this.objectReader(), container, kind);
+  }
+
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    return describeLibSQLObject(this.objectReader(), path, kind);
+  }
+
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    return describeLibSQLObjects(this.objectReader(), container, kind, limit);
   }
 
   // ==========================================================================

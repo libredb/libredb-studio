@@ -8,7 +8,11 @@ import { SQLBaseProvider } from "@/lib/db/providers/sql/sql-base";
 import type {
   DatabaseConnection,
   QueryResult,
-  TableSchema,
+  Container,
+  DatabaseObject,
+  KindCount,
+  ObjectDetail,
+  ObjectDetailBatch,
   HealthInfo,
   MaintenanceType,
   MaintenanceResult,
@@ -40,8 +44,20 @@ class TestSQLProvider extends SQLBaseProvider {
   async query(): Promise<QueryResult> {
     return { rows: [], fields: [], rowCount: 0, executionTime: 0 };
   }
-  async getSchema(): Promise<TableSchema[]> {
+  async listContainers(): Promise<Container[]> {
     return [];
+  }
+  async countObjects(): Promise<Record<string, KindCount>> {
+    return {};
+  }
+  async listObjects(): Promise<DatabaseObject[]> {
+    return [];
+  }
+  async describeObject(path: readonly string[]): Promise<ObjectDetail> {
+    return { path, columns: [], indexes: [], foreignKeys: [] };
+  }
+  async describeObjects(): Promise<ObjectDetailBatch> {
+    return { details: [] };
   }
   async getHealth(): Promise<HealthInfo> {
     return { activeConnections: 0, databaseSize: "0", cacheHitRatio: "0%", slowQueries: [], activeSessions: [] };

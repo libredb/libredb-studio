@@ -55,7 +55,7 @@ import type {
   TableStats,
 } from "@/lib/db/types";
 import { formatBytes, formatDuration } from "@/lib/db/utils/pool-manager";
-import type { ColumnSchema, TableSchema } from "@/lib/types";
+import type { ColumnSchema } from "@/lib/types";
 import { DRUID_CLIENT_DEADLINE_GRACE_MS, type DruidRow, type DruidTransport, DruidTransportError } from "./transport";
 
 // ============================================================================
@@ -65,7 +65,7 @@ import { DRUID_CLIENT_DEADLINE_GRACE_MS, type DruidRow, type DruidTransport, Dru
 /**
  * The one schema that holds datasources, and Druid's default schema.
  *
- * Because it IS the default, a `TableSchema.name` is the BARE datasource name and
+ * Because it IS the default, a datasource is addressed by its BARE name and
  * `SELECT * FROM "libredb_demo"` resolves - none of the qualification the other
  * multi-schema providers need. `INFORMATION_SCHEMA.SCHEMATA` reports exactly one
  * catalog, always `druid`, so there is nothing else to pin either.
@@ -319,7 +319,7 @@ export const DRUID_HISTORICAL_STORAGE_SQL = [
 export type DruidQueryRunner = Pick<DruidTransport, "query">;
 
 /** A column row placed against the datasource that owns it. */
-interface OwnedColumn {
+export interface OwnedColumn {
   table: string;
   column: ColumnSchema;
 }
@@ -329,7 +329,7 @@ interface OwnedColumn {
 // ============================================================================
 
 /** An identifier, or null for a row that cannot be placed and must be skipped. */
-function readIdentifier(value: unknown): string | null {
+export function readIdentifier(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
@@ -441,7 +441,7 @@ async function readRow(runner: DruidQueryRunner, sql: string): Promise<DruidRow 
 // Schema
 // ============================================================================
 
-function readColumn(row: DruidRow): OwnedColumn | null {
+export function readColumn(row: DruidRow): OwnedColumn | null {
   const table = readIdentifier(row.tableName);
   const name = readIdentifier(row.columnName);
   if (table === null || name === null) return null;
@@ -478,55 +478,6 @@ function readColumn(row: DruidRow): OwnedColumn | null {
       isPrimary: false,
     },
   };
-}
-
-/**
- * Bucket the column rows by the datasource that owns them. A row the decoder
- * cannot place is dropped rather than fatal, so one malformed row costs one
- * column instead of the whole tree.
- */
-function groupColumns(rows: DruidRow[]): Map<string, ColumnSchema[]> {
-  const grouped = new Map<string, ColumnSchema[]>();
-  for (const row of rows) {
-    const owned = readColumn(row);
-    if (owned === null) continue;
-    const columns = grouped.get(owned.table) ?? [];
-    columns.push(owned.column);
-    grouped.set(owned.table, columns);
-  }
-  return grouped;
-}
-
-/**
- * Every datasource, with its columns.
- *
- * `indexes` and `foreignKeys` are empty by construction, not by omission: Druid
- * has no user-defined indexes - every dimension is indexed inside the segment -
- * and no foreign keys anywhere, so there is no DDL that could declare either.
- *
- * A datasource whose segments have all been marked unused disappears from
- * `INFORMATION_SCHEMA.TABLES` entirely (live-verified through the Coordinator's
- * `markUnused`), so an empty result means "no datasources" and there is no
- * empty-datasource row to render - the opposite of Couchbase's empty-collection
- * case, and worth knowing before looking for one.
- */
-export async function getSchema(runner: DruidQueryRunner): Promise<TableSchema[]> {
-  const [tableRows, columnRows] = await Promise.all([
-    readRows(runner, DRUID_TABLE_LIST_SQL),
-    readRows(runner, DRUID_COLUMN_LIST_SQL),
-  ]);
-
-  const columns = groupColumns(columnRows);
-
-  return tableRows
-    .map((row) => readIdentifier(row.tableName))
-    .filter((name): name is string => name !== null)
-    .map((name) => ({
-      name,
-      columns: columns.get(name) ?? [],
-      indexes: [],
-      foreignKeys: [],
-    }));
 }
 
 // ============================================================================

@@ -139,7 +139,7 @@ import {
 } from "./types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END, fenceUntrustedContent } from "./untrusted-content";
 import type { ProviderCapabilities } from "@/lib/db/types";
-import type { DatabaseType, TableSchema } from "@/lib/types";
+import type { DatabaseType } from "@/lib/types";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
 export type AgentToolResources = Omit<AgentToolContext, "runId" | "modelId" | "mode" | "workflowType" | "actor">;
@@ -2732,10 +2732,13 @@ export async function runInvestigation(
      *
      * `null` is a load-bearing value rather than an empty default: a run on an engine
      * this server cannot ground checked nothing, and an empty inventory would report
-     * every table the model named as one this database does not have. It is the
-     * SNAPSHOT's tables and not the grounding flag, because the check needs the names.
+     * every table the model named as one this database does not have. It is the SNAPSHOT
+     * itself and not the grounding flag, because the check needs the names - and, since
+     * the object model landed, the KINDS beside them: the inventory carries the schema's
+     * views, sequences and functions too, and only what a statement can name may answer
+     * for a name a statement used (#789).
      */
-    let planningInventory: readonly TableSchema[] | null = null;
+    let planningInventory: AgentContextSnapshot | null = null;
 
     /**
      * A planning run's grounding: the inventory, its relations, and what the engine
@@ -2825,7 +2828,7 @@ export async function runInvestigation(
         await service.recordEvent(runId, {
           kind: "context-reused",
           fingerprint: held.fingerprint,
-          tableCount: held.tables.length,
+          tableCount: held.objects.length,
           ageMs: Math.max(0, (context.clock?.() ?? Date.now()) - held.capturedAtMs),
           // The same noun the capture entry records, and from the same source: what this
           // engine calls these rows is part of what the run was shown.
@@ -2849,7 +2852,7 @@ export async function runInvestigation(
         await service.recordEvent(runId, {
           kind: "context-captured",
           fingerprint: snapshot.fingerprint,
-          tableCount: snapshot.tables.length,
+          tableCount: snapshot.objects.length,
           snapshot,
           // The same noun this run's own prompt blocks are written with, recorded
           // where the timeline can read it: the rail has no provider to ask.
@@ -2898,7 +2901,7 @@ export async function runInvestigation(
       // #411.
       messages.push({
         role: "user",
-        content: packSchemaStatistics(snapshot.tables, statistics, operations ? { detail: "rows" } : {}),
+        content: packSchemaStatistics(snapshot, statistics, operations ? { detail: "rows" } : {}),
       });
       grounding = {
         schemaKnown: true,
@@ -2912,7 +2915,7 @@ export async function runInvestigation(
       // What the closing statement will be checked against, taken from the same reading
       // the model was shown: a statement validated against an inventory the model never
       // saw would be checked against a database and blamed on a model.
-      planningInventory = snapshot.tables;
+      planningInventory = snapshot;
     };
 
     /**
@@ -3013,7 +3016,7 @@ export async function runInvestigation(
       await service.recordEvent(runId, {
         kind: "context-captured",
         fingerprint: snapshot.fingerprint,
-        tableCount: snapshot.tables.length,
+        tableCount: snapshot.objects.length,
         snapshot,
         // As on the planning path: what the engine calls these rows is part of what was
         // read, so it is written down with the reading rather than guessed at later.
@@ -3217,7 +3220,7 @@ export async function runInvestigation(
       if (planStatementAsks >= planStatementAsksFor(model.modelId)) return false;
       // Grounded runs only. A run shown no inventory has nothing to write a statement FROM,
       // and asking it for one is the impossible ask this file records having paid for before.
-      if (planningInventory === null || planningInventory.length === 0) return false;
+      if (planningInventory === null || planningInventory.objects.length === 0) return false;
       if (turns >= maxTurns || resources.deadline.remainingMs() <= 0) return false;
       if (text.length === 0 || readPlanStatement(text, context.connection.type).kind !== "absent") return false;
       planStatementAsks += 1;
@@ -3703,7 +3706,7 @@ export async function runInvestigation(
           // table instead of asking the model to pick one. The snapshot is optional on the
           // event, and a run without one is told the generic form rather than nothing.
           const inventory = sofar.events.flatMap((event) =>
-            event.kind === "context-captured" && event.snapshot !== undefined ? event.snapshot.tables : [],
+            event.kind === "context-captured" && event.snapshot !== undefined ? event.snapshot.objects : [],
           );
           const spoken = would.flatMap((shortfall) => {
             const advice = shortfallNotice(

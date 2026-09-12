@@ -27,7 +27,7 @@
  * - Appending `LIMIT n` to a statement that ends in `OFFSET n` is a hard 400, so
  *   the shared limiter must not run on one.
  */
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { DruidProvider } from "@/lib/db/providers/sql/druid";
@@ -51,8 +51,12 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { DRUID_CONTAINER_LEVELS, DRUID_OBJECT_KINDS } from "@/lib/db/providers/sql/druid/objects";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import { getExplainStrategy } from "@/lib/explain";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { ExplainTreeNode } from "@/lib/explain/types";
+import { comparePaths } from "@/lib/db/object-path";
 
 // ============================================================================
 // Connection
@@ -507,6 +511,10 @@ describe("DruidProvider metadata", () => {
       supportsConnectionString: false,
       defaultPort: 8888,
       schemaRefreshPattern: "\\b(INSERT|REPLACE)\\b",
+      // The object model (#789), asserted in full in the `object surface` block
+      // below; repeated here only because this assertion is exhaustive.
+      containerLevels: DRUID_CONTAINER_LEVELS,
+      objectKinds: DRUID_OBJECT_KINDS,
     });
   });
 
@@ -703,19 +711,6 @@ describe("DruidProvider lifecycle", () => {
     await provider.disconnect();
 
     expect(provider.isConnected()).toBe(false);
-  });
-
-  test("every read before connect is refused rather than answered", async () => {
-    const provider = new DruidProvider(makeConnection());
-
-    await expect(provider.query(CONNECT_PROBE)).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getSchema()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getOverview()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getActiveSessions()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getTableStats()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getStorageStats()).rejects.toBeInstanceOf(DatabaseConfigError);
-    await expect(provider.getHealth()).rejects.toBeInstanceOf(DatabaseConfigError);
-    expect(sentSql).toEqual([]);
   });
 
   test("the three constant reads answer without a connection, because they read nothing", async () => {
@@ -1191,111 +1186,6 @@ describe("DruidProvider query preparation", () => {
 // ============================================================================
 
 describe("DruidProvider schema", () => {
-  test("getSchema lists the datasources by their bare names, with their columns", async () => {
-    // `druid` is the default schema, so `SELECT * FROM "libredb_demo"` resolves
-    // and no qualification is needed anywhere.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.map((table) => table.name)).toEqual(["libredb_demo", "libredb_rollup"]);
-    expect(schema[1].columns).toEqual([
-      { name: "__time", type: "TIMESTAMP", nullable: false, isPrimary: false },
-      { name: "id", type: "BIGINT", nullable: true, isPrimary: false },
-      { name: "qty", type: "BIGINT", nullable: true, isPrimary: false },
-    ]);
-  });
-
-  test("getSchema marks no column primary, and __time is the one NOT NULL column", async () => {
-    // `__time` is mandatory, it is the partitioning and sort key, and it is the only
-    // column Druid reports as IS_NULLABLE = 'NO' - but it is not UNIQUE (50 rows, 30
-    // distinct values live), and `isPrimary` is read as PRIMARY KEY by autocomplete,
-    // by the AI schema context and by the schema differ. Nullability is how the time
-    // column is identified instead.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema[0].columns.filter((column) => column.isPrimary)).toEqual([]);
-    expect(schema[0].columns.filter((column) => !column.nullable).map((column) => column.name)).toEqual(["__time"]);
-    expect(schema[0].columns.map((column) => column.name)).toEqual([
-      "__time",
-      "snowflake_id",
-      "id",
-      "name",
-      "region",
-      "qty",
-      "amount",
-      "row_count",
-    ]);
-  });
-
-  test("getSchema reports no indexes and no foreign keys, because Druid has neither", async () => {
-    // Every dimension is indexed inside the segment, with no name, no size and no
-    // usage counter of its own, and there is no DDL that could declare a key.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.every((table) => table.indexes.length === 0)).toBe(true);
-    expect(schema.every((table) => table.foreignKeys?.length === 0)).toBe(true);
-  });
-
-  test("getSchema leaves row counts and sizes unset rather than reading them from sys", async () => {
-    // Deliberate: `sys.segments` is permission-gated separately from the
-    // catalogs, so reading counts there would make the whole sidebar fail on a
-    // cluster that merely declines to describe its servers. The counts live in
-    // getTableStats(), where a denial costs one panel.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.every((table) => table.rowCount === undefined)).toBe(true);
-    expect(schema.every((table) => table.size === undefined)).toBe(true);
-    expect(sentAnything("sys.segments")).toBe(false);
-  });
-
-  test("getSchema reads the catalogs and nothing else", async () => {
-    const provider = await connectProvider();
-
-    await provider.getSchema();
-
-    expect(sqlWith("INFORMATION_SCHEMA.TABLES")).toBe(DRUID_TABLE_LIST_SQL);
-    expect(sqlWith("INFORMATION_SCHEMA.COLUMNS")).toBe(DRUID_COLUMN_LIST_SQL);
-    expect(sentSql).toHaveLength(3);
-  });
-
-  test("getTables lists the datasource names", async () => {
-    const provider = await connectProvider();
-
-    expect(await provider.getTables()).toEqual(["libredb_demo", "libredb_rollup"]);
-  });
-
-  test("a datasource with no segments left is simply absent", async () => {
-    // Live-verified through the Coordinator's markUnused: a datasource whose
-    // segments are all unused disappears from INFORMATION_SCHEMA.TABLES
-    // entirely, so there is no empty-datasource row to render.
-    const provider = await connectProvider();
-    overrideSurface(DRUID_TABLE_LIST_SQL, ok('[["tableName"],["STRING"],["VARCHAR"]]'));
-
-    expect(await provider.getSchema()).toEqual([]);
-  });
-
-  test("a denied catalog yields an empty tree instead of an error page", async () => {
-    const provider = await connectProvider();
-    denyEverything();
-
-    expect(await provider.getSchema()).toEqual([]);
-  });
-
-  test("a catalog failure that is not a denial propagates", async () => {
-    // An empty sidebar in place of a real error hides it forever.
-    const provider = await connectProvider();
-    replyFor = () => fail(400, UNKNOWN_DATASOURCE);
-
-    await expect(provider.getSchema()).rejects.toBeInstanceOf(QueryError);
-  });
-
   test("declares neither getSchemaList nor getSchemaRelations", async () => {
     // Both are optional, and the split does not fit Druid: with no user-defined
     // indexes and no foreign keys, getSchemaList would be byte-identical to
@@ -1724,5 +1614,1132 @@ describe("DruidProvider explain", () => {
     const strategy = getExplainStrategy(provider.getCapabilities().explainFormat);
 
     expect(strategy?.buildSql("UPDATE libredb_demo SET qty = 1", "analyze")).toBeNull();
+  });
+});
+
+// ============================================================================
+// The object surface (#789)
+// ----------------------------------------------------------------------------
+// Every row below was captured from Apache Druid 37.0.0 (`database-compose.yml`'s
+// own seven-container stack, Router on 8888) against the fixture in
+// `docker/druid-init/`, which is applied with
+// `docker exec libredb-druid-router bash /opt/druid-init/apply.sh`.
+//
+// Three measurements shape the whole block, and the first one contradicts the plan
+// this task was written from:
+//
+// 1. A LOOKUP IS IN SQL. `INFORMATION_SCHEMA.TABLES` carries one row per LOADED
+//    lookup, with `TABLE_SCHEMA = 'lookup'` and `TABLE_TYPE = 'TABLE'`, and
+//    `INFORMATION_SCHEMA.COLUMNS` carries its `k` and `v` columns. So the kind needs
+//    no second transport and the Coordinator's REST API is not involved.
+// 2. `INFORMATION_SCHEMA.SCHEMATA` reports FIVE schemas on a bare cluster -
+//    `INFORMATION_SCHEMA`, `druid`, `lookup`, `sys` and `view` - not the three the
+//    plan named. The container list is read from the server for that reason.
+// 3. A backslash is NOT an escape inside a Druid string literal: measured,
+//    `SELECT LENGTH('a\b')` is 3. Doubling the quote is the whole escape, which is
+//    what `libredb_o'brien` in the fixture is for.
+// ============================================================================
+
+const OBJECT_SCHEMA = "druid";
+
+/** `INFORMATION_SCHEMA.SCHEMATA`, verbatim, in SCHEMA_NAME order. */
+const SCHEMATA_NAMES = ["INFORMATION_SCHEMA", "druid", "lookup", "sys", "view"];
+
+/**
+ * `INFORMATION_SCHEMA.TABLES` as the cluster answers it for the fixture, before any
+ * projection of ours. The fake server below derives BOTH the counts and the listing
+ * from this one array, so ruling 5f holds in the fixture the same way it holds in the
+ * provider: there is no second place for the two to disagree.
+ */
+const CATALOG_TABLE_ROWS: { schema: string; name: string; type: string }[] = [
+  { schema: "INFORMATION_SCHEMA", name: "COLUMNS", type: "SYSTEM_TABLE" },
+  { schema: "INFORMATION_SCHEMA", name: "ROUTINES", type: "SYSTEM_TABLE" },
+  { schema: "INFORMATION_SCHEMA", name: "SCHEMATA", type: "SYSTEM_TABLE" },
+  { schema: "INFORMATION_SCHEMA", name: "TABLES", type: "SYSTEM_TABLE" },
+  { schema: "druid", name: "libredb-objects-events", type: "TABLE" },
+  // The second escape probe, and it proves the OPPOSITE rule to the apostrophe: this
+  // datasource ingests, and `TABLE_NAME = 'libredb_back\\slash'` with the backslash
+  // passed straight through is what matches it on the live cluster. Escaping the
+  // backslash matches nothing at all.
+  { schema: "druid", name: "libredb_back\\slash", type: "TABLE" },
+  // The apostrophe is the fixture's escape probe and it really ingests: the
+  // datasource exists on the live cluster under exactly this name.
+  { schema: "druid", name: "libredb_o'brien", type: "TABLE" },
+  { schema: "druid", name: "libredb_objects_orders", type: "TABLE" },
+  { schema: "lookup", name: "libredb_country_names", type: "TABLE" },
+  { schema: "lookup", name: "libredb_status_labels", type: "TABLE" },
+  { schema: "sys", name: "segments", type: "SYSTEM_TABLE" },
+  { schema: "sys", name: "server_properties", type: "SYSTEM_TABLE" },
+  { schema: "sys", name: "server_segments", type: "SYSTEM_TABLE" },
+  { schema: "sys", name: "servers", type: "SYSTEM_TABLE" },
+  { schema: "sys", name: "supervisors", type: "SYSTEM_TABLE" },
+  { schema: "sys", name: "tasks", type: "SYSTEM_TABLE" },
+];
+
+/** `INFORMATION_SCHEMA.COLUMNS` for the objects the tests describe, keyed by address. */
+const CATALOG_COLUMN_ROWS: Record<string, [name: string, type: string, nullable: string][]> = {
+  // Verbatim from the live 37.0.0 cluster. This datasource had no entry until the bulk
+  // column read went looking for one (#789): the single read is only ever driven against
+  // `libredb_objects_orders` here, so the gap was invisible while the batch describes
+  // every object the folder lists.
+  "druid.libredb-objects-events": [
+    ["__time", "TIMESTAMP", "NO"],
+    ["event", "VARCHAR", "YES"],
+    ["actor", "VARCHAR", "YES"],
+  ],
+  "druid.libredb_objects_orders": [
+    ["__time", "TIMESTAMP", "NO"],
+    ["order_id", "VARCHAR", "YES"],
+    ["country", "VARCHAR", "YES"],
+    ["status", "VARCHAR", "YES"],
+    ["quantity", "BIGINT", "YES"],
+    ["amount", "DOUBLE", "YES"],
+  ],
+  "druid.libredb_back\\slash": [
+    ["__time", "TIMESTAMP", "NO"],
+    ["note", "VARCHAR", "YES"],
+  ],
+  "druid.libredb_o'brien": [
+    ["__time", "TIMESTAMP", "NO"],
+    ["note", "VARCHAR", "YES"],
+  ],
+  "lookup.libredb_country_names": [
+    ["k", "VARCHAR", "YES"],
+    ["v", "VARCHAR", "YES"],
+  ],
+  // Every column of this one is reported NOT NULL, which is the only place in the
+  // fixture where `readColumn`'s nullable reading is exercised the other way round.
+  "INFORMATION_SCHEMA.TABLES": [
+    ["TABLE_CATALOG", "VARCHAR", "NO"],
+    ["TABLE_SCHEMA", "VARCHAR", "NO"],
+    ["TABLE_NAME", "VARCHAR", "NO"],
+    ["TABLE_TYPE", "VARCHAR", "NO"],
+    ["IS_JOINABLE", "VARCHAR", "NO"],
+    ["IS_BROADCAST", "VARCHAR", "NO"],
+  ],
+  "sys.servers": [
+    ["server", "VARCHAR", "YES"],
+    ["host", "VARCHAR", "YES"],
+  ],
+};
+
+/**
+ * The wire format, built rather than pasted: three header rows and then positional
+ * data rows. Everything in this block is text the server would send, so the real
+ * transport parses it.
+ */
+function druidBody(fields: string[], rows: unknown[][]): string {
+  const types = fields.map(() => "STRING");
+  return JSON.stringify([fields, types, types, ...rows]);
+}
+
+/**
+ * The schema the provider bound in its WHERE clause, with the SQL escape undone.
+ *
+ * Anchored on `WHERE` deliberately: the kind expression carries a
+ * `TABLE_SCHEMA = 'lookup'` of its own, so an unanchored match reads the CASE arm and
+ * serves every count out of the lookup schema.
+ */
+function boundSchema(sql: string): string {
+  const match = /WHERE TABLE_SCHEMA = '((?:[^']|'')*)'/.exec(sql);
+  if (match === null) throw new Error(`no TABLE_SCHEMA literal in: ${sql}`);
+  return match[1].replace(/''/g, "'");
+}
+
+function boundTable(sql: string): string {
+  const match = /TABLE_NAME = '((?:[^']|'')*)'/.exec(sql);
+  if (match === null) throw new Error(`no TABLE_NAME literal in: ${sql}`);
+  return match[1].replace(/''/g, "'");
+}
+
+/**
+ * What the ENGINE would answer for the provider's kind expression.
+ *
+ * Derived from the captured `TABLE_TYPE` and `TABLE_SCHEMA` rather than from the
+ * provider's own text, so the fake is a server and not a mirror of the code under
+ * test. The exact expression the provider sends is pinned separately below, and it
+ * was run against the live cluster.
+ */
+function engineKind(row: { schema: string; type: string }): string {
+  if (row.type === "SYSTEM_TABLE") return "system_table";
+  if (row.schema === "lookup") return "lookup";
+  return "datasource";
+}
+
+/**
+ * The bulk column read's one statement, served by APPLYING its clauses (#789).
+ *
+ * The fake dispatches on statement text, which standing ruling 5b says cannot see a
+ * rewrite of that text. So this arm reads the kind predicate, the `LIMIT` and the join
+ * key out of the statement and applies each one rather than assuming the provider wrote
+ * them: a bulk statement that dropped its `LIMIT`, filtered on the wrong kind or joined
+ * on the wrong schema answers differently here. The statement itself is pinned by
+ * literal in the block below as well, and it was run against a live 37.0.0 cluster.
+ */
+function bulkColumnReply(sql: string): Reply {
+  const schema = boundSchema(sql);
+  const kindMatch = /"objectKind" = '([a-z_]+)'/.exec(sql);
+  if (kindMatch === null) throw new Error(`no objectKind literal in: ${sql}`);
+  const limitMatch = /LIMIT (\d+)\)/.exec(sql);
+  // The join key. A statement joining on another schema's columns must not be served
+  // this schema's, or the whole address derivation goes unchecked.
+  const joinMatch = /ON c\.TABLE_SCHEMA = '((?:[^']|'')*)'/.exec(sql);
+  if (joinMatch === null) throw new Error(`no join schema literal in: ${sql}`);
+  const joinSchema = joinMatch[1].replace(/''/g, "'");
+
+  const ordered = CATALOG_TABLE_ROWS.filter((row) => row.schema === schema)
+    .filter((row) => engineKind(row) === kindMatch[1])
+    .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+  const targets = limitMatch === null ? ordered : ordered.slice(0, Number(limitMatch[1]));
+
+  const rows = targets.flatMap((row) => {
+    const columns = CATALOG_COLUMN_ROWS[`${joinSchema}.${row.name}`] ?? [];
+    // A LEFT JOIN keeps an object with no column row at all, which is what makes
+    // membership come from the TARGET read rather than from the column read.
+    if (columns.length === 0) return [[row.name, null, null, null]];
+    return columns.map(([name, type, nullable]) => [row.name, name, type, nullable]);
+  });
+  return ok(druidBody(["tableName", "columnName", "dataType", "isNullable"], rows));
+}
+
+function objectReply(sql: string): Reply {
+  if (sql.includes("LEFT JOIN INFORMATION_SCHEMA.COLUMNS")) return bulkColumnReply(sql);
+  // The FLAT reading's two statements, FIRST (#789).
+  //
+  // `DRUID_COLUMN_LIST_SQL` carries `columnName`, so without this arm it fell into the
+  // single-object column read below, whose `boundTable()` found no `TABLE_NAME` literal in
+  // it and threw `QueryError: no TABLE_NAME literal in: SELECT TABLE_NAME ...` - which is
+  // the loudest way a double can fail to serve `getSchema()` and is what left the join with
+  // nothing to check.
+  //
+  // Both statements are scoped by the provider to `TABLE_SCHEMA = 'druid'`
+  // (`DATASOURCE_SCHEMA_FILTER`), so the flat reading is the DATASOURCES and nothing else:
+  // a lookup and a system table are queryable and are not in it. The rows come from the
+  // same `CATALOG_TABLE_ROWS` the counts and the listings are derived from, so the fixture
+  // cannot make the two readings disagree where the engine would not.
+  //
+  // The names come back BARE. Druid's flat reading carries no schema qualifier at all,
+  // against a `[schema, name]` path, which is the spelling the address rule resolves by
+  // suffix; a fixture that answered `druid.libredb_objects_orders` would assert a spelling
+  // this provider never produces.
+  if (sql.includes("FROM INFORMATION_SCHEMA.TABLES") && sql.includes('AS "tableName"')) {
+    return ok(
+      druidBody(
+        ["tableName"],
+        CATALOG_TABLE_ROWS.filter((row) => row.schema === "druid").map((row) => [row.name]),
+      ),
+    );
+  }
+  // `AND TABLE_NAME =` is what tells the two apart: the single-object read projects the
+  // same four columns and narrows to one name, and the flat read narrows to the schema.
+  if (sql.includes("FROM INFORMATION_SCHEMA.COLUMNS") && !sql.includes("AND TABLE_NAME =")) {
+    const rows = CATALOG_TABLE_ROWS.filter((row) => row.schema === "druid").flatMap((row) =>
+      (CATALOG_COLUMN_ROWS[`druid.${row.name}`] ?? []).map(([name, type, nullable]) => [
+        row.name,
+        name,
+        type,
+        nullable,
+      ]),
+    );
+    return ok(druidBody(["tableName", "columnName", "dataType", "isNullable"], rows));
+  }
+  if (sql.includes("containerName")) {
+    return ok(
+      druidBody(
+        ["containerName"],
+        SCHEMATA_NAMES.map((name) => [name]),
+      ),
+    );
+  }
+  if (sql.includes("objectCount")) {
+    const counts = new Map<string, number>();
+    for (const row of CATALOG_TABLE_ROWS.filter((row) => row.schema === boundSchema(sql))) {
+      const kind = engineKind(row);
+      counts.set(kind, (counts.get(kind) ?? 0) + 1);
+    }
+    return ok(
+      druidBody(
+        ["objectKind", "objectCount"],
+        [...counts].map(([kind, count]) => [kind, count]),
+      ),
+    );
+  }
+  if (sql.includes("objectKind")) {
+    const match = /"objectKind" = '([a-z_]+)'/.exec(sql);
+    const rows = CATALOG_TABLE_ROWS.filter((row) => row.schema === boundSchema(sql)).filter(
+      (row) => match === null || engineKind(row) === match[1],
+    );
+    return ok(
+      druidBody(
+        ["objectName"],
+        rows.map((row) => [row.name]),
+      ),
+    );
+  }
+  if (sql.includes("columnName")) {
+    const table = boundTable(sql);
+    const columns = CATALOG_COLUMN_ROWS[`${boundSchema(sql)}.${table}`] ?? [];
+    return ok(
+      druidBody(
+        ["tableName", "columnName", "dataType", "isNullable"],
+        columns.map(([name, type, nullable]) => [table, name, type, nullable]),
+      ),
+    );
+  }
+  return defaultReply(sql);
+}
+
+function installObjectReplies(): void {
+  replyFor = objectReply;
+}
+
+describe("object surface", () => {
+  test("declares one schema container level and the three kinds Druid has", async () => {
+    const provider = await connectProvider();
+    const capabilities = provider.getCapabilities();
+
+    expect(capabilities.containerLevels).toEqual([{ id: "schema", label: "Schema", labelPlural: "Schemas" }]);
+    expect((capabilities.objectKinds ?? []).map((kind) => ({ id: kind.id, role: kind.role }))).toEqual([
+      { id: "datasource", role: "relation" },
+      { id: "lookup", role: "config" },
+      { id: "system_table", role: "relation" },
+    ]);
+
+    // The point of this engine. Druid has no view, no materialized view, no
+    // user-defined function, no stored procedure and no trigger: `CREATE` is not in
+    // the grammar in ANY form (live-verified, the parser lists what it expected and
+    // no CREATE is among them), so none of them is declared. A declared kind draws a
+    // folder, and a folder for a concept the engine cannot have is a lie its 0 badge
+    // makes look like a fact (standing ruling 4).
+    const ids = (capabilities.objectKinds ?? []).map((kind) => kind.id);
+    for (const absent of ["view", "materialized_view", "function", "procedure", "trigger", "index"]) {
+      expect(ids).not.toContain(absent);
+    }
+
+    // Druid SQL has no row-level DML at all, which is the same measurement behind
+    // `supportsInlineRowEdit: false`, so no kind accepts a row write.
+    expect((capabilities.objectKinds ?? []).every((kind) => kind.acceptsRowWrites === undefined)).toBe(true);
+    await provider.disconnect();
+  });
+
+  test("satisfies the shared object surface contract", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    // The server orders the schemas by name, so the FIRST container it answers is
+    // `INFORMATION_SCHEMA` and the contract used to run against four system tables while
+    // the datasources a person came for sat in `druid`. That was already the open concern
+    // this task's report raised, and the flat-reading join is what made it a red rather
+    // than a preference: `getSchema()` is scoped to `TABLE_SCHEMA = 'druid'`
+    // (`DATASOURCE_SCHEMA_FILTER`), so the two readings named nothing in common and the
+    // join was reported vacuous on a provider whose join is correct.
+    //
+    // The expectation names its container instead. `INFORMATION_SCHEMA`, `lookup` and
+    // `sys` are each still exercised end to end - count, listing and describe - in the
+    // internals block below, so nothing stops being measured.
+    await assertObjectSurface(provider, {
+      containers: SCHEMATA_NAMES.map((name) => [name]),
+      container: ["druid"],
+      kinds: { datasource: 4, lookup: 0, system_table: 0 },
+      sampleObject: { path: ["druid", "libredb_objects_orders"], kind: "datasource" },
+    });
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The rest of the object surface: the catalog reads behind each kind, the detail rows,
+ * the refusals and the two derivations standing ruling 5g names. Kept OUT of the
+ * `object surface` describe above so `-t "object surface"` still runs exactly the two
+ * conformance tests.
+ */
+describe("object surface internals", () => {
+  test("the container list is READ from the server, not hardcoded to three schemas", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const containers = await provider.listContainers();
+
+    // Five, measured on a bare 37.0.0 cluster. The plan behind #789 said three. `view`
+    // is a real schema this build can hold nothing in, and `INFORMATION_SCHEMA` is a
+    // real schema holding four system tables, so both are containers.
+    expect(containers).toEqual([
+      { path: ["INFORMATION_SCHEMA"], name: "INFORMATION_SCHEMA", level: 0, isSessionDefault: false },
+      { path: ["druid"], name: "druid", level: 0, isSessionDefault: true },
+      { path: ["lookup"], name: "lookup", level: 0, isSessionDefault: false },
+      { path: ["sys"], name: "sys", level: 0, isSessionDefault: false },
+      { path: ["view"], name: "view", level: 0, isSessionDefault: false },
+    ]);
+    expect(sqlWith("containerName")).toBe(
+      'SELECT SCHEMA_NAME AS "containerName" FROM INFORMATION_SCHEMA.SCHEMATA ORDER BY SCHEMA_NAME',
+    );
+    // And the statement carries no schema list of its own: a cluster whose extensions
+    // publish a schema this code has never heard of still shows it.
+    expect(sqlWith("containerName")).not.toContain("IN (");
+  });
+
+  test("nothing nests under a schema, so a parent path answers empty without a read", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    expect(await provider.listContainers(["druid"])).toEqual([]);
+    // The control: no statement was sent at all, so this is an answer rather than an
+    // empty read.
+    expect(sentAnything("containerName")).toBe(false);
+  });
+
+  test("a container row with no usable name is skipped rather than addressed as empty", async () => {
+    replyFor = (sql) =>
+      sql.includes("containerName") ? ok(druidBody(["containerName"], [[""], ["druid"]])) : objectReply(sql);
+    const provider = await connectProvider();
+
+    expect((await provider.listContainers()).map((container) => container.name)).toEqual(["druid"]);
+  });
+
+  test("the count and the listing read ONE subquery, which is what makes them agree", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    await provider.countObjects([OBJECT_SCHEMA]);
+    await provider.listObjects([OBJECT_SCHEMA], "datasource");
+
+    // Standing ruling 5f, held by construction rather than by two statements agreeing:
+    // the count GROUPs the same text the listing FILTERs, so there is no second WHERE
+    // clause for the two to drift apart in.
+    const subquery = [
+      'SELECT TABLE_NAME AS "objectName",',
+      "CASE WHEN TABLE_TYPE = 'SYSTEM_TABLE' THEN 'system_table'",
+      "WHEN TABLE_SCHEMA = 'lookup' THEN 'lookup'",
+      "ELSE 'datasource' END AS \"objectKind\"",
+      "FROM INFORMATION_SCHEMA.TABLES",
+      "WHERE TABLE_SCHEMA = 'druid'",
+    ].join(" ");
+    expect(sqlWith("objectCount")).toContain(subquery);
+    expect(sqlWith("\"objectKind\" = 'datasource'")).toContain(subquery);
+  });
+
+  test("the kind expression is TOTAL, so a TABLE_TYPE this build never saw is still an object", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    await provider.countObjects([OBJECT_SCHEMA]);
+    const counting = sqlWith("objectCount");
+
+    // Standing ruling 5a. The last arm has no predicate, so every row of
+    // INFORMATION_SCHEMA.TABLES lands in exactly one declared kind. An inclusion list
+    // of known TABLE_TYPEs would drop an unknown one out of the count AND the listing
+    // at once, which keeps the badge agreeing with the folder while the object cannot
+    // be reached at all.
+    expect(counting).toContain("ELSE 'datasource' END");
+    expect(counting).not.toContain("TABLE_TYPE IN (");
+    expect(counting).not.toContain("TABLE_TYPE = 'TABLE'");
+  });
+
+  test("a lookup is told from a datasource by its SCHEMA, because both are TABLE", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const lookups = await provider.listObjects(["lookup"], "lookup");
+    const datasources = await provider.listObjects([OBJECT_SCHEMA], "datasource");
+
+    // Measured on 37.0.0: a LOADED lookup has an INFORMATION_SCHEMA.TABLES row whose
+    // TABLE_TYPE is 'TABLE', exactly like a datasource's, so the type cannot tell them
+    // apart and the schema is the only thing that can.
+    expect(lookups.map((object) => object.name)).toEqual(["libredb_country_names", "libredb_status_labels"]);
+    expect(lookups.every((object) => object.kind === "lookup")).toBe(true);
+    expect(datasources.every((object) => object.kind === "datasource")).toBe(true);
+    expect(datasources.map((object) => object.name)).not.toContain("libredb_country_names");
+  });
+
+  test("the system tables of sys and INFORMATION_SCHEMA are objects, not a hidden schema", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const counts = await provider.countObjects(["sys"]);
+    const listed = await provider.listObjects(["sys"], "system_table");
+
+    // Six in `sys`, measured. Without this kind both system schemas would open onto
+    // nothing at all while `sys.segments` is right there to be selected from.
+    expect(counts.system_table).toEqual({ count: 6 });
+    expect(listed.map((object) => object.name)).toEqual([
+      "segments",
+      "server_properties",
+      "server_segments",
+      "servers",
+      "supervisors",
+      "tasks",
+    ]);
+  });
+
+  test("every declared kind is counted in every schema, so an empty folder still badges", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    // The seeded zeros. `druid` holds three datasources and no lookup and no system
+    // table, and both of those are `{count: 0}` rather than missing: a missing kind
+    // means the ENGINE has no such concept, which would draw no folder at all.
+    expect(await provider.countObjects([OBJECT_SCHEMA])).toEqual({
+      datasource: { count: 4 },
+      lookup: { count: 0 },
+      system_table: { count: 0 },
+    });
+    // The schema the engine publishes and this build can put nothing in: three zeros,
+    // no refusal, no missing kind.
+    expect(await provider.countObjects(["view"])).toEqual({
+      datasource: { count: 0 },
+      lookup: { count: 0 },
+      system_table: { count: 0 },
+    });
+  });
+
+  test("a count row for a kind Druid never declared cannot create a folder", async () => {
+    // `toString` is the shape that matters: `row.kind in counts` walks the prototype
+    // chain and would pass, so the guard is `Object.hasOwn`.
+    replyFor = (sql) =>
+      sql.includes("objectCount")
+        ? ok(
+            druidBody(
+              ["objectKind", "objectCount"],
+              [
+                ["toString", 9],
+                ["datasource", 2],
+              ],
+            ),
+          )
+        : objectReply(sql);
+    const provider = await connectProvider();
+
+    const counts = await provider.countObjects([OBJECT_SCHEMA]);
+
+    expect(Object.keys(counts).sort()).toEqual(["datasource", "lookup", "system_table"]);
+    expect(counts.datasource).toEqual({ count: 2 });
+  });
+
+  test("a count row with no readable kind or no readable number leaves the seed alone", async () => {
+    replyFor = (sql) =>
+      sql.includes("objectCount")
+        ? ok(
+            druidBody(
+              ["objectKind", "objectCount"],
+              [
+                ["", 4],
+                ["datasource", "not a number"],
+              ],
+            ),
+          )
+        : objectReply(sql);
+    const provider = await connectProvider();
+
+    expect(await provider.countObjects([OBJECT_SCHEMA])).toEqual({
+      datasource: { count: 0 },
+      lookup: { count: 0 },
+      system_table: { count: 0 },
+    });
+  });
+
+  test("a count that arrives as a quoted decimal string is still a number", async () => {
+    // The transport quotes an integer at the edge of the JS safe range before parsing,
+    // so both encodings reach the mapper (spec section 3). 2^53 is used rather than
+    // 2^53 + 1 because `KindCount.count` is a JS number: the larger value cannot be
+    // written as a literal at all, and asserting what it rounds to would pin a lie.
+    replyFor = (sql) =>
+      sql.includes("objectCount")
+        ? ok(druidBody(["objectKind", "objectCount"], [["datasource", "9007199254740992"]]))
+        : objectReply(sql);
+    const provider = await connectProvider();
+
+    expect(await provider.countObjects([OBJECT_SCHEMA])).toEqual({
+      datasource: { count: 9007199254740992 },
+      lookup: { count: 0 },
+      system_table: { count: 0 },
+    });
+  });
+
+  test("a refused count carries Druid's own sentence against every kind, never a zero", async () => {
+    replyFor = (sql) => (sql.includes("objectCount") ? fail(403, deniedBody("FORBIDDEN")) : objectReply(sql));
+    const provider = await connectProvider();
+
+    const counts = await provider.countObjects([OBJECT_SCHEMA]);
+
+    // A `druid-basic-security` cluster answers FORBIDDEN for a schema a role may not
+    // see. "You may not read this" and "this schema holds nothing" are different facts,
+    // and the sentence is Druid's own rather than this product's prefix of it.
+    for (const kind of ["datasource", "lookup", "system_table"]) {
+      expect(counts[kind]).toEqual({ unavailable: "Unauthorized" });
+    }
+  });
+
+  test("an apostrophe in a datasource name is escaped by DOUBLING and nothing else", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const detail = await provider.describeObject([OBJECT_SCHEMA, "libredb_o'brien"], "datasource");
+
+    // The fixture really holds this datasource: `libredb_o'brien` ingests and appears in
+    // INFORMATION_SCHEMA.TABLES, so the escape is exercised rather than asserted. The
+    // fake parses the literal back out, which is why a broken escape fails here rather
+    // than returning the wrong object.
+    expect(detail.columns.map((column) => column.name)).toEqual(["__time", "note"]);
+    expect(sqlWith("columnName")).toContain("AND TABLE_NAME = 'libredb_o''brien'");
+    // And measured: a backslash is an ordinary character inside a Druid literal
+    // (`SELECT LENGTH('a\b')` is 3), so a backslash rule would corrupt a legal name
+    // rather than protect anything.
+    expect(sqlWith("columnName")).not.toContain("\\");
+  });
+
+  test("a backslash in a datasource name is passed straight through, because it is not an escape", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const detail = await provider.describeObject([OBJECT_SCHEMA, "libredb_back\\slash"], "datasource");
+
+    // The fixture holds this datasource too, and this is the measurement that decides
+    // the rule: on the live cluster `TABLE_NAME = 'libredb_back\slash'` with ONE
+    // backslash matches it and `'libredb_back\\slash'` matches nothing. So the
+    // ClickHouse spelling of this helper, which escapes both, would draw the object in
+    // the tree and then fail to describe it.
+    expect(detail.columns.map((column) => column.name)).toEqual(["__time", "note"]);
+    expect(sqlWith("columnName")).toContain("AND TABLE_NAME = 'libredb_back\\slash'");
+  });
+
+  test("the listing is ordered over the path SEGMENTS, not over a stringified path", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const names = (await provider.listObjects([OBJECT_SCHEMA], "datasource")).map((object) => object.name);
+
+    // Code points, and the apostrophe (0x27) sorts below both the hyphen's successors
+    // and the underscore (0x5F). `JSON.stringify` would compare the escape sequences
+    // instead, which is the spelling standing ruling 5g forbids.
+    expect(names).toEqual([
+      "libredb-objects-events",
+      "libredb_back\\slash",
+      "libredb_o'brien",
+      "libredb_objects_orders",
+    ]);
+  });
+
+  test("the tree's order is the provider's own, not the order the rows arrived in", async () => {
+    // The statement carries `ORDER BY "objectName"` and the live cluster honours it, so
+    // the segment sort is belt and braces there. It is not decoration: the tree
+    // addresses by PATH, this is the one rule shared with every other provider in #789,
+    // and nothing in the transport promises that a proxy, a merge across Brokers or a
+    // later build preserves the server's order. So the rows arrive reversed here and
+    // the answer must still be ordered.
+    replyFor = (sql) =>
+      sql.includes("objectKind") && !sql.includes("objectCount")
+        ? ok(
+            druidBody(
+              ["objectName"],
+              [["libredb_objects_orders"], ["libredb_o'brien"], ["libredb_back\\slash"], ["libredb-objects-events"]],
+            ),
+          )
+        : objectReply(sql);
+    const provider = await connectProvider();
+
+    const names = (await provider.listObjects([OBJECT_SCHEMA], "datasource")).map((object) => object.name);
+
+    expect(names).toEqual([
+      "libredb-objects-events",
+      "libredb_back\\slash",
+      "libredb_o'brien",
+      "libredb_objects_orders",
+    ]);
+  });
+
+  test("an object row with no usable name is skipped rather than addressed as empty", async () => {
+    replyFor = (sql) =>
+      sql.includes("objectKind") && !sql.includes("objectCount")
+        ? ok(druidBody(["objectName"], [[""], ["libredb_objects_orders"]]))
+        : objectReply(sql);
+    const provider = await connectProvider();
+
+    const objects = await provider.listObjects([OBJECT_SCHEMA], "datasource");
+
+    expect(objects.map((object) => object.name)).toEqual(["libredb_objects_orders"]);
+  });
+
+  test("a kind Druid does not declare is refused by the DECLARATION, before any read", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    // The kinds this engine does not have. Each one is a folder the tree never draws,
+    // and asking for it is a caller mistake rather than an empty answer.
+    for (const kind of ["view", "function", "procedure", "trigger"]) {
+      await expect(provider.listObjects([OBJECT_SCHEMA], kind)).rejects.toThrow(
+        `Druid declares no object kind "${kind}"`,
+      );
+      await expect(provider.describeObject([OBJECT_SCHEMA, "x"], kind)).rejects.toThrow(
+        `Druid declares no object kind "${kind}"`,
+      );
+    }
+    expect(sentAnything("objectName")).toBe(false);
+    expect(sentAnything("columnName")).toBe(false);
+  });
+
+  test("a container path of the wrong shape raises instead of reading a segment of it", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    // An empty folder looks exactly like a schema holding nothing, which is the worst
+    // way to report a caller that built the path from another engine's model.
+    await expect(provider.countObjects([])).rejects.toThrow("A Druid container path is [schema], received []");
+    await expect(provider.listObjects(["a", "b"], "datasource")).rejects.toThrow(
+      'A Druid container path is [schema], received ["a","b"]',
+    );
+    await expect(provider.describeObject([OBJECT_SCHEMA], "datasource")).rejects.toThrow(
+      'A Druid "datasource" path is [schema, name], received ["druid"]',
+    );
+  });
+
+  test("describeObject reads the LAST segment as the name and the DECLARED level as the schema", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const detail = await provider.describeObject([OBJECT_SCHEMA, "libredb_objects_orders"], "datasource");
+
+    expect(detail.path).toEqual([OBJECT_SCHEMA, "libredb_objects_orders"]);
+    expect(sqlWith("columnName")).toContain("WHERE TABLE_SCHEMA = 'druid' AND TABLE_NAME = 'libredb_objects_orders'");
+    expect(detail.columns).toEqual([
+      { name: "__time", type: "TIMESTAMP", nullable: false, isPrimary: false },
+      { name: "order_id", type: "VARCHAR", nullable: true, isPrimary: false },
+      { name: "country", type: "VARCHAR", nullable: true, isPrimary: false },
+      { name: "status", type: "VARCHAR", nullable: true, isPrimary: false },
+      { name: "quantity", type: "BIGINT", nullable: true, isPrimary: false },
+      { name: "amount", type: "DOUBLE", nullable: true, isPrimary: false },
+    ]);
+    // `__time` is mandatory, sorted and NOT unique - 50 rows carry 30 distinct values
+    // on the #265 fixture - and `isPrimary` means PRIMARY KEY to every consumer of it.
+    // Nothing in a Druid datasource is unique, so no column is ever primary.
+    expect(detail.columns.every((column) => column.isPrimary === false)).toBe(true);
+    // No index and no foreign key, by construction rather than by omission: every
+    // dimension is indexed inside its segment and there is no DDL that could declare
+    // either one.
+    expect(detail.indexes).toEqual([]);
+    expect(detail.foreignKeys).toEqual([]);
+  });
+
+  test("one catalog answers the columns of all three kinds", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const lookup = await provider.describeObject(["lookup", "libredb_country_names"], "lookup");
+    const systemTable = await provider.describeObject(["sys", "servers"], "system_table");
+
+    // Measured: INFORMATION_SCHEMA.COLUMNS answers for a lookup's k and v and for a
+    // `sys` table's own columns, so no kind here answers three empty arrays and there
+    // is no per-kind branch to get wrong.
+    expect(lookup.columns.map((column) => column.name)).toEqual(["k", "v"]);
+    expect(systemTable.columns.map((column) => column.name)).toEqual(["server", "host"]);
+  });
+
+  test("a describe that matches no catalog row raises instead of describing an empty object", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    // Every object of every declared kind has at least one column - a datasource always
+    // has `__time`, a lookup always has `k` and `v` - so no rows means it is not there
+    // under that name in this schema.
+    await expect(provider.describeObject([OBJECT_SCHEMA, "gone"], "datasource")).rejects.toThrow(
+      "No Druid datasource named gone in druid",
+    );
+  });
+
+  test("a column row the catalog could not place is skipped rather than named empty", async () => {
+    replyFor = (sql) =>
+      sql.includes("columnName")
+        ? ok(
+            druidBody(
+              ["tableName", "columnName", "dataType", "isNullable"],
+              [
+                ["libredb_objects_orders", "", "VARCHAR", "YES"],
+                ["libredb_objects_orders", "order_id", "", "YES"],
+              ],
+            ),
+          )
+        : objectReply(sql);
+    const provider = await connectProvider();
+
+    const detail = await provider.describeObject([OBJECT_SCHEMA, "libredb_objects_orders"], "datasource");
+
+    // The nameless row is gone, and the one whose DATA_TYPE the server left empty keeps
+    // Druid's own word for a type its SQL layer cannot name rather than showing a blank.
+    expect(detail.columns).toEqual([{ name: "order_id", type: "OTHER", nullable: true, isPrimary: false }]);
+  });
+
+  test("a refused object read reaches the caller as this repo's own error type", async () => {
+    const provider = await connectProvider();
+    denyEverything();
+
+    // Unlike the count, which answers `{unavailable}` per kind, the three reads that
+    // throw go through the provider's own mapping, so a permission failure is an
+    // AuthenticationError and not a bare transport error.
+    await expect(provider.listContainers()).rejects.toBeInstanceOf(AuthenticationError);
+    await expect(provider.listObjects([OBJECT_SCHEMA], "datasource")).rejects.toBeInstanceOf(AuthenticationError);
+    await expect(provider.describeObject([OBJECT_SCHEMA, "x"], "datasource")).rejects.toBeInstanceOf(
+      AuthenticationError,
+    );
+  });
+
+  test("both object reads arm the client deadline LATER than the server's", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    await provider.countObjects([OBJECT_SCHEMA]);
+
+    // Equal deadlines are a race the client wins, and winning it replaces Druid's
+    // classified TIMEOUT envelope with a bare abort that says nothing useful.
+    const deadline = armedDeadlines[armedDeadlines.length - 1];
+    expect(deadline).toBe(15_000 + 5_000);
+    expect(bodyWith("objectCount").context).toEqual({ timeout: 15_000 });
+  });
+
+  // ==========================================================================
+  // Standing ruling 5g: the two derivations, pinned on a ONE-LEVEL engine
+  // --------------------------------------------------------------------------
+  // Druid declares one container level, so `path[0]` for the schema and a hardcoded
+  // depth of 1 are both behaviour-identical to the derived form here, and this
+  // provider's own fixture can never tell them apart. Three spellings of that defect
+  // shipped in this epic for exactly that reason, each found a review later than the
+  // last. So the declaration is swapped for a TWO-level one through `getCapabilities`
+  // and the reads are driven all the way to a BOUND VALUE. A test that stopped at the
+  // refusal path is how the third spelling survived two providers and a review round.
+  // ==========================================================================
+
+  test("a two-level declaration binds the SCHEMA level, not the first segment", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+
+    // The catalog segment is deliberately NOT the string "druid". Druid's own catalog
+    // really is called `druid` and so is its main schema, so a two-level test written
+    // with the engine's own names binds the same string either way and certifies the
+    // defect it exists to catch - which is how standing ruling 5g's third spelling
+    // survived two providers and a review round.
+    await provider.countObjects(["other_catalog", OBJECT_SCHEMA]);
+    await provider.listObjects(["other_catalog", OBJECT_SCHEMA], "datasource");
+    const detail = await provider.describeObject(
+      ["other_catalog", OBJECT_SCHEMA, "libredb_objects_orders"],
+      "datasource",
+    );
+
+    // The BOUND VALUE, three times. `path[0]` would bind `other_catalog` here and read
+    // a schema that does not exist.
+    expect(sqlWith("objectCount")).toContain("WHERE TABLE_SCHEMA = 'druid'");
+    expect(sqlWith("\"objectKind\" = 'datasource'")).toContain("WHERE TABLE_SCHEMA = 'druid'");
+    expect(sqlWith("columnName")).toContain("WHERE TABLE_SCHEMA = 'druid' AND TABLE_NAME = 'libredb_objects_orders'");
+    // And the object's own name is the LAST segment rather than `path[1]`, which is the
+    // second spelling of the same defect.
+    expect(detail.path).toEqual(["other_catalog", OBJECT_SCHEMA, "libredb_objects_orders"]);
+  });
+
+  test("a two-level declaration makes the DEPTH follow the declaration, not a constant", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+
+    // A hardcoded `container.length !== 1` would refuse the two-segment path the
+    // declaration now requires, and accept the one-segment path it now forbids. Both
+    // arms are asserted, and the message names the declared levels rather than a
+    // constant shape.
+    await expect(provider.countObjects([OBJECT_SCHEMA])).rejects.toThrow(
+      'A Druid container path is [catalog, schema], received ["druid"]',
+    );
+    await expect(provider.describeObject([OBJECT_SCHEMA, "libredb_objects_orders"], "datasource")).rejects.toThrow(
+      'A Druid "datasource" path is [catalog, schema, name], received ["druid","libredb_objects_orders"]',
+    );
+  });
+
+  test("comparePaths orders by SEGMENT, which a stringified path does not", () => {
+    // The two shapes standing ruling 5g forbids `JSON.stringify` for. Druid's own
+    // listing is all one depth and every name is a plain identifier, so neither case
+    // can arise from this engine's fixture: the function is exported and driven
+    // directly rather than left to a mutation nothing could kill.
+    //
+    // Mixed depth: `["a"]` before `["a","b"]`. Stringified, `["a","b"]` sorts FIRST,
+    // because the separator `,` (0x2C) is below the terminator `]` (0x5D).
+    expect(comparePaths(["a"], ["a", "b"])).toBeLessThan(0);
+    expect(comparePaths(["a", "b"], ["a"])).toBeGreaterThan(0);
+    expect(comparePaths(["a", "b"], ["a", "b"])).toBe(0);
+    // And the escape: a quote (0x22) is below a backslash (0x5C) by code point, while
+    // JSON writes both as `\"` and `\\` and reverses them.
+    expect(comparePaths(['a"b'], ["a\\b"])).toBeLessThan(0);
+    // The first differing segment decides, not the last.
+    expect(comparePaths(["a", "z"], ["b", "a"])).toBeLessThan(0);
+  });
+
+  test("a declaration with no schema level raises rather than reading 'undefined'", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [{ id: "catalog", label: "Catalog", labelPlural: "Catalogs" }],
+    });
+
+    // Falling through to `undefined` would reach the literal as the string "undefined"
+    // and quietly read a schema of that name, which returns an empty folder rather than
+    // an error.
+    await expect(provider.countObjects(["druid"])).rejects.toThrow(
+      'A Druid path needs a "schema" container level and a segment for it; the declaration is [catalog] and the path is ["druid"]',
+    );
+  });
+});
+
+/**
+ * The bulk column read (#789), the fifth method.
+ *
+ * Druid was one of the two type-ids that fell out of the four implementation waves, and
+ * nothing went red because the shared conformance helper skipped a provider that did not
+ * declare the method at all. So the property the helper could not check is asserted here
+ * directly rather than delegated: the batch describes EVERY object `listObjects` names for
+ * that container and kind, and an unbounded call leaves `truncated` absent.
+ *
+ * Everything here was measured against the running Apache Druid 37.0.0 cluster rather than
+ * reasoned about: the `LEFT JOIN` over `INFORMATION_SCHEMA`, the `ORDER BY` and `LIMIT`
+ * inside the target subquery, and the collation the cut runs under.
+ */
+describe("the bulk column read", () => {
+  const DATASOURCES = ["libredb-objects-events", "libredb_back\\slash", "libredb_o'brien", "libredb_objects_orders"];
+
+  test("describes EVERY object the listing names, in ONE round trip, with no truncation", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const listed = await provider.listObjects([OBJECT_SCHEMA], "datasource");
+    sentSql = [];
+    const batch = await provider.describeObjects!([OBJECT_SCHEMA], "datasource");
+
+    // The property the helper could not check until this wave. Not "every detail was
+    // listed", which a batch dropping one object also satisfies, but the two sets being
+    // EQUAL: a bulk read that quietly loses a table is the #414 absence this epic exists
+    // to stop.
+    expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+    expect(batch.details.map((detail) => detail.path[1])).toEqual(DATASOURCES);
+    // Unbounded, so nothing may claim a bound.
+    expect(batch.truncated).toBeUndefined();
+    // ONE round trip for the folder, not one per object.
+    expect(sentSql).toHaveLength(1);
+  });
+
+  test("every column set is what describeObject answers for the same object, column for column", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const batch = await provider.describeObjects!([OBJECT_SCHEMA], "datasource");
+    for (const detail of batch.details) {
+      const single = await provider.describeObject(detail.path, "datasource");
+      expect(detail).toEqual(single);
+    }
+    // The control: the loop above is only worth anything if it ran over more than one
+    // object, and a zero-iteration loop certifies nothing (standing ruling 5b).
+    expect(batch.details.length).toBe(4);
+  });
+
+  test("all three declared kinds answer, because no Druid kind is columnless", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const lookups = await provider.describeObjects!(["lookup"], "lookup");
+    const system = await provider.describeObjects!(["sys"], "system_table");
+
+    expect(lookups.details.map((detail) => detail.path)).toEqual([
+      ["lookup", "libredb_country_names"],
+      ["lookup", "libredb_status_labels"],
+    ]);
+    expect(lookups.details[0].columns.map((column) => column.name)).toEqual(["k", "v"]);
+    // Measured: `INFORMATION_SCHEMA.COLUMNS` answers for a lookup, for a `sys` table and
+    // for a datasource alike, so unlike every other engine in this epic there is no kind
+    // here that answers an empty batch without a round trip.
+    expect(system.details).toHaveLength(6);
+  });
+
+  test("a bounded read returns the bound, reports it, and reports the CALLER's limit", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const batch = await provider.describeObjects!([OBJECT_SCHEMA], "datasource", 2);
+
+    expect(batch.details.map((detail) => detail.path[1])).toEqual(DATASOURCES.slice(0, 2));
+    // The ONE sentence, built by the shared helper rather than spelled here: a reason a
+    // provider phrased for itself is how the same bound came to read three ways.
+    expect(batch.truncated).toEqual({ limit: 2, reason: callerBoundTruncationReason(2) });
+    expect(batch.truncated!.reason).toBe("the bulk column read was bounded at 2 objects by its caller");
+    // `limit + 1` reaches the statement, which is what tells a saturated read from an
+    // exact one without a second count, and the extra object is dropped here.
+    expect(sqlWith("LEFT JOIN")).toContain("LIMIT 3)");
+  });
+
+  test("a bound that is not reached reports no truncation", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    const exact = await provider.describeObjects!([OBJECT_SCHEMA], "datasource", 4);
+    const spare = await provider.describeObjects!([OBJECT_SCHEMA], "datasource", 9);
+
+    expect(exact.details).toHaveLength(4);
+    expect(exact.truncated).toBeUndefined();
+    expect(spare.details).toHaveLength(4);
+    expect(spare.truncated).toBeUndefined();
+  });
+
+  test("a limit that is not a positive whole number is refused rather than clamped", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(provider.describeObjects!([OBJECT_SCHEMA], "datasource", limit)).rejects.toThrow(
+        /positive whole number/,
+      );
+    }
+    // Refused BEFORE the wire, which matters more here than on a binding engine: this
+    // transport has no parameter channel, so the guard is what keeps anything but digits
+    // out of the statement text.
+    expect(sentAnything("LEFT JOIN")).toBe(false);
+  });
+
+  test("an undeclared kind is refused by name, and a container path of the wrong length too", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    await expect(provider.describeObjects!([OBJECT_SCHEMA], "view")).rejects.toThrow(
+      'Druid declares no object kind "view"',
+    );
+    await expect(provider.describeObjects!([], "datasource")).rejects.toThrow(
+      "A Druid container path is [schema], received []",
+    );
+    expect(sentAnything("LEFT JOIN")).toBe(false);
+  });
+
+  test("an object with no column row at all is still in the batch, because membership is the TARGET's", async () => {
+    // A LEFT JOIN, not an inner one. The engine says every Druid object has at least one
+    // column, so no fixture row can produce this - and a bulk read whose membership came
+    // from the COLUMN read would lose an object the folder lists the moment one did.
+    replyFor = (sql) =>
+      sql.includes("LEFT JOIN INFORMATION_SCHEMA.COLUMNS")
+        ? ok(
+            druidBody(
+              ["tableName", "columnName", "dataType", "isNullable"],
+              [
+                ["libredb-objects-events", null, null, null],
+                ["libredb_objects_orders", "__time", "TIMESTAMP", "NO"],
+              ],
+            ),
+          )
+        : objectReply(sql);
+    const provider = await connectProvider();
+
+    const batch = await provider.describeObjects!([OBJECT_SCHEMA], "datasource");
+
+    expect(batch.details.map((detail) => [detail.path[1], detail.columns.length])).toEqual([
+      ["libredb-objects-events", 0],
+      ["libredb_objects_orders", 1],
+    ]);
+  });
+
+  test("the bulk statement is the listing's own target, joined to the column catalog", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    await provider.describeObjects!([OBJECT_SCHEMA], "datasource");
+    const unbounded = sqlWith("LEFT JOIN");
+    sentSql = [];
+    await provider.describeObjects!([OBJECT_SCHEMA], "datasource", 2);
+    const bounded = sqlWith("LEFT JOIN");
+
+    // Pinned by LITERAL, because the fake dispatches on statement text and cannot see a
+    // rewrite of it (standing ruling 5b). Both were run against the live 37.0.0 cluster.
+    expect(unbounded).toBe(
+      'SELECT t."objectName" AS "tableName", c.COLUMN_NAME AS "columnName", ' +
+        'c.DATA_TYPE AS "dataType", c.IS_NULLABLE AS "isNullable" FROM (' +
+        'SELECT "objectName" FROM (SELECT TABLE_NAME AS "objectName", ' +
+        "CASE WHEN TABLE_TYPE = 'SYSTEM_TABLE' THEN 'system_table' WHEN TABLE_SCHEMA = 'lookup' THEN 'lookup' " +
+        "ELSE 'datasource' END AS \"objectKind\" FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'druid') " +
+        'WHERE "objectKind" = \'datasource\' ORDER BY "objectName") t ' +
+        "LEFT JOIN INFORMATION_SCHEMA.COLUMNS c ON c.TABLE_SCHEMA = 'druid' AND c.TABLE_NAME = t.\"objectName\" " +
+        'ORDER BY t."objectName", c.ORDINAL_POSITION',
+    );
+    // The bound is the ONLY difference, and it is inside the target rather than on the
+    // joined rows: a `LIMIT` on the outer statement would cut COLUMNS, not objects.
+    expect(bounded).toBe(unbounded.replace('ORDER BY "objectName") t', 'ORDER BY "objectName" LIMIT 3) t'));
+  });
+
+  test("the target is built by the SAME function the listing uses", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+
+    await provider.listObjects([OBJECT_SCHEMA], "datasource");
+    const listing = sqlWith("\"objectKind\" = 'datasource'");
+    sentSql = [];
+    await provider.describeObjects!([OBJECT_SCHEMA], "datasource");
+
+    // Every caller joins the two answers on path, so the two statements share one target
+    // rather than being two that happen to agree.
+    expect(sqlWith("LEFT JOIN")).toContain(`FROM (${listing}) t`);
+  });
+
+  test("a two-level declaration binds the SCHEMA segment and builds paths at the declared depth", async () => {
+    installObjectReplies();
+    const provider = await connectProvider();
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+
+    const batch = await provider.describeObjects!(["other_catalog", OBJECT_SCHEMA], "datasource");
+
+    // Standing ruling 5g, driven to a BOUND VALUE and not to a refusal. `container[0]`
+    // would bind `other_catalog` into both the target and the join key.
+    expect(sqlWith("LEFT JOIN")).toContain("WHERE TABLE_SCHEMA = 'druid'");
+    expect(sqlWith("LEFT JOIN")).toContain("ON c.TABLE_SCHEMA = 'druid'");
+    expect(batch.details.map((detail) => detail.path)).toEqual(
+      DATASOURCES.map((name) => ["other_catalog", OBJECT_SCHEMA, name]),
+    );
+    // And a hardcoded depth would have refused this path outright.
+    await expect(provider.describeObjects!([OBJECT_SCHEMA], "datasource")).rejects.toThrow(
+      'A Druid container path is [catalog, schema], received ["druid"]',
+    );
+  });
+
+  test("the batch is sorted by comparePaths, which is not the order the cluster cut by", async () => {
+    // The cross-cutting finding Task 26a-2 measured on three engines, re-measured here:
+    // `U&'\+00e000' < U&'\+01f600'` is TRUE on this cluster, the UTF-8 byte order, while
+    // a JavaScript sort compares UTF-16 code units and puts U+1F600 first. So a bounded
+    // cut's MEMBERSHIP is the cluster's and the ORDER of the answer is ours.
+    replyFor = (sql) =>
+      sql.includes("LEFT JOIN INFORMATION_SCHEMA.COLUMNS")
+        ? ok(
+            druidBody(
+              ["tableName", "columnName", "dataType", "isNullable"],
+              [
+                ["", "a", "VARCHAR", "YES"],
+                ["\u{1f600}", "b", "VARCHAR", "YES"],
+              ],
+            ),
+          )
+        : objectReply(sql);
+    const provider = await connectProvider();
+
+    const batch = await provider.describeObjects!([OBJECT_SCHEMA], "datasource");
+
+    expect(batch.details.map((detail) => detail.path[1])).toEqual(["\u{1f600}", ""]);
   });
 });

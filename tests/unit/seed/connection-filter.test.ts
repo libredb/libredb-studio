@@ -43,6 +43,21 @@ describe("mergeDefaults", () => {
   });
 });
 
+describe("filterByRoles: the no-scan choice", () => {
+  it("carries a seeded connection's no-scan choice through to the managed connection", () => {
+    // The second silent half (#765): this mapper is a hand-written field list, so a field
+    // the schema validates and the mapper forgets reaches the browser as `undefined` and
+    // the connection scans the catalog the deployment asked it not to.
+    const [managed] = filterByRoles([{ ...baseConn, skipObjectScan: true }], ["admin"]);
+    expect(managed.skipObjectScan).toBe(true);
+  });
+
+  it("leaves it absent for a seed that does not ask for it", () => {
+    const [managed] = filterByRoles([{ ...baseConn }], ["admin"]);
+    expect(managed.skipObjectScan).toBeUndefined();
+  });
+});
+
 describe("filterByRoles: engine-specific fields", () => {
   it("carries a Cassandra connection's data centre through to the managed connection", () => {
     // The one field `cassandra-driver` refuses to start without. Dropped here, a

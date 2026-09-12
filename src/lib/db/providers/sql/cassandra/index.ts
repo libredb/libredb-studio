@@ -54,12 +54,17 @@ import { SQLBaseProvider } from "../sql-base";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import {
   type ActiveSessionDetails,
+  type Container,
   type DatabaseConnection,
+  type DatabaseObject,
   type DatabaseOverview,
   type HealthInfo,
+  type KindCount,
   type IndexStats,
   type MaintenanceResult,
   type MaintenanceType,
+  type ObjectDetail,
+  type ObjectDetailBatch,
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
@@ -69,7 +74,6 @@ import {
   type QueryResult,
   type SlowQueryStats,
   type StorageStats,
-  type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
@@ -87,10 +91,18 @@ import {
   getHealth as readHealth,
   getOverview as readOverview,
   getPerformanceMetrics as readPerformanceMetrics,
-  getSchema as readSchema,
   getSlowQueries as readSlowQueries,
   readServerFacts,
 } from "./introspect";
+import {
+  CASSANDRA_CONTAINER_LEVELS,
+  CASSANDRA_OBJECT_KINDS,
+  countObjects as readObjectCounts,
+  describeObject as readObjectDetail,
+  describeObjects as readObjectDetails,
+  listContainers as readContainers,
+  listObjects as readObjects,
+} from "./objects";
 import { CassandraTransportError, type CassandraTransport } from "./transport";
 
 // ============================================================================
@@ -268,6 +280,11 @@ export class CassandraProvider extends SQLBaseProvider {
       // probe.customers WHERE id = 1;` returns the row, so the `;` the generators
       // already emit is valid CQL.
       schemaRefreshPattern: SCHEMA_REFRESH_PATTERN,
+      // One level and seven kinds, every one of them measured against a live 5.0.9
+      // holding the committed fixture. The declaration and the four methods that read
+      // it live in `objects.ts`, which carries the measurements (issue #789).
+      containerLevels: CASSANDRA_CONTAINER_LEVELS,
+      objectKinds: CASSANDRA_OBJECT_KINDS,
     };
   }
 
@@ -489,13 +506,18 @@ export class CassandraProvider extends SQLBaseProvider {
   }
 
   /**
-   * The keyspace every catalog read resolves against.
+   * The keyspace every FLAT catalog read resolves against.
    *
    * The connection's `database` field, exactly as a PostgreSQL connection pins one
-   * database and a Trino connection pins one catalog. A connection that names none
-   * has no tree to show: measured, an unqualified table name then answers "No
+   * database and a Trino connection pins one catalog. A connection that names none has
+   * no flat table list to show: measured, an unqualified table name then answers "No
    * keyspace has been specified. USE a keyspace, or explicitly specify
    * keyspace.tablename".
+   *
+   * That is a statement about `getSchema()` and the two other readers below, not about
+   * the connection. `listContainers` deliberately does not come through here (#789): a
+   * keyspace-less connection is legal and connectable, and the container tree is how
+   * somebody picks a keyspace when the connection pins none.
    */
   private requireKeyspace(): string {
     const keyspace = this.config.database;
@@ -610,19 +632,50 @@ export class CassandraProvider extends SQLBaseProvider {
   // Schema
   // ==========================================================================
 
+  // ==========================================================================
+  // Object surface (issue #789)
+  // ==========================================================================
+
   /**
-   * The tables and materialized views of the pinned keyspace.
+   * The four methods are thin on purpose: each one resolves the transport, hands
+   * `objects.ts` the DECLARATION rather than a hardcoded shape, and maps a transport
+   * fault the way every other catalog read here does.
    *
-   * `getSchemaList` and `getSchemaRelations` are deliberately NOT implemented. The
-   * split exists so a slow relationship read cannot block the table list, and here
-   * the relationships come from the same three-statement read as the columns: there
-   * are no foreign keys to fetch, and the secondary-index list is one row per index
-   * in the whole keyspace.
+   * `getCapabilities()` is called rather than read from a field, so a test that swaps a
+   * two-level declaration in reaches the same derivation the real one does - which is
+   * how standing ruling 5g's positional-index class is pinned on a one-level engine.
+   *
+   * `listContainers` deliberately does NOT call `requireKeyspace()`, unlike `getSchema()`
+   * beside it. `validate()` requires a host and a data centre and not a keyspace, so a
+   * keyspace-less connection is legal and connectable, and it is exactly the connection a
+   * container tree exists to serve: the tree is what lets somebody pick a keyspace when
+   * the connection pins none. The session default is then simply absent, and the
+   * comparison in `objects.ts` answers false for every keyspace because no keyspace can
+   * be named "". The old guard is a `getSchema()`-era rule, where it was right: a flat
+   * table list has no keyspace to read without one.
    */
-  public async getSchema(): Promise<TableSchema[]> {
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
     const transport = this.requireTransport();
-    const keyspace = this.requireKeyspace();
-    return this.guarded(() => readSchema(transport, keyspace));
+    return this.guarded(() => readContainers(transport, this.config.database ?? "", parent));
+  }
+
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    const transport = this.requireTransport();
+    return this.guarded(() => readObjectCounts(transport, this.getCapabilities(), container));
+  }
+
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    const transport = this.requireTransport();
+    return this.guarded(() => readObjects(transport, this.getCapabilities(), container, kind));
+  }
+
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    const transport = this.requireTransport();
+    return this.guarded(() => readObjectDetail(transport, this.getCapabilities(), path, kind));
+  }
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    const transport = this.requireTransport();
+    return this.guarded(() => readObjectDetails(transport, this.getCapabilities(), container, kind, limit));
   }
 
   // ==========================================================================

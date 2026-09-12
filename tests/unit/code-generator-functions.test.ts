@@ -12,7 +12,7 @@ import {
   mapSqlTypeToJava,
   generateCode,
 } from "@/components/CodeGenerator";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
 // ============================================================================
 // Naming helpers
@@ -149,8 +149,10 @@ describe("mapSqlTypeToJava", () => {
 // generateCode
 // ============================================================================
 
-const testSchema: TableSchema = {
+const testSchema: DetailedObject = {
   name: "order_items",
+  kind: "table",
+  path: ["order_items"],
   indexes: [],
   columns: [
     { name: "id", type: "SERIAL", nullable: false, isPrimary: true },
@@ -193,6 +195,22 @@ describe("generateCode", () => {
     expect(code).toContain("created_at  DateTime?");
   });
 
+  test("the Prisma map names the object's own SEGMENT and never the display label", () => {
+    // `DatabaseObject.name` is a display label and is NOT required to equal the last path
+    // segment (standing ruling 2). `@@map` is what Prisma addresses the table by, so it takes
+    // the segment; the model name is for a person and stays derived from the label (#789).
+    const labelled: DetailedObject = {
+      name: "Order Items",
+      kind: "table",
+      path: ["app", "order_items"],
+      indexes: [],
+      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+    };
+    const code = generateCode("prisma", labelled);
+    expect(code).toContain("model OrderItem {");
+    expect(code).toContain('@@map("order_items")');
+  });
+
   test("Go struct", () => {
     const code = generateCode("go", testSchema);
     expect(code).toContain("package models");
@@ -225,8 +243,10 @@ describe("generateCode", () => {
   });
 
   test("Go struct without time import when no date columns", () => {
-    const schema: TableSchema = {
+    const schema: DetailedObject = {
       name: "tags",
+      kind: "table",
+      path: ["tags"],
       indexes: [],
       columns: [
         { name: "id", type: "INTEGER", nullable: false, isPrimary: true },
@@ -238,8 +258,10 @@ describe("generateCode", () => {
   });
 
   test("Python dataclass without optional/datetime when not needed", () => {
-    const schema: TableSchema = {
+    const schema: DetailedObject = {
       name: "flags",
+      kind: "table",
+      path: ["flags"],
       indexes: [],
       columns: [
         { name: "id", type: "INTEGER", nullable: false, isPrimary: true },
@@ -252,8 +274,10 @@ describe("generateCode", () => {
   });
 
   test("Java POJO without LocalDateTime import when not needed", () => {
-    const schema: TableSchema = {
+    const schema: DetailedObject = {
       name: "tags",
+      kind: "table",
+      path: ["tags"],
       indexes: [],
       columns: [{ name: "id", type: "INTEGER", nullable: false, isPrimary: true }],
     };
@@ -262,7 +286,7 @@ describe("generateCode", () => {
   });
 
   test("empty columns produces empty body", () => {
-    const schema: TableSchema = { name: "empty", indexes: [], columns: [] };
+    const schema: DetailedObject = { name: "empty", kind: "table", path: ["empty"], indexes: [], columns: [] };
     const code = generateCode("typescript", schema);
     expect(code).toContain("export interface Empty");
     expect(code).toContain("{\n\n}");
@@ -300,8 +324,10 @@ describe("toIdentifier", () => {
 });
 
 describe("generateCode — non-identifier table names (#427)", () => {
-  const redisSchema: TableSchema = {
+  const redisSchema: DetailedObject = {
     name: "user:*",
+    kind: "table",
+    path: ["user:*"],
     indexes: [],
     columns: [
       { name: "key", type: "string", nullable: false, isPrimary: true },
@@ -347,8 +373,10 @@ describe("generateCode — non-identifier table names (#427)", () => {
 
   // Every target language accepts Unicode letters in an identifier, so a
   // non-ASCII table name must survive intact in all six outputs (#427).
-  const unicodeSchema: TableSchema = {
+  const unicodeSchema: DetailedObject = {
     name: "m\u00fc\u015fteri",
+    kind: "table",
+    path: ["m\u00fc\u015fteri"],
     indexes: [],
     columns: [{ name: "id", type: "INT", nullable: false, isPrimary: true }],
   };

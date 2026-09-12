@@ -42,6 +42,11 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
       // authenticates against the wrong database and reports a credentials error.
       authSource: conn.authSource,
       schema: conn.schema,
+      // The second half of the seed round-trip, and the half a zod field cannot cover:
+      // this mapper is a hand-written field list, so a field validated above and not
+      // copied here reaches the browser as `undefined` and the seeded connection scans
+      // the catalog the deployment asked it not to (#765).
+      skipObjectScan: conn.skipObjectScan,
       createdAt: new Date(),
       managed: conn.managed ?? true,
       roles: conn.roles,

@@ -52,6 +52,11 @@ import {
   type MaintenanceType,
   type PerformanceMetrics,
   type PreparedQuery,
+  type Container,
+  type DatabaseObject,
+  type KindCount,
+  type ObjectDetail,
+  type ObjectDetailBatch,
   type ProviderCapabilities,
   type ProviderLabels,
   type ProviderOptions,
@@ -60,8 +65,6 @@ import {
   type SlowQuery,
   type SlowQueryStats,
   type StorageStats,
-  type TableRelations,
-  type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
@@ -69,12 +72,17 @@ import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { ClickHouseHttpTransport } from "./http-transport";
+import { CLICKHOUSE_SYSTEM_DATABASES } from "./introspect";
 import {
-  CLICKHOUSE_SYSTEM_DATABASES,
-  getSchema as introspectSchema,
-  getSchemaList as introspectSchemaList,
-  getSchemaRelations as introspectSchemaRelations,
-} from "./introspect";
+  CLICKHOUSE_CONTAINER_LEVELS,
+  CLICKHOUSE_OBJECT_KINDS,
+  countObjects as readObjectCounts,
+  describeObject as readObjectDetail,
+  describeObjects as readObjectDetails,
+  listContainers as readContainers,
+  listObjects as readObjects,
+  literal,
+} from "./objects";
 import {
   type ClickHouseQueryResult,
   type ClickHouseRow,
@@ -362,15 +370,6 @@ function rowLimit(limit: number | undefined, fallback: number): number {
 }
 
 /**
- * A value as a ClickHouse string literal. The backslash escape has to be applied
- * as well as the doubled quote: ClickHouse honours both inside a literal
- * (live-verified), so escaping only the quote would leave `\'` as a way out.
- */
-function literal(value: string): string {
-  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`;
-}
-
-/**
  * `database.table` when the target names one, otherwise the pinned database.
  * The same rule `postgres.ts` applies to `public`, and the same limitation: a
  * dot inside a name cannot be told apart from the separator.
@@ -544,6 +543,13 @@ export class ClickHouseProvider extends SQLBaseProvider {
       },
       supportsConnectionString: true,
       defaultPort: 8123,
+      // #789. One level and no second one to add: ClickHouse has no schema below a
+      // database, and `CREATE SCHEMA` is not an alias for anything. The five kinds,
+      // the two that are deliberately absent (no trigger, no stored procedure) and the
+      // absence of `acceptsRowWrites` on every one of them are all argued in
+      // `./objects.ts`.
+      containerLevels: CLICKHOUSE_CONTAINER_LEVELS,
+      objectKinds: CLICKHOUSE_OBJECT_KINDS,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER|RENAME|TRUNCATE|ATTACH|DETACH)\\b",
     };
   }
@@ -764,19 +770,39 @@ export class ClickHouseProvider extends SQLBaseProvider {
   // Schema
   // ==========================================================================
 
-  public async getSchema(): Promise<TableSchema[]> {
+  // ==========================================================================
+  // Object surface (#789)
+  // ==========================================================================
+  //
+  // Four thin wrappers. The statements, the declaration and every derivation over it
+  // live in `./objects.ts`; what belongs here is the connection check and the error
+  // mapping, which are this class's own. `countObjects` is deliberately NOT wrapped in
+  // `guarded`: a refused count is reported per kind as the server's own sentence
+  // rather than thrown, so there is nothing for the mapper to classify.
+
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
     const transport = this.requireTransport();
-    return this.guarded(() => introspectSchema(transport, this.pinnedDatabase));
+    return this.guarded(() => readContainers(transport, parent));
   }
 
-  public async getSchemaList(): Promise<TableSchema[]> {
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
     const transport = this.requireTransport();
-    return this.guarded(() => introspectSchemaList(transport, this.pinnedDatabase));
+    return readObjectCounts(transport, this.getCapabilities(), container);
   }
 
-  public async getSchemaRelations(): Promise<TableRelations[]> {
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     const transport = this.requireTransport();
-    return this.guarded(() => introspectSchemaRelations(transport, this.pinnedDatabase));
+    return this.guarded(() => readObjects(transport, this.getCapabilities(), container, kind));
+  }
+
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    const transport = this.requireTransport();
+    return this.guarded(() => readObjectDetail(transport, this.getCapabilities(), path, kind));
+  }
+
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    const transport = this.requireTransport();
+    return this.guarded(() => readObjectDetails(transport, this.getCapabilities(), container, kind, limit));
   }
 
   // ==========================================================================

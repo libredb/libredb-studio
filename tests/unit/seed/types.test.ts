@@ -16,6 +16,25 @@ describe("SeedConnectionSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  /**
+   * The silent half of the round-trip (#765). Unlike the three
+   * `Record<keyof DatabaseConnection, ...>` maps, a zod object STRIPS a key it does not
+   * declare, so a seed file setting this on an owner holding tens of thousands of objects
+   * would validate, lose the field, and scan the catalog anyway with nothing to show for
+   * it. Nothing fails at compile time here, so it is pinned at run time.
+   */
+  it("carries a connection's no-scan choice through validation", () => {
+    const result = SeedConnectionSchema.safeParse({ ...validConn, skipObjectScan: true });
+    expect(result.success).toBe(true);
+    expect(result.data?.skipObjectScan).toBe(true);
+  });
+
+  it("leaves the no-scan choice absent when the seed does not make one", () => {
+    const result = SeedConnectionSchema.safeParse(validConn);
+    expect(result.success).toBe(true);
+    expect(result.data?.skipObjectScan).toBeUndefined();
+  });
+
   it("rejects invalid id format (uppercase)", () => {
     const result = SeedConnectionSchema.safeParse({ ...validConn, id: "INVALID" });
     expect(result.success).toBe(false);

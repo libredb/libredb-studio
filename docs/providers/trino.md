@@ -57,7 +57,7 @@ ordinary JSON API teaches:
 |---|---|---|
 | "Database" (the connection's `database` field) | One **catalog**, pinned for the connection | `X-Trino-Catalog` on every request ([§3.2](#32-the-connections-database-field-pins-one-catalog)) |
 | "Schema" | A schema inside that catalog | `information_schema.tables.table_schema` |
-| "Table" (`TableSchema`) | A table, always displayed `schema.table` | `<catalog>.information_schema.tables` |
+| "Table" (the relation kind) | A table, always displayed `schema.table` | `<catalog>.information_schema.tables` |
 | "Row" | One result row | A positional `data` array element, keyed by the page's column declaration |
 | Columns | The connector's declared columns, types rendered verbatim (`varchar(25)`, `array(integer)`, `row(x integer, y varchar)`) | `<catalog>.information_schema.columns` |
 | Primary key | **Nothing.** Trino declares none, anywhere | — ([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)) |
@@ -146,26 +146,28 @@ between the two products and nothing else does.
 
 ### 3.2 The connection's `database` field pins one catalog
 
-Trino's hierarchy is **catalog → schema → table**, one level deeper than the schema tree's
-database → schema → table. The mapping chosen here is the PostgreSQL one: the connection's
-`database` field holds **the catalog**, exactly as a PostgreSQL connection pins one database, and
-the schemas inside it are the schema level. The tree is two levels, and a table's display name is
-always `schema.table`.
+Trino's hierarchy is **catalog → schema → table**, and the connection's `database` field holds **the
+catalog**, exactly as a PostgreSQL connection pins one database.
 
-The alternative — fanning `information_schema` out across every catalog — is **unbounded in
-practice**: `jmx.current` alone publishes one table per MBean, and one sidebar refresh would depend
-on every connector the cluster has configured being reachable. `SHOW CATALOGS` is still useful, and
-it is exposed where it belongs: the Storage panel lists one row per catalog with its connector
-([§7](#7-monitoring--health)).
+**What the pin decides is the SESSION DEFAULT, and nothing else.** It supplies the catalog for names
+a statement does not fully qualify, and the object tree marks it `isSessionDefault` so it is the
+container the tree opens on first paint. It does not decide what the tree SHOWS: the tree declares
+two container levels, catalog and schema, and `listContainers()` lists every catalog `SHOW CATALOGS`
+answers, `system` and `jmx` included ([§6](#6-schema-introspection)).
+
+That is a change #789 made deliberately, and it retired the argument this section used to carry: the
+old flat tree fanned `information_schema` out across the pinned catalog eagerly, so listing every
+catalog would have been unbounded, with `jmx.current` alone publishing one table per MBean and every
+configured connector having to be reachable for one refresh. The object tree reads LAZILY, one
+container at a time, so listing catalog names costs one `SHOW CATALOGS` and nothing under a catalog
+is touched until a reader opens it.
 
 **Cross-catalog queries still work.** Nothing about this pin constrains the editor: `SELECT * FROM
-other_catalog.some_schema.t JOIN tpch.tiny.nation ON …` runs exactly as typed, because the pinned
-catalog only supplies the default for names that are not fully qualified. What the pin decides is
-which catalog the *tree* shows.
+other_catalog.some_schema.t JOIN tpch.tiny.nation ON …` runs exactly as typed.
 
-A connection that names no catalog still connects and still runs every fully qualified statement,
-plus the whole of `system.runtime`. What it cannot do is show a tree, and `getSchema()` says so:
-*"This connection pins no Trino catalog, so there is no schema to list."*
+A connection that names no catalog still connects, still runs every fully qualified statement plus
+the whole of `system.runtime`, and now still shows a tree: with no catalog pinned nothing is marked
+as the session default, so the tree lists the catalogs and opens none of them.
 
 ### 3.3 A failed statement arrives as HTTP 200
 
@@ -312,7 +314,7 @@ What that produces, deliberately and consistently:
 | Surface | Answer | Why |
 |---|---|---|
 | `getIndexStats()` | `[]`, and **no statement is sent** | The answer cannot vary with the connection, so there is nothing to ask |
-| `TableSchema.indexes` / `.foreignKeys` | `[]` | Empty by construction, not by omission |
+| `ObjectDetail.indexes` / `.foreignKeys` | `[]` | Empty by construction, not by omission |
 | `ColumnSchema.isPrimary` | `false` | No key is declared for any column |
 | `declaresForeignKeys` | `false` | So the ER diagram draws boxes and no edges *as the engine's answer*, not as a schema that happens to be empty (#414) |
 | `supportsInlineRowEdit` | `false` | The inline editor builds `UPDATE … WHERE <pk> = <val>`. With no column that identifies one row, an edit would silently rewrite every row that matches, so the control is not offered |
@@ -596,14 +598,366 @@ A table's name is `schema.table`, always qualified
 ([§3.2](#32-the-connections-database-field-pins-one-catalog)). `indexes` and `foreignKeys` are `[]`
 by construction ([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)).
 
-`getSchemaList()` and `getSchemaRelations()` are **deliberately not implemented**. That split exists
-so a slow relationship read cannot block the table list, and Trino has no relationship read at all: a
-list would be byte-identical to `getSchema()` and a relations read would spend a round trip to answer
+The two-phase flat schema split no longer exists anywhere (#789). It existed so a slow relationship
+read could not block the table list, and Trino never had a relationship read at all: a list would have
+been byte-identical to the object surface, and a relations read would have spent a round trip to answer
 two empty arrays per table.
 
 Measured against `tpch`: 72 tables, `column_default` projected and null for every connector probed
 (kept because a connector with server-side defaults would report it there, and an absent value costs
 nothing).
+
+### The object surface (#789)
+
+The flat list above is what the object surface answers. Alongside it the provider implements the lazy,
+container-aware object surface: `listContainers()`, `countObjects()`, `listObjects()` and
+`describeObject(path, kind)`, in
+[`objects.ts`](../../src/lib/db/providers/sql/trino/objects.ts) and
+[`index.ts`](../../src/lib/db/providers/sql/trino/index.ts). Both surfaces are live through Phase 1
+and they answer different questions: the object surface is scoped to the one catalog the connection pins
+([§3.2](#32-the-connections-database-field-pins-one-catalog)), while the object surface reaches
+**every catalog the coordinator can see**, including the ones this connection did not name.
+
+Everything below was measured against a live Trino 476 on 2026-09-11, running the `memory` and `tpch`
+catalogs `database-compose.yml` configures plus an `iceberg` catalog on an Apache Hive 4.0.1
+standalone metastore.
+
+#### Two container levels, and a catalog is not a database
+
+```ts
+containerLevels: [
+  { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+  { id: "schema",  label: "Schema",  labelPlural: "Schemas" },
+]
+```
+
+Trino is the third two-level engine in #789, after SQL Server and DuckDB, and the outer level is the
+one worth explaining: **a Trino catalog IS a named connector configuration**, not a database. Dropping
+`iceberg.properties` into `/etc/trino/catalog` creates the catalog `iceberg`, and the same session
+then addresses an Iceberg lake, a PostgreSQL server and a generated `tpch` dataset side by side. Two
+consequences a reader has to carry:
+
+* **`information_schema` is PER CATALOG.** `iceberg.information_schema.tables` says nothing about
+  `memory`. Every statement below therefore names its catalog, and the catalog is quoted rather than
+  bound: the client protocol sends no parameters ([§5.1](#51-execution)).
+* **What a catalog can do is the connector's answer, not the engine's.** Two of the four kinds below
+  exist only on some connectors, which is a fact about the deployment rather than about the model.
+
+`system` and `jmx` are **listed like any other catalog** rather than filtered out. Trino publishes no
+flag that separates a plumbing catalog from a data one, both are genuinely queryable, and a name
+denylist is a boundary this repo has already found unmaintainable. `information_schema` IS excluded
+from the schema list, which is the same exclusion the object surface already makes: every catalog carries
+one, and it holds only the tree's own plumbing. Measured with the exclusion removed, `memory` answers
+`["app", "default", "information_schema"]`.
+
+Both levels mark `isSessionDefault`, and both halves of the schema predicate are load-bearing: the
+connection's schema names a schema in the connection's catalog, and several Trino connectors create a
+schema called `default`, so comparing the schema name alone marks a row in every catalog on the
+cluster.
+
+#### Four kinds, and where each one's rows come from
+
+| Kind | Role | Source | Note |
+|---|---|---|---|
+| `table` | relation | `<catalog>.information_schema.tables`, `table_type = 'BASE TABLE'` | `acceptsRowWrites: true` |
+| `view` | relation | the same relation, `table_type = 'VIEW'` | No row writes: `INSERT INTO <view>` answers `Inserting into views is not supported` |
+| `materialized_view` | relation | `system.metadata.materialized_views`, filtered to the catalog | Some connectors only. No row writes: `Inserting into materialized views is not supported` |
+| `function` | routine | `SHOW FUNCTIONS FROM <catalog>.<schema>` | Per SCHEMA only, see below |
+
+**No trigger, no stored procedure and no index**, because Trino has none of the three anywhere in its
+model: `information_schema` holds eight views and neither `table_constraints` nor `key_column_usage`
+is among them, and there is no index catalog at all
+([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)). A declared kind draws a
+folder, and a folder for something the engine cannot have is a lie its zero badge makes look like a
+fact.
+
+`describeObject` therefore answers `indexes: []` and `foreignKeys: []` for every kind, and every
+column carries `isPrimary: false`. Those are the engine's answers and not defaults this provider
+chose. `is_nullable` is the ANSI varchar `'YES'`/`'NO'` here rather than a boolean.
+
+#### A materialized view is a BASE TABLE, so the table read has to subtract it
+
+This is the one trap in the whole surface. Measured: with `iceberg.warehouse.order_totals` a
+materialized view over `orders`, `iceberg.information_schema.tables` reports it as
+
+| table_schema | table_name | table_type |
+|---|---|---|
+| `warehouse` | `order_totals` | `BASE TABLE` |
+| `warehouse` | `orders` | `BASE TABLE` |
+
+So a table count taken from `table_type` alone counts the materialized view twice over, once under
+each kind, and the tree draws the same object in both folders. The relation reads carry a
+`NOT EXISTS` anti-join against `system.metadata.materialized_views`, and the materialized views come
+from that catalog rather than from `information_schema`, so neither source can lose a row the other
+holds. Measured with the anti-join removed, the `iceberg` catalog answers three tables and one
+materialized view for two objects, and `order_totals` appears in both listings.
+
+The materialized-view read is filtered `WHERE catalog_name = <catalog>`, and that is **isolation
+rather than an optimisation**. Two measurements, both against a live cluster:
+
+* With the filter removed, the `memory` catalog lists `["memory", "warehouse", "order_totals"]` — a
+  materialized view that lives in `iceberg`, handed a path in `memory` that resolves to nothing.
+* An **unfiltered** read fails outright when any catalog on the cluster cannot list its own
+  materialized views: with one deliberately broken Iceberg catalog present,
+  `SELECT * FROM system.metadata.materialized_views` answers
+  `Error listing materialized views for catalog brokenice: Failed to connect: …` while the filtered
+  read still answers its row. Without the filter, one misconfigured catalog anywhere empties the
+  Materialized Views folder of every catalog on the cluster.
+
+Materialized views are supported by **some connectors only**, Iceberg among them, and neither the
+Iceberg JDBC catalog nor the REST catalog will create one on 476 (`createMaterializedView is not
+supported for Iceberg JDBC catalogs`). The kind is declared anyway: it exists in the engine's model
+and `system.metadata.materialized_views` is an engine-level catalog, so a catalog holding none answers
+an honest `{ count: 0 }`. "This engine has no such concept" and "this container holds none" are
+different facts and #789's `KindCount` keeps them apart.
+
+#### The `table_type` vocabulary is the ENGINE's, and an unmodelled spelling is made loud
+
+`information_schema` is generated by the coordinator rather than by a connector, and it emits
+`BASE TABLE` and `VIEW` and nothing else — measured across `tpch` (72 rows), `memory` and `iceberg`.
+The count statement maps the two through a `CASE` whose **ELSE arm labels anything else
+`unknown:<type>`**, which is a kind id no declaration holds, so the reader raises naming the spelling:
+
+```
+Trino counted objects under "unknown:LOCAL TEMPORARY", which this provider does not declare as an
+object kind (#789)
+```
+
+The silent alternative, a `WHERE table_type IN (...)` that simply drops the row, would take the object
+out of the count and out of the listing together, leaving the count and the listing in agreement while
+the object is invisible in the tree. That is the shape of defect #789's standing rulings call the
+worst this epic has, and it is why the guard exists rather than a comment.
+
+**That raise reaches the caller as a raise.** `countObjects()` catches the READ and nothing else: a
+statement the engine refused becomes `{ unavailable }` carrying the engine's own sentence for every
+relation kind, because they all ride one `UNION ALL` and the statement failing genuinely loses all of
+them, while an unmodelled `table_type` propagates. The two are different facts and the earlier code
+spelled both as `{ unavailable }`, which had two costs: it filed a provider defect in a folder badge
+as though the engine had refused a read it had answered, and it blanked the `materialized_view` count
+as well, even though that count comes from `system.metadata.materialized_views` on the other arm of
+the union and was never in doubt.
+
+#### Functions are real here, and they are readable one schema at a time
+
+Catalog-stored SQL functions exist from Trino 431, on the Hive and Memory connectors only. The kind is
+declared because it was **confirmed on the build this repo runs**: measured on 476,
+
+```sql
+CREATE FUNCTION memory.app.plus_one(x bigint) RETURNS bigint RETURN x + 1;
+SHOW FUNCTIONS FROM memory.app;
+```
+
+succeeds and lists it, and `database-compose.yml` configures the `memory` catalog. Leaving the kind
+undeclared would make a function somebody wrote invisible in the tree, which is a worse absence than an
+empty folder.
+
+`SHOW FUNCTIONS FROM <catalog>.<schema>` is the **whole surface**, and it has three properties that
+shape the implementation. It takes a schema and has no catalog form
+(`SHOW FUNCTIONS FROM memory` answers `Catalog must be specified when session catalog is not set`); its
+columns are named `Function`, `Return Type`, `Argument Types`, `Function Type`, `Deterministic` and
+`Description`, with spaces, and no alias can rename them; and it cannot be wrapped in a subquery —
+`SELECT * FROM (SHOW FUNCTIONS FROM memory.app)` is a syntax error. There is no relation to read
+instead: `information_schema` has no routine catalog on this engine, and `system.jdbc.procedures`
+answers zero rows for a schema holding three functions.
+
+So a **catalog-level** function count is `{ unavailable }` carrying that reason, and a catalog-level
+listing is refused with the same sentence, rather than fanning `SHOW FUNCTIONS` out over every schema
+in the catalog — one full HTTP exchange each, unbounded on a Hive or Iceberg catalog. Open a schema to
+see its functions. The two reads behind `countObjects` are caught **separately** for the same reason
+they are two reads: `system.metadata` failing must not erase an honest function count, and a connector
+without stored functions must not blank the table count.
+
+A function's path segment carries its **argument types**, `plus_one(bigint)`, while its `name` stays
+the bare `plus_one` a person reads. Measured: `plus_one(bigint)` and `plus_one(double)` coexist in one
+schema, so a bare name gives two objects one address. The types and never the parameter names, which
+is the rule #789 settled on PostgreSQL: overload resolution never depends on a name, so carrying one
+would make an object's identity change when somebody renames an argument. On this engine the honest
+form is also the only available one, because `SHOW FUNCTIONS` publishes no parameter names at all.
+
+#### Hive-native views, and what Phase 1 does with them
+
+A Hive-native view is **readable** through the Hive connector but not writable, and Trino guarantees no
+round trip for one it did not create. Such a view appears in this listing exactly like any other, under
+the `view` kind, because `information_schema.tables` reports it as `VIEW` and the surface reads what
+the catalog reports. Phase 1 only ever lists and describes it, and neither `acceptsRowWrites` nor an
+inline editor is offered on a view of any kind, so nothing here can attempt a write. A Phase 2 Source
+tab is where the distinction starts to matter.
+
+#### `describeObjects()` describes a whole folder in two statements (#789)
+
+`describeObjects(container, kind, limit?)` answers the columns of EVERY object of one kind in one
+container, in TWO round trips whatever the folder holds: the target read plus the column read. The
+single read is one statement per object. Measured against a live Trino 476 over a 200-table schema of
+the `memory` connector: **165 ms for one `describeObjects()` against 5,160 ms for 200
+`describeObject()` calls**, the same 600 columns. On this engine the gap is the largest of the five in
+this wave, because every statement is a full HTTP exchange with a coordinator that plans it.
+
+The column read is `trinoObjectColumnsSql()` with the schema-and-name equality replaced by a join
+against the target, and nothing else changed.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.** The same two the folder already reads. The TARGET is the listing statement itself,
+from whichever of the two catalogs publishes that kind: `information_schema.tables` for a table and a
+view, `system.metadata.materialized_views` for a materialized view. The COLUMNS always come from
+`information_schema.columns`, including for a materialized view, which answers there while being
+reported as a `BASE TABLE` (measured on 476) - which is also why the relation target keeps its
+anti-join. It is not the object surface's reading: that one spans the pinned catalog with no anti-join at
+all, so it counts a materialized view as a table. MEMBERSHIP comes from the target read and never from
+the column read, so an object the column read answered nothing for comes back with an empty column list
+rather than missing, and this read does not repeat the single read's zero-column throw - there an empty
+answer means the object is not there under that name, here the listing has just said it is.
+
+**Which kinds have no columns.** `function` alone, the one non-relation kind, which answers
+`{ details: [] }` with NO round trip - and it answers so at EITHER container depth. That is worth
+stating, because `listObjects` REFUSES a catalog-level function read: `SHOW FUNCTIONS` is per schema and
+the fan-out would be one HTTP exchange per schema, unbounded on a Hive or Iceberg catalog. There is no
+fan-out here because a routine has no columns to read in the first place, so the bulk read answers the
+same empty batch at both depths rather than inheriting a refusal it has no reason for.
+
+**What bounds the read on the wire.** `LIMIT n` appended to the target, carrying `limit + 1` so a
+saturated read is told from an exact one with no second count. The value is INTERPOLATED rather than
+bound, because this transport sends a statement as text and has no parameter channel at all; it is safe
+by construction, since the caller's value is refused unless it is a positive whole number. That guard
+therefore protects the STATEMENT as well as the answer. The extra object is dropped in code and
+`truncated` carries the CALLER's limit.
+
+**What orders the cut, and under whose collation.** `ORDER BY "schemaName", "objectName"`, added by the
+target and carried by neither listing: the listings deliberately have no `ORDER BY`, because four kinds
+are read from three sources that cannot share one sort clause, and the ordering is done over the
+produced PATH instead. A BOUND needs one all the same, or two calls could keep different subsets.
+`schemaName` leads because a CATALOG-level container spans every schema under it. That sort runs under
+the cluster's own varchar comparison, which is the UTF-8 BYTE order: measured on 476,
+`U&'\+00E000' < U&'\+01F600'` is true, bytes `ee 80 80` below `f0 9f 98 80`, where a JavaScript sort
+puts the surrogate `0xD83D` first. So the MEMBERSHIP of a bounded cut is the cluster's and the ORDER of
+the answer is ours.
+
+**Mixed path depth (ruling 5f).** Not in this engine's relation set. `objectRead()` refuses a kind
+declaring `attachedTo`, there is no trigger anywhere in Trino's model, and every object of every
+declared kind is addressed `[catalog, schema, name]` at either container depth.
+
+The join is on BOTH the schema and the name, never on the name alone: a catalog-level container spans
+every schema under it, and two schemas holding a table of one name is the ordinary case. A JOIN and not
+a `(schema, name) IN (...)` tuple test, and both were measured accepted on 476; the join is the one
+whose output order is the coordinator's rather than a semi-join's. The grouping key joins the two
+segments with a NUL, which no Trino identifier can carry, so a schema called `a.b` holding `c` cannot
+collide with a schema called `a` holding `b.c`.
+
+#### Container shapes and the derivations behind them
+
+Both depths are accepted by all four methods: a catalog alone answers "how many tables does this whole
+catalog hold", and a schema answers the folder the tree actually draws. That matches SQL Server and
+DuckDB, and `src/lib/api/object-route.ts` admits any path down to the declared depth.
+
+Nothing reads a path by position. The container segments come from the declared `ContainerLevelSpec`
+ids, the object name is `path[path.length - 1]`, and the depth is `containerDepth()` — never
+`containerLevels.length` and never a hardcoded comparison. `trino-provider.test.ts` pins that by
+handing the provider a declaration listing `schema` BEFORE `catalog` and driving it to a bound value:
+with that declaration, `["beta", "alpha", "pin"]` addresses schema `beta` in catalog `alpha`, and a
+provider binding `path[0]` as the catalog reads a different real relation rather than failing.
+
+#### The fixture, and the half of it this repo cannot ship
+
+Standing ruling 5i (#789): a live measurement you cannot re-run is not evidence. The object-surface
+fixture is therefore `docker/trino-init/01-object-fixture.sql`, mounted into both the `trino` service
+and a one-shot `trino-init` sidecar in `database-compose.yml`, so
+
+```bash
+docker compose -f database-compose.yml up -d trino trino-init
+```
+
+brings the cluster up and seeds it. The image ships no init-script convention of its own, so the sidecar is what applies the file,
+running the CLI that ships in the same image against the coordinator. The mount is at `/fixtures` and
+not at the `/docker-entrypoint-initdb.d` most services in that file use, because that name would
+promise a start-up hook this image does not have.
+
+**Re-apply it after every restart of the coordinator.** The `memory` connector keeps its schemas,
+tables, views and functions in the coordinator's heap, so a restart loses all of them and the one-shot
+sidecar does not run again by itself. The file is written to be re-runnable, every statement
+`IF NOT EXISTS` or `OR REPLACE`:
+
+```bash
+docker exec libredb-trino trino --server localhost:8080 \
+  --file /fixtures/01-object-fixture.sql
+```
+
+What that fixture holds, and what the provider then answers against the compose cluster, measured
+through the provider itself on trinodb/trino:476:
+
+| Container | table | view | materialized_view | function |
+|---|---|---|---|---|
+| `memory` | 2 | 1 | 0 | unavailable |
+| `memory.app` | 2 | 1 | 0 | 3 |
+| `tpch.tiny` | 8 | 0 | 0 | 0 |
+
+`memory.app` holds `orders` and `customers`, the view `customer_names`, and the three functions
+`plus_one(bigint)`, `plus_one(double)` and `label(bigint, varchar)`. The overloaded pair is the
+fixture that makes the argument-type path segment observable rather than theoretical, and the server
+returns `orders` before `customers`, which is what makes the provider's own sort observable rather
+than incidental.
+
+##### `materialized_view` is 0 on this cluster, and that is the true answer
+
+**The compose cluster configures no Iceberg catalog**, so it can hold no materialized view at all: the
+kind is an engine-level concept but only some connectors implement it, and on 476 only a
+Hive-metastore-backed Iceberg catalog will CREATE one. The Iceberg JDBC and REST catalog types both
+answer `createMaterializedView is not supported for Iceberg JDBC catalogs`, so "configure Iceberg and
+you get materialized views" is wrong.
+
+An Iceberg catalog here would mean a metastore service, a warehouse volume and a second image in
+`database-compose.yml` for one object kind, which is a bigger change than the object surface owns. A
+live probe against this cluster will therefore see `materialized_view: 0` in every container. **That
+is the engine answering honestly, not a broken fixture**: the kind stays declared because the engine
+has the concept and `system.metadata.materialized_views` is an engine-level catalog, and #789's
+`KindCount` keeps "this engine has no such concept" and "this container holds none" apart.
+
+##### Reproducing the Iceberg measurements
+
+The materialized-view findings above were measured on a cluster built this way. It is written out in
+full so the numbers stay checkable without the compose file carrying a metastore.
+
+```bash
+docker network create trino-iceberg
+docker run -d --name trino-hms --network trino-iceberg \
+  -e SERVICE_NAME=metastore apache/hive:4.0.1
+mkdir -p /tmp/trino-iceberg/catalog
+cat > /tmp/trino-iceberg/catalog/iceberg.properties <<'PROPS'
+connector.name=iceberg
+iceberg.catalog.type=hive_metastore
+hive.metastore.uri=thrift://trino-hms:9083
+iceberg.file-format=PARQUET
+fs.hadoop.enabled=true
+PROPS
+docker run -d --name trino-iceberg-probe --network trino-iceberg -p 18099:8080 \
+  -v /tmp/trino-iceberg/catalog/iceberg.properties:/etc/trino/catalog/iceberg.properties:ro \
+  trinodb/trino:476
+```
+
+Then, once the coordinator is healthy:
+
+```sql
+CREATE SCHEMA iceberg.warehouse WITH (location = 'file:///tmp/warehouse');
+CREATE TABLE iceberg.warehouse.orders (id bigint, total double);
+INSERT INTO iceberg.warehouse.orders VALUES (1, 10.0), (2, 20.0);
+CREATE MATERIALIZED VIEW iceberg.warehouse.order_totals AS
+  SELECT id, total FROM iceberg.warehouse.orders;
+```
+
+Those statements produce the `iceberg` column of the original measurement:
+
+| Container | table | view | materialized_view | function |
+|---|---|---|---|---|
+| `iceberg` | 2 | 0 | 1 | unavailable |
+| `iceberg.warehouse` | 1 | 0 | 1 | 0 |
+
+`iceberg`'s two tables are `warehouse.orders` and `system.iceberg_tables`, the latter published by the
+connector itself, which is why the schema list carries no denylist beyond `information_schema`. The
+materialized view is reported as `table_type = 'BASE TABLE'` by `information_schema.tables`, which is
+the measurement the anti-join above exists for: it is why `iceberg` answers two tables and not three.
+
+For the catalog-isolation finding, add a second catalog file pointing at a metastore that is not
+there, `hive.metastore.uri=thrift://nosuchhost:9083`, and read
+`SELECT * FROM system.metadata.materialized_views` unfiltered.
 
 ---
 
@@ -967,7 +1321,7 @@ await provider.connect();
 const result = await provider.query("SELECT nationkey, name FROM tpch.tiny.nation ORDER BY 1");
 console.log(result.fields, result.rows.length, result.executionTime);
 
-const tables = await provider.getSchema(); // named "schema.table"
+const tables = await provider.listObjects(['tpch', 'sf1'], 'table');
 await provider.disconnect();
 ```
 

@@ -9,7 +9,7 @@ import {
   readSchemaStatistics,
 } from "@/lib/agent/schema-stats";
 import type { AgentToolContext } from "@/lib/agent/tools";
-import type { AgentRunMode } from "@/lib/agent/types";
+import type { AgentInventory, AgentInventoryObject, AgentRunMode } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import { QueryError } from "@/lib/db/errors";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
@@ -18,7 +18,7 @@ import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptor
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
-import type { DatabaseConnection, DatabaseType, QueryResult, TableSchema } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
 
 /**
  * The run's estimated statistics: reading them, and saying honestly what they are
@@ -160,7 +160,7 @@ function answerSqlite(withStatisticsTable: boolean): (sql: string) => Promise<Qu
 }
 
 /** The inventory the statistics are packed against. Order is the inventory's own. */
-const TABLES: readonly TableSchema[] = [
+const TABLE_OBJECTS: readonly AgentInventoryObject[] = [
   {
     name: "public.orders",
     columns: [
@@ -185,6 +185,15 @@ const TABLES: readonly TableSchema[] = [
     foreignKeys: [],
   },
 ];
+
+/** The same inventory, with the kinds a PostgreSQL capture really carries. */
+const TABLES: AgentInventory = {
+  objects: TABLE_OBJECTS.map((object) => ({ ...object, kind: "table" })),
+  kinds: [
+    { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+    { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+  ],
+};
 
 async function readOf(h: Harness): Promise<AgentSchemaStatistics> {
   return readSchemaStatistics(h.context);
@@ -448,7 +457,10 @@ describe("packSchemaStatistics", () => {
   test("names the engine's own limits where they are absolute, rather than leaving a gap to be guessed at", async () => {
     const statistics = await statisticsOf(harness("sqlite", answerSqlite(true)));
 
-    const packed = packSchemaStatistics([{ name: "orders", columns: [], indexes: [], foreignKeys: [] }], statistics);
+    const packed = packSchemaStatistics(
+      { objects: [{ name: "orders", columns: [], indexes: [], foreignKeys: [] }] },
+      statistics,
+    );
 
     expect(packed).toContain("orders: roughly 1000 row(s), estimated");
     expect(packed).toContain("no per-column distinct count or null fraction at all");
@@ -481,10 +493,42 @@ describe("packSchemaStatistics", () => {
     expect(reasons[0]).toContain("does not hold");
   });
 
+  /*
+    The inventory carries the engine's functions and sequences too (#789), and this pack
+    speaks about every entry it is given in the words "no statistics recorded for this
+    table; its size is unknown". Said about a function that is a category error handed to
+    a model as a fact, so the pack reads only what the declared role says has rows.
+  */
+  test("a FUNCTION in the inventory gets no line, because a routine has no rows and no size", async () => {
+    const statistics = await statisticsOf(harness("postgres", answerPostgres));
+    const withRoutine: AgentInventory = {
+      ...TABLES,
+      objects: [
+        ...TABLES.objects,
+        { name: "public.order_total(integer)", kind: "function", label: "order_total", columns: [], indexes: [] },
+      ],
+    };
+
+    const packed = packSchemaStatistics(withRoutine, statistics);
+
+    expect(packed).not.toContain("order_total");
+    expect(packed).toContain("public.orders: roughly 1000 row(s), estimated");
+  });
+
+  test("an inventory of nothing but routines packs the same sentence an empty one does", async () => {
+    const statistics = await statisticsOf(harness("postgres", answerPostgres));
+    const routinesOnly: AgentInventory = {
+      kinds: TABLES.kinds,
+      objects: [{ name: "public.order_total(integer)", kind: "function", columns: [], indexes: [] }],
+    };
+
+    expect(packSchemaStatistics(routinesOnly, statistics)).toContain("no tables");
+  });
+
   test("an empty inventory packs to the reason it is empty rather than to a bare fence", async () => {
     const statistics = await statisticsOf(harness("postgres", answerPostgres));
 
-    const packed = packSchemaStatistics([], statistics);
+    const packed = packSchemaStatistics({ objects: [] }, statistics);
 
     expect(packed).toContain("no tables");
     expect(packed).not.toContain(UNTRUSTED_CONTENT_BEGIN);
@@ -505,9 +549,9 @@ describe("packSchemaStatistics", () => {
       columns: [],
       indexes: [],
       foreignKeys: [],
-    })) as TableSchema[];
+    })) as AgentInventoryObject[];
 
-    const packed = packSchemaStatistics(tables, statistics);
+    const packed = packSchemaStatistics({ objects: tables }, statistics);
 
     expect(packed.length).toBeLessThanOrEqual(AGENT_STATISTICS_PACK_MAX_CHARS);
     expect(packed).toContain("further table(s) omitted");
@@ -525,7 +569,7 @@ describe("packSchemaStatistics", () => {
     const statistics = await readOf(harness("postgres", async () => result(rows)));
 
     const packed = packSchemaStatistics(
-      [{ name: "public.orders", columns: [], indexes: [], foreignKeys: [] }],
+      { objects: [{ name: "public.orders", columns: [], indexes: [], foreignKeys: [] }] },
       statistics,
     );
 
@@ -569,7 +613,7 @@ describe("packSchemaStatistics", () => {
     const statistics = await readOf(harness("postgres", async () => result(rows)));
 
     const packed = packSchemaStatistics(
-      [{ name: "public.orders", columns: [], indexes: [], foreignKeys: [] }],
+      { objects: [{ name: "public.orders", columns: [], indexes: [], foreignKeys: [] }] },
       statistics,
       { detail: "rows" },
     );

@@ -19,7 +19,10 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { TableSchema, SchemaSnapshot, DatabaseType, DatabaseConnection } from "@/lib/types";
+import type { SchemaSnapshot, DatabaseType, DatabaseConnection } from "@/lib/types";
+import { detailedObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import { relationKindIds } from "@/lib/db/object-kinds";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import { storage } from "@/lib/storage";
 import { logger } from "@/lib/logger";
 import { useAllConnections } from "@/hooks/use-all-connections";
@@ -29,7 +32,7 @@ import type { SchemaDiff as SchemaDiffType, TableDiff } from "@/lib/schema-diff/
 import { SnapshotTimeline } from "@/components/SnapshotTimeline";
 
 interface SchemaDiffProps {
-  schema: TableSchema[];
+  schema: readonly DetailedObject[];
   connection: DatabaseConnection | null;
 }
 
@@ -103,13 +106,34 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
       setFetchingRemote(true);
       try {
-        const res = await appFetch("/api/db/schema-snapshot", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(
-            conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : { connection: conn },
-          ),
-        });
+        /*
+          Two reads of the object surface, where this used to be one call to
+          `POST /api/db/schema-snapshot` (#789). That route read the flat schema, which no longer
+          exists, and the two things it hand-rolled around that read are things
+          `getOrCreateProvider` does for every object route already: it opens the SSH tunnel
+          (#457), and it returns the handle this connection already holds rather than opening a
+          second one, which is what #498 needed on an engine that admits only one writer to its
+          file. So the route is deleted rather than ported.
+
+          `provider-meta` decides which kinds are asked for, exactly as the object browser's own
+          read does, and for the same measured reason: a diff is over relations, and asking for
+          every declared kind would list routines and triggers this comparison cannot use.
+        */
+        const payload = conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : { connection: conn };
+        const post = (path: string, body: unknown) =>
+          appFetch(path, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+
+        const metaRes = await post("/api/db/provider-meta", payload);
+        const meta = await metaRes.json();
+        if (!metaRes.ok) throw new Error(meta.error);
+        const kinds = relationKindIds(meta.capabilities as ProviderCapabilities);
+        if (kinds.length === 0) throw new Error(`${conn.name} declares no object kinds a schema diff can compare`);
+
+        const res = await post("/api/db/objects/inventory", { ...payload, kinds, includeColumns: true });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
 
@@ -119,7 +143,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           connectionId: conn.id,
           connectionName: conn.name,
           databaseType: conn.type,
-          schema: data.schema,
+          schema: [...detailedObjects(data.objects ?? [], data.details ?? [])],
           createdAt: new Date(),
           label: `Live: ${conn.name}`,
         };

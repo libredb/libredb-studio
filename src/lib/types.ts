@@ -1,3 +1,21 @@
+/*
+  This module type-imports from `src/lib/db`, which is the opposite of the usual direction,
+  and it is deliberate (#789).
+
+  `SchemaSnapshot.schema` stores what the consumer actually held, and that shape is
+  `StoredObject`, which is `DetailedObject` with the two fields a record written before the
+  object model could not carry. The alternative is a second declaration of the same shape
+  here, which is precisely the drift the field's own docblock records: the declaration said
+  `TableSchema` while the stored JSON carried two more fields, and a later reader trusted the
+  type instead of the data. One declaration, imported, cannot drift.
+
+  It is TYPE-ONLY in both directions and there is no runtime edge: `detailed-object.ts` imports
+  `ColumnSchema`, `ForeignKeySchema` and `IndexSchema` from this file, so the two are a type
+  cycle that TypeScript resolves and every bundler erases. Nothing is imported for a value, so
+  no module graph is created by it.
+*/
+import type { StoredObject } from "@/lib/db/detailed-object";
+
 export type DatabaseType =
   | "postgres"
   | "mysql"
@@ -186,37 +204,31 @@ export interface DatabaseConnection {
    * is a field of its own rather than a reuse of `database`.
    */
   authSource?: string;
+  /**
+   * Read no catalog when this connection opens.
+   *
+   * For a connection whose owner holds tens of thousands of objects, even the two cheap
+   * reads first paint makes are worth deferring, and a user who only wants to run one
+   * statement should not wait for either (#765, asked for by the reporter as "not
+   * preloading anything ... at db connection level"). The editor and query execution
+   * are fully usable while this is set; the object panel shows a load action instead of
+   * a scan, and pressing it reads exactly what opening the connection would have.
+   *
+   * A per-connection answer rather than a global setting, because the connection is
+   * what knows: the same deployment holds a five-table SQLite sample and a 40,000-object
+   * Oracle owner, and the flag follows the one that hurts.
+   */
+  skipObjectScan?: boolean;
   managed?: boolean; // true = admin-controlled, read-only in UI
   seedId?: string; // stable reference to seed config ID
   agentUser?: string; // optional least-privilege role for the agent read-only execution profile (#328)
   agentPassword?: string; // password for agentUser; secret-classified, sealed at rest by connection-secrets
 }
 
-export interface TableSchema {
-  name: string;
-  columns: ColumnSchema[];
-  indexes: IndexSchema[];
-  foreignKeys?: ForeignKeySchema[];
-  rowCount?: number;
-  size?: string;
-}
-
 export interface ForeignKeySchema {
   columnName: string;
   referencedTable: string;
   referencedColumn: string;
-}
-
-/**
- * Heavy relationship/index data for a table, loaded separately from the fast
- * structural schema (see getSchemaList / getSchemaRelations) and merged on the
- * client by `name`. Keeping it separate prevents a slow stats query from
- * blocking the table list.
- */
-export interface TableRelations {
-  name: string;
-  foreignKeys: ForeignKeySchema[];
-  indexes: IndexSchema[];
 }
 
 export interface ColumnSchema {
@@ -375,7 +387,23 @@ export interface SchemaSnapshot {
   connectionId: string;
   connectionName: string;
   databaseType: DatabaseType;
-  schema: TableSchema[];
+  /**
+   * The objects as the consumer held them when the snapshot was taken (#789).
+   *
+   * `StoredObject` and NOT `DetailedObject`, and the difference is the whole compatibility
+   * story of this record. A live reading now always carries `kind` and `path`, because the
+   * flat surface it used to come from is gone, so `DetailedObject` declares both as facts.
+   * A snapshot is not a live reading: these records sit in the user's own storage, and every
+   * one written before the object model landed carries neither field. Declaring the stored
+   * array as the live shape would be the same drift this field has already had once, where
+   * the declaration said `TableSchema` and the stored JSON carried two more fields.
+   *
+   * `diffSchemas` therefore keeps comparing BY NAME, as Task 25c measured: an old snapshot
+   * carries no kind, so keying on kind would report every object in it as removed and
+   * re-added the first time it was opened against a current reading. Nothing migrates these
+   * records and nothing needs to.
+   */
+  schema: StoredObject[];
   createdAt: Date;
   label?: string;
 }

@@ -36,8 +36,8 @@ which is the SQL reference implementation. The headline differences:
 
 | Aspect | PostgreSQL | MySQL |
 |--------|------------|-------|
-| Schema introspection | One `MATERIALIZED`-CTE round-trip + two-phase (`getSchemaList`/`getSchemaRelations`) | Single `getSchema()`, **N+1** (1 + 3 queries per table), **no** two-phase split |
-| Schema scope | All non-system schemas, cross-schema FKs | **Single database** (`TABLE_SCHEMA = <db>`), bare table names |
+| Schema introspection | One set of shared `MATERIALIZED` CTEs behind the object surface | `information_schema` behind the object surface; the bulk column read is four statements per folder ([§7.1](#71-the-object-surface-789)) |
+| Schema scope | All non-system schemas, cross-schema FKs | **Single database** (`TABLE_SCHEMA = <db>`), bare table names, lifted by the object surface ([§7.1](#71-the-object-surface-789)) |
 | Maintenance ops | `vacuum`, `analyze`, `reindex`, `kill` | `analyze`, `optimize`, `check`, `kill` |
 | Query timeout | `statement_timeout` from `queryTimeout` | **Not wired** — no server-side query timeout |
 | Pool config honored | `min`/`max`/`idleTimeout`/`acquireTimeout` | **`max` only** (`connectionLimit`) |
@@ -72,6 +72,11 @@ selectable and answers **0 rows**, so the slow-query list is empty rather than a
 distinguishable from a broken read at all. `information_schema`, `PROCESSLIST`, `EXPLAIN
 FORMAT=JSON`, schema introspection, sizes and row counts are unaffected. Start the server with
 `performance_schema=ON` to get the monitoring figures.
+
+**MariaDB declares two object kinds MySQL does not have.** `package` and `sequence` reach the object
+browser through `objectKinds`, which on this provider is resolved from the `VERSION()` string rather
+than being a constant, see [§7.1](#71-the-object-surface-789). That is the third of the three
+behaviours on this page that are this provider's code and not the engine's.
 
 The one metric that goes the other way is `deadlocks`: it comes from the `Innodb_deadlocks` row of
 `SHOW STATUS`, which MariaDB publishes and MySQL does not, so it is the single performance figure a
@@ -114,20 +119,23 @@ case 'mysql': {
 
 ## 3. Design decisions
 
-### 3.1 N+1 schema introspection (no MATERIALIZED CTEs, no two-phase split)
+### 3.1 No MATERIALIZED CTEs
 
-Unlike PostgreSQL, `getSchema()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)) runs one
-query for the table list and then **three queries per table** (columns, foreign keys, indexes) —
-the classic `1 + N*3` pattern. MySQL also does **not** implement `getSchemaList()` /
-`getSchemaRelations()`, so the two-phase fast-tree loading that PostgreSQL uses is unavailable; the
-`/api/db/schema/list` route falls back to the single `getSchema()`. On a very large schema this is
-more round-trips than the Postgres approach — see [Known limitations](#14-known-limitations--future-work).
+Unlike PostgreSQL, this provider composes no `MATERIALIZED` CTEs: MySQL has no such hint, and
+`information_schema` is a set of views over the data dictionary rather than the materialised copies it
+was through 5.7. The object surface's bulk column read is four statements per folder
+([§7.1](#71-the-object-surface-789)) whatever the folder holds.
 
-### 3.2 Single-database scope
+### 3.2 Single-database scope, and how the object surface lifts it
 
-Every introspection query is parameterized with `TABLE_SCHEMA = ?` bound to `config.database`. MySQL
-"schemas" *are* databases, so the provider only ever sees the connected database, and table display
+The deleted flat reading parameterized every query with `TABLE_SCHEMA = ?` bound to `config.database`. MySQL
+"schemas" *are* databases, so that surface only ever sees the connected database, and table display
 names are bare (no `schema.table` prefixing). There is no cross-schema FK resolution to worry about.
+
+This is a property of the FLAT surface and not of the engine: MySQL resolves a qualified name across
+databases on one connection, so the object surface's `listContainers()` is bound to nothing and every
+database the server holds is browsable from one session ([§7.1](#71-the-object-surface-789)). Both
+surfaces are live through Phase 1 of #789.
 
 ### 3.3 BLOB / binary values reach every surface AS BYTES
 
@@ -173,8 +181,8 @@ module-local helper, `runStatement(queryable, sql, params?)`
 | carries none (or an empty array) | `conn.query(sql)` | text |
 
 Parameterised statements are unchanged: the placeholders are what the prepared protocol is for, and
-binding is what keeps a value out of the SQL text. So `getSchema()` and every `information_schema`
-read that names the database stay prepared, while `SHOW STATUS`, `SHOW VARIABLES`, `SELECT VERSION()`,
+binding is what keeps a value out of the SQL text. So every `information_schema` read that names the
+database stays prepared, while `SHOW STATUS`, `SHOW VARIABLES`, `SELECT VERSION()`,
 `SHOW BINARY LOGS`, the maintenance statement, `KILL`, and a parameterless statement from the editor —
 `EXPLAIN FORMAT=JSON …` among them — go over the text protocol.
 
@@ -239,7 +247,7 @@ against three live servers:
 | `getOverview` | ok | **recovered** (reads MySQL 5.7.32, the wire version) | **recovered** (reads MySQL 5.1.0, the fictitious `version()`) |
 | `getPerformanceMetrics` | ok | answers `{}` — nothing measured rather than a fabricated number | answers `{}` |
 | `getStorageStats` | ok | **recovered** | **recovered** |
-| `getSchema`, table/index stats, editor query, transactions | ok | ok | ok |
+| object reads, table/index stats, editor query, transactions | ok | ok | ok |
 | maintenance `analyze` / `optimize` / `check` | all three ok (`check` **recovered**) | all three ok (`optimize`, `check` **recovered**) | n/a |
 | Explain | ok, `EXPLAIN FORMAT=JSON` (the connect probe measures `mysql-json`) | **Explain tab renders the text plan, browser, 2026-09-06**: the probe measures `mysql-text`, the panel sends plain `EXPLAIN`, and one row came back for a constant `SELECT` ([§5.5](#55-the-explain-grammar-is-measured-at-connect)) | **Explain tab renders the text plan, browser, 2026-09-06**: the same probe and statement, 14 rows drawn as a 13-node tree |
 
@@ -556,17 +564,372 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 
 ## 7. Schema introspection
 
-`getSchema()` returns one `TableSchema` per `BASE TABLE` in the connected database. Per table it
-issues three follow-up queries:
+Every reading of this engine's objects goes through the object surface. The flat reading that came
+before it was one query for the table list plus three per table, and on MySQL it was also a cage:
+every one of its reads bound `TABLE_SCHEMA = config.database` ([§3.2](#32-single-database-scope-and-how-the-object-surface-lifts-it)),
+so the app showed exactly one database with no way to reach another. It is deleted.
 
-| Data | Source | Notes |
-|------|--------|-------|
-| Tables | `information_schema.TABLES` | `TABLE_ROWS` (engine estimate), `DATA_LENGTH + INDEX_LENGTH` |
-| Columns | `information_schema.COLUMNS` | first 100 (`LIMIT 100`); `isPrimary` = `COLUMN_KEY = 'PRI'` |
-| Foreign keys | `information_schema.KEY_COLUMN_USAGE` | rows where `REFERENCED_TABLE_NAME IS NOT NULL` |
-| Indexes | `information_schema.STATISTICS` | `GROUP_CONCAT` columns by `SEQ_IN_INDEX`; `unique` = `NOT NON_UNIQUE` |
+### 7.1 The object surface (#789)
 
-There is no `getSchemaList()`/`getSchemaRelations()` — see [§3.1](#31-n1-schema-introspection-no-materialized-ctes-no-two-phase-split).
+Five container-aware methods (`listContainers`, `countObjects`, `listObjects`, `describeObject`,
+`describeObjects`) declared in [`types.ts`](../../src/lib/db/types.ts) and implemented in
+[`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts).
+
+`information_schema` answers for every kind here, which is the OPPOSITE of
+[PostgreSQL's](./postgres.md) "read the native catalog" reasoning and is deliberate: MySQL 8's data
+dictionary made `information_schema` a set of views over the dictionary tables rather than the
+materialised copies it was through 5.7, so there is no cheaper native catalog to prefer, and the
+SQL-standard names are the portable ones across the wire-compatible family.
+
+#### `objectKinds` is a function of the SERVER, and this is the only provider where it is
+
+Six kinds on MySQL and eight on MariaDB. There is no `mariadb` type id and choosing MySQL in the
+connection dialog is the documented way to reach a MariaDB server ([§1.1](#11-mariadb-and-the-other-mysql-protocol-engines)),
+so the declaration is resolved from the server's own `VERSION()` string, measured once per
+`connect()` beside the EXPLAIN grammar probe ([§5.5](#55-the-explain-grammar-is-measured-at-connect)).
+The type id could not answer this question even if `src/lib/db` were allowed to ask it.
+
+| Kind | `role` | Catalog | Type column value | Note |
+|---|---|---|---|---|
+| `table` | `relation` | `information_schema.TABLES` | `BASE TABLE`, `SYSTEM VERSIONED` | `acceptsRowWrites: true`; two spellings, see below |
+| `view` | `relation` | `information_schema.TABLES` | `VIEW` | not a row-write target |
+| `procedure` | `routine` | `information_schema.ROUTINES` | `PROCEDURE` | |
+| `function` | `routine` | `information_schema.ROUTINES` | `FUNCTION` | |
+| `trigger` | `attached` | `information_schema.TRIGGERS` | n/a | `attachedTo: 'table'` |
+| `event` | `config` | `information_schema.EVENTS` | n/a | |
+| `package` | `group` | `information_schema.ROUTINES` | `PACKAGE` | **MariaDB only**, `childKinds: ['procedure', 'function']` |
+| `sequence` | `config` | `information_schema.TABLES` | `SEQUENCE` | **MariaDB only** |
+
+An unconnected provider declares the MySQL six, which is a real surface rather than internal state:
+`POST /api/db/provider-meta` reads capabilities off a provider it never connects (#457). The MySQL
+set is the safe default of the two, because declaring a kind the server does not have draws a folder
+that can never fill, while missing one costs two folders a MariaDB user regains the moment the
+connection is live.
+
+`containerLevels` is one level, `schema`, labelled **Database**: on MySQL the two words name the same
+object. No `catalog` level is declared, because MySQL has exactly one and
+`information_schema.SCHEMATA` is what a catalog would contain.
+
+**No `index` kind**, on the same line PostgreSQL and Oracle are read against. MySQL's own dictionary
+models an index as an attribute of the table it is on: `information_schema.STATISTICS` is keyed by
+`TABLE_SCHEMA` and `TABLE_NAME`, and an index cannot exist without them, so an index stays in
+`describeObject()`'s output beside that object's columns rather than becoming a container-level
+folder.
+
+**A MariaDB package's members are declared but not browsable yet.** `childKinds` is a true statement
+about the engine and Phase 2 renders it, but Phase 1's provider surface is container-scoped end to
+end, so a Procedures folder under a package would render, never badge, and expand to nothing.
+
+#### The `TABLE_TYPE` vocabulary enumerates the ENGINE, not the fixture
+
+Worth stating explicitly, because the first version of this provider got it wrong and the defect was
+invisible. The vocabulary came from `SELECT DISTINCT TABLE_TYPE` run against the seeded fixture,
+which enumerates the fixture; a type neither the `CASE` arms nor the listing bind names falls out of
+BOTH the count and the listing, so the two still agree and the object is simply absent from the tree
+with every gate passing.
+
+Enumerated by building a table for each case rather than by reading a fixture. Measured 2026-09-11
+on MySQL 26.7.0 and MariaDB 12.3.2:
+
+| `TABLE_TYPE` | MySQL | MariaDB | Mapped to |
+|---|---|---|---|
+| `BASE TABLE` | yes | yes | `table` |
+| `VIEW` | yes | yes | `view` |
+| `SYSTEM VIEW` | yes | yes | nothing, deliberately |
+| `SEQUENCE` | no | yes | `sequence` |
+| `SYSTEM VERSIONED` | no | yes | `table` |
+| `TEMPORARY` | no | yes | nothing, deliberately |
+
+A PARTITIONED table is `BASE TABLE` on both, so partitioning adds no spelling. `ROUTINE_TYPE` is
+`PROCEDURE` and `FUNCTION` on MySQL plus `PACKAGE` and `PACKAGE BODY` on MariaDB, and MariaDB's
+grammar has no other routine form.
+
+`SYSTEM VERSIONED` is a **`table`** and not a kind of its own. MariaDB's system versioning is a
+property of a table you still `SELECT` from, `INSERT` into and address by name, so giving it a folder
+would split one concept across two. Because `table` therefore has two spellings, the listing binds
+`TABLE_TYPE IN (?, ?)` with the placeholder count sized from the same vocabulary table the `CASE`
+arms are built from, so the two cannot disagree about how many spellings a kind has.
+
+The two exclusions are each wrong in a different way if reversed:
+
+- **`SYSTEM VIEW`** is what `information_schema`'s own tables are, and that schema is not a container
+  here.
+- **`TEMPORARY`** is SESSION-SCOPED, which a pooled provider cannot address at all. Measured on
+  MariaDB 12.3.2: a `CREATE TEMPORARY TABLE` is listed in `information_schema.TABLES` by the session
+  that created it and by no other (session A saw `tmp_cross`, session B saw none). This provider
+  hands out a different pooled connection per method call, so a Temporary folder would badge whatever
+  the connection that answered `countObjects` happened to hold, list whatever a different connection
+  held, and hand out addresses that resolve on one connection and not the next.
+
+#### A live guard, because "the vocabulary enumerates the engine" is a claim that decays
+
+The table above is right today and a future MariaDB release can add to it, and the failure mode is
+SILENCE: a spelling no `CASE` arm names is dropped from the count and from the listing alike, so the
+two agree, every gate passes, and the object is absent from the tree. That is exactly how
+`SYSTEM VERSIONED` hid here. Prose and an absence from a table do not detect anything.
+
+So the rules are a value, `CATALOG_TYPE_RULES` in
+[`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts): the modelled half is derived from
+`MYSQL_OBJECT_TYPES` so it cannot drift, and the excluded half is a MAP of spelling to reason, so an
+exclusion cannot be added without saying why. `tests/live/mysql-object-vocabulary.ts` then asks a
+real server for its own `SELECT DISTINCT TABLE_TYPE` and `SELECT DISTINCT ROUTINE_TYPE` and exits
+non-zero NAMING any value outside modelled-plus-excluded.
+
+**Where it runs.** It is a live check, so it is not in `bun run test` or `bun run test:ci`:
+`tests/run-core.sh` globs `tests/unit tests/api tests/integration tests/hooks tests/security
+tests/evals`, and nothing under `tests/live/` is collected, the same arrangement
+`tests/live/schema-diff-dialects.ts` has. It runs by hand against a disposable server, and belongs
+permanently in #789's live acceptance run:
+
+```bash
+LIBREDB_LIVE_MYSQL_URLS="mysql://root:root@127.0.0.1:3306/app,mysql://root:root@127.0.0.1:3307/app" \
+  bun tests/live/mysql-object-vocabulary.ts
+```
+
+Point it at a MySQL **and** a MariaDB; a run against one server is half a measurement.
+
+**What it cannot see, stated so the guard can be calibrated.** `SELECT DISTINCT` reports the
+spellings a server's DATA exhibits, not the spellings its grammar can produce, so both fixtures hold
+one object of every spelling this provider knows about, `WITH SYSTEM VERSIONING` included. The one
+spelling a fixture can never carry is `TEMPORARY`, since a temporary table dies with the session that
+made it; it stays recognised through its entry in `CATALOG_TYPE_RULES.tables.excluded`.
+
+The subset assertion has two ways to be vacuous and neither is visible from a live run, so both are
+pinned in the unit suite instead: that neither half of the rules is empty, that no spelling is in
+both halves, and that every exclusion carries a reason.
+
+#### A table and a stored routine can share a name, and this is measured
+
+#789 reasoned that they could and named MySQL as the engine that proves it. Measured 2026-09-11 on
+**MySQL 26.7.0** and **MariaDB 12.3.2**, in one database, each statement run after the one above it:
+
+| Statement | Answer |
+|---|---|
+| `CREATE TABLE app.foo (id INT PRIMARY KEY)` | accepted |
+| `CREATE PROCEDURE app.foo() SELECT 1` | accepted |
+| `CREATE FUNCTION app.foo() RETURNS INT DETERMINISTIC RETURN 1` | accepted |
+| `CREATE TRIGGER app.foo BEFORE INSERT ON app.foo FOR EACH ROW ...` | accepted |
+| `CREATE EVENT app.foo ON SCHEDULE EVERY 1 DAY DO SELECT 1` | accepted |
+| `CREATE VIEW app.foo AS SELECT 1 AS n` | **ERROR 1050 (42S01) `Table 'foo' already exists`** |
+| `CREATE SEQUENCE app.foo START WITH 1` (MariaDB) | **ERROR 1050 (42S01) `Table 'foo' already exists`** |
+
+So a table, a procedure, a function, a trigger and an event of one name coexist in one database, and
+the ONE namespace that is shared is the table/view/sequence one, and a MariaDB sequence is a table
+underneath, which is why it collides. A path is therefore unique WITHIN a kind and deliberately not
+across kinds, which is what `assertObjectSurface` in
+[`tests/helpers/object-surface-conformance.ts`](../../tests/helpers/object-surface-conformance.ts)
+asserts and what makes the tree's row identity path PLUS kind id. The fixture ships the pair as
+`app.order_archive`, a table and a stored procedure, so the answer cannot quietly stop being true.
+
+Two consequences follow for `describeObject()`. It takes the KIND as its second argument, and it has
+to: the detail reads key the last path segment against `TABLE_NAME`, so a name-driven describe would
+have handed `app.order_archive` the procedure its namesake table's five columns. And a path segment
+needs no disambiguator, unlike PostgreSQL's: MySQL does not overload routines, measured: a second
+`CREATE PROCEDURE app.foo(a INT)` over an existing `app.foo()` answers `ER_SP_ALREADY_EXISTS`.
+
+A trigger nests as `[database, table, trigger]` because `attachedTo: 'table'` says it hangs off its
+table, NOT because the name needs the table to be unique: measured, a trigger name is unique per
+DATABASE and not per table, and a second `CREATE TRIGGER app.foo` on a different table answers
+`ER_TRG_ALREADY_EXISTS`.
+
+#### `listContainers()` reads `information_schema.SCHEMATA`, bound to nothing
+
+That is what ends the single-database confinement. MySQL resolves a qualified name across databases
+on one connection, unlike PostgreSQL where a `pg` pool is pinned to one database, so every
+database the server holds is genuinely browsable from one session.
+
+Four schemas are hidden: `information_schema`, `mysql`, `performance_schema`, `sys`. It is a
+hand-written name list, unlike Oracle's `ORACLE_MAINTAINED` and PostgreSQL's `pg_depend` ownership
+test, because neither server publishes the fact: nothing in `SCHEMATA` says whether a schema is the
+server's own. What makes the list safe is that all four names are RESERVED, so hiding them can never
+hide a database a person created; measured 2026-09-11, `SCHEMATA` holds exactly these four plus the
+user's own on both servers. They are hidden from the BROWSER and stay fully reachable from the SQL
+editor, the same treatment `pg_catalog` gets on PostgreSQL, and this provider itself reads two of
+them.
+
+`Container.isSessionDefault` comes from `SCHEMA_NAME = DATABASE()`, the server's own answer for which
+database the session is in, rather than from `config.database`, because the configured value is what a
+person typed into a form. It is SQL NULL rather than 0 when no database was selected, which reads as
+false.
+
+#### `countObjects()` is one statement over four views
+
+One UNION ALL arm per view, one `GROUP BY`, one round trip for a whole folder row, and it reads no
+column of any table. The SAME statement text goes to both servers and nothing in it branches on the
+flavour: MySQL holds no `SEQUENCE` row and no `PACKAGE` row, so those `CASE` arms never fire there.
+The data decides, which is one fewer place the two branches can disagree.
+
+`WHERE kind IS NOT NULL` drops what the `CASE` has no name for rather than counting it under a folder
+that does not exist. Two things fall out that way:
+
+- **`SYSTEM VIEW`**, which is what `information_schema`'s own tables are on both servers.
+- **`PACKAGE BODY`**, which is a second `ROUTINES` row for one tree node exactly as on Oracle, so
+  counting it would double the Packages badge. The body cannot exist alone: measured,
+  `CREATE PACKAGE BODY` with no specification answers `ERROR 1305 PACKAGE app.orphan_pkg does not
+  exist`, so the `PACKAGE` row is present for every package and counting that row alone is complete.
+
+**A catalog row cannot create a folder.** A kind that was not declared is skipped rather than
+answered for, and on this provider that is a live case rather than defensive programming: a MariaDB
+server whose version probe came back empty answers `sequence` and `package` rows against a MySQL
+declaration. The DECLARATION decides which folders exist.
+
+**A refused read is `{ unavailable }`, never 0**, carrying the server's own sentence unmapped, and
+every declared kind is seeded at `{ count: 0 }` before the read so a folder the database holds none
+of renders a zero rather than disappearing. There is no partial outcome to report and no retry that
+could produce one, because the four views are one statement. Worth knowing when reading a small
+number: `information_schema` FILTERS by privilege rather than refusing, so a role that can see only
+part of a database gets a real count of the part it can see.
+
+#### `describeObject()` reads three narrow statements, and only for the `TABLES` kinds
+
+Columns, foreign keys and indexes, each bound to ONE database and ONE object. Only the kinds
+`information_schema.TABLES` resolves have any of the three, so a procedure, a function, a trigger, an
+event and a MariaDB package answer three empty arrays without a round trip, which is a true fact about those
+kinds rather than a failed read.
+
+A **MariaDB sequence DOES describe**, and that is why the rule is keyed on the CATALOG rather than on
+`role === 'relation'`: measured on 12.3.2, `information_schema.COLUMNS` answers eight real columns for
+one (`next_not_cached_value`, `minimum_value`, `maximum_value`, `start_value`, `increment`,
+`cache_size`, `cycle_option`, `cycle_count`), because a sequence is a table underneath. Its role is
+`config` rather than `relation` because nobody selects rows from it.
+
+Three differences from the deleted flat reads over the same views, all deliberate:
+
+- **No `LIMIT`.** The flat column read stopped at 100 columns, which a flat tree could live with and a
+  detail panel cannot: nothing downstream can tell a cap from a count, so a 140-column table would
+  report 100 columns as a fact.
+- **No `GROUP_CONCAT` for the index columns.** `group_concat_max_len` is 1024 by default on both
+  servers (measured) and the function truncates silently at it, so a wide composite index would report
+  a column list short by an unknowable amount. The object read takes one row per column and groups
+  them in code, which has no cap at all.
+- **`REFERENCED_TABLE_SCHEMA` is read.** InnoDB accepts a foreign key into another database, and the
+  object browser is no longer confined to one, so a reference that leaves the container is qualified;
+  a bare name there addresses a table in the wrong database.
+
+A `VIEW` carries neither a row count nor a size: measured, `information_schema.TABLES` answers NULL in
+`TABLE_ROWS`, `DATA_LENGTH` and `INDEX_LENGTH` for one, and 0 rows of 0 bytes would be a measurement
+nobody took. `TABLE_ROWS` on a base table is the engine's own estimate, the same nature as
+PostgreSQL's `reltuples`.
+
+**One known defect this surface inherits rather than repairs:** MariaDB reports
+`COLUMN_DEFAULT` as the DEFAULT EXPRESSION AS WRITTEN where MySQL reports the VALUE, and the two
+disagree in both directions. A nullable MariaDB column with no default reads as having the default
+`NULL`, and the string `NULL` means opposite things on the two servers; less visibly, MariaDB keeps
+the quotes, so `DEFAULT 'abc'` reads back as `'abc'` there and `abc` on MySQL. A repair that
+special-cases only `NULL` therefore leaves every string default wrong by two characters.
+Measured both ways and filed as **#795**, whose comment carries the
+full measurement table and what "done" looks like.
+
+#### `describeObjects()` describes a whole folder in four statements (#789)
+
+`describeObjects(container, kind, limit?)` answers columns, indexes and foreign keys for EVERY object of
+one kind in one database, in FOUR round trips whatever the folder holds.
+The single read is three statements per object, so a folder of 200 tables cost 600.
+Measured on MySQL 26.7.0 against a 200-table database built by the commands below: **13 ms for one
+`describeObjects()` against 118 ms for 200 `describeObject()` calls**, the same 600 columns and 400 indexes.
+
+The five decisions this engine had to make for itself, each measured rather than reasoned:
+
+**Which catalog.**
+The same three `information_schema` views `describeObject()` reads, and that is a real answer rather than an
+assumption carried over: PostgreSQL had to leave `information_schema.columns` because it holds no row at all
+for a materialized view or a sequence, and on this family it holds a row for every kind that has columns,
+a MariaDB `SEQUENCE` included.
+What the bulk read does NOT take from that view is the MEMBERSHIP of its answer.
+The target set is read from `information_schema.TABLES`, the same view `listObjects` reads, because a view
+whose base table has been dropped keeps its `TABLES` row and has NO `COLUMNS` row at all.
+Measured on both servers: `CREATE VIEW broken AS SELECT id FROM base; DROP TABLE base;` leaves one `TABLES`
+row and zero `COLUMNS` rows.
+A target derived from the column read would therefore drop an object the folder lists, which is the class of
+absence standing ruling 5a is about.
+It is also what lets an object the three detail reads answered nothing for come back with three empty lists
+rather than missing.
+
+**Which kinds have no columns.**
+The kinds read from `information_schema.ROUTINES`, plus `trigger` and `event`: a procedure, a function, a
+MariaDB package, a trigger and an event answer `{ details: [] }` with no round trip at all.
+A MariaDB `sequence` is NOT one of them, for the reason the single read gives above, and the rule is the one
+function `hasColumns()` so the two reads cannot disagree about it.
+
+**What bounds the read on the wire.**
+`LIMIT ?` inside the target subquery, the placeholder BOUND rather than interpolated: measured on MySQL
+26.7.0 and MariaDB 12.3.2 through the binary prepared protocol, a placeholder in a derived table's `LIMIT`
+is accepted.
+The provider binds `limit + 1`, so a saturated read is told from an exact one with no second count, drops the
+extra object, and reports the CALLER's limit in `truncated`.
+An unbounded call runs a statement with no `LIMIT` clause and can never report truncation.
+Neither the columns nor the indexes are capped: the deleted flat reading's `LIMIT 100` was an
+unreported bound and is the defect `truncated` exists to prevent.
+
+**What orders the cut, and under whose collation.**
+`ORDER BY TABLE_NAME` in the target statement, which runs under the SERVER's collation, and **the two servers
+in this family do not use the same one.**
+Measured: `information_schema.TABLES.TABLE_NAME` collates `utf8mb3_bin` on MySQL 26.7.0 and
+`utf8mb3_general_ci` on MariaDB 12.3.2, and the fixture makes the difference visible rather than theoretical.
+The `table` rows of `app` come back as `customers, order_archive, orders` on MySQL and as
+`customers, orders, order_archive, order_audit` on MariaDB, because `general_ci` folds `s` to the weight of
+`S` (0x53), which sorts below `_` (0x5F).
+The two lists differ in length as well as in order: `order_audit` is the `WITH SYSTEM VERSIONING` table, which
+only the MariaDB fixture creates because MySQL has no system versioning, so MySQL holds three `table` rows and
+MariaDB holds four (re-measured live on MySQL 26.7.0 and MariaDB 12.3.2 for #789 Task 27).
+So `describeObjects(["app"], "table", 2)` keeps `customers, order_archive` on one server and
+`customers, orders` on the other.
+That order decides WHICH objects a bound keeps and nothing else: the answer is re-sorted by path in code,
+which is one rule on every server, and a caller joins the two answers on path rather than on position.
+A bounded read's membership is therefore the server's, and it is not promised to be the same on two servers
+of this family.
+
+**Mixed path depth (ruling 5f).**
+Not in this engine's relation set.
+The kinds that have columns are all addressed `[database, name]`; `trigger` is the one kind here with a
+second possible depth, and it has no columns, so the target set is one shape.
+
+The three detail reads repeat the target subquery rather than joining a temporary of it, and that is safe for
+one measured reason: a table name is unique within a database, so `ORDER BY TABLE_NAME` is a TOTAL order and
+all four statements cut the same set.
+Rows for the extra `limit + 1` object are dropped in code, since the target list is what says which objects
+the answer is about.
+One statement for all four is not reachable here: mysql2 sends one statement per call, and `JSON_ARRAYAGG`
+has no ordering guarantee at all, so the column order a person reads would become the order the optimizer
+happened to produce.
+
+An empty container costs ONE round trip rather than four.
+
+Rebuilding the 200-table database the timing above was measured on, so the number is re-runnable rather than
+asserted:
+
+```sql
+DROP DATABASE IF EXISTS bulk26a1; CREATE DATABASE bulk26a1;
+DELIMITER //
+CREATE PROCEDURE bulk26a1.seed()
+BEGIN
+  DECLARE i INT DEFAULT 0;
+  WHILE i < 200 DO
+    SET @s = CONCAT('CREATE TABLE bulk26a1.t', LPAD(i,3,'0'),
+                    ' (id INT PRIMARY KEY, a VARCHAR(20), b DECIMAL(10,2), KEY ix_a (a))');
+    PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+    SET i = i + 1;
+  END WHILE;
+END //
+DELIMITER ;
+CALL bulk26a1.seed();
+```
+
+#### The fixture, and running it
+
+[`docker/mysql-init/01-object-fixture.sql`](../../docker/mysql-init/01-object-fixture.sql) and
+[`docker/mariadb-init/01-object-fixture.sql`](../../docker/mariadb-init/01-object-fixture.sql) are
+mounted at `/docker-entrypoint-initdb.d` by the `mysql` and `mariadb` services in
+[`database-compose.yml`](../../database-compose.yml). Each image runs its file once, on a FRESH data
+directory only, so an already-initialized container has to be recreated before an edit takes effect.
+They build one object of every kind the respective server declares, in a database called `app`, plus a
+second database `reporting` so the container list has something to show that the connection did not
+open against, and a cross-database foreign key from `app.orders` into `reporting.regions`.
+
+`DELIMITER` in those files is a CLIENT command and is correct there because the `mysql` client is
+what runs them. It must never be sent through mysql2, which takes one statement per call and has no
+notion of it. `SET sql_mode = 'ORACLE'` is REQUIRED for `CREATE PACKAGE` and rewrites the grammar of
+everything after it, which is why it is the last thing in the MariaDB file.
 
 ---
 
@@ -904,6 +1267,8 @@ gated on the literal `vacuum`, so MySQL's own wording was written and never show
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `3306` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
+| `containerLevels` | one level, `{ id: 'schema', label: 'Database', labelPlural: 'Databases' }` ([§7.1](#71-the-object-surface-789)) |
+| `objectKinds` | six on MySQL, eight on MariaDB, resolved from the server's own `VERSION()` string at connect and never from the type id ([§7.1](#71-the-object-surface-789)) |
 
 ### Labels
 
@@ -1005,8 +1370,8 @@ the rule rather than paid for; the day a statement does, the rule narrows rather
 exception. A fixture that *answers* a listed statement is **recorded** rather than thrown at: a
 throw from there would arrive inside `getHealth()`'s per-panel catch as a panel error the test under
 way might legitimately be asserting, which is exactly where the original unfaithfulness did its
-damage. A file-scope `afterEach` — file scope because the file has five top-level `describe`s, and a
-hook inside one would leave four unguarded — drains the recorded violations and fails the single
+damage. A file-scope `afterEach`, file scope because the file has eight top-level `describe`s and a
+hook inside one would leave seven unguarded, drains the recorded violations and fails the single
 test that produced one.
 
 Because `mysql.ts` no longer emits any statement naming `sql_text`, nothing else in the suite can
@@ -1029,7 +1394,7 @@ And the mock connection answers **both `query` and `execute`**, recording which 
 went through. A mock that only answered `execute` could not tell a statement routed to the text
 protocol from one left on the prepared protocol, which is what
 [§3.4](#34-which-wire-protocol-a-statement-takes) turns on: the `MySQLProvider wire protocol` block
-pins the method for `getHealth`, `getOverview`, `getPerformanceMetrics`, `getSchema`,
+pins the method for `getHealth`, `getOverview`, `getPerformanceMetrics`, the object reads,
 `getStorageStats`, each maintenance statement, `cancelQuery`, the editor's own path (with and without
 parameters), the Explain statement `mysqlJsonStrategy` builds, and the transaction path.
 
@@ -1042,12 +1407,27 @@ parameters), the Explain statement `mysqlJsonStrategy` builds, and the transacti
 ### 12.2 Coverage
 
 20+ describe blocks cover: validation (incl. connection-string bypass), connect/disconnect,
-capabilities, `getSchema()` (columns/FKs/indexes, primary-key detection), health, maintenance (all
+capabilities, the object surface (columns/FKs/indexes, primary-key detection), health, maintenance (all
 types + kill validation), the full transaction lifecycle, `queryInTransaction`, query cancellation,
 overview, performance metrics, slow queries, active sessions, table/index/storage stats, every SSL
 branch, `prepareQuery`, error mapping (`ER_ACCESS_DENIED`, `ECONNREFUSED`), the non-SELECT envelope
 (DDL, `INSERT`, `UPDATE`, `DELETE`, and the transaction path) driven from real `ResultSetHeader`
 literals, and the wire protocol each statement takes.
+
+It also covers **the object surface** ([§7.1](#71-the-object-surface-789)) in two blocks. `object
+surface` holds the seven conformance tests: the declared kinds and roles on each server, the
+pre-connect declaration, the container list, and `assertObjectSurface` against the fixture's counts
+on MySQL and again on MariaDB. `MySQL object listing and detail` holds the rest: the catalog read
+behind each kind derived from the declaration, the counting statement's arms and exclusions, the
+seeded zeros, a refused count as `{ unavailable }`, trigger nesting at both depths, the path sort,
+the detail rows, the path-shape refusals, the three version-probe outcomes, and the namespace pair
+that settles whether one path can carry two kinds.
+
+**The MariaDB branch is driven by a MariaDB fixture and not by a flag.** `objectSurfaceFixture({
+mariadb: true })` changes the string `VERSION()` answers and adds the two MariaDB-only row sets, and
+nothing else, so a declaration that ignored the version string cannot produce two answers. Both
+declarations were then re-measured end to end against live containers, `mysql:latest` on 33106 and
+`mariadb:latest` on 33107, through the real `mysql2` driver.
 
 ### 12.3 Run it
 
@@ -1057,11 +1437,27 @@ bun run test:ci                                         # CI publish gate — pe
 bun run test:coverage                                   # CI coverage workflow — per-file core + components
 ```
 
-### 12.4 Optional: verifying against a live MySQL
+### 12.4 Optional: verifying against a live MySQL, and a live MariaDB
+
+The compose services carry the object-browser fixture ([§7.1](#71-the-object-surface-789)), so this
+is the way to get a server with one object of every declared kind on it:
 
 ```bash
-docker run --rm -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=app -p 3306:3306 mysql:8
-# then point a connection at localhost:3306 (db=app, user=root) in the Studio UI
+docker compose -f database-compose.yml up -d mysql                     # localhost:3306, db=app, user=root
+docker compose -f database-compose.yml --profile compat up -d mariadb  # localhost:3307, db=app, user=root
+```
+
+Point a connection at either one with type MySQL. MariaDB is the branch worth checking by hand,
+because it is the one that declares Packages and Sequences. Either image runs its fixture once, on a
+fresh data directory only, so a container that already exists has to be recreated first.
+
+With both up, run the catalog-vocabulary guard against them
+([§7.1](#71-the-object-surface-789)), which is the check that a future server has not grown a
+`TABLE_TYPE` this provider silently drops:
+
+```bash
+LIBREDB_LIVE_MYSQL_URLS="mysql://root:root@127.0.0.1:3306/app,mysql://root:root@127.0.0.1:3307/app" \
+  bun tests/live/mysql-object-vocabulary.ts
 ```
 
 ---
@@ -1079,12 +1475,13 @@ const provider = await createDatabaseProvider({
 
 await provider.connect();
 const res = await provider.query('SELECT id, email FROM users WHERE active = ?', [1]);
-const schema = await provider.getSchema();   // single call (no two-phase split)
+const tables = await provider.listObjects(['app'], 'table');
+const { details } = await provider.describeObjects(['app'], 'table');   // 4 statements
 await provider.disconnect();
 ```
 
 Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/cancel`,
-`POST /api/db/maintenance` (admin), and `POST /api/db/schema/list` (falls back to `getSchema()`).
+`POST /api/db/maintenance` (admin), and `POST /api/db/objects/inventory`.
 
 ---
 
@@ -1094,9 +1491,6 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   auto-killed (only explicit `cancelQuery()`/`KILL QUERY`). *Future:* derive a per-statement
   `MAX_EXECUTION_TIME` (the SELECT execution limit) from `queryTimeout`. (Note `wait_timeout` is
   unrelated — it bounds idle connections, not query execution.)
-- **N+1 schema introspection, no two-phase loading.** `getSchema()` issues `1 + 3×tables` queries
-  and there is no `getSchemaList()`/`getSchemaRelations()`, so large schemas are slower than the
-  Postgres MATERIALIZED-CTE path and the tree cannot stream relationships in.
 - **Pool tuning is limited** to `max` (`connectionLimit`); `min`/`idleTimeout`/`acquireTimeout` are
   ignored.
 - **Index `scans` is `CARDINALITY`**, an estimate of distinct values — not a real index-usage/scan

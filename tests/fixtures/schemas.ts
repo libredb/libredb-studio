@@ -1,7 +1,22 @@
-import type { TableSchema } from "@/lib/types";
+/**
+ * The shared object fixture every consumer test draws on (#789).
+ *
+ * `DetailedObject` rather than the flat `TableSchema` it held before, and each entry
+ * carries the two facts the flat shape could not: the `kind` its engine declared and the
+ * `path` its segments make up. That is what lets a consumer test exercise a real filter
+ * instead of a population nothing declared anything about, where every filter keeps
+ * everything and passes whatever it is given.
+ *
+ * The paths are two-segment and the names are BARE, which is the PostgreSQL shape the join
+ * in `src/lib/db/detailed-object.ts` exists for: a reading of the session default container
+ * drops the schema from the name it displays and keeps it in the segments.
+ */
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
-export const mockUsersTable: TableSchema = {
+export const mockUsersTable: DetailedObject = {
   name: "users",
+  kind: "table",
+  path: ["public", "users"],
   columns: [
     { name: "id", type: "integer", nullable: false, isPrimary: true, defaultValue: "nextval('users_id_seq')" },
     { name: "name", type: "varchar(255)", nullable: false, isPrimary: false },
@@ -19,8 +34,10 @@ export const mockUsersTable: TableSchema = {
   size: "64 kB",
 };
 
-export const mockOrdersTable: TableSchema = {
+export const mockOrdersTable: DetailedObject = {
   name: "orders",
+  kind: "table",
+  path: ["public", "orders"],
   columns: [
     { name: "id", type: "integer", nullable: false, isPrimary: true },
     { name: "user_id", type: "integer", nullable: false, isPrimary: false },
@@ -37,8 +54,10 @@ export const mockOrdersTable: TableSchema = {
   size: "128 kB",
 };
 
-export const mockProductsTable: TableSchema = {
+export const mockProductsTable: DetailedObject = {
   name: "products",
+  kind: "table",
+  path: ["public", "products"],
   columns: [
     { name: "id", type: "integer", nullable: false, isPrimary: true },
     { name: "name", type: "varchar(255)", nullable: false, isPrimary: false },
@@ -51,6 +70,6 @@ export const mockProductsTable: TableSchema = {
   size: "32 kB",
 };
 
-export const mockSchema: TableSchema[] = [mockUsersTable, mockOrdersTable, mockProductsTable];
+export const mockSchema: DetailedObject[] = [mockUsersTable, mockOrdersTable, mockProductsTable];
 
-export const emptySchema: TableSchema[] = [];
+export const emptySchema: DetailedObject[] = [];

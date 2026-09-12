@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D51, U17 · 12
+- [Drivers and connections](#drivers-and-connections) — D1–D55, U17 · 16
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X12, U2–U21 · 6
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X13, U2–U21 · 7
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B75 · 21
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B80 · 24
 
 ---
 
@@ -232,9 +232,9 @@ role, not inferred from the code.
 
 Measured 2026-08-27 against `datafuselabs/databend:v1.2.925-patch-11` (issue #424, Phase 0).
 Databend replies `Prepare is not support in Databend` to mysql2's prepared protocol, and that one
-answer takes `getTables()`, `getSchema()`, `getActiveSessions()`, `getTableStats()`,
-`getIndexStats()` and `getStorageStats()` - the whole object browser and every statistics panel -
-while the editor keeps working.
+answer takes the object reads, `getActiveSessions()`, `getTableStats()`, `getIndexStats()` and
+`getStorageStats()` - the whole object browser and every statistics panel - while the editor keeps
+working.
 
 **The catalogs are there.** Asked with literal SQL on the same connection,
 `information_schema.tables` returns the true 3 and 2000 rows with `data_length` 124 and 49000, and
@@ -533,6 +533,76 @@ FIELD inside a successful response is a different question and needs its own mea
 optional fields are absent rather than 0 on the refusal, each provider's doc and test move with it, and
 `maxConnections` keeps its 0 - for that field the type says 0 and absence are one fact.
 
+### D52. A Couchbase node behind a port mapping is unreachable
+
+`http-transport.ts` resolves the query service from the cluster's own node map, which is right for a
+plain deployment and wrong behind a port mapping. A node advertises its INTERNAL ports there, so a
+container published on other host ports hands back an address only the container can reach, and the
+`DEFAULT_QUERY_PORT = 8093` fallback at `http-transport.ts:484` is unreachable for the same reason.
+The connection's own port is read for management (`:367`) and never for the query service.
+
+Measured on Couchbase CE 8.0.2 during the object-model epic's live acceptance: a node published on
+38091/38093 failed while the same node on 8091/8093 worked.
+
+Couchbase's own answer to this is `alternateAddresses.external`, which the transport already prefers
+when the cluster publishes it (`:473-477`), so an operator-configured cluster is fine today. What is
+not handled is the ordinary developer case of a stock image published on other ports, where nothing
+configures the external address and the user has already told us the port.
+
+Not fixed inside #789 because it is a transport defect with no object-model component, and that PR
+is a major already carrying seventeen providers.
+
+**Done when:** a Couchbase connection reaches the query service on a node published behind a port
+mapping, with the precedence between the node map, the external addresses and the user's own port
+stated where a reader meets it.
+
+### D53. The libSQL object fixture exists only as prose
+
+Every other engine's object fixture is a file under `docker/*-init/` mounted by
+`database-compose.yml`. libSQL's is a fenced SQL block in `docs/providers/libsql.md:584`, so it is
+applied by hand and cannot drift-check against the suite that depends on it. Standing ruling 5i in
+the object-model epic says a fixture is a deliverable rather than scaffolding, and this one is the
+exception nobody chose.
+
+Applying it also needs a client that does not split `CREATE TRIGGER ... BEGIN ... END` on the
+semicolon, which is a real trap for anyone reproducing the suite and is currently unwritten.
+
+**Done when:** the libSQL fixture is a file applied the way the other sixteen are, or the doc says
+why it cannot be and how to apply it safely.
+
+### D54. The data profiler can only profile columns on PostgreSQL-family engines
+
+`src/app/api/db/profile/route.ts:115-116` casts every column with `${safeCol}::text` to take
+its `MIN` and `MAX`. That is PostgreSQL's cast syntax, and it is written once for every engine:
+SQL Server, Oracle, MySQL, ClickHouse and the rest reject it, so each column comes back as
+"Could not profile this column" while the row count and the column list beside it are correct.
+The failure is per column and the panel still renders, which is why it reads as a data problem
+rather than a dialect one.
+
+Measured in a browser during #789's review, on SQL Server 2022 against `shop.dbo.customers`:
+three columns, three refusals, two rows counted correctly.
+
+Pre-existing and not caused by #789: `git show main:src/app/api/db/profile/route.ts` carries the
+identical two lines. It became visible because the object tree's row menu now offers Profile on
+every relation of every engine, where the flat explorer offered it on the tables it listed.
+
+Closing it is a per-dialect text cast measured on each engine rather than a one-line change:
+Oracle has `TO_CHAR`, SQL Server `CAST(x AS NVARCHAR(MAX))`, MySQL `CAST(x AS CHAR)`, ClickHouse
+`toString`, and `MIN`/`MAX` over a cast do not order the same way everywhere, so what the two
+numbers MEAN needs stating per engine rather than assuming a lexicographic answer is wanted.
+
+**Done when:** a column profiles on every engine whose provider offers the action, or the action
+is not offered where it cannot answer, with the engine's own sentence rather than a generic one.
+
+### D55. The admin Operations table list does not print a row's schema
+
+Two tables with the same label in different schemas render as identical rows, so an operator
+choosing between them has only the deep link's own marking to tell them apart. Found while moving
+the maintenance deep link onto the object path in #789, which now carries the full address; the
+list it lands on still shows a bare name.
+
+**Done when:** a row in that list is identifiable without relying on what marked it.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -650,6 +720,34 @@ and calling that lossless would be a lie.
 **Done when:** a declared type the target cannot parse is either translated or refused with something a
 reader can act on, proven by replaying a `jsonb` and a `json` result into ClickHouse, Trino and
 Cassandra.
+
+### X13. Profile is withheld from two engines by an engine-wide flag, and LibreDB has named objects behind it
+
+`row-actions.ts:146` gates Profile on `capabilities.tablesAreDerivedGroupings !== true`, which is a
+PROVIDER fact, while every other gate beside it is a per-kind declaration. The flag says "the rows
+this engine shows are prefix groupings this server derived from a bounded scan", and on Redis that
+is true of every row it has. On LibreDB it is true of one kind out of three: `keyspace` is derived,
+while `table` and `collection` are entries the persisted catalog NAMES, created by `table()` and
+`doc()` and addressed by the name their author chose (#789, Task 23). Those two are refused Profile
+purely because the gate never got a per-kind half.
+
+Nothing regresses today and that is measured, not assumed: `POST /api/db/profile` branches on
+`queryLanguage === "sql"` and this provider declares `json`, so a profile of a LibreDB table is sent
+as a MongoDB aggregate pipeline and the grammar answers
+`Unknown command ... Supported: get, put, delete, prefix, range`. Profile cannot work on ANY kind
+here, so withholding it from all three is the honest menu rather than a cost. That is pinned by a
+test in `tests/integration/db/libredb-provider.test.ts`.
+
+The condition that makes it bite is a separate fact changing: the day the profile route grows an arm
+for this engine's grammar, two named-object kinds stay silently refused with no declaration
+recording why, and the reason will read as a Redis decision rather than a LibreDB one. The same
+would happen to any future engine that sets the flag while holding cataloged objects.
+
+**Done when:** the per-kind half exists - a kind-level declaration saying whether a kind's rows are
+derived groupings, read beside the engine-wide flag the way `kindAcceptsRowWrites` is read beside
+`supportsInlineRowEdit` - or the engine-wide gate is deliberately kept with that decision written at
+`libredb.ts`'s `tablesAreDerivedGroupings` site and in `docs/providers/libredb.md`. Either way
+LibreDB's `table` and `collection` stop being refused by a flag that was never about them.
 
 ---
 
@@ -1802,3 +1900,60 @@ so), and none of them has been measured.
 
 **Done when:** a resume onto a repointed connection does one stated thing, and the run's own record
 says which.
+
+### B78. Generated Redis and LibreDB command text carries em dashes
+
+House style forbids em and en dashes in anything that lands in the repo or in front of a user.
+`src/lib/query-generators.ts` emits five of them into text a user reads in the editor, reproduced in
+the browser on a live Redis 8 during task 28b by pressing Generate Command on a key-prefix row:
+
+    # Redis commands for "bulk:*" — select a line and Run Selected.
+    # List keys under this prefix — ONE scan iteration, not the whole set.
+    # Create or update it — this overwrites an existing value
+
+plus `:229` for the hash variant and `:411` for the LibreDB header. Eleven more sit in that file's
+doc comments. Pre-existing rather than #789's, and named here because task 27 found it and it would
+otherwise disappear: it is not one edit but a small sweep, and
+`tests/unit/lib/query-generators.test.ts` pins the exact strings.
+
+**Done when:** no emitted line in that file carries an em or en dash, and its tests assert the new
+wording.
+
+### B80. The inventory's two bounds do not reach the container enumeration
+
+`POST /api/db/objects/inventory` bounds the listings it issues (`INVENTORY_PAIR_LIMIT`) and the
+objects it returns (`INVENTORY_LIMIT`), and its own docblock says so. Neither reaches the walk that
+produces the containers in the first place. `enumerateContainers`
+(`src/lib/db/container-walk.ts`) calls `listContainers()` once at the top level and then once per
+parent at every level below, with no cap: a two-level engine holding 5,000 catalogs issues 5,001
+round trips before the first pair exists, and only then meets a limit. The pair limit truncates the
+SCAN, never the walk.
+
+Not invented here, because `container-walk.ts` has a second reader: the agent's grounding inventory
+(`src/lib/agent/tools.ts`) performs the same walk from its run context. A cap belongs to both or to
+neither, and it needs the `truncated` shape the route already publishes, so it is one decision
+rather than a number chosen at one call site. The route's docblock states the gap where it bites.
+
+**Done when:** the walk reports a bound the same way a saturated scan does, both readers carry it,
+and a test drives an engine whose top level exceeds the cap.
+
+### B79. A connection switch reads the new connection with the old engine's container depth
+
+Reproducible in a browser in one click. Select a depth-0 connection (SQLite), then a depth-2 one
+(DuckDB): the first request the tree issues is `POST /api/db/objects/counts` with
+`{"connectionId":"seed:t28b-duckdb","container":[]}`, which answers HTTP 400 "A DuckDB container
+path is [database] or [database, schema], received []". The tree then re-reads correctly and the
+final paint is right, so nothing is visible to the user; the 400 is in the server log on every such
+switch.
+
+The cause is a one-commit prop skew rather than anything in the tree: `Sidebar` renders `ObjectTree`
+with `activeConnection` and `metadata`, `useProviderMetadata` clears its metadata in an EFFECT, and a
+child's effects run before its parent's - so the tree's reconciler fires once with the new connection
+and the previous engine's `capabilities`. `Sidebar`'s own comment reasons about metadata being
+ABSENT ("Nothing is drawn while the declaration is missing") and not about it being STALE.
+
+Pre-existing in shape and newly consequential: while the sidebar only listed tables, a stale
+capability object cost nothing, and now the request SHAPE is derived from it.
+
+**Done when:** no read is issued for a connection whose declaration has not arrived, proven by a test
+that switches between two engines of different depth and asserts what was posted.

@@ -1,5 +1,5 @@
 import React from "react";
-import { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import {
   Search,
@@ -37,7 +37,7 @@ import { writeToClipboard } from "@/components/copy-button";
 import { ColumnList } from "./ColumnList";
 
 interface TableItemProps {
-  table: TableSchema;
+  table: DetailedObject;
   isExpanded: boolean;
   onToggle: () => void;
   // `labels` is itself optional on ProviderMetadata, so the indexed access already
@@ -45,12 +45,14 @@ interface TableItemProps {
   labels?: NonNullable<ProviderMetadata["labels"]>;
   capabilities?: ProviderMetadata["capabilities"];
   isAdmin: boolean;
-  onTableClick?: (tableName: string) => void;
-  onGenerateSelect?: (tableName: string) => void;
-  onProfileTable?: (tableName: string) => void;
-  onGenerateCode?: (tableName: string) => void;
-  onGenerateTestData?: (tableName: string) => void;
-  onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", table?: string) => void;
+  onTableClick?: (path: readonly string[]) => void;
+  onGenerateSelect?: (path: readonly string[]) => void;
+  // ADDRESSES, one element per segment, the same shape `onTableClick` above already takes:
+  // the shell resolves the object by path, because a label is not unique (#789, Task 35).
+  onProfileTable?: (path: readonly string[]) => void;
+  onGenerateCode?: (path: readonly string[]) => void;
+  onGenerateTestData?: (path: readonly string[]) => void;
+  onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", path?: readonly string[]) => void;
 }
 
 type TableItemCallbacks = Pick<
@@ -64,7 +66,7 @@ type TableItemCallbacks = Pick<
  * travels as one object rather than as a positional list.
  */
 interface MenuItemsContext {
-  table: TableSchema;
+  table: DetailedObject;
   labels: TableItemProps["labels"];
   capabilities: TableItemProps["capabilities"];
   isAdmin: boolean;
@@ -107,11 +109,11 @@ function renderMenuItems({
 
   return (
     <>
-      <Item onClick={() => callbacks.onTableClick?.(table.name)}>
+      <Item onClick={() => callbacks.onTableClick?.(table.path)}>
         <Play strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-green" />
         {labels?.selectAction || "Select Top 50"}
       </Item>
-      <Item onClick={() => callbacks.onGenerateSelect?.(table.name)}>
+      <Item onClick={() => callbacks.onGenerateSelect?.(table.path)}>
         <Funnel strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
         {labels?.generateAction || "Generate Query"}
       </Item>
@@ -123,23 +125,23 @@ function renderMenuItems({
           address it — so this separator is unconditional (#427). */}
       <Separator />
       {rowsAreAddressable && (
-        <Item onClick={() => callbacks.onProfileTable?.(table.name)}>
+        <Item onClick={() => callbacks.onProfileTable?.(table.path)}>
           <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-cyan" />
           {"Profile Table"}
         </Item>
       )}
-      <Item onClick={() => callbacks.onGenerateCode?.(table.name)}>
+      <Item onClick={() => callbacks.onGenerateCode?.(table.path)}>
         <Code strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-purple" />
         {"Generate Code"}
       </Item>
       {rowsAreAddressable && (
-        <Item onClick={() => callbacks.onGenerateTestData?.(table.name)}>
+        <Item onClick={() => callbacks.onGenerateTestData?.(table.path)}>
           <WandSparkles strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-amber" />
           {"Generate Test Data"}
         </Item>
       )}
       {/* A PER-ROW maintenance action needs an addressable row AND an engine with
-          maintenance to run: both items call `onOpenMaintenance("tables", table.name)`,
+          maintenance to run: both items call `onOpenMaintenance("tables", table.path)`,
           and for a derived grouping there is no such object to name — which is exactly
           the dead end #427 reported for Redis "Key Info".
 
@@ -158,7 +160,7 @@ function renderMenuItems({
 
           What this gate CANNOT answer is the rest of U22: both items are deep links, and the
           destination renders a per-table control only for a ROW it has statistics for. Nothing
-          here knows whether one will arrive: `TableSchema.rowCount` and `.size` are optional and
+          here knows whether one will arrive: `DetailedObject.rowCount` and `.size` are optional and
           come from the schema read, not from the monitoring statistics the destination lists, and
           no declared capability says whether an engine publishes per-table figures - so
           withholding the link would need a new capability flag this repo does not want. The
@@ -172,13 +174,13 @@ function renderMenuItems({
         <>
           <Separator />
           {analyzeControl.offered && (
-            <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>
+            <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.path)}>
               <Search strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-amber" />
               {analyzeControl.label ?? labels?.analyzeAction ?? "Analyze Table"}
             </Item>
           )}
           {vacuumControl.offered && (
-            <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>
+            <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.path)}>
               <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
               {vacuumControl.label ?? labels?.vacuumAction ?? "Vacuum Table"}
             </Item>

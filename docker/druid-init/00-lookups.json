@@ -1,0 +1,18 @@
+{
+  "__default": {
+    "libredb_country_names": {
+      "version": "v__VERSION__",
+      "lookupExtractorFactory": {
+        "type": "map",
+        "map": { "TR": "Turkey", "DE": "Germany", "US": "United States" }
+      }
+    },
+    "libredb_status_labels": {
+      "version": "v__VERSION__",
+      "lookupExtractorFactory": {
+        "type": "map",
+        "map": { "1": "active", "2": "archived" }
+      }
+    }
+  }
+}

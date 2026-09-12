@@ -4,13 +4,16 @@ import React, { useState, useMemo } from "react";
 import { Code, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/copy-button";
-import { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
+import { objectPathLabel } from "@/lib/db/object-path";
+import { objectSegment } from "@/lib/query-generators";
 
 interface CodeGeneratorProps {
   isOpen: boolean;
   onClose: () => void;
-  tableName: string;
-  tableSchema: TableSchema | null;
+  /** The object's ADDRESS, one element per segment (#789, Task 35), never its label. */
+  tablePath: readonly string[];
+  tableSchema: DetailedObject | null;
   databaseType?: string;
 }
 
@@ -175,7 +178,10 @@ export function mapSqlTypeToJava(sqlType: string): string {
   return "String";
 }
 
-export function generateCode(lang: Language, table: TableSchema): string {
+export function generateCode(lang: Language, table: DetailedObject): string {
+  // The type, model or struct NAME is for a person to read, so it is derived from the display
+  // label. The Prisma `@@map` below is not: it is what Prisma addresses the table by, so it
+  // takes the object's own segment, which the label is not required to equal (#789).
   const name = toIdentifier(table.name);
   const columns = table.columns || [];
 
@@ -204,7 +210,7 @@ export function generateCode(lang: Language, table: TableSchema): string {
         const auto = c.type.toLowerCase().includes("serial") ? " @default(autoincrement())" : "";
         return `  ${c.name}  ${prismaType}${nullable}${pk}${auto}`;
       });
-      return `model ${name} {\n${fields.join("\n")}\n\n  @@map("${table.name}")\n}`;
+      return `model ${name} {\n${fields.join("\n")}\n\n  @@map("${objectSegment(table.path)}")\n}`;
     }
     case "go": {
       const fields = columns.map((c) => {
@@ -248,7 +254,10 @@ export function generateCode(lang: Language, table: TableSchema): string {
   }
 }
 
-export function CodeGenerator({ isOpen, onClose, tableName, tableSchema, databaseType }: CodeGeneratorProps) {
+export function CodeGenerator({ isOpen, onClose, tablePath, tableSchema, databaseType }: CodeGeneratorProps) {
+  // Display only, and the qualified spelling rather than the last segment: two objects can
+  // carry one label, so a header reading `customers` cannot say which one this is.
+  const tableName = objectPathLabel(tablePath);
   const [language, setLanguage] = useState<Language>("typescript");
   const [showLangDropdown, setShowLangDropdown] = useState(false);
 

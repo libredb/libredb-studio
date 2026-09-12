@@ -44,6 +44,9 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   authSource: "public",
   schema: "public",
   queryTimeout: "public",
+  // A display preference: whether this browser reads the catalog when the connection
+  // opens. It grants nothing and unlocks nothing.
+  skipObjectScan: "public",
   managed: "public",
   seedId: "public",
   agentUser: "public",

@@ -397,22 +397,102 @@ nothing further.
 **There are TWO readings, and which one runs is the dialect's decision** (#414). On the dialects
 `CATALOG_PLANS` serves — PostgreSQL and SQLite — the server composes catalog statements and executes
 them under `agent-read-only`. On every other dialect it invokes `db.schema.read`, a sixth operation
-descriptor whose whole input is empty: it acquires `agent-operations`, calls the connection's own
-`provider.getSchema()` — the inspection the sidebar performs when it lists your tables — and returns
-the structure rather than rows to reassemble. Both go through `runAuditedAgentCall`, so both meet the
+descriptor whose whole input is empty: it acquires `agent-operations`, walks the connection's own
+object surface — the same reading the sidebar performs when it lists your objects — and returns the
+structure rather than rows to reassemble. Both go through `runAuditedAgentCall`, so both meet the
 same mode check, deadline admission, budget clamp, audit and artifact; there is no second, unaudited
 path to an engine. The two do NOT converge, and that asymmetry is structural: the composed path is
 audited statement by statement, carries foreign keys the provider path cannot on an engine that
 declares none, and SQLite's inventory is parsed out of stored DDL the provider does not expose the
 same way.
 
+**The provider path IS the object surface, and that is what says what each entry IS** (#789). The
+flat reading it replaced answered one list of names, the way a composed `information_schema.columns`
+read still returns a view's columns beside a table's with nothing to tell them apart. So a run was
+handed a view, a materialized view, a Redis key grouping and a Druid datasource under one word, and
+#414 measured what a model does with that: it drafted `KEYS user:*` against a row nobody had named.
+`readObjectInventoryForGrounding` asks the provider's own object surface instead:
+`listContainers` down to the declared depth, then `countObjects` per container, then `listObjects` for
+each kind the count did not answer zero for. It runs under the SAME `db.schema.read` descriptor, with
+its own fingerprint source, because it is a schema read and an operator denying that descriptor means
+to deny this too.
+
+**It is taken on the provider path only, and the read-only envelope is what decides that: the composed
+path reads the kind itself.** The object surface is reached through the four curated provider methods,
+and each of them sends its catalog statement through `provider.query`: no provider routes those through
+`queryReadOnly`, so there is no read-only transaction for them to arrive inside. On the engines the
+provider path grounds that costs nothing, because their whole grounding is already one curated call
+under `agent-operations`, the profile that exists because `agent-read-only` is refused for a provider
+with no read-only statement path. On PostgreSQL and SQLite it is not free: there the run's posture is
+that every statement it sends arrives inside `BEGIN READ ONLY`, down to the provider declining a bare
+EXPLAIN-format probe at connect to keep that true, and an object read taken there acquired a second
+provider under `agent-operations` and sent the walk's catalog SQL outside that envelope.
+
+Those two dialects do not lose the kind for it. They are the two engines agent mode executes on, and
+an inventory that hands a model a view under the word table is the defect #414 measured, so the kind is
+composed on the catalog path the same way every other fact that path carries is: the composed statement
+selects the ENGINE's own word for the relation, and `context-snapshot.ts` maps it onto the kind id the
+PROVIDER declares. On PostgreSQL that word is `pg_class.relkind`, joined into the column read by a pair
+of LEFT JOINs so a wire-compatible engine missing the catalog row loses the kind rather than the table;
+on SQLite it is the `sqlite_schema.type` column that read already selected. No provider method is
+called and no second provider is acquired, so the envelope is untouched.
+
+What that reading can honestly say is narrower than what the provider walk says, and it says only that.
+The ids, roles and labels are the provider's declaration, so a run and the object tree call a thing by
+one word, and an engine word the provider declares no kind for - a PostgreSQL foreign table - keeps NO
+kind rather than the likeliest one. The kinds an inventory declares are the ones its own objects were
+identified as: `information_schema.columns` holds no materialized view and no sequence at all
+(measured on postgres:18), so neither is in the reading and neither is named by it. No count and no
+sampled state travels with them, because this reading takes no per-kind count and samples nothing: a
+composed read that overran the row budget is REFUSED whole rather than truncated, so an inventory that
+arrived at all arrived complete.
+
+What it costs is ONE statement of the run's budget, and that one statement is not one provider call:
+inside it the walk issues `listContainers` per container level, then one `countObjects` per container,
+then one `listObjects` per container-and-kind pair the count did not answer zero for, up to the pair
+bound of 1,000. So the budget charge is a charge for the READING and not a measure of the traffic, and
+an engine with many containers pays for the reading in latency rather than in budget. The audit stream
+carries the one call, and the deadline this call was granted is what bounds the whole walk.
+
+**IT CARRIES COLUMNS TOO, and the join is gone.** This used to be an identity read with no columns,
+joined afterwards to a second, FLAT reading that had them: the key was every suffix of the object's
+path, most qualified first, because the flat readings did not agree on how much of the address they
+put in the single string they answered with, and an object whose name held a dot or whose engine
+spelled it differently matched nothing and reached the model with an empty column list. The flat
+reading is deleted. `describeObjects` answers a whole container-and-kind folder in ONE round trip, so
+the columns arrive WITH the identity and are joined on the PATH inside the walk itself, which both
+halves spell the same way because both came from the same call. The `includeColumns` that was once
+removed from the inventory route was one `describeObject` PER OBJECT, up to 5,000 sequential round
+trips; this is one call per container-and-kind pair, under the same pair bound the listing already
+obeys.
+
+What that leaves is narrower and is stated rather than inferred: an object the bulk read did not
+describe reaches the model with an EMPTY column list, which is a true reading on both of its arms - a
+kind that has no columns at all, a routine or a trigger or a sequence, and a bulk read the provider
+bounded before it reached that object. The second arm is why a provider's own `truncated` travels
+with the inventory and is said in the prompt: a model told nothing would read a missing column as an
+absent one.
+
+Two bounds, and they are literally the numbers `POST /api/db/objects/inventory` uses - one owner,
+`src/lib/db/inventory-bounds.ts`, imported by both - so that the agent and the route cannot disagree
+about how much of a database an inventory is: **5,000 objects** and **1,000 container-and-kind
+listings**. Either one biting reports `truncated`, which the packing turns into a
+sentence saying the inventory is incomplete and naming the limit. A kind whose count came back with
+`sampledFrom`, Redis key groupings from one bounded `SCAN` and LibreDB keyspaces from a bounded key
+walk, is reported as a FLOOR ("at least what is shown"), and a kind on an engine declaring
+`tablesAreDerivedGroupings` is named as groupings this server derived rather than objects anybody
+named, so no command can be addressed to one. An absence the model was not told about is read as an
+absence in the database, which is #414 in one sentence.
+
 **What the provider path costs, and what it cannot promise.** One statement of the run's budget, where
-PostgreSQL costs three and SQLite two. `getSchema()` takes no budget on any provider, so the call is
+PostgreSQL costs three and SQLite two. No object method takes a budget on any provider, so the call is
 raced against the timeout this call was granted — which bounds THE RUN and not the database: the driver
 call is not cancelled, this run simply stops waiting, and the capture is then `unavailable` whole
-rather than partial. And the reading is BOUNDED by the provider itself — MongoDB stops at 200
-collections, Redis scans 1000 keys, LibreDB 10000 — so the preface says the inventory is what the
-inspection found and not proof that nothing else exists. On MongoDB and Couchbase the field names are
+rather than partial. And the reading may be BOUNDED by the provider itself — Redis scans 1000 keys
+and LibreDB 10000, and each says so through `sampledFrom`, which makes that kind's count and listing
+a floor — so the preface says the inventory is what the inspection found and not proof that nothing
+else exists. MongoDB is NOT one of them, measured: `listCollections` is tallied whole, with no cap,
+and the 200-collection slice that claim came from belonged to the deleted flat reading. On MongoDB and Couchbase the field names are
 inferred from a sample of the user's own documents: no value is kept, but the existence of a field
 there is derived from data rather than read from a catalog, which is why `db.schema.read` is its own
 operation id an operator can deny without denying any other agent read.
@@ -583,7 +663,9 @@ Three consequences worth stating plainly, because each is easy to assume the oth
    statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
    because SQLite resolves table names at prepare time). On the other fifteen it is **one** — the
    single `db.schema.read` call, with no statistics read to add, since those dialects hold none this
-   run knows how to read. They come out of the same per-run statement budget every other read does,
+   run knows how to read. Since #789 an engine that declares object kinds costs **one more**, the
+   object-surface reading above; an engine that declares none is charged nothing extra, because a read
+   that cannot exist is never admitted. They come out of the same per-run statement budget every other read does,
    and they are audited the same way. The ledger-reuse path saves the schema reading and deliberately
    does **not** save the statistics read.
 2. **A plan run now writes `context-captured` to its own ledger**, which it never did before, and
@@ -598,8 +680,8 @@ Three consequences worth stating plainly, because each is easy to assume the oth
 ### What the inventory is an inventory OF
 
 Grounding a plan on nine more engines exposed something the two-engine version could not: this
-product records every schema in one shape, `TableSchema`, and the prompts had been using that shape's
-name as a **noun**. A plan run on a seeded local Redis read 17 real key prefixes through the provider
+product recorded every schema in one flat shape, and the prompts had been using that shape's name as
+a **noun**. A plan run on a seeded local Redis read 17 real key prefixes through the provider
 — the grounding worked — and, under a block headed *"Schema inventory for this run — 17 table(s)"*,
 drafted `KEYS user:*` in one run and `ZCARD user:*` in another. Neither names anything: `user:*` is a
 grouping this server computed by SCANning a bounded slice of the keyspace and collapsing everything
@@ -681,6 +763,13 @@ Two checks run before it is offered anywhere, and neither is more than it says:
   to a false alarm, so an empty unknown list means "nothing recognised was missing", never "the
   statement is sound". Nothing here checks **columns**. A run with no inventory records
   `no-inventory` rather than an empty list, because an empty list is a claim that every table exists.
+  Since the object model (#789) the comparison is against the entries whose declared kind has
+  `role: "relation"`, and never against every entry: a capture carries the schema's views, sequences
+  and macros too, and DuckDB lists a macro under its bare name, so a draft reading `FROM order_total`
+  would otherwise be told the object it named exists. A kind marked as derived groupings is refused
+  by the same line, because those rows are prefix groupings the server derived rather than objects
+  anybody named. An entry with no kind at all is KEPT: an inventory recorded before kinds existed
+  declares none, and reporting all of it as unknown would be a false alarm on every resumed run.
 - **Read-only classification**, through the existing statement guard (`inspectAgentStatement`). A
   statement that is not read-only is **not blocked** — the owner ruled on that — but it is marked, on
   the event and visibly in the rail, so that hand-off never quietly gives a user a `DELETE`.
@@ -914,11 +1003,28 @@ though both are conventional in a profiler.
 
 The model names a **table**, never columns and never SQL. The columns come from the run's own
 captured inventory, so a profile cannot be aimed at something the run never established exists, and
-an unqualified name is resolved against a qualified inventory only when exactly one table matches —
-two schemas holding the same table name is precisely when a guess would profile the wrong one. **The
-composed statement targets what was RESOLVED**, not the model's spelling: composing from the
-spelling left PostgreSQL's `search_path` to decide which relation was read while the ledger said a
-qualified one had been profiled.
+what it may resolve to is narrowed by the declared role the same way the identifier check is (#789):
+a sequence or a macro in the inventory is refused with `OBJECT_NOT_PROFILABLE`, which CONFIRMS the
+object and refuses the action rather than denying a name the model can see in the inventory, and
+carries the engine's own word for the kind as its detail. The names such a refusal offers back are
+only ones it would then accept. **A spelling is resolved against the inventory's addresses rather
+than compared to them**, by the one rule in `src/lib/db/object-address.ts`: it matches an entry whose
+address ENDS with it, segment by segment, with the most qualified match winning outright. So a model
+may name `orders` against a `sales.orders` inventory, and on an engine whose containers are two deep
+it may name `sales.orders` against a `shop.sales.orders` one, which is the form that engine's own
+documentation writes. Two entries answering one spelling at the same length are refused rather than
+guessed between, because two schemas holding the same table name is precisely when a guess would
+profile the wrong one, and a named qualifier is never matched against a bare entry.
+That refusal is `TABLE_SPELLING_AMBIGUOUS`, and it NAMES THE ENTRIES: it used to be answered as
+`TABLE_NOT_INVENTORIED`, which told a model that had just been shown both objects that the table was
+not in the inventory at all, and then offered it the first six profilable names, neither of which was
+a candidate.
+An ambiguity is repairable by qualifying the spelling and an absence is not, so the addresses the run
+holds are the whole of the help and they travel as the refusal's detail. **The composed
+statement targets what was RESOLVED**, not the model's spelling, and it quotes the resolved address
+one segment at a time: composing from the spelling left PostgreSQL's `search_path` to decide which
+relation was read while the ledger said a qualified one had been profiled, and joining the address
+before quoting it would name an identifier no engine holds.
 
 A profile **settles a step**, like every other database reach: its invocation is on the ledger before
 its effect, so it inherits the cancellation checkpoint, the replay of an identical call, and the
@@ -1016,7 +1122,7 @@ What differs is the **packing** (`packOperationsInventory`, `context-snapshot.ts
   the identifier list *is* the payload and the run is told to match what the engine reports against
   it — so an unquoted table name carrying a newline, or an index named `a, b_unique`, would add an
   entry nobody created and the run could recommend action on it.
-- **What it CALLS them is the provider's word, not `TableSchema`'s.** The header, the omission notice
+- **What it CALLS them is the provider's word, not this repo's.** The header, the omission notice
   and the note above it take their noun from `ProviderLabels.entityName` (#414), so a Redis Operate
   run reads "key pattern(s)" rather than "table(s)" — and where those rows are groupings this server
   derived rather than objects the engine holds, the plan rules say so in one sentence. See
@@ -1969,7 +2075,7 @@ model passed the capability probe**; for anybody else the answer is that there i
 | **A free-form markdown report**, opening with a performance score out of 100 and closing with configuration advice. | A report is claims, each citing an artifact this run read or the snapshot it captured, verified against the run's own ledger before it is recorded. A number cited to nothing cannot be reported — the citation is what is checked, never the claim's text, so a fabricated score citing a real artifact would be accepted. | `src/lib/agent/tools.ts` (`composeReportTool`); `tests/evals/legacy-surface-coverage.test.ts` — an invented correlation id is refused and the run ends `unanswered (no-report)`. |
 | **Maintenance tasks** — `VACUUM`, `ANALYZE`, reindexing — in the same report. | Nothing proposes them: the `change` card has two members and neither is maintenance. It stays where it was before the panels — the monitoring surface, and the user's own editor. | `src/lib/agent/tools.ts` (`recommendationSchema`). |
 | **Multi-turn conversation.** NL2SQL replayed the whole exchange on every request, so "and how many in the second one?" was answerable. | **Largely restored, and differently.** A follow-up is still a NEW run — a run's objective is fixed when it starts, and no ledger event records a later question — but it now belongs to a CONVERSATION and is told about it: every earlier step's objective, and the most recent step's report, derived server-side from those runs' own ledgers and fenced before the model reads it. What is not restored is the replay: NL2SQL re-sent the whole exchange verbatim, while a conversation carries a bounded account of it, and only the newest step's findings. Two other differences are deliberate — the run still re-reads the catalog, because its inventory is its own evidence; and `LIBREDB_AGENT_THREAD_CONTEXT=false` turns the whole thing off, which no panel offered. See [the conversation a run belongs to](#the-conversation-a-run-belongs-to). | `src/lib/agent/thread-context.ts`; `src/app/api/agent/runs/route.ts`; `tests/evals/thread-context.test.ts` — a three-step conversation, and the fence the block arrives inside. |
-| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is never guessed at — since #414 it is read a different way instead of being refused. **A run whose workflow sends statements is refused on another engine before it opens**: `POST /api/agent/runs` answers 400 with the posture's own sentence when the mode is agent and `AGENT_WORKFLOW_SENDS_STATEMENTS` holds for the requested workflow, so no run id and no model turn are spent on a refusal the connection's type already decided. What an engine that IS admitted can then do differs by MODE. **Agent mode is still the two dialects**: its read-class tools reach the database through `provider.queryReadOnly`, which is the same fact the refusal reads. **Plan mode is now every engine**: its grounding acquires `agent-operations` and calls `provider.getSchema()` (`db.schema.read`), so a plan run on MongoDB is ordinarily grounded and is asked for one statement or command **in that engine's own language**, in a block still tagged with the canonical type-id. What the engine decides is no longer whether a plan is grounded but HOW — a composed catalog statement or a provider inventory, and whether estimated statistics exist at all — and the four prefaces say which. Where the reading itself fails, the run is steered to the `NO STATEMENT:` refusal with the capture's own diagnosis. **The `operations` workflow reaches every engine in both modes**, because it composes no SQL at all, and since #411 it is grounded under the same rule as everything else. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`, `captureFromProvider`, `packOperationsInventory`), `src/lib/db/operations/descriptors.ts` (`db.schema.read`); `tests/unit/lib/agent/context-snapshot.test.ts` — the provider path, its timeout and its refusals; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts` — a plan run whose provider cannot describe itself runs no statement and says it is ungrounded; `tests/isolated/agent-investigation.test.ts` — a plan run grounded through the engine's own schema inspection. |
+| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is never guessed at — since #414 it is read a different way instead of being refused. **A run whose workflow sends statements is refused on another engine before it opens**: `POST /api/agent/runs` answers 400 with the posture's own sentence when the mode is agent and `AGENT_WORKFLOW_SENDS_STATEMENTS` holds for the requested workflow, so no run id and no model turn are spent on a refusal the connection's type already decided. What an engine that IS admitted can then do differs by MODE. **Agent mode is still the two dialects**: its read-class tools reach the database through `provider.queryReadOnly`, which is the same fact the refusal reads. **Plan mode is now every engine**: its grounding acquires `agent-operations` and walks the provider's object surface (`db.schema.read`), so a plan run on MongoDB is ordinarily grounded and is asked for one statement or command **in that engine's own language**, in a block still tagged with the canonical type-id. What the engine decides is no longer whether a plan is grounded but HOW — a composed catalog statement or a provider inventory, and whether estimated statistics exist at all — and the four prefaces say which. Where the reading itself fails, the run is steered to the `NO STATEMENT:` refusal with the capture's own diagnosis. **The `operations` workflow reaches every engine in both modes**, because it composes no SQL at all, and since #411 it is grounded under the same rule as everything else. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`, `captureFromProvider`, `packOperationsInventory`), `src/lib/db/operations/descriptors.ts` (`db.schema.read`); `tests/unit/lib/agent/context-snapshot.test.ts` — the provider path, its timeout and its refusals; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts` — a plan run whose provider cannot describe itself runs no statement and says it is ungrounded; `tests/isolated/agent-investigation.test.ts` — a plan run grounded through the engine's own schema inspection. |
 
 One of these has since been restored under its own workflow (the monitoring row, which closed both
 deferrals that tracked it), and the first row is Phase 1's own boundary rather than a defect, and its one
@@ -2492,6 +2598,17 @@ the role's own grants are the whole boundary (A3).
   fix,
   left unmodelled because the user-index reader drops `COLLATE` too and honouring it in one reader
   only would make the inventory disagree with itself.
+- **B78** — the Redis and LibreDB command generators emit em dashes into text a user reads in the
+  editor. Pre-existing house-style debt, recorded rather than swept because its tests pin the exact
+  strings.
+- **B79** — switching between two connections of different container depth issues one read for the
+  new connection under the old engine's declaration, which answers 400 and is then re-read
+  correctly. A one-commit prop skew rather than a tree defect: the metadata hook clears itself in an
+  effect, and a child's effects run before its parent's.
+- **B80** — the object inventory route bounds its listings and its objects, and neither bound reaches
+  the container walk underneath them, which is unbounded at every level. Not capped at the call site
+  because the agent's own grounding inventory walks the same code, so the cap and the way it is
+  reported belong to both readers.
 - **B59** — per-model WORDING has nowhere to go. A sentence is a measured value here (twice a shared
   change won cells and lost others, and had to be reverted whole), and the per-model override is
   gone: the document refuses wording and nothing else can populate it. Refusing unsigned prompt text

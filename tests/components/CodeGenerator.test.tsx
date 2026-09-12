@@ -6,7 +6,7 @@ import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { CodeGenerator } from "@/components/CodeGenerator";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
 // The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
 // `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
@@ -22,8 +22,10 @@ function setExecCommand(execCommand: ((command: string) => boolean) | undefined)
   Object.defineProperty(globalThis.document, "execCommand", { value: execCommand, configurable: true });
 }
 
-const schema: TableSchema = {
+const schema: DetailedObject = {
   name: "users",
+  kind: "table",
+  path: ["users"],
   indexes: [],
   columns: [
     { name: "id", type: "SERIAL", nullable: false, isPrimary: true },
@@ -45,14 +47,14 @@ describe("CodeGenerator", () => {
 
   test("does not render when isOpen is false", () => {
     const { container } = render(
-      <CodeGenerator isOpen={false} onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen={false} onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     expect(container.textContent).toBe("");
   });
 
   test("renders TypeScript interface by default", () => {
     const { queryByText, container } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     expect(queryByText("Code Generator")).not.toBeNull();
     expect(container.textContent).toContain("export interface User");
@@ -62,7 +64,7 @@ describe("CodeGenerator", () => {
 
   test("switches language via dropdown", () => {
     const { queryByText, container } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     fireEvent.click(queryByText("TypeScript Interface")!);
     fireEvent.click(queryByText("Go Struct")!);
@@ -76,7 +78,7 @@ describe("CodeGenerator", () => {
     setClipboard({ writeText });
 
     const { getByTestId } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     fireEvent.click(getByTestId("code-generator-copy"));
     expect(writeText).toHaveBeenCalledTimes(1);
@@ -89,7 +91,7 @@ describe("CodeGenerator", () => {
     setExecCommand(() => false);
 
     const { getByTestId } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     fireEvent.click(getByTestId("code-generator-copy"));
 
@@ -99,44 +101,55 @@ describe("CodeGenerator", () => {
 
   test("close button fires onClose", () => {
     const onClose = mock(() => {});
-    const { container } = render(<CodeGenerator isOpen onClose={onClose} tableName="users" tableSchema={schema} />);
+    const { container } = render(
+      <CodeGenerator isOpen onClose={onClose} tablePath={["app", "users"]} tableSchema={schema} />,
+    );
     const closeBtn = container.querySelector("button");
     fireEvent.click(closeBtn!);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  test("shows table name in header", () => {
+  test("names the object by its ADDRESS, so two objects sharing a label read differently", () => {
+    // The header used to render the bare label, which is the same string for the `orders`
+    // in `app` and the one in `dbo` (#789, Task 35).
     const { queryAllByText } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="orders" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["shop", "dbo", "orders"]} tableSchema={schema} />,
     );
-    // Table name appears in header and footer
-    expect(queryAllByText("orders").length).toBeGreaterThanOrEqual(1);
+    // The address appears in the header and again in the footer.
+    expect(queryAllByText("shop.dbo.orders").length).toBeGreaterThanOrEqual(1);
+    expect(queryAllByText("orders")).toHaveLength(0);
   });
 
   test("shows database type when provided", () => {
     const { queryByText } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} databaseType="postgres" />,
+      <CodeGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["app", "users"]}
+        tableSchema={schema}
+        databaseType="postgres"
+      />,
     );
     expect(queryByText("postgres")).not.toBeNull();
   });
 
   test("does not show database type badge when not provided", () => {
     const { queryByText } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     expect(queryByText("postgres")).toBeNull();
   });
 
   test("shows no schema message when tableSchema is null", () => {
     const { container } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={null} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={null} />,
     );
     expect(container.textContent).toContain("No schema available");
   });
 
   test("switches to Zod schema", () => {
     const { queryByText, container } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     fireEvent.click(queryByText("TypeScript Interface")!);
     fireEvent.click(queryByText("Zod Schema")!);
@@ -145,7 +158,7 @@ describe("CodeGenerator", () => {
 
   test("switches to Prisma model", () => {
     const { queryByText, container } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     fireEvent.click(queryByText("TypeScript Interface")!);
     fireEvent.click(queryByText("Prisma Model")!);
@@ -154,7 +167,7 @@ describe("CodeGenerator", () => {
 
   test("switches to Python dataclass", () => {
     const { queryByText, container } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     fireEvent.click(queryByText("TypeScript Interface")!);
     fireEvent.click(queryByText("Python Dataclass")!);
@@ -164,7 +177,7 @@ describe("CodeGenerator", () => {
 
   test("switches to Java POJO", () => {
     const { queryByText, container } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     fireEvent.click(queryByText("TypeScript Interface")!);
     fireEvent.click(queryByText("Java POJO")!);
@@ -173,7 +186,7 @@ describe("CodeGenerator", () => {
 
   test("footer shows column count and format", () => {
     const { queryByText } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     expect(queryByText(/5 columns/)).not.toBeNull();
     expect(queryByText(/ts format/)).not.toBeNull();
@@ -181,7 +194,7 @@ describe("CodeGenerator", () => {
 
   test("footer format changes with language", () => {
     const { queryByText } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     fireEvent.click(queryByText("TypeScript Interface")!);
     fireEvent.click(queryByText("Go Struct")!);
@@ -195,7 +208,7 @@ describe("CodeGenerator", () => {
     setClipboard({ writeText });
 
     const { getByTestId } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     fireEvent.click(getByTestId("code-generator-copy"));
     await waitFor(() => expect(getByTestId("code-generator-copy").textContent).toContain("Copied"));
@@ -203,7 +216,7 @@ describe("CodeGenerator", () => {
 
   test("dropdown closes after selecting language", () => {
     const { queryByText, queryAllByText } = render(
-      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "users"]} tableSchema={schema} />,
     );
     // Open dropdown
     fireEvent.click(queryByText("TypeScript Interface")!);

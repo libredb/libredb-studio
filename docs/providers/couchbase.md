@@ -46,7 +46,7 @@ The two things that *are* Couchbase-shaped, and which every design decision belo
 
 | `DatabaseProvider` slot | Couchbase realisation | Mechanism |
 |-------------------------|-----------------------|-----------|
-| "Table" (`TableSchema`) | A **collection**, displayed as `collection` or `scope.collection` | `system:keyspaces` LEFT JOIN `system:scopes` |
+| "Table" (the relation kind) | A **collection**, displayed as `collection` or `scope.collection` | `system:keyspaces` LEFT JOIN `system:scopes` |
 | "Row" | A **document** | SQL++ result row |
 | Columns | **Inferred** field types from a 100-document sample | `INFER <keyspace> WITH {"sample_size": 100}` |
 | Primary key | The document key, projected as `__id` | `META(d).id` |
@@ -334,7 +334,7 @@ No index available on keyspace `travel`.`inventory`.`hotel` that matches your qu
 Create one first: CREATE PRIMARY INDEX ON `travel`.`inventory`.`hotel`
 ```
 
-In both cases `getSchemaRelations()` reads `system:indexes`, so an un-indexed collection shows an
+In both cases the deleted flat relations read reads `system:indexes`, so an un-indexed collection shows an
 empty index list in the explorer before anything is run. Documents whose key is known are reachable
 without any index on every supported version
 ([§5.3](#53-use-keys-reads-a-document-with-no-index-at-all)).
@@ -353,7 +353,7 @@ async function degradeTo<T>(operation: () => Promise<T>, fallback: T): Promise<T
 ```
 
 A source the connected user cannot read yields the fallback instead of breaking an otherwise working
-connection. `getSchemaRelations()` is the deliberate exception: an empty index list *is* the
+connection. the deleted flat relations read is the deliberate exception: an empty index list *is* the
 un-indexed signal of §3.8, so degrading a failed catalog read to empty would fabricate that signal
 for the whole bucket ([`introspect.ts`](../../src/lib/db/providers/document/couchbase/introspect.ts)).
 
@@ -551,14 +551,15 @@ direct action and the background pre-warm show the estimated plan.
 
 ## 6. Schema introspection
 
-`getSchemaList()` is the primary path used by `/api/db/schema/list`, so columns are produced there
-([`introspect.ts`](../../src/lib/db/providers/document/couchbase/introspect.ts)):
+Every reading of this engine's objects goes through the object surface
+([`objects.ts`](../../src/lib/db/providers/document/couchbase/objects.ts)), over the same catalogs the
+deleted flat reading used:
 
 | Data | Source |
 |------|--------|
 | Collections | `system:keyspaces` LEFT JOIN `system:scopes`, filtered to the pinned bucket |
 | Columns | `INFER <keyspace> WITH {"sample_size": 100}` per collection, 4 at a time, 5 s server-side timeout each |
-| Indexes | `system:indexes` (via `getSchemaRelations()`) |
+| Indexes | `system:indexes` |
 | Foreign keys | always `[]` — Couchbase has none and none are invented |
 
 Three details are load-bearing:
@@ -575,9 +576,280 @@ Three details are load-bearing:
   schema loading in hand (`mapWithConcurrency()`,
   [`introspect.ts`](../../src/lib/db/providers/document/couchbase/introspect.ts)).
 
-`getSchema()` merges both halves. A primary index carries no `index_key`, so it is reported with the
+the object surface merges both halves. A primary index carries no `index_key`, so it is reported with the
 synthetic column `META().id`; `unique` is true only for primary indexes, because no secondary GSI
 enforces uniqueness.
+
+---
+
+## 6a. The object surface (#789)
+
+the object surface above flattens the bucket into one list of collections. The object browser is the
+other surface: it walks the engine's own hierarchy, so a bucket holds scopes and a scope holds
+collections, functions and indexes. Both surfaces are live through Phase 1 and they read the same
+catalogs.
+
+Everything in this section was measured against **Couchbase Server 8.0.2 Community** running
+[`docker/couchbase-init/01-object-fixture.sh`](../../docker/couchbase-init/01-object-fixture.sh), on
+2026-09-11. The statements and the derivations live in
+[`objects.ts`](../../src/lib/db/providers/document/couchbase/objects.ts); the four methods are on the
+provider in [`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts).
+
+### 6a.1 What is declared
+
+| Level | `id` | Label | Source |
+|-------|------|-------|--------|
+| 0 | `catalog` | Bucket | `system:buckets` |
+| 1 | `schema` | Scope | `system:all_scopes`, `_system` excluded by exact name |
+
+| Kind | Role | Path | Source |
+|------|------|------|--------|
+| `collection` | relation | `[bucket, scope, collection]` | `system:keyspaces` |
+| `function` | routine | `[bucket, scope, function]` | `system:functions` |
+| `index` | config, `attachedTo: collection` | `[bucket, scope, collection, index]` | `system:indexes` |
+
+A collection declares `acceptsRowWrites: true`. That is the per-kind fact and it is deliberately
+separate from the engine-wide `supportsInlineRowEdit: false` this provider also declares: the
+results grid's `UPDATE ... SET` cannot address a document through the `__id` projection
+([§9](#9-capabilities--labels)), while an import into a collection is an ordinary `UPSERT`.
+
+`isSessionDefault` is marked at **both** levels. The bucket is the one the connection pinned; the
+scope is `_default`, in that bucket only, because an unqualified SQL++ keyspace resolves into
+`_default` and [§3.4](#34-keyspace-flattening-follows-the-postgresql-rule) already treats it as the implicit scope for the flat
+explorer. Marking only the bucket would leave the tree's first paint opening a bucket and stopping,
+with no counts read at all.
+
+### 6a.2 Which catalog, and why not the obvious one
+
+| Read | Catalog | Why not the alternative |
+|------|---------|------------------------|
+| Scopes | `system:all_scopes` | `system:scopes` lists **neither `_default` nor `_system`**. Measured on a bucket holding four scopes: `SELECT s.name FROM system:scopes` answers 2 rows while `SELECT COUNT(*) FROM system:scopes` answers 4. `_default` is where most of a bucket's collections live, so reading `system:scopes` would hide them. |
+| Collections | `system:keyspaces` | `system:all_keyspaces` answers every `system:keyspaces` row for the bucket **plus three**: the `_system` scope's `_mobile` and `_query`, and a scoped `_default`.`_default` row **alongside** the pre-scopes bucket-level row that already is that collection. One collection would get two paths. The excess is three whatever the bucket holds; the totals move with the fixture ([§6a.8](#6a8-the-fixture)), so they are not quoted here. |
+| Indexes | `system:indexes` | `system:all_indexes` carries a `#sequentialscan` pseudo-index for **every** keyspace it can see, in every namespace, plus the query service's own `#system` namespace indexes. What it adds is not a constant: it grows with the keyspace count, while `system:indexes` answers only the indexes that were created. |
+| Functions | `system:functions` | There is no `system:all_functions` ("Keyspace not found all_functions"). |
+
+**Nothing here counts with `COUNT(*)`, and that is measured rather than stylistic.** A `system:`
+keyspace can count rows its own projection never returns — the `system:scopes` measurement above is
+the reproducible case — so a badge taken that way would be a number the folder can never show.
+`countObjects()` is the **length of what `listObjects()` returns**, kind by kind. That costs one
+round trip per declared kind on a count, three in total, and it is what discharges the "the listing
+contains exactly what the count counted" rule structurally: there is no second statement for the two
+answers to drift apart in.
+
+### 6a.3 The two row shapes, and the bucket-level one
+
+`system:keyspaces` and `system:indexes` each answer two shapes:
+
+- a **scoped** row, carrying `bucket`/`bucket_id` and `scope`/`scope_id`;
+- the **pre-scopes bucket-level** row, carrying neither, whose name is the **bucket's** name.
+
+The second is `_default`.`_default` and its indexes. Dropping it would hide every document written
+before scopes existed, and naming the collection from the row's own `name` would address it as a
+collection called `travel`, which is a keyspace path no statement can reach. One placement function
+(`resolveKeyspaceOf()`) serves both catalogs, because their projections are aliased onto the same
+field names.
+
+That function is **total**: it always returns a placement. A scoped row that names no scope, and an
+index row that names no keyspace, are both placed in `_default`, which is where an unqualified SQL++
+keyspace resolves. Neither shape was observed on 8.0.2, and neither is claimed to be unreachable:
+dropping a row instead would take it out of the **count and the listing together**, which is an
+object that is invisible in the tree while the count still agrees with the listing, so no gate would
+see it. The only row dropped is one carrying no **name**, which addresses nothing and cannot be a
+tree row.
+
+### 6a.4 Identity
+
+- **A collection** is addressed by its name within its scope.
+- **A function** is addressed by its **bare name**, with no argument list. SQL++ has no overloading:
+  measured, with `discount(price, pct)` in place, `CREATE FUNCTION discount(price)` is refused with
+  *"Function 'discount' already exists"* — refused on the name, arity and all. The same name in
+  another scope succeeds. PostgreSQL needs an argument-type list here; Couchbase does not.
+- **An index** carries its **collection** in the path. Measured: `ix_name` is created on both
+  `inventory`.`airline` and `inventory`.`hotel` and both succeed, while a second `ix_name` on one of
+  them is refused with *"The index ix_name already exists."* So the name alone is not unique within
+  a scope, and the kind declares `attachedTo: "collection"`.
+- A collection name is unique per **scope**, not per bucket: the fixture holds `airline` in both
+  `_default` and `inventory`, each with its own `ix_name` over a different key. A read that filtered
+  a collection's indexes on the collection name alone would hand one of them the other's.
+
+### 6a.5 A GLOBAL function is excluded
+
+`system:functions` answers namespace-level functions as well as scope-level ones. A global function
+belongs to `default:`, above every bucket, so it has no container in a bucket/scope tree; listing it
+under a bucket would claim it lives somewhere it does not. The fixture creates `celsius` so the
+exclusion is pinned by a test that names it.
+
+The exclusion is **structural**: a row is placed by whether its `identity` carries a bucket and a
+scope, never by matching `identity.type` (measured values: `"global"`, `"scope"`). A future third
+identity type is therefore placed by where it says it lives rather than dropped for being an
+unrecognised spelling. There is no other classifier vocabulary in this provider at all: a row's KIND
+is decided by **which catalog it came from**, so there is no `CASE` an unmodelled value can fall out
+of.
+
+`definition["#language"]` is likewise never read. Its measured values are `inline` and, on Enterprise
+Edition, `javascript`; Community Edition refuses the latter outright (*"Functions of type javascript
+are only supported in Enterprise Edition"*). Since one kind covers both flavours, the language is a
+detail for a Phase 2 Source tab rather than a classifier.
+
+### 6a.6 What is NOT declared, and what was measured to decide it
+
+- **No `view` kind.** SQL++ has **no `CREATE VIEW` statement at all**: `CREATE VIEW v AS SELECT 1` is
+  error 3000, *"syntax error - line 1, column 8, near 'CREATE ', at: VIEW (reserved word)"*. The
+  legacy **map-reduce Views**, deprecated since 7.0 and still not removed, do exist — the fixture
+  creates `_design/dev_legacy` holding a `by_city` view over the CAPI port — and they are invisible
+  to the query service: a `LIKE` over `ENCODE_JSON` of `system:all_keyspaces`, `system:all_indexes`,
+  `system:functions`, `system:buckets` and `system:all_scopes` finds **zero** rows mentioning it, and
+  it is not a document in `_default`.`_default` either. They are reachable only over ports 8091 and
+  8092, which this provider's transport does not speak for objects. Phase 2 could add them through
+  the management REST surface; Phase 1 does not guess.
+- **No Eventing Function kind.** Eventing is a separate service with its own REST API on port 8096.
+  Measured on the fixture node, which runs `data,index,query`: nothing listens on 8096 at all, and
+  Eventing is an Enterprise Edition service in any case. It is not reachable through the query
+  service this provider speaks.
+- **No kind for the `_system` scope's contents.** `_system` is the server's own scope (`_mobile`,
+  `_query`) and is excluded by exact name. A prefix rule would be wrong twice: it would sweep up
+  `_default`, and the engine already refuses any user scope starting with `_` or `%` (*"First
+  character must not be _ or %"*, measured on `_systemx`), so nothing a person creates can hide
+  behind the exclusion.
+
+### 6a.7 `describeObject`
+
+The **kind** decides, and nothing reads the name to work out what it is holding.
+
+| Kind | Columns | Indexes | Foreign keys |
+|------|---------|---------|--------------|
+| `collection` | `INFER`, 100-document sample, the same bound the deleted flat reading used | that collection's `system:indexes` rows, scope and collection both matched | always `[]` |
+| `function` | `[]` | `[]` | `[]` |
+| `index` | `[]` | `[]` | `[]` |
+
+A rejected `INFER` yields **no columns rather than an error**: the collection being empty (error
+7014) and the user lacking SELECT on it are both ordinary states. The fixture leaves `hotel` and
+`bookings` empty so that stays measured. `foreignKeys` is always `[]` for the same reason
+`declaresForeignKeys: false` is declared: SQL++ has no referential constraint.
+
+A function's parameters and its body, and an index's keys as a first-class detail, are Phase 2.
+
+### 6a.7b `describeObjects`, the bulk column read
+
+`describeObjects(container, kind, limit?)` answers columns and indexes for every object of one kind
+in one container. The two halves of an `ObjectDetail` do not have the same answer here, and both
+answers are measurements on Couchbase Server 8.0.2 Community, on a node this task created and
+removed.
+
+**The indexes bulk-read, and already did.** `INDEXES_SQL` answers one bucket's whole index catalog
+in one statement and `describeObject` filters it down to one collection, so the batch reads it
+**once** for the folder where a loop over `describeObject` reads the same statement once per
+object.
+
+**The columns cannot.** Couchbase stores no schema: a collection has whatever fields its documents
+carry, and `INFER` is the engine's own sampler. Three measurements close every combined form:
+
+1. `INFER a, b` is error 3000, a syntax error at the comma. `INFER` takes one keyspace.
+2. `INFER` against a scope is refused: `Keyspace resolves to default:travel.inventory - only 2 or 4
+   parts are valid`. There is no folder-level form.
+3. `INFER` **is** subquery-able — both `SELECT * FROM (INFER ...) AS x` and
+   `WITH x AS (INFER ...) SELECT x` parse — so a `UNION ALL` over several of them is a real
+   statement. It is still wrong here: measured, such a statement fails **entirely** with error 7014,
+   `No documents found, unable to infer schema`, as soon as one of its keyspaces is empty. An empty
+   collection is an ordinary state, and the fixture keeps `hotel` and `bookings` empty on purpose,
+   so a combined statement would cost a whole folder its columns because one collection held no
+   documents.
+
+So the `INFER`s are **one per described object**, at most `INFER_CONCURRENCY` (4) in flight, and cut
+by the caller's `limit` before any of them is issued. A folder of N collections costs two catalog
+statements plus N `INFER`s, against 2N statements for the same objects one at a time.
+
+| Shape | Statements | Time |
+| --- | --- | --- |
+| One `describeObjects` over a 40-collection scope | 42 | 293 ms |
+| The 40 `describeObject` calls it replaces | 80 | 462 ms |
+
+The gain is real but modest, and that is the honest shape of it: the `INFER`s dominate and they do
+not go away, so what the batch removes is 39 whole-bucket index reads. The bench scope is
+re-runnable — 40 collections in a `bench` scope, two documents each — and is not part of the
+committed fixture.
+
+**One mapper, shared with the single read.** `relationDetail()` in
+[`objects.ts`](../../src/lib/db/providers/document/couchbase/objects.ts) builds both, so a batch
+cannot spell an index differently from `describeObject` on the same collection. Verified live: for
+every collection of `travel`, `travel`.`_default` and `travel`.`inventory`, the batch's detail is
+identical to `describeObject()` for the same path.
+
+**`function` and `index` answer `{ details: [] }` with no round trip**, which is the same fact the
+single read states by answering three empty arrays: a function's parameters and an index's keys are
+not columns.
+
+**The bound is the caller's, and there is no `limit + 1`.** The catalog statements answer a whole
+bucket in one round trip each, so the target set is complete before anything is cut and the
+comparison is exact. The cut is applied in code, after `comparePaths`, which makes a bounded read's
+membership **ours** rather than the server's — the server never orders this read. `INFER`'s own
+`sample_size` is deliberately **not** reported as truncation: it bounds the documents a column list
+is inferred from, exactly as in the single read and in the object surface, and no object is dropped by
+it, so reporting it would claim the batch left objects out when it left none out.
+
+**Collation, for the record.** SQL++ `ORDER BY` over `["\ue000", "😀"]` answers `U+E000` first,
+which is UTF-8 byte order, while `comparePaths` compares UTF-16 code units and puts `😀` first
+(`0xD83D` is below `0xE000`). Task 26a-2 measured the same divergence on five SQL engines. It cannot
+bite here, because no statement in the object surface carries an `ORDER BY` at all: every listing,
+and the cut a bounded read applies, is sorted in TypeScript.
+
+### 6a.8 The fixture
+
+[`docker/couchbase-init/01-object-fixture.sh`](../../docker/couchbase-init/01-object-fixture.sh) is
+part of the deliverable, not scaffolding: every claim above is re-measurable against it. Couchbase
+has **no `/docker-entrypoint-initdb.d`** — a fresh node has no cluster, no bucket and no index — so
+it is applied by the `couchbase-init` sidecar in
+[`database-compose.yml`](../../database-compose.yml), which mounts this directory at `/fixture` and
+runs the script after `cluster-init`, `bucket-create` and the bucket-level `CREATE PRIMARY INDEX`.
+The script is re-runnable, so an edit is re-applied with:
+
+```bash
+docker compose -f database-compose.yml up -d couchbase couchbase-init
+docker logs libredb-couchbase-init
+```
+
+To apply it to a node you brought up by hand, mount the directory and run the script inside the
+container, which is how the measurements above were taken:
+
+```bash
+docker run -d --name cb -p 8091:8091 -p 8092:8092 -p 8093:8093 \
+  --ulimit nofile=200000:200000 \
+  -v "$PWD/docker/couchbase-init:/fixture:ro" couchbase:community-8.0.2
+docker exec cb couchbase-cli cluster-init -c localhost \
+  --cluster-username Administrator --cluster-password password123 \
+  --cluster-name libredb --services data,index,query \
+  --cluster-ramsize 1024 --cluster-index-ramsize 512 --index-storage-setting default
+docker exec cb couchbase-cli bucket-create -c localhost -u Administrator -p password123 \
+  --bucket travel --bucket-type couchbase --storage-backend couchstore \
+  --bucket-ramsize 256 --bucket-replica 0 --wait
+docker exec -e COUCHBASE_HOST=localhost cb bash /fixture/01-object-fixture.sh
+```
+
+Port **8092** is the CAPI port and is needed only for the map-reduce view; the provider itself uses
+8091 and 8093. What the fixture holds, and the counts it produces:
+
+What it holds, so the counts below can be derived rather than remembered:
+
+- **Collections:** `inventory`.`airline`, `inventory`.`hotel`, `_default`.`airline`,
+  `_default`.`bookings`, plus `_default`.`_default`, which every bucket has and which the query
+  service reports as the pre-scopes bucket-level row ([§6a.3](#6a3-the-two-row-shapes-and-the-bucket-level-one)).
+- **Functions:** `discount` in `inventory` and `discount` in `_default`. The global `celsius` is
+  deliberately outside the tree ([§6a.5](#6a5-a-global-function-is-excluded)) and is not counted.
+- **Indexes:** `ix_name` on each of `inventory`.`airline`, `inventory`.`hotel` and
+  `_default`.`airline`, the primary index on `inventory`.`airline`, and the bucket-level primary
+  index, which the `couchbase-init` sidecar creates before running the script.
+
+| Container | `collection` | `function` | `index` |
+|-----------|--------------|------------|---------|
+| `[travel]` | 5 | 2 | 5 |
+| `[travel, _default]` | 3 | 1 | 2 |
+| `[travel, inventory]` | 2 | 1 | 3 |
+
+The `[travel]` row is the length of each list above; the two scope rows are the same objects split
+by scope, with `_default`.`_default` and the bucket-level index falling into `_default`. Those are
+the numbers `tests/integration/db/couchbase-provider.test.ts` asserts and the numbers a live
+provider answered against the fixture on 2026-09-11. **They move whenever the script gains an
+object**, so anything stated as a total elsewhere in this document is stated against this list.
 
 ---
 
@@ -853,7 +1125,8 @@ const rows = await provider.query(
 const byKey = await provider.query(
   'SELECT d.* FROM `travel`.`inventory`.`hotel` AS d USE KEYS ["hotel::1"]',
 );
-const schema = await provider.getSchema();   // collections + inferred fields + indexes
+const objects = await provider.listObjects(container, 'table');
+const { details } = await provider.describeObjects(container, 'table');
 
 await provider.disconnect();
 ```
@@ -923,7 +1196,7 @@ Everything else:
   per-index series under `@index-<bucket>`, and the provider does not guess: an unpublished size is
   `N/A` with no byte count, while `scans` reports `0` only because the field is required.
 - **One bucket per connection.** Multi-bucket browsing from a single connection is out of scope;
-  `getSchemaList()` and every monitoring read are scoped to `config.database`.
+  the deleted flat list read and every monitoring read are scoped to `config.database`.
 - **Analytics/Columnar, Full-Text Search, Eventing and Capella management APIs** (allowed-IP
   administration, cluster provisioning) are not covered.
 - **Monitoring needs privileges.** Without the Query System Catalog role, slow queries and active

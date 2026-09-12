@@ -3,8 +3,11 @@
 import type { CsvDelimiter } from "@/lib/export/csv";
 
 import { appFetch } from "@/lib/config/base-path";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Sidebar, ConnectionsList } from "@/components/sidebar";
+import { type TreeRowActionHandlers } from "@/components/object-tree";
+import { objectAtPath } from "@/lib/db/detailed-object";
+import { objectPathQuery } from "@/lib/db/object-path";
 import { MobileNav } from "@/components/MobileNav";
 import { SchemaExplorer } from "@/components/schema-explorer";
 import { ConnectionModal } from "@/components/ConnectionModal";
@@ -26,6 +29,8 @@ import {
 } from "@/components/studio/index";
 import { AgentRail } from "@/components/agent/AgentRail";
 import { DatabaseConnection, SavedQuery } from "@/lib/types";
+import type { DatabaseObject } from "@/lib/db/types";
+import { relationKindIds } from "@/lib/db/object-kinds";
 import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
 import { lazyRetry } from "@/lib/lazy";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
@@ -102,7 +107,7 @@ export default function Studio() {
 
   // 2. Connection Manager + Provider Metadata
   const conn = useConnectionManager(storageReady);
-  const { metadata } = useProviderMetadata(conn.activeConnection);
+  const { metadata, error: metadataError, retry: retryMetadata } = useProviderMetadata(conn.activeConnection);
 
   // 3. Tab Manager
   const tabMgr = useTabManager({
@@ -116,6 +121,16 @@ export default function Studio() {
     activeConnection: conn.activeConnection,
   });
 
+  /**
+   * How many catalog-changing statements this session has run (#789).
+   *
+   * The object tree holds its own lazy cache and nothing outside it can reach it, so a DDL
+   * statement has to TELL it. A counter rather than a boolean or a timestamp: it is monotonic,
+   * it needs no clearing, and the tree acts on a value it has not seen before.
+   */
+  const [objectRefreshToken, setObjectRefreshToken] = useState(0);
+  const objectsChanged = useCallback(() => setObjectRefreshToken((previous) => previous + 1), []);
+
   // 5. Query Execution
   const queryExec = useQueryExecution({
     activeConnection: conn.activeConnection,
@@ -127,6 +142,7 @@ export default function Studio() {
     transactionActive: txn.transactionActive,
     playgroundMode: txn.playgroundMode,
     fetchSchema: conn.fetchSchema,
+    onObjectsChanged: objectsChanged,
     queryEditorRef,
   });
 
@@ -218,9 +234,12 @@ export default function Studio() {
   /** What the panel group may hold: below the breakpoint, only the body panel. */
   const isMobile = useIsMobile();
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [profilerTable, setProfilerTable] = useState<string | null>(null);
-  const [codeGenTable, setCodeGenTable] = useState<string | null>(null);
-  const [testDataTable, setTestDataTable] = useState<string | null>(null);
+  // The three modal targets are ADDRESSES, not labels (#789, Task 35). A label is not
+  // unique - two containers hold one `customers` on the SQL Server this was measured on -
+  // so a target spelled as a name opened whichever object the flat list held first.
+  const [profilerPath, setProfilerPath] = useState<readonly string[] | null>(null);
+  const [codeGenPath, setCodeGenPath] = useState<readonly string[] | null>(null);
+  const [testDataPath, setTestDataPath] = useState<readonly string[] | null>(null);
 
   // === Agent rail (#329 T10a) ===
   // Server-side flag, discovered at runtime the way the storage mode is: the pages
@@ -342,13 +361,21 @@ export default function Studio() {
   const effectiveMasking = shouldMask(user?.role, maskingConfig);
   const userCanToggle = canToggleMasking(user?.role, maskingConfig);
 
-  // The Explorer's per-row items call this with the row's name; without carrying it
-  // the tab opened with nothing selected (#459). The name rides the query string —
-  // the admin section is routed, so a param is what a section page can read. The
-  // non-admin /monitoring route has no such reader, so it keeps the bare path.
-  const openMaintenance = (_tab?: "global" | "tables" | "sessions", table?: string) => {
+  /*
+    The Explorer's per-row items call this with the row's ADDRESS; without carrying it the
+    tab opened with nothing selected (#459). The address rides the query string - the admin
+    section is routed, so a param is what a section page can read - as one `path` parameter
+    per SEGMENT (`objectPathQuery`), which is the shape that survives the round trip: the URL
+    grammar escapes each segment, so a dot, a space or a `/` inside a name reaches the
+    destination as itself, and the depth is the parameter count rather than a separator the
+    reader has to guess at. `?table=<label>` did none of that and named a label two objects
+    can share (#789, Task 35).
+
+    The non-admin /monitoring route has no such reader, so it keeps the bare path.
+  */
+  const openMaintenance = (_tab?: "global" | "tables" | "sessions", path?: readonly string[]) => {
     if (isAdmin) {
-      router.push(table ? `/admin/operations?table=${encodeURIComponent(table)}` : "/admin/operations");
+      router.push(path === undefined ? "/admin/operations" : `/admin/operations?${objectPathQuery(path)}`);
     } else {
       router.push("/monitoring");
     }
@@ -412,8 +439,56 @@ export default function Studio() {
     downloadText(file.content, file.mimeType, resultExportFileName(file.extension, hydrated?.runId));
   };
 
-  const onTableClick = (tableName: string) => {
-    tabMgr.handleTableClick(tableName, queryExec.executeQuery);
+  /** Open and run the statement for one object, addressed by its PATH (#789). */
+  const onTableClick = (path: readonly string[]) => {
+    tabMgr.handleTableClick(path, queryExec.executeQuery);
+  };
+
+  /**
+   * A row activated in the object tree (#789).
+   *
+   * Gated on the kind's declared ROLE, never on its id: `handleTableClick` generates a
+   * query and EXECUTES it, so handing it a routine or a trigger would run
+   * `SELECT * FROM order_total(integer) LIMIT 50` against the database. The old flat
+   * explorer could not reach that state because it only ever listed relations; the tree
+   * lists every declared kind, so the gate is what keeps a click on a function from
+   * being a failed statement in the reader's history.
+   *
+   * The PATH and not the name. `name` is the label and `path` is the address (standing
+   * ruling 2), and the generator now takes segments, so an object outside the session
+   * default container generates a QUALIFIED statement instead of a bare identifier the
+   * server cannot resolve.
+   */
+  const onObjectClick = (object: DatabaseObject) => {
+    if (metadata === null || !relationKindIds(metadata.capabilities).includes(object.kind)) return;
+    onTableClick(object.path);
+  };
+
+  /**
+   * The row menu's actions, all six of them (U22, #789).
+   *
+   * This shell is the one that has every destination: the modals below, the create-table
+   * modal, and the admin Operations page the maintenance items deep-link to. WHICH of them
+   * a given row is offered is not decided here - `rowActions` reads the provider's
+   * declaration for that row's kind - so this object is only the list of what the shell can
+   * do at all.
+   *
+   * Every one of them carries `object.path`. An object is TARGETED by its address and
+   * RESOLVED by its address (#789, Task 35): the narrowing to `object.name` that used to
+   * stand here handed a label on, and the modals resolved it with a find-by-name that
+   * answers the first object carrying that label, so Profile on one `customers` opened the
+   * other one's columns with no error.
+   *
+   * Maintenance is withheld from a non-admin because the page it opens is the admin one; the
+   * other five are the same for every role, exactly as the flat explorer had them.
+   */
+  const objectActions: TreeRowActionHandlers = {
+    onGenerateSelect: (object) => tabMgr.handleGenerateSelect(object.path),
+    onProfileObject: (object) => setProfilerPath(object.path),
+    onGenerateCode: (object) => setCodeGenPath(object.path),
+    onGenerateTestData: (object) => setTestDataPath(object.path),
+    onOpenMaintenance: isAdmin ? (object) => openMaintenance("tables", object.path) : undefined,
+    onCreateObject: () => setIsCreateTableModalOpen(true),
   };
 
   const requestDeleteConnection = (id: string) => {
@@ -502,9 +577,6 @@ export default function Studio() {
               <Sidebar
                 connections={conn.connections}
                 activeConnection={conn.activeConnection}
-                schema={conn.schema}
-                isLoadingSchema={conn.isLoadingSchema}
-                schemaError={conn.schemaError}
                 onSelectConnection={conn.setActiveConnection}
                 onDeleteConnection={requestDeleteConnection}
                 onEditConnection={(c) => {
@@ -513,17 +585,15 @@ export default function Studio() {
                 }}
                 onDuplicateConnection={handleDuplicateConnection}
                 onAddConnection={() => setIsConnectionModalOpen(true)}
-                onTableClick={onTableClick}
-                onGenerateSelect={tabMgr.handleGenerateSelect}
-                onCreateTableClick={() => setIsCreateTableModalOpen(true)}
+                onObjectClick={onObjectClick}
+                objectActions={objectActions}
                 onShowDiagram={() => setShowDiagram(true)}
-                isAdmin={isAdmin}
-                onOpenMaintenance={openMaintenance}
-                databaseType={conn.activeConnection?.type}
                 metadata={metadata}
-                onProfileTable={(name) => setProfilerTable(name)}
-                onGenerateCode={(name) => setCodeGenTable(name)}
-                onGenerateTestData={(name) => setTestDataTable(name)}
+                metadataError={metadataError}
+                onRetryMetadata={retryMetadata}
+                objectScanDeferred={conn.objectScanDeferred}
+                onLoadObjects={conn.loadObjects}
+                objectRefreshToken={objectRefreshToken}
               />
             </ResizablePanel>
             <ResizableHandle className="w-1 bg-transparent hover:bg-brand-tint/30 transition-colors" />
@@ -598,7 +668,11 @@ export default function Studio() {
                     <React.Suspense
                       fallback={<ViewLoading label="Loading the diagram" className="absolute inset-0 z-20" />}
                     >
-                      <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />
+                      <SchemaDiagram
+                        schema={conn.schema}
+                        capabilities={metadata?.capabilities}
+                        onClose={() => setShowDiagram(false)}
+                      />
                     </React.Suspense>
                   </ChunkBoundary>
                 )}
@@ -640,12 +714,12 @@ export default function Studio() {
                       schema={conn.schema}
                       isLoadingSchema={conn.isLoadingSchema}
                       schemaError={conn.schemaError}
-                      onTableClick={(tableName) => {
-                        onTableClick(tableName);
+                      onTableClick={(path) => {
+                        onTableClick(path);
                         setActiveMobileTab("editor");
                       }}
-                      onGenerateSelect={(tableName) => {
-                        tabMgr.handleGenerateSelect(tableName);
+                      onGenerateSelect={(path) => {
+                        tabMgr.handleGenerateSelect(path);
                         setActiveMobileTab("editor");
                       }}
                       onCreateTableClick={() => setIsCreateTableModalOpen(true)}
@@ -653,9 +727,9 @@ export default function Studio() {
                       onOpenMaintenance={openMaintenance}
                       databaseType={conn.activeConnection?.type}
                       metadata={metadata}
-                      onProfileTable={(name) => setProfilerTable(name)}
-                      onGenerateCode={(name) => setCodeGenTable(name)}
-                      onGenerateTestData={(name) => setTestDataTable(name)}
+                      onProfileTable={(path) => setProfilerPath(path)}
+                      onGenerateCode={(path) => setCodeGenPath(path)}
+                      onGenerateTestData={(path) => setTestDataPath(path)}
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center h-full text-fg-muted">
@@ -826,6 +900,7 @@ export default function Studio() {
         onClose={() => setIsImportModalOpen(false)}
         onImport={(sql) => queryExec.executeQuery(sql)}
         tables={conn.schema}
+        capabilities={metadata?.capabilities}
         databaseType={conn.activeConnection?.type}
       />
       <QuerySafetyDialog
@@ -839,28 +914,28 @@ export default function Studio() {
         }}
       />
       <DataProfiler
-        isOpen={!!profilerTable}
-        onClose={() => setProfilerTable(null)}
-        tableName={profilerTable || ""}
-        tableSchema={conn.schema.find((t) => t.name === profilerTable) || null}
+        isOpen={profilerPath !== null}
+        onClose={() => setProfilerPath(null)}
+        tablePath={profilerPath ?? []}
+        tableSchema={objectAtPath(conn.schema, profilerPath)}
         connection={conn.activeConnection}
         schemaContext={conn.schemaContext}
         databaseType={conn.activeConnection?.type}
       />
       <CodeGenerator
-        isOpen={!!codeGenTable}
-        onClose={() => setCodeGenTable(null)}
-        tableName={codeGenTable || ""}
-        tableSchema={conn.schema.find((t) => t.name === codeGenTable) || null}
+        isOpen={codeGenPath !== null}
+        onClose={() => setCodeGenPath(null)}
+        tablePath={codeGenPath ?? []}
+        tableSchema={objectAtPath(conn.schema, codeGenPath)}
         databaseType={conn.activeConnection?.type}
       />
       <TestDataGenerator
-        isOpen={!!testDataTable}
-        onClose={() => setTestDataTable(null)}
-        tableName={testDataTable || ""}
-        tableSchema={conn.schema.find((t) => t.name === testDataTable) || null}
+        isOpen={testDataPath !== null}
+        onClose={() => setTestDataPath(null)}
+        tablePath={testDataPath ?? []}
+        tableSchema={objectAtPath(conn.schema, testDataPath)}
         databaseType={conn.activeConnection?.type}
-        queryLanguage={metadata?.capabilities.queryLanguage}
+        capabilities={metadata?.capabilities}
         onExecuteQuery={(q) => queryExec.executeQuery(q)}
       />
 
@@ -941,6 +1016,7 @@ export default function Studio() {
         connections={conn.connections}
         activeConnection={conn.activeConnection}
         schema={conn.schema}
+        capabilities={metadata?.capabilities}
         onSelectConnection={conn.setActiveConnection}
         onTableClick={onTableClick}
         onAddConnection={() => setIsConnectionModalOpen(true)}

@@ -97,7 +97,7 @@ describe("POST /api/db/profile", () => {
       method: "POST",
       body: {
         connection: { ...validConnection, type: "mysql" },
-        tableName: "users",
+        tablePath: ["public", "users"],
         columns: ["a\\' UNION SELECT 1 -- "],
       },
     });
@@ -115,7 +115,7 @@ describe("POST /api/db/profile", () => {
 
     const req = createMockRequest("/api/db/profile", {
       method: "POST",
-      body: { connection: validConnection, tableName: "users", columns: ["id"] },
+      body: { connection: validConnection, tablePath: ["public", "users"], columns: ["id"] },
     });
 
     const res = await POST(req as never);
@@ -169,7 +169,7 @@ describe("POST /api/db/profile", () => {
 
     const req = createMockRequest("/api/db/profile", {
       method: "POST",
-      body: { connection: validConnection, tableName: "users", columns: ["id"] },
+      body: { connection: validConnection, tablePath: ["public", "users"], columns: ["id"] },
     });
 
     const res = await POST(req as never);
@@ -190,7 +190,7 @@ describe("POST /api/db/profile", () => {
   test("returns 400 for SQL provider with no columns", async () => {
     const req = createMockRequest("/api/db/profile", {
       method: "POST",
-      body: { connection: validConnection, tableName: "users", columns: [] },
+      body: { connection: validConnection, tablePath: ["public", "users"], columns: [] },
     });
 
     const res = await POST(req as never);
@@ -230,7 +230,7 @@ describe("POST /api/db/profile", () => {
 
     const req = createMockRequest("/api/db/profile", {
       method: "POST",
-      body: { connection: mongoConnection, tableName: "users", columns: ["status", "name"] },
+      body: { connection: mongoConnection, tablePath: ["public", "users"], columns: ["status", "name"] },
     });
 
     const res = await POST(req as never);
@@ -250,7 +250,7 @@ describe("POST /api/db/profile", () => {
   test("returns 400 when connection is missing", async () => {
     const req = createMockRequest("/api/db/profile", {
       method: "POST",
-      body: { tableName: "users", columns: ["id"] },
+      body: { tablePath: ["public", "users"], columns: ["id"] },
     });
 
     const res = await POST(req as never);
@@ -260,17 +260,22 @@ describe("POST /api/db/profile", () => {
     expect(data.error).toContain("required");
   });
 
-  test("returns 400 when tableName is missing", async () => {
-    const req = createMockRequest("/api/db/profile", {
-      method: "POST",
-      body: { connection: validConnection, columns: ["id"] },
-    });
+  test("returns 400 when the address is missing, empty or not segments", async () => {
+    // Four shapes, because `Array.isArray` alone accepts three of them: a caller that lost
+    // the address, one that sent an empty one, one that sent the old dotted STRING, and one
+    // whose array holds something that is not a segment (memory: cast-is-not-a-check).
+    for (const tablePath of [undefined, [], "public.users", ["public", null]]) {
+      const req = createMockRequest("/api/db/profile", {
+        method: "POST",
+        body: { connection: validConnection, ...(tablePath === undefined ? {} : { tablePath }), columns: ["id"] },
+      });
 
-    const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string }>(res);
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ error: string }>(res);
 
-    expect(res.status).toBe(400);
-    expect(data.error).toContain("required");
+      expect(res.status).toBe(400);
+      expect(data.error).toContain("tablePath");
+    }
   });
 
   test("returns 500 on error", async () => {
@@ -278,7 +283,7 @@ describe("POST /api/db/profile", () => {
 
     const req = createMockRequest("/api/db/profile", {
       method: "POST",
-      body: { connection: validConnection, tableName: "users", columns: ["id"] },
+      body: { connection: validConnection, tablePath: ["public", "users"], columns: ["id"] },
     });
 
     const res = await POST(req as never);
@@ -338,7 +343,7 @@ describe("POST /api/db/profile", () => {
 
     const req = createMockRequest("/api/db/profile", {
       method: "POST",
-      body: { connection: validConnection, tableName: "users", columns: ["name", "email"] },
+      body: { connection: validConnection, tablePath: ["public", "users"], columns: ["name", "email"] },
     });
 
     const res = await POST(req as never);
@@ -395,7 +400,7 @@ describe("POST /api/db/profile", () => {
 
     const req = createMockRequest("/api/db/profile", {
       method: "POST",
-      body: { connection: validConnection, tableName: "users", columns: ["binary_col", "name"] },
+      body: { connection: validConnection, tablePath: ["public", "users"], columns: ["binary_col", "name"] },
     });
 
     const res = await POST(req as never);
@@ -408,5 +413,71 @@ describe("POST /api/db/profile", () => {
     const errorCol = data.columns.find((c) => c.error);
     expect(errorCol).toBeDefined();
     expect(errorCol!.error).toContain("Could not profile");
+  });
+  /**
+   * The defect Task 35 closed, at the one seam that could still only see a label (#789).
+   *
+   * The fixture is the collision itself: the live SQL Server holds `libredb_objects.app.customers`
+   * and `shop.dbo.customers`. The request below asks for the SECOND, and the assertion is that
+   * the statement the engine is sent addresses THAT one - a route that keeps the object's own
+   * segment, or that qualifies it from the wrong container, profiles the other table and answers
+   * 200 with somebody else's statistics.
+   */
+  test("profiles the object at the ADDRESS it was given, not the label's first match", async () => {
+    const req = createMockRequest("/api/db/profile", {
+      method: "POST",
+      body: {
+        connection: { ...validConnection, type: "mssql", port: 1433 },
+        tablePath: ["shop", "dbo", "customers"],
+        columns: ["id"],
+      },
+    });
+
+    await POST(req as never);
+
+    const emitted = (mockSQLProvider.query as ReturnType<typeof mock>).mock.calls.map((call) => String(call[0]));
+    expect(emitted.length).toBeGreaterThan(0);
+    for (const sql of emitted) {
+      expect(sql).toContain("FROM shop.dbo.customers");
+      expect(sql).not.toContain("libredb_objects");
+    }
+  });
+
+  test("a segment containing a dot is ONE segment, not two qualifiers", async () => {
+    // ClickHouse really holds `demo`.`.inner_id.fake`. The string form split it into
+    // `""."inner_id"."fake"`, which is the last instance of the defect `path` exists to retire.
+    const req = createMockRequest("/api/db/profile", {
+      method: "POST",
+      body: { connection: validConnection, tablePath: ["demo", ".inner_id.fake"], columns: ["id"] },
+    });
+
+    await POST(req as never);
+
+    const emitted = String((mockSQLProvider.query as ReturnType<typeof mock>).mock.calls[0]?.[0]);
+    expect(emitted).toContain('FROM demo.".inner_id.fake"');
+  });
+
+  test("MongoDB is addressed by the collection's own segment, not by the joined path", async () => {
+    // A collection's path is [database, collection] and the driver takes the collection
+    // alone, the same reading `quoteObjectPath`'s JSON branch and the generators use.
+    const mongoProvider = createMockProvider({ capabilities: { queryLanguage: "json" } });
+    (mongoProvider.query as ReturnType<typeof mock>).mockImplementation(async (queryStr: string) => {
+      const parsed = JSON.parse(queryStr);
+      if (parsed.operation === "count")
+        return { rows: [{ count: 1 }], fields: ["count"], rowCount: 1, executionTime: 1 };
+      return { rows: [{ status: "active" }], fields: ["status"], rowCount: 1, executionTime: 1 };
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
+
+    const req = createMockRequest("/api/db/profile", {
+      method: "POST",
+      body: { connection: mongoConnection, tablePath: ["sample_shop", "users"], columns: ["status"] },
+    });
+
+    await POST(req as never);
+
+    for (const call of (mongoProvider.query as ReturnType<typeof mock>).mock.calls) {
+      expect(JSON.parse(String(call[0])).collection).toBe("users");
+    }
   });
 });

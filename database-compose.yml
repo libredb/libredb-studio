@@ -45,6 +45,14 @@ services:
       POSTGRES_DB: postgres
     ports:
       - "5432:5432"
+    volumes:
+      # The seed this file's postgres is for. Without it the service came up with an
+      # empty `postgres` database and no `libredb_dev` at all, so the object-tree
+      # fixture in 02-sample-data.sql (#710, #789) was never applied and an acceptance
+      # run measured an absence we had created. The scripts run in alphabetical order
+      # and ONLY on a fresh data directory, so an existing container has to be
+      # recreated before they take effect.
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
   mongodb:
     image: mongo:latest
     container_name: libredb-mongodb
@@ -54,6 +62,13 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: admin
     ports:
       - "27017:27017"
+    volumes:
+      # The object-browser fixture (#789). The image runs every .js in this directory
+      # through mongosh once, on a FRESH data directory only, so an already-initialized
+      # container has to be recreated before an edit to that file takes effect. Connect
+      # against the `app` database it creates; `configstore` is there so the reserved
+      # database names stay excluded by exact name rather than by prefix.
+      - ./docker/mongodb-init:/docker-entrypoint-initdb.d:ro
   mysql:
     image: mysql:latest
     container_name: libredb-mysql
@@ -63,6 +78,11 @@ services:
       MYSQL_DATABASE: mysql
     ports:
       - "3306:3306"
+    volumes:
+      # The object-browser fixture (#789). The image runs it once, on a FRESH data
+      # directory only, so an already-initialized container has to be recreated before an
+      # edit to that file takes effect. Connect against the `app` database it creates.
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d:ro
   mssql:
     # Use 2022-latest to avoid SQL Server 2025 NUMA/processor topology assert in containers.
     # Limit CPUs to avoid: ASSERT (result * DrtlGetProcessorCoreCount() == DrtlGetProcessorCount())
@@ -85,10 +105,21 @@ services:
     container_name: libredb-oracle
     restart: unless-stopped
     environment:
+      # Inert against this image and left alone rather than removed, because it records
+      # what somebody expected. ORACLE_PDB is the Oracle-published image's variable;
+      # gvenzl/oracle-xe reads ORACLE_DATABASE, and setting that one creates a SECOND
+      # pluggable database and adds minutes to the first start. Measured: the service name
+      # to connect to is XEPDB1.
       ORACLE_PDB: ORCLPDB1
       ORACLE_PASSWORD: Password123!
     ports:
       - "1521:1521"
+    volumes:
+      # The object-browser fixture (#789, #765): two owners, one object of every declared
+      # kind, and a package whose body deliberately does not compile. SQL*Plus runs these
+      # once and ONLY on a fresh data directory, so an existing container has to be
+      # recreated before an edit takes effect. Connect as APP / Password123! on XEPDB1.
+      - ./docker/oracle-init:/container-entrypoint-initdb.d:ro
   couchbase:
     # The image ships an uninitialized node: the cluster, the credentials below,
     # the bucket and its primary index are all applied by the couchbase-init
@@ -135,6 +166,13 @@ services:
       COUCHBASE_USER: Administrator
       COUCHBASE_PASSWORD: password123
       COUCHBASE_BUCKET: travel
+    volumes:
+      # The object-browser fixture (#789). Couchbase has no
+      # /docker-entrypoint-initdb.d, so the sidecar sources it after the cluster,
+      # the bucket and the bucket-level primary index exist. The script is
+      # re-runnable, so `docker compose up couchbase-init` re-applies an edit
+      # without recreating the data node.
+      - ./docker/couchbase-init:/fixture:ro
     entrypoint: ["/bin/bash", "-c"]
     command:
       # $$ escapes compose interpolation: these expand in the container's shell.
@@ -159,7 +197,11 @@ services:
             "http://$$COUCHBASE_HOST:8093/query/service" \
             --data-urlencode "statement=CREATE PRIMARY INDEX IF NOT EXISTS ON \`$$COUCHBASE_BUCKET\`"; then
             echo "couchbase ready: bucket $$COUCHBASE_BUCKET has a primary index"
-            exit 0
+            # The object-browser fixture (#789): the scope, the collections, the
+            # two same-named indexes, the two same-named scope functions, the
+            # global function and the legacy map-reduce view. Every claim the
+            # provider doc makes about this engine is re-measurable against it.
+            exec bash /fixture/01-object-fixture.sh
           fi
           sleep 2
         done
@@ -183,6 +225,19 @@ services:
       # 8123 is HTTP, the only protocol the provider speaks. 9000 (native TCP) is deliberately
       # NOT exposed: there is no native-protocol transport in this codebase to connect with it.
       - "8123:8123"
+    volumes:
+      # The object-browser fixture (#789). The image feeds these to clickhouse-client once,
+      # on a FRESH data directory only, so an already-initialized container has to be
+      # recreated before an edit to that file takes effect. Connect against the `demo`
+      # database CLICKHOUSE_DB creates.
+      - ./docker/clickhouse-init:/docker-entrypoint-initdb.d:ro
+      # A CONFIG-FILE dictionary, which SQL cannot create. Measured: such a dictionary has
+      # no system.tables row at all and lives only in system.dictionaries with an empty
+      # database, so it is the only object that exercises the provider's dictionary union.
+      # The default config's <dictionaries_config>*_dictionary.*ml</dictionaries_config> glob
+      # is what picks this file up, so the `_dictionary.xml` suffix and this exact directory
+      # are both load-bearing.
+      - ./docker/clickhouse-config/regions_dictionary.xml:/etc/clickhouse-server/regions_dictionary.xml:ro
     ulimits:
       # ClickHouse warns at every start below this and degrades under load, same class of
       # issue as the couchbase nofile setting above.
@@ -196,9 +251,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 40
-    # No seed sidecar: CLICKHOUSE_DB above creates `demo` on first boot, and unlike Couchbase
-    # there is no index prerequisite - a SELECT against a freshly created table works
-    # immediately. Do not add one.
+    # No seed sidecar: CLICKHOUSE_DB above creates `demo` on first boot, the init mount seeds
+    # it, and unlike Couchbase there is no index prerequisite - a SELECT against a freshly
+    # created table works immediately. Do not add one.
 
   # ---------------------------------------------------------------------------------------
   # Apache Druid. Unlike every other service here, Druid is a distributed system and has no
@@ -342,6 +397,15 @@ services:
     environment: *druid-env
     volumes:
       - druid_router_var:/opt/druid/var
+      # The object-surface fixture (#789). Druid's image has no init-script directory
+      # and Druid has no CREATE statement at all, so the fixture is a lookup map plus
+      # three ingestion task specs and a script that applies them:
+      #
+      #   docker exec libredb-druid-router bash /opt/druid-init/apply.sh
+      #
+      # Mounted on the Router because the Router fronts the SQL endpoint AND, through
+      # the management proxy, the Coordinator and Overlord APIs the fixture needs.
+      - ./docker/druid-init:/opt/druid-init:ro
     ports:
       - "8888:8888"
     depends_on:
@@ -364,6 +428,12 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
+    # The object-browser fixture (#789) is NOT mounted here on purpose: this image has no
+    # init-script directory and no entrypoint hook of any kind, so there is nowhere to mount
+    # it that would run it. Apply it by hand, in one command, once the service is up:
+    #   docker exec -i libredb-redis redis-cli --no-raw < docker/redis-init/01-object-fixture.redis
+    # redis-cli reading stdin uses ONE connection for the whole file, which is what makes the
+    # `SELECT 3` in the middle of it land in database 3. See docs/providers/redis.md 11.5.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -403,6 +473,13 @@ services:
       xpack.security.enabled: "false"
       # Sized for a laptop. The image otherwise claims a heap from the host's total memory.
       ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      # The object-surface fixture (#789). Neither image has an init-script directory
+      # and neither product has DDL - an index, an alias, an ingest pipeline, an index
+      # template and a data stream are all created over REST - so the fixture is a
+      # script, mounted read-only and run by hand or by `docker exec`. The exact
+      # commands are in docs/providers/elasticsearch.md.
+      - ./docker/search-init:/opt/search-init:ro
     ports:
       # 9200 is the HTTP API, the only protocol this provider speaks. 9300 (transport) is
       # deliberately not published: there is no transport-protocol client in this codebase.
@@ -431,6 +508,10 @@ services:
       # the node serves HTTPS with a self-signed certificate and a default admin password.
       DISABLE_SECURITY_PLUGIN: "true"
       OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      # The same fixture script, unchanged: every endpoint it calls answered identically
+      # on both products (#789). See docs/providers/opensearch.md for the commands.
+      - ./docker/search-init:/opt/search-init:ro
     ports:
       # 9201 on the host because both products ship on 9200 in the container and the
       # elasticsearch service above already publishes it. The provider's default port stays
@@ -526,6 +607,21 @@ services:
     image: trinodb/trino:476
     container_name: libredb-trino
     restart: unless-stopped
+    volumes:
+      # The object-surface fixture (#789). Mounted at /fixtures and NOT at the
+      # /docker-entrypoint-initdb.d most services here use, because that name is a promise
+      # this image does not keep: the Trino image has no init-script directory and runs no
+      # seed script of its own. The `trino-init` sidecar below is what applies the file, and
+      # mounting it on the coordinator too is what makes the re-apply after a restart a
+      # one-liner with no bind flags:
+      #
+      #   docker exec libredb-trino trino --server localhost:8080 \
+      #     --file /fixtures/01-object-fixture.sql
+      #
+      # That re-apply is not optional housekeeping. The `memory` connector holds its schemas,
+      # tables, views and functions in the COORDINATOR'S HEAP, so a restart loses all of them
+      # and the sidecar, being a one-shot, does not run again by itself.
+      - ./docker/trino-init:/fixtures:ro
     ports:
       # 8080 is the client protocol AND the web UI - one port, two surfaces, which is why
       # the provider's default port is a generic number and the dialect is declared rather
@@ -544,11 +640,43 @@ services:
       interval: 5s
       timeout: 5s
       retries: 40
-    # No seed sidecar, and no `depends_on`: the image ships the `tpch` catalog configured, so
-    # `tpch.tiny.nation` (25 rows) and `tpch.tiny.lineitem` (60175 rows) are queryable the
-    # moment the healthcheck passes - generated on read, never stored. `tpcds`, `memory`,
-    # `system` and `jmx` are configured too. Point a connection's Database field at `tpch`;
-    # `jmx` is what makes the overview's uptime readable, so leave that catalog in place.
+    # No `depends_on`: the image ships the `tpch` catalog configured, so `tpch.tiny.nation`
+    # (25 rows) and `tpch.tiny.lineitem` (60175 rows) are queryable the moment the
+    # healthcheck passes - generated on read, never stored. `tpcds`, `memory`, `system` and
+    # `jmx` are configured too. Point a connection's Database field at `tpch`; `jmx` is what
+    # makes the overview's uptime readable, so leave that catalog in place.
+    #
+    # THERE IS NO ICEBERG CATALOG HERE, and that is a deliberate limit rather than an
+    # oversight. A materialized view is the one object kind Trino cannot create without one,
+    # and on 476 only a HIVE-METASTORE-backed Iceberg catalog will create one at all: the
+    # JDBC and REST catalog types both answer `createMaterializedView is not supported`. So
+    # an Iceberg catalog here would mean a metastore service, a warehouse volume and a
+    # second image in this file for one object kind. The object surface therefore answers
+    # `materialized_view: 0` everywhere on this cluster, which is the TRUE answer for it, and
+    # docs/providers/trino.md carries the catalog properties and the exact statements that
+    # reproduce the materialized-view measurements on a cluster that does have one.
+
+  trino-init:
+    # One-shot sidecar, the same shape as couchbase-init above. The Trino image has no
+    # init-script convention of its own, so the seeding is a CLI run rather
+    # than a mount the server reads: the CLI ships in this image at /usr/bin/trino, which is
+    # why the sidecar reuses the coordinator's image instead of adding a second one.
+    image: trinodb/trino:476
+    container_name: libredb-trino-init
+    restart: "no"
+    depends_on:
+      trino:
+        condition: service_healthy
+    volumes:
+      - ./docker/trino-init:/fixtures:ro
+    # `--server trino:8080`, the compose service name, not localhost: this is a separate
+    # container. The image's own entrypoint launches a coordinator, so it is replaced here.
+    entrypoint: ["/usr/bin/trino"]
+    command:
+      - "--server"
+      - "trino:8080"
+      - "--file"
+      - "/fixtures/01-object-fixture.sql"
 
   cassandra:
     # Pinned to the exact build the provider was live-verified against, the same rule
@@ -559,6 +687,24 @@ services:
     image: cassandra:5.0.9
     container_name: libredb-cassandra
     restart: unless-stopped
+    # TWO SETTINGS THAT SHIP DISABLED, rewritten into cassandra.yaml before the node
+    # starts. Without them this service measures a CONFIGURATION rather than an engine
+    # (issue #789): `CREATE MATERIALIZED VIEW` answers "Materialized views are disabled.
+    # Enable in cassandra.yaml to use." and `CREATE FUNCTION` answers "User-defined
+    # functions are disabled in cassandra.yaml - set user_defined_functions_enabled=true
+    # to enable", so the object fixture would build neither and the tree would show two
+    # empty folders that look like facts about Cassandra.
+    #
+    # A sed rather than a mounted cassandra.yaml: the file is ~2000 lines and version
+    # specific, so a copy pinned here would silently strip whatever 5.0.10 adds. The
+    # image's own entrypoint is still what starts the node. Cassandra 5.0 logs an
+    # experimental warning beside the first setting, which is the engine's own wording
+    # and not a problem with this service.
+    command: >
+      bash -c "sed -i
+      -e 's/^materialized_views_enabled:.*/materialized_views_enabled: true/'
+      -e 's/^user_defined_functions_enabled:.*/user_defined_functions_enabled: true/'
+      /etc/cassandra/cassandra.yaml && exec docker-entrypoint.sh cassandra -f"
     environment:
       CASSANDRA_CLUSTER_NAME: libredb-probe
       # 2G of a 4G limit. The image otherwise sizes the heap from the HOST's memory,
@@ -585,9 +731,29 @@ services:
       timeout: 10s
       retries: 30
       start_period: 60s
-    # No seed sidecar: the provider's live pass creates its own keyspace. The gate-4
-    # probe used `probe` with customers (500 rows), orders (2000), events (10
-    # partitions x 50 clustering rows), a secondary index and a 28-column type matrix.
+    volumes:
+      # THE IMAGE HAS NO INIT-SCRIPT DIRECTORY. Its entrypoint runs `cassandra -f` and
+      # never scans a mounted folder, and the node is not accepting CQL at the moment
+      # the entrypoint starts anyway. The mount puts the fixture INSIDE the container so
+      # it can be applied by hand once `nodetool status` reports UN:
+      #
+      #   docker exec libredb-cassandra cqlsh -f \
+      #     /fixtures/01-object-fixture.cql
+      #
+      # The target is /fixtures and NOT the /docker-entrypoint-initdb.d every other
+      # service here uses, because that name is a promise this image does not keep: it
+      # would tell a reader the file runs itself at start, and nothing runs it.
+      #
+      # The full recipe, including the optional trigger step, is in
+      # docs/providers/cassandra.md.
+      - ./docker/cassandra-init:/fixtures:ro
+    # No seed sidecar, because there is nothing for one to hook into: see the volume
+    # above. The object fixture (issue #789) builds keyspace `probe` with three tables, a
+    # materialized view, three indexes of two different catalog kinds, a user-defined
+    # type, four functions including an overloaded pair, an aggregate and - after the
+    # documented trigger step - one trigger. It also creates a keyspace called
+    # `system_reports`, which exists to keep the "a system keyspace is excluded by exact
+    # name, never by a `system%` prefix" measurement refutable.
 
   # ==========================================================================
   # Wire-compatible engines (issue #424, Phase 0)
@@ -810,6 +976,12 @@ services:
       MARIADB_DATABASE: probe
     ports:
       - "3307:3306"
+    volumes:
+      # The MariaDB half of the object-browser fixture (#789), and it is a SEPARATE file
+      # from the MySQL one on purpose: this provider's `objectKinds` is resolved from the
+      # server's own version string, and MariaDB declares `package` and `sequence`, which
+      # MySQL does not have at all. See docs/providers/mysql.md.
+      - ./docker/mariadb-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mariadb-admin", "ping", "-uroot", "-proot", "--silent"]
       interval: 5s

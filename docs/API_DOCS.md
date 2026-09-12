@@ -544,7 +544,7 @@ carries a plain statement. Four things differ from the other SQL providers:
   pins one catalog exactly as a PostgreSQL connection pins one database. Schemas inside it are the
   schema level, and every table is named `schema.table`. A statement may still name any other
   catalog in full: `SELECT * FROM other_catalog.some_schema.t` runs unchanged. A connection with no
-  catalog runs fully qualified statements fine, but `GET /api/db/schema` refuses with the reason.
+  catalog runs fully qualified statements fine, but the object reads refuse with the reason.
 - **There is no `connectionString`.** `jdbc:trino://host:port/catalog/schema` exists, but the shared
   parser does not accept it, so a connection is `host` + `port` (+ optional `database` catalog,
   `schema`, and `username`).
@@ -626,7 +626,7 @@ statement. Five things differ from the other SQL providers:
 ```
 
 **Notes:**
-- **No row count and no size are reported anywhere** - not in `GET /api/db/schema`, not in the
+- **No row count and no size are reported anywhere** - not on a listed object, not in the
   overview, and the table, index and storage panels answer `[]`. Cassandra publishes partition
   estimates (measured at 143 for a 500-row clustered table) and whole mebibytes (`1 MiB` for 19,476
   bytes), and neither is a number this API will pass on. See
@@ -691,90 +691,9 @@ Redis is a key-value store, so the `sql` field carries a Redis command instead o
 | `INFO` | `section` + `key` + `value` columns |
 
 **Notes:**
-- Schema introspection (`/api/db/schema`) uses a non-blocking `SCAN` and groups keys by prefix, presenting each prefix (e.g. `user:*`) as a "table".
+- Schema introspection (`/api/db/objects/*`) uses a non-blocking `SCAN` and groups keys by prefix, presenting each prefix (e.g. `user:*`) as a "table".
 - Monitoring/health endpoints derive their data from `INFO`, `SLOWLOG GET`, and `CLIENT LIST`.
 - Invalid JSON, a missing `command` field, or an unknown/failed Redis command returns `400 Bad Request` with code `QUERY_ERROR`.
-
----
-
-#### POST /api/db/schema
-
-Get database schema including tables, columns, indexes, and foreign keys.
-
-**Authentication:** Required
-
-**Request:**
-```json
-{
-  "id": "conn-123",
-  "name": "My Database",
-  "type": "postgres",
-  "host": "localhost",
-  "port": 5432,
-  "database": "mydb",
-  "user": "admin",
-  "password": "secret"
-}
-```
-
-**Response (200 OK):**
-```json
-[
-  {
-    "name": "users",
-    "rowCount": 1500,
-    "size": "2.4 MB",
-    "columns": [
-      {
-        "name": "id",
-        "type": "integer",
-        "nullable": false,
-        "isPrimary": true,
-        "defaultValue": "nextval('users_id_seq')"
-      },
-      {
-        "name": "email",
-        "type": "varchar(255)",
-        "nullable": false,
-        "isPrimary": false
-      },
-      {
-        "name": "created_at",
-        "type": "timestamp",
-        "nullable": true,
-        "isPrimary": false,
-        "defaultValue": "CURRENT_TIMESTAMP"
-      }
-    ],
-    "indexes": [
-      {
-        "name": "users_pkey",
-        "columns": ["id"],
-        "unique": true
-      },
-      {
-        "name": "users_email_idx",
-        "columns": ["email"],
-        "unique": true
-      }
-    ],
-    "foreignKeys": [
-      {
-        "columnName": "org_id",
-        "referencedTable": "organizations",
-        "referencedColumn": "id"
-      }
-    ]
-  }
-]
-```
-
-**Response (503 Service Unavailable):**
-```json
-{
-  "error": "Connection failed: ECONNREFUSED"
-}
-```
 
 ---
 
@@ -1258,7 +1177,7 @@ Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ 
 
 ---
 
-> **Internal routes (not part of this public reference).** The frontend also calls several internal `/api/db/*` endpoints that mirror provider internals and change with the UI: `multi-query`, `schema/list`, `schema/relations`, `transaction`, `cancel`, `disconnect`, `test-connection`, `monitoring`, `pool-stats`, `profile`, `provider-meta`, `schema-snapshot`. They're auth-gated by the middleware like everything else; consult the route handlers in `src/app/api/db/` for their shapes.
+> **Internal routes (not part of this public reference).** The frontend also calls several internal `/api/db/*` endpoints that mirror provider internals and change with the UI: `multi-query`, `transaction`, `cancel`, `disconnect`, `test-connection`, `monitoring`, `pool-stats`, `profile`, `provider-meta`, and the object-surface routes under `objects/`. They're auth-gated by the middleware like everything else; consult the route handlers in `src/app/api/db/` for their shapes.
 
 ---
 
@@ -1296,6 +1215,7 @@ interface DatabaseConnection {
   instanceName?: string;   // MSSQL: named instance (e.g. SQLEXPRESS)
   localDataCenter?: string; // Cassandra only, and REQUIRED there: the driver refuses to connect without it (`datacenter1` on a stock single node)
   authSource?: string; // MongoDB only: the database the credentials live in (`?authSource=admin`). Not the database being opened - without it the driver checks the user against that one, which fails as a credentials error
+  skipObjectScan?: boolean; // read no catalog when this connection opens: zero reads on connect, so the editor is usable immediately and the object tree offers a load action instead of scanning (#765, an Oracle owner with 43,512 tables froze the browser on connect)
   managed?: boolean;       // true = admin-controlled, read-only in UI
   seedId?: string;         // stable reference to seed config ID
   agentUser?: string;      // optional least-privilege role for the agent read-only execution profile (#328)
@@ -1311,16 +1231,21 @@ The connection form exposes **Query Timeout (ms)** as an optional positive whole
 saved timeout refreshes its cached provider on the next request. Explicit provider options take
 precedence; the connectivity check still uses its own 10000 ms timeout.
 
-### TableSchema
+### DatabaseObject
+
+The identity half of the object surface, as `POST /api/db/objects/list` and
+`POST /api/db/objects/inventory` answer it.
 
 ```typescript
-interface TableSchema {
-  name: string;            // Table name
-  columns: ColumnSchema[]; // Column definitions
-  indexes: IndexSchema[];  // Index definitions
-  foreignKeys?: ForeignKeySchema[];
-  rowCount?: number;       // Approximate row count
-  size?: string;           // Table size (e.g., "2.4 MB")
+interface DatabaseObject {
+  path: readonly string[]; // Container segments, then the object's own identifier
+  name: string;            // Display label, NOT required to equal the last path segment
+  kind: string;            // The declared kind id this object was listed under
+  status?: string;         // Present only where the engine reports something worth acting on,
+                           // in the engine's own word: Oracle's INVALID, SQL Server's DISABLED.
+                           // Absent means ordinary, not unknown.
+  rowCount?: number;       // Relations only, and only where the engine counts
+  sizeBytes?: number;
 }
 
 interface ColumnSchema {
@@ -1588,20 +1513,15 @@ curl -X POST http://localhost:3000/api/db/query \
   }'
 ```
 
-#### Get Schema
+#### Read the objects, with their columns
 ```bash
-curl -X POST http://localhost:3000/api/db/schema \
+curl -X POST http://localhost:3000/api/db/objects/inventory \
   -H "Content-Type: application/json" \
   -b cookies.txt \
   -d '{
-    "id": "1",
-    "name": "Local PG",
-    "type": "postgres",
-    "host": "localhost",
-    "port": 5432,
-    "database": "mydb",
-    "user": "postgres",
-    "password": "postgres"
+    "connection": { "id": "1", "name": "Local PG", "type": "postgres" },
+    "kinds": ["table"],
+    "includeColumns": true
   }'
 ```
 
