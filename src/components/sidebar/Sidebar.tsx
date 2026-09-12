@@ -4,7 +4,7 @@ import React from "react";
 import { DatabaseConnection } from "@/lib/types";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
-import { Plus, Zap, Layers, LoaderCircle } from "lucide-react";
+import { Plus, Zap, Layers, LoaderCircle, CircleAlert } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ObjectTree, type ObjectSource, type TreeRowActionHandlers } from "@/components/object-tree";
 import { GitHubRepoLink } from "@/components/github-repo-link";
@@ -29,6 +29,17 @@ interface SidebarProps {
    * which folders exist - so there is nothing to draw until it arrives.
    */
   metadata?: ProviderMetadata | null;
+  /**
+   * Why the declaration could not be read, in the route's own words (#789).
+   *
+   * Absence and failure are two different facts and the pending spinner below answers only
+   * one of them: with no error the panel is waiting, with one it has nothing more to wait
+   * for. The embedded workspace passes neither this nor the retry, because its host DECLARES
+   * the capabilities rather than reading them, so there is no read to fail or to re-issue.
+   */
+  metadataError?: string | null;
+  /** Read the declaration again. Absent means the shell has no way to, so none is offered. */
+  onRetryMetadata?: () => void;
   /** The active connection reads no catalog until asked (#765). */
   objectScanDeferred?: boolean;
   /** Perform the read the active connection deferred. */
@@ -49,6 +60,12 @@ interface SidebarProps {
    * host is the only party that can reach the database.
    */
   objectSource?: ObjectSource;
+  /**
+   * Bumped by the shell when a statement it ran changed the catalog (#789), handed straight
+   * through. The standalone shell drives it from the same DDL detection that re-reads the flat
+   * inventory; the embedded workspace does not, because its host runs the statements.
+   */
+  objectRefreshToken?: number;
 }
 
 export function Sidebar({
@@ -62,10 +79,13 @@ export function Sidebar({
   onObjectClick,
   onShowDiagram,
   metadata,
+  metadataError = null,
+  onRetryMetadata,
   objectScanDeferred = false,
   onLoadObjects,
   objectActions,
   objectSource,
+  objectRefreshToken,
 }: SidebarProps) {
   const appVersion = getAppVersion();
 
@@ -140,7 +160,27 @@ export function Sidebar({
               onObjectClick={onObjectClick}
               actions={objectActions}
               source={objectSource}
+              refreshToken={objectRefreshToken}
             />
+          ) : metadataError !== null ? (
+            <div
+              data-testid="sidebar-provider-failure"
+              className="flex flex-col items-center justify-center py-12 px-4 text-center"
+            >
+              <CircleAlert strokeWidth={1.5} className="w-6 h-6 text-warning" />
+              <h3 className="mt-3 text-foreground text-xs font-medium mb-1">This connection could not be read</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed break-words">{metadataError}</p>
+              {onRetryMetadata !== undefined && (
+                <button
+                  type="button"
+                  data-testid="sidebar-provider-retry"
+                  onClick={onRetryMetadata}
+                  className="mt-3 rounded-md bg-brand-solid hover:bg-brand-solid-hover text-white px-3 py-1.5 text-xs font-medium transition-colors"
+                >
+                  Try again
+                </button>
+              )}
+            </div>
           ) : (
             <div
               data-testid="sidebar-provider-pending"

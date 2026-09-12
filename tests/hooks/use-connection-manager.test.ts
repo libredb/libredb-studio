@@ -1526,6 +1526,44 @@ describe("the object inventory the explorer reads", () => {
     expect(result.current.isLoadingSchema).toBe(false);
   });
 
+  test("moving to a deferred connection stops reporting the superseded read as in flight", async () => {
+    let releaseFirst: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": async () => {
+        await gate;
+        return { ok: true, json: { objects: OBJECTS, details: DETAILS } };
+      },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    let first: Promise<void> = Promise.resolve();
+    await act(async () => {
+      first = result.current.fetchSchema(makeConnection({ id: "conn-a" }));
+      await Promise.resolve();
+    });
+    expect(result.current.isLoadingSchema).toBe(true);
+
+    // The deferred connection issues no request, so it is the only party that can clear the
+    // flag: the read it superseded asks whether it is still current and it is not.
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-b", skipObjectScan: true }));
+    });
+    expect(result.current.isLoadingSchema).toBe(false);
+
+    await act(async () => {
+      releaseFirst?.();
+      await first;
+    });
+    expect(result.current.isLoadingSchema).toBe(false);
+    expect(result.current.schema).toEqual([]);
+  });
+
   test("a failed read for the connection left behind reports nothing under the new one", async () => {
     let releaseFirst: (() => void) | null = null;
     const gate = new Promise<void>((resolve) => {

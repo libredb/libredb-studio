@@ -725,3 +725,146 @@ describe("useConnectionAdapter and the object model", () => {
     ]);
   });
 });
+
+// =============================================================================
+// The read generation guard (#789)
+// =============================================================================
+//
+// The host supplies `onSchemaFetch`, so its latency is not this hook's to bound: a read for
+// connection A can settle after the reader has moved to B. `src/hooks/use-connection-manager.ts`
+// has held this guard since the flat reading; the embedded adapter shipped without it.
+describe("useConnectionAdapter and a slow host read", () => {
+  /** One deferred answer per connection id, so a test can settle them out of order. */
+  function pendingReader() {
+    const settle = new Map<string, (value: DetailedObject[]) => void>();
+    const onSchemaFetch = mock(
+      (id: string) =>
+        new Promise<DetailedObject[]>((resolve) => {
+          settle.set(id, resolve);
+        }),
+    );
+    return { onSchemaFetch, settle };
+  }
+
+  const objectNamed = (name: string): DetailedObject => ({
+    name,
+    kind: "table",
+    path: [name],
+    columns: [],
+    indexes: [],
+  });
+
+  test("a read that settles after the reader switched connections is discarded", async () => {
+    const { onSchemaFetch, settle } = pendingReader();
+    const connections = [makeWorkspaceConnection({ id: "a" }), makeWorkspaceConnection({ id: "b" })];
+
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
+
+    let readA: Promise<void>;
+    let readB: Promise<void>;
+    act(() => {
+      readA = result.current.fetchSchema(result.current.connections[0]);
+      readB = result.current.fetchSchema(result.current.connections[1]);
+    });
+
+    // B answers first, then A: the reader is on B, so A's objects must never land.
+    await act(async () => {
+      settle.get("b")!([objectNamed("b_table")]);
+      await readB!;
+      settle.get("a")!([objectNamed("a_table")]);
+      await readA!;
+    });
+
+    expect(result.current.schema.map((object) => object.name)).toEqual(["b_table"]);
+  });
+
+  test("a superseded read that fails does not clear the current connection's objects", async () => {
+    const settle = new Map<string, (value: DetailedObject[]) => void>();
+    const reject = new Map<string, (reason: Error) => void>();
+    const onSchemaFetch = mock(
+      (id: string) =>
+        new Promise<DetailedObject[]>((resolve, fail) => {
+          settle.set(id, resolve);
+          reject.set(id, fail);
+        }),
+    );
+    const connections = [makeWorkspaceConnection({ id: "a" }), makeWorkspaceConnection({ id: "b" })];
+
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
+
+    let readA: Promise<void>;
+    let readB: Promise<void>;
+    act(() => {
+      readA = result.current.fetchSchema(result.current.connections[0]);
+      readB = result.current.fetchSchema(result.current.connections[1]);
+    });
+
+    await act(async () => {
+      settle.get("b")!([objectNamed("b_table")]);
+      await readB!;
+      reject.get("a")!(new Error("Connection refused"));
+      await readA!;
+    });
+
+    expect(result.current.schema.map((object) => object.name)).toEqual(["b_table"]);
+    // The flag belongs to the read that is current. A superseded one clearing it would report
+    // the newer read as finished while it is still in flight; here both have settled, so the
+    // assertion is that the failure did not leave it stuck on either.
+    expect(result.current.isLoadingSchema).toBe(false);
+  });
+
+  test("a superseded read does not report the newer read as finished", async () => {
+    const { onSchemaFetch, settle } = pendingReader();
+    const connections = [makeWorkspaceConnection({ id: "a" }), makeWorkspaceConnection({ id: "b" })];
+
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
+
+    let readA: Promise<void>;
+    act(() => {
+      readA = result.current.fetchSchema(result.current.connections[0]);
+      void result.current.fetchSchema(result.current.connections[1]);
+    });
+
+    await act(async () => {
+      settle.get("a")!([objectNamed("a_table")]);
+      await readA!;
+    });
+
+    // B is still in flight.
+    expect(result.current.isLoadingSchema).toBe(true);
+    expect(result.current.schema).toEqual([]);
+  });
+
+  test("moving to a connection that defers its scan supersedes the read in flight", async () => {
+    const { onSchemaFetch, settle } = pendingReader();
+    const connections = [
+      makeWorkspaceConnection({ id: "a" }),
+      makeWorkspaceConnection({ id: "b", skipObjectScan: true }),
+    ];
+
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
+
+    let readA: Promise<void>;
+    act(() => {
+      readA = result.current.fetchSchema(result.current.connections[0]);
+    });
+
+    // The deferred connection issues no request at all and must still supersede A's.
+    await act(async () => {
+      await result.current.fetchSchema(result.current.connections[1]);
+      settle.get("a")!([objectNamed("a_table")]);
+      await readA!;
+    });
+
+    expect(result.current.schema).toEqual([]);
+    expect(result.current.isLoadingSchema).toBe(false);
+  });
+});

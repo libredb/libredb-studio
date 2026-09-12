@@ -216,6 +216,53 @@ describe("Sidebar", () => {
     expect(getByTestId("sidebar-provider-pending")).not.toBeNull();
   });
 
+  /**
+   * MAJOR 3, #789. Absence and failure are two different facts, and the pending spinner
+   * above is the answer to only one of them. A refused `provider-meta` read left the reader
+   * watching "Reading the connection..." for ever with no message and nothing to press.
+   */
+  test("a refused declaration read is shown in the route's own words, not as a spinner", () => {
+    const props = createDefaultProps({
+      metadata: null,
+      metadataError: "authentication failed for user postgres",
+    });
+    const { queryByTestId, getByTestId } = render(<Sidebar {...props} />);
+
+    expect(queryByTestId("sidebar-provider-pending")).toBeNull();
+    expect(queryByTestId("object-tree")).toBeNull();
+    expect(getByTestId("sidebar-provider-failure").textContent).toContain("authentication failed for user postgres");
+  });
+
+  test("the failure offers a retry, and the press reaches the owner of the read", () => {
+    const onRetryMetadata = mock(() => {});
+    const props = createDefaultProps({ metadata: null, metadataError: "Connection refused", onRetryMetadata });
+    const { getByTestId } = render(<Sidebar {...props} />);
+
+    fireEvent.click(getByTestId("sidebar-provider-retry"));
+
+    expect(onRetryMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  // The shell that cannot retry does not draw a button that does nothing. The embedded
+  // workspace is that shell: its host DECLARES the capabilities, so there is no read to
+  // re-issue and it passes neither prop.
+  test("no retry is offered when the shell supplied no way to re-read", () => {
+    const props = createDefaultProps({ metadata: null, metadataError: "Connection refused" });
+    const { queryByTestId } = render(<Sidebar {...props} />);
+
+    expect(queryByTestId("sidebar-provider-retry")).toBeNull();
+  });
+
+  // The control: a failure that has been cleared gives the tree back rather than leaving
+  // the panel up, so the retry's success is visible.
+  test("a declaration that arrives after a failure draws the tree", () => {
+    const props = createDefaultProps({ metadataError: null });
+    const { queryByTestId, getByTestId } = render(<Sidebar {...props} />);
+
+    expect(queryByTestId("sidebar-provider-failure")).toBeNull();
+    expect(getByTestId("object-tree")).not.toBeNull();
+  });
+
   // #765: the connection's own answer decides, and the press is handed to the owner of
   // that answer rather than performed here.
   test("a deferred connection hands the tree the deferral and the load action", () => {

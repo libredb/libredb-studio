@@ -83,7 +83,7 @@ export interface TreeReadFailure {
 type ReadSlot =
   | { readonly kind: "containers"; readonly key: string }
   | { readonly kind: "counts"; readonly key: string }
-  | { readonly kind: "objects"; readonly key: string; readonly containerKey: string };
+  | { readonly kind: "objects"; readonly key: string };
 
 interface TreeRead {
   readonly request: ObjectReadRequest;
@@ -98,14 +98,6 @@ interface TreeCache {
   readonly containersRead: ReadonlySet<string>;
   readonly counts: Readonly<Record<string, Record<string, KindCount>>>;
   readonly objects: Readonly<Record<string, readonly DatabaseObject[]>>;
-  /**
-   * The container each loaded folder belongs to, recorded from the row that asked for it.
-   *
-   * `invalidateContainer` needs to find a container's folders, and this is what saves it from
-   * rebuilding a folder's row id from the path and the kind. That id rule lives in `flatten.ts`;
-   * a second copy of it here is how the two would drift.
-   */
-  readonly folderContainer: Readonly<Record<string, string>>;
   readonly expanded: ReadonlySet<string>;
   /** Failures by slot key, so a retry clears exactly the read it re-issues. */
   readonly failures: Readonly<Record<string, TreeReadFailure>>;
@@ -124,8 +116,8 @@ export interface TreeNodes {
   /** The object an object row was built from, for the fields the row model does not carry. */
   objectFor(row: TreeRowModel): DatabaseObject | undefined;
   toggle(id: string): void;
-  /** Drop one container's counts and the loaded objects of its folders, and read them again. */
-  invalidateContainer(path: readonly string[]): void;
+  /** Read every answer the tree is currently showing again, in place. */
+  refresh(): void;
   /** Read the top of the tree again, keeping whatever the reader has opened. */
   loadContainers(): void;
 }
@@ -146,7 +138,6 @@ function emptyCache(connectionId: string): TreeCache {
     containersRead: new Set(),
     counts: {},
     objects: {},
-    folderContainer: {},
     expanded: new Set(),
     failures: {},
   };
@@ -179,7 +170,7 @@ function readFor(row: TreeRowModel, depth: 0 | 1 | 2): TreeRead | undefined {
   if (row.kind === "folder" && row.kindId !== undefined) {
     return {
       request: { route: "list", container: row.path, kind: row.kindId },
-      slot: { kind: "objects", key: row.id, containerKey: pathKey(row.path) },
+      slot: { kind: "objects", key: row.id },
     };
   }
   if (row.kind === "container") {
@@ -257,11 +248,7 @@ function store(cache: TreeCache, slot: ReadSlot, data: unknown): TreeCache {
     case "counts":
       return { ...cache, counts: { ...cache.counts, [slot.key]: data as Record<string, KindCount> } };
     case "objects":
-      return {
-        ...cache,
-        objects: { ...cache.objects, [slot.key]: data as readonly DatabaseObject[] },
-        folderContainer: { ...cache.folderContainer, [slot.key]: slot.containerKey },
-      };
+      return { ...cache, objects: { ...cache.objects, [slot.key]: data as readonly DatabaseObject[] } };
   }
 }
 
@@ -291,10 +278,8 @@ function forget(cache: TreeCache, slot: ReadSlot): TreeCache {
     }
     case "objects": {
       const objects = { ...emptied.objects };
-      const folderContainer = { ...emptied.folderContainer };
       delete objects[slot.key];
-      delete folderContainer[slot.key];
-      return { ...emptied, objects, folderContainer };
+      return { ...emptied, objects };
     }
   }
 }
@@ -457,7 +442,10 @@ export function useTreeNodes(
       inFlight.current.add(key);
       try {
         const data = await readThrough(connReader, conn, read);
-        applyFor(connId, (current) => store(current, read.slot, data));
+        // The failure goes with the answer. A re-read issued over a FAILED slot (`refresh`)
+        // would otherwise leave the row reporting a refusal the engine has since withdrawn,
+        // and `pending` would never re-issue it because a failure suppresses the derivation.
+        applyFor(connId, (current) => store(withoutFailure(current, read.slot), read.slot, data));
       } catch (error) {
         applyFor(connId, (current) => withFailure(current, read.slot, toFailure(error)));
       } finally {
@@ -552,20 +540,55 @@ export function useTreeNodes(
     [apply, depth, rows],
   );
 
-  const invalidateContainer = useCallback(
-    (path: readonly string[]) => {
-      const containerKey = pathKey(path);
-      apply((current) => {
-        let next = forget(current, { kind: "counts", key: containerKey });
-        for (const [folderId, owner] of Object.entries(current.folderContainer)) {
-          if (owner !== containerKey) continue;
-          next = forget(next, { kind: "objects", key: folderId, containerKey });
-        }
-        return next;
-      });
-    },
-    [apply],
-  );
+  /**
+   * Read every answer the tree is currently showing again, in place (#789, MAJOR 1).
+   *
+   * WHAT IS RE-READ: the container listing, plus one read for every OPEN row, which is
+   * exactly the set `pending` derives when a cache is empty. A container the reader has
+   * COLLAPSED is not re-read; its cache is left alone and the next expansion shows what was
+   * there before, which is the same staleness an unopened folder has always had and costs
+   * nothing until the reader asks.
+   *
+   * WHY NOTHING IS DERIVED FROM THE STATEMENT, which is the interesting half. The caller is
+   * the DDL refresh in `use-query-execution.ts`, and it holds a statement, not a container.
+   * Deriving one would mean parsing a qualified object name out of arbitrary DDL, and three
+   * measured facts say that answer would be wrong more often than it is useful:
+   *
+   * - The trigger itself is coarse. `ProviderCapabilities.schemaRefreshPattern` is
+   *   `(CREATE|DROP|ALTER|TRUNCATE)\b` on the base provider and names no object at all, so
+   *   `CREATE SCHEMA`, `CREATE DATABASE` and `CREATE USER` all arrive here. The first two
+   *   change the CONTAINER LIST, which no per-container invalidation can express.
+   * - One statement can change more than one container: `DROP SCHEMA x CASCADE`,
+   *   `ALTER TABLE a.t RENAME TO b.t`, `CREATE TRIGGER ... ON other.table`.
+   * - The parse is per engine. Identifier quoting is `"`, backtick or `[]` depending on the
+   *   engine and case folding differs, so a derivation would have to branch on the engine to
+   *   be right, and a WRONG container is the worst outcome available: it re-reads a container
+   *   nobody changed and leaves the changed one stale, silently.
+   *
+   * WHAT IT COSTS on a large schema, which is the question that makes the blunt answer
+   * defensible. The bound is the TREE's expansion state, not the size of the database: one
+   * containers read, one counts read per open container, one listing per open folder. A
+   * reader with three schemas open and two folders expanded pays six reads, the same six
+   * first paint made. A 43,000-object catalog with everything collapsed pays one.
+   *
+   * The reads are ISSUED rather than the slots emptied, and that is deliberate: forgetting
+   * first would leave the root slot unfilled for the length of one round trip, and
+   * `rootLoading` is derived from exactly that, so every `CREATE TABLE` would replace the
+   * whole sidebar with a spinner. `store` overwrites, so the stale rows stay on screen until
+   * the new answer lands.
+   */
+  const refresh = useCallback(() => {
+    // A deferred connection wants ZERO catalog reads (#765), and a DDL statement it ran does
+    // not change that: the reader asked for nothing to be read and nothing is.
+    if (deferred) return;
+    const reads: TreeRead[] = [root];
+    for (const row of rows) {
+      if (row.expanded !== true) continue;
+      const read = readFor(row, depth);
+      if (read !== undefined) reads.push(read);
+    }
+    for (const read of reads) void run(connectionId, connection, reader, read);
+  }, [connection, connectionId, deferred, depth, reader, root, rows, run]);
 
   const loadContainers = useCallback(() => apply((current) => forget(current, root.slot)), [apply, root]);
 
@@ -579,7 +602,7 @@ export function useTreeNodes(
     failureFor,
     objectFor,
     toggle,
-    invalidateContainer,
+    refresh,
     loadContainers,
   };
 }

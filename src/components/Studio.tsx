@@ -3,7 +3,7 @@
 import type { CsvDelimiter } from "@/lib/export/csv";
 
 import { appFetch } from "@/lib/config/base-path";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Sidebar, ConnectionsList } from "@/components/sidebar";
 import { type TreeRowActionHandlers } from "@/components/object-tree";
 import { objectAtPath } from "@/lib/db/detailed-object";
@@ -107,7 +107,7 @@ export default function Studio() {
 
   // 2. Connection Manager + Provider Metadata
   const conn = useConnectionManager(storageReady);
-  const { metadata } = useProviderMetadata(conn.activeConnection);
+  const { metadata, error: metadataError, retry: retryMetadata } = useProviderMetadata(conn.activeConnection);
 
   // 3. Tab Manager
   const tabMgr = useTabManager({
@@ -121,6 +121,16 @@ export default function Studio() {
     activeConnection: conn.activeConnection,
   });
 
+  /**
+   * How many catalog-changing statements this session has run (#789).
+   *
+   * The object tree holds its own lazy cache and nothing outside it can reach it, so a DDL
+   * statement has to TELL it. A counter rather than a boolean or a timestamp: it is monotonic,
+   * it needs no clearing, and the tree acts on a value it has not seen before.
+   */
+  const [objectRefreshToken, setObjectRefreshToken] = useState(0);
+  const objectsChanged = useCallback(() => setObjectRefreshToken((previous) => previous + 1), []);
+
   // 5. Query Execution
   const queryExec = useQueryExecution({
     activeConnection: conn.activeConnection,
@@ -132,6 +142,7 @@ export default function Studio() {
     transactionActive: txn.transactionActive,
     playgroundMode: txn.playgroundMode,
     fetchSchema: conn.fetchSchema,
+    onObjectsChanged: objectsChanged,
     queryEditorRef,
   });
 
@@ -578,8 +589,11 @@ export default function Studio() {
                 objectActions={objectActions}
                 onShowDiagram={() => setShowDiagram(true)}
                 metadata={metadata}
+                metadataError={metadataError}
+                onRetryMetadata={retryMetadata}
                 objectScanDeferred={conn.objectScanDeferred}
                 onLoadObjects={conn.loadObjects}
+                objectRefreshToken={objectRefreshToken}
               />
             </ResizablePanel>
             <ResizableHandle className="w-1 bg-transparent hover:bg-brand-tint/30 transition-colors" />

@@ -1,11 +1,12 @@
 "use client";
 
 import { appFetch } from "@/lib/config/base-path";
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import { detailedObjects, type DetailedObject } from "@/lib/db/detailed-object";
 import { relationKindIds } from "@/lib/db/object-kinds";
 import type { DatabaseObject, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
+import { useReadGeneration } from "@/hooks/use-read-generation";
 import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { logger } from "@/lib/logger";
@@ -56,23 +57,14 @@ export function useConnectionManager(storageReady = false) {
   const { toast } = useToast();
 
   /**
-   * Which catalog read is the CURRENT one, as a counter (#789 review, Minor 8).
+   * Which catalog read is the CURRENT one (#789 review, Minor 8).
    *
-   * A read writes the schema up to three times and every write used to land under
-   * whichever connection was on screen when its answer arrived. Two of those writes are
-   * merely stale, and the third is worse: the object inventory DECORATES the list with
-   * kinds, so connection A's kinds applied to connection B's list tag nothing where the
-   * names differ and tag WRONGLY where they coincide, and `relationObjects` and
-   * `rowWritableObjects` then hide a row of B's or offer an import into a view on the
-   * strength of a declaration about A. That is a stale result that HIDES objects rather
-   * than one that shows old ones, which is why it is closed here rather than left with
-   * the phase 2 merge that has had the same shape for longer.
-   *
-   * A counter rather than an abort signal because the request is not the thing to cancel:
-   * the deferred path in `fetchSchema` issues no request at all and still supersedes a
-   * read in flight, so what is being sequenced is the READ, not the socket.
+   * Stated once in `useReadGeneration` and used by both shells: the embedded adapter had the
+   * same race and shipped without the guard, because the rule lived inside this hook rather
+   * than beside both of its readers. What it costs, and why a counter rather than an abort
+   * signal, is written there.
    */
-  const currentRead = useRef(0);
+  const reads = useReadGeneration();
 
   /*
     One read of the object surface, and it is the only catalog reading this hook does (#789).
@@ -103,9 +95,8 @@ export function useConnectionManager(storageReady = false) {
   */
   const readSchema = useCallback(
     async (conn: DatabaseConnection) => {
-      const generation = ++currentRead.current;
       /** Whether this read is still the one on screen. Every write below asks first. */
-      const isCurrent = () => currentRead.current === generation;
+      const isCurrent = reads.begin();
       setIsLoadingSchema(true);
 
       const payload = conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : { connection: conn };
@@ -179,7 +170,7 @@ export function useConnectionManager(storageReady = false) {
         if (isCurrent()) setIsLoadingSchema(false);
       }
     },
-    [toast],
+    [reads, toast],
   );
 
   /**
@@ -206,7 +197,7 @@ export function useConnectionManager(storageReady = false) {
         // This supersedes any read in flight, exactly as a read does (Minor 8): the reader
         // has moved to a connection that reads NOTHING, so an answer still on its way for the
         // previous one must not land under this connection's name.
-        currentRead.current++;
+        reads.supersede();
         // Nothing was read for THIS connection, so nothing may stay on screen or in the AI
         // prompt as its objects. `readSchema` is the only writer of these two, so returning
         // without clearing them leaves the PREVIOUS connection's tables under this
@@ -215,11 +206,15 @@ export function useConnectionManager(storageReady = false) {
         // rail are handed.
         setSchema([]);
         setSchemaError(null);
+        // The superseded read will not clear this: its own `finally` asks whether it is still
+        // current and it is not. Nothing is being read here, so a spinner would report a read
+        // that is never going to answer.
+        setIsLoadingSchema(false);
         return;
       }
       await readSchema(conn);
     },
-    [readSchema, scanDeferred],
+    [readSchema, reads, scanDeferred],
   );
 
   /**

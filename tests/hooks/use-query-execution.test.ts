@@ -1227,6 +1227,63 @@ describe("useQueryExecution", () => {
     expect(fetchSchemaMock).not.toHaveBeenCalled();
   });
 
+  /**
+   * MAJOR 1, #789. `fetchSchema` re-reads the inventory the diagram and the modals draw from;
+   * the object TREE keeps its own cache and was not one of the things a DDL statement
+   * refreshed, so after `CREATE TABLE` the sidebar showed the old folder contents until the
+   * connection was re-selected.
+   */
+  test("executeQuery asks the object tree to re-read after DDL", async () => {
+    const onObjectsChanged = mock(() => {});
+    mockGlobalFetch({
+      "/api/db/query": { ok: true, json: { ...mockQueryResult, rows: [], rowCount: 0 } },
+    });
+    const params = createDefaultParams({ onObjectsChanged });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("CREATE TABLE test_table (id INT)", undefined, false, { skipSafety: true });
+    });
+
+    expect(onObjectsChanged).toHaveBeenCalledTimes(1);
+  });
+
+  test("executeQuery does not ask the object tree to re-read for a SELECT", async () => {
+    const onObjectsChanged = mock(() => {});
+    mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const params = createDefaultParams({ onObjectsChanged });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+
+    expect(onObjectsChanged).not.toHaveBeenCalled();
+  });
+
+  // A playground run is rolled back, so nothing it created survives to be listed. The tree
+  // must not be re-read for it, exactly as the inventory is not.
+  test("a playground DDL run asks for no re-read, because it was rolled back", async () => {
+    const onObjectsChanged = mock(() => {});
+    mockGlobalFetch({
+      "/api/db/query": { ok: true, json: { ...mockQueryResult, rows: [], rowCount: 0 } },
+      "/api/db/transaction": { ok: true, json: { success: true } },
+    });
+    const params = createDefaultParams({ onObjectsChanged, playgroundMode: true, transactionActive: true });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("CREATE TABLE test_table (id INT)", undefined, false, { skipSafety: true });
+    });
+
+    expect(onObjectsChanged).not.toHaveBeenCalled();
+  });
+
   // ── handleLoadMore does nothing when no more data ──────────────────────
 
   test("handleLoadMore does nothing when pagination hasMore is false", async () => {

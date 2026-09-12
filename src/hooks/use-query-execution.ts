@@ -43,6 +43,15 @@ interface UseQueryExecutionParams {
   transactionActive: boolean;
   playgroundMode: boolean;
   fetchSchema: (conn: DatabaseConnection) => Promise<void>;
+  /**
+   * Tell the object tree its catalog changed (#789).
+   *
+   * Separate from `fetchSchema`, and the split is not cosmetic: `fetchSchema` re-reads the
+   * flat inventory the diagram, the profiler and the modals draw from, while the tree holds
+   * its OWN lazy cache of counts and listings that nothing else can reach. Both are driven by
+   * the same `schemaRefreshPattern`, and until this existed only the first one was refreshed.
+   */
+  onObjectsChanged?: () => void;
   queryEditorRef: RefObject<QueryEditorRef | null>;
 }
 
@@ -112,6 +121,7 @@ export function useQueryExecution({
   transactionActive,
   playgroundMode,
   fetchSchema,
+  onObjectsChanged,
   queryEditorRef,
 }: UseQueryExecutionParams) {
   /**
@@ -597,6 +607,9 @@ export function useQueryExecution({
         if (!isExplain && !isPlaygroundRun && metadata) {
           if (shouldRefreshSchema(queryToExecute, metadata.capabilities.schemaRefreshPattern)) {
             fetchSchema(activeConnection);
+            // The tree's cache is its own and nothing else can reach it, so the same statement
+            // that re-reads the inventory has to say so here too.
+            onObjectsChanged?.();
           }
         }
 
@@ -655,7 +668,17 @@ export function useQueryExecution({
         }
       }
     },
-    [activeConnection, toast, fetchSchema, metadata, transactionActive, playgroundMode, setTabs, queryEditorRef],
+    [
+      activeConnection,
+      toast,
+      fetchSchema,
+      onObjectsChanged,
+      metadata,
+      transactionActive,
+      playgroundMode,
+      setTabs,
+      queryEditorRef,
+    ],
   );
 
   // Force execute (bypass safety check) — unified via skipSafety flag

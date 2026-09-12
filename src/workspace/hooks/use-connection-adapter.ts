@@ -5,6 +5,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { ObjectSource } from "@/components/object-tree";
+import { useReadGeneration } from "@/hooks/use-read-generation";
 import type { WorkspaceConnection, WorkspaceObjectReader } from "@/workspace/types";
 
 interface UseConnectionAdapterParams {
@@ -70,19 +71,34 @@ export function useConnectionAdapter({
     setActiveConnectionId(conn?.id ?? null);
   }, []);
 
+  /**
+   * Which catalog read is the CURRENT one (#789).
+   *
+   * `onSchemaFetch` is the HOST's callback, so its latency is not this hook's to bound: a read
+   * for connection A can settle after the reader has moved to B, and every write below asks
+   * first. The rule is stated once in `useReadGeneration` and used by both shells rather than
+   * written twice, which is how the standalone hook came to have it and this one not.
+   */
+  const reads = useReadGeneration();
+
   const readSchema = useCallback(
     async (conn: DatabaseConnection) => {
+      const isCurrent = reads.begin();
       setIsLoadingSchema(true);
       try {
         const result = await onSchemaFetch(conn.id);
-        setSchema(result);
+        if (isCurrent()) setSchema(result);
       } catch {
-        setSchema([]);
+        // A read the reader has moved on from reports nothing at all: clearing the list here
+        // would blame the CURRENT connection for a read that was never issued against it.
+        if (isCurrent()) setSchema([]);
       } finally {
-        setIsLoadingSchema(false);
+        // Only the current read owns the flag; a superseded one clearing it would report the
+        // newer read as finished while it is still in flight.
+        if (isCurrent()) setIsLoadingSchema(false);
       }
     },
-    [onSchemaFetch],
+    [onSchemaFetch, reads],
   );
 
   /**
@@ -102,14 +118,22 @@ export function useConnectionAdapter({
   const fetchSchema = useCallback(
     async (conn: DatabaseConnection) => {
       if (scanDeferred(conn)) {
+        // This supersedes any read in flight, exactly as a read does: the reader has moved to a
+        // connection that reads NOTHING, so an answer still on its way for the previous one must
+        // not land under this connection's name.
+        reads.supersede();
         // Nothing was read for THIS connection, so the previous one's tables may not stay
         // on screen under its name (D31). `readSchema` is the only other writer.
         setSchema([]);
+        // The superseded read will not clear this: its own `finally` asks whether it is still
+        // current and it is not. Nothing is being read here, so a spinner would report a read
+        // that is never going to answer.
+        setIsLoadingSchema(false);
         return;
       }
       await readSchema(conn);
     },
-    [readSchema, scanDeferred],
+    [readSchema, reads, scanDeferred],
   );
 
   /** Read what opening this connection would have read, because the user asked. */

@@ -173,6 +173,41 @@ describe("ObjectTree", () => {
   });
 });
 
+/**
+ * MAJOR 1, #789. The signal from the shell: `Studio.tsx` bumps a counter when a statement it
+ * ran matched the provider's `schemaRefreshPattern`, and this is the only thing that makes the
+ * tree act on it.
+ */
+describe("ObjectTree refresh token", () => {
+  test("a bumped token re-reads the tree, and an unchanged one reads nothing", async () => {
+    const calls = installFetch(routesFor({}, { table: { count: 2 }, view: { count: 0 } }));
+    const { rerender } = render(
+      <ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} refreshToken={0} />,
+    );
+    await screen.findByRole("treeitem", { name: /app/ });
+    const afterFirstPaint = calls.length;
+
+    // A re-render with the SAME token must not re-read: the token is the message, not the
+    // render. Without this the tree would re-read on every parent render.
+    rerender(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} refreshToken={0} />);
+    await waitFor(() => expect(calls.length).toBe(afterFirstPaint));
+
+    rerender(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} refreshToken={1} />);
+    await waitFor(() => expect(calls.length).toBeGreaterThan(afterFirstPaint));
+    expect(calls.slice(afterFirstPaint).map((call) => call.route)).toEqual(["containers"]);
+  });
+
+  test("a deferred tree reads nothing however many statements the shell ran", async () => {
+    const calls = installFetch(routesFor({}, { table: { count: 2 }, view: { count: 0 } }));
+    const { rerender } = render(
+      <ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} deferred refreshToken={0} />,
+    );
+    rerender(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} deferred refreshToken={1} />);
+    await waitFor(() => expect(screen.getByTestId("tree-deferred")).toBeTruthy());
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe("ObjectTree aria positions", () => {
   test("a sibling group of two reports a set size of two and distinct positions", async () => {
     installFetch({
@@ -902,7 +937,15 @@ describe("useTreeNodes", () => {
     expect(result.current.rows).toHaveLength(3);
   });
 
-  test("invalidateContainer drops the counts and the loaded objects of that container and reads them again", async () => {
+  /**
+   * MAJOR 1, #789. `use-query-execution.ts` refreshes on DDL, and until this existed the tree
+   * was not one of the things it refreshed: after `CREATE TABLE` the sidebar kept its cached
+   * counts and listings until the connection was re-selected.
+   *
+   * WHICH container is re-read: every one that is OPEN, and the container listing itself.
+   * Nothing is derived from the statement. The reasoning is in `refresh`'s own docblock.
+   */
+  test("refresh re-reads the counts and the objects of every open row", async () => {
     let generation = 0;
     const calls = installFetch({
       containers: () => appSchema,
@@ -918,15 +961,22 @@ describe("useTreeNodes", () => {
     await waitFor(() => expect(result.current.rows.map((r) => r.label)).toContain("t0"));
 
     generation = 1;
-    act(() => result.current.invalidateContainer(["app"]));
+    act(() => result.current.refresh());
     await waitFor(() => expect(result.current.rows.map((r) => r.label)).toContain("t1"));
     expect(result.current.rows.find((r) => r.kindId === "table" && r.kind === "folder")?.badge).toBe("1");
     expect(calls.filter((call) => call.route === "counts")).toHaveLength(2);
     expect(calls.filter((call) => call.route === "list")).toHaveLength(2);
+    expect(calls.filter((call) => call.route === "containers")).toHaveLength(2);
   });
 
-  test("invalidating a container nobody opened leaves the other container's cache alone", async () => {
-    installFetch({
+  /**
+   * The cost claim, measured rather than asserted: a refresh costs one read per OPEN row and
+   * nothing for a container the reader has collapsed, whose cache is simply left as it is
+   * until it is opened again. That is what bounds a refresh by the tree's expansion state
+   * rather than by the size of the schema.
+   */
+  test("refresh reads nothing for a container the reader has collapsed", async () => {
+    const calls = installFetch({
       containers: () => [
         { path: ["app"], name: "app", level: 0 },
         { path: ["sales"], name: "sales", level: 0 },
@@ -939,11 +989,84 @@ describe("useTreeNodes", () => {
     await waitFor(() => expect(result.current.rows).toHaveLength(2));
     act(() => result.current.toggle("app"));
     await waitFor(() => expect(result.current.rows).toHaveLength(4));
-    act(() => result.current.toggle("app/table"));
-    await waitFor(() => expect(result.current.rows.map((r) => r.label)).toContain("orders"));
+    act(() => result.current.toggle("app"));
+    await waitFor(() => expect(result.current.rows).toHaveLength(2));
 
-    act(() => result.current.invalidateContainer(["sales"]));
-    expect(result.current.rows.map((r) => r.label)).toContain("orders");
+    const before = calls.length;
+    act(() => result.current.refresh());
+    await waitFor(() => expect(calls.length).toBeGreaterThan(before));
+    // The container listing, and nothing else: no counts read is re-issued for a container
+    // nobody is looking at.
+    expect(calls.slice(before).map((call) => call.route)).toEqual(["containers"]);
+  });
+
+  /**
+   * A refresh does not EMPTY a slot before re-reading it, and the difference is visible: a
+   * forget-then-read would replace the whole sidebar with the root spinner on every
+   * `CREATE TABLE`, because `rootLoading` is derived from the root slot being unfilled.
+   */
+  test("refresh leaves the rows on screen while the re-read is in flight", async () => {
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let slow = false;
+    installFetch({
+      containers: async () => {
+        if (slow) await gate;
+        return appSchema;
+      },
+      counts: () => ({ table: { count: 1 }, view: { count: 0 } }),
+    });
+    const { result } = renderTree();
+
+    await waitFor(() => expect(result.current.rows).toHaveLength(1));
+    act(() => result.current.toggle("app"));
+    await waitFor(() => expect(result.current.rows).toHaveLength(3));
+
+    slow = true;
+    act(() => result.current.refresh());
+    expect(result.current.rootLoading).toBe(false);
+    expect(result.current.rows.map((r) => r.label)).toEqual(["app", "Tables", "Views"]);
+
+    await act(async () => {
+      release?.();
+      await Promise.resolve();
+    });
+  });
+
+  test("a DDL statement that created a container puts it in the tree", async () => {
+    let names = ["app"];
+    installFetch({
+      containers: () => names.map((name) => ({ path: [name], name, level: 0 })),
+      counts: () => ({ table: { count: 1 }, view: { count: 0 } }),
+    });
+    const { result } = renderTree();
+
+    await waitFor(() => expect(result.current.rows).toHaveLength(1));
+
+    names = ["app", "sales"];
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.rows.map((r) => r.label)).toContain("sales"));
+  });
+
+  test("refresh clears the failure of a read that then answers", async () => {
+    let failing = true;
+    installFetch({
+      containers: () => appSchema,
+      counts: () =>
+        failing ? Response.json({ error: "relation does not exist" }, { status: 500 }) : { table: { count: 2 } },
+    });
+    const { result } = renderTree();
+
+    await waitFor(() => expect(result.current.rows).toHaveLength(1));
+    act(() => result.current.toggle("app"));
+    await waitFor(() => expect(result.current.failureFor(result.current.rows[0] as never)).toBeDefined());
+
+    failing = false;
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.rows).toHaveLength(3));
+    expect(result.current.failureFor(result.current.rows[0] as never)).toBeUndefined();
   });
 
   test("changing the connection throws the whole cache away rather than showing the last one's tree", async () => {

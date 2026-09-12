@@ -3,7 +3,7 @@ import "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
 
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
 
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
@@ -379,5 +379,132 @@ describe("useProviderMetadata", () => {
     const body = JSON.parse(options?.body as string);
     expect(body.connection?.id).toBe("conn-1");
     expect(body.connectionId).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// A failed read is a fact the reader is owed (#789)
+// =============================================================================
+//
+// Absence used to be the only thing a failure produced: the hook logged a warning, set the
+// metadata to null, and the sidebar renders its pending spinner whenever metadata is absent.
+// A reader whose provider-meta read failed then watched "Reading the connection..." for ever,
+// with no message and nothing to retry. This epic's rule everywhere else is that a refusal is
+// shown in the engine's own words rather than as an absence.
+describe("useProviderMetadata reporting a failed read", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  test("reports the route's own sentence when the read is refused", async () => {
+    mockGlobalFetch({
+      "/api/db/provider-meta": {
+        ok: false,
+        status: 502,
+        json: { error: "The MySQL server is not reachable from this host" },
+      },
+    });
+
+    const { result } = renderHook(() => useProviderMetadata(makeConnection()));
+
+    await waitFor(() => {
+      expect(result.current.error).not.toBeNull();
+    });
+    expect(result.current.error).toBe("The MySQL server is not reachable from this host");
+    expect(result.current.metadata).toBeNull();
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  test("falls back to the status when the body names no error", async () => {
+    mockGlobalFetch({
+      "/api/db/provider-meta": { ok: false, status: 503, json: {} },
+    });
+
+    const { result } = renderHook(() => useProviderMetadata(makeConnection()));
+
+    await waitFor(() => {
+      expect(result.current.error).not.toBeNull();
+    });
+    expect(result.current.error).toBe("The connection could not be read (HTTP 503)");
+  });
+
+  test("a successful read carries no error", async () => {
+    mockGlobalFetch({
+      "/api/db/provider-meta": { ok: true, status: 200, json: mockMetadata },
+    });
+
+    const { result } = renderHook(() => useProviderMetadata(makeConnection()));
+
+    await waitFor(() => {
+      expect(result.current.metadata).not.toBeNull();
+    });
+    expect(result.current.error).toBeNull();
+  });
+
+  test("retry reads the same connection again and clears the error on success", async () => {
+    let attempts = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/db/provider-meta": () => {
+        attempts += 1;
+        return attempts === 1
+          ? { ok: false, status: 500, json: { error: "Connection refused" } }
+          : { ok: true, status: 200, json: mockMetadata };
+      },
+    });
+
+    const { result } = renderHook(() => useProviderMetadata(makeConnection()));
+
+    await waitFor(() => {
+      expect(result.current.error).toBe("Connection refused");
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.retry());
+
+    await waitFor(() => {
+      expect(result.current.metadata).not.toBeNull();
+    });
+    expect(result.current.error).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("a failure for the connection left behind is not reported under the new one", async () => {
+    let releaseFirst: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let calls = 0;
+
+    mockGlobalFetch({
+      "/api/db/provider-meta": async () => {
+        calls += 1;
+        if (calls === 1) {
+          await gate;
+          return { ok: false, status: 500, json: { error: "Connection refused" } };
+        }
+        return { ok: true, status: 200, json: mockMetadata };
+      },
+    });
+
+    const { result, rerender } = renderHook(({ conn }) => useProviderMetadata(conn), {
+      initialProps: { conn: makeConnection({ id: "conn-a" }) },
+    });
+
+    rerender({ conn: makeConnection({ id: "conn-b" }) });
+
+    await waitFor(() => {
+      expect(result.current.metadata).not.toBeNull();
+    });
+
+    await act(async () => {
+      releaseFirst?.();
+      await Promise.resolve();
+    });
+
+    expect(result.current.error).toBeNull();
   });
 });

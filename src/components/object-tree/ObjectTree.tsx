@@ -67,6 +67,15 @@ export interface ObjectTreeProps {
    * ships no routes for those paths to reach.
    */
   readonly source?: ObjectSource;
+  /**
+   * A counter the shell bumps when a statement it ran changed the catalog (#789).
+   *
+   * A TOKEN rather than a callback registration or an imperative handle, because the signal is
+   * one-way and the tree is the only thing that acts on it: the shell holds a number, and a
+   * value different from the one this tree last acted on is the whole message. Which reads that
+   * costs, and why nothing is derived from the statement, is in `useTreeNodes`' `refresh`.
+   */
+  readonly refreshToken?: number;
 }
 
 /** An open menu: which row it belongs to, and where the reader asked for it. */
@@ -120,6 +129,7 @@ export function ObjectTree({
   actions,
   labels,
   source,
+  refreshToken = 0,
 }: ObjectTreeProps) {
   const tree = useTreeNodes(connection, capabilities, deferred, source);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -131,6 +141,20 @@ export function ObjectTree({
   // twice: Right on an open row and Left on its child both land on a row that is already active.
   const [focusRequest, setFocusRequest] = useState<{ readonly id: string } | null>(null);
   const treeRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * The token this tree has already acted on.
+   *
+   * Compared rather than depended on alone, because `refresh` is rebuilt whenever the rows
+   * change and an effect keyed on it would re-read the whole tree on every expansion.
+   */
+  const actedOn = useRef(refreshToken);
+  const refresh = tree.refresh;
+  useEffect(() => {
+    if (refreshToken === actedOn.current) return;
+    actedOn.current = refreshToken;
+    refresh();
+  }, [refresh, refreshToken]);
 
   const rows = tree.rows;
   // Exactly one row is tabbable. Until the reader picks one it is the first, and a row that
