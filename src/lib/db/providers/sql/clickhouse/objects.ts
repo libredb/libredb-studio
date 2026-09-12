@@ -59,7 +59,7 @@
  */
 
 import { QueryError } from "@/lib/db/errors";
-import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import type {
   ColumnSchema,
   Container,
@@ -399,9 +399,6 @@ function bulkDictionaryColumnsSql(database: string, kind: string, limit?: number
     "GROUP BY name)) AS d",
   ].join(" ");
 }
-
-/** What `ObjectDetailBatch.truncated.reason` says when the caller's bound bites. */
-const BULK_TRUNCATION_REASON = "the caller's limit on one ClickHouse bulk column read";
 
 function objectIndexesSql(database: string, name: string): string {
   return [
@@ -956,7 +953,9 @@ export async function describeObjects(
   // name the statement ordered by: that order is the server's and decides only which
   // objects a bound keeps.
   const sorted = details.sort((left, right) => comparePaths(left.path, right.path));
-  return truncated ? { details: sorted, truncated: { limit, reason: BULK_TRUNCATION_REASON } } : { details: sorted };
+  return truncated
+    ? { details: sorted, truncated: { limit, reason: callerBoundTruncationReason(limit) } }
+    : { details: sorted };
 }
 
 /** Every target dictionary described, in one statement. */

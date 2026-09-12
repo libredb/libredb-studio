@@ -60,7 +60,7 @@
  */
 import { expect } from "bun:test";
 import type { Container, DatabaseObject, DatabaseProvider, KindCount, ObjectDetailBatch } from "@/lib/db/types";
-import { declaredKinds, isCountUnavailable, relationKindIds } from "@/lib/db/object-kinds";
+import { callerBoundTruncationReason, declaredKinds, isCountUnavailable, relationKindIds } from "@/lib/db/object-kinds";
 import { resolveObjectAddress } from "@/lib/db/object-address";
 import { enumerateContainers } from "@/lib/db/container-walk";
 
@@ -362,7 +362,11 @@ async function assertFlatReadingJoins(
  *      path and never by a joined name;
  *   3. truncation is reported, which is checked by bounding a read whose unbounded answer
  *      is already known to be larger - the only probe that can tell a provider that stops
- *      short and says so from one that stops short silently.
+ *      short and says so from one that stops short silently;
+ *   4. the sentence it is reported with is the ONE sentence every engine uses for a
+ *      caller's bound, `callerBoundTruncationReason()`. A non-empty reason was the old bar
+ *      and eleven implementers cleared it with three unrelated phrasings. CONTAINS rather
+ *      than equals, because a provider with a second bound of its own names both.
  *
  * The zero-iteration case of each loop is what the two throws guard: a provider answering
  * `{ details: [] }` for every kind satisfies every check inside them, so the richest
@@ -427,4 +431,11 @@ async function assertBulkColumnRead(
     );
   }
   expect(bounded.truncated.limit).toBe(1);
+  const callerSentence = callerBoundTruncationReason(1);
+  if (!bounded.truncated.reason.includes(callerSentence)) {
+    throw new Error(
+      `describeObjects("${richest.kind}", limit 1) reported "${bounded.truncated.reason}", which does not carry ` +
+        `the one sentence a caller's bound is reported with: "${callerSentence}"`,
+    );
+  }
 }

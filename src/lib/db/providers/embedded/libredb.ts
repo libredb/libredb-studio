@@ -47,7 +47,7 @@ import {
   type ObjectDetailBatch,
   type ObjectKindSpec,
 } from "../../types";
-import { containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
 import { DatabaseConfigError, ConnectionError, QueryError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
@@ -227,25 +227,21 @@ const SCAN_DERIVED_KIND_ID = objectKindFor(undefined);
 const KEY_SCAN_SAMPLE_SENTENCE = `the first ${LIBREDB_MAX_KEY_SCAN.toLocaleString("en-US")} keys of a bounded key scan`;
 
 /**
- * The two sentences `describeObjects` reports a bound with, and they are two DIFFERENT
- * bounds rather than two phrasings of one (#789).
+ * The SECOND of the two sentences `describeObjects` reports a bound with, and they are two
+ * DIFFERENT bounds rather than two phrasings of one (#789).
  *
- * The first is the CALLER's: a `limit` this provider was handed and applied, so the number
- * in the sentence is the caller's own. The second is a bound the caller never asked for
- * and this provider did not choose per call - the key walk stops at
- * `LIBREDB_MAX_KEY_SCAN`, so on a larger file the derived groupings are the groupings of a
- * SAMPLE. A cap nobody can see is exactly what `ObjectDetailBatch.truncated` exists to
- * prevent, so the second is reported on an UNBOUNDED call too, and both are named when
- * both bite.
+ * The first is the CALLER's and is `callerBoundTruncationReason()` in `object-kinds.ts`,
+ * shared by every provider so that one event reads one way whichever engine is open. This
+ * one is a bound the caller never asked for and this provider did not choose per call: the
+ * key walk stops at `LIBREDB_MAX_KEY_SCAN`, so on a larger file the derived groupings are
+ * the groupings of a SAMPLE. A cap nobody can see is exactly what
+ * `ObjectDetailBatch.truncated` exists to prevent, so this one is reported on an UNBOUNDED
+ * call too, and both are named when both bite.
  *
- * The scan sentence reuses `KEY_SCAN_SAMPLE_SENTENCE`, the same words `countObjects` puts
- * on the badge through `KindCount.sampledFrom`, so a person meeting the fact twice meets
- * it in one wording.
+ * It reuses `KEY_SCAN_SAMPLE_SENTENCE`, the same words `countObjects` puts on the badge
+ * through `KindCount.sampledFrom`, so a person meeting the fact twice meets it in one
+ * wording.
  */
-function callerBoundSentence(limit: number): string {
-  return `the bulk column read was bounded at ${limit} object${limit === 1 ? "" : "s"} by its caller`;
-}
-
 const SCAN_BOUND_SENTENCE = `the key walk stopped at ${KEY_SCAN_SAMPLE_SENTENCE}`;
 
 /**
@@ -1131,7 +1127,10 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     // that is exact.
     const scanBound = scanTruncated && kind === SCAN_DERIVED_KIND_ID;
     if (!bounded && !scanBound) return { details };
-    const reasons = [...(bounded ? [callerBoundSentence(limit!)] : []), ...(scanBound ? [SCAN_BOUND_SENTENCE] : [])];
+    const reasons = [
+      ...(bounded ? [callerBoundTruncationReason(limit!)] : []),
+      ...(scanBound ? [SCAN_BOUND_SENTENCE] : []),
+    ];
     // The CALLER's limit whenever the caller set one that bit; otherwise the number this
     // read actually produced, which is the only bound in existence on that arm and keeps
     // `details.length <= truncated.limit` true either way.

@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type oracledb from "oracledb";
 import { ConnectionError, DatabaseConfigError, DatabaseError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
@@ -3563,7 +3564,7 @@ describe("Oracle bulk column read", () => {
     expect(issued[1].sql).toContain(":4");
     expect(issued[1].params).toEqual(["APP", "TABLE", 2, "APP"]);
     expect(batch.details.map((detail) => detail.path)).toEqual([["APP", "APP_CUSTOMERS"]]);
-    expect(batch.truncated).toEqual({ limit: 1, reason: "column read limit reached" });
+    expect(batch.truncated).toEqual({ limit: 1, reason: callerBoundTruncationReason(1) });
     await provider.disconnect();
   });
 

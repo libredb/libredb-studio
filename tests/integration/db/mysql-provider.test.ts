@@ -4,6 +4,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
@@ -4379,7 +4380,7 @@ describe("MySQL bulk column read", () => {
     expect(protocolCalls[0].params).toEqual(["app", "BASE TABLE", "SYSTEM VERSIONED", 2]);
     expect(protocolCalls[0].sql).toContain("LIMIT ?");
     expect(batch.details.map((detail) => detail.path)).toEqual([["app", "customers"]]);
-    expect(batch.truncated).toEqual({ limit: 1, reason: "column read limit reached" });
+    expect(batch.truncated).toEqual({ limit: 1, reason: callerBoundTruncationReason(1) });
     await provider.disconnect();
   });
 

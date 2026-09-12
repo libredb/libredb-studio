@@ -22,7 +22,7 @@
  */
 
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import {
   type ActiveSession,
@@ -317,19 +317,6 @@ function indexColumns(row: CouchbaseRow): string[] {
 // ============================================================================
 // Couchbase Provider
 // ============================================================================
-
-/**
- * The sentence `describeObjects` reports the caller's own bound with (#789).
- *
- * There is only ONE bound on this engine's bulk read and it is the caller's: the catalog
- * statements answer a whole bucket in one round trip each, so the target set is complete
- * before anything is cut, and no cap of this provider's own reaches the answer. INFER's
- * `sample_size` bounds the documents a column list is inferred from, not the objects the
- * batch holds, so it is documented rather than reported here.
- */
-function callerBoundSentence(limit: number): string {
-  return `the bulk column read was bounded at ${limit} object${limit === 1 ? "" : "s"} by its caller`;
-}
 
 export class CouchbaseProvider extends BaseDatabaseProvider {
   private transport: CouchbaseTransport | null = null;
@@ -931,7 +918,14 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     ]);
 
     const details = chosen.map((object, index) => relationDetail(object.path, keyspaces[index], columns[index], rows));
-    return bounded ? { details, truncated: { limit, reason: callerBoundSentence(limit) } } : { details };
+    // The bound reported here is the CALLER's and there is no other on this engine's bulk
+    // read: the catalog statements answer a whole bucket in one round trip each, so the
+    // target set is complete before anything is cut, and no cap of this provider's own
+    // reaches the answer. INFER's `sample_size` bounds the documents a column list is
+    // inferred from, not the objects the batch holds, so it is documented rather than
+    // reported here. The sentence itself is shared (#789), so one event reads one way on
+    // every engine.
+    return bounded ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
   }
 
   // ==========================================================================

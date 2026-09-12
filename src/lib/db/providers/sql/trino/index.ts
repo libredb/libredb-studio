@@ -54,7 +54,7 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import {
   type ActiveSessionDetails,
   type ColumnSchema,
@@ -104,7 +104,6 @@ import {
   type KindCountRow,
   type TrinoContainer,
   applyKindCounts,
-  TRINO_BULK_TRUNCATION_REASON,
   comparePaths,
   objectDetailFromRows,
   objectKey,
@@ -1041,7 +1040,7 @@ export class TrinoProvider extends SQLBaseProvider {
       // objects a bound keeps.
       .sort((left, right) => comparePaths(left.path, right.path));
 
-    return truncated ? { details, truncated: { limit, reason: TRINO_BULK_TRUNCATION_REASON } } : { details };
+    return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
   }
 
   // ==========================================================================

@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 function fakeProvider(overrides: Record<string, unknown> = {}) {
@@ -666,7 +667,7 @@ describe("assertObjectSurface and the bulk column read", () => {
       describeObjects: async (_c: readonly string[], kind: string, limit?: number) => {
         const all = detailsFor(kind);
         if (limit !== undefined && all.length > limit) {
-          return { details: all.slice(0, limit), truncated: { limit, reason: "column read limit reached" } };
+          return { details: all.slice(0, limit), truncated: { limit, reason: callerBoundTruncationReason(limit) } };
         }
         return { details: all };
       },
@@ -739,11 +740,49 @@ describe("assertObjectSurface and the bulk column read", () => {
       describeObjects: async (_c: readonly string[], kind: string, limit?: number) =>
         limit === undefined
           ? { details: detailsFor(kind) }
-          : { details: detailsFor(kind), truncated: { limit, reason: "column read limit reached" } },
+          : { details: detailsFor(kind), truncated: { limit, reason: callerBoundTruncationReason(limit) } },
     });
     await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
       /describeObjects\("table"\) reported a limit of 1 and returned 2 column sets/,
     );
+  });
+
+  // One sentence for one event, across every engine (#789). A non-empty reason was the old
+  // bar, and eleven implementers cleared it with three unrelated phrasings, so the same
+  // bound read three ways depending on which engine was open. This is the check that makes
+  // the twelfth follow the eleven rather than inventing a fourth.
+  test("rejects a caller-bounded batch whose reason is not the shared sentence", async () => {
+    const provider = bulkProvider({
+      describeObjects: async (_c: readonly string[], kind: string, limit?: number) => {
+        const all = detailsFor(kind);
+        if (limit !== undefined && all.length > limit) {
+          return { details: all.slice(0, limit), truncated: { limit, reason: "column read limit reached" } };
+        }
+        return { details: all };
+      },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /reported "column read limit reached", which does not carry the one sentence a caller's bound is reported with/,
+    );
+  });
+
+  // A provider with a SECOND bound of its own names both, so the guard asks for CONTAINS
+  // and never for equality: redis and libredb join the caller's sentence to their scan
+  // bound's, and an equality check would fail both of them for being more informative.
+  test("accepts a reason that carries the shared sentence inside a composed one", async () => {
+    const provider = bulkProvider({
+      describeObjects: async (_c: readonly string[], kind: string, limit?: number) => {
+        const all = detailsFor(kind);
+        if (limit !== undefined && all.length > limit) {
+          return {
+            details: all.slice(0, limit),
+            truncated: { limit, reason: `${callerBoundTruncationReason(limit)}, and the key walk stopped early` },
+          };
+        }
+        return { details: all };
+      },
+    });
+    await assertObjectSurface(provider as never, expectation);
   });
 
   test("rejects a truncation carrying no reason a person can read", async () => {
@@ -791,7 +830,7 @@ describe("assertObjectSurface and the bulk column read", () => {
         asked.push({ container, kind, limit });
         const all = detailsFor(kind);
         if (limit !== undefined && all.length > limit) {
-          return { details: all.slice(0, limit), truncated: { limit, reason: "column read limit reached" } };
+          return { details: all.slice(0, limit), truncated: { limit, reason: callerBoundTruncationReason(limit) } };
         }
         return { details: all };
       },

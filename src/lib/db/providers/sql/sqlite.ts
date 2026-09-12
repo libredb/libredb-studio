@@ -50,7 +50,7 @@ import {
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 import { loadSQLiteDriver, type SQLiteDatabase } from "./sqlite-driver";
-import { containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
 import * as path from "path";
@@ -529,9 +529,6 @@ const BULK_RELATION_TYPES: Readonly<Record<string, readonly string[]>> = {
   table: ["table", "virtual"],
   view: ["view"],
 };
-
-/** What `ObjectDetailBatch.truncated.reason` says when the caller's bound bites. */
-const BULK_TRUNCATION_REASON = "the caller's limit on one SQLite bulk column read";
 
 /**
  * The target set of one bulk read: every object of one kind in `main`, in the engine's
@@ -1592,7 +1589,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       )
       .sort((left, right) => comparePaths(left.path, right.path));
 
-    return truncated ? { details, truncated: { limit, reason: BULK_TRUNCATION_REASON } } : { details };
+    return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
   }
 
   // ============================================================================

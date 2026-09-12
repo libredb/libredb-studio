@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import { EventEmitter } from "node:events";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 
@@ -3196,7 +3197,7 @@ describe("SQL Server bulk column read", () => {
     expect(issued[0].sql).toContain("TOP (@limit)");
     expect(issued[0].sql).toContain("ORDER BY s.name, o.name");
     expect(batch.details.map((detail) => detail.path[2])).toEqual(["customers", "order_audit"]);
-    expect(batch.truncated).toEqual({ limit: 2, reason: "column read limit reached" });
+    expect(batch.truncated).toEqual({ limit: 2, reason: callerBoundTruncationReason(2) });
     await provider.disconnect();
   });
 

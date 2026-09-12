@@ -35,7 +35,13 @@ import {
   type ObjectDetailBatch,
   type ObjectKindSpec,
 } from "../../types";
-import { containerDepth, declaredKinds, findKind, isCountUnavailable } from "@/lib/db/object-kinds";
+import {
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+  isCountUnavailable,
+} from "@/lib/db/object-kinds";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
@@ -318,19 +324,6 @@ const SAMPLE_KEYSPACE_FIELD = "__ks";
 
 /** The field one sample row carries the document itself in. */
 const SAMPLE_DOCUMENT_FIELD = "d";
-
-/**
- * The sentence `describeObjects` reports the caller's own bound with (#789).
- *
- * There is only ONE bound on this engine and it is the caller's: `listCollections` answers
- * the whole catalog in one command, so the target set is complete before anything is cut,
- * and no cap of this provider's own reaches the answer. `getSchema()`'s silent
- * `.slice(0, 200)` is NOT carried here, which is the reference's first "do not copy": an
- * unreported bound is the defect `truncated` exists to prevent.
- */
-function callerBoundSentence(limit: number): string {
-  return `the bulk column read was bounded at ${limit} object${limit === 1 ? "" : "s"} by its caller`;
-}
 
 /** A string the server sent, or "" when it sent nothing usable. */
 function readText(value: unknown): string {
@@ -1982,7 +1975,14 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     const details = chosen.map((object, index) =>
       this.objectDetailFrom(object.path, samples.get(object.name) ?? [], indexes[index]),
     );
-    return bounded ? { details, truncated: { limit, reason: callerBoundSentence(limit) } } : { details };
+    // The bound reported here is the CALLER's and there is no other on this engine:
+    // `listCollections` answers the whole catalog in one command, so the target set is
+    // complete before anything is cut, and no cap of this provider's own reaches the
+    // answer. `getSchema()`'s silent `.slice(0, 200)` is NOT carried here, which is the
+    // reference's first "do not copy": an unreported bound is the defect `truncated`
+    // exists to prevent. The sentence itself is shared (#789), so one event reads one way
+    // on every engine.
+    return bounded ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
   }
 
   private formatDurationString(ms: number): string {

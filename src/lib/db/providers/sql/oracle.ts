@@ -38,7 +38,7 @@ import {
   type IndexSchema,
   type ForeignKeySchema,
 } from "../../types";
-import { containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
 import {
   DatabaseConfigError,
   ConnectionError,
@@ -583,12 +583,6 @@ function bulkDetailSql(
          ORDER BY d.NAME, ai.INDEX_NAME, aic.COLUMN_POSITION`,
   };
 }
-
-/**
- * The provider's own sentence for what stopped a bulk read, phrased for a person reading a
- * partial answer. It is the CALLER's limit that bit and never a bound this file invented.
- */
-const BULK_TRUNCATION_REASON = "column read limit reached";
 
 // ============================================================================
 // Object surface shapes and derivations (#789)
@@ -1915,7 +1909,7 @@ export class OracleProvider extends SQLBaseProvider {
           }),
         )
         .sort((left, right) => comparePaths(left.path, right.path));
-      return truncated ? { details, truncated: { limit, reason: BULK_TRUNCATION_REASON } } : { details };
+      return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
     } finally {
       await conn.close();
     }

@@ -376,9 +376,6 @@ export function objectKey(schema: string, name: string): string {
   return `${schema}\u0000${name}`;
 }
 
-/** What `ObjectDetailBatch.truncated.reason` says when the caller's bound bites. */
-export const TRINO_BULK_TRUNCATION_REASON = "the caller's limit on one Trino bulk column read";
-
 /** One relation's columns, in declared order. A materialized view answers here too (measured). */
 export function trinoObjectColumnsSql(catalog: string, schema: string, name: string): string {
   return [

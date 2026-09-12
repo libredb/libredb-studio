@@ -38,7 +38,7 @@ import {
   type StorageStats,
 } from "../../types";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
-import { containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
 import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
@@ -1074,13 +1074,6 @@ const BULK_DETAIL_SQL_BOUNDED: Record<string, BulkDetailStatements> = Object.fro
     .filter(([, spec]) => spec.catalog === "tables")
     .map(([kind, spec]) => [kind, bulkDetailSql(spec.types.length, true)]),
 );
-
-/**
- * The provider's own sentence for what stopped a bulk read, phrased for a person reading a
- * partial answer. It is the CALLER's limit that bit and never a bound this file invented:
- * an unbounded call has no limit to report and never carries this.
- */
-const BULK_TRUNCATION_REASON = "column read limit reached";
 
 // ----------------------------------------------------------------------------
 // The declaration, which is a function of the SERVER and not of the type id
@@ -2271,7 +2264,7 @@ export class MySQLProvider extends SQLBaseProvider {
           }),
         )
         .sort((left, right) => comparePaths(left.path, right.path));
-      return truncated ? { details, truncated: { limit, reason: BULK_TRUNCATION_REASON } } : { details };
+      return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
     } finally {
       conn.release();
     }

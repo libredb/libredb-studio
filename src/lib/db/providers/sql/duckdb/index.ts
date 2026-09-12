@@ -68,7 +68,7 @@ import {
   type TableSchema,
   type TableStats,
 } from "../../../types";
-import { containerDepth, declaredKinds, findKind } from "../../../object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../../object-kinds";
 import {
   DatabaseConfigError,
   DatabaseError,
@@ -111,7 +111,6 @@ import {
   type SchemaNameRow,
   applyKindCounts,
   comparePaths,
-  BULK_TRUNCATION_REASON,
   bulkColumnsSql,
   bulkForeignKeysSql,
   bulkIndexesSql,
@@ -994,7 +993,7 @@ export class DuckDBProvider extends SQLBaseProvider {
       })
       .sort((left, right) => comparePaths(left.path, right.path));
 
-    return truncated ? { details, truncated: { limit, reason: BULK_TRUNCATION_REASON } } : { details };
+    return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
   }
 
   // ==========================================================================

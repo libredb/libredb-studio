@@ -35,7 +35,7 @@ import {
   type ObjectDetailBatch,
   type ObjectKindSpec,
 } from "../../types";
-import { declaredKinds, findKind } from "../../object-kinds";
+import { callerBoundTruncationReason, declaredKinds, findKind } from "../../object-kinds";
 import {
   DatabaseConfigError,
   ConnectionError,
@@ -861,13 +861,6 @@ const BULK_DETAIL_SQL: Record<string, string> = Object.fromEntries(
 const BULK_DETAIL_SQL_BOUNDED: Record<string, string> = Object.fromEntries(
   Object.entries(RELKIND_BY_KIND).map(([kind, relkinds]) => [kind, bulkDetailSql(relkinds, true)]),
 );
-
-/**
- * The provider's own sentence for what stopped a bulk read, phrased for a person reading a
- * partial answer. It is the caller's limit that bit and never a bound this file invented:
- * an unbounded call has no limit to report and never carries this.
- */
-const BULK_TRUNCATION_REASON = "column read limit reached";
 
 /**
  * The one schema a container path names on this engine.
@@ -2453,7 +2446,7 @@ export class PostgresProvider extends SQLBaseProvider {
       const details = (truncated ? rows.slice(0, limit) : rows)
         .map((row) => objectDetailFromRow(objectPath(schema, row), row))
         .sort((left, right) => comparePaths(left.path, right.path));
-      return truncated ? { details, truncated: { limit, reason: BULK_TRUNCATION_REASON } } : { details };
+      return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
     } finally {
       client.release();
     }

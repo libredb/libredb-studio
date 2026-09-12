@@ -377,9 +377,6 @@ export function bulkIndexesSql(kind: string, bySchema: boolean, bounded: boolean
   );
 }
 
-/** What `ObjectDetailBatch.truncated.reason` says when the caller's bound bites. */
-export const BULK_TRUNCATION_REASON = "the caller's limit on one DuckDB bulk column read";
-
 /**
  * One relation's columns. `duckdb_columns()` carries a VIEW's columns as well as a
  * table's, so one statement answers for both declared relation kinds.

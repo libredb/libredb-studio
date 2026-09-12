@@ -1275,6 +1275,17 @@ export interface ObjectDetail {
  * handed over as a complete one is what makes its reader treat a missing table as an
  * absent one - the #414 defect, measured against the agent. `details.length` never
  * exceeds `truncated.limit`.
+ *
+ * `reason` is ONE SENTENCE for one event across every engine, and that is a rule rather
+ * than a convention: build the caller's half with `callerBoundTruncationReason()` in
+ * `src/lib/db/object-kinds.ts` and never spell it per provider. Eleven implementers wrote
+ * three unrelated phrasings for the same bound before this was written down, so the same
+ * event read three ways depending on which engine was open, and once the flat surface is
+ * gone this sentence is the only thing explaining a short answer. A provider that applies
+ * a SECOND bound of its own, a bounded key walk say, names that one in its own words and
+ * joins the two: they are two different bounds, not two phrasings of one. The shared
+ * conformance guard asks that a caller-bounded batch's reason CONTAIN the shared sentence,
+ * never that it equal it.
  */
 export interface ObjectDetailBatch {
   readonly details: readonly ObjectDetail[];

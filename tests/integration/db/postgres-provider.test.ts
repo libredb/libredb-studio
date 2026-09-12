@@ -4,6 +4,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import { EventEmitter } from "node:events";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
@@ -4668,7 +4669,7 @@ describe("PostgreSQL bulk column read", () => {
     const batch = await provider.describeObjects(["app"], "table", 1);
     expect(bound).toBe(2);
     expect(batch.details).toHaveLength(1);
-    expect(batch.truncated).toEqual({ limit: 1, reason: "column read limit reached" });
+    expect(batch.truncated).toEqual({ limit: 1, reason: callerBoundTruncationReason(1) });
     await provider.disconnect();
   });
 

@@ -83,7 +83,7 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import {
   type ActiveSessionDetails,
   type ColumnSchema,
@@ -441,17 +441,6 @@ function comparePaths(left: readonly string[], right: readonly string[]): number
  */
 function searchObjectDetail(path: readonly string[], columns: ColumnSchema[]): ObjectDetail {
   return { path: [...path], columns, indexes: [], foreignKeys: [] };
-}
-
-/**
- * The sentence the bulk read reports the caller's own bound with (#789).
- *
- * There is only ONE bound on this engine's batch and it is the caller's. The chunking the
- * transport does to stay inside the cluster's request-line limit is not one: it splits a
- * read into several requests and drops nothing.
- */
-function callerBoundSentence(limit: number): string {
-  return `the bulk column read was bounded at ${limit} object${limit === 1 ? "" : "s"} by its caller`;
 }
 
 /**
@@ -1262,7 +1251,11 @@ abstract class SearchProvider extends SQLBaseProvider {
 
       const columns = await this.describeMapped(kind, chosen, signal);
       const details = chosen.map((object, index) => searchObjectDetail(object.path, columns[index]));
-      return bounded ? { details, truncated: { limit, reason: callerBoundSentence(limit) } } : { details };
+      // The bound reported here is the CALLER's and there is no other on this engine's
+      // batch. The chunking the transport does to stay inside the cluster's request-line
+      // limit is not one: it splits a read into several requests and drops nothing. The
+      // sentence itself is shared (#789), so one event reads one way on every engine.
+      return bounded ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
     });
   }
 

@@ -94,3 +94,29 @@ export function isCountUnavailable(count: KindCount): count is { readonly unavai
 export function isCountSampled(count: KindCount): count is { readonly count: number; readonly sampledFrom: string } {
   return "sampledFrom" in count;
 }
+
+/**
+ * The one sentence every provider reports a CALLER's bulk-read bound with (#789).
+ *
+ * `ObjectDetailBatch.truncated.reason` is a sentence a person reads beside a partial
+ * answer, and once the flat surface is gone it is the ONLY sentence explaining why an
+ * answer is short. Eleven implementers wrote three unrelated phrasings for one event
+ * ("column read limit reached", "the caller's limit on one <Engine> bulk column read",
+ * and this one), so the same bound read three ways depending on which engine was open.
+ * This is the shape that won, for two reasons that are not taste: it carries the NUMBER
+ * that bit, which the terse spelling drops and a reader cannot recover, and it names no
+ * engine, so there is nothing per-provider left to spell differently.
+ *
+ * It is a function rather than a constant because the number is the caller's and changes
+ * per call, and it is here rather than in each provider because fourteen copies of a
+ * sentence is how the three phrasings happened.
+ *
+ * A provider that applies a SECOND bound of its own - redis and libredb walk a bounded
+ * keyspace - names that one in its own words and joins the two, because they are two
+ * different bounds rather than two phrasings of one. The shared conformance guard asks
+ * only that a caller-bounded batch's reason CONTAIN this sentence, never that it equal
+ * it, so a composed sentence satisfies it.
+ */
+export function callerBoundTruncationReason(limit: number): string {
+  return `the bulk column read was bounded at ${limit} object${limit === 1 ? "" : "s"} by its caller`;
+}

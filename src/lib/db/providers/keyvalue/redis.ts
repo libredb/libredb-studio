@@ -16,7 +16,7 @@
 
 import Redis, { type RedisOptions } from "ioredis";
 import { BaseDatabaseProvider } from "../../base-provider";
-import { containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -169,24 +169,21 @@ const KEY_SCAN_LIMIT = 1000;
 const KEY_SCAN_SAMPLE_SENTENCE = `the first ${KEY_SCAN_LIMIT.toLocaleString("en-US")} keys of one SCAN walk`;
 
 /**
- * The two sentences `describeObjects` reports a bound with, and they are two DIFFERENT
- * bounds rather than two phrasings of one (#789).
+ * The SECOND of the two sentences `describeObjects` reports a bound with, and they are two
+ * DIFFERENT bounds rather than two phrasings of one (#789).
  *
- * The first is the CALLER's: a `limit` this provider was handed and applied, so the number
- * in the sentence is the caller's own. The second is a bound nobody asked for on the call -
- * the walk stops at `KEY_SCAN_LIMIT` keys, so on a larger keyspace the groupings are the
- * groupings of a SAMPLE and there may be objects the batch does not hold. A cap nobody can
- * see is exactly what `ObjectDetailBatch.truncated` exists to prevent, so the second is
- * reported on an unbounded read too, and both are named when both bite.
+ * The first is the CALLER's and is `callerBoundTruncationReason()` in `object-kinds.ts`,
+ * shared by every provider so that one event reads one way whichever engine is open. This
+ * one is a bound nobody asked for on the call: the walk stops at `KEY_SCAN_LIMIT` keys, so
+ * on a larger keyspace the groupings are the groupings of a SAMPLE and there may be objects
+ * the batch does not hold. A cap nobody can see is exactly what
+ * `ObjectDetailBatch.truncated` exists to prevent, so this one is reported on an unbounded
+ * read too, and both are named when both bite.
  *
- * The scan sentence reuses `KEY_SCAN_SAMPLE_SENTENCE`, the same words `countObjects` puts on
- * the badge through `KindCount.sampledFrom`, so a person meeting the fact twice meets it in
- * one wording.
+ * It reuses `KEY_SCAN_SAMPLE_SENTENCE`, the same words `countObjects` puts on the badge
+ * through `KindCount.sampledFrom`, so a person meeting the fact twice meets it in one
+ * wording.
  */
-function callerBoundSentence(limit: number): string {
-  return `the bulk column read was bounded at ${limit} object${limit === 1 ? "" : "s"} by its caller`;
-}
-
 const SCAN_BOUND_SENTENCE = `the key walk stopped at ${KEY_SCAN_SAMPLE_SENTENCE}`;
 
 /**
@@ -1284,7 +1281,7 @@ export class RedisProvider extends BaseDatabaseProvider {
 
       if (!bounded && !scanTruncated) return { details };
       const reasons = [
-        ...(bounded ? [callerBoundSentence(limit!)] : []),
+        ...(bounded ? [callerBoundTruncationReason(limit!)] : []),
         ...(scanTruncated ? [SCAN_BOUND_SENTENCE] : []),
       ];
       // The CALLER's limit whenever the caller set one that bit; otherwise the number this

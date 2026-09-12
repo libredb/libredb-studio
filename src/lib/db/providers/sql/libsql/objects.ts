@@ -41,7 +41,7 @@ import type {
   ProviderCapabilities,
 } from "@/lib/db/types";
 import { QueryError } from "@/lib/db/errors";
-import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import { readNumber, readText } from "./introspect";
 import type { LibSQLBatchOutcome, LibSQLRow, LibSQLStatement, LibSQLTransport } from "./transport";
 
@@ -220,9 +220,6 @@ const BULK_RELATION_TYPES: Readonly<Record<string, readonly string[]>> = {
   table: ["table", "virtual"],
   view: ["view"],
 };
-
-/** What `ObjectDetailBatch.truncated.reason` says when the caller's bound bites. */
-const BULK_TRUNCATION_REASON = "the caller's limit on one libSQL bulk column read";
 
 /**
  * The target set of one bulk read: every object of one kind in `main`, in the engine's own
@@ -933,7 +930,7 @@ export async function describeLibSQLObjects(
     )
     .sort((left, right) => comparePaths(left.path, right.path));
 
-  return truncated ? { details, truncated: { limit, reason: BULK_TRUNCATION_REASON } } : { details };
+  return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
 }
 
 /** The rows of one bulk statement, grouped by the `object_name` each one carries. */

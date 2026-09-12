@@ -518,7 +518,8 @@ Three properties it holds to:
    joined name: `"app.orders"` is what `query-generators.ts` used to split back on `.`.
 3. **It reports its own truncation.** `limit + 1` rows are asked for, so a saturated read is
    distinguishable from an exact one without a second count; the extra row is dropped and
-   `truncated` carries the caller's own limit with the sentence `column read limit reached`. An
+   `truncated` carries the caller's own limit with the one sentence every provider reports a
+   caller's bound with, `callerBoundTruncationReason()` in `src/lib/db/object-kinds.ts`. An
    unbounded call runs without a `LIMIT` clause and can never report truncation. `getSchema()`'s
    `FILTER (WHERE c.ordinal_position <= 100)` column cap is deliberately NOT carried over, because an
    unreported bound is the defect this field exists to prevent.
@@ -549,7 +550,8 @@ joins on path rather than on position.
 describeObjects(app, table):             10 details, 1 round trip, truncated=undefined
 describeObjects(app, view):              4 details      materialized_view: 1     sequence: 11
 describeObjects(app, function|trigger):  0 details, 0 round trips
-describeObjects(app, table, limit 3):    3 details, truncated={"limit":3,"reason":"column read limit reached"}
+describeObjects(app, table, limit 3):    3 details, truncated={"limit":3,
+                                         "reason":"the bulk column read was bounded at 3 objects by its caller"}
 describeObjects(app, table, limit 10):   10 details, truncated=undefined
 ```
 
