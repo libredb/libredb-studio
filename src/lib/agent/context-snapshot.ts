@@ -74,16 +74,13 @@
 
 import { createHash } from "node:crypto";
 import type { AgentCatalogKind } from "./composed-sql";
-import { addressContainer, addressKeys } from "./inventory-address";
-import { preferredCandidate } from "@/lib/db/object-address";
 import { type AgentInventoryNoun, TABLE_INVENTORY_NOUN } from "./inventory-noun";
 import { parseSqliteIndexDdl, parseSqliteTableDdl } from "./sqlite-ddl";
 import {
-  type AgentProviderSchemaRead,
+  type AgentObjectInventoryRead,
   type AgentToolContext,
   readCatalogForGrounding,
   readObjectInventoryForGrounding,
-  readProviderSchemaForGrounding,
 } from "./tools";
 import type {
   AgentContextSnapshot,
@@ -840,9 +837,9 @@ async function readInventory(context: AgentToolContext): Promise<AgentContextCap
  * through it.
  */
 async function captureFromProvider(context: AgentToolContext, nowMs: number): Promise<AgentContextCapture> {
-  let read: AgentProviderSchemaRead;
+  let read: AgentObjectInventoryRead;
   try {
-    read = await readProviderSchemaForGrounding(context);
+    read = await readObjectInventoryForGrounding(context);
   } catch (error) {
     const failure = environmentFailure(error, context);
     if (failure === null) throw error;
@@ -855,8 +852,14 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
     );
   }
   if (read.kind === "unavailable") return unavailable("CATALOG_READ_REFUSED", read.modelText);
+  if (read.kind === "unsupported") {
+    return unavailable(
+      "CATALOG_READ_REFUSED",
+      `This server has no inventory to read for a ${context.connection.type} connection: the provider declares no object kinds, so there is nothing to list.`,
+    );
+  }
 
-  const inventory = await tagWithObjectKinds(context, finalize(providerTables(read.tables)));
+  const inventory = addressInventory(read.inventory, read.defaultContainer);
   return {
     kind: "captured",
     snapshot: {
@@ -870,199 +873,50 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
 }
 
 /**
- * The inventory the run reasons over: the columns one reading carries, joined to the
- * identity the other one does (#789).
+ * The walk's inventory as the RUN reads it: addressed, labelled and ordered (#789).
  *
- * TWO READINGS ARE JOINED HERE and neither can be dropped, which is the whole shape of
- * this function. The composed catalog and the provider schema inspection both answer one
- * FLAT list of names with columns, indexes and keys on each, and neither says what kind
- * anything is: a PostgreSQL `information_schema.columns` read returns a view's columns
- * beside a table's, indistinguishable. The object surface says exactly that, and carries
- * no columns, because reading them in bulk is an N+1 the epic refused (see the route's
- * own docblock, and `readObjectInventoryForGrounding`).
+ * Three things happen here and each one is a fact about what a model may do with an entry.
  *
- * The join key is the QUALIFIED NAME, and it is the honest one available rather than a
- * good one: the flat readings address by a single string, the object surface by segments,
- * and nothing in either records how the first was built. So an object joins a flat entry
- * when its segments joined by `.` equal that entry's name, which holds on every engine
- * measured, and fails to join for a name that itself contains a dot. A failure to join
- * COSTS COLUMNS AND NEVER INVENTS THEM: the object still reaches the model, named and
- * kinded, with an empty column list, and the flat entry it could not be matched to is
- * carried as well rather than dropped. Both halves of that are deliberate, since a
- * silently missing object is the defect #414 measured.
+ * `name` becomes the ADDRESS - the segments joined - because four consumers resolve a model's
+ * spelling against it, and a run told `orders` in a database holding four schemas cannot write
+ * a statement against it. The engine's own display label is carried BESIDE it and only where
+ * the two differ, which ruling 2 of #789 requires: a PostgreSQL routine's last path segment
+ * carries its overload form while its label is the bare name.
  *
- * TAKEN ON THIS PATH ONLY. The composed catalog path does not call this function, and the reason
- * is the read-only envelope rather than a preference: see the block in `readInventory`. It is
- * not left kindless for it - it composes its own kind out of the catalog row, which is what
- * `composedKindResolver` is - so what that path does without is the COLUMNS join below, which it
- * needs no part of: its own reading already carries the columns on the same row.
+ * The order is the name a reader sees, so two captures of one database serialise identically
+ * whatever order the containers were walked in, which is what lets `reusableSnapshot` compare a
+ * run's own recorded capture to a fresh one.
  *
- * An entry the object read never named keeps NO kind at all. It is not labelled "table":
- * a missing fact filled in with the most common value is exactly how a view came to be
- * handed over under the word table, and the renderers say nothing where they know nothing.
+ * `defaultContainer` is carried ONTO the inventory rather than used and dropped: it is the
+ * tie-breaker for every consumer of the address rule, and a tool that runs later cannot read it
+ * back off the walk. `profile_table` refused a spelling the object browser resolves in the same
+ * run because this fact used to stop here.
  *
- * A read that was refused, timed out, or found no declared kinds leaves the run with the
- * inventory it had before this existed, and with no kinds. That is a LOSS OF DETAIL and
- * not a loss of grounding, so it does not fail the capture: refusing to ground a run at
- * all because an engine would not enumerate its kinds would trade a real regression for a
- * label.
+ * This used to be a JOIN, and the join is what is gone. Columns came from a second, FLAT reading
+ * and were matched to these objects by every suffix of the path, round by round, with ties
+ * refused: about a hundred lines whose whole job was to guess how the other reading had spelled
+ * a name. The flat reading is deleted, `describeObjects` answers columns for the same folder the
+ * listing walked, and the two are joined on the path inside the walk itself.
  */
-async function tagWithObjectKinds(
-  context: AgentToolContext,
-  flat: readonly AgentInventoryObject[],
-): Promise<AgentInventory> {
-  const read = await readObjectInventoryForGrounding(context);
-  if (read.kind !== "completed") return { objects: flat, kinds: [] };
-
-  const unmatched = new Map(flat.map((entry) => [entry.name, entry]));
-  const relationKinds = new Set(
-    (read.inventory.kinds ?? []).filter((kind) => kind.role === "relation").map((kind) => kind.id),
-  );
-  const joinable = read.inventory.objects.map((object) =>
-    object.kind !== undefined && relationKinds.has(object.kind)
-      ? { keys: joinKeys(object), container: addressContainer(object) }
-      : { keys: [], container: [] },
-  );
-  const matched = joinFlatEntries(joinable, unmatched, read.defaultContainer);
-
-  const objects = read.inventory.objects.map((object, index) => {
-    const columns = matched.get(index);
+function addressInventory(inventory: AgentInventory, defaultContainer: readonly string[] | undefined): AgentInventory {
+  const objects = inventory.objects.map((object) => {
     const name = qualifiedName(object);
     return {
       ...object,
       name,
-      // The engine's own display label, kept because `name` is now the ADDRESS and the
-      // two differ: ruling 2 of #789 lets a routine's last path segment carry the
-      // overload form while its label is the bare name.
       ...(object.name === name ? {} : { label: object.name }),
-      columns: columns?.columns ?? [],
-      indexes: columns?.indexes ?? [],
-      foreignKeys: columns?.foreignKeys ?? [],
     };
   });
-
   return {
-    ...read.inventory,
-    // Carried onto the inventory rather than used and dropped: this is the tie-breaker for
-    // every consumer of the address rule, and a tool that runs later cannot read it back
-    // off the walk. `profile_table` refused a spelling the object browser resolves in the
-    // same run because this fact stopped here.
-    ...(read.defaultContainer === undefined ? {} : { defaultContainer: read.defaultContainer }),
-
-    // Sorted by the name a reader sees, so two captures of one database serialise
-    // identically whatever order the containers were walked in.
-    objects: [...objects, ...unmatched.values()].sort((left, right) =>
+    ...inventory,
+    ...(defaultContainer === undefined ? {} : { defaultContainer }),
+    objects: objects.sort((left, right) =>
       displayName(left) === displayName(right) ? 0 : displayName(left) < displayName(right) ? -1 : 1,
     ),
   };
 }
 
-/**
- * The keys an object may be spelled by in a FLAT reading, most qualified first.
- *
- * The flat readings do not agree on how much of the address they put in the one string
- * they answer with, and keying the join on the fully composed form alone matched NOTHING
- * on two engines rather than degrading: MySQL's `getSchema()` names a table bare while its
- * object path is `[database, table]`, and SQL Server strips `dbo.` from a flat name while
- * its object path is `[catalog, schema, table]`. Every object then failed to join, and
- * BOTH halves reached the prompt - a kinded row with no columns beside a kindless row with
- * the real ones - so the header count doubled and the duplicates spent the character bound
- * that decides what is omitted.
- *
- * So the key is every SUFFIX of the path, from the whole address down to the bare
- * identifier, and `joinFlatEntries` tries them a round at a time so that the most
- * qualified spelling always claims its entry first. A path-less object has one key, its
- * own name, which is what the flat readings already produce.
- *
- * `addressKeys` is that key set and it is DECLARED ONCE, in `inventory-address.ts`, because
- * `er-diagram.ts` resolves a foreign key target against exactly the same spellings and the
- * two came to disagree about what a name means the moment they were written twice: this
- * join stopped treating a bare `customers` as `public.customers` nowhere, while the diagram
- * did it everywhere and annotated every same-schema key as pointing outside the inventory.
- */
-const joinKeys = addressKeys;
-
-/**
- * The join itself: object index to the flat entry carrying its columns.
- *
- * Round by round, from the most qualified spelling to the least, and an entry is CONSUMED
- * when it is claimed, so a shorter key can only take what no longer key wanted. That is
- * what keeps SQL Server's two `orders` apart: `sales.orders` matches in the second round
- * and `dbo`'s bare `orders` in the third, rather than the bare key taking whichever object
- * the walk happened to reach first.
- *
- * A key two objects claim in the same round is a TIE, and `preferredContainer` is the one
- * thing that can break it (#789). The round order is what makes the preference safe to
- * apply: a candidate is only ever compared against others that already claimed the SAME
- * key in the SAME round, which is the same rank, so the preference cannot promote a
- * worse-ranked match over a better one. `preferredCandidate` is the shared rule, the one
- * `resolveObjectAddress` breaks its own ties with, because a second spelling of it is how
- * the object browser and this join came to disagree in the first place.
- *
- * Where the tie does NOT break - no preferred container, or none of the claimants in it -
- * both are left UNJOINED. The columns would be one object's and the other's would be
- * wrong, and this read costing a column list is the failure the module already accepts;
- * handing a model another object's columns is not.
- *
- * That refusal is FINAL, and the key is retired rather than left to a later round. It was
- * not, and the round order is not what makes it safe: a candidate whose key set is LONGER
- * reaches the same string one round later and takes what two better-ranked candidates were
- * refused. `resolveObjectAddress`, handed the same objects and the same name, answers
- * `ambiguous`, so leaving the key claimable made the two consumers of one rule disagree,
- * which is the failure `object-address.ts`'s own header says the file exists to prevent.
- * Key sets of different lengths are reachable because ruling 5f lets a kind carry mixed
- * path depth: an object attached to another sits one segment deeper than its siblings.
- *
- * Retired and NOT deleted from `unmatched`: the flat entry still has to reach the model as
- * a kindless row carrying its columns. Dropping it would trade a wrong join for the silent
- * absence #414 measured, which is the worse of the two.
- *
- * Disclosed rather than claimed: the rule's third direction, refusing when the preferred
- * container holds MORE THAN ONE tied candidate, cannot be reached from here and so cannot
- * be mutated here. Two objects tying on one key at one rank share every segment from that
- * rank on and differ somewhere before it, and every segment before the last is part of the
- * container, so their containers always differ. It is pinned in the rule's own suite,
- * where a caller that can reach it does.
- */
-function joinFlatEntries(
-  candidates: readonly { readonly keys: readonly string[]; readonly container: readonly string[] }[],
-  unmatched: Map<string, AgentInventoryObject>,
-  preferredContainer: readonly string[] | undefined,
-): Map<number, AgentInventoryObject> {
-  const matched = new Map<number, AgentInventoryObject>();
-  /** Keys a tie refused, which no later round may reopen. */
-  const refused = new Set<string>();
-  const rounds = Math.max(0, ...candidates.map((candidate) => candidate.keys.length));
-
-  for (let round = 0; round < rounds; round += 1) {
-    const claimants = new Map<string, number[]>();
-    for (const [index, candidate] of candidates.entries()) {
-      if (matched.has(index)) continue;
-      const key = candidate.keys[round];
-      if (key === undefined || refused.has(key) || !unmatched.has(key)) continue;
-      const claimed = claimants.get(key);
-      if (claimed === undefined) claimants.set(key, [index]);
-      else claimed.push(index);
-    }
-    for (const [key, claimed] of claimants) {
-      const only =
-        claimed.length === 1
-          ? claimed[0]
-          : preferredCandidate(claimed, (index) => candidates[index].container, preferredContainer);
-      const entry = only === undefined ? undefined : unmatched.get(key);
-      if (only === undefined || entry === undefined) {
-        refused.add(key);
-        continue;
-      }
-      matched.set(only, entry);
-      unmatched.delete(key);
-    }
-  }
-
-  return matched;
-}
-
-/** An object's segments as one qualified name, for the join above and for nothing else. */
+/** An object's segments as one qualified name. */
 function qualifiedName(object: AgentInventoryObject): string {
   return object.path === undefined ? object.name : object.path.join(".");
 }
@@ -1109,26 +963,6 @@ function environmentFailure(error: unknown, context: AgentToolContext): AgentCon
     );
   }
   return null;
-}
-
-/**
- * The provider's tables, reduced to the four fields a snapshot carries.
- *
- * `foreignKeys` defaults to an empty list because two providers (Redis, LibreDB)
- * never set the field at all, and `finalize` has to produce the same shape on both
- * paths or two readings of one schema would fingerprint differently.
- */
-function providerTables(tables: readonly AgentInventoryObject[]): TableIndex {
-  const index: TableIndex = new Map();
-  for (const table of tables) {
-    index.set(table.name, {
-      name: table.name,
-      columns: [...table.columns],
-      indexes: [...table.indexes],
-      foreignKeys: [...(table.foreignKeys ?? [])],
-    });
-  }
-  return index;
 }
 
 // ============================================================================

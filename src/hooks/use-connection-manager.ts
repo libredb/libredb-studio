@@ -2,10 +2,10 @@
 
 import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import type { DatabaseConnection, TableRelations } from "@/lib/types";
-import { tagObjectKinds, type DetailedObject } from "@/lib/db/detailed-object";
+import type { DatabaseConnection } from "@/lib/types";
+import { detailedObjects, type DetailedObject } from "@/lib/db/detailed-object";
 import { relationKindIds } from "@/lib/db/object-kinds";
-import type { DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
+import type { DatabaseObject, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
 import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { logger } from "@/lib/logger";
@@ -74,13 +74,33 @@ export function useConnectionManager(storageReady = false) {
    */
   const currentRead = useRef(0);
 
-  // Read schema for a connection — two phases so a slow/failing stats query
-  // never blocks the table list:
-  //   1. /api/db/schema/list      → tables + columns + PKs (fast)  → render tree
-  //   2. /api/db/schema/relations → foreign keys + indexes (heavy) → async merge
-  //
-  // Unguarded on purpose: `fetchSchema` below is the guarded entry point every caller
-  // uses, and `loadObjects` is the one call that is allowed past the guard.
+  /*
+    One read of the object surface, and it is the only catalog reading this hook does (#789).
+
+    It was three requests until the flat schema reading was deleted: `/api/db/schema/list` for
+    names and columns, `/api/db/objects/inventory` for the kind and the address, and
+    `/api/db/schema/relations` for foreign keys and indexes, with a join on the display NAME
+    holding the first two together. That join is gone with the reading it existed for, and so is
+    every defect it carried: a name containing a dot lost its columns, a bare `orders` answered to
+    every `orders` on the server, and an object the flat read never named could not be tagged at
+    all.
+
+    `/api/db/provider-meta` still comes first, and it is the cheapest read in the app: it
+    constructs the provider and reads its capabilities WITHOUT opening a connection, so the extra
+    request costs no socket, no pool client and no catalog statement. Its answer decides which
+    kinds are asked for.
+
+    ONLY THE RELATION KINDS ARE ASKED FOR. Measured against dvdrental on PostgreSQL 18 while the
+    join still existed: 7 listings returning 59 objects for every kind against 3 listings
+    returning 22 for the relation kinds, per container, on every connection select and every
+    DDL-triggered refresh (`use-query-execution.ts`). The consumers of this list draw rows,
+    columns and foreign keys, which is what `role: "relation"` declares; a routine or a trigger in
+    it would be a row the diagram and the import target cannot use. The kinds come from the
+    provider`s own declaration and never from a list written here.
+
+    Unguarded on purpose: `fetchSchema` below is the guarded entry point every caller uses, and
+    `loadObjects` is the one call that is allowed past the guard.
+  */
   const readSchema = useCallback(
     async (conn: DatabaseConnection) => {
       const generation = ++currentRead.current;
@@ -88,27 +108,57 @@ export function useConnectionManager(storageReady = false) {
       const isCurrent = () => currentRead.current === generation;
       setIsLoadingSchema(true);
 
-      const payload = conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : conn; // bare conn for backward compat with schema route
-      // The object routes refuse a body that names neither `connection` nor `connectionId`,
-      // where the two schema routes accept a bare connection AS the whole body. One payload
-      // for both would be a 400 on every unmanaged connection.
-      const objectPayload =
-        conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : { connection: conn };
+      const payload = conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : { connection: conn };
       const init = (path: string, body: unknown = payload): [string, RequestInit] => [
         path,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
       ];
 
-      // Phase 1 — structural list (blocks; this is what the explorer needs)
       try {
-        const response = await appFetch(...init("/api/db/schema/list"));
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Failed to fetch schema");
+        const metaRes = await appFetch(...init("/api/db/provider-meta"));
+        if (!metaRes.ok) {
+          const body = await metaRes.json().catch(() => ({}));
+          throw new Error(body.error || `The provider metadata could not be read (${metaRes.status})`);
         }
-        const list: DetailedObject[] = await response.json();
+        const { capabilities } = (await metaRes.json()) as { capabilities: ProviderCapabilities };
+        const kinds = relationKindIds(capabilities);
+        // A true statement about the engine rather than a failure: nothing declared a kind whose
+        // rows this list renders, so there is nothing to ask for and nothing to show. It is not
+        // reported as an error, because no reading failed.
+        if (kinds.length === 0) {
+          if (isCurrent()) {
+            setSchema([]);
+            setSchemaError(null);
+          }
+          return;
+        }
+
+        const objectsRes = await appFetch(
+          ...init("/api/db/objects/inventory", { ...payload, kinds, includeColumns: true }),
+        );
+        if (!objectsRes.ok) {
+          const body = await objectsRes.json().catch(() => ({}));
+          throw new Error(body.error || "Failed to read the database objects");
+        }
+        const { objects, details, truncated } = (await objectsRes.json()) as {
+          objects?: DatabaseObject[];
+          details?: ObjectDetail[];
+          truncated?: { limit: number; reason: string };
+        };
+        if (!Array.isArray(objects)) throw new Error("The object inventory answered a body this list cannot render");
         if (!isCurrent()) return;
-        setSchema(list);
+        // A saturated inventory leaves its tail out of the list entirely, and an object nobody
+        // was shown reads as an object the database does not hold. Stating it in the log is the
+        // weaker half of the answer; a surface a READER can see belongs to Phase 2, and is
+        // carried in `docs/superpowers/works/00-QA-ACCEPTANCE.md` rather than left implicit.
+        if (truncated !== undefined) {
+          logger.warn("Object inventory truncated; objects beyond the limit are not listed", {
+            route: "use-connection-manager",
+            limit: truncated.limit,
+            reason: truncated.reason,
+          });
+        }
+        setSchema(detailedObjects(objects, details ?? []));
         setSchemaError(null);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -118,128 +168,14 @@ export function useConnectionManager(storageReady = false) {
         // was never issued against it.
         if (!isCurrent()) return;
         // Nothing read for THIS connection, so nothing may stay on screen as its
-        // tables — the previous connection's list is not evidence about this one.
+        // objects - the previous connection's list is not evidence about this one.
         setSchema([]);
         setSchemaError(errorMessage);
         toast({ title: "Schema Error", description: errorMessage, variant: "destructive" });
-        return; // finally still clears the loading flag; skip relations
       } finally {
         // Only the current read owns the flag; a superseded one clearing it would report
         // the newer read as finished while it is still in flight.
         if (isCurrent()) setIsLoadingSchema(false);
-      }
-
-      // Phase 1b — the kind and the segments of each object, from the object surface, joined
-      // onto the list above (#789). The flat reading says what an object is CALLED and never
-      // what it IS, and every consumer filter reads the kind, so without this the diagram
-      // draws a routine and an import offers a view as a target.
-      //
-      // Best-effort, and deliberately not a phase-1 failure: through Phase 1 the four object
-      // methods are optional, so an engine that has not been migrated answers 501, and that is
-      // a loss of DETAIL rather than of objects. Nothing is ever removed from the list here, so
-      // a refused inventory leaves exactly the explorer the flat reading built. The assertable
-      // evidence is the list itself, which carries no kinds, rather than this log line.
-      //
-      // ONLY THE RELATION KINDS ARE ASKED FOR, which the review round measured twice.
-      //
-      //  - Correctness. The flat readings hold relations and nothing else (`postgres.ts:225`
-      //    is `'BASE TABLE','MATERIALIZED VIEW'`, `mysql.ts:280` is `'BASE TABLE'`), so every
-      //    routine, trigger, sequence and event in the answer is an object the join can never
-      //    match and can only CONTEST. Measured on MySQL 26.7.0, where standing ruling 3's
-      //    `foo` really exists as a table, a procedure, a function, a trigger and an event in
-      //    one database: the table, the procedure and the event carry the identical address
-      //    `["task25c_fix1_probe","foo"]`, so they answer the flat name at the same rank,
-      //    `resolveObjectAddress` refuses to choose and the TABLE comes back untagged. Every
-      //    25a filter then goes quiet for it. Asking for relation kinds tags it `table`.
-      //  - Cost. Each kind is one sequential `listObjects` round trip per container inside
-      //    the route. Measured against the dvdrental database on PostgreSQL 18: 7 listings
-      //    returning 59 objects before, 3 listings returning 22 objects after, per container,
-      //    on every connection select and on every DDL-triggered refresh
-      //    (`use-query-execution.ts`).
-      //
-      // The kinds come from the provider's own declaration and never from a list written
-      // here: `role` is the provider's word about its own engine, and a hardcoded set of ids
-      // would be wrong for every engine this repo has not heard of. `/api/db/provider-meta`
-      // is the cheapest read in the app for this - it constructs the provider and reads its
-      // capabilities WITHOUT opening a connection (see that route) - so the extra request
-      // costs no socket, no pool client and no catalog statement.
-      //
-      // With no declaration there is nothing to ask FOR, and the request is not sent at all:
-      // asking for every kind is the defect above, and an engine that declares no object
-      // kinds could not have tagged anything anyway. Both cases leave the flat list standing
-      // untagged, which is what a 501 from the object surface already does.
-      try {
-        const metaRes = await appFetch(...init("/api/db/provider-meta", objectPayload));
-        if (!metaRes.ok) throw new Error(`provider metadata unavailable (${metaRes.status})`);
-        const { capabilities } = (await metaRes.json()) as { capabilities: ProviderCapabilities };
-        const kinds = relationKindIds(capabilities);
-        if (kinds.length === 0) throw new Error("the provider declares no relation kinds");
-
-        const objectsRes = await appFetch(...init("/api/db/objects/inventory", { ...objectPayload, kinds }));
-        if (objectsRes.ok) {
-          const { objects, truncated, defaultContainer } = (await objectsRes.json()) as {
-            objects?: DatabaseObject[];
-            truncated?: { limit: number; reason: string };
-            defaultContainer?: string[];
-          };
-          // A saturated inventory leaves its tail untagged, and untagged reads as "nothing
-          // was declared about this object" in every consumer. Nothing on screen separates
-          // that from an engine with no object surface at all, so the incompleteness is at
-          // least stated. Turning it into something a READER can see needs a surface this
-          // hook does not have and Task 26 is expected to settle when the flat reading goes.
-          if (truncated !== undefined) {
-            logger.warn("Object inventory truncated; objects beyond the limit keep no kind", {
-              route: "use-connection-manager",
-              limit: truncated.limit,
-              reason: truncated.reason,
-            });
-          }
-          // The session default container travels with the inventory and breaks the tie this
-          // join could not: the flat reading above is a reading of ONE container and drops
-          // that container from every name it writes, so a bare `orders` answers to every
-          // `orders` on the server. Measured on SQL Server holding `dbo.orders` as a view
-          // beside `sales.orders`: the entry came back untagged, and untagged is KEPT by
-          // `rowWritableObjects`, so the view was offered row writes (#789). Absent when the
-          // engine could not say, and the join keeps its refusal then.
-          if (objects !== undefined && isCurrent()) {
-            setSchema((prev) => tagObjectKinds(prev, objects, defaultContainer));
-          }
-        } else {
-          const body = await objectsRes.json().catch(() => ({}));
-          logger.debug("Object inventory unavailable; the schema keeps no kinds", {
-            route: "use-connection-manager",
-            status: objectsRes.status,
-            reason: typeof body.error === "string" ? body.error : undefined,
-          });
-        }
-      } catch (error) {
-        logger.debug("Object inventory failed; the schema keeps no kinds", {
-          route: "use-connection-manager",
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      // Phase 2 — relationships + indexes (best-effort; never breaks the list)
-      try {
-        const relRes = await appFetch(...init("/api/db/schema/relations"));
-        if (!relRes.ok) {
-          const errorData = await relRes.json().catch(() => ({}));
-          throw new Error(errorData.error || "Failed to fetch schema relations");
-        }
-        const relations: TableRelations[] = await relRes.json();
-        if (!isCurrent()) return;
-        const byName = new Map(relations.map((r) => [r.name, r]));
-        setSchema((prev) =>
-          prev.map((t) => {
-            const r = byName.get(t.name);
-            return r ? { ...t, foreignKeys: r.foreignKeys, indexes: r.indexes } : t;
-          }),
-        );
-      } catch (error) {
-        // Foreign keys / indexes are non-essential for browsing — log and move on.
-        logger.error("Failed to load schema relations (FK/indexes); table list unaffected", error, {
-          route: "use-connection-manager",
-        });
       }
     },
     [toast],

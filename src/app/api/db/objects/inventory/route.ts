@@ -6,6 +6,7 @@ import {
   INVENTORY_LIMIT,
   INVENTORY_PAIR_LIMIT,
   INVENTORY_TRUNCATION_REASON,
+  optionalBoolean,
   optionalContainerList,
   optionalStringArray,
   PAIR_TRUNCATION_REASON,
@@ -13,7 +14,7 @@ import {
   type ObjectInventory,
 } from "@/lib/api/object-route";
 import { enumerateContainers } from "@/lib/db/container-walk";
-import type { DatabaseObject } from "@/lib/db/types";
+import type { DatabaseObject, ObjectDetail } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
 
@@ -36,11 +37,19 @@ export const dynamic = "force-dynamic";
  * needs a limit argument on the provider method itself, which is not something this route can do
  * from the outside; it is Task 24's open item, alongside bulk column reading.
  *
- * No `includeColumns`. It was implemented here as one `describeObject` per object, up to 5000
- * sequential round trips, which is an N+1 the epic should not ship, and the alternative is a fifth
- * bulk provider method invented across seventeen providers before any consumer has stated what it
- * needs. Task 24 owns re-introducing bulk column reading with a measured design once the agent's
- * grounding requirement is known.
+ * `includeColumns` is back, and it is a DIFFERENT read from the one that was removed. The first
+ * spelling called `describeObject` once per object, up to 5000 sequential round trips, and was
+ * taken out as an N+1 this epic should not ship. This one calls `describeObjects` once per
+ * container-and-kind PAIR: the same pairs the listing loop already walks, bounded by the same
+ * `INVENTORY_PAIR_LIMIT`, so asking for columns at most doubles the round trips rather than
+ * multiplying them by the object count. It exists because the flat schema reading that used to
+ * carry columns is gone, and the object browser, the diagram, the docs page and the schema diff
+ * all draw columns.
+ *
+ * The per-read bound handed to `describeObjects` is what is left of the object budget, so a
+ * provider cannot return more detail than this route is willing to carry, and a provider that
+ * bounded its own read says so in its own `truncated` - which is joined into this answer, because
+ * a short column read is exactly as much a bounded inventory as a short listing.
  */
 export async function POST(req: NextRequest) {
   return handleObjectRequest(req, "api/db/objects/inventory", async (provider, body): Promise<ObjectInventory> => {
@@ -75,7 +84,11 @@ export async function POST(req: NextRequest) {
     let truncated: ObjectInventory["truncated"] =
       pairs.length > scanned.length ? { limit: INVENTORY_PAIR_LIMIT, reason: PAIR_TRUNCATION_REASON } : undefined;
 
+    const includeColumns = optionalBoolean(body, "includeColumns");
+    const describeObjects = provider.describeObjects.bind(provider);
+
     const objects: DatabaseObject[] = [];
+    const details: ObjectDetail[] = [];
     for (const pair of scanned) {
       if (objects.length >= INVENTORY_LIMIT) {
         // Overwrites a pair-limit reason where both bit. The object limit is the one the reader can
@@ -84,12 +97,25 @@ export async function POST(req: NextRequest) {
         truncated = { limit: INVENTORY_LIMIT, reason: INVENTORY_TRUNCATION_REASON };
         break;
       }
+      const before = objects.length;
       for (const object of await listObjects(pair.container, pair.kind)) {
         if (objects.length >= INVENTORY_LIMIT) {
           truncated = { limit: INVENTORY_LIMIT, reason: INVENTORY_TRUNCATION_REASON };
           break;
         }
         objects.push(object);
+      }
+      // Only for a pair that actually named something, and bounded by what is left of the object
+      // budget: describing a folder this read already had to cut short would buy columns for
+      // objects the caller is not being given.
+      if (includeColumns && objects.length > before) {
+        const batch = await describeObjects(pair.container, pair.kind, objects.length - before);
+        details.push(...batch.details);
+        // The provider's own bound, kept in the provider's own words. It is reported even when the
+        // listing above fitted, because a complete list of objects whose columns were cut is still
+        // an incomplete answer, and a reader that trusted it would read a missing column as an
+        // absent one.
+        if (batch.truncated !== undefined) truncated = batch.truncated;
       }
     }
 
@@ -101,6 +127,7 @@ export async function POST(req: NextRequest) {
     const { defaultContainer } = enumerated;
     return {
       objects,
+      ...(includeColumns ? { details } : {}),
       ...(truncated === undefined ? {} : { truncated }),
       ...(defaultContainer === undefined ? {} : { defaultContainer }),
     };

@@ -105,19 +105,6 @@ export const SEARCH_MAPPING_CONCURRENCY = 4;
 // Options
 // ============================================================================
 
-/** What a caller may ask introspection to include. */
-export interface SearchSchemaOptions {
-  /**
-   * Include the indices the engine keeps for itself. Default false.
-   *
-   * It is an option rather than a constant because both answers are legitimate and
-   * the caller knows which: an operator debugging why ML inference is failing wants
-   * `.plugins-ml-config` in the tree, and a developer writing a query does not want
-   * two thirds of the sidebar to be indices they have never heard of.
-   */
-  includeSystemIndices?: boolean;
-}
-
 // ============================================================================
 // System indices
 // ============================================================================

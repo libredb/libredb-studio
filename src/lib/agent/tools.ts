@@ -75,8 +75,10 @@ import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } fro
 import type { OperationRegistry } from "@/lib/db/operations/registry";
 import type {
   Container,
+  DatabaseObject,
   KindCount,
   DatabaseProvider,
+  ObjectDetail,
   ObjectKindSpec,
   ProviderCapabilities,
   ProviderLabels,
@@ -2192,7 +2194,7 @@ export async function readCatalogForGrounding(
 }
 
 /**
- * The provider schema read overran the time this call was granted.
+ * The provider object read overran the time this call was granted.
  *
  * A sentinel rather than a refusal code, for the same reason `AgentCuratedReadError`
  * is one: `executeAuditedOperation` owns the invoke callback's result type and there
@@ -2203,131 +2205,9 @@ export async function readCatalogForGrounding(
  */
 class AgentSchemaReadTimeout extends Error {
   constructor(readonly grantedMs: number) {
-    super(`the provider schema read did not answer within ${grantedMs}ms`);
+    super(`the provider object read did not answer within ${grantedMs}ms`);
     this.name = "AgentSchemaReadTimeout";
   }
-}
-
-/**
- * What the server's provider schema read produced. `tables` is the inventory itself.
- *
- * No artifact reference travels with it, and that is not an oversight: the artifact is
- * still produced, still lands in the run's store and still reaches the audit stream, so
- * the call is as citable as any other. What the CALLER does with the reading is build a
- * snapshot from the structure, and it has no use for a handle to a projection of it.
- */
-export type AgentProviderSchemaRead =
-  | { readonly kind: "completed"; readonly tables: readonly AgentInventoryObject[] }
-  | { readonly kind: "timed-out"; readonly grantedMs: number }
-  | { readonly kind: "unavailable"; readonly modelText: string };
-
-/**
- * The ENGINE'S OWN schema inspection, taken by the server while it grounds a run
- * (#414) — the same reading the sidebar performs when it lists your tables.
- *
- * The sibling of `readCatalogForGrounding`, for the engines that one cannot serve.
- * A catalog read is a statement the server composes per dialect, and it is composed
- * for two of the fourteen; everywhere else a run had no inventory at all and was told
- * so. This is the other reading the product already knows how to take, brought inside
- * the same pipeline rather than called beside it: `runAuditedAgentCall` applies the
- * mode check, the repair ledger, the deadline admission, the budget clamp, the
- * audited execution and the artifact exactly as it does for every statement, so there
- * is still no second, unaudited path to an engine — which is the objection
- * `context-snapshot.ts`'s own docblock opens with.
- *
- * **It acquires `AGENT_OPERATIONS_PROFILE`, and that is not interchangeable with the
- * read-only one.** `agent-read-only` sets `requiresReadOnlyStatements: true`, and
- * `factory.ts` refuses acquisition outright for a provider with no `queryReadOnly` —
- * which is every engine this function exists to reach. Acquired under that profile
- * this call would throw `PROFILE_UNSUPPORTED_BY_PROVIDER` before it ever reached a
- * provider, on all nine. The operations profile is the honest one here for the same
- * reason `runCuratedRead` takes it: no statement is sent that an engine has to plan,
- * so there is no statement for a read-only transaction to bound.
- *
- * **It returns the provider's own list itself.** The artifact carries a model-facing
- * PROJECTION — one row per table: its name, how many columns, how many indexes — so
- * the call is citable and showable like any other reach, but the inventory does not
- * round-trip through it. The catalog path deliberately does the opposite, reading its
- * rows back out of the artifact store, and the difference is not inconsistency: there
- * the rows ARE the reading, so a released artifact must yield no snapshot rather than
- * a reconstruction from model-facing text. Here the provider handed back a structure,
- * there is no text to reconstruct from, and a round trip through the store would only
- * introduce a way to lose it.
- */
-export async function readProviderSchemaForGrounding(context: AgentToolContext): Promise<AgentProviderSchemaRead> {
-  let tables: readonly AgentInventoryObject[] = [];
-
-  let outcome: AgentToolOutcome;
-  try {
-    outcome = await runAuditedAgentCall(context, {
-      operationId: "db.schema.read",
-      // The connection IS the identity of this call: it takes no input, so two
-      // requests for it on one run are the same request and the repair ledger should
-      // say so rather than admitting the second as a fresh attempt.
-      fingerprintSource: `schema:${context.connection.id}`,
-      input: {},
-      label: "provider schema inventory",
-      grounding: true,
-      invoke: async (_validatedInput, budget, phase) => {
-        // No "can this provider describe itself" check, deliberately: `getSchema()` is
-        // a REQUIRED member of `DatabaseProvider`, so every provider `acquireProvider`
-        // can return has one, and a guard for its absence would be a refusal code, a
-        // sentence and a headline for a state that cannot occur. What CAN happen is a
-        // `getSchema()` that rejects, and that is the case handled below.
-        const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
-        const startedAtMs = context.clock?.() ?? Date.now();
-        // Set immediately before the call leaves, for the same reason the statement
-        // path sets it: anything that threw while we were still connecting is not
-        // something the model could have written differently.
-        phase.statementSent = true;
-
-        // HONEST LIMIT, stated because the alternative reading of this race is
-        // wrong: `getSchema()` takes no budget on any provider, so what this bounds
-        // is THE RUN and not the database. The driver call is not cancelled — it goes
-        // on reading until the engine or the driver ends it — and this run simply
-        // stops waiting for it. The clamp that reaches an engine on the statement
-        // path (PostgreSQL's `SET LOCAL statement_timeout`) has no counterpart here.
-        // Without the race there is no bound at all, which is the only worse answer.
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const overran = new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(
-            () => reject(new AgentSchemaReadTimeout(budget.statementTimeoutMs)),
-            budget.statementTimeoutMs,
-          );
-        });
-        try {
-          tables = await Promise.race([provider.getSchema(), overran]);
-        } catch (error) {
-          if (error instanceof AgentSchemaReadTimeout) throw error;
-          // Same wrap as the curated path, for the same measured reason: these
-          // provider methods do not map their driver's errors uniformly, so a raw
-          // `MongoServerError` can reach this seam and would otherwise propagate out
-          // of the tool layer and kill the run on the engines this exists to reach.
-          throw asReadingFailure(error, context.connection.type);
-        } finally {
-          clearTimeout(timer);
-        }
-
-        const rows = tables.map((table) => ({
-          table: table.name,
-          columns: table.columns.length,
-          indexes: table.indexes.length,
-        }));
-        return {
-          rows,
-          fields: ["table", "columns", "indexes"],
-          rowCount: rows.length,
-          executionTime: (context.clock?.() ?? Date.now()) - startedAtMs,
-        };
-      },
-    });
-  } catch (error) {
-    if (error instanceof AgentSchemaReadTimeout) return { kind: "timed-out", grantedMs: error.grantedMs };
-    throw error;
-  }
-
-  if (outcome.kind !== "completed") return { kind: "unavailable", modelText: outcome.modelText };
-  return { kind: "completed", tables };
 }
 
 /**
@@ -2343,6 +2223,16 @@ export async function readProviderSchemaForGrounding(context: AgentToolContext):
  * copies of `comparePaths`. Both are stated again in `docs/AGENT.md`.
  */
 const AGENT_INVENTORY_OBJECT_LIMIT = 5000;
+
+/**
+ * The separator that turns a path into a map key for the columns join.
+ *
+ * A control character, because it cannot occur inside an identifier on any engine here, so two
+ * different paths cannot collide on one key. `JSON.stringify` is deliberately not used: standing
+ * ruling 5g records that JSON escaping reorders exotic names, and a key built one way here and
+ * another way in the object browser is how two joins came to disagree before.
+ */
+const OBJECT_PATH_KEY_SEPARATOR = String.fromCharCode(31);
 const AGENT_INVENTORY_PAIR_LIMIT = 1000;
 
 /** The object limit's sentence, and the pair limit's. Phrased as the route phrases them. */
@@ -2391,8 +2281,8 @@ export type AgentObjectInventoryRead =
  * one (#789 fix round 2). The walk reaches the four curated provider methods, and each sends
  * its catalog statement through `provider.query`: nothing routes them through `queryReadOnly`,
  * so no read-only transaction can contain them. That matches the path that grounds through
- * `readProviderSchemaForGrounding` exactly - there the whole grounding is a curated call under
- * this same profile - and it does not match a dialect `CATALOG_PLANS` serves, where every
+ * the flat provider inspection this replaced took exactly - that whole grounding was a curated
+ * call under this same profile - and it does not match a dialect `CATALOG_PLANS` serves, where every
  * statement of the run arrives inside `BEGIN READ ONLY` and this read would have been the one
  * that left it.
  *
@@ -2413,13 +2303,15 @@ export type AgentObjectInventoryRead =
  * differs from the schema read's, so the repair ledger does not read the two as one
  * attempt.
  *
- * WHAT IT DOES NOT DO is read columns. The bulk route removed `includeColumns` after
- * measuring it as one `describeObject` per object, up to 5000 sequential round trips, and
- * this read would pay the same N+1. So columns keep coming from the reading that already
- * carries them and this one supplies identity; `context-snapshot.ts` joins the two. The
- * open item that closes the gap is a bulk column read on the provider surface, which is a
- * fifth method across seventeen providers and is stated in the epic rather than invented
- * here.
+ * IT READS COLUMNS TOO, and that is what makes it the WHOLE grounding on these engines rather
+ * than half of it. Columns used to come from a second, flat reading (`getSchema()`) joined onto
+ * this one by qualified NAME, which cost an object its columns whenever its name contained a dot
+ * and matched nothing at all on an engine whose flat name and object path disagree. The flat
+ * reading is gone, and `describeObjects` answers a whole container-and-kind folder in ONE round
+ * trip, so the columns arrive with the identity and are joined on the PATH, which both halves
+ * spell the same way because both came from the same call. The N+1 that got `includeColumns`
+ * removed from the inventory route was one `describeObject` PER OBJECT; this is one call per
+ * PAIR, bounded by the same pair limit the listing already obeys.
  *
  * `countObjects` is called per container before any listing, which is one extra provider
  * call per container and pays for itself twice: a kind the engine answers `{ count: 0 }`
@@ -2450,8 +2342,11 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
         const startedAtMs = context.clock?.() ?? Date.now();
         phase.statementSent = true;
 
-        // The same honest limit `readProviderSchemaForGrounding` states: the walk is not
-        // cancelled, this run simply stops waiting for it.
+        // THE HONEST LIMIT, stated because the alternative reading of this race is wrong: no
+        // provider method here takes a budget, so what this bounds is THE RUN and not the
+        // database. The walk is not cancelled - it goes on reading until the engine or the
+        // driver ends it - and this run simply stops waiting for it. Without the race there is
+        // no bound at all, which is the only worse answer.
         let timer: ReturnType<typeof setTimeout> | undefined;
         const overran = new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
@@ -2514,12 +2409,8 @@ async function walkObjectInventory(
   capabilities: ProviderCapabilities,
   declared: readonly ObjectKindSpec[],
 ): Promise<{ readonly inventory: AgentInventory; readonly defaultContainer?: readonly string[] }> {
-  const listObjects = provider.listObjects?.bind(provider);
-  // Nothing to walk rather than a thrown refusal: until Task 26 the four object methods
-  // are optional on the interface, so a provider that declares kinds and cannot list them
-  // is a state the TYPE still allows. An empty inventory tags nothing, which leaves the
-  // run exactly as grounded as it was before this read existed.
-  if (listObjects === undefined) return { inventory: { objects: [], kinds: [] } };
+  const listObjects = provider.listObjects.bind(provider);
+  const describeObjects = provider.describeObjects.bind(provider);
 
   const { containers, defaultContainer } = await enumerateGroundingContainers(provider, capabilities);
   const sampledFrom = new Map<string, string>();
@@ -2538,20 +2429,45 @@ async function walkObjectInventory(
         break;
       }
       pairs += 1;
+      const listed: DatabaseObject[] = [];
       for (const object of await listObjects(container, spec.id)) {
-        if (objects.length >= AGENT_INVENTORY_OBJECT_LIMIT) {
+        if (objects.length + listed.length >= AGENT_INVENTORY_OBJECT_LIMIT) {
           // Overwrites a pair-limit reason where both bit, the same way the route resolves
           // it: the object limit is the one a reader can see reflected in what they hold.
           truncated = { limit: AGENT_INVENTORY_OBJECT_LIMIT, reason: AGENT_INVENTORY_TRUNCATION_REASON };
           break;
         }
+        listed.push(object);
+      }
+
+      // One bulk read for the whole folder, bounded by what is left of the object budget, and
+      // only where the folder held something: describing a pair that named nothing would buy a
+      // round trip for an empty answer.
+      let details: readonly ObjectDetail[] = [];
+      if (listed.length > 0) {
+        const batch = await describeObjects(container, spec.id, listed.length);
+        details = batch.details;
+        // The provider's own bound in the provider's own words. Reported even when the listing
+        // fitted, because a complete list of objects whose columns were cut is still an
+        // incomplete reading, and a model told otherwise reads a missing column as an absent one.
+        if (batch.truncated !== undefined) truncated = batch.truncated;
+      }
+      const byPath = new Map(details.map((detail) => [detail.path.join(OBJECT_PATH_KEY_SEPARATOR), detail]));
+      for (const object of listed) {
+        const detail = byPath.get(object.path.join(OBJECT_PATH_KEY_SEPARATOR));
         objects.push({
           path: object.path,
           name: object.name,
           kind: object.kind,
-          columns: [],
-          indexes: [],
-          foreignKeys: [],
+          // Empty rather than absent where the folder answered no detail for this object, which
+          // is a true reading on both of its arms: a kind that has no columns at all, and a
+          // bulk read the provider bounded before it reached this object. Neither may be shown
+          // to a model as a column list that was read and found empty, which is why `truncated`
+          // above travels with the inventory.
+          columns: detail?.columns ?? [],
+          indexes: detail?.indexes ?? [],
+          foreignKeys: detail?.foreignKeys ?? [],
+          ...(object.rowCount === undefined ? {} : { rowCount: object.rowCount }),
         });
       }
       if (truncated !== undefined) break;

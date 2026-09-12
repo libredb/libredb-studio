@@ -40,16 +40,6 @@ function addressSegments(object: AgentInventoryObject): readonly string[] {
 }
 
 /**
- * Every spelling an entry may be addressed by, most qualified first.
- *
- * Exported for `context-snapshot.ts`'s join, which keys on exactly this set rather than
- * calling the resolver per entry: the two must not come to disagree about what a name means.
- */
-export function addressKeys(object: AgentInventoryObject): readonly string[] {
-  return keysOfSegments(addressSegments(object));
-}
-
-/**
  * The container an entry SITS IN, which is what an unqualified spelling written by that
  * entry is resolved from.
  *

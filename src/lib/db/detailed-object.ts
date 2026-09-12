@@ -17,7 +17,8 @@
  * is persisted data rather than a reading.
  */
 import { findKind, kindAcceptsRowWrites } from "@/lib/db/object-kinds";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import type { DatabaseObject, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
+import { formatBytes } from "@/lib/db/utils/pool-manager";
 import type { ColumnSchema, ForeignKeySchema, IndexSchema } from "@/lib/types";
 
 export interface DetailedObject {
@@ -101,3 +102,51 @@ export function rowWritableObjects(
   if (capabilities === undefined) return objects;
   return objects.filter((object) => kindAcceptsRowWrites(capabilities, object.kind));
 }
+
+/**
+ * The objects an inventory read named, joined to the columns it described (#789).
+ *
+ * THE JOIN KEY IS THE PATH, segment by segment, and that is the whole point of this function
+ * existing rather than a name comparison: both halves come from the same provider call for the
+ * same container and kind, so the address is exact on both sides and no reader has to split a
+ * name to find it. Every dot-splitting defect this epic fixed came from a name standing in for
+ * an address, and this is the join where that used to happen.
+ *
+ * An object with no matching detail keeps EMPTY columns rather than being dropped. Two states
+ * reach that arm and both are true readings: a kind that legitimately has no columns, and a read
+ * the inventory bounded before it could describe that folder. Dropping the object would turn
+ * either into "this database does not hold it", which is the absence #414 measured.
+ */
+export function detailedObjects(
+  objects: readonly DatabaseObject[],
+  details: readonly ObjectDetail[],
+): readonly DetailedObject[] {
+  const byPath = new Map(details.map((detail) => [pathKey(detail.path), detail]));
+  return objects.map((object) => {
+    const detail = byPath.get(pathKey(object.path));
+    return {
+      name: object.name,
+      kind: object.kind,
+      path: object.path,
+      columns: detail?.columns ?? [],
+      indexes: detail?.indexes ?? [],
+      foreignKeys: detail?.foreignKeys ?? [],
+      ...(object.rowCount === undefined ? {} : { rowCount: object.rowCount }),
+      ...(object.sizeBytes === undefined ? {} : { size: formatBytes(object.sizeBytes) }),
+    };
+  });
+}
+
+/**
+ * A path as one comparable string.
+ *
+ * `JSON.stringify` is deliberately NOT used, for the reason standing ruling 5g gives about
+ * sorting: JSON escaping reorders exotic names and a deeper path collides differently. The
+ * separator is a control character no engine here allows inside an identifier, so two different
+ * paths cannot produce one key.
+ */
+function pathKey(path: readonly string[]): string {
+  return path.join(SEGMENT_SEPARATOR);
+}
+
+const SEGMENT_SEPARATOR = String.fromCharCode(31);

@@ -171,7 +171,7 @@ export function resolveObjectAddress<T>(
  * A caller with no context passes `undefined` and keeps its refusal, which is why the
  * absence is handled here rather than at each call site.
  */
-export function preferredCandidate<T>(
+function preferredCandidate<T>(
   candidates: readonly T[],
   containerOf: (item: T) => readonly string[],
   preferredContainer: readonly string[] | undefined,

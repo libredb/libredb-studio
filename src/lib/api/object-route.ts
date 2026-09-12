@@ -4,7 +4,13 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
-import type { DatabaseConnection, DatabaseObject, DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
+import type {
+  DatabaseConnection,
+  DatabaseObject,
+  DatabaseProvider,
+  ObjectDetail,
+  ObjectKindSpec,
+} from "@/lib/db/types";
 
 /**
  * Shared request handling for the six object-tree routes under /api/db/objects (#789).
@@ -223,8 +229,38 @@ export const INVENTORY_TRUNCATION_REASON = "inventory limit reached";
 export const INVENTORY_PAIR_LIMIT = 1000;
 export const PAIR_TRUNCATION_REASON = "container and kind pair limit reached";
 
+/**
+ * Whether one inventory read also carries columns, indexes and foreign keys.
+ *
+ * `false` and absent are the same request, and the flag is refused rather than coerced when it
+ * is anything else: a caller that sent `"true"` meant to ask for columns, and answering the
+ * cheap read to a caller who is about to render an empty column list is the silent degradation
+ * this surface exists to avoid.
+ */
+export function optionalBoolean(body: Record<string, unknown>, name: string): boolean {
+  const value = body[name];
+  if (value === undefined) return false;
+  if (typeof value !== "boolean") {
+    throw new ObjectRouteError(`"${name}" must be true or false`, 400);
+  }
+  return value;
+}
+
 export interface ObjectInventory {
   readonly objects: readonly DatabaseObject[];
+  /**
+   * Columns, indexes and foreign keys for the objects above, when `includeColumns` asked (#789).
+   *
+   * A SEPARATE array keyed by `ObjectDetail.path` rather than fields merged onto each object, and
+   * that is what keeps the two facts apart: `objects` is what the engine NAMED and `details` is
+   * what it could DESCRIBE, and a kind that legitimately has no columns - a routine, a trigger, a
+   * sequence on some engines - answers no detail at all rather than an object carrying three
+   * empty arrays that a reader cannot tell from a refused read.
+   *
+   * Absent, not empty, when the caller did not ask. An empty array would say every object was
+   * described and none had anything.
+   */
+  readonly details?: readonly ObjectDetail[];
   /** Absent when the whole inventory fits. Never absent when it did not. */
   readonly truncated?: { readonly limit: number; readonly reason: string };
   /**

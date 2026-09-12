@@ -1,5 +1,5 @@
 import type { ColumnSchema, IndexSchema, ForeignKeySchema } from "@/lib/types";
-import type { DetailedObject } from "@/lib/db/detailed-object";
+import type { StoredObject } from "@/lib/db/detailed-object";
 import type { SchemaDiff, TableDiff, ColumnDiff, IndexDiff, ForeignKeyDiff } from "./types";
 
 function diffColumns(sourceCols: readonly ColumnSchema[], targetCols: readonly ColumnSchema[]): ColumnDiff[] {
@@ -192,30 +192,26 @@ function diffForeignKeys(
 }
 
 /**
- * What changed between two readings of one database (#789).
+ * Two readings of a database, compared BY NAME (#789).
  *
- * It takes the OBJECTS a consumer holds, so `SchemaDiff.tsx` hands its two lists straight
- * through rather than copying every array of every object to meet a mutable signature.
+ * The name is the key and not the path or the kind, and that is a compatibility decision with a
+ * measured reason rather than a shortcut. Both sides of this comparison may be a `SchemaSnapshot`
+ * out of the user's own storage, and a snapshot written before the object model carries no `kind`
+ * and no `path` at all. Keying on either would report every object in such a snapshot as REMOVED
+ * and every object in the current reading as ADDED, the first time somebody opened an old
+ * snapshot against a live database: a diff that invents every change there is. Nothing migrates
+ * those records, so `StoredObject` is the shape that enters here and NAME is the only field both
+ * populations are guaranteed to spell.
  *
- * THE COMPARISON IS BY NAME, and deliberately not by `kind` or by `path`. A snapshot stored
- * BEFORE the object surface landed carries neither field, and a diff that keyed on them
- * would report every object in such a snapshot as removed and immediately re-added, which is
- * the one answer a schema diff must never invent. A snapshot taken since does carry both:
- * `SchemaDiff.tsx` copies the tagged list the hook produces, and `SchemaSnapshot` in
- * `src/lib/types.ts` now says so. So the two populations differ in what they hold, they meet
- * here, and NAME is the only thing both spell.
- *
- * No false pairing follows from mixing them, on the population that reaches this: both sides
- * come from the flat reading, which holds relations only (`postgres.ts:225` is
- * `'BASE TABLE','MATERIALIZED VIEW'`), so a routine and a relation sharing a name in one
- * container never both enter the map. What DOES survive, and predates all of this, is that
- * two flat names colliding leave `new Map()` holding the last entry.
+ * What survives, and predates all of this: two entries colliding on one name leave `new Map()`
+ * holding the last of them.
  *
  * The cost, stated rather than left to be discovered: this cannot say that a table became a
- * view. Saying it needs BOTH readings to carry the object model, which is what the task that
- * removes the flat shape settles.
+ * view. Both sides now CARRY the kind when both are current readings, so the comparison could be
+ * taught to notice it for a pair that has one; doing that while an old snapshot may be the other
+ * side means deciding what a kind-versus-no-kind pair means, which is Phase 2's to settle.
  */
-export function diffSchemas(source: readonly DetailedObject[], target: readonly DetailedObject[]): SchemaDiff {
+export function diffSchemas(source: readonly StoredObject[], target: readonly StoredObject[]): SchemaDiff {
   const sourceMap = new Map(source.map((t) => [t.name, t]));
   const targetMap = new Map(target.map((t) => [t.name, t]));
 
