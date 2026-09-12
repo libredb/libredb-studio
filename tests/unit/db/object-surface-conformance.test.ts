@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import { QueryError } from "@/lib/db/errors";
+import { applySourceBound, callerBoundTruncationReason, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 function fakeProvider(overrides: Record<string, any> = {}) {
@@ -847,5 +848,539 @@ describe("assertObjectSurface and the bulk column read", () => {
       { container: ["app"], kind: "view", limit: undefined },
       { container: ["app"], kind: "table", limit: 1 },
     ]);
+  });
+});
+
+/**
+ * The source half (#789 Phase 2).
+ *
+ * Every test here drives a deliberately WRONG provider double and asserts the helper
+ * throws, because a correct provider passes a weak helper: "conformance passes" is
+ * evidence about the provider and never about the helper.
+ */
+describe("assertObjectSurface and the object source read", () => {
+  const listed: Record<string, { path: readonly string[]; name: string; kind: string }[]> = {
+    table: [
+      { path: ["app", "orders"], name: "orders", kind: "table" },
+      { path: ["app", "products"], name: "products", kind: "table" },
+    ],
+    view: [{ path: ["app", "order_summary"], name: "order_summary", kind: "view" }],
+    function: [
+      { path: ["app", "order_total(integer)"], name: "order_total", kind: "function" },
+      { path: ["app", "order_tax(integer)"], name: "order_tax", kind: "function" },
+    ],
+  };
+
+  const readable = "SELECT 1 FROM orders";
+  const absentName = "no_such_routine(integer)";
+
+  // Every positive double raises for the absent path, because the helper drives the absence
+  // arm on every provider it certifies. A double that answered a document there would fail
+  // for the one reason the test is not about.
+  function raiseIfAbsent(path: readonly string[]): void {
+    if (path[path.length - 1] === absentName) {
+      throw new QueryError(`no routine called "${absentName}" in schema app`, "postgres");
+    }
+  }
+
+  function capabilities(kindOverrides: Record<string, unknown> = {}) {
+    return {
+      queryLanguage: "sql",
+      containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+        {
+          id: "function",
+          role: "routine",
+          label: "Function",
+          labelPlural: "Functions",
+          hasSource: true,
+          sourceLanguage: "sql",
+          ...kindOverrides,
+        },
+      ],
+    };
+  }
+
+  function sourceProvider(overrides: Record<string, unknown> = {}) {
+    return fakeProvider({
+      type: "postgres",
+      getCapabilities: () => capabilities(),
+      countObjects: async () => ({ table: { count: 2 }, view: { count: 1 }, function: { count: 2 } }),
+      listObjects: async (_c: readonly string[], kind: string) => listed[kind] ?? [],
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) => {
+        raiseIfAbsent(path);
+        return {
+          path,
+          kind,
+          parts: [
+            {
+              id: "definition",
+              label: "Definition",
+              ...applySourceBound(readable, limit),
+              language: "sql",
+              form: "complete",
+              origin: "regenerated",
+            },
+          ],
+        };
+      },
+      ...overrides,
+    });
+  }
+
+  const expectation = {
+    containers: [["app"]],
+    kinds: { table: 2, view: 1, function: 2 },
+    sampleObject: { path: ["app", "order_summary"], kind: "view" },
+    absentSource: { path: ["app", absentName], kind: "function" },
+  };
+
+  // The one positive case. It is here so the twelve refusals below are known to be
+  // refusing something a correct provider does not do.
+  test("passes a provider whose declaration, method and answers agree", async () => {
+    await assertObjectSurface(sourceProvider() as never, expectation);
+  });
+
+  // The pairing, in both directions. It is the only assertion in this block that certifies
+  // a provider implementing NOTHING, which is fifteen of the seventeen on the day it lands.
+  test("a provider that declares a source-bearing kind and implements no method is refused", async () => {
+    const provider = sourceProvider({ readObjectSource: undefined });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /declares 1 source-bearing kind\(s\) and does not implement readObjectSource/,
+    );
+  });
+
+  test("a provider that implements the method and declares no source-bearing kind is refused", async () => {
+    const provider = sourceProvider({ getCapabilities: () => capabilities({ hasSource: undefined }) });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /declares 0 source-bearing kind\(s\) and implements readObjectSource/,
+    );
+  });
+
+  test("an expectation with no absentSource is refused, so the absence raise is always driven", async () => {
+    const { absentSource: _absentSource, ...noAbsent } = expectation;
+    await expect(assertObjectSurface(sourceProvider() as never, noAbsent)).rejects.toThrow(/names no absentSource/);
+  });
+
+  // ONE notch narrower than "exercised none", which is where this class of guard has been
+  // wrong three times in this epic: Oracle declares nine source-bearing kinds, and an
+  // expectation naming one of them would silence a "none" guard while eight went unread.
+  test("an expectation that exercises only some source-bearing kinds is refused by name", async () => {
+    const twoSourceKinds = sourceProvider({
+      getCapabilities: () => ({
+        ...capabilities(),
+        objectKinds: capabilities().objectKinds.map((kind) =>
+          kind.id === "view" ? { ...kind, hasSource: true, sourceLanguage: "sql" } : kind,
+        ),
+      }),
+    });
+    const { view: _view, ...withoutView } = expectation.kinds;
+    await expect(assertObjectSurface(twoSourceKinds as never, { ...expectation, kinds: withoutView })).rejects.toThrow(
+      /source-bearing kinds the expectation never exercised \(view\)/,
+    );
+  });
+
+  test("an absentSource naming a kind the source loop never read has no control, and is refused", async () => {
+    await expect(
+      assertObjectSurface(sourceProvider() as never, {
+        ...expectation,
+        absentSource: { path: ["app", "nope"], kind: "table" },
+      }),
+    ).rejects.toThrow(/absentSource names the kind "table", which the source loop never read/);
+  });
+
+  // Both doubles below are correct in EVERY other respect: they raise for the absent path and
+  // they honour the caller's bound. Without that the helper throws for the bound instead and
+  // the assertion pins nothing, which a mutation of the path and kind checks proved.
+  test("a document answering for a different path than it was asked is refused", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) => {
+        raiseIfAbsent(path);
+        return {
+          path: ["app", "somewhere_else"],
+          kind,
+          parts: [
+            {
+              id: "definition",
+              label: "Definition",
+              ...applySourceBound(readable, limit),
+              language: "sql",
+              form: "complete",
+              origin: "stored",
+            },
+          ],
+        };
+      },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(/somewhere_else/);
+  });
+
+  test("a document answering for a different kind than it was asked is refused", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], _kind: string, limit?: number) => {
+        raiseIfAbsent(path);
+        return {
+          path,
+          kind: "procedure",
+          parts: [
+            {
+              id: "definition",
+              label: "Definition",
+              ...applySourceBound(readable, limit),
+              language: "sql",
+              form: "complete",
+              origin: "stored",
+            },
+          ],
+        };
+      },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(/procedure/);
+  });
+
+  test("a part with an empty text is refused, because an empty definition is not a definition", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string) => ({
+        path,
+        kind,
+        parts: [
+          { id: "definition", label: "Definition", text: "   ", language: "sql", form: "complete", origin: "stored" },
+        ],
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(/answered a part with no text/);
+  });
+
+  test("a refusal with an empty sentence is refused", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string) => ({
+        path,
+        kind,
+        parts: [{ id: "definition", label: "Definition", unavailable: "  " }],
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /answered a refusal with no sentence/,
+    );
+  });
+
+  test("two parts sharing one id are refused, because neither can be addressed", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string) => ({
+        path,
+        kind,
+        parts: [
+          {
+            id: "definition",
+            label: "Specification",
+            text: readable,
+            language: "sql",
+            form: "complete",
+            origin: "stored",
+          },
+          { id: "definition", label: "Body", text: readable, language: "sql", form: "complete", origin: "stored" },
+        ],
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(/share the id "definition"/);
+  });
+
+  test("a language that disagrees with the kind's declared default is refused", async () => {
+    const provider = sourceProvider({
+      getCapabilities: () => capabilities({ sourceLanguage: "lua" }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /declares sourceLanguage "lua" and the part carries "sql"/,
+    );
+  });
+
+  // A kind that declares no `sourceLanguage` leaves the part's id to the provider, so the
+  // comparison is skipped rather than defaulted. Without this the arm never runs.
+  test("a kind that declares no sourceLanguage accepts whatever the part carries", async () => {
+    const provider = sourceProvider({ getCapabilities: () => capabilities({ sourceLanguage: undefined }) });
+    await assertObjectSurface(provider as never, expectation);
+  });
+
+  test("a provider whose every part is a refusal cannot be bound-checked, and says so", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string) => ({
+        path,
+        kind,
+        parts: [{ id: "definition", label: "Definition", unavailable: "Encrypted." }],
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /no source-bearing kind answered a readable part/,
+    );
+  });
+
+  test("a provider whose longest definition is under the probe cannot be bound-checked, and says so", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string) => ({
+        path,
+        kind,
+        parts: [
+          { id: "definition", label: "Definition", text: "x", language: "sql", form: "complete", origin: "stored" },
+        ],
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /so a bound cannot be told from no bound/,
+    );
+  });
+
+  test("a provider that ignores the limit is refused", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string) => ({
+        path,
+        kind,
+        parts: [
+          {
+            id: "definition",
+            label: "Definition",
+            text: readable,
+            language: "sql",
+            form: "complete",
+            origin: "stored",
+          },
+        ],
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /limit \d+\) returned \d+ characters/,
+    );
+  });
+
+  test("a provider that bounds a part and reports nothing is refused", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) => ({
+        path,
+        kind,
+        parts: [
+          {
+            id: "definition",
+            label: "Definition",
+            text: limit === undefined ? readable : readable.slice(0, limit),
+            language: "sql",
+            form: "complete",
+            origin: "stored",
+          },
+        ],
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(/reported no truncation/);
+  });
+
+  test("a provider that reports its bound in its own words, without the shared sentence, is refused", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) => ({
+        path,
+        kind,
+        parts: [
+          {
+            id: "definition",
+            label: "Definition",
+            text: limit === undefined ? readable : readable.slice(0, limit),
+            language: "sql",
+            form: "complete",
+            origin: "stored",
+            ...(limit === undefined ? {} : { truncated: { limit, reason: "source limit reached" } }),
+          },
+        ],
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /which does not carry the one sentence a caller's bound is reported with/,
+    );
+  });
+
+  // The NUMBER and the SENTENCE are two facts and a provider can get one right while the
+  // other is wrong. This double reports the correct sentence beside a limit it never applied,
+  // which is exactly what a reader would be shown as the size of the bound.
+  test("a provider that reports the right sentence beside the wrong limit number is refused", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) => {
+        raiseIfAbsent(path);
+        const bounded = applySourceBound(readable, limit);
+        return {
+          path,
+          kind,
+          parts: [
+            {
+              id: "definition",
+              label: "Definition",
+              text: bounded.text,
+              language: "sql",
+              form: "complete",
+              origin: "stored",
+              ...(bounded.truncated === undefined
+                ? {}
+                : { truncated: { limit: bounded.truncated.limit + 1, reason: bounded.truncated.reason } }),
+            },
+          ],
+        };
+      },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow();
+  });
+
+  // A provider with a SECOND bound of its own names both, so the guard asks for CONTAINS
+  // and never for equality.
+  test("accepts a bound reason that carries the shared sentence inside a composed one", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) => {
+        raiseIfAbsent(path);
+        const bounded = applySourceBound(readable, limit);
+        return {
+          path,
+          kind,
+          parts: [
+            {
+              id: "definition",
+              label: "Definition",
+              text: bounded.text,
+              language: "sql",
+              form: "complete",
+              origin: "stored",
+              ...(bounded.truncated === undefined
+                ? {}
+                : {
+                    truncated: {
+                      limit: bounded.truncated.limit,
+                      reason: `${bounded.truncated.reason}, and the catalog stores only the first 4,000 characters`,
+                    },
+                  }),
+            },
+          ],
+        };
+      },
+    });
+    await assertObjectSurface(provider as never, expectation);
+  });
+
+  // The escape hatch a bounded probe would otherwise leave open: a provider could answer
+  // short on an unbounded call and wave the caller's flag at it.
+  test("a provider that reports a caller's bound on an UNBOUNDED read is refused", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string) => ({
+        path,
+        kind,
+        parts: [
+          {
+            id: "definition",
+            label: "Definition",
+            text: readable,
+            language: "sql",
+            form: "complete",
+            origin: "stored",
+            truncated: { limit: 4, reason: sourceBoundTruncationReason(4) },
+          },
+        ],
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /was called with no limit and reported one/,
+    );
+  });
+
+  // A bound of the provider's OWN on an unbounded read stays certifiable, which is the
+  // other side of the same assertion: redis and libredb walk a bounded keyspace and say so.
+  test("accepts a provider's own bound on an unbounded read", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) => {
+        raiseIfAbsent(path);
+        const bounded = applySourceBound(readable, limit);
+        return {
+          path,
+          kind,
+          parts: [
+            {
+              id: "definition",
+              label: "Definition",
+              text: bounded.text,
+              language: "sql",
+              form: "complete",
+              origin: "stored",
+              truncated: bounded.truncated ?? { limit: 4000, reason: "the catalog stores only 4,000 characters" },
+            },
+          ],
+        };
+      },
+    });
+    await assertObjectSurface(provider as never, expectation);
+  });
+
+  test("a provider that answers a document for an absent object instead of raising is refused", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) => ({
+        path,
+        kind,
+        parts: [
+          {
+            id: "definition",
+            label: "Definition",
+            ...applySourceBound(readable, limit),
+            language: "sql",
+            form: "complete",
+            origin: "stored",
+          },
+        ],
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /did not raise for \["app","no_such_routine\(integer\)"\]; it answered a document/,
+    );
+  });
+
+  test("a provider that raises something other than a QueryError for an absent object is refused", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) => {
+        if (path[path.length - 1] === "no_such_routine(integer)") throw new TypeError("undefined is not a function");
+        return {
+          path,
+          kind,
+          parts: [
+            {
+              id: "definition",
+              label: "Definition",
+              ...applySourceBound(readable, limit),
+              language: "sql",
+              form: "complete",
+              origin: "stored",
+            },
+          ],
+        };
+      },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /did not raise for .*; it answered TypeError: undefined is not a function/,
+    );
+  });
+
+  test("a raise that does not name the object is refused, because the reader cannot tell which one", async () => {
+    const provider = sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) => {
+        if (path[path.length - 1] === "no_such_routine(integer)") throw new QueryError("not found", "postgres");
+        return {
+          path,
+          kind,
+          parts: [
+            {
+              id: "definition",
+              label: "Definition",
+              ...applySourceBound(readable, limit),
+              language: "sql",
+              form: "complete",
+              origin: "stored",
+            },
+          ],
+        };
+      },
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /without naming "no_such_routine\(integer\)"/,
+    );
   });
 });

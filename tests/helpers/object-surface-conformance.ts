@@ -59,8 +59,23 @@
  * which names neither the kind nor the expectation.
  */
 import { expect } from "bun:test";
-import type { DatabaseObject, DatabaseProvider, KindCount, ObjectDetailBatch } from "@/lib/db/types";
-import { callerBoundTruncationReason, declaredKinds, isCountUnavailable, relationKindIds } from "@/lib/db/object-kinds";
+import { QueryError } from "@/lib/db/errors";
+import type {
+  DatabaseObject,
+  DatabaseProvider,
+  KindCount,
+  ObjectDetailBatch,
+  ObjectSourceDocument,
+} from "@/lib/db/types";
+import {
+  callerBoundTruncationReason,
+  declaredKinds,
+  findKind,
+  isCountUnavailable,
+  isSourcePartUnavailable,
+  relationKindIds,
+  sourceBoundTruncationReason,
+} from "@/lib/db/object-kinds";
 // The SAME key the providers and the joins use. A helper keying paths its own way could
 // certify a provider whose own reader disagrees with it about what one path is.
 import { pathKey } from "@/lib/db/object-path";
@@ -84,6 +99,15 @@ export interface ObjectSurfaceExpectation {
   readonly container?: readonly string[];
   readonly kinds: Readonly<Record<string, number>>;
   readonly sampleObject: { readonly path: readonly string[]; readonly kind: string };
+  /**
+   * A path whose last segment names nothing, and the source-bearing kind to ask it under.
+   *
+   * AUTHORED rather than found, which is the deliberate asymmetry with `sampleObject`: only
+   * the test author knows what is illegal or impossible on that engine, and there is by
+   * definition no listing that produced it. Required whenever the provider declares a
+   * source-bearing kind, and the helper throws by name when it is missing.
+   */
+  readonly absentSource?: { readonly path: readonly string[]; readonly kind: string };
 }
 
 function startsWith(path: readonly string[], prefix: readonly string[]): boolean {
@@ -194,6 +218,7 @@ export async function assertObjectSurface(
   expect(detail.path).toEqual([...sample.path]);
 
   await assertBulkColumnRead(provider, container, listings);
+  await assertSourceSurface(provider, expected, listings);
 }
 
 /**
@@ -370,5 +395,202 @@ async function assertBulkColumnRead(
       `describeObjects("${richest.kind}", limit 1) reported "${bounded.truncated.reason}", which does not carry ` +
         `the one sentence a caller's bound is reported with: "${callerSentence}"`,
     );
+  }
+}
+
+/**
+ * The optional sixth method, checked against the provider's OWN listing (#789 Phase 2).
+ *
+ * Every path driven here is one the PROVIDER produced, for the reason `assertBulkColumnRead`
+ * records: the only thing that makes an assertion about a read non-vacuous is that it compares
+ * two answers the provider gave, never one the test author typed. The single exception is
+ * `absentSource`, which cannot be found by definition, and which therefore carries a POSITIVE
+ * CONTROL in the same helper: the loop above must already have read a document for that kind,
+ * so a rejection cannot be a connection failure or a bad bind.
+ *
+ * The zero-iteration case of each loop is what the throws guard:
+ *
+ *   - the PAIRING is outside every loop, so the fifteen providers that implement nothing are
+ *     certified exactly as strongly as the two that implement something: `false === false` is
+ *     an assertion too, and it is the only thing standing between a declaration and a method
+ *     that disagree;
+ *   - a source-bearing kind the expectation never NAMES is refused by name, one notch narrower
+ *     than "named none". Oracle declares nine of them and an expectation naming one would
+ *     silence a "none" guard while eight kinds went unread;
+ *   - a document of nothing but refusals answers no readable part, so the bound probe below
+ *     would never run and every bound assertion would be vacuous;
+ *   - a definition under two characters cannot be bounded distinguishably, which is the same
+ *     bar `richest.count < 2` sets for the bulk read.
+ */
+async function assertSourceSurface(
+  provider: DatabaseProvider,
+  expected: ObjectSurfaceExpectation,
+  listings: ReadonlyMap<string, DatabaseObject[]>,
+): Promise<void> {
+  const capabilities = provider.getCapabilities();
+  const sourceKinds = declaredKinds(capabilities).filter((kind) => kind.hasSource === true);
+  const read = provider.readObjectSource;
+
+  // The pairing, unconditional and outside every loop. A declaration with no method behind it
+  // surfaces as a 400 at runtime rather than a red build, and this is what catches it.
+  if (sourceKinds.length > 0 !== (typeof read === "function")) {
+    throw new Error(
+      `${provider.type} declares ${sourceKinds.length} source-bearing kind(s) and ` +
+        `${typeof read === "function" ? "implements readObjectSource" : "does not implement readObjectSource"}`,
+    );
+  }
+  if (read === undefined) return;
+
+  const absent = expected.absentSource;
+  if (absent === undefined) {
+    throw new Error(
+      "the provider declares a source-bearing kind and the expectation names no absentSource, so the " +
+        "absence raise is never driven",
+    );
+  }
+
+  // NAMED rather than counted above zero. A kind the expectation names at zero is an
+  // acknowledged absence that the count assertion already pins, and a fixture holding none of
+  // a declared kind is a legitimate state ruling 4 describes. A kind the expectation OMITS is
+  // the silent hole, and it is the one refused here.
+  const unexercised = sourceKinds.filter((kind) => !Object.hasOwn(expected.kinds, kind.id)).map((kind) => kind.id);
+  if (unexercised.length > 0) {
+    throw new Error(
+      `${provider.type} declares source-bearing kinds the expectation never exercised (${unexercised.join(", ")}), ` +
+        "so every source assertion for them is vacuous",
+    );
+  }
+
+  const wanted = new Set(sourceKinds.filter((kind) => (expected.kinds[kind.id] ?? 0) > 0).map((kind) => kind.id));
+  const entered = new Set<string>();
+  let longest: { kind: string; path: readonly string[]; length: number } | undefined;
+
+  // `listings` and not `wanted` drives the walk, because `listings` is what the provider
+  // actually produced. Every entry it holds for a kind the expectation counts above zero is
+  // known non-empty: the listing loop threw otherwise.
+  for (const [kindId, objects] of listings) {
+    if (!wanted.has(kindId)) continue;
+    const object = objects[0];
+    const document = await read.call(provider, object.path, kindId);
+    entered.add(kindId);
+    assertSourceDocument(document, object, kindId, findKind(capabilities, kindId)?.sourceLanguage);
+    for (const part of document.parts) {
+      if (isSourcePartUnavailable(part)) continue;
+      // The escape hatch a bounded probe would otherwise leave open: a provider could answer
+      // short on an unbounded call and wave the flag at it. A bound of its OWN stays
+      // certifiable; the CALLER's bound is not, because no caller passed one.
+      if (
+        part.truncated !== undefined &&
+        part.truncated.reason.includes(sourceBoundTruncationReason(part.truncated.limit))
+      ) {
+        throw new Error(
+          `readObjectSource("${kindId}") was called with no limit and reported one: "${part.truncated.reason}"`,
+        );
+      }
+      if (longest === undefined || part.text.length > longest.length) {
+        longest = { kind: kindId, path: object.path, length: part.text.length };
+      }
+    }
+  }
+
+  if (longest === undefined) {
+    throw new Error("no source-bearing kind answered a readable part, so every source assertion is vacuous");
+  }
+  // A bounded probe proves nothing unless the UNBOUNDED answer is longer than the bound.
+  if (longest.length < 2) {
+    throw new Error(
+      `the longest definition read is ${longest.length} character(s), so a bound cannot be told from no bound`,
+    );
+  }
+
+  const probe = Math.floor(longest.length / 2);
+  const bounded = await read.call(provider, longest.path, longest.kind, probe);
+  let marked = false;
+  for (const part of bounded.parts) {
+    if (isSourcePartUnavailable(part)) continue;
+    if (part.text.length > probe) {
+      throw new Error(`readObjectSource("${longest.kind}", limit ${probe}) returned ${part.text.length} characters`);
+    }
+    if (part.truncated === undefined) continue;
+    expect(part.truncated.limit).toBe(probe);
+    const sentence = sourceBoundTruncationReason(probe);
+    if (!part.truncated.reason.includes(sentence)) {
+      throw new Error(
+        `readObjectSource("${longest.kind}", limit ${probe}) reported "${part.truncated.reason}", which does ` +
+          `not carry the one sentence a caller's bound is reported with: "${sentence}"`,
+      );
+    }
+    marked = true;
+  }
+  if (!marked) {
+    throw new Error(
+      `readObjectSource("${longest.kind}", limit ${probe}) bounded a ${longest.length}-character definition and ` +
+        "reported no truncation",
+    );
+  }
+
+  // The absence, with its positive control: the loop above already resolved a document for
+  // this kind, so a rejection here cannot be a connection failure or a bad bind.
+  if (!entered.has(absent.kind)) {
+    throw new Error(
+      `absentSource names the kind "${absent.kind}", which the source loop never read, so its rejection has no ` +
+        "control",
+    );
+  }
+  let raised: unknown;
+  try {
+    await read.call(provider, absent.path, absent.kind);
+  } catch (error) {
+    raised = error;
+  }
+  if (!(raised instanceof QueryError)) {
+    throw new Error(
+      `readObjectSource did not raise for ${JSON.stringify(absent.path)}; it answered ` +
+        `${raised === undefined ? "a document" : String(raised)}`,
+    );
+  }
+  const segment = absent.path[absent.path.length - 1];
+  if (!raised.message.includes(segment)) {
+    throw new Error(
+      `readObjectSource raised for ${JSON.stringify(absent.path)} without naming "${segment}": "${raised.message}"`,
+    );
+  }
+}
+
+/**
+ * One document's own shape.
+ *
+ * What is NOT checked here, and why: a part carrying BOTH `text` and `unavailable` is a
+ * compile error for our own providers, so a check for it here would be a line no test can
+ * reach. A HOST can produce one, and the client's shape check is where that is caught.
+ */
+function assertSourceDocument(
+  document: ObjectSourceDocument,
+  object: DatabaseObject,
+  kindId: string,
+  declaredLanguage: string | undefined,
+): void {
+  expect(document.path).toEqual([...object.path]);
+  expect(document.kind).toBe(kindId);
+  const ids = new Set<string>();
+  for (const part of document.parts) {
+    if (ids.has(part.id)) {
+      throw new Error(`two parts of ${JSON.stringify(object.path)} share the id "${part.id}"`);
+    }
+    ids.add(part.id);
+    if (isSourcePartUnavailable(part)) {
+      if (part.unavailable.trim() === "") {
+        throw new Error(`readObjectSource("${kindId}") answered a refusal with no sentence a person can read`);
+      }
+      continue;
+    }
+    if (part.text.trim() === "") {
+      throw new Error(`readObjectSource("${kindId}") answered a part with no text, which is not a definition`);
+    }
+    if (declaredLanguage !== undefined && part.language !== declaredLanguage) {
+      throw new Error(
+        `kind "${kindId}" declares sourceLanguage "${declaredLanguage}" and the part carries "${part.language}"`,
+      );
+    }
   }
 }

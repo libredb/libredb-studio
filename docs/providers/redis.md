@@ -837,6 +837,70 @@ The UTF-8-byte versus UTF-16-code-unit divergence Task 26a-2 measured on five SQ
 has nothing to bite on here for the same reason: there is no server-side sort to disagree
 with.
 
+#### Object source (#789)
+
+`readObjectSource(path, kind, limit?)` answers ONE kind and the **declaration** says which. `function`
+declares `hasSource` and `sourceLanguage: "lua"`; `keyspace` declares neither, because a key prefix is
+a grouping this server derived from a bounded `SCAN` and nobody wrote a definition for it. That is the
+`tablesAreDerivedGroupings` refusal carried into the object model rather than left behind with the
+flag's old reader. The refusal is read off the declaration and never off the kind id, so a kind this
+engine does not declare at all takes the same path and raises with the same sentence.
+
+The command is `FUNCTION LIST LIBRARYNAME <name> WITHCODE`, sent once. It is server-scoped and takes
+no database: measured, one `FUNCTION LOAD` is visible from every numbered database and `SELECT` does
+not change what it answers.
+
+| Field | Value | Why |
+|---|---|---|
+| `id` | `definition` | one part, always: a library has one Lua text |
+| `label` | `Definition` | rendered as-is |
+| `language` | the kind's declared `sourceLanguage`, which is `lua` | `lua` IS a Monaco language id the installed 0.56.0 bundle registers, unlike `plsql`, `tsql` and `cql` |
+| `form` | `complete` | the text runs as given: it is what `FUNCTION LOAD` was handed |
+| `origin` | `stored` | the author's own bytes. Measured on Redis 8.10.0: `WITHCODE` answers the shebang line and the body exactly as they were loaded, with no reformatting |
+
+**The selection is BYTE-EQUAL, and that is the whole of the parser's reason to exist.** Measured on
+Redis 8.10.0 against the committed fixture:
+
+```
+$ redis-cli FUNCTION LIST                              # the dictionary is CASE-SENSITIVE
+library_name
+libredb_probe
+library_name
+LIBREDB_PROBE
+$ redis-cli FUNCTION LIST LIBRARYNAME libredb_probe    # the argument is a CASE-INSENSITIVE glob
+library_name
+libredb_probe
+library_name
+LIBREDB_PROBE
+```
+
+One lookup for either name answers BOTH, so a reader taking `reply[0]` would hand back the other
+library's Lua as this object's definition. The entry whose `library_name` is byte-equal to the last
+path segment is the one read, and its `library_code` is found by walking the key/value pairs rather
+than by position, the same rule the listing's parser records: the nested `functions` value is itself a
+list of key/value lists, and RESP3 answers a map where there is no order at all.
+
+**An absent library RAISES.** Measured on Redis 8.10.0,
+`FUNCTION LIST LIBRARYNAME no_such_library WITHCODE` answers an **empty array** and not an error, so
+emptiness is absence here and a provider that returned a document would invent one. An entry that
+matches by name and carries no `library_code`, or an empty one, takes the same arm: an empty text
+would put an empty editor over a definition that was never read.
+
+**A refused read is the server's own sentence, unprefixed**, carried as the part's `unavailable` and
+never as a text. Measured as the ACL user the fixture creates:
+
+```
+$ redis-cli --user libredb_nofunction --pass nofunction FUNCTION LIST LIBRARYNAME libredb_probe WITHCODE
+NOPERM User libredb_nofunction has no permissions to run the 'function|list' command
+```
+
+KeyDB, DragonflyDB and Garnet have no `FUNCTION` command at all and each refuses in its own words (the
+table in [§6.1](#61-the-object-surface-789) has them), so this path is reachable on three of the four
+Redis-wire relatives this type id serves.
+
+**A caller's bound** cuts one part's text and reports itself through the one sentence every engine
+uses, `the source read was bounded at <n> characters by its caller`. An exact answer is never marked.
+
 #### Reads go to the CONTAINER's database, never the session's
 
 Every object read opens its own short-lived connection with `db` set, rather than issuing `SELECT` on
@@ -933,7 +997,7 @@ no control offers it.
 | `declaresForeignKeys` | `false` — Redis has no constraints at all, and the "tables" here are key prefixes this provider grouped rather than objects anyone declared |
 | `tablesAreDerivedGroupings` | `true` — the object surface SCANs a bounded slice of the keyspace and groups the real key names it found by their prefix, so a `user:*` row is this server's own summary and not a key any command can be given. The agent layer states this to a plan run, in one sentence, so a grounded run does not draft a command against a grouping. In the object tree it is what withholds Profile from a `keyspace` row ([§6.1](#61-the-object-surface-789)) |
 | `containerLevels` | one level, `schema`, labelled Database ([§6.1](#61-the-object-surface-789)) |
-| `objectKinds` | `keyspace` (relation) and `function` (routine, `hasSource`, Lua). Three further candidates are absent rather than declared and zero ([§6.1](#61-the-object-surface-789)) |
+| `objectKinds` | `keyspace` (relation) and `function` (routine, `hasSource`, `sourceLanguage: "lua"`). `function` is the only kind in this engine with a definition text, read through `FUNCTION LIST ... WITHCODE` ([§6.1](#61-the-object-surface-789)). Three further candidates are absent rather than declared and zero |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze']` |
 | `supportsConnectionString` | `false` |
@@ -1083,7 +1147,12 @@ docker exec -i libredb-redis redis-cli --no-raw < docker/redis-init/01-object-fi
 `redis-cli` reading from stdin uses ONE connection for the whole file, which is what makes the
 `SELECT 3` in the middle of it work; a per-line `redis-cli` loop would silently write every key into
 database 0. The file is idempotent: it `DEL`s the keys it is about to write and loads the function
-library with `FUNCTION LOAD REPLACE`.
+libraries with `FUNCTION LOAD REPLACE`.
+
+**The file carries no comments, and that is a constraint rather than a style.** Measured on
+Redis 8.10.0: `redis-cli` reading from stdin does NOT skip a `#` line, it sends it as a command, and
+the server answers ``ERR unknown command '#'``. Every explanation of what the fixture holds therefore
+lives in the table below rather than beside the line.
 
 What it builds, and why each part is there:
 
@@ -1093,6 +1162,8 @@ What it builds, and why each part is there:
 | db 0 | mixed value types under one prefix (string, hash, list) | the sampled `type` column is `string/hash`-shaped rather than uniform |
 | db 3 | `report:daily` | a key that exists in ONE database and nowhere else, so a provider reading the SESSION's database instead of the CONTAINER's is distinguishable from a correct one |
 | db 0 | function library `libredb_probe`, two registered functions | the `function` kind has an object, and `FUNCTION LIST WITHCODE` has source to answer |
+| db 0 | a SECOND library `LIBREDB_PROBE`, differing from the first ONLY in case | `LIBRARYNAME` is a case-INSENSITIVE glob over a case-SENSITIVE dictionary, so one lookup answers both and a source read taking `reply[0]` shows the wrong library ([§6.1](#61-the-object-surface-789)) |
+| server | ACL user `libredb_nofunction`, password `nofunction`, `-function` | a live principal for the source read's refusal pane |
 
 To measure a cluster-mode container, which is the only deployment where the database count is not 16:
 

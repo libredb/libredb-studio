@@ -16,7 +16,13 @@
 
 import Redis, { type RedisOptions } from "ioredis";
 import { BaseDatabaseProvider } from "../../base-provider";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+} from "../../object-kinds";
 import { comparePaths } from "../../object-path";
 import {
   type DatabaseConnection,
@@ -44,6 +50,7 @@ import {
   type ObjectDetail,
   type ObjectDetailBatch,
   type ObjectKindSpec,
+  type ObjectSourceDocument,
 } from "../../types";
 import { DatabaseConfigError, QueryError, ConnectionError } from "../../errors";
 
@@ -337,6 +344,39 @@ function parseFunctionLibraries(reply: unknown): string[] {
     }
   }
   return names;
+}
+
+/**
+ * One library's `library_code` out of a `FUNCTION LIST ... WITHCODE` reply, selected
+ * BYTE-EQUAL (#789 Phase 2).
+ *
+
+ * The selection is the whole of this function's reason to exist. MEASURED on redis 8.10.0
+ * against the committed fixture: the library dictionary is CASE-SENSITIVE, so `libredb_probe`
+ * and `LIBREDB_PROBE` coexist, while the `LIBRARYNAME` argument is a CASE-INSENSITIVE glob, so
+ * ONE lookup for either name answers BOTH. `reply[0]` would therefore hand back the other
+ * library's Lua as this object's definition, and `docker/redis-init/01-object-fixture.redis`
+ * holds that pair for exactly this reason. Reply order is not part of the protocol contract:
+ * RESP3 answers a map, where there is no order at all.
+ *
+ * The pairs are walked rather than indexed, the same rule `parseFunctionLibraries` records:
+ * the nested `functions` value is itself a list of key/value lists, so a parser reading
+ * positions takes a field name for a library name the moment the server adds a field.
+ */
+function parseFunctionLibraryCode(reply: unknown, name: string): string | undefined {
+  for (const entry of Array.isArray(reply) ? reply : []) {
+    if (!Array.isArray(entry)) continue;
+    let matched = false;
+    let code: string | undefined;
+    for (let index = 0; index + 1 < entry.length; index += 2) {
+      const key = String(entry[index]);
+      const value = entry[index + 1];
+      if (key === "library_name" && value === name) matched = true;
+      if (key === "library_code" && typeof value === "string") code = value;
+    }
+    if (matched) return code;
+  }
+  return undefined;
 }
 
 // ============================================================================
@@ -1166,6 +1206,89 @@ export class RedisProvider extends BaseDatabaseProvider {
       }
       return RedisProvider.keyspaceDetail(path, info.types);
     });
+  }
+
+  /**
+   * `FUNCTION LIST LIBRARYNAME <name> WITHCODE`, as its own method (#789 Phase 2).
+   *
+   * A method rather than an inline call so the refusal arm of `readObjectSource` can be
+   * driven without reaching into ioredis, and so the command text has one writer. It is
+   * SERVER-SCOPED and takes no database: measured on redis 8.10.0, one `FUNCTION LOAD` is
+   * visible from every numbered database and `SELECT` does not change what `FUNCTION LIST`
+   * answers, which is the same fact `listObjects` records for the listing.
+   */
+  private async callFunctionList(name: string): Promise<unknown> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return await (this.client as any).call("FUNCTION", "LIST", "LIBRARYNAME", name, "WITHCODE");
+  }
+
+  /**
+   * A function library's Lua source (#789 Phase 2).
+   *
+   * ONE kind can answer here and the DECLARATION says which: `function` declares `hasSource`
+   * and `keyspace` does not, because a key prefix is a grouping this server derived from a
+   * bounded `SCAN` and nobody wrote a definition for it. That is the
+   * `tablesAreDerivedGroupings` refusal carried into the object model rather than left behind
+   * with the flag's old reader. The refusal is read off the declaration and never off the
+   * kind id, so a kind this engine does not declare at all takes the same path.
+   *
+   * A library the server does not hold RAISES. It has to: measured on redis 8.10.0,
+   * `FUNCTION LIST LIBRARYNAME no_such_library WITHCODE` answers an EMPTY ARRAY and not an error, so
+   * emptiness is absence here and a provider that returned a document would invent one. A
+   * matching entry carrying no `library_code` takes the same arm, because an empty text would
+   * put an empty editor over a definition that was never read.
+   *
+   * A refusal is the server's own sentence, unprefixed. KeyDB, DragonflyDB and Garnet have no
+   * `FUNCTION` command at all and each refuses in its own words (all measured 2026-09-11), so
+   * this path is reachable on three of the four Redis-wire relatives this type id serves.
+   *
+   * The name is `path[path.length - 1]` and never `path[1]`: standing ruling 5g, and the
+   * integration suite pins it by swapping a two-level declaration in.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec?.hasSource !== true) {
+      throw new QueryError(`Redis declares no readable source for the kind "${kind}"`, "redis");
+    }
+    const name = path[path.length - 1];
+    let reply: unknown;
+    try {
+      reply = await this.callFunctionList(name);
+    } catch (error) {
+      return {
+        path: [...path],
+        kind,
+        parts: [
+          {
+            id: "definition",
+            label: "Definition",
+            unavailable: error instanceof Error ? error.message : String(error),
+          },
+        ],
+      };
+    }
+    const code = parseFunctionLibraryCode(reply, name);
+    if (code === undefined || code.trim() === "") {
+      throw new QueryError(`Redis holds no function library called "${name}"`, "redis");
+    }
+    const bounded = applySourceBound(code, limit);
+    return {
+      path: [...path],
+      kind,
+      parts: [
+        {
+          id: "definition",
+          label: "Definition",
+          text: bounded.text,
+          language: spec.sourceLanguage ?? "lua",
+          form: "complete",
+          origin: "stored",
+          ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+        },
+      ],
+    };
   }
 
   /**
