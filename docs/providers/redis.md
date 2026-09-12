@@ -777,6 +777,66 @@ shows a person. Phase 2's Source tab is where the two must agree, and it needs c
 so the reader has to treat emptiness as absence itself, and the miss then belongs in
 `describeObject()` rather than in the tab.
 
+#### What `describeObjects()` answers, and the two bounds it reports
+
+`describeObjects(container, kind, limit?)` is the bulk column read (#789): the columns of
+every object of one kind in one database, from ONE walk.
+
+**One walk for a whole folder.** Nothing here sends a statement, so the N+1 the inventory
+route removed does not come back as round trips: `describeObject()` runs a full
+`scanKeyGroups` walk of its own, and a body looping it would walk the keyspace once per
+grouping. The suite counts the driver's `SCAN` calls - one for the folder, against two for
+two single reads - because that is the only observable difference between the two, and a
+timing comparison over the loopback would pass either way. Measured live on redis:latest at
+port 16379 with the committed fixture, 2 ms for one `describeObjects(["0"], "keyspace")`
+against 6 ms for the four `describeObject()` calls it replaces.
+
+**A function library folder answers `{ details: [] }` and sends nothing at all** - not even
+the `FUNCTION LIST` the listing needs. A library has no columns, no indexes and no foreign
+keys, and its source, the one thing it does have, is Phase 2's through
+`FUNCTION LIST WITHCODE`. That is a true statement about the KIND rather than a refused
+read, which is why it is an empty batch and not a throw. A kind this provider declares and
+has no command for is a different fact and RAISES, with the same sentence `listObjects()`
+refuses with: "this kind has no columns" and "this file has no reader for this kind" must
+not arrive as the same empty answer.
+
+**One mapper, shared with the single read.** `keyspaceDetail()` builds both, over
+`keyGroupColumns()`, which is also what `getSchema()` builds its rows from. Every column set
+the bulk read answers is byte-identical to `describeObject()` for the same path, checked for
+every grouping in the fixture and re-checked live.
+
+**Two bounds, and the answer names whichever bit.**
+
+| Bound | Applies to | `truncated.limit` | `truncated.reason` |
+| --- | --- | --- | --- |
+| The caller's `limit` | `keyspace` | the caller's own number | `the bulk column read was bounded at N objects by its caller` |
+| The 1,000-key walk | `keyspace` | the number of objects answered | `the key walk stopped at the first 1,000 keys of one SCAN walk` |
+| Both | `keyspace` | the caller's own number | the two joined with `, and ` |
+
+The second is a bound this provider did not choose on the call, so it is reported on an
+unbounded read as readily as on a bounded one: a cap nobody can see is the defect
+`truncated` exists to prevent, and it is the same fact `countObjects()` already puts on the
+badge through `KindCount.sampledFrom`. It cannot bite on the `function` folder, which sends
+nothing, so the marking is per KIND here exactly as it is in the count. Measured live
+against a database holding 1,200 keys under one prefix: an unbounded read answers one
+column set and reports `the key walk stopped at the first 1,000 keys of one SCAN walk`.
+
+A limit that is not a positive whole number **raises** rather than being clamped, and the
+guard runs after the declaration check and after the container check.
+
+**The cut is ours, because this engine offers nothing to cut under.** Every other engine in
+#789 pushes a `LIMIT` down and re-sorts in code, so a bounded read's MEMBERSHIP is the
+server's and its ORDER is ours. There is no such split here. `SCAN` publishes no order at
+all, not even a stable one between two walks of an unchanged keyspace, and its bound is on
+KEYS rather than on groupings, so there is no `limit + 1` to push down: a walk cannot know
+how many groupings it will produce until it has finished. Both the membership and the order
+of a bounded read are `comparePaths`', and this document says so rather than implying an
+order the server does not have.
+
+The UTF-8-byte versus UTF-16-code-unit divergence Task 26a-2 measured on five SQL engines
+has nothing to bite on here for the same reason: there is no server-side sort to disagree
+with.
+
 #### Reads go to the CONTAINER's database, never the session's
 
 Every object read opens its own short-lived connection with `db` set, rather than issuing `SELECT` on

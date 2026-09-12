@@ -41,6 +41,7 @@ import {
   type DatabaseObject,
   type KindCount,
   type ObjectDetail,
+  type ObjectDetailBatch,
   type ObjectKindSpec,
 } from "../../types";
 import { DatabaseConfigError, QueryError, ConnectionError } from "../../errors";
@@ -166,6 +167,27 @@ const KEY_SCAN_LIMIT = 1000;
  * Phrased to follow "counted from", which is how `flatten.ts` builds the badge's title.
  */
 const KEY_SCAN_SAMPLE_SENTENCE = `the first ${KEY_SCAN_LIMIT.toLocaleString("en-US")} keys of one SCAN walk`;
+
+/**
+ * The two sentences `describeObjects` reports a bound with, and they are two DIFFERENT
+ * bounds rather than two phrasings of one (#789).
+ *
+ * The first is the CALLER's: a `limit` this provider was handed and applied, so the number
+ * in the sentence is the caller's own. The second is a bound nobody asked for on the call -
+ * the walk stops at `KEY_SCAN_LIMIT` keys, so on a larger keyspace the groupings are the
+ * groupings of a SAMPLE and there may be objects the batch does not hold. A cap nobody can
+ * see is exactly what `ObjectDetailBatch.truncated` exists to prevent, so the second is
+ * reported on an unbounded read too, and both are named when both bite.
+ *
+ * The scan sentence reuses `KEY_SCAN_SAMPLE_SENTENCE`, the same words `countObjects` puts on
+ * the badge through `KindCount.sampledFrom`, so a person meeting the fact twice meets it in
+ * one wording.
+ */
+function callerBoundSentence(limit: number): string {
+  return `the bulk column read was bounded at ${limit} object${limit === 1 ? "" : "s"} by its caller`;
+}
+
+const SCAN_BOUND_SENTENCE = `the key walk stopped at ${KEY_SCAN_SAMPLE_SENTENCE}`;
 
 /**
  * The container levels this provider declares, sliced to the depth `containerDepth()` reports.
@@ -1029,6 +1051,58 @@ export class RedisProvider extends BaseDatabaseProvider {
   }
 
   /**
+   * ONE bounded walk turned into the key groupings it saw, each carrying the value types
+   * that walk sampled under it.
+   *
+   * The one place a `keyspace` object is BUILT, so its path, its label, its row count and
+   * the sample its columns are derived from all come from one pass. `listObjects` takes the
+   * objects out of it and `describeObjects` takes the samples, which is what keeps the two
+   * from describing the same grouping from two different walks - and this engine can tell
+   * the difference, because two walks of a live keyspace need not see the same keys.
+   *
+   * Sorted by PATH, segment by segment. That is not a preference here, it is the only order
+   * there is: `SCAN` guarantees NO order at all, not even a stable one between two walks of
+   * an unchanged keyspace, so a bounded read's membership is decided by `comparePaths` and
+   * never by the server. Every other engine in #789 cuts under the server's own collation
+   * and re-sorts in code; this one has nothing to cut under.
+   */
+  private static async keyspaceEntries(
+    client: Redis,
+    container: readonly string[],
+    kind: string,
+  ): Promise<{ entries: { object: DatabaseObject; types: ReadonlySet<string> }[]; truncated: boolean }> {
+    const { groups, truncated } = await RedisProvider.scanKeyGroups(client);
+    const entries = [...groups.entries()]
+      .map(([pattern, info]) => ({
+        object: {
+          path: [...container, pattern],
+          name: pattern,
+          kind,
+          // The keys this SCAN walk saw under the prefix, which is a sample and not a total
+          // wherever the keyspace is larger than the bound.
+          rowCount: info.count,
+        },
+        types: info.types as ReadonlySet<string>,
+      }))
+      .sort((left, right) => comparePaths(left.object.path, right.object.path));
+    return { entries, truncated };
+  }
+
+  /**
+   * One walked grouping turned into one `ObjectDetail`, shared by the single and the bulk
+   * read.
+   *
+   * One function because a caller joins the two answers together: two copies would be two
+   * chances for the bulk read to spell a grouping's columns differently from the single read
+   * of the same grouping. It goes through `keyGroupColumns`, which is also what `getSchema()`
+   * builds its rows from, so all three surfaces describe one grouping one way while the flat
+   * one is still live.
+   */
+  private static keyspaceDetail(path: readonly string[], types: ReadonlySet<string>): ObjectDetail {
+    return { path: [...path], columns: keyGroupColumns(types), indexes: [], foreignKeys: [] };
+  }
+
+  /**
    * The objects of one kind in one database, and whether the read that produced them was
    * BOUNDED. The ONE reader of either catalog.
    *
@@ -1057,17 +1131,8 @@ export class RedisProvider extends BaseDatabaseProvider {
     kind: string,
   ): Promise<{ objects: DatabaseObject[]; sampledFrom?: string }> {
     if (kind === "keyspace") {
-      const { groups, truncated } = await RedisProvider.scanKeyGroups(client);
-      const objects = [...groups.entries()]
-        .map(([pattern, info]) => ({
-          path: [...container, pattern],
-          name: pattern,
-          kind,
-          // The keys this SCAN walk saw under the prefix, which is a sample and not a total
-          // wherever the keyspace is larger than the bound.
-          rowCount: info.count,
-        }))
-        .sort((left, right) => comparePaths(left.path, right.path));
+      const { entries, truncated } = await RedisProvider.keyspaceEntries(client, container, kind);
+      const objects = entries.map((entry) => entry.object);
       // Only when the walk actually stopped early. A completed cursor walked the whole
       // keyspace, and marking that count a floor would teach a reader to discount a number
       // that is exact.
@@ -1146,7 +1211,86 @@ export class RedisProvider extends BaseDatabaseProvider {
           "redis",
         );
       }
-      return { path: [...path], columns: keyGroupColumns(info.types), indexes: [], foreignKeys: [] };
+      return RedisProvider.keyspaceDetail(path, info.types);
+    });
+  }
+
+  /**
+   * Columns for EVERY object of one kind in one database, from ONE walk (#789).
+   *
+   * ONE WALK for the whole folder, which is the entire reason this method exists. Nothing
+   * here sends a statement, so the N+1 the inventory route removed does not come back as
+   * round trips: `describeObject` runs a full `scanKeyGroups` walk of its own, and a body
+   * looping it would walk the keyspace once per grouping. The suite counts the driver's
+   * `SCAN` calls, which is the only observable difference between the two.
+   *
+   * A FUNCTION LIBRARY HAS NO COLUMNS, so its folder answers `{ details: [] }` and sends
+   * NOTHING - not even the `FUNCTION LIST` the listing needs. That is the reference's fourth
+   * guard and it is the same fact `describeObject` already answers for one library: a library
+   * has no columns, no indexes and no foreign keys, and its SOURCE, the one thing it does
+   * have, is Phase 2's through `FUNCTION LIST WITHCODE`. It is a true statement about the
+   * KIND rather than a refused read, so it is an empty batch and not a throw.
+   *
+   * A kind this provider declares and cannot enumerate is a different fact again, and it
+   * RAISES: "this kind has no columns" and "this file has no reader for this kind" must not
+   * arrive as the same empty answer, because only the second is a defect. The refusal is
+   * `listIn`'s own, so the two methods refuse by one rule.
+   *
+   * TWO BOUNDS, AND THE ANSWER NAMES WHICHEVER BIT. The caller's `limit` is applied to the
+   * sorted groupings and reports the caller's own number. The walk's 1,000-key budget is a
+   * bound this provider did not choose on this call, and it is reported too, on an unbounded
+   * read as readily as on a bounded one, because a cap nobody can see is the defect
+   * `truncated` exists to prevent. It cannot bite on the `function` folder, which sends
+   * nothing, so the marking is per KIND here exactly as it is in `countObjects`.
+   *
+   * THE CUT IS OURS, BECAUSE THIS ENGINE OFFERS NOTHING TO CUT UNDER. `SCAN` publishes no
+   * order at all and its bound is on KEYS rather than on groupings, so there is no `limit + 1`
+   * to push down: a walk cannot know how many groupings it will produce until it has finished.
+   * The membership of a bounded read is therefore `comparePaths`' and this provider says so
+   * rather than implying an order the server does not have.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    // The four guards, in the reference's order: the DECLARATION first, because an undeclared
+    // kind is a fact about the engine and an empty answer is a claim about the data; then the
+    // container, through the same reader `listObjects` uses.
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`Redis declares no object kind "${kind}"`, "redis");
+    }
+    const db = containerDatabase(capabilities, container);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      // Not clamped and not ignored. A 0 would answer nothing while reporting a truncation
+      // the caller never asked for, and a fraction cannot cut a list; both are caller
+      // mistakes and neither has a right answer to guess at.
+      throw new QueryError(
+        `A Redis bulk column read limit must be a positive whole number, received ${limit}`,
+        "redis",
+      );
+    }
+    if (kind === "function") return { details: [] };
+    if (kind !== "keyspace") {
+      // The same sentence `listIn` refuses with, so a kind added to the declaration without
+      // a reader fails by name on both methods rather than answering an empty folder here.
+      throw new QueryError(`Redis declares the kind "${kind}" but has no command that lists it`, "redis");
+    }
+
+    return this.withDatabase(db, async (client) => {
+      const { entries, truncated: scanTruncated } = await RedisProvider.keyspaceEntries(client, container, kind);
+      const bounded = limit !== undefined && entries.length > limit;
+      const details = (bounded ? entries.slice(0, limit) : entries).map((entry) =>
+        RedisProvider.keyspaceDetail(entry.object.path, entry.types),
+      );
+
+      if (!bounded && !scanTruncated) return { details };
+      const reasons = [
+        ...(bounded ? [callerBoundSentence(limit!)] : []),
+        ...(scanTruncated ? [SCAN_BOUND_SENTENCE] : []),
+      ];
+      // The CALLER's limit whenever the caller set one that bit; otherwise the number this
+      // read actually produced, which is the only bound in existence on that arm and keeps
+      // `details.length <= truncated.limit` true either way.
+      return { details, truncated: { limit: bounded ? limit! : details.length, reason: reasons.join(", and ") } };
     });
   }
 

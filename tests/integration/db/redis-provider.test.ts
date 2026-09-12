@@ -95,6 +95,12 @@ const MOCK_KEYS_BY_DB: Record<number, string[]> = {
 };
 
 /**
+ * The value type of each mock key, taken from the committed fixture: `HSET session:abc`
+ * makes that one a hash while the `SET` keys are strings. Anything absent is a string.
+ */
+const MOCK_KEY_TYPES: Record<string, string> = { "session:abc": "hash" };
+
+/**
  * What `CONFIG GET databases` answers. 16 is a stock server; a test sets it to 1 to stand
  * for the cluster-mode deployment, where the reply really is 1 (measured on redis 8.10.0
  * started with `--cluster-enabled yes`, where `SELECT 3` also answers "ERR SELECT is not
@@ -142,6 +148,16 @@ let functionRefusal: string | null = null;
 
 /** When set, `SCAN` rejects with this sentence, whatever database it was opened on. */
 let scanRefusal: string | null = null;
+
+/**
+ * How many `SCAN` calls the driver has taken since a test reset it.
+ *
+ * The bulk column read's whole claim is that a folder costs ONE keyspace walk rather than
+ * one per object, and on this engine that is not a statement count: nothing here sends a
+ * statement. Counting the driver calls is the only observable difference between one walk
+ * and a loop over `describeObject`, and it does not depend on the wall clock (#789).
+ */
+let scanCalls = 0;
 
 /**
  * When true, `SCAN` answers a NON-ZERO cursor and a page big enough to spend the provider's
@@ -205,13 +221,23 @@ mock.module("ioredis", () => {
     }
 
     async scan(): Promise<[string, string[]]> {
+      scanCalls += 1;
       if (scanRefusal !== null) throw new Error(scanRefusal);
       if (scanOverflows) return ["42", [...(MOCK_KEYS_BY_DB[this._db] ?? []), ...OVERFLOW_KEYS]];
       return ["0", MOCK_KEYS_BY_DB[this._db] ?? []];
     }
 
-    async type() {
-      return "string";
+    /**
+     * The value TYPE of one key, from a per-key table rather than one constant.
+     *
+     * A constant "string" made every grouping's column list identical, so a bulk read that
+     * described every object with the FIRST grouping's types was indistinguishable from a
+     * correct one. `session:abc` is a HASH in the committed fixture
+     * (`docker/redis-init/01-object-fixture.redis` writes it with `HSET`) and
+     * `queue:jobs` a list, so the table below is the fixture's own shape (#789).
+     */
+    async type(key: string) {
+      return MOCK_KEY_TYPES[key] ?? "string";
     }
 
     async client(subcommand: string) {
@@ -1225,6 +1251,7 @@ describe("RedisProvider", () => {
       functionRefusal = null;
       scanRefusal = null;
       scanOverflows = false;
+      scanCalls = 0;
       capturedCalls.length = 0;
       capturedRedisOptions.length = 0;
       await provider.connect();
@@ -1520,6 +1547,201 @@ describe("RedisProvider", () => {
       expect(capturedRedisOptions[capturedRedisOptions.length - 1].db).toBe(3);
       const detail = await provider.describeObject(["main", "3", "report:*"], "keyspace");
       expect(detail.path).toEqual(["main", "3", "report:*"]);
+    });
+
+    // ======================================================================
+    // The bulk column read (#789)
+    // ======================================================================
+
+    /**
+     * ONE walk for the whole folder, and the SCAN count is what is asserted.
+     *
+     * `describeObject` runs a whole `scanKeyGroups` walk of its own, so a body looping it
+     * would walk the keyspace once per grouping - which on this engine is the N+1 the
+     * inventory route removed, spelled in SCAN pages rather than in statements. The
+     * assertion is on the driver call count and not on the wall clock.
+     */
+    test("describeObjects walks the keyspace ONCE for a whole folder, not once per grouping", async () => {
+      scanCalls = 0;
+      const batch = await provider.describeObjects!(["0"], "keyspace");
+
+      expect(batch.details.map((detail) => detail.path)).toEqual([
+        ["0", "session:*"],
+        ["0", "user:*"],
+      ]);
+      expect(scanCalls).toBe(1);
+      // The control: the single read pays one walk per object, so two objects cost two.
+      scanCalls = 0;
+      await provider.describeObject(["0", "session:*"], "keyspace");
+      await provider.describeObject(["0", "user:*"], "keyspace");
+      expect(scanCalls).toBe(2);
+    });
+
+    test("every grouping carries ITS OWN sampled types, not the first one's", async () => {
+      const batch = await provider.describeObjects!(["0"], "keyspace");
+
+      // `session:abc` is a HASH and the two `user:` keys are strings, so the two groupings
+      // answer two different column lists. With one type for the whole database a bulk read
+      // describing every object from the first grouping's sample would be indistinguishable
+      // from a correct one.
+      expect(batch.details.map((detail) => detail.columns.map((column) => column.type))).toEqual([
+        ["string", "hash", "hash"],
+        ["string", "string", "string"],
+      ]);
+      expect(batch.details[0].columns.map((column) => column.name)).toEqual(["key", "value", "type"]);
+    });
+
+    test("the bulk read spells a grouping exactly as the single read does", async () => {
+      const batch = await provider.describeObjects!(["0"], "keyspace");
+      const listed = await provider.listObjects(["0"], "keyspace");
+
+      expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+      for (const detail of batch.details) {
+        expect(detail).toEqual(await provider.describeObject(detail.path, "keyspace"));
+      }
+    });
+
+    /**
+     * A FUNCTION LIBRARY HAS NO COLUMNS, so the batch is empty and NOTHING is sent.
+     *
+     * The reference's fourth guard, and here it is the same fact `describeObject` already
+     * answers for one library: a library has no columns, no indexes and no foreign keys, and
+     * its source is Phase 2's through `FUNCTION LIST WITHCODE`. The assertion is on the
+     * commands sent, not on the empty array, because an implementation that read
+     * `FUNCTION LIST` and then dropped every row would satisfy the array.
+     */
+    test("a function library folder answers an empty batch with NO round trip", async () => {
+      capturedCalls.length = 0;
+      scanCalls = 0;
+      const batch = await provider.describeObjects!(["0"], "function");
+
+      expect(batch).toEqual({ details: [] });
+      expect(commandsSent()).toEqual([]);
+      expect(scanCalls).toBe(0);
+    });
+
+    test("the caller's bound cuts the sorted groupings and reports the caller's own limit", async () => {
+      const batch = await provider.describeObjects!(["0"], "keyspace", 1);
+
+      expect(batch.details.map((detail) => detail.path)).toEqual([["0", "session:*"]]);
+      expect(batch.truncated).toEqual({
+        limit: 1,
+        reason: "the bulk column read was bounded at 1 object by its caller",
+      });
+    });
+
+    test("a bound the folder fits inside reports nothing, on either side of the boundary", async () => {
+      expect((await provider.describeObjects!(["0"], "keyspace", 2)).truncated).toBeUndefined();
+      expect((await provider.describeObjects!(["0"], "keyspace", 3)).truncated).toBeUndefined();
+    });
+
+    /**
+     * The bound this provider did NOT choose, reported rather than hidden.
+     *
+     * The walk stops at 1,000 keys, so on a larger keyspace the groupings are the groupings
+     * of a SAMPLE and there may be more objects than the batch holds. `countObjects` already
+     * says so through `KindCount.sampledFrom`; this is the same fact from the same walk, in
+     * the field `ObjectDetailBatch` has for it, and it is reported on an UNBOUNDED read
+     * because a cap nobody can see is what `truncated` exists to prevent.
+     */
+    test("a SCAN stopped by its key budget is reported as truncation on an unbounded read", async () => {
+      scanOverflows = true;
+      const batch = await provider.describeObjects!(["0"], "keyspace");
+
+      expect(batch.details.map((detail) => detail.path)).toEqual([
+        ["0", "bulk:*"],
+        ["0", "session:*"],
+        ["0", "user:*"],
+      ]);
+      expect(batch.truncated).toEqual({
+        limit: 3,
+        reason: "the key walk stopped at the first 1,000 keys of one SCAN walk",
+      });
+      // The FUNCTION folder in the same state is not marked: `FUNCTION LIST` enumerates the
+      // whole server and has no key budget at all. That is the per-kind half of the rule.
+      expect((await provider.describeObjects!(["0"], "function")).truncated).toBeUndefined();
+    });
+
+    test("a walk that reached the end of the keyspace reports nothing, which is the control", async () => {
+      expect((await provider.describeObjects!(["0"], "keyspace")).truncated).toBeUndefined();
+    });
+
+    test("both bounds at once name both, and the limit reported is the caller's", async () => {
+      scanOverflows = true;
+      const batch = await provider.describeObjects!(["0"], "keyspace", 1);
+
+      expect(batch.details.map((detail) => detail.path)).toEqual([["0", "bulk:*"]]);
+      expect(batch.truncated).toEqual({
+        limit: 1,
+        reason:
+          "the bulk column read was bounded at 1 object by its caller, and the key walk " +
+          "stopped at the first 1,000 keys of one SCAN walk",
+      });
+    });
+
+    test("a refused SCAN raises rather than answering an empty folder", async () => {
+      scanRefusal = "NOPERM this user has no permissions to run the 'scan' command";
+      await expect(provider.describeObjects!(["0"], "keyspace")).rejects.toThrow(/NOPERM/);
+    });
+
+    test("an undeclared kind is refused by the DECLARATION, naming the engine and the kind", async () => {
+      await expect(provider.describeObjects!(["0"], "stream")).rejects.toThrow(
+        /Redis declares no object kind "stream"/,
+      );
+    });
+
+    test("a container path of the wrong shape is refused before anything is opened", async () => {
+      await expect(provider.describeObjects!([], "keyspace")).rejects.toThrow(/\[database\]/);
+      await expect(provider.describeObjects!(["main"], "keyspace")).rejects.toThrow(/"main"/);
+    });
+
+    test("a limit that is not a positive whole number is refused, never clamped", async () => {
+      for (const limit of [0, -1, 1.5, Number.NaN]) {
+        await expect(provider.describeObjects!(["0"], "keyspace", limit)).rejects.toThrow(
+          /bulk column read limit must be a positive whole number/,
+        );
+      }
+      // Guard ORDER: the declaration first, then the container, then the limit.
+      await expect(provider.describeObjects!(["0"], "stream", 0)).rejects.toThrow(/declares no object kind/);
+      await expect(provider.describeObjects!([], "keyspace", 0)).rejects.toThrow(/\[database\]/);
+    });
+
+    /**
+     * A declared kind with no enumerator behind it, on the fifth method.
+     *
+     * The bulk read must refuse the same way the listing does rather than answer the empty
+     * batch a columnless kind gets: "this kind has no columns" and "this provider has no
+     * command for this kind" are different facts, and only the second is a defect.
+     */
+    test("a declared kind with no command behind it is refused by name, not answered empty", async () => {
+      const base = provider.getCapabilities();
+      spyOn(provider, "getCapabilities").mockReturnValue({
+        ...base,
+        objectKinds: [...(base.objectKinds ?? []), { id: "stream", role: "relation", label: "S", labelPlural: "S" }],
+      });
+
+      await expect(provider.describeObjects!(["0"], "stream")).rejects.toThrow(/has no command that lists it/);
+    });
+
+    /**
+     * Standing ruling 5g on the fifth method: driven to the BOUND VALUE, the `db` the object
+     * connection was opened on, and not to a refusal.
+     */
+    test("the bulk read follows a two-level declaration to the database it binds", async () => {
+      const base = provider.getCapabilities();
+      spyOn(provider, "getCapabilities").mockReturnValue({
+        ...base,
+        containerLevels: [
+          { id: "catalog", label: "Cluster", labelPlural: "Clusters" },
+          { id: "schema", label: "Database", labelPlural: "Databases" },
+        ],
+      });
+
+      const batch = await provider.describeObjects!(["main", "3"], "keyspace");
+
+      expect(batch.details.map((detail) => detail.path)).toEqual([["main", "3", "report:*"]]);
+      expect(batch.details[0].columns.map((column) => column.name)).toEqual(["key", "value", "type"]);
+      expect(capturedRedisOptions[capturedRedisOptions.length - 1].db).toBe(3);
     });
   });
 });
