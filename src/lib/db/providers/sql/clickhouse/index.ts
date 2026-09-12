@@ -57,6 +57,7 @@ import {
   type KindCount,
   type ObjectDetail,
   type ObjectDetailBatch,
+  type ObjectSourceDocument,
   type ProviderCapabilities,
   type ProviderLabels,
   type ProviderOptions,
@@ -82,6 +83,7 @@ import {
   listContainers as readContainers,
   listObjects as readObjects,
   literal,
+  readObjectSource as readSourceDocument,
 } from "./objects";
 import {
   type ClickHouseQueryResult,
@@ -803,6 +805,19 @@ export class ClickHouseProvider extends SQLBaseProvider {
   public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
     const transport = this.requireTransport();
     return this.guarded(() => readObjectDetails(transport, this.getCapabilities(), container, kind, limit));
+  }
+
+  /**
+   * One object's definition text (#789 Phase 2).
+   *
+   * The fifth thin wrapper, and it is OPTIONAL on `DatabaseProvider` while the five above are
+   * required: a provider that declares no source-bearing kind implements nothing, and
+   * `assertObjectSurface` asserts the pairing in both directions. ClickHouse declares all five
+   * of its kinds source-bearing, so the method is here and the pairing holds.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    const transport = this.requireTransport();
+    return this.guarded(() => readSourceDocument(transport, this.getCapabilities(), path, kind, limit));
   }
 
   // ==========================================================================

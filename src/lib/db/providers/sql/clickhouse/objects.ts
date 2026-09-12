@@ -59,7 +59,13 @@
  */
 
 import { QueryError } from "@/lib/db/errors";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+} from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import type {
   ColumnSchema,
@@ -72,6 +78,8 @@ import type {
   ObjectDetail,
   ObjectDetailBatch,
   ObjectKindSpec,
+  ObjectSourceDocument,
+  ObjectSourcePart,
   ProviderCapabilities,
 } from "@/lib/db/types";
 import {
@@ -83,7 +91,7 @@ import {
   readText,
   splitKeyExpression,
 } from "./introspect";
-import type { ClickHouseRow, ClickHouseTransport } from "./transport";
+import { type ClickHouseRow, type ClickHouseTransport, ClickHouseTransportError } from "./transport";
 
 const PROVIDER = "clickhouse" as const;
 
@@ -103,17 +111,50 @@ export const CLICKHOUSE_CONTAINER_LEVELS: ContainerLevels = Object.freeze([
   { id: "schema", label: "Database", labelPlural: "Databases" },
 ] as const);
 
+/**
+ * EVERY declared kind has a definition text, and `sql` is the right Monaco id for all five
+ * (#789 Phase 2).
+ *
+ * The four table-backed kinds read `system.tables.create_table_query` and a function reads
+ * `system.functions.create_query`. The function row is a MEASUREMENT and not a reading of the
+ * documentation, which marks that column Obsolete: on 26.7.1.1315 it carries
+ * `CREATE FUNCTION order_total_with_tax AS total -> (total * 1.2)` for the one
+ * `SQLUserDefined` row while all 1858 `System` rows are empty, and the measurement wins over
+ * the label (#789 probe 10). `docs/providers/clickhouse.md` records both, so a later reader
+ * knows the column is deprecated rather than absent.
+ *
+ * `hasSource` answers for the KIND and the READ answers per object. Two of these kinds hold
+ * objects with no text at all - a config-file dictionary and a function whose `origin` is
+ * `ExecutableUserDefined` or `WasmUserDefined` - and each is a refusal PART beside readable
+ * siblings of the same kind, never a dropped declaration.
+ */
 export const CLICKHOUSE_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
-  { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
-  { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+  { id: "table", role: "relation", label: "Table", labelPlural: "Tables", hasSource: true, sourceLanguage: "sql" },
+  { id: "view", role: "relation", label: "View", labelPlural: "Views", hasSource: true, sourceLanguage: "sql" },
   {
     id: "materialized_view",
     role: "relation",
     label: "Materialized View",
     labelPlural: "Materialized Views",
+    hasSource: true,
+    sourceLanguage: "sql",
   },
-  { id: "dictionary", role: "config", label: "Dictionary", labelPlural: "Dictionaries" },
-  { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+  {
+    id: "dictionary",
+    role: "config",
+    label: "Dictionary",
+    labelPlural: "Dictionaries",
+    hasSource: true,
+    sourceLanguage: "sql",
+  },
+  {
+    id: "function",
+    role: "routine",
+    label: "Function",
+    labelPlural: "Functions",
+    hasSource: true,
+    sourceLanguage: "sql",
+  },
 ] as const);
 
 /**
@@ -488,6 +529,27 @@ function containerDatabase(capabilities: ProviderCapabilities, container: readon
 }
 
 /**
+ * Refuses an object path of the wrong shape, naming the shape it does admit.
+ *
+ * ONE writer for two readers since #789 Phase 2: `describeObject` and `readObjectSource` ask
+ * the same question about the same path, and two copies of this derivation are two chances
+ * for the detail pane and the Source tab to disagree about what an object's address is.
+ *
+ * Derived, not counted. One segment per declared container level plus the name, and the
+ * segment NAMES are the declared level labels sliced to the same depth, so the message and
+ * the check cannot disagree. No kind here declares `attachedTo`, so there is a single shape
+ * rather than the two MySQL accepts.
+ */
+function assertObjectPathShape(capabilities: ProviderCapabilities, kind: string, path: readonly string[]): void {
+  const shape = [...declaredLevels(capabilities).map((level) => level.label.toLowerCase()), "name"];
+  if (path.length === shape.length) return;
+  throw new QueryError(
+    `A ClickHouse "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`,
+    PROVIDER,
+  );
+}
+
+/**
  * Every declared kind seeded at zero, before any row is read.
  *
  * Seeding is what makes "ClickHouse has this kind and this database holds none" render
@@ -802,17 +864,7 @@ export async function describeObject(
     throw new QueryError(`ClickHouse declares no object kind "${kind}"`, PROVIDER);
   }
 
-  // Derived, not counted. One segment per declared container level plus the name, and
-  // the segment NAMES are the declared level labels sliced to the same depth, so the
-  // message and the check cannot disagree. No kind here declares `attachedTo`, so
-  // there is a single shape rather than the two MySQL accepts.
-  const shape = [...declaredLevels(capabilities).map((level) => level.label.toLowerCase()), "name"];
-  if (path.length !== shape.length) {
-    throw new QueryError(
-      `A ClickHouse "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`,
-      PROVIDER,
-    );
-  }
+  assertObjectPathShape(capabilities, kind, path);
 
   // The same two questions `listObjects` asks, in the same order: the DECLARATION
   // decides whether the kind exists, then the catalog map decides whether anything can
@@ -984,4 +1036,359 @@ function groupRows(rows: readonly ClickHouseRow[]): Map<string, ClickHouseRow[]>
     else existing.push(row);
   }
   return grouped;
+}
+
+// ============================================================================
+// Object source reading (#789 Phase 2)
+// ============================================================================
+
+/**
+ * ONE object's definition text, and the whole reason this read takes NO IDENTIFIER
+ * POSITION anywhere.
+ *
+ * `SHOW CREATE TABLE|VIEW|DICTIONARY` is the statement a ClickHouse user knows, and it
+ * takes an identifier where a bind would go. On this engine that position is a
+ * statement-injection hazard rather than a quoting inconvenience: MEASURED on 26.7.1.1315
+ * (#789 probe 11), a backslash inside a QUOTED IDENTIFIER is processed as an ESCAPE in both
+ * the double-quote and the backtick form, so `SELECT 1 AS "a\"b"` and `SELECT 1 AS "a""b"`
+ * produce the same identifier, and a table created as `"x\\"` stores exactly one trailing
+ * backslash. A name ending in one therefore SWALLOWS the closing quote and the parser keeps
+ * reading: the same statement with two more aliases fails ten characters later, at the
+ * FORMAT clause. `SQLBaseProvider.escapeIdentifier` doubles ONLY the quote character and is
+ * unsafe here, and `literal()` below is a STRING escaper whose single quotes are a parse
+ * error in an identifier position.
+ *
+ * So the position is REMOVED rather than escaped. Every one of the three statements here is
+ * a `WHERE x = <literal>` read of a system table, which is the same value position the other
+ * nine `literal()` call sites in this file use and where the doubled quote plus the escaped
+ * backslash are both measured to be correct. Live-verified against the committed fixture's
+ * own `` demo.`bs_one\` ``: the escaped spelling reads the object back, and the naive one,
+ * with the backslash left alone, answers code 62 `Single quoted string is not closed` having
+ * run on into the trailing clause.
+ *
+ * NOTHING IS LOST BY AVOIDING `SHOW CREATE`, and that is a measurement too rather than an
+ * assumption: `formatQuery(create_table_query)` is BYTE-IDENTICAL to what
+ * `SHOW CREATE <kind>` answers, for a table, a view, a materialised view and a DDL
+ * dictionary alike (measured on 26.7.1.1315 against the fixture: 323, 238 and 212 bytes, and
+ * `mv_rollup` identical). The catalog column on its own is a single line, which is the same
+ * statement and a much worse thing to hand a reader, so the engine's own formatter is asked
+ * for the spelling and the engine's own catalog for the text.
+ *
+ * A `function` is the one kind NOT formatted, and that is forced rather than chosen:
+ * `formatQuery('')` raises code 62 `Empty query`, `system.functions.create_query` really is
+ * EMPTY for a non-SQL origin, and turning that per-object refusal into a hard error would
+ * take the whole document away. Measured: the formatter leaves the one SQL function's text
+ * byte-identical anyway, so the column is read raw.
+ *
+ * `system.tables.create_table_query` REDACTS a credential. A DDL dictionary comes back
+ * carrying `PASSWORD '[HIDDEN]'`, which is the server's own substitution under
+ * `format_display_secrets_in_show_and_select = 0`, the default, and `SHOW CREATE` does the
+ * same. The text is still `complete`: it is the statement the server publishes for that
+ * object, and section 6.2 of docs/providers/clickhouse.md says where the placeholder comes
+ * from so a reader is not told a password was lost in transit.
+ */
+function objectSourceSql(database: string, name: string): string {
+  return [
+    "SELECT formatQuery(t.create_table_query) AS objectSource",
+    "FROM system.tables AS t",
+    `WHERE t.database = ${literal(database)} AND t.name = ${literal(name)}`,
+  ].join(" ");
+}
+
+/**
+ * One function's text, with the ORIGIN that says why there may be none.
+ *
+ * `create_query` carries the statement on 26.7.1.1315 despite the current documentation
+ * marking the column Obsolete, and the measurement wins over the label (#789 probe 10). The
+ * control that makes it a PER OBJECT fact rather than a server-wide one: all 1858 `System`
+ * rows are empty beside the one `SQLUserDefined` row that is not.
+ *
+ * `origin` is projected because it is the only thing that can say WHICH absence an empty
+ * text is. An `ExecutableUserDefined` or `WasmUserDefined` function has no SQL text at all -
+ * its body is an external program or a WASM module - and a refusal that did not name the
+ * origin would be a guess dressed as the engine's answer.
+ */
+function functionSourceSql(name: string): string {
+  return [
+    "SELECT f.origin AS objectOrigin, f.create_query AS objectSource",
+    "FROM system.functions AS f",
+    `WHERE f.name = ${literal(name)}`,
+  ].join(" ");
+}
+
+/**
+ * Whether a dictionary of this name is declared in a CONFIGURATION FILE, and which one.
+ *
+ * Asked only after `objectSourceSql()` has answered no row, and it is what separates the two
+ * facts that read produces for this kind: a dictionary nobody declared, and a dictionary
+ * declared where `system.tables` cannot see it. MEASURED: a config-file dictionary has NO
+ * `system.tables` row at all and sits in `system.dictionaries` with an EMPTY `database` and
+ * an `origin` naming the file, while a DDL dictionary carries its database and a uuid.
+ *
+ * `d.database = ''` is that flavour's whole address, because a database cannot be named the
+ * empty string, so this question can never be answered by the DDL dictionary the first read
+ * already covers.
+ *
+ * `SHOW CREATE DICTIONARY` is not what asks it. Measured: for the fixture's
+ * `dict_regions_config` it answers code 390 CANNOT_GET_CREATE_TABLE_QUERY,
+ * "Table `dict_regions_config` doesn't exist.", which is a FALSE claim about a dictionary
+ * the server is serving - the same shape as Oracle's ORA-31603 "not found in schema" for an
+ * object a caller simply may not read (#789 ruling C). A refusal has to say which absence it
+ * is, so this read answers the fact and the sentence is composed from it.
+ */
+function configDictionarySql(name: string): string {
+  return [
+    "SELECT d.origin AS objectOrigin",
+    "FROM system.dictionaries AS d",
+    `WHERE d.name = ${literal(name)} AND d.database = ''`,
+  ].join(" ");
+}
+
+/**
+ * What one source statement produced: a text, a refusal, or a legal absence.
+ *
+ * Three arms and never one shape with an optional `text`, for the reason `ObjectSourcePart`
+ * is a union: a refusal and an absent text are different facts, and one shape carrying both
+ * makes them the same value at every call site below.
+ */
+type SourceRead =
+  | { readonly outcome: "text"; readonly text: string }
+  | { readonly outcome: "refused"; readonly unavailable: string }
+  | { readonly outcome: "absent" };
+
+/**
+ * One source statement, with a PRIVILEGE DENIAL classified rather than thrown.
+ *
+ * MEASURED on 26.7.1.1315, and the two catalogs behave differently, which is why this is one
+ * helper rather than an arm on one of them. `system.tables` FILTERS BY GRANT: a user holding
+ * only `SELECT ON demo.orders` reads that table's `create_table_query` and gets ZERO ROWS for
+ * `customers`, never a denial - so a caller who cannot see an object never lists it and never
+ * reaches this read for it. `system.dictionaries` DENIES instead, code 497 as HTTP 500
+ * (section 3.3), with the sentence "src_probe: Not enough privileges. To execute this query,
+ * it's necessary to have the grant SELECT ON system.dictionaries."
+ *
+ * That sentence is carried VERBATIM and never through the provider's error mapping, which
+ * would put this product's prefix in front of the server's words in a pane whose whole
+ * purpose is to show the reader what the server said. Every OTHER failure propagates: a
+ * timeout or a dropped socket is nobody answering at all, and rendering it as this object's
+ * own refusal would present a symptom as a fact about the object.
+ */
+async function querySource(
+  transport: ClickHouseTransport,
+  sql: string,
+): Promise<{ readonly rows: readonly ClickHouseRow[] } | { readonly unavailable: string }> {
+  try {
+    return { rows: (await transport.query(sql)).rows };
+  } catch (error) {
+    if (error instanceof ClickHouseTransportError && error.is("ACCESS_DENIED")) {
+      return { unavailable: error.message };
+    }
+    throw error;
+  }
+}
+
+/** One table-backed object's definition: a table, a view, a materialised view or a DDL dictionary. */
+async function readTableBackedSource(
+  transport: ClickHouseTransport,
+  database: string,
+  name: string,
+): Promise<SourceRead> {
+  const answer = await querySource(transport, objectSourceSql(database, name));
+  if (!("rows" in answer)) return { outcome: "refused", unavailable: answer.unavailable };
+  const row = answer.rows[0];
+  if (row === undefined) return { outcome: "absent" };
+  const text = readText(row.objectSource);
+  if (text.trim() === "") {
+    // An empty definition is not a definition. No live row produces one - 0 of 186
+    // `system.tables` rows carry an empty `create_table_query`, and `formatQuery` raises
+    // code 62 on one rather than answering a blank - so this is the arm that keeps a
+    // wire-compatible fork or a future column change from reaching an editor buffer with
+    // nothing in it.
+    return {
+      outcome: "refused",
+      unavailable:
+        "ClickHouse answered an empty create_table_query for this object, so there is no definition to show. " +
+        "The object is in system.tables and the column that carries its CREATE statement is blank.",
+    };
+  }
+  return { outcome: "text", text };
+}
+
+/**
+ * One function's definition, or the reason its origin has none.
+ *
+ * The empty text is the LIVE case here rather than the defensive one, which is the exact
+ * mirror of the table-backed read above.
+ */
+async function readFunctionSource(transport: ClickHouseTransport, name: string): Promise<SourceRead> {
+  const answer = await querySource(transport, functionSourceSql(name));
+  if (!("rows" in answer)) return { outcome: "refused", unavailable: answer.unavailable };
+  const row = answer.rows[0];
+  if (row === undefined) return { outcome: "absent" };
+  const text = readText(row.objectSource);
+  if (text.trim() === "") {
+    const origin = readIdentifier(row.objectOrigin);
+    return {
+      outcome: "refused",
+      unavailable:
+        "ClickHouse publishes no SQL text for this function: system.functions.create_query is empty" +
+        (origin === null ? "" : ` and its origin is ${origin}`) +
+        ". A function whose body is an external program or a WASM module has no SQL definition to read.",
+    };
+  }
+  return { outcome: "text", text };
+}
+
+/**
+ * One dictionary's definition, and the SECOND question a missing row makes it ask.
+ *
+ * A DDL dictionary is read exactly as a table is, out of `system.tables`. Nothing there means
+ * one of two facts and they must not be reported as one: a CONFIG-FILE dictionary, which the
+ * server is serving and publishes no CREATE statement for, and no dictionary of that name at
+ * all. The second read answers which, and only the first of the two is a refusal - the second
+ * raises, because an object the provider cannot find never answers a document (#789).
+ */
+async function readDictionarySource(
+  transport: ClickHouseTransport,
+  database: string,
+  name: string,
+): Promise<SourceRead> {
+  const first = await readTableBackedSource(transport, database, name);
+  if (first.outcome !== "absent") return first;
+
+  const answer = await querySource(transport, configDictionarySql(name));
+  if (!("rows" in answer)) return { outcome: "refused", unavailable: answer.unavailable };
+  const row = answer.rows[0];
+  if (row === undefined) return { outcome: "absent" };
+  const origin = readIdentifier(row.objectOrigin);
+  return {
+    outcome: "refused",
+    unavailable:
+      "ClickHouse publishes no CREATE DICTIONARY statement for this dictionary: it is declared in the " +
+      `configuration file ${origin ?? "system.dictionaries reports no origin for"}, not in SQL, so it has no ` +
+      "system.tables row to read one from. SHOW CREATE DICTIONARY answers that the table does not exist for it, " +
+      "which is a false claim about a dictionary this server is serving.",
+  };
+}
+
+/**
+ * One read as the part a document carries.
+ *
+ * The two arms are built as WHOLE LITERALS and neither is spread from the other, which is the
+ * point rather than a style. A part carrying BOTH `text` and `unavailable` COMPILES as an
+ * `ObjectSourcePart`, because TypeScript's excess-property check on a union admits any
+ * property declared on ANY member of it, and `isSourcePartUnavailable` then narrows such a
+ * part to the refusal arm and drops a definition the engine really returned. This function
+ * cannot build one: the refusal arm returns before the text arm is reached and neither
+ * literal mentions the other's keys (#789).
+ */
+function sourcePart(
+  read: SourceRead & { readonly outcome: "text" | "refused" },
+  language: string,
+  limit: number | undefined,
+): ObjectSourcePart {
+  if (read.outcome === "refused") {
+    return { id: SOURCE_PART_ID, label: SOURCE_PART_LABEL, unavailable: read.unavailable };
+  }
+  const bounded = applySourceBound(read.text, limit);
+  return {
+    id: SOURCE_PART_ID,
+    label: SOURCE_PART_LABEL,
+    text: bounded.text,
+    language,
+    // The statement runs as given, so `complete`; the server REBUILT it from its own catalog
+    // rather than storing what the author typed, so `regenerated`. Measured: a table created
+    // as `total Decimal(12, 2) DEFAULT 0` comes back backquoted, with a `SETTINGS
+    // index_granularity = 8192` clause nobody wrote, and a reader must never be shown a
+    // reconstruction as an original.
+    form: "complete",
+    origin: "regenerated",
+    ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+  };
+}
+
+/** Every part this engine emits is the object's whole definition, so there is one id and one label. */
+const SOURCE_PART_ID = "definition";
+const SOURCE_PART_LABEL = "Definition";
+
+/**
+ * One object's definition text (#789 Phase 2).
+ *
+ * EVERY declared kind can answer, so there is no kind here that declares nothing. The
+ * DECLARATION is what decides, read off `objectKinds` and never off a list of kind ids kept
+ * beside it, and the catalog map decides which statement reads it - the same two questions,
+ * in the same order, that `listObjects` and `describeObject` ask.
+ *
+ * ONE PART per document. No ClickHouse object is two texts: there is no package, no spec and
+ * body split, and a materialised view's implicit inner table is storage the server created
+ * rather than a second definition of the view (it is excluded from the tree for that reason,
+ * see this file's docblock).
+ *
+ * The database is the container segment the DECLARATION names `schema` and the object's own
+ * name is `path[path.length - 1]`, never a literal index (standing ruling 5g), pinned in this
+ * provider's suite by a two-level declaration AND by one that swaps the two levels over.
+ *
+ * A FUNCTION is server-global and its path's container segment records where it was reached
+ * from rather than something that owns it, exactly as the listing says, so that segment is
+ * deliberately not part of the statement that reads it.
+ */
+export async function readObjectSource(
+  transport: ClickHouseTransport,
+  capabilities: ProviderCapabilities,
+  path: readonly string[],
+  kind: string,
+  limit?: number,
+): Promise<ObjectSourceDocument> {
+  const spec = findKind(capabilities, kind);
+  if (spec === undefined) {
+    throw new QueryError(`ClickHouse declares no object kind "${kind}"`, PROVIDER);
+  }
+  if (spec.hasSource !== true) {
+    throw new QueryError(`ClickHouse publishes no definition text for the kind "${kind}"`, PROVIDER);
+  }
+  if (spec.sourceLanguage === undefined) {
+    // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
+    // observable, so a kind that declared source and forgot its language would ship a Source
+    // tab that silently stopped highlighting. The declaration is the only source of the
+    // language and there is no literal here to fall back to.
+    throw new QueryError(
+      `ClickHouse declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
+      PROVIDER,
+    );
+  }
+  assertObjectPathShape(capabilities, kind, path);
+  const catalog = objectCatalog(kind);
+  if (catalog === undefined) {
+    throw new QueryError(
+      `ClickHouse declares readable source for the kind "${kind}" but has no statement that reads it`,
+      PROVIDER,
+    );
+  }
+
+  const database = containerSegment(capabilities, path, "schema");
+  const name = path[path.length - 1];
+  const read =
+    catalog === "functions"
+      ? await readFunctionSource(transport, name)
+      : catalog === "dictionaries"
+        ? await readDictionarySource(transport, database, name)
+        : await readTableBackedSource(transport, database, name);
+
+  if (read.outcome === "absent") {
+    // Absence RAISES and is never a refusal part: the document's `parts` tuple leaves no
+    // empty value for an absence to be confused with, and a refusal sentence over an object
+    // nobody found would be a claim about the wrong thing. The sentence names the object's
+    // last segment, which is the identifier the caller asked under.
+    throw new QueryError(
+      catalog === "functions"
+        ? `No ClickHouse function named ${name}`
+        : `No ClickHouse ${kind} named ${name} in ${database}`,
+      PROVIDER,
+    );
+  }
+
+  // An array LITERAL, which is what satisfies the non-empty tuple. `rows.map(...)` does not,
+  // and casting past it would defeat the invariant the tuple exists for.
+  const parts: [ObjectSourcePart] = [sourcePart(read, spec.sourceLanguage, limit)];
+  return { path: [...path], kind, parts };
 }

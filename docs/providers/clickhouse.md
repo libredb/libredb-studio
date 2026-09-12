@@ -1007,6 +1007,213 @@ backquoted identifier.
 
 ---
 
+### 6.2 Object source (#789)
+
+`readObjectSource(path, kind, limit?)` answers ONE object's definition text as a document of
+named parts.
+Every declared kind has one, so there is no kind here that declares nothing, and every
+document this engine produces carries exactly ONE part: ClickHouse has no package, no
+specification-and-body split, and a materialised view's implicit inner table is storage the
+server created rather than a second definition of the view.
+
+Everything below was measured on **ClickHouse 26.7.1.1315** against
+`docker/clickhouse-init/01-object-fixture.sql` applied through the mount
+`database-compose.yml` declares.
+
+| Kind | Statement | Monaco id | `form` | `origin` |
+|---|---|---|---|---|
+| `table`, `view`, `materialized_view` | `SELECT formatQuery(t.create_table_query) AS objectSource FROM system.tables AS t WHERE t.database = <literal> AND t.name = <literal>` | `sql` | `complete` | `regenerated` |
+| `dictionary` | the same statement; a row that is missing asks `SELECT d.origin AS objectOrigin FROM system.dictionaries AS d WHERE d.name = <literal> AND d.database = ''` | `sql` | `complete` | `regenerated` |
+| `function` | `SELECT f.origin AS objectOrigin, f.create_query AS objectSource FROM system.functions AS f WHERE f.name = <literal>` | `sql` | `complete` | `regenerated` |
+
+`complete` in words: each of these is a statement that RUNS AS GIVEN, never a body or a bare
+SELECT.
+`regenerated` in words: the server REBUILT it from its own catalog rather than storing what
+the author typed, so a reader must never be shown it as an original. The fixture's
+`total Decimal(12, 2) DEFAULT 0` comes back backquoted, and every MergeTree table comes back
+carrying a `SETTINGS index_granularity = 8192` clause nobody wrote.
+
+`sql` is the right Monaco id and no part of it is a compromise: ClickHouse SQL is SQL, and the
+installed monaco-editor 0.56.0 registers `sql`. The three ids this design had to refuse
+elsewhere, `plsql`, `tsql` and `cql`, are not registered at all and are not needed here.
+
+#### The read takes NO identifier position, and that is the security decision
+
+`SHOW CREATE TABLE|VIEW|DICTIONARY` is the statement a ClickHouse user knows, and it takes an
+IDENTIFIER where a bind would go.
+On this engine that position is a statement-injection hazard rather than a quoting
+inconvenience.
+
+MEASURED (#789 probe 11): a backslash inside a QUOTED IDENTIFIER is processed as an ESCAPE, in
+the double-quote form and the backtick form alike.
+`SELECT 1 AS "a\"b"` and `SELECT 1 AS "a""b"` produce the SAME identifier, and a table created
+as `"x\\"` stores `hex(name) = 785C`, exactly one trailing backslash.
+So a name ending in a backslash SWALLOWS the closing quote and the parser KEEPS READING: the
+naive statement answers code 62, `Double quoted string is not closed`, and the error position
+MOVES with whatever follows, which is how the swallow was told from a plain error.
+
+Two consequences, and both are why neither existing helper is used here:
+
+| Helper | Why not |
+|---|---|
+| `SQLBaseProvider.escapeIdentifier` | doubles ONLY the quote character, so it leaves the backslash escape open. Unsafe on this engine |
+| `literal()` in `objects.ts` | a STRING escaper that emits single quotes. `SHOW CREATE DICTIONARY 'db'.'name'` is a parse error |
+
+The position is therefore REMOVED rather than escaped. All three statements above are
+`WHERE x = <literal>` reads of a system table, which is the same VALUE position the other nine
+`literal()` call sites in that file use, and where the doubled quote plus the escaped backslash
+are both measured to be correct. The fixture carries the two adversarial objects that make
+that testable rather than assertable:
+
+| Object | Measured |
+|---|---|
+| ``demo.`bs_one\` `` | `hex(name) = 62735F6F6E655C`, `length(name) = 7`: exactly one trailing backslash |
+| ``demo.`dq"two` `` | a double quote inside a backquoted identifier is an ordinary character |
+
+Reading ``bs_one\`` back with the backslash ESCAPED answers its definition; with the backslash
+left alone the same statement fails with code 62, `Single quoted string is not closed`, at the
+position of the clause that followed it, which is the value-position twin of what probe 11
+measured for identifiers.
+
+#### Nothing is lost by avoiding `SHOW CREATE`, and that is a measurement
+
+`formatQuery(create_table_query)` is BYTE-IDENTICAL to what `SHOW CREATE <kind>` answers:
+
+| Object | `SHOW CREATE` | `formatQuery(create_table_query)` |
+|---|---|---|
+| `demo.orders` | 323 bytes | 323 bytes, identical |
+| `demo.order_summary` | 238 bytes | 238 bytes, identical |
+| `demo.dict_customers` | 212 bytes | 212 bytes, identical |
+| `demo.mv_rollup` | identical | identical |
+
+The catalog column ON ITS OWN is a single line. That is the same statement and a much worse
+thing to hand a reader, so the engine's own formatter supplies the spelling and the engine's
+own catalog supplies the text.
+
+A `function` is the one kind NOT formatted, and that is forced rather than chosen:
+`formatQuery('')` raises code 62 `Empty query`, `system.functions.create_query` really IS empty
+for a non-SQL origin, and turning that per-object refusal into a hard error would take the
+whole document away. Measured: the formatter leaves the one SQL function's text byte-identical
+anyway, so the column is read raw. On `system.tables` the formatter is safe because 0 of 186
+rows on a bare server carry an empty `create_table_query`.
+
+#### `system.functions.create_query` is documented Obsolete and CARRIES THE TEXT
+
+The ClickHouse documentation marks that column Obsolete. The server does not: on 26.7.1.1315 it
+answers `CREATE FUNCTION order_total_with_tax AS total -> (total * 1.2)`, 62 characters, for the
+fixture's SQL function (#789 probe 10).
+The measurement wins over the label, and both are recorded here so a later reader knows the
+column is DEPRECATED rather than ABSENT. The control that makes it a per-object fact rather
+than a server-wide one: grouped over the whole table, `System` has 1858 rows with 1858 EMPTY
+`create_query` values beside the one `SQLUserDefined` row that is not.
+
+#### The three refusals, each PER OBJECT inside a declared kind
+
+`hasSource` answers for the KIND and the READ answers per object. A refusal is a PART carrying
+a sentence, never a dropped declaration and never an absence.
+
+**A CONFIG-FILE dictionary.** It has no `system.tables` row at all and sits in
+`system.dictionaries` with an EMPTY `database` and an `origin` naming the file, so the read that
+answers for every other object of this kind answers no row for it. It sits beside a DDL
+dictionary of the SAME KIND in the same fixture, which is what makes the refusal per object.
+The sentence is OURS and names the engine's own `origin` value, and the reason it is not the
+engine's own is measured: `SHOW CREATE DICTIONARY dict_regions_config` answers code 390
+`CANNOT_GET_CREATE_TABLE_QUERY`, ``Table `dict_regions_config` doesn't exist.``, which is a
+FALSE claim about a dictionary the server is serving. That is the same shape as Oracle's
+ORA-31603 "not found in schema", and the ruling there applies here: a refusal must say WHICH
+absence it is.
+
+**A function with no SQL text.** `system.functions.origin` is
+`Enum8('System' = 0, 'SQLUserDefined' = 1, 'ExecutableUserDefined' = 2, 'WasmUserDefined' = 3)`,
+and an `ExecutableUserDefined` or `WasmUserDefined` function's body is an external program or a
+WASM module rather than SQL, so its `create_query` is empty. The refusal carries the ORIGIN the
+server reported, because that column is the only thing that can say WHICH absence an empty text
+is. DISCLOSED: neither origin exists on this server and neither is in the fixture, because both
+need a server-side configuration file and a script directory that `database-compose.yml` does
+not mount, and that file is owned by another task for the whole of #789. The arm is driven in
+the suite by a server that answers an empty `create_query`, and the live half stays UNMEASURED.
+
+**A privilege denial.** It arrives as HTTP 500 with exception code 497 and never as 403
+(section 3.3), and the sentence is the server's own, VERBATIM and unprefixed, never through the
+provider's error mapping. Measured with a `src_probe` user holding only `SELECT ON demo.orders`:
+
+```
+Code: 497. DB::Exception: src_probe: Not enough privileges. To execute this query, it's
+necessary to have the grant SELECT ON system.dictionaries. (ACCESS_DENIED)
+```
+
+Every OTHER failure RAISES. A timeout or a dropped socket is nobody answering at all, and
+rendering it in the Source pane as this object's own refusal would present a symptom as a fact
+about the object.
+
+#### `system.tables` FILTERS by grant where `system.dictionaries` DENIES
+
+Measured with the same restricted user, and it is the reason the denial above is reachable on
+one catalog and not the other:
+
+| Read | As `src_probe`, holding `SELECT ON demo.orders` |
+|---|---|
+| `create_table_query` for `demo.orders` | the full definition |
+| `create_table_query` for `demo.customers` | ZERO ROWS, no denial |
+| `system.dictionaries` | code 497, ACCESS_DENIED |
+| `system.functions` | answered, no grant needed |
+
+So on the table-backed kinds a privilege problem looks exactly like an absence, and this
+provider raises `No ClickHouse table named customers in demo` for it. That is not a false claim
+a user can meet from the tree: the SAME filtering hides the object from `system.tables` for the
+count and the listing, so a caller who cannot see it never lists it and never reaches this read.
+
+#### An absence RAISES and an empty text is a refusal
+
+An object the provider cannot find raises a `QueryError` naming the object's last segment:
+`No ClickHouse table named no_such_table in demo`, `No ClickHouse dictionary named ghost in demo`,
+`No ClickHouse function named ghost`. It never answers a document and never answers a refusal
+part, because the document's `parts` tuple leaves no empty value an absence could be confused
+with.
+
+An empty or whitespace-only text is a REFUSAL and never a part with no text in it: an empty
+definition is not a definition, and an editor buffer opened over one is the failure this whole
+design exists to prevent.
+
+#### A DDL dictionary's credential comes back REDACTED
+
+`SOURCE(CLICKHOUSE(... PASSWORD '[HIDDEN]'))` is the SERVER's own substitution under
+`format_display_secrets_in_show_and_select = 0`, which is the default, and `SHOW CREATE` does
+exactly the same. The text is still `complete`: it is the statement the server publishes for
+that object. Nothing in this product redacts anything, and a reader meeting the placeholder is
+looking at the server's own answer rather than a password lost in transit.
+
+#### Paths, again, and the same rule
+
+The database is the container segment the DECLARATION names `schema` and the object's own name
+is the LAST segment, never a literal index. A FUNCTION is server-global, so the container
+segment of its path records where it was REACHED from and is deliberately not part of the
+statement that reads it. The suite pins both derivations with a synthetic TWO-LEVEL declaration
+AND with one that SWAPS the two levels over and feeds the path in the swapped order, where the
+same three values must still reach the server.
+
+#### Reproducing the whole section
+
+```bash
+docker compose -f database-compose.yml up -d clickhouse
+# every object below is created by docker/clickhouse-init/01-object-fixture.sql
+curl -s 'http://127.0.0.1:8123/?user=libredb&password=password123&database=demo' \
+  --data-binary "SELECT formatQuery(create_table_query) FROM system.tables WHERE database='demo' AND name='orders' FORMAT TSVRaw"
+curl -s 'http://127.0.0.1:8123/?user=libredb&password=password123&database=demo' \
+  --data-binary "SHOW CREATE TABLE demo.orders FORMAT TSVRaw"   # byte-identical to the line above
+curl -s 'http://127.0.0.1:8123/?user=libredb&password=password123&database=demo' \
+  --data-binary "SELECT database, origin FROM system.dictionaries ORDER BY name FORMAT TSV"
+curl -s 'http://127.0.0.1:8123/?user=libredb&password=password123&database=demo' \
+  --data-binary "SELECT name, origin, create_query FROM system.functions WHERE origin != 'System' FORMAT TSV"
+# the escaper, both ways round, against the fixture's own adversarial table
+curl -s 'http://127.0.0.1:8123/?user=libredb&password=password123&database=demo' \
+  --data-binary "SELECT name FROM system.tables WHERE database='demo' AND name='bs_one\\\\' FORMAT TSV"
+curl -s 'http://127.0.0.1:8123/?user=libredb&password=password123&database=demo' \
+  --data-binary "SELECT name FROM system.tables WHERE database='demo' AND name='bs_one\\' FORMAT TSV"
+```
+
+---
+
 ## 7. Monitoring & health
 
 Every method below degrades to empty/zero on `ACCESS_DENIED` (497) or `UNKNOWN_TABLE` (60) — and

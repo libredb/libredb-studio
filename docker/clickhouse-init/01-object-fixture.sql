@@ -144,3 +144,32 @@ ENGINE = Dictionary(demo.dict_customers);
 -- A user-defined function. CREATE FUNCTION takes no database qualifier, because a
 -- ClickHouse UDF is SERVER-GLOBAL: system.functions has no database column at all.
 CREATE FUNCTION order_total_with_tax AS (total) -> total * 1.2;
+
+-- Two ADVERSARIAL NAMES for the source read's escaper (#789).
+--
+-- Measured on 26.7.1.1315 (#789 probe 11): a backslash inside a QUOTED IDENTIFIER is
+-- processed as an ESCAPE on this engine, in the double-quote form and the backtick form
+-- alike, so a name ending in one swallows the closing quote and the parser runs on into
+-- whatever follows. The source read therefore takes NO identifier position at all: every
+-- caller-supplied name reaches its statements as a STRING LITERAL, where the same hazard
+-- exists and the provider's `literal()` answers it by escaping the backslash as well as
+-- doubling the quote.
+--
+-- These two tables are what makes a test of that non-vacuous rather than a claim in a
+-- docblock. `bs_one\` stores exactly ONE trailing backslash (hex(name) = 62735F6F6E655C,
+-- length 7), and reading its definition back with the backslash left unescaped fails with
+-- code 62, `Single quoted string is not closed`, at the position of the clause that
+-- followed. Renaming or dropping either one makes that measurement unrepeatable.
+CREATE TABLE demo.`bs_one\\`
+(
+  x UInt8
+)
+ENGINE = MergeTree
+ORDER BY x;
+
+CREATE TABLE demo.`dq"two`
+(
+  x UInt8
+)
+ENGINE = MergeTree
+ORDER BY x;
