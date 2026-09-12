@@ -85,6 +85,13 @@ mock.module("@/components/results-grid/StatsBar", () => ({
             `${(props.pendingChanges as unknown[]).length} changes`,
           )
         : null,
+      props.onToggleWrapText
+        ? React.createElement(
+            "button",
+            { "data-testid": "wrap-toggle", onClick: props.onToggleWrapText as () => void },
+            "WRAP",
+          )
+        : null,
       (props.activeFilterCount as number) > 0
         ? React.createElement(
             "button",
@@ -109,6 +116,7 @@ mock.module("@/components/results-grid/StatsBar", () => ({
 
 // ── Mock @tanstack/react-virtual ────────────────────────────────────────────
 mock.module("@tanstack/react-virtual", () => ({
+  measureElement: () => 36,
   useVirtualizer: (opts: { count: number }) => ({
     getVirtualItems: () =>
       Array.from({ length: opts.count }, (_, i) => ({
@@ -118,6 +126,7 @@ mock.module("@tanstack/react-virtual", () => ({
         key: i,
       })),
     getTotalSize: () => opts.count * 36,
+    measureElement: () => {},
   }),
 }));
 

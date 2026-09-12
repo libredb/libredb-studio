@@ -14,7 +14,7 @@ import {
   tableFeatures,
   useTable,
 } from "@tanstack/react-table";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { measureElement, useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { ArrowUpDown, ArrowUp, ArrowDown, Eye, Funnel, Lock } from "lucide-react";
 import {
@@ -138,6 +138,7 @@ export function ResultsGrid({
   const [editingCell, setEditingCell] = useState<{ rowIndex: number; columnId: string } | null>(null);
   const [editValue, setEditValue] = useState<string>("");
   const [viewMode, setViewMode] = useState<"card" | "table">("card");
+  const [wrapText, setWrapText] = useState(false);
   const [selectedRow, setSelectedRow] = useState<{ row: Record<string, unknown>; index: number } | null>(null);
   const [columnFilters, setColumnFilters] = useState<Map<string, string>>(new Map());
   const [activeFilterCol, setActiveFilterCol] = useState<string | null>(null);
@@ -476,6 +477,7 @@ export function ResultsGrid({
     count: rows.length,
     getScrollElement: () => tableContainerRef.current,
     estimateSize: () => 36,
+    measureElement: wrapText ? measureElement : undefined,
     overscan: 10,
   });
 
@@ -490,6 +492,7 @@ export function ResultsGrid({
     count: result.rows.length,
     getScrollElement: () => mobileTableContainerRef.current,
     estimateSize: () => 48,
+    measureElement: wrapText ? measureElement : undefined,
     overscan: 5,
   });
 
@@ -528,6 +531,8 @@ export function ResultsGrid({
         onClearFilters={handleClearFilters}
         viewMode={viewMode}
         onSetViewMode={setViewMode}
+        wrapText={wrapText}
+        onToggleWrapText={() => setWrapText((value) => !value)}
         hasSensitive={hasSensitive}
         effectiveMaskingEnabled={effectiveMaskingEnabled}
         userCanToggle={userCanToggle}
@@ -622,6 +627,7 @@ export function ResultsGrid({
                     height: `${virtualRow.size}px`,
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
+                  ref={wrapText ? mobileTableVirtualizer.measureElement : undefined}
                   className="flex hover:bg-brand-tint/[0.03] transition-colors border-b border-hairline cursor-pointer text-left"
                   onClick={() => setSelectedRow({ row, index: virtualRow.index })}
                 >
@@ -638,9 +644,9 @@ export function ResultsGrid({
                       <div
                         key={field}
                         className={cn(
-                          "h-full px-4 py-3 border-r border-hairline text-xs font-mono whitespace-nowrap overflow-hidden flex items-center",
+                          "h-full px-4 py-3 border-r border-hairline text-xs font-mono overflow-hidden flex min-w-[120px]",
+                          wrapText ? "whitespace-normal break-words items-start" : "whitespace-nowrap items-center",
                           idx === 0 && "sticky left-0 z-10 bg-sunken shadow-[2px_0_8px_rgba(0,0,0,0.3)]",
-                          "min-w-[120px]",
                         )}
                       >
                         <span className={className}>{displayValue}</span>
@@ -687,6 +693,7 @@ export function ResultsGrid({
                 <div
                   key={row.id}
                   data-index={virtualRow.index}
+                  ref={wrapText ? rowVirtualizer.measureElement : undefined}
                   style={{
                     height: `${virtualRow.size}px`,
                     transform: `translateY(${virtualRow.start}px)`,
@@ -700,7 +707,10 @@ export function ResultsGrid({
                     <div
                       key={cell.id}
                       style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
-                      className="h-full px-4 py-2 border-r border-hairline text-xs font-mono whitespace-nowrap overflow-hidden group-hover:border-hairline-strong flex items-center shrink-0"
+                      className={cn(
+                        "h-full px-4 py-2 border-r border-hairline text-xs font-mono overflow-hidden group-hover:border-hairline-strong flex shrink-0",
+                        wrapText ? "whitespace-normal break-words items-start" : "whitespace-nowrap items-center",
+                      )}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </div>
