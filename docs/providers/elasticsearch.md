@@ -932,6 +932,49 @@ answer rather than a gap: they are JSON documents with no field list, exactly as
 and a sequence have no columns on the SQL engines. `indexes` and `foreignKeys` are always empty, for
 the reasons in the table above.
 
+#### `describeObjects`, the bulk column read (#789)
+
+`describeObjects(container, kind, limit?)` answers columns for every object of one kind, and **which
+call it uses depends on the kind**, measured on Elasticsearch 9.1.4 on 2026-09-12 rather than assumed:
+
+- An **index** is concrete, so `_mapping` over a comma-joined list comes back keyed by the name that
+  was asked for. One request serves a whole folder.
+- An **alias** and a **data stream** resolve to the index behind them and come back keyed by **that**
+  index. Measured: `GET /probe_orders_alias,alias_two/_mapping`, two aliases on one index, answers a
+  single `probe_orders` key, and the fixture's alias answers under the same key as the index itself.
+  Nothing in that payload attributes a mapping back to the alias it was asked for, so those stay one
+  request per object, issued in parallel and cut by the caller's `limit` first.
+- A **pipeline** and a **template** answer `{ details: [] }` with no round trip at all, the same
+  fact `describeObject` states by answering three empty arrays.
+
+**The bulk request is chunked, and the bound is the cluster's own.** Measured on Elasticsearch 9.1.4: a `_mapping`
+request whose index list is 3,999 characters answers HTTP 200 and one of 4,499 answers HTTP 400,
+`too_long_http_line_exception`, "An HTTP line is larger than 4096 bytes." The limit is on the whole
+request line, so the transport splits the names into request-line-sized chunks by BYTES rather than
+by a count - an index name may be up to 255 bytes - and issues as many requests as that needs.
+Splitting drops nothing, so it is **not** reported as truncation.
+
+| Shape | Requests | Time |
+| --- | --- | --- |
+| One `describeObjects` over 261 indices | 3 | 9 ms |
+| The 261 `describeObject` calls it replaces | 522 | 1,381 ms |
+
+**One mapper, shared with the single read.** `searchObjectDetail()` builds both, so a batch cannot
+spell an object differently from `describeObject` on the same name. Verified live on both products:
+for every index, alias and data stream, the batch's detail is identical to the single read's.
+
+**A name the cluster answered nothing for is named, never described as empty.** A concrete `_mapping`
+request answers for every name it was given - a closed index included, measured - and refuses the
+whole request for one that does not exist, so a name missing from a present answer cannot come from
+the engine. Reporting it as a mapping-less index would spell it exactly like an index that really has
+no mapping, which is an ordinary state.
+
+**The bound is the caller's, and there is no `limit + 1`.** Every listing is one REST call answering
+the cluster's whole set, so the target set is complete before anything is cut and the comparison is
+exact. The cut is applied in code after the shared `comparePaths` sort, which makes a bounded read's
+membership this provider's rather than the server's: no listing endpoint here takes an order or a
+limit at all.
+
 **The fixture is `docker/search-init/01-object-fixture.sh` and it applies unchanged to both
 products.** Neither image has an init-script directory, so it is a script rather than a file the
 entrypoint runs. `database-compose.yml` mounts the directory read-only into both services at

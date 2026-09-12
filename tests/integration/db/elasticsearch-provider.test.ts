@@ -646,6 +646,38 @@ const DATA_STREAMS_BODY = JSON.stringify({
 const ALIAS_MAPPING_BODY = JSON.stringify({
   probe_orders: { mappings: { properties: { customer: { type: "keyword" }, id: { type: "long" } } } },
 });
+/**
+ * `GET /shared_alias/_mapping`, the SECOND alias, resolving to a DIFFERENT index.
+ *
+ * The two aliases of this fixture point at different indices here, which is what lets a
+ * test tell an alias described from its own mapping from one handed the first alias's.
+ */
+const SHARED_ALIAS_MAPPING_BODY = JSON.stringify({
+  probe_buckets: { mappings: { properties: { k: { type: "keyword" } } } },
+});
+
+/**
+ * `GET /probe_buckets,probe_orders,probe_shapes/_mapping`, the whole index folder in one
+ * request (#789).
+ *
+ * Keyed by the concrete index name, which for the INDEX kind is the name that was asked
+ * for - that is the property the bulk read rests on, and the property an alias and a data
+ * stream do not have.
+ *
+ * COMPOSED from the three single-index bodies rather than written again, so the bulk read
+ * and the single read cannot be compared against two different servers: a fixture that
+ * quietly gave the batch a smaller mapping would make "the two answers agree" pass while
+ * they described different indices.
+ */
+function bulkMappingBody(...names: string[]): string {
+  const single: Record<string, string> = {
+    probe_buckets: BUCKETS_MAPPING_BODY,
+    probe_orders: ORDERS_MAPPING_BODY,
+    probe_shapes: SHAPES_MAPPING_BODY,
+  };
+  return JSON.stringify(Object.assign({}, ...names.map((name) => JSON.parse(single[name]) as Record<string, unknown>)));
+}
+
 const STREAM_MAPPING_BODY = JSON.stringify({
   ".ds-probe_stream-2026.09.11-000001": {
     mappings: { _data_stream_timestamp: { enabled: true }, properties: { "@timestamp": { type: "date" } } },
@@ -727,7 +759,13 @@ const PATH_BODIES: Record<string, string> = {
   "/_index_template": TEMPLATES_BODY,
   "/_data_stream": DATA_STREAMS_BODY,
   "/probe_orders_alias/_mapping": ALIAS_MAPPING_BODY,
+  "/shared_alias/_mapping": SHARED_ALIAS_MAPPING_BODY,
   "/probe_stream/_mapping": STREAM_MAPPING_BODY,
+  // The bulk column read (#789): ONE `_mapping` request naming every index of the
+  // folder, keyed by the concrete index name. The key is the exact path the transport
+  // builds, so a changed separator or a changed order cannot be served this payload.
+  "/probe_buckets,probe_orders,probe_shapes/_mapping": bulkMappingBody("probe_buckets", "probe_orders", "probe_shapes"),
+  "/probe_buckets,probe_orders/_mapping": bulkMappingBody("probe_buckets", "probe_orders"),
 };
 
 function defaultReply(request: SentRequest): Reply {
@@ -2596,6 +2634,195 @@ describe("Elasticsearch object listings and detail", () => {
     // engine has no foreign key constraint in its model at all.
     expect(alias.indexes).toEqual([]);
     expect(alias.foreignKeys).toEqual([]);
+  });
+
+  // --------------------------------------------------------------------------
+  // describeObjects, the bulk column read (#789)
+  // --------------------------------------------------------------------------
+
+  test("reads a whole index folder's mappings in ONE request", async () => {
+    const provider = await connectProvider();
+    sent = [];
+
+    const batch = await provider.describeObjects!([], "index");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([["probe_buckets"], ["probe_orders"], ["probe_shapes"]]);
+    expect(batch.truncated).toBeUndefined();
+    // Each index carries ITS OWN fields, taken from the key the cluster answered under.
+    // `k.keyword` is a multi-field and is dropped by the SAME rule the single read
+    // applies, because OpenSearch cannot select one - so the two answers agree here too.
+    expect(batch.details.map((detail) => detail.columns.map((column) => column.name))).toEqual([
+      ["k"],
+      ["created", "customer", "id", "note", "total"],
+      ["address.city", "note"],
+    ]);
+    // ONE mapping request for the three, and it names all three: a loop over
+    // `describeObject` would send three, each preceded by its own `_cat/indices` read.
+    expect(pathsSent().filter((path) => path.endsWith("/_mapping"))).toEqual([
+      "/probe_buckets,probe_orders,probe_shapes/_mapping",
+    ]);
+  });
+
+  test("chunks the request so a wide folder cannot outgrow the cluster's request-line limit", async () => {
+    // Measured on 9.1.4: a `_mapping` request whose index list is 3,999 characters answers
+    // 200 and one of 4,499 answers HTTP 400, `too_long_http_line_exception`, "An HTTP line
+    // is larger than 4096 bytes." So the whole folder in one URL is not an option, and the
+    // chunking is bounded by BYTES rather than by a count of names, because an index name
+    // may be up to 255 bytes.
+    const wide = Array.from({ length: 60 }, (_, index) => `bench_${String(index).padStart(3, "0")}_${"x".repeat(80)}`);
+    const provider = await connectProvider();
+    // Every index has a mapping of its own, synthesised from whatever names the URL
+    // carries, so the chunk boundaries are the only thing under test here.
+    replyFor = (request) => {
+      if (request.path === "/_cat/indices?format=json&bytes=b") {
+        return ok(JSON.stringify(wide.map((index) => ({ index, status: "open", "docs.count": "1" }))));
+      }
+      if (request.path.endsWith("/_mapping")) {
+        const names = decodeURIComponent(request.path.slice(1, -"/_mapping".length)).split(",");
+        return ok(
+          JSON.stringify(
+            Object.fromEntries(names.map((name) => [name, { mappings: { properties: { a: { type: "long" } } } }])),
+          ),
+        );
+      }
+      return defaultReply(request);
+    };
+    sent = [];
+
+    const batch = await provider.describeObjects!([], "index");
+
+    expect(batch.details.map((detail) => detail.path[0])).toEqual([...wide].sort());
+    const mappingPaths = pathsSent().filter((path) => path.endsWith("/_mapping"));
+    expect(mappingPaths.length).toBeGreaterThan(1);
+    // Every request stays well under the 4,096-byte line, and no name is asked for twice.
+    for (const path of mappingPaths) expect(path.length).toBeLessThan(4000);
+    const asked = mappingPaths.flatMap((path) => decodeURIComponent(path.slice(1, -"/_mapping".length)).split(","));
+    expect(asked).toEqual([...wide].sort());
+  });
+
+  test("an alias and a data stream are read one at a time, because the answer is keyed by the INDEX", async () => {
+    const provider = await connectProvider();
+    sent = [];
+
+    const aliases = await provider.describeObjects!([], "alias");
+
+    expect(aliases.details.map((detail) => detail.path)).toEqual([["probe_orders_alias"], ["shared_alias"]]);
+    expect(aliases.details.map((detail) => detail.columns.map((column) => column.name))).toEqual([
+      ["customer", "id"],
+      ["k"],
+    ]);
+    // TWO requests, one per alias, and that is measured rather than lazy: an alias
+    // resolves to the index behind it, so a combined request comes back keyed by the
+    // CONCRETE index and two aliases on one index answer ONE key (measured on 9.1.4,
+    // `GET /probe_orders_alias,alias_two/_mapping` answers `{"probe_orders": ...}`).
+    // There is nothing in that answer to attribute a mapping back to an alias with.
+    expect(pathsSent().filter((path) => path.endsWith("/_mapping"))).toEqual([
+      "/probe_orders_alias/_mapping",
+      "/shared_alias/_mapping",
+    ]);
+
+    sent = [];
+    const streams = await provider.describeObjects!([], "stream");
+    expect(streams.details.map((detail) => detail.columns.map((column) => column.name))).toEqual([["@timestamp"]]);
+    expect(pathsSent().filter((path) => path.endsWith("/_mapping"))).toEqual(["/probe_stream/_mapping"]);
+  });
+
+  test("the bulk read spells an object exactly as the single read does", async () => {
+    const provider = await connectProvider();
+
+    for (const kind of ["index", "alias", "stream"]) {
+      const listed = await provider.listObjects([], kind);
+      const batch = await provider.describeObjects!([], kind);
+      expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+      for (const detail of batch.details) {
+        expect(detail).toEqual(await provider.describeObject(detail.path, kind));
+      }
+    }
+  });
+
+  test("the caller's bound cuts the sorted objects and reaches the mapping request", async () => {
+    const provider = await connectProvider();
+    sent = [];
+
+    const batch = await provider.describeObjects!([], "index", 2);
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([["probe_buckets"], ["probe_orders"]]);
+    expect(batch.truncated).toEqual({
+      limit: 2,
+      reason: "the bulk column read was bounded at 2 objects by its caller",
+    });
+    // The bound reaches the WIRE: the third index is not in the URL at all.
+    expect(pathsSent().filter((path) => path.endsWith("/_mapping"))).toEqual(["/probe_buckets,probe_orders/_mapping"]);
+  });
+
+  test("a bound the folder fits inside reports nothing, on either side of the boundary", async () => {
+    const provider = await connectProvider();
+
+    expect((await provider.describeObjects!([], "index", 3)).truncated).toBeUndefined();
+    expect((await provider.describeObjects!([], "index", 4)).truncated).toBeUndefined();
+  });
+
+  test("a kind with no columns answers an empty batch with no round trip at all", async () => {
+    const provider = await connectProvider();
+
+    for (const kind of ["pipeline", "template"]) {
+      sent = [];
+      expect(await provider.describeObjects!([], kind)).toEqual({ details: [] });
+      expect(sent).toEqual([]);
+    }
+  });
+
+  test("an index the cluster answered nothing for is named, never described as empty", async () => {
+    // A concrete `_mapping` request answers for every name it was given - a closed index
+    // included, measured on 9.1.4 - and 404s outright for one that does not exist. So a
+    // present answer with a name missing from it cannot come from the engine, and the
+    // honest response is to say which index rather than to report it as a mapping-less
+    // index, which is a real and different state.
+    const provider = await connectProvider();
+    overridePath(
+      "/probe_buckets,probe_orders,probe_shapes/_mapping",
+      ok(JSON.stringify({ probe_buckets: { mappings: {} }, probe_orders: { mappings: {} } })),
+    );
+
+    await expect(provider.describeObjects!([], "index")).rejects.toThrow(
+      /answered no mapping for the index probe_shapes/,
+    );
+  });
+
+  test("an undeclared kind is refused by the DECLARATION, naming the engine and the kind", async () => {
+    const provider = await connectProvider();
+
+    await expect(provider.describeObjects!([], "view")).rejects.toThrow(/declares no object kind "view"/);
+  });
+
+  test("a container path of the wrong shape is refused before anything is read", async () => {
+    const provider = await connectProvider();
+    sent = [];
+
+    await expect(provider.describeObjects!(["nope"], "index")).rejects.toThrow(/container path has 0 segment\(s\)/);
+    expect(sent).toEqual([]);
+  });
+
+  test("a limit that is not a positive whole number is refused, never clamped", async () => {
+    const provider = await connectProvider();
+
+    for (const limit of [0, -1, 1.5, Number.NaN]) {
+      await expect(provider.describeObjects!([], "index", limit)).rejects.toThrow(
+        /bulk column read limit must be a positive whole number/,
+      );
+    }
+    // Guard ORDER: the declaration, then the container, then the limit.
+    await expect(provider.describeObjects!([], "view", 0)).rejects.toThrow(/declares no object kind/);
+    await expect(provider.describeObjects!(["nope"], "index", 0)).rejects.toThrow(/container path has 0 segment/);
+  });
+
+  test("a refused listing raises rather than answering an empty folder", async () => {
+    const provider = await connectProvider();
+    denyEverything();
+
+    // The cluster's own refusal, mapped to this repo's class for it, and never an empty
+    // folder: "nobody may read this" and "there is nothing here" are different facts.
+    await expect(provider.describeObjects!([], "index")).rejects.toThrow(/refused the credentials/);
   });
 
   test("a pipeline and a template have no columns, and that is the right answer", async () => {

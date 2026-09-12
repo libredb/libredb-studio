@@ -95,6 +95,14 @@ function createTransport(options: FakeOptions = {}) {
       return options.indices ?? [];
     },
 
+    // The bulk form is unused by `introspect.ts`, which reads one index at a time, and it
+    // is here because the seam requires it: a double that omitted a method would not
+    // compile, and one that answered rows for it would let a read that should never happen
+    // pass unnoticed.
+    mappings: async (): Promise<Map<string, SearchMappingField[]>> => {
+      throw new Error("introspect must not use the bulk mapping read");
+    },
+
     mapping: async (name: string, signal?: AbortSignal): Promise<SearchMappingField[]> => {
       recorded.mappingCalls.push(name);
       recorded.signals.push(signal);

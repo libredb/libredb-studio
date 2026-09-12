@@ -86,6 +86,7 @@ import {
 import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
 import {
   type ActiveSessionDetails,
+  type ColumnSchema,
   type Container,
   type DatabaseConnection,
   type DatabaseObject,
@@ -96,6 +97,7 @@ import {
   type MaintenanceResult,
   type MaintenanceType,
   type ObjectDetail,
+  type ObjectDetailBatch,
   type ObjectKindSpec,
   type PerformanceMetrics,
   type PreparedQuery,
@@ -424,6 +426,33 @@ function comparePaths(left: readonly string[], right: readonly string[]): number
 // ============================================================================
 // Pure helpers
 // ============================================================================
+
+/**
+ * One object's `ObjectDetail`, shared by the single and the bulk read (#789).
+ *
+ * ONE function because every caller joins the two answers on path, and two copies would be
+ * two chances for a batch to describe an object differently from `describeObject` on the
+ * same name.
+ *
+ * `indexes` and `foreignKeys` are ALWAYS empty, and both are facts about the engine rather
+ * than unread fields: every mapped field is inverted-indexed as a property of being mapped,
+ * so there is no secondary-index object anybody named, and neither product has a foreign
+ * key constraint in its model - the same measurement behind `declaresForeignKeys: false`.
+ */
+function searchObjectDetail(path: readonly string[], columns: ColumnSchema[]): ObjectDetail {
+  return { path: [...path], columns, indexes: [], foreignKeys: [] };
+}
+
+/**
+ * The sentence the bulk read reports the caller's own bound with (#789).
+ *
+ * There is only ONE bound on this engine's batch and it is the caller's. The chunking the
+ * transport does to stay inside the cluster's request-line limit is not one: it splits a
+ * read into several requests and drops nothing.
+ */
+function callerBoundSentence(limit: number): string {
+  return `the bulk column read was bounded at ${limit} object${limit === 1 ? "" : "s"} by its caller`;
+}
 
 /**
  * The neutral seam result as the grid's row contract.
@@ -1139,7 +1168,101 @@ abstract class SearchProvider extends SQLBaseProvider {
       const columns = SEARCH_MAPPED_KINDS.includes(kind)
         ? toColumns(await this.requireTransport().mapping(name, signal))
         : [];
-      return { path: [...path], columns, indexes: [], foreignKeys: [] };
+      return searchObjectDetail(path, columns);
+    });
+  }
+
+  /**
+   * Columns for EVERY object of one kind, and the one kind that can be read in one
+   * request (#789).
+   *
+   * WHICH CALL, and why it is not the same one for all three mapped kinds, measured on
+   * Elasticsearch 9.1.4 and OpenSearch 3.8.0:
+   *
+   * - An INDEX is concrete, so `_mapping` over a comma-joined list answers keyed by the
+   *   name that was asked for and ONE request serves the whole folder. That is the seam's
+   *   `mappings()`, and the request-line limit it splits on is the cluster's own.
+   * - An ALIAS and a DATA STREAM resolve to the index behind them and come back keyed by
+   *   THAT index. Measured: `GET /probe_orders_alias,alias_two/_mapping`, two aliases on
+   *   one index, answers a single `probe_orders` key, and the fixture's alias answers
+   *   under the same key as the index itself. There is nothing in that payload to
+   *   attribute a mapping back to the alias it was asked for, so those stay one request
+   *   per object, issued in parallel and cut by the caller's `limit` first.
+   *
+   * A PIPELINE and a TEMPLATE answer `{ details: [] }` with no round trip at all: they are
+   * JSON documents with no field list, which is the same fact `describeObject` states by
+   * answering three empty arrays.
+   */
+  private async describeMapped(
+    kind: string,
+    chosen: readonly DatabaseObject[],
+    signal?: AbortSignal,
+  ): Promise<ColumnSchema[][]> {
+    const transport = this.requireTransport();
+    if (kind !== SEARCH_KIND_INDEX) {
+      return await Promise.all(chosen.map(async (object) => toColumns(await transport.mapping(object.name, signal))));
+    }
+
+    const names = chosen.map((object) => object.name);
+    const byIndex = await transport.mappings(names, signal);
+    return names.map((name) => {
+      const fields = byIndex.get(name);
+      // A concrete request answers for every name it was given - a CLOSED index included,
+      // measured - and refuses the whole request for one that does not exist. So a name
+      // missing from a present answer cannot come from the engine, and saying which index
+      // is the honest response: reporting it as a mapping-less index would spell it the
+      // same way as an index that really has no mapping, which is an ordinary state.
+      if (fields === undefined) {
+        throw new QueryError(`${this.product.label} answered no mapping for the index ${name}`, this.type);
+      }
+      return toColumns(fields);
+    });
+  }
+
+  /**
+   * Columns for every object of one kind, in as few requests as the engine allows (#789).
+   *
+   * The four guards, in the reference implementation's order: the DECLARATION first,
+   * because an undeclared kind is a fact about the engine while an empty answer is a claim
+   * about the data; then the container, through the same check `listObjects` uses; then the
+   * limit; then the kinds that have no columns at all.
+   *
+   * THE BOUND IS THE CALLER'S AND THERE IS NO `limit + 1`. That extra row exists to tell a
+   * saturated read from an exact one without a second count, and it is unnecessary here:
+   * every listing is one REST call answering the cluster's whole set, so the target set is
+   * COMPLETE before anything is cut and the comparison is exact. The cut is applied in code
+   * after the shared `comparePaths` sort, so a bounded read's membership is this provider's
+   * rather than the server's - no listing endpoint here takes an order or a limit.
+   *
+   * The chunking `mappings()` performs is NOT reported as truncation: it splits one read
+   * into several requests and drops nothing, so a `truncated` for it would claim objects
+   * were left out when none were.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    this.ensureConnected();
+    if (findKind(this.getCapabilities(), kind) === undefined) {
+      throw new QueryError(`${this.product.label} declares no object kind "${kind}"`, this.type);
+    }
+    this.requireContainer(container);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      // Not clamped and not ignored: a 0 would answer nothing while reporting a truncation
+      // nobody asked for, and a fraction cannot cut a list. Both are caller mistakes.
+      throw new QueryError(
+        `A ${this.product.label} bulk column read limit must be a positive whole number, received ${limit}`,
+        this.type,
+      );
+    }
+    if (!SEARCH_MAPPED_KINDS.includes(kind)) return { details: [] };
+
+    return await this.guarded(async () => {
+      const signal = this.deadline();
+      const listed = await this.readKind(container, kind, signal);
+      const bounded = limit !== undefined && listed.length > limit;
+      const chosen = bounded ? listed.slice(0, limit) : listed;
+
+      const columns = await this.describeMapped(kind, chosen, signal);
+      const details = chosen.map((object, index) => searchObjectDetail(object.path, columns[index]));
+      return bounded ? { details, truncated: { limit, reason: callerBoundSentence(limit) } } : { details };
     });
   }
 

@@ -314,6 +314,21 @@ export interface SearchTransport {
   mapping(index: string, signal?: AbortSignal): Promise<SearchMappingField[]>;
 
   /**
+   * The mappings of MANY indices, keyed by the name the cluster answered under (#789).
+   *
+   * For a concrete index that key IS the name asked for, which is what lets one request
+   * serve a whole folder. It is NOT true of an alias or a data stream: both resolve to
+   * the index behind them and come back keyed by that index, so two aliases on one index
+   * answer one key and nothing in the payload attributes it back. Those keep to
+   * `mapping()`, one at a time.
+   *
+   * The implementation owes the caller one thing beyond the answer: the request line has
+   * a length limit on the wire, so it must issue as many requests as that limit needs
+   * rather than one that the cluster refuses.
+   */
+  mappings(indices: readonly string[], signal?: AbortSignal): Promise<Map<string, SearchMappingField[]>>;
+
+  /**
    * Every alias in the cluster, by name, deduplicated (#789).
    *
    * One alias may point at MANY indices (measured: adding `shared_alias` to two

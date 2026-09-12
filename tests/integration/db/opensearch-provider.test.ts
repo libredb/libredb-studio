@@ -563,6 +563,12 @@ function defaultReply(path: string, body: Record<string, unknown> | null): Reply
   if (path === "/_data_stream") return ok(DATA_STREAMS_BODY);
   if (path === "/probe_orders_alias/_mapping") return ok(ALIAS_MAPPING_BODY);
   if (path === "/probe_stream/_mapping") return ok(STREAM_MAPPING_BODY);
+  // The bulk column read (#789): ONE `_mapping` request naming the whole index folder,
+  // answered by COMPOSING the single-index bodies rather than by writing a third one, so
+  // the batch and the single read cannot be compared against two different servers.
+  if (path === "/probe_orders,probe_shapes/_mapping") {
+    return ok(JSON.stringify({ ...JSON.parse(ORDERS_MAPPING_BODY), ...JSON.parse(SHAPES_MAPPING_BODY) }));
+  }
 
   // Every other index name: the core REST layer's snake_case 404.
   if (path.endsWith("/_mapping")) return { status: 404, body: MAPPING_NOT_FOUND_BODY };
@@ -1287,6 +1293,82 @@ describe("object surface", () => {
       kinds: FIXTURE_OBJECT_COUNTS,
       sampleObject: { path: ["probe_stream"], kind: "stream" },
     });
+  });
+
+  // --------------------------------------------------------------------------
+  // describeObjects, the bulk column read (#789)
+  // --------------------------------------------------------------------------
+
+  test("reads the whole index folder's mappings in ONE request, and each alias in its own", async () => {
+    const provider = await connectProvider();
+    sentPaths = [];
+
+    const indices = await provider.describeObjects!([], "index");
+
+    expect(indices.details.map((detail) => detail.path)).toEqual([["probe_orders"], ["probe_shapes"]]);
+    expect(indices.details.map((detail) => detail.columns.map((column) => column.name))).toEqual([
+      ["customer", "id", "total"],
+      ["address.city", "items.sku", "note"],
+    ]);
+    expect(sentPaths.filter((path) => path.endsWith("/_mapping"))).toEqual(["/probe_orders,probe_shapes/_mapping"]);
+
+    // An alias and a data stream resolve to the index behind them, so their mappings come
+    // back keyed by THAT index and a combined request cannot be attributed. Measured on
+    // 3.8.0, the same as on Elasticsearch, which is why one provider serves both.
+    sentPaths = [];
+    const aliases = await provider.describeObjects!([], "alias");
+    expect(aliases.details.map((detail) => detail.columns.map((column) => column.name))).toEqual([["customer", "id"]]);
+    expect(sentPaths.filter((path) => path.endsWith("/_mapping"))).toEqual(["/probe_orders_alias/_mapping"]);
+  });
+
+  test("the bulk read spells an object exactly as the single read does", async () => {
+    const provider = await connectProvider();
+
+    for (const kind of ["index", "alias", "stream"]) {
+      const listed = await provider.listObjects([], kind);
+      const batch = await provider.describeObjects!([], kind);
+      expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+      for (const detail of batch.details) {
+        expect(detail).toEqual(await provider.describeObject(detail.path, kind));
+      }
+    }
+  });
+
+  test("the caller's bound cuts the sorted objects and reaches the mapping request", async () => {
+    const provider = await connectProvider();
+    sentPaths = [];
+
+    const batch = await provider.describeObjects!([], "index", 1);
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([["probe_orders"]]);
+    expect(batch.truncated).toEqual({
+      limit: 1,
+      reason: "the bulk column read was bounded at 1 object by its caller",
+    });
+    // Singular, because a bound of one object is one object. The bound reaches the wire:
+    // `probe_shapes` is not in the URL.
+    expect(sentPaths.filter((path) => path.endsWith("/_mapping"))).toEqual(["/probe_orders/_mapping"]);
+    expect((await provider.describeObjects!([], "index", 2)).truncated).toBeUndefined();
+  });
+
+  test("a kind with no columns answers an empty batch with no round trip at all", async () => {
+    const provider = await connectProvider();
+
+    for (const kind of ["pipeline", "template"]) {
+      sentPaths = [];
+      expect(await provider.describeObjects!([], kind)).toEqual({ details: [] });
+      expect(sentPaths).toEqual([]);
+    }
+  });
+
+  test("the guards refuse in order: the declaration, the container, then the limit", async () => {
+    const provider = await connectProvider();
+
+    await expect(provider.describeObjects!([], "view", 0)).rejects.toThrow(/declares no object kind "view"/);
+    await expect(provider.describeObjects!(["nope"], "index", 0)).rejects.toThrow(/container path has 0 segment/);
+    await expect(provider.describeObjects!([], "index", 0)).rejects.toThrow(
+      /bulk column read limit must be a positive whole number/,
+    );
   });
 
   test("a backing index is hidden by the dot rule, so a data stream is counted once", async () => {

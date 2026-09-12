@@ -133,6 +133,46 @@ const CLUSTER_STATS_PATH = "/_cluster/stats";
 const MAPPING_SUFFIX = "/_mapping";
 
 /**
+ * How many bytes of index names one bulk mapping request may carry (#789).
+ *
+ * The bound is the cluster's, not this client's, and it is measured: a `_mapping` request
+ * whose index list is 3,999 characters answers HTTP 200 on Elasticsearch 9.1.4, and one of
+ * 4,499 answers HTTP 400 with `too_long_http_line_exception`, "An HTTP line is larger than
+ * 4096 bytes." The limit is on the whole REQUEST LINE, so the budget below leaves room for
+ * the method, the `/_mapping` suffix and the HTTP version beside the names.
+ *
+ * A BYTE budget and not a count of names, because index names vary: both products cap a
+ * name at 255 bytes, so one name always fits on its own line and every list can be split.
+ */
+const MAPPING_TARGETS_MAX_BYTES = 3500;
+
+/**
+ * The index names of one bulk mapping read, split into request-line-sized, comma-joined
+ * chunks.
+ *
+ * Names are percent-encoded FIRST and joined with a literal comma, because the comma is
+ * the separator the endpoint reads: encoding it would make one request for a list of
+ * indices into one request for an index whose name contains commas.
+ */
+function mappingChunks(indices: readonly string[]): string[] {
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const index of indices) {
+    const encoded = encodeURIComponent(index);
+    const joined = current === "" ? encoded : `${current},${encoded}`;
+    if (current !== "" && joined.length > MAPPING_TARGETS_MAX_BYTES) {
+      chunks.push(current);
+      current = encoded;
+      continue;
+    }
+    current = joined;
+  }
+  if (current !== "") chunks.push(current);
+  return chunks;
+}
+
+/**
  * The four object listings the tree reads (#789), measured identical in shape on
  * Elasticsearch 9.1.4 and OpenSearch 3.8.0 on 2026-09-11.
  *
@@ -1151,6 +1191,22 @@ export class SearchHttpTransport implements SearchTransport {
     // `{"<index>":{"mappings":{}}}` - a present, EMPTY object. That is a fact about
     // the index, and the seam says an empty list, not an error.
     return properties === null ? [] : flattenProperties(properties, "");
+  }
+
+  public async mappings(indices: readonly string[], signal?: AbortSignal): Promise<Map<string, SearchMappingField[]>> {
+    const byIndex = new Map<string, SearchMappingField[]>();
+
+    for (const chunk of mappingChunks(indices)) {
+      const payload = asRecord(await this.request(`/${chunk}${MAPPING_SUFFIX}`, signal));
+      if (payload === null) throw unreadableBody(this.spec, "a mapping");
+
+      for (const [name, entry] of Object.entries(payload)) {
+        const mappings = asRecord(asRecord(entry)?.[MAPPING_FIELDS.MAPPINGS]);
+        const properties = asRecord(mappings?.[MAPPING_FIELDS.PROPERTIES]);
+        byIndex.set(name, properties === null ? [] : flattenProperties(properties, ""));
+      }
+    }
+    return byIndex;
   }
 
   /**
