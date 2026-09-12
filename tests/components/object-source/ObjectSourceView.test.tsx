@@ -60,8 +60,15 @@ mock.module("@monaco-editor/react", () => ({
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ObjectSourcePatch, ObjectSourceReader } from "@/components/object-source";
-import { ObjectSourceView } from "@/components/object-source/ObjectSourceView";
+// Imported from the BARREL and not by path, deliberately: `index.ts` had no runtime importer
+// anywhere in the tree, so its re-export lines produced no `DA:` record at all and the 100
+// percent gate could not see them. A type-only import is erased and does not count (#789).
+import {
+  isSourceDocumentShape,
+  ObjectSourceView,
+  type ObjectSourcePatch,
+  type ObjectSourceReader,
+} from "@/components/object-source";
 import { pathKey } from "@/lib/db/object-path";
 import type { ObjectSourceDocument } from "@/lib/db/types";
 import { STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib/editor/monaco-theme";
@@ -281,32 +288,101 @@ describe("ObjectSourceView", () => {
     expect(screen.queryAllByRole("tab")).toHaveLength(0);
   });
 
+  /**
+   * Every `aria-controls` a tab carries RESOLVES, and the panel it names points back at it.
+   *
+   * The first spelling of this test walked both tabs and resolved the IDREF only inside
+   * `if (aria-selected === "true")`, so the non-selected tab's wiring was certified by the
+   * attribute being truthy and containing no space. Mutation G, `panelId(index)` to
+   * `panelId(activeIndex)`, survived it: 24 pass 0 fail. Only the ACTIVE panel is in the tree,
+   * so a tab naming any other panel is an axe `aria-valid-attr-value` violation that ships.
+   */
+  function assertTabWiring(): number {
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.length).toBeGreaterThan(1);
+    let carried = 0;
+    for (const tab of tabs) {
+      const controls = tab.getAttribute("aria-controls");
+      if (controls === null) {
+        // A tab whose panel is NOT rendered carries no reference at all, which is the other
+        // half of the same invariant: an absent IDREF is honest, a dangling one is not.
+        expect(tab.getAttribute("aria-selected")).toBe("false");
+        continue;
+      }
+      expect(tab.getAttribute("aria-selected")).toBe("true");
+      // An IDREF may not carry a space: a part label or a provider-local id containing one
+      // would split the reference in two and both halves would resolve to nothing.
+      expect(controls.includes(" ")).toBe(false);
+      const panel = window.document.getElementById(controls);
+      expect(panel).not.toBeNull();
+      expect(panel?.getAttribute("role")).toBe("tabpanel");
+      expect(panel?.getAttribute("aria-labelledby")).toBe(tab.getAttribute("id"));
+      carried += 1;
+    }
+    return carried;
+  }
+
   test("draws a tablist with one tab per part for a two-part document, wired with aria-controls", async () => {
-    // jsx-a11y categories.correctness is "error" in .oxlintrc.json:5 and this directory is not
-    // in the one exempted path, so the tabs pattern is complete here even though the studio tab
-    // bar is only half of it.
+    render(<Harness reader={readerFor(twoParts)} />);
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Package specification", "Package body"]);
+    // Exactly one panel is in the tree, so exactly one tab may name one.
+    expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
+    expect(assertTabWiring()).toBe(1);
+
+    // And the wiring FOLLOWS the selection rather than being correct only at index 0.
+    await userEvent.click(screen.getAllByRole("tab")[1]!);
+    await waitFor(() => expect(screen.getAllByRole("tab")[1]!.getAttribute("aria-selected")).toBe("true"));
+    expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
+    expect(assertTabWiring()).toBe(1);
+  });
+
+  /**
+   * The KEYBOARD half of the WAI-ARIA tabs pattern, which the first round omitted entirely.
+   *
+   * Both tab buttons sat at the implicit tabindex 0, so a keyboard user tabbing through a
+   * two-part Oracle package landed on every part button in turn instead of entering the
+   * tablist once and arrowing, and no arrow key did anything. `jsx-a11y` has NO rule for
+   * roving tabindex or for arrow-key navigation, measured: `bun run lint` reported 0 errors
+   * over the version that had neither, so the lint gate says nothing about this.
+   * `StudioTabBar.tsx` is the repository's own spelling and this mirrors it.
+   */
+  test("gives the tablist one tab stop and moves the selection with the arrow keys", async () => {
     render(<Harness reader={readerFor(twoParts)} />);
     await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
 
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["Package specification", "Package body"]);
+    expect(tabs.map((tab) => tab.getAttribute("tabindex"))).toEqual(["0", "-1"]);
 
-    const panel = screen.getByRole("tabpanel");
-    let wired = 0;
-    for (const tab of tabs) {
-      const controls = tab.getAttribute("aria-controls");
-      expect(controls).toBeTruthy();
-      // An IDREF may not carry a space: a part label or a provider-local id containing one
-      // would split the reference in two and both halves would resolve to nothing.
-      expect(controls?.includes(" ")).toBe(false);
-      if (tab.getAttribute("aria-selected") === "true") {
-        expect(panel.getAttribute("id")).toBe(controls);
-        expect(panel.getAttribute("aria-labelledby")).toBe(tab.getAttribute("id"));
-      }
-      wired += 1;
-    }
-    // Non-vacuity: two tabs were walked, not zero.
-    expect(wired).toBe(2);
+    tabs[0]!.focus();
+    await userEvent.keyboard("{ArrowRight}");
+
+    await waitFor(() => expect(editorValue()).toContain("PACKAGE BODY"));
+    const moved = screen.getAllByRole("tab");
+    expect(moved.map((tab) => tab.getAttribute("tabindex"))).toEqual(["-1", "0"]);
+    // Focus FOLLOWS activation, or the next arrow key would go to the tab that lost it.
+    expect(window.document.activeElement).toBe(moved[1]!);
+  });
+
+  test("wraps the arrow keys around the tablist and jumps with Home and End", async () => {
+    render(<Harness reader={readerFor(twoParts)} />);
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+
+    screen.getAllByRole("tab")[0]!.focus();
+    // ArrowLeft from the first part wraps to the last rather than doing nothing.
+    await userEvent.keyboard("{ArrowLeft}");
+    await waitFor(() => expect(editorValue()).toContain("PACKAGE BODY"));
+
+    await userEvent.keyboard("{Home}");
+    await waitFor(() => expect(editorValue()).toContain("FUNCTION total"));
+
+    await userEvent.keyboard("{End}");
+    await waitFor(() => expect(editorValue()).toContain("PACKAGE BODY"));
+
+    // A key the pattern does not claim is left to the browser: no selection change, no throw.
+    await userEvent.keyboard("{ArrowDown}");
+    expect(editorValue()).toContain("PACKAGE BODY");
   });
 
   test("switching to the second part shows its text and asks for no second read", async () => {
@@ -543,6 +619,111 @@ describe("ObjectSourceView", () => {
 
     await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
     expect(asked).toEqual(["one", "two"]);
+  });
+
+  /**
+   * THE PROP PATH IS AN ENTRY TOO, and round 1 left the invariant enforced on only one of them.
+   *
+   * `isSourceDocumentShape` ran inside the read effect alone, so a document arriving already
+   * present through the `document` prop was never checked. That is not a hypothetical entry:
+   * `use-tab-manager.ts` restores the tab set from `localStorage` with a `JSON.parse` guarded
+   * only by `Array.isArray(parsed.tabs)`, so once a Source tab carries its document, an older
+   * shape, a truncated write or a hand-edited entry arrives with `needsRead === false`. A part
+   * with an empty `text` then mounted an editor holding `""` over an object that HAS a
+   * definition, which is the exact DBeaver composition this phase exists to prevent (#789).
+   */
+  function renderWithDocument(value: ObjectSourceDocument) {
+    render(
+      <ObjectSourceView
+        connection={connection}
+        path={[...PATH]}
+        kind="package"
+        kindLabel="Package"
+        displayName="APP_ORDERS_PKG"
+        document={value}
+        refreshToken={0}
+        readAtToken={0}
+        reader={readerFor(oneReadablePart)}
+        onChange={() => {}}
+      />,
+    );
+  }
+
+  test("refuses a prop-supplied document whose only part carries an EMPTY text, and draws no editor", () => {
+    renderWithDocument({
+      path: [...PATH],
+      kind: "package",
+      parts: [{ ...oneReadablePart.parts[0], text: "" }],
+    });
+
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByTestId("source-editor")).toBeNull();
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "The source read answered with a body this viewer cannot render.",
+    );
+  });
+
+  test("refuses a prop-supplied part carrying BOTH text and unavailable, rather than dropping the text", () => {
+    // tsc 6.0.3 admits this literal: the excess-property check on a union accepts any property
+    // declared on any member, so `isSourcePartUnavailable` would narrow it to the refusal and
+    // the definition the engine returned would vanish behind our own headline.
+    renderWithDocument({
+      path: [...PATH],
+      kind: "package",
+      parts: [{ ...oneReadablePart.parts[0], unavailable: "wrapped" }],
+    });
+
+    expect(screen.queryByTestId("object-source-refused")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "The source read answered with a body this viewer cannot render.",
+    );
+  });
+
+  test("refuses a prop-supplied origin outside its union, which would caption `undefined`", () => {
+    // A host-shaped lie: `origin: "typed"` indexes the frozen record at a key it has no entry
+    // for, so the caption read "undefined Complete as shown." with an editor open beneath it.
+    renderWithDocument({
+      path: [...PATH],
+      kind: "package",
+      parts: [{ ...oneReadablePart.parts[0], origin: "typed" }],
+    } as unknown as ObjectSourceDocument);
+
+    expect(screen.queryByTestId("object-source-caption")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "The source read answered with a body this viewer cannot render.",
+    );
+  });
+
+  test("still renders a prop-supplied document that the shape check accepts", () => {
+    // The control for the three refusals above. Without it they could all pass over a viewer
+    // that simply refused every prop-supplied document.
+    renderWithDocument(oneReadablePart);
+
+    expect(screen.queryByTestId("object-source-failure")).toBeNull();
+    expect(editorValue()).toContain("FUNCTION total");
+  });
+
+  test("draws the refusal pane for a document whose ONLY part is a refusal, with no tablist", async () => {
+    const onlyRefusal: ObjectSourceDocument = {
+      path: [...PATH],
+      kind: "package",
+      parts: [refusedSecondPart.parts[1]!],
+    };
+    render(<Harness reader={readerFor(onlyRefusal)} />);
+
+    await waitFor(() => expect(screen.getByTestId("object-source-refused")).toBeTruthy());
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByText("The text for object 'customer_summary' is encrypted.")).toBeTruthy();
+  });
+
+  test("the barrel re-exports the live shape check, not a second copy of it", () => {
+    // The barrel had no runtime importer anywhere in the tree, so its lines produced no `DA:`
+    // record and the coverage gate could not see them. This is that importer.
+    expect(isSourceDocumentShape(oneReadablePart)).toBe(true);
+    expect(isSourceDocumentShape({ ...oneReadablePart, parts: [] })).toBe(false);
   });
 
   test("uses the application's own route when no reader is supplied", async () => {

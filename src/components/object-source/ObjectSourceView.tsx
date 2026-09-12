@@ -101,7 +101,11 @@ function activePart(document: ObjectSourceDocument, activePartId: string | undef
  * The renderer does not rely on the type for this, because the union does NOT make a part
  * carrying both `text` and `unavailable` a compile error: TypeScript's excess-property check on
  * a union admits any property declared on any member, so such a part narrows to the refusal.
- * `isSourceDocumentShape` refuses that part before it can reach this function.
+ * `isSourceDocumentShape` refuses that part on BOTH entries: the read effect checks what a
+ * reader answered, and the render checks what the `document` PROP carries, because a tab's
+ * document survives a reload through `localStorage` and comes back as parsed JSON that no
+ * compiler ever saw. Round 1 checked only the read effect, and a restored document with an
+ * empty `text` then mounted an editor holding `""` over an object that HAS a definition.
  *
  * Nothing rendered here reads a kind id or a database type id. The kind's label arrives as a
  * prop from the declaration, the part's label is the engine's own word, and the language
@@ -172,13 +176,35 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
     // as stable, and a change in either is answered by the address guard rather than a re-issue.
   }, [address, needsRead, refreshToken, connection, path, kind, reader, onChange]);
 
+  /**
+   * The SECOND entry, and the one round 1 left unguarded (#789).
+   *
+   * A document that arrives already present never passes through the read effect, so nothing
+   * checked it. That entry is real rather than theoretical: `use-tab-manager.ts` restores the
+   * tab set from `localStorage` with a `JSON.parse` guarded only by `Array.isArray`, so an
+   * older shape, a truncated write or a hand-edited entry reaches this component with
+   * `needsRead === false`. Measured on the round-1 component: a part with `text: ""` mounted
+   * the editor with the value `""`, a part carrying both keys rendered the refusal pane over a
+   * real definition, and `origin: "typed"` captioned "undefined Complete as shown.".
+   *
+   * A refused document is reported in the FAILURE grammar rather than thrown away silently,
+   * and it is never re-read: the document is present, so `needsRead` is false and a re-read
+   * would loop on the same bad value. The stale banner's control is the way back.
+   */
+  const renderableDocument = useMemo(
+    () => (sourceDocument !== undefined && isSourceDocumentShape(sourceDocument) ? sourceDocument : undefined),
+    [sourceDocument],
+  );
+  const shownFailure =
+    failure ?? (sourceDocument !== undefined && renderableDocument === undefined ? UNRENDERABLE : undefined);
+
   const reread = useCallback(() => {
     onChange({ document: undefined, failure: undefined, readAtToken: undefined });
   }, [onChange]);
 
   const part = useMemo(
-    () => (sourceDocument === undefined ? undefined : activePart(sourceDocument, props.activePartId)),
-    [sourceDocument, props.activePartId],
+    () => (renderableDocument === undefined ? undefined : activePart(renderableDocument, props.activePartId)),
+    [renderableDocument, props.activePartId],
   );
 
   /*
@@ -187,11 +213,46 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * DDL passes for the whole session.
    */
   const stale = props.readAtToken !== undefined && props.readAtToken !== refreshToken;
-  const parts = sourceDocument?.parts ?? [];
+  const parts = renderableDocument?.parts ?? [];
   const showSwitcher = parts.length > 1;
   const tabId = (index: number) => `${baseId}-tab-${index}`;
   const panelId = (index: number) => `${baseId}-panel-${index}`;
   const activeIndex = parts.findIndex((candidate) => candidate === part);
+
+  /**
+   * The KEYBOARD half of the WAI-ARIA tabs pattern, which round 1 omitted entirely.
+   *
+   * Both tab buttons sat at the implicit tabindex 0, so a keyboard user tabbing through a
+   * two-part Oracle package landed on every part button in turn instead of entering the
+   * tablist once and arrowing within it, and no arrow key did anything. `jsx-a11y` has NO rule
+   * for roving tabindex or for arrow-key navigation, measured: `bun run lint` reported zero
+   * errors over the version that had neither, so the lint gate cannot stand in for this.
+   *
+   * `StudioTabBar.tsx` is the repository's own spelling of the same pattern and this mirrors
+   * it, including focus following activation: without that, the next arrow key would be
+   * delivered to the tab that just lost the selection. The focus move addresses the button by
+   * its part id and never by a position in the node list.
+   */
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const wanted =
+      event.key === "ArrowRight"
+        ? index + 1
+        : event.key === "ArrowLeft"
+          ? index - 1
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? parts.length - 1
+              : undefined;
+    if (wanted === undefined) return;
+    event.preventDefault();
+    const target = parts[(wanted + parts.length) % parts.length];
+    onChange({ activePartId: target.id });
+    event.currentTarget
+      .closest('[role="tablist"]')
+      ?.querySelector<HTMLButtonElement>(`[role="tab"][data-part-id="${target.id}"]`)
+      ?.focus();
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="object-source-view">
@@ -227,7 +288,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
         </div>
       )}
 
-      {failure !== undefined ? (
+      {shownFailure !== undefined ? (
         <div className="flex-1 px-3 py-8 text-center text-muted-foreground" data-testid="object-source-failure">
           <TriangleAlert aria-hidden="true" strokeWidth={1.5} className="mx-auto mb-2 h-8 w-8 opacity-50" />
           <p className="text-xs text-destructive">The source read failed.</p>
@@ -235,7 +296,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
             className="mx-auto mt-1 max-w-xl break-words text-xs text-destructive"
             data-testid="object-source-failure-message"
           >
-            {failure}
+            {shownFailure}
           </p>
         </div>
       ) : part === undefined ? (
@@ -256,8 +317,18 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
                   type="button"
                   role="tab"
                   id={tabId(index)}
-                  aria-controls={panelId(index)}
+                  data-part-id={candidate.id}
+                  /*
+                   * Only the ACTIVE panel is in the tree, so only the active tab may name one.
+                   * Round 1 gave every tab `aria-controls={panelId(index)}`, which left every
+                   * non-selected tab pointing at an element that does not exist: an axe
+                   * `aria-valid-attr-value` violation that shipped. An absent reference is
+                   * honest about a panel that is not rendered; a dangling one is not.
+                   */
+                  {...(index === activeIndex ? { "aria-controls": panelId(index) } : {})}
                   aria-selected={index === activeIndex}
+                  tabIndex={index === activeIndex ? 0 : -1}
+                  onKeyDown={(event) => onTabKeyDown(event, index)}
                   className={
                     index === activeIndex
                       ? "rounded px-2 py-1 text-xs font-medium text-foreground bg-muted"
