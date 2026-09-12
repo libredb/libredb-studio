@@ -866,9 +866,12 @@ unreported bound and is the defect `truncated` exists to prevent.
 in this family do not use the same one.**
 Measured: `information_schema.TABLES.TABLE_NAME` collates `utf8mb3_bin` on MySQL 26.7.0 and
 `utf8mb3_general_ci` on MariaDB 12.3.2, and the fixture makes the difference visible rather than theoretical.
-The four `table` rows of `app` come back as `customers, order_archive, order_audit, orders` on MySQL and as
+The `table` rows of `app` come back as `customers, order_archive, orders` on MySQL and as
 `customers, orders, order_archive, order_audit` on MariaDB, because `general_ci` folds `s` to the weight of
 `S` (0x53), which sorts below `_` (0x5F).
+The two lists differ in length as well as in order: `order_audit` is the `WITH SYSTEM VERSIONING` table, which
+only the MariaDB fixture creates because MySQL has no system versioning, so MySQL holds three `table` rows and
+MariaDB holds four (re-measured live on MySQL 26.7.0 and MariaDB 12.3.2 for #789 Task 27).
 So `describeObjects(["app"], "table", 2)` keeps `customers, order_archive` on one server and
 `customers, orders` on the other.
 That order decides WHICH objects a bound keeps and nothing else: the answer is re-sorted by path in code,
