@@ -1,4 +1,6 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { existsSync, readdirSync } from "node:fs";
+import path from "node:path";
 import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 import { createMockProvider } from "../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -105,6 +107,22 @@ const searchRoute = await import("@/app/api/db/objects/search/route");
 const inventoryRoute = await import("@/app/api/db/objects/inventory/route");
 const sourceRoute = await import("@/app/api/db/objects/source/route");
 
+/**
+ * The seven handlers KEYED BY THE DIRECTORY each one lives in, so the census can be checked
+ * against `src/app/api/db/objects/` rather than against itself.
+ */
+const objectRoutes: Record<string, { POST: (req: never) => Promise<Response> }> = {
+  containers: containersRoute,
+  counts: countsRoute,
+  list: listRoute,
+  describe: describeRoute,
+  search: searchRoute,
+  inventory: inventoryRoute,
+  source: sourceRoute,
+};
+
+const OBJECT_ROUTE_DIR = path.resolve(import.meta.dir, "../..", "src/app/api/db/objects");
+
 // ============================================================================
 // Fixtures
 // ============================================================================
@@ -184,11 +202,30 @@ describe("the shared guard", () => {
     expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(0);
   });
 
-  test("every one of the seven routes refuses an unauthenticated caller", async () => {
-    const routes = [containersRoute, countsRoute, listRoute, describeRoute, searchRoute, inventoryRoute, sourceRoute];
-    for (const route of routes) {
+  test("every route directory under api/db/objects is censused, and every one refuses an unauthenticated caller", async () => {
+    // Derived from the DIRECTORY rather than from the array literal this replaced. That literal
+    // certified only what it happened to hold: deleting one handler from it left this file at
+    // 71 pass, 0 fail with the test still naming a count, so an eighth route could have landed
+    // uncensused. The population is now the filesystem, and a route directory with no handler
+    // here fails by name (#789).
+    const directories = readdirSync(OBJECT_ROUTE_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(path.join(OBJECT_ROUTE_DIR, entry.name, "route.ts")))
+      .map((entry) => entry.name)
+      .sort();
+
+    // The zero-iteration case certifies nothing, so it is refused BY NAME: a readdir that found
+    // no route directory would otherwise run the loop below zero times and pass.
+    if (directories.length === 0) {
+      throw new Error(`no route.ts found under ${OBJECT_ROUTE_DIR}, so this census would certify nothing`);
+    }
+    expect(Object.keys(objectRoutes).sort()).toEqual(directories);
+
+    for (const name of directories) {
+      if (!Object.hasOwn(objectRoutes, name)) {
+        throw new Error(`this census holds no handler for src/app/api/db/objects/${name}/route.ts`);
+      }
       mockGetSession.mockResolvedValueOnce(null as unknown as { role: string; username: string });
-      const response = await route.POST(
+      const response = await objectRoutes[name].POST(
         new Request("http://localhost:3000/api/db/objects/x", { method: "POST" }) as never,
       );
       expect(response.status).toBe(401);
@@ -1256,12 +1293,12 @@ describe("POST /api/db/objects/source", () => {
     });
   }
 
-  function oneReadablePart(part: ObjectSourcePart = readablePart()): ObjectSourceDocument {
+  function documentWithOnePart(part: ObjectSourcePart = readablePart()): ObjectSourceDocument {
     return { path: ["app", "order_total(integer)"], kind: "function", parts: [part] };
   }
 
   test("answers the provider's document for a source-bearing kind, bounded by the route", async () => {
-    const read = mock(async () => oneReadablePart());
+    const read = mock(async () => documentWithOnePart());
     activeProvider = objectProvider({ objectKinds: [TABLE_KIND, FUNCTION_KIND], readObjectSource: read });
 
     const response = await sourceRoute.POST(
@@ -1273,7 +1310,7 @@ describe("POST /api/db/objects/source", () => {
 
     expect(response.status).toBe(200);
     const body = await parseResponseJSON<ObjectSourceDocument>(response);
-    expect(body).toEqual(oneReadablePart());
+    expect(body).toEqual(documentWithOnePart());
     // The route names its own bound rather than leaving `limit` absent, which is what makes a
     // provider that honours the argument bound the same way the route would have bounded it.
     expect(read).toHaveBeenCalledWith(["app", "order_total(integer)"], "function", SOURCE_CHARACTER_LIMIT);
@@ -1288,7 +1325,7 @@ describe("POST /api/db/objects/source", () => {
     activeProvider = objectProvider({
       objectKinds: [FUNCTION_KIND],
       readObjectSource: mock(async function (this: DatabaseProvider) {
-        return oneReadablePart(readablePart({ label: this.type }));
+        return documentWithOnePart(readablePart({ label: this.type }));
       }),
     });
 
@@ -1305,7 +1342,7 @@ describe("POST /api/db/objects/source", () => {
   });
 
   test("refuses a kind that declares no source, naming the engine and the kind", async () => {
-    activeProvider = sourceProviderReading(oneReadablePart());
+    activeProvider = sourceProviderReading(documentWithOnePart());
 
     const response = await sourceRoute.POST(
       createMockRequest("/api/db/objects/source", {
@@ -1340,7 +1377,7 @@ describe("POST /api/db/objects/source", () => {
   });
 
   test("refuses a kind the engine does not declare at all", async () => {
-    activeProvider = sourceProviderReading(oneReadablePart());
+    activeProvider = sourceProviderReading(documentWithOnePart());
 
     const response = await sourceRoute.POST(
       createMockRequest("/api/db/objects/source", {
@@ -1356,7 +1393,7 @@ describe("POST /api/db/objects/source", () => {
   });
 
   test("refuses an empty path", async () => {
-    activeProvider = sourceProviderReading(oneReadablePart());
+    activeProvider = sourceProviderReading(documentWithOnePart());
 
     const response = await sourceRoute.POST(
       createMockRequest("/api/db/objects/source", {
@@ -1370,7 +1407,7 @@ describe("POST /api/db/objects/source", () => {
   });
 
   test("refuses a missing kind", async () => {
-    activeProvider = sourceProviderReading(oneReadablePart());
+    activeProvider = sourceProviderReading(documentWithOnePart());
 
     const response = await sourceRoute.POST(
       createMockRequest("/api/db/objects/source", {
@@ -1385,7 +1422,7 @@ describe("POST /api/db/objects/source", () => {
 
   test("bounds a provider that ignores the limit, and marks what it bounded", async () => {
     activeProvider = sourceProviderReading(
-      oneReadablePart(readablePart({ text: "x".repeat(SOURCE_CHARACTER_LIMIT + 10) })),
+      documentWithOnePart(readablePart({ text: "x".repeat(SOURCE_CHARACTER_LIMIT + 10) })),
     );
 
     const response = await sourceRoute.POST(
@@ -1408,7 +1445,7 @@ describe("POST /api/db/objects/source", () => {
 
   test("joins its own sentence to a bound the provider already reported", async () => {
     activeProvider = sourceProviderReading(
-      oneReadablePart(
+      documentWithOnePart(
         readablePart({
           text: "y".repeat(SOURCE_CHARACTER_LIMIT + 10),
           truncated: { limit: 4000, reason: "the engine stopped at 4,000 characters" },
@@ -1436,7 +1473,7 @@ describe("POST /api/db/objects/source", () => {
 
   test("leaves a part that already fits exactly as the provider wrote it", async () => {
     const exact = readablePart({ text: "z".repeat(SOURCE_CHARACTER_LIMIT) });
-    activeProvider = sourceProviderReading(oneReadablePart(exact));
+    activeProvider = sourceProviderReading(documentWithOnePart(exact));
 
     const response = await sourceRoute.POST(
       createMockRequest("/api/db/objects/source", {
@@ -1487,7 +1524,7 @@ describe("POST /api/db/objects/source", () => {
       label: "Body",
       unavailable: "u".repeat(SOURCE_CHARACTER_LIMIT + 10),
     };
-    activeProvider = sourceProviderReading(oneReadablePart(refusal));
+    activeProvider = sourceProviderReading(documentWithOnePart(refusal));
 
     const response = await sourceRoute.POST(
       createMockRequest("/api/db/objects/source", {
@@ -1501,6 +1538,57 @@ describe("POST /api/db/objects/source", () => {
     const [part] = body.parts;
     if (!("unavailable" in part)) throw new Error("the double answers a refused part");
     expect(part.unavailable).toHaveLength(SOURCE_CHARACTER_LIMIT + 10);
+  });
+
+  test("refuses a part that carries both a refusal and a text, rather than shipping one over the other", async () => {
+    // MEASURED against tsc 6.0.3 and recorded on `ObjectSourcePart`: a literal carrying
+    // `unavailable` BESIDE `text` COMPILES, because the excess-property check on a union admits
+    // any property declared on ANY member of it. `isSourcePartUnavailable` then narrows it to the
+    // refusal arm, so the route's character bound would return it untouched and a 2 MB definition
+    // would reach `NextResponse.json` under a 1,000,000 bound while the client rendered a refusal
+    // over it. No cast is needed to build one and none is used here.
+    const hybrid = {
+      ...readablePart({ text: "x".repeat(SOURCE_CHARACTER_LIMIT * 2) }),
+      unavailable: "the engine refused this body",
+    } satisfies ObjectSourcePart;
+    activeProvider = sourceProviderReading(documentWithOnePart(hybrid));
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      "the source read answered a part that carries both a refusal and a text; a refusal and a definition " +
+        "are different facts and a reader must never be shown one over the other",
+    );
+  });
+
+  test("refuses a document that carries no parts at all, by name and not by a TypeError", async () => {
+    // `parts` is a NON-EMPTY tuple in the type, and a JS caller or a host is not held to it. Before
+    // this guard an empty array reached `"unavailable" in part` on `undefined` and the TypeError
+    // went to `createErrorResponse` as an unhandled error, so the walk's zero-part case certified
+    // nothing. The cast is what a type-checked caller CANNOT write, which is the point.
+    activeProvider = sourceProviderReading({
+      path: ["app", "f"],
+      kind: "function",
+      parts: [] as unknown as ObjectSourceDocument["parts"],
+    });
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      "the source read answered a document with no parts, and a source document names at least one",
+    );
   });
 
   test("refuses a document carrying more parts than the route will carry", async () => {

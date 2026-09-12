@@ -257,11 +257,18 @@ export function requireSourceReader(
  * The answered document under the route's OWN bound (#789 Phase 2).
  *
  * The route ENFORCES rather than trusts, which is the shipped precedent and not a new rule: the
- * inventory route applies its own two bounds on top of the bound it hands `describeObjects`. Here
- * there are sixteen providers plus any host implementing the embedded source seam, and the route
- * materialises the whole answer and serialises it in one `NextResponse.json`, so this is the one
- * place a memory bound can actually be held. A number merely PASSED to an implementation outside
- * our compiler is a request, not a bound.
+ * inventory route applies its own two bounds on top of the bound it hands `describeObjects`. The
+ * callers behind this one are the sixteen providers that implement `readObjectSource`, and the
+ * route materialises the whole answer and serialises it in one `NextResponse.json`, so this is the
+ * one place a memory bound can actually be held. A number merely PASSED to an implementation is a
+ * request, not a bound.
+ *
+ * CORRECTED after review, because the first version of this paragraph named a caller that cannot
+ * reach it. MEASURED: `handleObjectRequest` takes its provider from `getOrCreateProvider`, which
+ * resolves through a closed `switch (connection.type)` in `src/lib/db/factory.ts` with no
+ * registration point for anyone else, and the embedded shell has no API routes at all, so a host
+ * implementing the workspace source seam reads through its own function and never through this
+ * module. The bound is here for a PROVIDER defect, which is enough on its own.
  *
  * A provider that bounded correctly is returned unchanged, which is what makes the walk safe to
  * run on every answer. A provider that bounded at its own SMALLER limit is also unchanged, because
@@ -270,10 +277,22 @@ export function requireSourceReader(
  *
  * `parts.length` is bounded too, because the tuple type has no upper bound and the real response
  * size is `limit` times the part count. `SOURCE_PART_LIMIT` is four times the largest shape any
- * engine in the fleet produces, so no correct provider can reach it and a host that does is a
- * caller mistake rather than a database fact.
+ * engine in the fleet produces, so no correct provider can reach it and a provider that does is a
+ * defect rather than a database fact.
+ *
+ * The EMPTY document is refused by name rather than left to the destructuring below. `parts` is a
+ * non-empty tuple in the type and a JavaScript caller is not held to it, and MEASURED before this
+ * guard existed, `parts: []` reached `"unavailable" in part` on `undefined` and raised
+ * `TypeError: part is not an Object`, which `createErrorResponse` reports as an unhandled error
+ * rather than as the caller's mistake it is.
  */
 export function boundSourceDocument(document: ObjectSourceDocument, limit: number): ObjectSourceDocument {
+  if (document.parts.length === 0) {
+    throw new ObjectRouteError(
+      "the source read answered a document with no parts, and a source document names at least one",
+      400,
+    );
+  }
   if (document.parts.length > SOURCE_PART_LIMIT) {
     throw new ObjectRouteError(
       `the source read answered ${document.parts.length} parts and this route carries at most ${SOURCE_PART_LIMIT}`,
@@ -286,9 +305,35 @@ export function boundSourceDocument(document: ObjectSourceDocument, limit: numbe
   return { ...document, parts: [boundPart(first, limit), ...rest.map((part) => boundPart(part, limit))] };
 }
 
+/**
+ * One part under the bound, and the one malformed shape the bound cannot hold.
+ *
+ * The hybrid is refused BEFORE the narrowing, and that order is the whole guard. MEASURED against
+ * tsc 6.0.3 and recorded on `ObjectSourcePart` itself: a part carrying `unavailable` BESIDE
+ * `text`, `language`, `form` and `origin` COMPILES with no cast, because the excess-property check
+ * on a union admits any property declared on ANY member of it. `isSourcePartUnavailable` asks
+ * `"unavailable" in part`, so such a part narrows to the refusal arm and the line below would
+ * return it untouched: MEASURED through this function at a 1,000,000 bound, a hybrid carrying
+ * 2,000,000 characters came back with its text whole, 2,000,141 characters of JSON on the wire,
+ * while a client narrowing the same way renders a refusal over the definition the engine really
+ * returned. `assertObjectSurface` refuses the shape for our own providers, and the check runs only
+ * in the provider suites, so this is where the same refusal reaches a running server (#789).
+ *
+ * A 400 in this module's own vocabulary and not a silent repair. Bounding the text would keep the
+ * memory bound and still ship a part that reads as a refusal over a real definition, which is the
+ * exact collapse the union exists to prevent.
+ *
+ * Below it, a refusal carries no text, so there is nothing to bound and nothing to mark. Reading
+ * `.text` on one would be a property access on the arm that does not declare it.
+ */
 function boundPart(part: ObjectSourcePart, limit: number): ObjectSourcePart {
-  // A refusal carries no text, so there is nothing to bound and nothing to mark. Reading `.text`
-  // on one would be a property access on the arm that does not declare it.
+  if (isSourcePartUnavailable(part) && Object.hasOwn(part, "text")) {
+    throw new ObjectRouteError(
+      "the source read answered a part that carries both a refusal and a text; a refusal and a definition " +
+        "are different facts and a reader must never be shown one over the other",
+      400,
+    );
+  }
   if (isSourcePartUnavailable(part) || part.text.length <= limit) return part;
   const reason = sourceBoundTruncationReason(limit);
   return {
