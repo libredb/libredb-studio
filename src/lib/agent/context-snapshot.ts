@@ -943,6 +943,12 @@ async function tagWithObjectKinds(
 
   return {
     ...read.inventory,
+    // Carried onto the inventory rather than used and dropped: this is the tie-breaker for
+    // every consumer of the address rule, and a tool that runs later cannot read it back
+    // off the walk. `profile_table` refused a spelling the object browser resolves in the
+    // same run because this fact stopped here.
+    ...(read.defaultContainer === undefined ? {} : { defaultContainer: read.defaultContainer }),
+
     // Sorted by the name a reader sees, so two captures of one database serialise
     // identically whatever order the containers were walked in.
     objects: [...objects, ...unmatched.values()].sort((left, right) =>

@@ -3778,7 +3778,7 @@ describe("profileTableTool — the model names a table, the server decides the r
     indexes: [],
   });
 
-  const ambiguousRun = (objects: readonly unknown[]) =>
+  const ambiguousRun = (objects: readonly unknown[], defaultContainer?: readonly string[]) =>
     ({
       runId: "run-1",
       events: [
@@ -3793,6 +3793,7 @@ describe("profileTableTool — the model names a table, the server decides the r
             capturedAtMs: 1,
             objects,
             kinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+            ...(defaultContainer === undefined ? {} : { defaultContainer }),
           },
         },
       ],
@@ -3835,6 +3836,50 @@ describe("profileTableTool — the model names a table, the server decides the r
     if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
     expect(outcome.modelText).not.toContain("not in the schema inventory");
     expect(outcome.modelText).not.toContain("public.actor");
+  });
+
+  /**
+   * The session default breaks the tie here too, because it breaks it EVERYWHERE ELSE
+   * (#789 bulk-read review, Important 3).
+   *
+   * `er-diagram.ts` passes the declaring object's container, `detailed-object.ts` passes
+   * the session default and the inventory join passes the same default. This was the one
+   * consumer of the address rule that passed nothing, so a run inventoried `app.orders` and
+   * `public.orders` with `public` as the session default, the object browser tagged the
+   * flat `orders` as `public.orders` and the tree resolved it, and `profile_table("orders")`
+   * in that same run was told the spelling was ambiguous. A table the run had inventoried
+   * and the browser could address could not be profiled.
+   *
+   * The run holds the fact and used to throw it away: the container walk reads it, the
+   * join uses it, and nothing carried it onto the snapshot a tool later reads.
+   */
+  test("the session default the capture read breaks a profile spelling's tie", () => {
+    const ambiguous = ambiguousRun(
+      [...CROWD, relation("app.orders", ["app", "orders"]), relation("public.orders", ["public", "orders"])],
+      ["public"],
+    );
+
+    const outcome = planTableProfile(harness().context, ambiguous, { table: "orders" });
+
+    if (outcome.kind !== "planned") throw new Error(`expected a plan, got ${outcome.kind}`);
+    expect(outcome.plan.target.entry.name).toBe("public.orders");
+  });
+
+  // The refusal is not weakened where there is no default to break the tie with: a capture
+  // that read no session default still refuses rather than guessing.
+  test("without a session default the same two candidates are still refused", () => {
+    const ambiguous = ambiguousRun([
+      ...CROWD,
+      relation("app.orders", ["app", "orders"]),
+      relation("public.orders", ["public", "orders"]),
+    ]);
+
+    const outcome = planTableProfile(harness().context, ambiguous, { table: "orders" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_SPELLING_AMBIGUOUS");
+    expect(outcome.modelText).toContain("app.orders");
+    expect(outcome.modelText).toContain("public.orders");
   });
 
   test("a spelling only ONE object answers is still profiled, so the ambiguity arm is not a net", () => {

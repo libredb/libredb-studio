@@ -1970,6 +1970,42 @@ describe("captureContextSnapshot — the object surface that says what each entr
   });
 
   /**
+   * The session default travels ON the inventory, because a tool runs long after the walk
+   * that read it (#789 bulk-read review, Important 3).
+   *
+   * It used to be read by the container walk, used by the join two lines later and then
+   * dropped, so `profile_table` resolved with no preferred container and refused a spelling
+   * the object browser resolves in the same run off the same two objects.
+   */
+  test("the capture carries the session default the walk read, so a later tool can break the same tie", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        containers: () => [
+          { path: ["app"], name: "app", level: 0, isSessionDefault: true },
+          { path: ["archive"], name: "archive", level: 0 },
+        ],
+      }),
+    );
+
+    expect(snapshot.defaultContainer).toEqual(["app"]);
+  });
+
+  // Absent is not a default to invent: an engine that marks no level leaves the field off,
+  // and a tie with nothing to break it is refused rather than guessed.
+  test("a walk that read no session default carries none", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        containers: () => [
+          { path: ["app"], name: "app", level: 0 },
+          { path: ["archive"], name: "archive", level: 0 },
+        ],
+      }),
+    );
+
+    expect(snapshot.defaultContainer).toBeUndefined();
+  });
+
+  /**
    * A tie that does not break is FINAL, and nothing may claim the entry in a later round
    * (#789 bulk-read review, Important 2).
    *

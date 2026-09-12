@@ -3289,13 +3289,28 @@ type ProfileTargetResolution =
  * `ambiguous` with its candidates, `inventoriedTable` below folded that into `null`, and
  * `null` was answered as `TABLE_NOT_INVENTORIED`. The two failures are different facts and
  * only one of them is repairable by the model, so they travel separately from here (#789).
+ *
+ * `preferredContainer` is the session default the capture read, and it is passed for the
+ * reason every other consumer of the rule passes one: `er-diagram.ts` passes the declaring
+ * object's container, `detailed-object.ts` and the inventory join pass the session default,
+ * and this was the ONE that passed nothing. A run holding `app.orders` and `public.orders`
+ * with `public` as its default had the flat `orders` tagged `public.orders` by the object
+ * browser and answered `TABLE_AMBIGUOUS` here, in the same run, so a table the run had
+ * inventoried and the browser could address could not be profiled. It breaks a tie between
+ * equally ranked entries and never promotes a worse-ranked one, which is documented on the
+ * rule itself; where the capture read no default it is absent and the refusal stands.
  */
 function resolveProfileTarget(
   objects: readonly AgentInventoryObject[],
   schema: string | undefined,
   table: string,
+  preferredContainer: readonly string[] | undefined,
 ): ProfileTargetResolution {
-  const resolution = resolveInventoryAddress(objects, schema === undefined ? table : `${schema}.${table}`);
+  const resolution = resolveInventoryAddress(
+    objects,
+    schema === undefined ? table : `${schema}.${table}`,
+    preferredContainer,
+  );
   if (resolution.kind === "absent") return { kind: "absent" };
   if (resolution.kind === "ambiguous") return { kind: "ambiguous", candidates: resolution.candidates };
   const entry = resolution.object;
@@ -3327,8 +3342,9 @@ function inventoriedTable(
   objects: readonly AgentInventoryObject[],
   schema: string | undefined,
   table: string,
+  preferredContainer: readonly string[] | undefined,
 ): ResolvedProfileTarget | null {
-  const resolution = resolveProfileTarget(objects, schema, table);
+  const resolution = resolveProfileTarget(objects, schema, table, preferredContainer);
   return resolution.kind === "resolved" ? resolution.target : null;
 }
 
@@ -3401,7 +3417,9 @@ export function planTableProfile(
   // the old flat row menu carried on `tablesAreDerivedGroupings`.
   const profilable = snapshot === null ? [] : addressableObjects(snapshot);
   const resolution: ProfileTargetResolution =
-    snapshot === null ? { kind: "absent" } : resolveProfileTarget(profilable, parsed.value.schema, parsed.value.table);
+    snapshot === null
+      ? { kind: "absent" }
+      : resolveProfileTarget(profilable, parsed.value.schema, parsed.value.table, snapshot.defaultContainer);
   // Asked BEFORE the three questions below, because none of them is about this failure: the
   // qualifier is not unknown, the object is not un-profilable and the table is not missing.
   // The run read every candidate and cannot say which the caller meant, and the candidates
@@ -3432,7 +3450,9 @@ export function planTableProfile(
       This only asks the second question once the first has failed — would this table have
       resolved unqualified? — and, when it would, says so and gives the name to use.
     */
-    const unqualified = snapshot !== null && inventoriedTable(profilable, undefined, parsed.value.table) !== null;
+    const unqualified =
+      snapshot !== null &&
+      inventoriedTable(profilable, undefined, parsed.value.table, snapshot.defaultContainer) !== null;
     if (unqualified) return unavailable("TABLE_QUALIFIER_UNKNOWN");
     // The third question, and it is asked over the WHOLE inventory: a name that resolves
     // there and not among the profilable ones is an object this run has been shown and may
@@ -3440,7 +3460,9 @@ export function planTableProfile(
     // engine's own word for the kind travels as the detail, because the kinds are the
     // provider's and this sentence may not enumerate them.
     const listed =
-      snapshot === null ? null : inventoriedTable(snapshot.objects, parsed.value.schema, parsed.value.table);
+      snapshot === null
+        ? null
+        : inventoriedTable(snapshot.objects, parsed.value.schema, parsed.value.table, snapshot.defaultContainer);
     if (listed !== null) {
       const kind = (snapshot?.kinds ?? []).find((declared) => declared.id === listed.entry.kind);
       return unavailable("OBJECT_NOT_PROFILABLE", kind === undefined ? undefined : `it is listed under ${kind.label}`);

@@ -577,6 +577,17 @@ export interface AgentInventory {
   readonly kinds?: readonly AgentInventoryKind[];
   /** Present only where a bound actually bit. Absent is a claim of completeness. */
   readonly truncated?: { readonly limit: number; readonly reason: string };
+  /**
+   * The container the session is IN, where the reading that produced this knew it (#789).
+   *
+   * It is the tie-breaker for every consumer of the address rule, and it is carried on the
+   * inventory because the fact is read once, by the container walk, and needed later by a
+   * tool: `profile_table` resolved with no preferred container and refused a spelling the
+   * object browser resolves, in the same run, off the same two objects. Absent where the
+   * engine has no containers or marked no level `isSessionDefault`, and absent is not a
+   * default to invent: a tie with nothing to break it is refused, not guessed.
+   */
+  readonly defaultContainer?: readonly string[];
 }
 
 /**
