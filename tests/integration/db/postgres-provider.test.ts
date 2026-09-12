@@ -4044,6 +4044,44 @@ describe("object surface", () => {
     };
     const relkindOf = (sql: string) => Object.keys(relations).find((relkinds) => sql.includes(`IN (${relkinds})`))!;
     mockQueryFn = async (sql, params) => {
+      // The FLAT reading, over the same relations the object reading lists (#789).
+      //
+      // The guard inside `assertObjectSurface` joins `getSchema()`'s names to the object
+      // paths with the app's own rule, and it cannot do that against a double that never
+      // answers `SCHEMA_FULL_SQL`: this fake used to fall through to the container arm,
+      // which returned `[{ name: "app" }]`, and one row with no `table_schema` and no
+      // `table_name` reached the reader as the single flat entry `undefined.undefined`.
+      // That is a shape mismatch and not a join, so the guard was measuring nothing.
+      //
+      // It is checked FIRST because `SCHEMA_FULL_SQL` also carries an `ORDER BY`.
+      //
+      // The rows are the DRIVER'S rows and the naming is left to `postgres.ts`, which is
+      // the whole point: the provider spells a name schema-qualified except in `public`
+      // (`postgres.ts:2047`), so a fixture that returned finished names would assert the
+      // fixture's spelling rather than the engine's. `public.audit_log` is the spelling
+      // PostgreSQL NEVER produces, and this epic has already taken a Critical for writing
+      // it, so the `public` row is here to be stripped: it reaches the reading as a bare
+      // `audit_log`. It sits outside the listed container deliberately, because the flat
+      // reading spans every schema the connection can see while the object listing is
+      // scoped to one, which is exactly the asymmetry the join has to survive.
+      if (sql.includes("FROM tables_info ti")) {
+        const flat = [
+          ...Object.values(relations).flatMap((names) => names.map((name) => ["app", name] as const)),
+          ["public", "audit_log"] as const,
+        ];
+        return {
+          rows: flat.map(([schema, name]) => ({
+            table_schema: schema,
+            table_name: name,
+            row_count: "0",
+            total_size: "8192",
+            columns: [{ name: "id", type: "integer", nullable: false, defaultValue: null }],
+            pk_columns: ["id"],
+            foreign_keys: [],
+            indexes: [],
+          })),
+        };
+      }
       // Checked FIRST: the bulk statement also joins pg_namespace and also carries an
       // ORDER BY, so a looser arm below would answer it with a container row.
       if (sql.includes("described_columns")) {
