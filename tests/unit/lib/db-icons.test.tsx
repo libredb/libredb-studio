@@ -17,6 +17,7 @@ import {
   OpenSearchIcon,
   TrinoIcon,
   CassandraIcon,
+  Db2Icon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -38,6 +39,7 @@ describe("db-icons", () => {
     { name: "OpenSearchIcon", Component: OpenSearchIcon },
     { name: "TrinoIcon", Component: TrinoIcon },
     { name: "CassandraIcon", Component: CassandraIcon },
+    { name: "Db2Icon", Component: Db2Icon },
   ];
 
   for (const { name, Component } of icons) {

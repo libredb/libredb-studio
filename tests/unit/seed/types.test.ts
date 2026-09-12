@@ -81,6 +81,7 @@ describe("SeedConnectionSchema", () => {
       "druid",
       "trino",
       "cassandra",
+      "db2",
     ];
     for (const type of allTypes) {
       const result = SeedConnectionSchema.safeParse({ ...validConn, type });

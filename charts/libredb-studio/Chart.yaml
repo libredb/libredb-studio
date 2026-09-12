@@ -1,6 +1,6 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting sixteen engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and libSQL
+description: Web-based SQL IDE for cloud-native teams supporting seventeen engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, IBM Db2 LUW, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and libSQL
 type: application
 version: 0.1.63
 appVersion: "0.15.0"
@@ -38,6 +38,9 @@ keywords:
   # One keyword only, unlike the pair above: DuckDB is registered as `duckdb` and that
   # is also the product name an evaluator types, so there is no second spelling to catch.
   - duckdb
+  # Two spellings for IBM Db2: the type-id `db2` and the product name a user searches.
+  - db2
+  - ibm db2
   - web-ide
 maintainers:
   - name: cevheri

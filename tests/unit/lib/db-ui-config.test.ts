@@ -25,6 +25,7 @@ const ALL_TYPES: DatabaseType[] = [
   "cassandra",
   "libsql",
   "duckdb",
+  "db2",
 ];
 
 describe("db-ui-config", () => {
@@ -60,7 +61,10 @@ describe("db-ui-config", () => {
       // libSQL joins them: `libsql://<database>-<org>.turso.io?authToken=<jwt>` is the
       // URL Turso's own CLI prints, so there is a real string to paste here - unlike
       // Trino, whose canonical form is a JDBC URL.
-      const withToggle = new Set<DatabaseType>(["mongodb", "couchbase", "clickhouse", "libsql"]);
+      // Db2 joins them too: the driver takes a `KEY=VALUE;` DRDA attribute list, and
+      // `db2://host:port/db` is the scheme common tools/ORMs emit, so there is a string
+      // to paste.
+      const withToggle = new Set<DatabaseType>(["mongodb", "couchbase", "clickhouse", "libsql", "db2"]);
       for (const type of ALL_TYPES) {
         expect(getDBConfig(type).showConnectionStringToggle).toBe(withToggle.has(type));
       }
@@ -370,6 +374,8 @@ describe("db-showcase", () => {
         "redis",
         "oracle",
         "mssql",
+        // IBM Db2 sits with the enterprise relational names it is compared to.
+        "db2",
         "elasticsearch",
         "opensearch",
         "cassandra",

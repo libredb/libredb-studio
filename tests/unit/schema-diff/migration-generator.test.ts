@@ -940,6 +940,9 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     mysql: "key-follows-in-an-alter",
     oracle: "key-follows-in-an-alter",
     mssql: "key-follows-in-an-alter",
+    // Db2 LUW accepts a trailing `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY`, so
+    // the key leaves CREATE TABLE the same way it does on PostgreSQL and the others.
+    db2: "key-follows-in-an-alter",
     clickhouse: "engine-has-no-foreign-key",
     couchbase: "engine-has-no-foreign-key",
     druid: "engine-has-no-foreign-key",
@@ -1055,6 +1058,11 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   mongodb: { label: "MongoDB", reason: "schemaless" },
   redis: { label: "Redis", reason: "no column definitions" },
   libredb: { label: "LibreDB", reason: "JSON command grammar" },
+  // Db2 LUW has its own branch in the modified-column chain: it spells a type change
+  // `ALTER COLUMN c SET DATA TYPE t` (the PostgreSQL arm's `... TYPE t` is invalid Db2)
+  // and uses PostgreSQL's own SET/DROP verbs for nullability and default. The DDL is
+  // pinned in the "generateMigrationSQL: db2" describe block below.
+  db2: "has-own-branch",
 };
 
 /**
@@ -1210,6 +1218,133 @@ describe("generateMigrationSQL: duckdb", () => {
   });
 });
 
+/**
+ * Db2 LUW's modified-column DDL, asserted at the string level. Unlike the DuckDB block
+ * above, there is no embedded Db2 to execute against — the driver is a server client, not
+ * an in-process engine — so these pin the emitted spelling rather than a running result;
+ * the byte-exact behaviour is confirmed on the gate-4 live pass (docs/providers/db2.md).
+ */
+describe("generateMigrationSQL: db2", () => {
+  test("a modified column emits Db2's SET DATA TYPE spelling, not PostgreSQL's TYPE", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "db2");
+
+    expect(sql).toContain('ALTER TABLE "users" ALTER COLUMN "name" SET DATA TYPE varchar(255);');
+    expect(sql).toContain('ALTER TABLE "users" ALTER COLUMN "name" SET NOT NULL;');
+    expect(sql).toContain('ALTER TABLE "users" ALTER COLUMN "name" SET DEFAULT \'unknown\';');
+    // The invalid PostgreSQL spelling must not leak through the shared `else` arm.
+    expect(sql).not.toMatch(/ALTER COLUMN "name" TYPE /);
+    expect(sql).not.toContain("Cannot alter column");
+  });
+
+  test("added and dropped columns take the standard spelling, which Db2 accepts", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "db2");
+
+    expect(sql).toContain('ALTER TABLE "users" ADD COLUMN "phone" varchar(20);');
+    expect(sql).toContain('ALTER TABLE "users" DROP COLUMN "legacy_col";');
+  });
+
+  test("the migration is wrapped in a transaction, because Db2 DDL is transactional", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "db2");
+
+    expect(sql).toContain("BEGIN;");
+    expect(sql).toContain("COMMIT;");
+  });
+
+  test("a REORG advisory (commented, not executable) is emitted once per table left REORG-pending", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "db2");
+
+    // The REORG is emitted as a COMMENT, following the generator's pattern for anything
+    // it cannot emit as both correct and safe to run blindly — a REORG can be very slow
+    // and lock-heavy, and cannot run inside the BEGIN;/COMMIT; wrapper. So there must be
+    // NO executable REORG statement, only the advisory comment lines.
+    expect(sql).not.toMatch(/^\s*CALL SYSPROC\.ADMIN_CMD\('REORG TABLE/m);
+    expect(sql).toContain("REORG-pending");
+    const advisory = sql.split("\n").filter((line) => line.includes("REORG TABLE"));
+    // One advisory line (the commented CALL) per table, and it is a comment.
+    expect(advisory).toHaveLength(1);
+    expect(advisory[0].trimStart().startsWith("--")).toBe(true);
+    expect(advisory[0]).toContain('REORG TABLE "users"');
+    // The advisory appears after the ALTERs it refers to.
+    expect(sql.indexOf("REORG TABLE")).toBeGreaterThan(sql.indexOf("SET DATA TYPE"));
+    // And it warns about the cost / transaction boundary.
+    expect(sql).toMatch(/slow|lock|OUTSIDE the transaction/i);
+  });
+
+  test("no REORG advisory when only immediate operations (ADD COLUMN, index) are present", () => {
+    // An added-table diff carries no dropped or modified column, so nothing goes pending.
+    const sql = generateMigrationSQL(makeAddedTableDiff(), "db2");
+    expect(sql).not.toContain("REORG");
+  });
+
+  test("a modified column that drops its default emits Db2's DROP DEFAULT", () => {
+    // The shared fixture only ADDS a default; this covers the removal arm.
+    const diff: SchemaDiff = {
+      hasChanges: true,
+      summary: { added: 0, removed: 0, modified: 1 },
+      tables: [
+        {
+          action: "modified",
+          tableName: "users",
+          columns: [
+            {
+              action: "modified",
+              columnName: "status",
+              sourceType: "varchar(20)",
+              targetType: "varchar(20)",
+              sourceNullable: false,
+              targetNullable: true,
+              sourceDefault: "'active'",
+              targetDefault: undefined,
+              changes: ["Default removed", "Nullable changed"],
+            },
+          ],
+          indexes: [],
+          foreignKeys: [],
+        },
+      ],
+    };
+    const sql = generateMigrationSQL(diff, "db2");
+    expect(sql).toContain('ALTER TABLE "users" ALTER COLUMN "status" DROP DEFAULT;');
+    // Nullability false -> true emits DROP NOT NULL.
+    expect(sql).toContain('ALTER TABLE "users" ALTER COLUMN "status" DROP NOT NULL;');
+  });
+
+  test("a DEFAULT-only column change does NOT raise the REORG advisory (metadata-only on Db2 LUW)", () => {
+    // Only the default changes — no type change, no nullability change. On Db2 LUW this
+    // is a metadata-only ALTER that does not go REORG-pending, so the advisory would be a
+    // false positive.
+    const diff: SchemaDiff = {
+      hasChanges: true,
+      summary: { added: 0, removed: 0, modified: 1 },
+      tables: [
+        {
+          action: "modified",
+          tableName: "users",
+          columns: [
+            {
+              action: "modified",
+              columnName: "status",
+              sourceType: "varchar(20)",
+              targetType: "varchar(20)",
+              sourceNullable: true,
+              targetNullable: true,
+              sourceDefault: "'active'",
+              targetDefault: "'inactive'",
+              changes: ["Default changed"],
+            },
+          ],
+          indexes: [],
+          foreignKeys: [],
+        },
+      ],
+    };
+    const sql = generateMigrationSQL(diff, "db2");
+    expect(sql).toContain('ALTER TABLE "users" ALTER COLUMN "status" SET DEFAULT \'inactive\';');
+    expect(sql).not.toContain("REORG");
+    expect(sql).not.toContain("SET DATA TYPE");
+  });
+});
+
 describe("generateMigrationSQL: dialects that cannot modify a column", () => {
   for (const [dialect, expected] of Object.entries(MODIFIED_COLUMN_COVERAGE)) {
     if (typeof expected === "string") continue;
@@ -1265,6 +1400,10 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   elasticsearch: false, // `BEGIN` is not in the grammar (NO_COLUMN_MODIFICATION's measured statement list; docs/providers/elasticsearch.md §9)
   opensearch: false, // same, measured separately on OpenSearch 3.8.0 (docs/providers/opensearch.md §9)
   trino: false, // connector-dependent at best; no portable BEGIN/COMMIT (NO_COLUMN_MODIFICATION)
+  // Db2 LUW has transactional DDL — a CREATE/ALTER inside BEGIN;/COMMIT; is atomic — so it
+  // takes the default wrapper the way PostgreSQL and MySQL do. Its own modified-column DDL
+  // is pinned in the "generateMigrationSQL: db2" block; this line classifies the wrapper.
+  db2: "BEGIN;",
 };
 
 // Both creation and modification paths must use the same wrapper policy.

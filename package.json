@@ -24,7 +24,8 @@
     "elasticsearch",
     "opensearch",
     "trino",
-    "cassandra"
+    "cassandra",
+    "db2"
   ],
   "homepage": "https://github.com/libredb/libredb-studio",
   "bugs": {
@@ -123,6 +124,7 @@
   "//trustedDependencies": "Explicit allowlist of the ONLY dependencies permitted to execute code at install time. Without this field bun applies its own default allowlist, which synthesizes a `node-gyp rebuild` for any package shipping a binding.gyp - including better-sqlite3 13, whose `gypfile: false` says not to (it is N-API and ships prebuilts, so npm honours it and bun does not). These three are exactly the packages that ran scripts before the field existed; cpu-features (optional, ssh2) and unrs-resolver stay blocked as they already were.",
   "trustedDependencies": [
     "esbuild",
+    "ibm_db",
     "oracledb",
     "ssh2"
   ],
@@ -216,6 +218,7 @@
     "embla-carousel-react": "^8.6.0",
     "framer-motion": "^13.2.0",
     "geist": "^1.7.2",
+    "ibm_db": "4.0.1",
     "input-otp": "^1.5.0",
     "ioredis": "^5.11.1",
     "jose": "^6.2.12",

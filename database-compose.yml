@@ -89,6 +89,53 @@ services:
       ORACLE_PASSWORD: Password123!
     ports:
       - "1521:1521"
+  db2:
+    # IBM Db2 LUW (Community Edition image). One container is the whole server, like the
+    # mssql and oracle services above, so it carries no `profiles:` — it is a shipped
+    # provider and a plain `docker compose up` has to be able to reproduce its integration
+    # pass, the same rule mssql/oracle/clickhouse follow.
+    #
+    # Three things this image needs that the others do not, and each is load-bearing:
+    #
+    #   * `privileged: true`. The Db2 engine sets kernel parameters (shared memory, message
+    #     queues) at startup and the container's entrypoint refuses to proceed without the
+    #     capability to do so. Without it the database never comes up. This is IBM's own
+    #     documented requirement for this image, not a convenience.
+    #   * `LICENSE=accept`. The image will not start otherwise; there is no EULA prompt to
+    #     answer interactively, so the acceptance is the env var.
+    #   * A long first boot. Db2 creates the instance and the SAMPLE-style database on first
+    #     run, which takes minutes — far longer than mssql/oracle — so the healthcheck's
+    #     retries and start_period are generous. MEASURED expectations belong in
+    #     docs/providers/db2.md after the gate-4 pass; the values here are a starting point,
+    #     not a claim.
+    #
+    # DB2INSTANCE/DB2INST1_PASSWORD are the instance owner the provider connects as; DBNAME
+    # is the database its `database` field should point at.
+    image: icr.io/db2_community/db2:12.1.0.0
+    container_name: libredb-db2
+    restart: unless-stopped
+    privileged: true
+    environment:
+      LICENSE: accept
+      DB2INSTANCE: db2inst1
+      DB2INST1_PASSWORD: Password123!
+      DBNAME: testdb
+      # Skips the optional text-search and audit setup the image otherwise runs on first
+      # boot, which shortens the multi-minute init the healthcheck waits through.
+      ARCHIVE_LOGS: "false"
+      AUTOCONFIG: "false"
+    ports:
+      - "50000:50000"
+    healthcheck:
+      # `db2gcf -s` reports the instance state; the database is queryable once the entrypoint
+      # writes "Setup has completed" to the log, but db2gcf is the machine-readable signal.
+      # The interval and retry budget cover several minutes of first-boot setup — a fixed
+      # sleep would be wrong the way the cassandra service's comment warns.
+      test: ["CMD-SHELL", "su - db2inst1 -c 'db2gcf -s' | grep -q Available"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 120s
   couchbase:
     # The image ships an uninitialized node: the cluster, the credentials below,
     # the bucket and its primary index are all applied by the couchbase-init

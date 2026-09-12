@@ -63,7 +63,22 @@ export type DatabaseType =
   // MotherDuck (`md:`), Quack and DuckLake are NOT this id and have no row anywhere
   // yet: each is a different connection story than a local path, and #424 publishes
   // no name it has not connected to.
-  | "duckdb";
+  | "duckdb"
+  // IBM Db2 for Linux, UNIX and Windows (Db2 LUW). A proprietary relational engine
+  // reached over the DRDA binary protocol, so - unlike the driver-free HTTP providers
+  // - it carries a NATIVE driver (`ibm_db`, an N-API addon whose install step fetches
+  // the IBM CLI driver). There is a first-class HTTP path (the Db2 REST service's
+  // `/v1/services/execsql`), but it is a separately deployed container that is
+  // commonly disabled, so an IDE that must reach any standard Db2 uses the driver the
+  // way DBeaver/DataGrip do. Standard SQL: double-quoted identifiers and
+  // `FETCH FIRST n ROWS ONLY` pagination are both correct, so this extends
+  // `SQLBaseProvider` and overrides only `prepareQuery()`, mirroring Oracle. The
+  // connection's `database` field pins one database; a Db2 SCHEMA is the namespace
+  // level, read as the connecting user's schema by default the way Oracle reads its
+  // owner. `supportsExplain` is false initially (the same posture as Oracle and SQL
+  // Server, #126): Db2 EXPLAIN populates explain tables rather than returning a plan
+  // from one statement, so the single-statement explain path cannot express it yet.
+  | "db2";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

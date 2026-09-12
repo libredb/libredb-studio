@@ -16,7 +16,7 @@ Hosting LibreDB Studio means running a single stateless Next.js container that s
 
 ## Dependencies for libredb-studio Hosting
 
-- A database to connect to — any of the sixteen engines above (bring your own, or add a Railway database to the project).
+- A database to connect to — any of the seventeen engines above (bring your own, or add a Railway database to the project).
 - A persistent volume mounted at `/app/data` for the SQLite-backed store of saved connections and settings (included in this template).
 
 ### Deployment Dependencies

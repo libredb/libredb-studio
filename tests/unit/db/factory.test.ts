@@ -159,6 +159,21 @@ mock.module("mssql", () => {
   };
 });
 
+mock.module("ibm_db", () => {
+  // The Db2 provider imports the module as its driver and calls `open`, which hands back
+  // a connection with `query`/`close`. createDatabaseProvider only constructs the
+  // provider (connect() is not called here), so a minimal open/query/close is enough for
+  // the dynamic import to resolve and the construction test below to pass.
+  const mockConn = {
+    query: (_sql: string, cb: (err: Error | null, rows: Record<string, unknown>[]) => void) => cb(null, []),
+    close: (cb: (err: Error | null) => void) => cb(null),
+  };
+  return {
+    default: { open: (_c: string, cb: (err: Error | null, conn: typeof mockConn) => void) => cb(null, mockConn) },
+    open: (_c: string, cb: (err: Error | null, conn: typeof mockConn) => void) => cb(null, mockConn),
+  };
+});
+
 mock.module("mongodb", () => {
   const mockCollection = {
     find: () => ({ limit: () => ({ toArray: async () => [] }), toArray: async () => [] }),
@@ -401,6 +416,14 @@ describe("createDatabaseProvider", () => {
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
     expect(provider.type).toBe("mssql");
+  });
+
+  test('creates provider for type "db2"', async () => {
+    // Db2 requires a database name (the provider's validate() enforces it, like mssql).
+    const conn = makeConnection("db2", { port: 50000, database: "testdb" });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("db2");
   });
 
   test('creates provider for type "couchbase"', async () => {
