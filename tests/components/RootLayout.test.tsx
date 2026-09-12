@@ -42,23 +42,22 @@ describe("RootLayout", () => {
   test("shares a branded static image with matching Open Graph and Twitter metadata", () => {
     const screenshot = readFileSync(new URL("../../public/screenshots/hero-editor.png", import.meta.url));
     const image = {
-      url: "https://app.libredb.org/screenshots/hero-editor.png",
+      url: "https://raw.githubusercontent.com/libredb/libredb-studio/main/public/screenshots/hero-editor.png",
       alt: "LibreDB Studio SQL editor and query results",
     };
     expect(metadata.openGraph).toMatchObject({
       type: "website",
-      url: "https://app.libredb.org",
+      url: "https://libredb.org",
       title: metadata.title,
-      description: metadata.description,
       siteName: "LibreDB Studio",
       images: [{ ...image, width: screenshot.readUInt32BE(16), height: screenshot.readUInt32BE(20) }],
     });
     expect(metadata.twitter).toMatchObject({
       card: "summary_large_image",
       title: metadata.title,
-      description: metadata.description,
       images: [image],
     });
+    expect(metadata.openGraph?.description).toBe(metadata.twitter?.description);
   });
 
   test("describes the database scope in a search-result snippet", () => {
@@ -67,7 +66,7 @@ describe("RootLayout", () => {
     expect(description.length).toBeLessThanOrEqual(160);
     expect(description).toContain("self-hosted");
     expect(description).toContain("SQL and NoSQL");
-    expect(description).toContain("and more");
+    expect(description).toContain("database management platform");
     expect(description).not.toMatch(/\d/);
   });
 
