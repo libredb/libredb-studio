@@ -53,6 +53,7 @@ import {
   type MaintenanceType,
   type ObjectDetail,
   type ObjectDetailBatch,
+  type ObjectSourceDocument,
   type PerformanceMetrics,
   type ProviderCapabilities,
   type ProviderExecutionContext,
@@ -64,7 +65,13 @@ import {
   type StorageStats,
   type TableStats,
 } from "../../../types";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../../object-kinds";
+import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+} from "../../../object-kinds";
 import {
   DatabaseConfigError,
   DatabaseError,
@@ -117,6 +124,12 @@ import {
   listObjectsSql,
   listedObject,
   objectRead,
+  type ObjectSourceRow,
+  blankDefinitionReason,
+  blankDefinitionShape,
+  objectSourceColumn,
+  objectSourceForm,
+  objectSourceSql,
   seedZeroCounts,
 } from "./objects";
 import { comparePaths } from "@/lib/db/object-path";
@@ -422,19 +435,49 @@ export class DuckDBProvider extends SQLBaseProvider {
       // catalog hierarchy entirely - it has no `database_name` and no `schema_name`, so
       // there is no container in this model it could hang under. Recorded in
       // `docs/providers/duckdb.md` as out of Phase 1's scope.
+      //
+      // EVERY declared kind carries `hasSource` (#789), and all four are `sql`. DuckDB
+      // publishes a definition text for each of them and no fifth kind is declared, so
+      // the "declares nothing" half of this engine's row in #789 is empty. `sql` is the
+      // honest id rather than a compromise: DuckDB's dialect is PostgreSQL-shaped, the
+      // installed monaco-editor 0.56.0 registers no DuckDB id, and the text the engine
+      // publishes is ordinary SQL. The `macro` text is the ONE `partial` form in the
+      // fleet's design and `objects.ts` records why.
       objectKinds: [
-        { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+        {
+          id: "table",
+          role: "relation",
+          label: "Table",
+          labelPlural: "Tables",
+          acceptsRowWrites: true,
+          hasSource: true,
+          sourceLanguage: "sql",
+        },
         // No `acceptsRowWrites` on a view. Measured on v1.5.5: `INSERT INTO <view>`
         // answers `Catalog Error: <view> is not an table`, so a view is never an import
         // or inline-edit target here - not even the single-table case PostgreSQL takes.
-        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views", hasSource: true, sourceLanguage: "sql" },
         // ONE kind for both macro forms. A scalar macro (`AS <expression>`) and a table
         // macro (`AS TABLE <select>`) are `function_type` 'macro' and 'table_macro', and
         // both are something a person wrote with CREATE MACRO. There is no
         // `duckdb_macros()`: `duckdb_functions()` filtered on `function_type` is the only
         // route, and `information_schema` has no `.routines` on this engine.
-        { id: "macro", role: "routine", label: "Macro", labelPlural: "Macros" },
-        { id: "sequence", role: "config", label: "Sequence", labelPlural: "Sequences" },
+        {
+          id: "macro",
+          role: "routine",
+          label: "Macro",
+          labelPlural: "Macros",
+          hasSource: true,
+          sourceLanguage: "sql",
+        },
+        {
+          id: "sequence",
+          role: "config",
+          label: "Sequence",
+          labelPlural: "Sequences",
+          hasSource: true,
+          sourceLanguage: "sql",
+        },
       ],
     };
   }
@@ -983,6 +1026,121 @@ export class DuckDBProvider extends SQLBaseProvider {
       .sort((left, right) => comparePaths(left.path, right.path));
 
     return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
+  }
+
+  /**
+   * One object's definition text, as DuckDB rebuilds it from its own catalog (#789).
+   *
+   * EVERY DECLARED KIND CAN ANSWER, and no kind here declares nothing: `duckdb_tables()`,
+   * `duckdb_views()` and `duckdb_sequences()` each publish a `sql` column and
+   * `duckdb_functions()` publishes `macro_definition`, so this engine's row in #789 has an
+   * empty "declares nothing" half.
+   *
+   * `origin` IS `regenerated` FOR ALL FOUR, and that is measured rather than assumed.
+   * `CREATE TABLE main.customers (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, note
+   * VARCHAR DEFAULT 'none')` reads back as `CREATE TABLE customers(id INTEGER PRIMARY KEY,
+   * "name" VARCHAR NOT NULL, note VARCHAR DEFAULT('none'));` on v1.5.5: the schema
+   * qualification is gone, `name` is quoted, the default is parenthesised, and on the
+   * neighbouring table an inline `REFERENCES` comes back as a table-level `FOREIGN KEY`
+   * clause. None of that is the author's bytes. SQLite is the engine where `stored` has a
+   * producer; claiming it here would make the caption's distinction decoration.
+   *
+   * `form` IS PER KIND AND THE MACRO IS THE EXCEPTION, deliberately. A table, a view and a
+   * sequence each answer a statement ending in `;` that runs as given, so they are
+   * `complete`. A macro answers a BODY - `(x + 1)` for a scalar macro, `SELECT * FROM
+   * analytics.events LIMIT n` for a table macro - because DuckDB publishes no `CREATE
+   * MACRO` statement anywhere, so it is `partial` and the Source caption says what that
+   * means. Assembling a statement out of `parameters` would show a user something the
+   * engine never published, which they might copy and run; Phase 3 assembles, per the rule
+   * that the provider builds the statement and core never does. `objects.ts` carries the
+   * whole argument beside the record that decides it.
+   *
+   * NO REFUSAL IS REACHABLE HERE, and it is a measured CANNOT rather than an omission.
+   * Measured on v1.5.5: zero `duckdb_tables()` rows, zero of 47 `duckdb_views()` rows, zero
+   * `duckdb_sequences()` rows and zero of 136 macros carry a NULL or whitespace-only text,
+   * and even `CREATE MACRO no_body() AS NULL` publishes the four characters `NULL`. The
+   * blank arm exists anyway, because an empty definition must never reach an editor as a
+   * definition, and its three sentences say which of three shapes produced it.
+   *
+   * ABSENCE RAISES, and on this engine it is the ONLY failure the read has. A missing name
+   * answers ZERO ROWS rather than a row carrying nothing, and no rows says nothing of that
+   * name is there under that kind, which is a different fact from "the definition cannot be
+   * read". The message names the object AND its container, because on a two-level engine
+   * the same name in the neighbouring catalog is a real object and the caller needs to know
+   * which one was looked for.
+   *
+   * THE KIND IS A REQUIRED ARGUMENT AND THIS ENGINE IS ONE OF THE THREE REASONS IT IS.
+   * Measured on v1.5.5 and held by `docker/duckdb-init/01-object-fixture.sql`: a table, a
+   * sequence and a macro can all be called `overlap` in one schema, so a read keyed on the
+   * path alone answers one of the three at random.
+   *
+   * NOTHING HERE IS POSITIONAL (standing ruling 5g). The three binds and the container
+   * names in the message all come from `objectRead()`, the same reader `describeObject`
+   * uses, so the Source tab and the detail pane cannot disagree about what a path
+   * addresses. A declaration with its two levels SWAPPED is driven all the way to a bound
+   * value in this provider's suite, which is what a declaration that merely matches the
+   * real one cannot do.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`DuckDB declares no object kind "${kind}"`, "duckdb");
+    }
+    if (spec.hasSource !== true) {
+      throw new QueryError(`DuckDB publishes no definition text for the kind "${kind}"`, "duckdb");
+    }
+    if (spec.sourceLanguage === undefined) {
+      // An unregistered or absent Monaco id degrades to plain text with no throw and
+      // nothing observable, so a kind that declared source and forgot its language would
+      // ship a Source tab that silently stopped highlighting. The declaration is the only
+      // source of the language and there is no literal here to fall back to.
+      throw new QueryError(
+        `DuckDB declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
+        "duckdb",
+      );
+    }
+
+    const read = objectRead(capabilities, spec, path);
+    const sql = objectSourceSql(kind);
+    const rows = await this.runObjectRows<ObjectSourceRow>(sql, read.binds);
+    const row = rows[0];
+    if (row === undefined) {
+      throw new QueryError(`No DuckDB ${kind} named ${read.name} in ${read.catalog}.${read.schema}`, "duckdb", sql);
+    }
+
+    const definition = row.definition;
+    if (typeof definition !== "string" || definition.trim() === "") {
+      return {
+        path: [...path],
+        kind,
+        parts: [
+          {
+            id: "definition",
+            label: "Definition",
+            unavailable: blankDefinitionReason(blankDefinitionShape(row), kind, objectSourceColumn(kind), read.name),
+          },
+        ],
+      };
+    }
+
+    const bounded = applySourceBound(definition, limit);
+    return {
+      path: [...path],
+      kind,
+      parts: [
+        {
+          id: "definition",
+          label: "Definition",
+          text: bounded.text,
+          language: spec.sourceLanguage,
+          form: objectSourceForm(kind),
+          origin: "regenerated",
+          ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+        },
+      ],
+    };
   }
 
   // ==========================================================================

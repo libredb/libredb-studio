@@ -760,8 +760,6 @@ listed DuckDB object carries no `rowCount` at all.
   alongside `system`, and both are excluded together. A session-scoped table is invisible in the
   tree.
 - Secrets, for the reason above.
-- Object SOURCE, which is Phase 2's. `duckdb_views().sql`, `duckdb_sequences().sql` and
-  `duckdb_functions().macro_definition` all publish it, so the data is there when that phase arrives.
 - A macro's parameters. `duckdb_functions().parameters` is a `VARCHAR[]` of names, and a routine has
   no columns, so `describeObject` answers three empty arrays for a macro and a sequence without a
   round trip.
@@ -772,6 +770,115 @@ cannot separate the user's objects from the system catalog, which is the one dis
 needs. `CALL pragma_table_info('<table>')` additionally answers the SQLite-shaped
 `cid, name, type, notnull, dflt_value, pk` — and `notnull` projects fine here because it is `CALL`ed
 rather than selected bare, unlike the libSQL case recorded in [libsql.md](./libsql.md) §3.7.
+
+---
+
+### Object source (#789)
+
+Every declared kind publishes a definition text, so **all four declare `hasSource`, all four with
+`sourceLanguage: "sql"`, and no kind declares nothing.** `readObjectSource(path, kind, limit?)` reads
+one object and answers a document of exactly one part.
+
+`sql` is the honest Monaco id rather than a compromise. DuckDB's dialect is PostgreSQL-shaped, the
+installed monaco-editor 0.56.0 registers no DuckDB id, and the text the engine publishes is ordinary
+SQL. This is unlike Oracle, SQL Server and Cassandra, where `plsql`, `tsql` and `cql` are not
+registrable ids in that bundle and `sql` really is a compromise those provider docs record.
+
+| kind | statement | what the text IS | `form` | `origin` |
+|---|---|---|---|---|
+| `table` | `SELECT sql AS definition FROM duckdb_tables() WHERE database_name = $1 AND schema_name = $2 AND table_name = $3` | a `CREATE TABLE` statement ending in `;`, rebuilt from the catalog | `complete` | `regenerated` |
+| `view` | `SELECT sql AS definition FROM duckdb_views() WHERE database_name = $1 AND schema_name = $2 AND view_name = $3` | a `CREATE VIEW` statement ending in `;` | `complete` | `regenerated` |
+| `sequence` | `SELECT sql AS definition FROM duckdb_sequences() WHERE database_name = $1 AND schema_name = $2 AND sequence_name = $3` | a `CREATE SEQUENCE` statement with every option spelled out | `complete` | `regenerated` |
+| `macro` | `SELECT macro_definition AS definition FROM duckdb_functions() WHERE database_name = $1 AND schema_name = $2 AND function_type IN ('macro', 'table_macro') AND function_name = $3` | the macro **body**, never a statement | **`partial`** | `regenerated` |
+
+#### The macro is `partial`, deliberately
+
+`duckdb_functions().macro_definition` is a BODY. Measured on v1.5.5 against
+`docker/duckdb-init/01-object-fixture.sql`: `CREATE MACRO main.add_one(x) AS x + 1` publishes
+`(x + 1)`, and `CREATE MACRO analytics.recent_events(n) AS TABLE SELECT * FROM analytics.events
+LIMIT n` publishes `SELECT * FROM analytics.events LIMIT n`. DuckDB publishes no `CREATE MACRO`
+statement anywhere: there is no `duckdb_macros()`, and `information_schema` has no `.routines` on this
+engine.
+
+The alternative was assembling a statement out of `duckdb_functions().parameters`. It is declined.
+Assembling would show a user a statement the engine never published, which they might copy and run,
+and the Source pane says `form: partial` with a caption that tells them the text is the body only.
+A less pretty pane that is more true. Phase 3 assembles, per the rule that the provider builds the
+statement and core never does.
+
+#### `origin` is `regenerated` on all four, and that is measured
+
+The three `sql` columns are **not** the author's bytes. Measured on v1.5.5:
+
+```
+CREATE TABLE main.customers (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, note VARCHAR DEFAULT 'none')
+  -> CREATE TABLE customers(id INTEGER PRIMARY KEY, "name" VARCHAR NOT NULL, note VARCHAR DEFAULT('none'));
+CREATE TABLE main.orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES main.customers(id), total DECIMAL(12,2))
+  -> CREATE TABLE orders(id INTEGER PRIMARY KEY, customer_id INTEGER, total DECIMAL(12,2), FOREIGN KEY (customer_id) REFERENCES customers(id));
+CREATE SEQUENCE main.customer_seq START 1
+  -> CREATE SEQUENCE customer_seq INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START 1 NO CYCLE;
+```
+
+The schema qualification is dropped, `name` is quoted, the default is parenthesised, an inline
+`REFERENCES` becomes a table-level `FOREIGN KEY` clause, and every sequence option is spelled out
+whether the author wrote it or not. SQLite is the engine in this fleet where `origin: "stored"` has a
+producer; claiming it here would make the Source caption's distinction decoration.
+
+#### The refusals: NONE, stated as a CANNOT
+
+**This engine has no privilege model and no refusal for a source read.** DuckDB has no users, no
+roles and no passwords (§11), so there is nothing a read can be denied for.
+
+Nor does it answer a row carrying nothing. Measured on v1.5.5 over a fresh instance holding the
+fixture: zero `duckdb_tables()` rows, zero of 47 `duckdb_views()` rows, zero `duckdb_sequences()`
+rows and zero of 136 macros carry a NULL or whitespace-only text. Even a macro written to have no
+body publishes something: `CREATE MACRO no_body() AS NULL` answers the four characters `NULL`.
+
+The provider still carries a blank arm, because an empty definition must never reach an editor as a
+definition, and it says **which of three shapes** produced it: the reply carried no definition column
+at all (a fact about the READ, not about the object), the column was NULL, or the column held no
+non-whitespace character. Those three sentences are **ours**, not the engine's, which is this
+engine's one exception to the "the engine's own sentence, unprefixed" guarantee: from DuckDB's point
+of view the read SUCCEEDED and answered a row, so there is nothing to carry verbatim.
+
+#### A missing name is ABSENCE and raises
+
+A name nothing carries answers **zero rows**, not a row carrying nothing, so the read raises a
+`QueryError` naming the object and its container (`No DuckDB macro named no_such_macro in
+memory.main`). The container is in the message because on a two-level engine the same name in the
+neighbouring catalog is a real object, and a caller needs to be told which one was looked for.
+
+#### The kind is a required argument, and this engine is one of the three reasons
+
+Measured on v1.5.5, and held by `docker/duckdb-init/01-object-fixture.sql`: a table, a sequence and a
+macro can all be called `overlap` in one schema, and they answer three different definitions.
+
+```
+table    -> CREATE TABLE overlap(id INTEGER);
+sequence -> CREATE SEQUENCE overlap INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START 1 NO CYCLE;
+macro    -> x
+```
+
+A source read keyed on the path alone answers one of the three at random. The kind picks the catalog
+function; the three binds pick the row. MySQL, MariaDB and DuckDB are the three engines that made
+`kind` a required argument of `readObjectSource`.
+
+#### No escaper, and there is no identifier position to escape
+
+Every bind is a parameter. Each `duckdb_*` table function publishes its container as a COLUMN, so a
+catalog and a schema are bound STRINGS rather than parts of a three-part name, and the object's name
+is bound too. That removes the whole class of quoting defect ClickHouse and SQL Server need an
+identifier escaper for. The same statement builder that the count, the listing and the four detail
+reads use builds this one, so a change to the container filter or to the macro `function_type`
+predicate moves the source read with it.
+
+#### A macro's overloads
+
+There are none to disambiguate. Measured on v1.5.5: `CREATE MACRO main.pair(a) AS a` followed by
+`CREATE MACRO main.pair(a, b) AS a + b` is refused with
+`Catalog Error: Macro Function with name "pair" already exists!`, so a macro name is unique within its
+schema and the last path segment is the whole identity. This is unlike PostgreSQL, where the routine
+segment carries an argument type list.
 
 ---
 
@@ -867,10 +974,25 @@ sibling test files.
 Two things the tests deliberately do **not** assert, both from §3.5 and §7: `memory_limit` (80% of
 host RAM, machine-dependent) and any absolute byte figure parsed from a formatted size string.
 
-The object-surface tests (§6) are the same shape and it matters more there: because the engine is
-in-process, every claim about `duckdb_databases()`, `duckdb_schemas()` and `function_type` in this
-document is re-measured against a REAL DuckDB on every test run, and the fixture `ATTACH`es a second
-`:memory:` catalog so the two container levels are exercised live. Two facts are asserted on the
+The object-surface and object-source tests (§6) are the same shape and it matters more there:
+because the engine is in-process, every claim about `duckdb_databases()`, `duckdb_schemas()`,
+`function_type` and every definition text in this document is re-measured against a REAL DuckDB on
+every test run, and the fixture `ATTACH`es a second catalog so the two container levels are exercised
+live.
+
+**The fixture is a committed file**, `docker/duckdb-init/01-object-fixture.sql`, replayed by the
+suite through `docker/duckdb-init/build-fixture.ts`. The same reader builds a database FILE anybody
+can point Studio at:
+
+```bash
+bun docker/duckdb-init/build-fixture.ts                    # ./.duckdb-fixture/object-fixture.duckdb
+bun docker/duckdb-init/build-fixture.ts /tmp/demo.duckdb   # anywhere else
+```
+
+The fixture's second catalog is a placeholder the reader substitutes: the suite attaches `:memory:`
+and a file build attaches a sibling file, because DuckDB does **not** persist an attachment inside a
+database file. So opening the built file shows one catalog, and the builder prints the `ATTACH`
+statement that reaches the other. Two facts are asserted on the
 STATEMENT rather than on rows, because no fixture on this engine can distinguish them: the macro
 `function_type` predicate, and `ORDER BY column_index` on the column read.
 
@@ -992,6 +1114,8 @@ to a database login.
 | TEMP tables are absent from the object tree | `duckdb_databases()` marks `temp` `internal`, alongside `system` | Ours, §6 |
 | Secrets are not an object kind | A secret has no catalog and no schema, so nothing in the model can hold it | Ours, out of Phase 1's scope (§6) |
 | A listed object carries no row count | `estimated_size` is an estimate, and `count(*)` per object is an N+1 | Ours, §6 and §3.5 |
+| A macro's Source pane shows a BODY, not a `CREATE MACRO` statement | `duckdb_functions().macro_definition` is the only text the engine publishes, and there is no `duckdb_macros()` | The engine's; ours to assemble in a later phase, and the pane says `form: partial` meanwhile (§6, Object source) |
+| Every definition text is a regeneration, never the author's bytes | The catalog stores a parsed object, not the submitted statement | The engine's (§6, Object source) |
 
 ---
 

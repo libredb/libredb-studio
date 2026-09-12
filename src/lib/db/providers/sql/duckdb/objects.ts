@@ -46,6 +46,7 @@ import type {
   KindCount,
   ObjectDetail,
   ObjectKindSpec,
+  ObjectSourceForm,
   ProviderCapabilities,
 } from "../../../types";
 
@@ -111,6 +112,23 @@ interface DuckDBObjectSource {
   readonly nameColumn: string;
   /** An extra predicate ANDed onto the container filter, where the kind needs one. */
   readonly predicate?: string;
+  /** The column in that function's output carrying the object's definition text (#789). */
+  readonly definitionColumn: string;
+  /**
+   * What the text in `definitionColumn` IS, and on this engine it is not one answer (#789).
+   *
+   * `complete` for the three kinds whose column is called `sql`: measured on v1.5.5, each
+   * answers a statement ending in `;` that runs as given. `partial` for `macro`, which is
+   * the ONE `partial` producer the #789 design commits to and it is deliberate:
+   * `duckdb_functions().macro_definition` is a BODY, `(x + 1)` for a scalar macro and
+   * `SELECT * FROM analytics.events LIMIT n` for a table macro, and DuckDB publishes no
+   * `CREATE MACRO` statement anywhere. Assembling one out of `parameters` would mean
+   * showing the user a statement the engine never published, which they might copy and
+   * run; the caption that says "this is the body only, not a complete statement" is
+   * cheaper and more honest. Phase 3 assembles, per the Phase 1 rule that the provider
+   * builds the statement and core never does.
+   */
+  readonly definitionForm: ObjectSourceForm;
 }
 
 /** `'macro', 'table_macro'`: a vocabulary as a SQL literal list. */
@@ -133,14 +151,21 @@ function literalList(values: readonly string[]): string {
  * and no `.routines` - so nothing below reaches for it.
  */
 const DUCKDB_OBJECT_SOURCES: Record<string, DuckDBObjectSource> = {
-  table: { relation: "duckdb_tables()", nameColumn: "table_name" },
-  view: { relation: "duckdb_views()", nameColumn: "view_name" },
+  table: { relation: "duckdb_tables()", nameColumn: "table_name", definitionColumn: "sql", definitionForm: "complete" },
+  view: { relation: "duckdb_views()", nameColumn: "view_name", definitionColumn: "sql", definitionForm: "complete" },
   macro: {
     relation: "duckdb_functions()",
     nameColumn: "function_name",
     predicate: `function_type IN (${literalList(MACRO_FUNCTION_TYPES)})`,
+    definitionColumn: "macro_definition",
+    definitionForm: "partial",
   },
-  sequence: { relation: "duckdb_sequences()", nameColumn: "sequence_name" },
+  sequence: {
+    relation: "duckdb_sequences()",
+    nameColumn: "sequence_name",
+    definitionColumn: "sql",
+    definitionForm: "complete",
+  },
 };
 
 /**
@@ -428,6 +453,111 @@ export const OBJECT_INDEXES_SQL = `SELECT index_name, is_unique, expressions::VA
       ORDER BY index_name`;
 
 // ============================================================================
+// Source statements (#789)
+// ============================================================================
+
+/**
+ * ONE object's definition text, by catalog, schema and name (#789).
+ *
+ * Built from the SAME `objectSource()` and the SAME `kindFilter()` the count, the listing
+ * and the four detail reads use, so the Source tab and the tree cannot disagree about
+ * which `duckdb_*` function answers for a kind or about which rows of it are in scope. A
+ * source statement written separately is how a macro read would keep answering after
+ * `MACRO_FUNCTION_TYPES` changed underneath it.
+ *
+ * THE NAME IS THE THIRD BIND AND THE KIND IS NOT IN THE STATEMENT AT ALL, which is why
+ * `readObjectSource` takes the kind as an argument. Measured on DuckDB v1.5.5 and held by
+ * `docker/duckdb-init/01-object-fixture.sql`: a table, a sequence and a macro can all be
+ * called `overlap` in one schema, so a read keyed on the name alone answers one of the
+ * three at random. The kind picks the catalog function; the three binds pick the row.
+ *
+ * The column is aliased to `definition` so the row shape below is one type for four kinds
+ * rather than a union over `sql` and `macro_definition`. Every bind is a parameter and
+ * nothing is interpolated: `duckdb_*` table functions publish the container as a COLUMN,
+ * so there is no identifier position here and no escaper is needed.
+ */
+export function objectSourceSql(kind: string): string {
+  const source = objectSource(kind);
+  return `SELECT ${source.definitionColumn} AS definition
+      FROM ${source.relation}
+      WHERE ${kindFilter(source, true)} AND ${source.nameColumn} = $3`;
+}
+
+/** What `form` the text one kind publishes has, read off the same record the statement is. */
+export function objectSourceForm(kind: string): ObjectSourceForm {
+  return objectSource(kind).definitionForm;
+}
+
+/**
+ * The catalog COLUMN one kind's definition comes out of, for a refusal to name.
+ *
+ * Read off the same record the statement is built from, so a sentence cannot send a reader
+ * to a column this read never asked for: `sql` for a table, a view and a sequence,
+ * `macro_definition` for a macro.
+ */
+export function objectSourceColumn(kind: string): string {
+  return objectSource(kind).definitionColumn;
+}
+
+/**
+ * Which of three ways a row carried no definition, so the refusal can say which (#789).
+ *
+ * `absent` is this provider asking for a column the reply does not carry, which is a fact
+ * about the READ; `null` and `blank` are facts about the ROW. They are kept apart because
+ * a refusal stating a cause that is false for the shape in front of it is worse than one
+ * stating none.
+ */
+export type BlankDefinitionShape = "absent" | "null" | "blank";
+
+export function blankDefinitionShape(row: ObjectSourceRow): BlankDefinitionShape {
+  if (!Object.hasOwn(row, "definition")) return "absent";
+  return typeof row.definition === "string" ? "blank" : "null";
+}
+
+/**
+ * The sentence a row carrying no definition is refused with, ONE PER SHAPE (#789).
+ *
+ * OURS rather than the engine's, and `docs/providers/duckdb.md` records that as this
+ * engine's one exception to the "the engine's own sentence, unprefixed" guarantee: DuckDB
+ * supplies no sentence at all here, because from its point of view the read SUCCEEDED and
+ * answered a row. There is nothing to carry verbatim.
+ *
+ * NONE OF THE THREE WAS OBSERVED ON A LIVE ENGINE, and that is stated in the sentences
+ * themselves rather than hidden. Measured on DuckDB v1.5.5: zero of the instance's
+ * `duckdb_tables()` rows, zero of its 47 `duckdb_views()` rows, zero `duckdb_sequences()`
+ * rows and zero of its 136 macros carry a NULL or whitespace-only text, and even
+ * `CREATE MACRO no_body() AS NULL` publishes the four characters `NULL`. The arms exist
+ * anyway, because an empty definition must never reach an editor as a definition, and
+ * because the `absent` one is the failure mode recipe rule 6 (#789) exists for: a wrong
+ * reply COLUMN reads as `undefined`, not as an error.
+ *
+ * The COLUMN is named in the sentence, and it differs by kind - `sql` for a table, a view
+ * and a sequence, `macro_definition` for a macro - so a reader is sent to the column this
+ * read actually asked for rather than to a spelling that is wrong for their object.
+ */
+export function blankDefinitionReason(shape: BlankDefinitionShape, kind: string, column: string, name: string): string {
+  const opening = `DuckDB answered a row for the ${kind} "${name}"`;
+  if (shape === "absent") {
+    return (
+      `${opening} with no ${column} column at all. That is a fact about this read and not ` +
+      "about the object: the statement asks for one column and the reply does not carry it."
+    );
+  }
+  if (shape === "blank") {
+    return (
+      `${opening} whose ${column} holds no non-whitespace character. An empty definition is ` +
+      "not a definition, so it is refused rather than opened in an editor, and the engine " +
+      "supplies no sentence of its own for this."
+    );
+  }
+  return (
+    `${opening} whose ${column} is NULL. Measured on DuckDB v1.5.5 the engine publishes a ` +
+    "text for every row of every catalog function this provider reads, so nothing here was " +
+    "observed to produce a NULL, and the engine supplies no sentence of its own for it."
+  );
+}
+
+// ============================================================================
 // Row shapes
 // ============================================================================
 
@@ -450,6 +580,18 @@ export interface KindCountRow {
 export interface ObjectRow {
   schema_name: string;
   name: string;
+}
+
+/**
+ * One row of `objectSourceSql()` (#789).
+ *
+ * `unknown` and not `string | null`, because the whole point of `blankDefinitionShape()` is
+ * that this reply is not trusted to have the column at all: a driver that answered a
+ * number, or a statement whose alias was changed, must reach the refusal arm rather than a
+ * `.trim()` on a non-string.
+ */
+export interface ObjectSourceRow {
+  definition: unknown;
 }
 
 export interface ColumnRow {
@@ -668,6 +810,12 @@ function objectShapes(capabilities: ProviderCapabilities, spec: ObjectKindSpec):
  * the bind array by position would reintroduce exactly the defect above.
  */
 export interface ObjectRead {
+  /**
+   * Named as well as bound, for the reason the schema is (#789): a message or a second read
+   * that wanted the catalog back would otherwise take `binds[0]`, which is the positional
+   * read this whole interface exists to remove.
+   */
+  readonly catalog: string;
   readonly schema: string;
   readonly name: string;
   readonly binds: [string, string, string];
@@ -689,7 +837,7 @@ export function objectRead(
   const catalog = requiredSegment(segments, "catalog");
   const schema = requiredSegment(segments, "schema");
   const name = path[path.length - 1];
-  return { schema, name, binds: [catalog, schema, name] };
+  return { catalog, schema, name, binds: [catalog, schema, name] };
 }
 
 // ============================================================================
