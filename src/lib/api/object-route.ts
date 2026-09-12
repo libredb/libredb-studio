@@ -3,7 +3,15 @@ import { getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
-import { containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import {
+  SOURCE_PART_LIMIT,
+  containerDepth,
+  declaredKinds,
+  findKind,
+  isSourcePartUnavailable,
+  kindHasSource,
+  sourceBoundTruncationReason,
+} from "@/lib/db/object-kinds";
 import { INVENTORY_LIMIT, INVENTORY_PAIR_LIMIT, PAIR_TRUNCATION_REASON } from "@/lib/db/inventory-bounds";
 import type {
   DatabaseConnection,
@@ -11,14 +19,18 @@ import type {
   DatabaseProvider,
   ObjectDetail,
   ObjectKindSpec,
+  ObjectSourceDocument,
+  ObjectSourcePart,
 } from "@/lib/db/types";
 
 /**
- * Shared request handling for the six object-tree routes under /api/db/objects (#789).
+ * Shared request handling for the seven object routes under /api/db/objects (#789).
  *
- * One handler rather than six copies, on the precedent of `src/lib/api/schema-route.ts`: the
- * guard-then-parse ordering below is a security property, and six copies of it would be six
- * chances for one of them to drift back to parsing first.
+ * One handler rather than seven copies: the guard-then-parse ordering below is a security
+ * property, and seven copies of it would be seven chances for one of them to drift back to
+ * parsing first. The seventh, the source read, was built on this handler rather than beside it
+ * and inherited auth-before-parse, rate limiting, connection resolution and error mapping with no
+ * new line of any of them.
  *
  * `route` is the same string the caller passes for error-response context, so `POST /${route}`
  * reuses it rather than threading a second, guard-specific string through every call site.
@@ -207,6 +219,83 @@ export function resolveKinds(provider: DatabaseProvider, requested?: readonly st
     }
     return kind;
   });
+}
+
+/**
+ * The provider's source reader for one kind, or a 400 saying it has none (#789 Phase 2).
+ *
+ * ONE branch with TWO conjuncts, on purpose. The first is reachable on every engine: a kind that
+ * declares no `hasSource` is an ordinary thing to ask for, because a caller can hold a stale menu
+ * or a path it built itself. The second is reachable through a provider that declares the kind and
+ * omits the method, which `readObjectSource` being optional makes representable and only this
+ * check makes visible. Folding them into two `if`s would give the second one a line whose only
+ * purpose is a state the first already excluded, which is the shape the deleted 501 arm had.
+ *
+ * It is a helper here rather than a `throw` in the route for the reason every 400 in this module
+ * is: `ObjectRouteError` is module-private, and keeping it private is what keeps the status
+ * vocabulary in one file rather than letting each route mint its own.
+ *
+ * 400 and not 404 or 501, following `resolveKinds`: answering nothing reads as a claim about the
+ * DATA when the truth is a claim about the ENGINE.
+ *
+ * The returned function is BOUND to the provider, because it is read off the instance as a value
+ * and a provider method that reaches its own pool through `this` would otherwise be called with
+ * no receiver.
+ */
+export function requireSourceReader(
+  provider: DatabaseProvider,
+  kind: string,
+): (path: readonly string[], kind: string, limit?: number) => Promise<ObjectSourceDocument> {
+  const read = provider.readObjectSource;
+  if (!kindHasSource(provider.getCapabilities(), kind) || read === undefined) {
+    throw new ObjectRouteError(`${provider.type} declares no readable source for kind "${kind}"`, 400);
+  }
+  return read.bind(provider);
+}
+
+/**
+ * The answered document under the route's OWN bound (#789 Phase 2).
+ *
+ * The route ENFORCES rather than trusts, which is the shipped precedent and not a new rule: the
+ * inventory route applies its own two bounds on top of the bound it hands `describeObjects`. Here
+ * there are sixteen providers plus any host implementing the embedded source seam, and the route
+ * materialises the whole answer and serialises it in one `NextResponse.json`, so this is the one
+ * place a memory bound can actually be held. A number merely PASSED to an implementation outside
+ * our compiler is a request, not a bound.
+ *
+ * A provider that bounded correctly is returned unchanged, which is what makes the walk safe to
+ * run on every answer. A provider that bounded at its own SMALLER limit is also unchanged, because
+ * its text already fits. Only a provider that over-answered is sliced, and its own sentence is
+ * KEPT and joined rather than replaced: a second bound is a second fact.
+ *
+ * `parts.length` is bounded too, because the tuple type has no upper bound and the real response
+ * size is `limit` times the part count. `SOURCE_PART_LIMIT` is four times the largest shape any
+ * engine in the fleet produces, so no correct provider can reach it and a host that does is a
+ * caller mistake rather than a database fact.
+ */
+export function boundSourceDocument(document: ObjectSourceDocument, limit: number): ObjectSourceDocument {
+  if (document.parts.length > SOURCE_PART_LIMIT) {
+    throw new ObjectRouteError(
+      `the source read answered ${document.parts.length} parts and this route carries at most ${SOURCE_PART_LIMIT}`,
+      400,
+    );
+  }
+  // Destructured rather than mapped, because `parts` is a NON-EMPTY tuple and `Array.prototype.map`
+  // answers a plain array that no longer satisfies it.
+  const [first, ...rest] = document.parts;
+  return { ...document, parts: [boundPart(first, limit), ...rest.map((part) => boundPart(part, limit))] };
+}
+
+function boundPart(part: ObjectSourcePart, limit: number): ObjectSourcePart {
+  // A refusal carries no text, so there is nothing to bound and nothing to mark. Reading `.text`
+  // on one would be a property access on the arm that does not declare it.
+  if (isSourcePartUnavailable(part) || part.text.length <= limit) return part;
+  const reason = sourceBoundTruncationReason(limit);
+  return {
+    ...part,
+    text: part.text.slice(0, limit),
+    truncated: { limit, reason: part.truncated === undefined ? reason : `${part.truncated.reason}; ${reason}` },
+  };
 }
 
 // The four inventory bounds are `src/lib/db/inventory-bounds.ts`'s, and they are re-exported

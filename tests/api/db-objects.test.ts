@@ -3,6 +3,7 @@ import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 import { createMockProvider } from "../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { INVENTORY_LIMIT, INVENTORY_PAIR_LIMIT } from "@/lib/api/object-route";
+import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { QueryError } from "@/lib/db/errors";
 import type {
@@ -14,6 +15,8 @@ import type {
   KindCount,
   ObjectDetail,
   ObjectKindSpec,
+  ObjectSourceDocument,
+  ObjectSourcePart,
 } from "@/lib/db/types";
 import {
   DatabaseError,
@@ -100,6 +103,7 @@ const listRoute = await import("@/app/api/db/objects/list/route");
 const describeRoute = await import("@/app/api/db/objects/describe/route");
 const searchRoute = await import("@/app/api/db/objects/search/route");
 const inventoryRoute = await import("@/app/api/db/objects/inventory/route");
+const sourceRoute = await import("@/app/api/db/objects/source/route");
 
 // ============================================================================
 // Fixtures
@@ -122,6 +126,7 @@ interface ProviderShape {
   listObjects?: DatabaseProvider["listObjects"];
   describeObject?: DatabaseProvider["describeObject"];
   describeObjects?: DatabaseProvider["describeObjects"];
+  readObjectSource?: DatabaseProvider["readObjectSource"];
 }
 
 /** A provider that declares one schema level and two kinds unless the test says otherwise. */
@@ -138,6 +143,7 @@ function objectProvider(shape: ProviderShape = {}): DatabaseProvider {
   if (shape.listObjects) provider.listObjects = shape.listObjects;
   if (shape.describeObject) provider.describeObject = shape.describeObject;
   if (shape.describeObjects) provider.describeObjects = shape.describeObjects;
+  if (shape.readObjectSource) provider.readObjectSource = shape.readObjectSource;
   return provider;
 }
 
@@ -178,8 +184,8 @@ describe("the shared guard", () => {
     expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(0);
   });
 
-  test("every one of the six routes refuses an unauthenticated caller", async () => {
-    const routes = [containersRoute, countsRoute, listRoute, describeRoute, searchRoute, inventoryRoute];
+  test("every one of the seven routes refuses an unauthenticated caller", async () => {
+    const routes = [containersRoute, countsRoute, listRoute, describeRoute, searchRoute, inventoryRoute, sourceRoute];
     for (const route of routes) {
       mockGetSession.mockResolvedValueOnce(null as unknown as { role: string; username: string });
       const response = await route.POST(
@@ -1200,5 +1206,368 @@ describe("POST /api/db/objects/inventory", () => {
 
     const body = await parseResponseJSON<Record<string, unknown>>(response);
     expect("defaultContainer" in body).toBe(false);
+  });
+});
+
+// ============================================================================
+// source
+// ============================================================================
+
+describe("POST /api/db/objects/source", () => {
+  const FUNCTION_KIND: ObjectKindSpec = {
+    id: "function",
+    role: "routine",
+    label: "Function",
+    labelPlural: "Functions",
+    hasSource: true,
+    sourceLanguage: "sql",
+  };
+
+  function readablePart(overrides: Partial<Extract<ObjectSourcePart, { text: string }>> = {}): ObjectSourcePart {
+    return {
+      id: "body",
+      label: "Body",
+      text: "CREATE FUNCTION order_total(integer) RETURNS integer AS $$ SELECT 1 $$ LANGUAGE sql",
+      language: "sql",
+      form: "complete",
+      origin: "regenerated",
+      ...overrides,
+    };
+  }
+
+  /**
+   * A provider that answers only the kind it declares and raises its OWN error for anything else.
+   *
+   * The raise is what makes the gate's two conjuncts distinguishable. A double that answered any
+   * kind would turn the undeclared-kind test into a 200-versus-400 comparison, and deleting the
+   * declaration conjunct would then be caught by the status alone. Raising a `QueryError` is what
+   * a real provider does when asked for an object it cannot read, and `createErrorResponse` maps
+   * it to the same 400 the gate uses, so only the SENTENCE separates the two.
+   */
+  function sourceProviderReading(document: ObjectSourceDocument): DatabaseProvider {
+    return objectProvider({
+      objectKinds: [TABLE_KIND, FUNCTION_KIND],
+      readObjectSource: mock(async (path: readonly string[], kind: string) => {
+        if (kind !== "function") {
+          throw new QueryError(`the engine has no readable ${kind} at ${path.join(".")}`, "postgres");
+        }
+        return document;
+      }),
+    });
+  }
+
+  function oneReadablePart(part: ObjectSourcePart = readablePart()): ObjectSourceDocument {
+    return { path: ["app", "order_total(integer)"], kind: "function", parts: [part] };
+  }
+
+  test("answers the provider's document for a source-bearing kind, bounded by the route", async () => {
+    const read = mock(async () => oneReadablePart());
+    activeProvider = objectProvider({ objectKinds: [TABLE_KIND, FUNCTION_KIND], readObjectSource: read });
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "order_total(integer)"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await parseResponseJSON<ObjectSourceDocument>(response);
+    expect(body).toEqual(oneReadablePart());
+    // The route names its own bound rather than leaving `limit` absent, which is what makes a
+    // provider that honours the argument bound the same way the route would have bounded it.
+    expect(read).toHaveBeenCalledWith(["app", "order_total(integer)"], "function", SOURCE_CHARACTER_LIMIT);
+  });
+
+  test("calls the reader with the provider as its receiver, so a method reading `this` still works", async () => {
+    // Every shipped provider reads `this` in this method: it is where the pool, the config and the
+    // escaper live. The reader is taken off the instance as a VALUE here, and a value called with
+    // no receiver has `this === undefined` under a module's strict mode, so the label below is
+    // read from the receiver rather than closed over. Unbound, this double raises a TypeError
+    // instead of answering, which is the difference a 200 and a label can see.
+    activeProvider = objectProvider({
+      objectKinds: [FUNCTION_KIND],
+      readObjectSource: mock(async function (this: DatabaseProvider) {
+        return oneReadablePart(readablePart({ label: this.type }));
+      }),
+    });
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    const [part] = (await parseResponseJSON<ObjectSourceDocument>(response)).parts;
+    expect(part.label).toBe("postgres");
+  });
+
+  test("refuses a kind that declares no source, naming the engine and the kind", async () => {
+    activeProvider = sourceProviderReading(oneReadablePart());
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "orders"], kind: "table" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    // The SENTENCE and not the status: the double raises its own error for this kind, and that
+    // error also maps to 400, so a status-only assertion survives deleting the declaration
+    // conjunct of the gate.
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      'postgres declares no readable source for kind "table"',
+    );
+  });
+
+  test("refuses a provider that declares hasSource and implements no method, with the same sentence", async () => {
+    activeProvider = objectProvider({ objectKinds: [TABLE_KIND, FUNCTION_KIND] });
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      'postgres declares no readable source for kind "function"',
+    );
+  });
+
+  test("refuses a kind the engine does not declare at all", async () => {
+    activeProvider = sourceProviderReading(oneReadablePart());
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "procedure" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      'postgres declares no readable source for kind "procedure"',
+    );
+  });
+
+  test("refuses an empty path", async () => {
+    activeProvider = sourceProviderReading(oneReadablePart());
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: [], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toContain("must name an object");
+  });
+
+  test("refuses a missing kind", async () => {
+    activeProvider = sourceProviderReading(oneReadablePart());
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toContain('"kind" must be a non-empty string');
+  });
+
+  test("bounds a provider that ignores the limit, and marks what it bounded", async () => {
+    activeProvider = sourceProviderReading(
+      oneReadablePart(readablePart({ text: "x".repeat(SOURCE_CHARACTER_LIMIT + 10) })),
+    );
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await parseResponseJSON<ObjectSourceDocument>(response);
+    const [part] = body.parts;
+    if ("unavailable" in part) throw new Error("the double answers a readable part");
+    expect(part.text).toHaveLength(SOURCE_CHARACTER_LIMIT);
+    expect(part.truncated).toEqual({
+      limit: SOURCE_CHARACTER_LIMIT,
+      reason: sourceBoundTruncationReason(SOURCE_CHARACTER_LIMIT),
+    });
+  });
+
+  test("joins its own sentence to a bound the provider already reported", async () => {
+    activeProvider = sourceProviderReading(
+      oneReadablePart(
+        readablePart({
+          text: "y".repeat(SOURCE_CHARACTER_LIMIT + 10),
+          truncated: { limit: 4000, reason: "the engine stopped at 4,000 characters" },
+        }),
+      ),
+    );
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    const body = await parseResponseJSON<ObjectSourceDocument>(response);
+    const [part] = body.parts;
+    if ("unavailable" in part) throw new Error("the double answers a readable part");
+    // Two bounds are two facts, so the engine's own sentence is kept beside the route's rather
+    // than replaced by it.
+    expect(part.truncated?.reason).toBe(
+      `the engine stopped at 4,000 characters; ${sourceBoundTruncationReason(SOURCE_CHARACTER_LIMIT)}`,
+    );
+    expect(part.truncated?.limit).toBe(SOURCE_CHARACTER_LIMIT);
+  });
+
+  test("leaves a part that already fits exactly as the provider wrote it", async () => {
+    const exact = readablePart({ text: "z".repeat(SOURCE_CHARACTER_LIMIT) });
+    activeProvider = sourceProviderReading(oneReadablePart(exact));
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    const body = await parseResponseJSON<ObjectSourceDocument>(response);
+    const [part] = body.parts;
+    if ("unavailable" in part) throw new Error("the double answers a readable part");
+    // An exact answer is never marked: marking one teaches a reader to discount every mark.
+    expect(part.truncated).toBeUndefined();
+    expect(part.text).toHaveLength(SOURCE_CHARACTER_LIMIT);
+  });
+
+  test("bounds a part that is not the first one, so the walk is not a first-part special case", async () => {
+    const document: ObjectSourceDocument = {
+      path: ["app", "pkg"],
+      kind: "function",
+      parts: [
+        readablePart({ id: "spec", label: "Specification", text: "SHORT" }),
+        readablePart({ id: "body", label: "Body", text: "w".repeat(SOURCE_CHARACTER_LIMIT + 1) }),
+      ],
+    };
+    activeProvider = sourceProviderReading(document);
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "pkg"], kind: "function" },
+      }) as never,
+    );
+
+    const body = await parseResponseJSON<ObjectSourceDocument>(response);
+    const [spec, second] = body.parts;
+    if ("unavailable" in spec || second === undefined || "unavailable" in second) {
+      throw new Error("the double answers two readable parts");
+    }
+    expect(spec.truncated).toBeUndefined();
+    expect(second.text).toHaveLength(SOURCE_CHARACTER_LIMIT);
+    expect(second.truncated?.reason).toBe(sourceBoundTruncationReason(SOURCE_CHARACTER_LIMIT));
+  });
+
+  test("carries a refused part through untouched, because a refusal has no text to bound", async () => {
+    const refusal: ObjectSourcePart = {
+      id: "body",
+      label: "Body",
+      unavailable: "u".repeat(SOURCE_CHARACTER_LIMIT + 10),
+    };
+    activeProvider = sourceProviderReading(oneReadablePart(refusal));
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await parseResponseJSON<ObjectSourceDocument>(response);
+    const [part] = body.parts;
+    if (!("unavailable" in part)) throw new Error("the double answers a refused part");
+    expect(part.unavailable).toHaveLength(SOURCE_CHARACTER_LIMIT + 10);
+  });
+
+  test("refuses a document carrying more parts than the route will carry", async () => {
+    const parts = Array.from({ length: SOURCE_PART_LIMIT + 1 }, (_unused, index) =>
+      readablePart({ id: `p${index}`, label: `Part ${index}` }),
+    ) as unknown as ObjectSourceDocument["parts"];
+    activeProvider = sourceProviderReading({ path: ["app", "f"], kind: "function", parts });
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      `the source read answered ${SOURCE_PART_LIMIT + 1} parts and this route carries at most ${SOURCE_PART_LIMIT}`,
+    );
+  });
+
+  test("carries a document holding exactly the part limit", async () => {
+    const parts = Array.from({ length: SOURCE_PART_LIMIT }, (_unused, index) =>
+      readablePart({ id: `p${index}`, label: `Part ${index}`, text: "ok" }),
+    ) as unknown as ObjectSourceDocument["parts"];
+    activeProvider = sourceProviderReading({ path: ["app", "f"], kind: "function", parts });
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect((await parseResponseJSON<ObjectSourceDocument>(response)).parts).toHaveLength(SOURCE_PART_LIMIT);
+  });
+
+  test("carries the engine's own error to a 400 rather than inventing one", async () => {
+    activeProvider = objectProvider({
+      objectKinds: [FUNCTION_KIND],
+      readObjectSource: mock(async () => {
+        throw new QueryError("permission denied for schema app", "postgres");
+      }),
+    });
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    const body = await parseResponseJSON<{ error: string; code: string }>(response);
+    expect(body.error).toBe("permission denied for schema app");
+    expect(body.code).toBe(ApiErrorCode.QUERY_ERROR);
+  });
+
+  test("refuses an unauthenticated caller before parsing a body", async () => {
+    mockGetSession.mockResolvedValueOnce(null as unknown as { role: string; username: string });
+
+    const response = await sourceRoute.POST(
+      new Request("http://localhost:3000/api/db/objects/source", { method: "POST" }) as never,
+    );
+
+    expect(response.status).toBe(401);
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(0);
   });
 });
