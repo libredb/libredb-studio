@@ -1228,6 +1228,12 @@ creates two owners so the lifted confinement is observable, one object of every 
 three trigger cases above, and the package whose body does not compile. Connect as `APP` /
 `Password123!` on service `XEPDB1`.
 
+It also seeds ROWS, two in `APP.APP_CUSTOMERS` and two in `REPORTING.REPORT_DAILY`, and those are
+part of the fixture rather than decoration: the terminator measurement in
+[§3.2a](#32a-a-generated-statement-carries-no-terminator) reads `-> rows`, and a table with none
+answers the accepted statement and the rejected one alike. One is inside the connecting user's own
+schema and one is outside it, which is the pair the generated statement's qualification needs.
+
 Three things about it are load-bearing:
 
 - The `/` statement terminators are a SQL*Plus convention and are correct in a mounted init script,

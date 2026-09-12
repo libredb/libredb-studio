@@ -45,6 +45,14 @@ CREATE TABLE app.customers (
 );
 GO
 
+-- Two rows, and they are part of the deliverable rather than decoration (#789, standing
+-- ruling 5i). `app` is NOT the login's default schema (sa defaults to dbo), so this is the
+-- click OUTSIDE the default container: the tree writes
+-- `libredb_objects.app.customers`, and an empty table answers that and the broken bare
+-- `customers` with the same zero rows. Two is the smallest count that is not one.
+INSERT INTO app.customers (id, name) VALUES (1, N'ada'), (2, N'grace');
+GO
+
 CREATE TABLE app.orders (
   id           INT            NOT NULL CONSTRAINT app_orders_pk PRIMARY KEY,
   customer_id  INT            CONSTRAINT app_orders_customer_fk REFERENCES app.customers (id),
@@ -174,6 +182,11 @@ CREATE TABLE dbo.audit_trail (
 );
 GO
 
+-- Two rows. `dbo` is sa's default schema, so this is the DEFAULT-container click, the
+-- counterpart of the `app.customers` rows above.
+INSERT INTO dbo.audit_trail (id, message) VALUES (1, N'created'), (2, N'updated');
+GO
+
 CREATE SYNONYM app.customer_alias FOR app.customers;
 GO
 
@@ -201,6 +214,12 @@ CREATE TABLE warehouse.stock (
 GO
 
 CREATE INDEX warehouse_stock_on_hand_ix ON warehouse.stock (on_hand);
+GO
+
+-- Two rows in the OTHER database, which is the cross-CATALOG click: the tree writes
+-- `libredb_objects_two.warehouse.stock` from a connection whose database is
+-- `libredb_objects`, and that three-part name is the only address that reaches this table.
+INSERT INTO warehouse.stock (sku, on_hand, reorder_at) VALUES (N'SKU-1', 5, 2), (N'SKU-2', 0, 1);
 GO
 
 -- A user table in a FIXED-ROLE schema, which is legal and measured: db_owner and the eight

@@ -108,6 +108,13 @@ CREATE TABLE demo.`.inner_id.fake`
 ENGINE = MergeTree
 ORDER BY x;
 
+-- One row, and it is the deliverable rather than decoration (#789, standing ruling 5i).
+-- This is the table whose dotted name the object tree has to quote as ONE segment, so the
+-- click on it is the only thing that can tell `demo.".inner_id.fake"` from the broken
+-- `"".inner_id.fake`, and an empty table answers both of them with zero rows. One row is
+-- enough: the click is being measured, not the data.
+INSERT INTO demo.`.inner_id.fake` VALUES (1);
+
 -- Shape 4a: the DDL dictionary. LIFETIME 0 means never reloaded, and LAYOUT(FLAT) keeps
 -- the source read trivial; neither is required for the object surface, which reads the
 -- catalog rather than the dictionary's contents.

@@ -1200,6 +1200,12 @@ of them named exactly like a table, a cross-schema foreign key, a user table in 
 and an OFFLINE database. Every one of those is there because some claim in
 [§7](#the-object-surface-789) cannot be measured without it.
 
+It also seeds ROWS, two each in `libredb_objects.app.customers`, `libredb_objects.dbo.audit_trail`
+and `libredb_objects_two.warehouse.stock`. Those three cover the three addresses a generated
+`SELECT TOP 50` has to write: the login's default schema, another schema in the connected database,
+and another database entirely. An empty table returns nothing for a correct address and for a wrong
+one, so the rows are what makes the click measurable at all.
+
 ---
 
 ## 13. Usage examples

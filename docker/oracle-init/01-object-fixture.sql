@@ -52,6 +52,15 @@ CREATE TABLE app.app_customers (
   CONSTRAINT app_customers_pk PRIMARY KEY (id)
 );
 
+-- Two rows, and they are part of the deliverable rather than decoration (#789, standing
+-- ruling 5i). APP is the connecting user's own schema, so this is the DEFAULT-container
+-- click: the tree writes APP.APP_CUSTOMERS and an empty table cannot tell a statement the
+-- server accepted from one it rejected, because both answer with no rows. Two is the
+-- smallest count that is not one: a single row cannot show that a limit clause left the
+-- rows alone.
+INSERT INTO app.app_customers (id, name) VALUES (1, 'ada');
+INSERT INTO app.app_customers (id, name) VALUES (2, 'grace');
+
 ALTER TABLE app.app_orders ADD CONSTRAINT app_orders_customer_fk
   FOREIGN KEY (customer_id) REFERENCES app.app_customers (id);
 
@@ -62,6 +71,13 @@ CREATE TABLE reporting.report_daily (
   orders      NUMBER(10),
   CONSTRAINT report_daily_pk PRIMARY KEY (report_day)
 );
+
+-- Two rows in the OTHER owner, which is the cross-container click: APP reads these through
+-- the GRANT below, and the statement the tree writes has to be REPORTING.REPORT_DAILY
+-- rather than the bare name. Written as DATE literals so the rows do not depend on the
+-- session's NLS_DATE_FORMAT.
+INSERT INTO reporting.report_daily (report_day, orders) VALUES (DATE '2026-09-01', 10);
+INSERT INTO reporting.report_daily (report_day, orders) VALUES (DATE '2026-09-02', 20);
 
 GRANT SELECT ON reporting.report_daily TO app;
 
@@ -127,5 +143,11 @@ GRANT ADMINISTER DATABASE TRIGGER TO app;
 
 CREATE OR REPLACE TRIGGER app.app_logon_trg AFTER LOGON ON app.SCHEMA BEGIN NULL; END;
 /
+
+-- Explicit, rather than relying on SQL*Plus committing on EXIT. Measured on gvenzl/oracle-xe
+-- 21.3.0: EXIT does commit, so this line changes nothing today, and it is here because the
+-- INSERTs above are the only DML in the file and a fixture whose data survives on a client
+-- convention is one image upgrade away from coming back empty.
+COMMIT;
 
 EXIT;

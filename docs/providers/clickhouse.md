@@ -1258,7 +1258,7 @@ Two mounts seed the object surface's own fixture, and the service is useless for
 
 | Mount | Holds |
 |---|---|
-| `docker/clickhouse-init/01-object-fixture.sql` | one object of every declared kind, plus the three shapes the exclusion rules are measured against: a materialized view with an implicit inner table, one with a `TO` target, a user table named `.inner_id.fake`, and a table whose engine is `Dictionary` |
+| `docker/clickhouse-init/01-object-fixture.sql` | one object of every declared kind, plus the three shapes the exclusion rules are measured against: a materialized view with an implicit inner table, one with a `TO` target, a user table named `.inner_id.fake`, and a table whose engine is `Dictionary`. It also seeds rows: two in `reporting.regions`, two in `demo.customers`, two in `demo.orders` and one in ``demo.`.inner_id.fake` ``, the last so that the dotted name a generated statement must quote as ONE segment can be shown returning a row rather than an empty result either spelling produces |
 | `docker/clickhouse-config/regions_dictionary.xml` | the config-file dictionary, which SQL cannot create and which has no `system.tables` row |
 
 Both run on a **fresh data directory only**, so an already-initialized container has to be recreated
