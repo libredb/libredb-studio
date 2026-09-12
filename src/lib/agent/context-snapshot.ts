@@ -998,6 +998,19 @@ const joinKeys = addressKeys;
  * wrong, and this read costing a column list is the failure the module already accepts;
  * handing a model another object's columns is not.
  *
+ * That refusal is FINAL, and the key is retired rather than left to a later round. It was
+ * not, and the round order is not what makes it safe: a candidate whose key set is LONGER
+ * reaches the same string one round later and takes what two better-ranked candidates were
+ * refused. `resolveObjectAddress`, handed the same objects and the same name, answers
+ * `ambiguous`, so leaving the key claimable made the two consumers of one rule disagree,
+ * which is the failure `object-address.ts`'s own header says the file exists to prevent.
+ * Key sets of different lengths are reachable because ruling 5f lets a kind carry mixed
+ * path depth: an object attached to another sits one segment deeper than its siblings.
+ *
+ * Retired and NOT deleted from `unmatched`: the flat entry still has to reach the model as
+ * a kindless row carrying its columns. Dropping it would trade a wrong join for the silent
+ * absence #414 measured, which is the worse of the two.
+ *
  * Disclosed rather than claimed: the rule's third direction, refusing when the preferred
  * container holds MORE THAN ONE tied candidate, cannot be reached from here and so cannot
  * be mutated here. Two objects tying on one key at one rank share every segment from that
@@ -1011,6 +1024,8 @@ function joinFlatEntries(
   preferredContainer: readonly string[] | undefined,
 ): Map<number, AgentInventoryObject> {
   const matched = new Map<number, AgentInventoryObject>();
+  /** Keys a tie refused, which no later round may reopen. */
+  const refused = new Set<string>();
   const rounds = Math.max(0, ...candidates.map((candidate) => candidate.keys.length));
 
   for (let round = 0; round < rounds; round += 1) {
@@ -1018,7 +1033,7 @@ function joinFlatEntries(
     for (const [index, candidate] of candidates.entries()) {
       if (matched.has(index)) continue;
       const key = candidate.keys[round];
-      if (key === undefined || !unmatched.has(key)) continue;
+      if (key === undefined || refused.has(key) || !unmatched.has(key)) continue;
       const claimed = claimants.get(key);
       if (claimed === undefined) claimants.set(key, [index]);
       else claimed.push(index);
@@ -1029,7 +1044,10 @@ function joinFlatEntries(
           ? claimed[0]
           : preferredCandidate(claimed, (index) => candidates[index].container, preferredContainer);
       const entry = only === undefined ? undefined : unmatched.get(key);
-      if (only === undefined || entry === undefined) continue;
+      if (only === undefined || entry === undefined) {
+        refused.add(key);
+        continue;
+      }
       matched.set(only, entry);
       unmatched.delete(key);
     }

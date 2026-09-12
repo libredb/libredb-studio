@@ -1970,6 +1970,62 @@ describe("captureContextSnapshot — the object surface that says what each entr
   });
 
   /**
+   * A tie that does not break is FINAL, and nothing may claim the entry in a later round
+   * (#789 bulk-read review, Important 2).
+   *
+   * The round order is what makes the preference safe: a candidate is only compared with
+   * others that reached the same key in the same round, which is the same rank. But an
+   * unbroken tie used to leave the entry in `unmatched`, so a candidate with a LONGER key
+   * set reached that same string one round later and took what two better-ranked
+   * candidates had been refused. `resolveObjectAddress`, given the same three objects and
+   * the same bare name, answers `ambiguous` and refuses. Two consumers of one rule
+   * disagreeing is the failure `object-address.ts`'s own header says the file exists to
+   * prevent.
+   *
+   * Ruling 5f is what makes the key sets differ in length: a kind may carry mixed path
+   * depth, and an object attached to another sits one segment deeper than its siblings.
+   */
+  test("a tie that cannot be broken is not reopened for a candidate that reaches the key later", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        // No container is the session default, so nothing can break the tie below.
+        containers: () => [
+          { path: ["app"], name: "app", level: 0 },
+          { path: ["sales"], name: "sales", level: 0 },
+          { path: ["cat"], name: "cat", level: 0 },
+        ],
+        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+        objects: (container, kind) =>
+          kind !== "table"
+            ? []
+            : container[0] === "cat"
+              ? // One segment deeper than its siblings, which ruling 5f allows: its key set
+                // is ["cat.sch.orders", "sch.orders", "orders"], so it reaches the bare key
+                // in round 3 while the other two tied on it in round 2.
+                [{ path: ["cat", "sch", "orders"], name: "orders", kind }]
+              : [{ path: [...container, "orders"], name: "orders", kind }],
+        schema: [
+          {
+            name: "orders",
+            columns: [{ name: "id", type: "int", nullable: false, isPrimary: true }],
+            indexes: [],
+            foreignKeys: [],
+          },
+        ],
+      }),
+    );
+
+    expect(snapshot.objects.map((object) => [object.name, object.columns.length])).toEqual([
+      ["app.orders", 0],
+      ["cat.sch.orders", 0],
+      // Still carried, and still the only thing holding the columns: a refusal costs a
+      // column list and never hands them to the wrong object.
+      ["orders", 1],
+      ["sales.orders", 0],
+    ]);
+  });
+
+  /**
    * The tie-breaker, on the agent's own join (#789).
    *
    * The same two readings the object browser joins, tied the same way, and until this
