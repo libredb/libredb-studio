@@ -2040,7 +2040,7 @@ const FIXTURE_DATABASES = [
 /** The whole database, then one schema. Two different answers, which is the point. */
 const FIXTURE_COUNTS: Record<string, Array<{ kind: string; n: number }>> = {
   "": [
-    { kind: "table", n: 5 },
+    { kind: "table", n: 6 },
     { kind: "view", n: 1 },
     { kind: "procedure", n: 1 },
     { kind: "function", n: 3 },
@@ -2061,6 +2061,9 @@ const FIXTURE_COUNTS: Record<string, Array<{ kind: string; n: number }>> = {
     { kind: "table", n: 1 },
     { kind: "trigger", n: 1 },
   ],
+  // `dbo` holds one table and nothing else. Measured on SQL Server 2022 CU26 (16.0.4265.3)
+  // against the fixture, with the same two-arm counting statement the provider issues.
+  dbo: [{ kind: "table", n: 1 }],
 };
 
 const FIXTURE_TABLES = [
@@ -2071,6 +2074,11 @@ const FIXTURE_TABLES = [
   { schema_name: "app", name: "order_audit", row_count: 0 },
   { schema_name: "app", name: "order_audit_history", row_count: 0 },
   { schema_name: "app", name: "orders", row_count: 0 },
+  // The one user table in `dbo`, and the only thing that exercises the flat reading's
+  // `dbo` strip: `getSchema()` shows a `dbo` table by its BARE name and qualifies every
+  // other schema, which is the exact behaviour that made SQL Server join nothing before the
+  // address rule was fixed. Ordered here the way `ORDER BY s.name, t.name` returns it.
+  { schema_name: "dbo", name: "audit_trail", row_count: 0 },
   { schema_name: "reporting", name: "daily", row_count: 0 },
 ];
 
@@ -2119,6 +2127,7 @@ const FIXTURE_BULK_TARGET: Record<string, Array<{ object_id: number; schema_name
     { object_id: 2, schema_name: "app", name: "order_audit" },
     { object_id: 3, schema_name: "app", name: "order_audit_history" },
     { object_id: 4, schema_name: "app", name: "orders" },
+    { object_id: 7, schema_name: "dbo", name: "audit_trail" },
     { object_id: 5, schema_name: "reporting", name: "daily" },
   ],
   view: [{ object_id: 6, schema_name: "app", name: "order_summary" }],
@@ -2508,7 +2517,7 @@ describe("object surface", () => {
 
     await assertObjectSurface(provider, {
       containers: FIXTURE_DATABASES.map((database) => [database.name]),
-      kinds: { table: 5, view: 1, procedure: 1, function: 3, trigger: 4, synonym: 1, sequence: 1 },
+      kinds: { table: 6, view: 1, procedure: 1, function: 3, trigger: 4, synonym: 1, sequence: 1 },
       sampleObject: { path: ["libredb_objects", "app", "orders"], kind: "table" },
     });
 
@@ -2534,13 +2543,13 @@ describe("SQL Server object containers, listings and detail", () => {
     // read `assertObjectSurface` itself performs. Only an engine with two container levels
     // can tell either mistake from the derivation.
     const wholeDatabase = await provider.countObjects(["libredb_objects"]);
-    expect(wholeDatabase.table).toEqual({ count: 5 });
+    expect(wholeDatabase.table).toEqual({ count: 6 });
     const databaseRead = issued.at(-1)!;
     expect(databaseRead.sql).not.toContain("@schema");
     expect(databaseRead.inputs).toEqual({});
 
     // A different number from the same fixture, because the schema really is a filter and
-    // not a decoration: app holds four of the five tables, `reporting` the fifth.
+    // not a decoration: app holds four of the six tables, `dbo` one and `reporting` one.
     const oneSchema = await provider.countObjects(["libredb_objects", "app"]);
     expect(oneSchema.table).toEqual({ count: 4 });
     const schemaRead = issued.at(-1)!;
@@ -2679,9 +2688,39 @@ describe("SQL Server object containers, listings and detail", () => {
       ["libredb_objects", "app", "order_audit"],
       ["libredb_objects", "app", "order_audit_history"],
       ["libredb_objects", "app", "orders"],
+      ["libredb_objects", "dbo", "audit_trail"],
       ["libredb_objects", "reporting", "daily"],
     ]);
 
+    await provider.disconnect();
+  });
+
+  test("the flat reading strips dbo and qualifies every other schema", async () => {
+    // The `dbo` strip (`mssql.ts`'s getSchema display rule) is the exact behaviour that made
+    // SQL Server join nothing before the address rule was fixed, and until now no test
+    // reached it from the COMMITTED fixture: `docker/mssql-init/01-object-fixture.sql`
+    // created no user table in `dbo`, so the only rows that exercised it were invented in a
+    // mock, which standing ruling 5i does not allow to stand in for a fixture. The fixture
+    // now seeds `dbo.audit_trail`, measured on SQL Server 2022 CU26 (16.0.4265.3).
+    const provider = await connectedForObjects();
+
+    const flat = await provider.getSchema();
+
+    // Bare in `dbo`, qualified everywhere else, in one answer. Either half alone is
+    // satisfied by a rule that does the wrong thing to the other.
+    expect(flat.map((table) => table.name)).toEqual([
+      "app.customers",
+      "app.order_audit",
+      "app.order_audit_history",
+      "app.orders",
+      "audit_trail",
+      "reporting.daily",
+    ]);
+    // And the bare name still addresses its object: the flat reading spells the `dbo` table
+    // with one segment against a three-segment path, which is the join the object browser
+    // performs and the reason the strip mattered at all.
+    const listed = await provider.listObjects(["libredb_objects"], "table");
+    expect(listed.map((object) => object.path)).toContainEqual(["libredb_objects", "dbo", "audit_trail"]);
     await provider.disconnect();
   });
 
@@ -3088,6 +3127,7 @@ describe("SQL Server bulk column read", () => {
       ["libredb_objects", "app", "order_audit"],
       ["libredb_objects", "app", "order_audit_history"],
       ["libredb_objects", "app", "orders"],
+      ["libredb_objects", "dbo", "audit_trail"],
       ["libredb_objects", "reporting", "daily"],
     ]);
     const orders = batch.details[3];
@@ -3104,7 +3144,8 @@ describe("SQL Server bulk column read", () => {
     expect(orders.foreignKeys).toEqual([
       { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
     ]);
-    expect(batch.details[4].foreignKeys).toEqual([
+    const daily = batch.details.find((detail) => detail.path[1] === "reporting")!;
+    expect(daily.foreignKeys).toEqual([
       { columnName: "customer_id", referencedTable: "app.customers", referencedColumn: "id" },
     ]);
     // An object the four detail reads answered nothing for is still IN the answer.
@@ -3162,9 +3203,9 @@ describe("SQL Server bulk column read", () => {
   test("a bounded read that fits reports nothing", async () => {
     const provider = await connectedForObjects();
 
-    const batch = await provider.describeObjects(["libredb_objects"], "table", 5);
+    const batch = await provider.describeObjects(["libredb_objects"], "table", 6);
 
-    expect(batch.details).toHaveLength(5);
+    expect(batch.details).toHaveLength(6);
     expect(batch.truncated).toBeUndefined();
     await provider.disconnect();
   });
@@ -3188,7 +3229,10 @@ describe("SQL Server bulk column read", () => {
     const provider = await connectedForObjects();
     issued = [];
 
-    expect(await provider.describeObjects(["libredb_objects", "dbo"], "table")).toEqual({ details: [] });
+    // `reporting` and the `view` kind, because `dbo` stopped being empty: the fixture now
+    // holds one user table there to exercise the flat reading's `dbo` strip. Measured:
+    // `reporting` holds one table and no view, so this read finds no target and stops.
+    expect(await provider.describeObjects(["libredb_objects", "reporting"], "view")).toEqual({ details: [] });
     expect(issued).toHaveLength(1);
     await provider.disconnect();
   });

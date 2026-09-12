@@ -162,6 +162,18 @@ CREATE TRIGGER orders ON DATABASE FOR DROP_TABLE AS
   PRINT 'a table was dropped';
 GO
 
+-- A user table in `dbo`, and it is the ONLY thing that exercises the flat reading's `dbo`
+-- strip. `getSchema()` shows a table in `dbo` by its bare name and qualifies every other
+-- schema, which is the exact behaviour that made SQL Server join nothing before the address
+-- rule was fixed; with no user table in `dbo` anywhere in this file that branch was reached
+-- by no test at all. `dbo` is also the login's default schema here (sa), so this row is the
+-- default-container case rather than an exotic one.
+CREATE TABLE dbo.audit_trail (
+  id      INT NOT NULL CONSTRAINT dbo_audit_trail_pk PRIMARY KEY,
+  message NVARCHAR(200)
+);
+GO
+
 CREATE SYNONYM app.customer_alias FOR app.customers;
 GO
 
