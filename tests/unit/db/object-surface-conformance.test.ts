@@ -37,6 +37,50 @@ describe("assertObjectSurface", () => {
     });
   });
 
+  /**
+   * WHICH container the contract runs in, where the first one the engine answers is not
+   * the one holding its objects (#789).
+   *
+   * Druid is why. It publishes five schemas and the server orders them by name, so
+   * `containers[0]` is `INFORMATION_SCHEMA`: the contract ran against four system tables
+   * while the datasources a person came for sat in `druid`, and the flat reading, which
+   * `getSchema()` scopes to `TABLE_SCHEMA = 'druid'`, then shared no name with the listing
+   * and the join was vacuous on a provider whose join is fine.
+   *
+   * It is additive and defaults to `containers[0]`, so no other expectation changes, and
+   * it is not a way out of a red: the container named still has to be one the provider
+   * ANSWERED, which is what the next test pins.
+   */
+  test("the contract runs in the container the expectation names, not in the first one listed", async () => {
+    const provider = fakeProvider({
+      listContainers: async () => [
+        { path: ["INFORMATION_SCHEMA"], name: "INFORMATION_SCHEMA", level: 0 },
+        { path: ["app"], name: "app", level: 0, isSessionDefault: true },
+      ],
+      countObjects: async (container: readonly string[]) => {
+        expect(container).toEqual(["app"]);
+        return { table: { count: 2 }, view: { count: 4 } };
+      },
+    });
+    await assertObjectSurface(provider as never, {
+      containers: [["INFORMATION_SCHEMA"], ["app"]],
+      container: ["app"],
+      kinds: { table: 2, view: 4 },
+      sampleObject: { path: ["app", "order_summary"], kind: "view" },
+    });
+  });
+
+  test("rejects an expectation naming a container the provider never answered", async () => {
+    await expect(
+      assertObjectSurface(fakeProvider() as never, {
+        containers: [["app"]],
+        container: ["warehouse"],
+        kinds: { table: 2, view: 4 },
+        sampleObject: { path: ["app", "order_summary"], kind: "view" },
+      }),
+    ).rejects.toThrow(/the expectation names the container \["warehouse"\], which listContainers did not answer/);
+  });
+
   test("rejects a count for a kind the provider never declared", async () => {
     const provider = fakeProvider({ countObjects: async () => ({ package: { count: 1 } }) });
     await expect(

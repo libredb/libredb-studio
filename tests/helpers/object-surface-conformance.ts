@@ -66,6 +66,21 @@ import { enumerateContainers } from "@/lib/db/container-walk";
 
 export interface ObjectSurfaceExpectation {
   readonly containers: readonly (readonly string[])[];
+  /**
+   * WHICH of the answered containers the counts, listings and the join run in.
+   *
+   * Absent means the first one, which is what every engine but one wants. Druid is the
+   * exception and the reason this exists: it publishes five schemas and the server orders
+   * them by name, so `containers[0]` is `INFORMATION_SCHEMA` and the contract ran against
+   * four system tables while the datasources sat in `druid`. The flat reading is scoped to
+   * `TABLE_SCHEMA = 'druid'` (`druid/introspect.ts`), so the two readings shared no name
+   * and the join was reported vacuous on a provider whose join is correct.
+   *
+   * It is not a way out of a red. The container named must be one `listContainers`
+   * ANSWERED, checked below, so an expectation cannot point the contract at a container
+   * the engine does not publish.
+   */
+  readonly container?: readonly string[];
   readonly kinds: Readonly<Record<string, number>>;
   readonly sampleObject: { readonly path: readonly string[]; readonly kind: string };
 }
@@ -96,7 +111,16 @@ export async function assertObjectSurface(
   expect(containers.map((container) => container.path)).toEqual(expected.containers.map((path) => [...path]));
 
   // An engine with no container level addresses every object at the root container.
-  const container = expected.containers[0] ?? [];
+  const container = expected.container ?? expected.containers[0] ?? [];
+  if (
+    expected.container !== undefined &&
+    !containers.some((answered) => pathKey(answered.path) === pathKey(container))
+  ) {
+    throw new Error(
+      `the expectation names the container ${pathKey(container)}, which listContainers did not answer; ` +
+        `it answered ${JSON.stringify(containers.map((answered) => answered.path))}`,
+    );
+  }
   const counts: Record<string, KindCount> = await provider.countObjects!(container);
 
   for (const id of Object.keys(counts)) {
