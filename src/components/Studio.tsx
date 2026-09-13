@@ -871,14 +871,18 @@ export default function Studio() {
                           on a definition to run, and a control that is present and refuses is
                           a worse answer than a control that is not there (#789 Phase 2).
 
-                          The connection is checked here rather than asserted with a `!`. A
-                          Source tab cannot be opened without one - it is reached from a tree
-                          that needs a connection to draw, and tabs are persisted per
-                          connection id - so this is a state the type admits and the product
-                          does not reach, and the branch is total rather than a crash waiting
-                          for a state nobody predicted.
+                          THE CONNECTION IS NO LONGER PART OF THIS BRANCH, and that conjunct
+                          was the third door onto the same hazard (#789 fix round 1). It read
+                          `|| conn.activeConnection === null` on a docblock arguing the state
+                          was admitted by the type and not reached by the product. It is
+                          reached: a Source tab outlives the connection that opened it, so a
+                          person who deletes the active connection with one open got a tab
+                          labelled `Source: <name>` over an EMPTY, EDITABLE buffer with a live
+                          Run button, which is the composition this whole surface exists to
+                          prevent. The viewer takes a nullable connection and refuses in its
+                          own grammar, so the pane stays a pane and asks the route nothing.
                         */}
-                        {sourceTab === undefined || conn.activeConnection === null ? (
+                        {sourceTab === undefined ? (
                           <>
                             <QueryToolbar
                               activeConnection={conn.activeConnection}

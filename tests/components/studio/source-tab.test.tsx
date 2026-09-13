@@ -29,6 +29,8 @@ import React from "react";
 
 let sourceReads: Array<{ path: unknown; kind: unknown }> = [];
 let sourceAnswer: { status: number; body: unknown } = { status: 200, body: {} };
+/** A source read that never settles, so a pane can be caught with NOTHING in hand. */
+let sourceHangs = false;
 
 const DEFINITION = "CREATE OR REPLACE FUNCTION app.order_total(integer)\n  RETURNS numeric AS $$ SELECT 1 $$;";
 
@@ -107,7 +109,13 @@ const pgConn = { id: "c1", type: "postgres" as const, name: "TestPG", host: "loc
 const connectionManagerAnswer = {
   connections: [pgConn],
   servedSeeds: { loaded: true, seeds: [] },
-  activeConnection: pgConn,
+  /*
+   * Typed nullable and RESET in `beforeEach`, because one test deletes the active connection
+   * out from under an open Source tab. The object identity has to stay the same across renders
+   * for the reason the file records above, so the field is mutated rather than the object
+   * replaced.
+   */
+  activeConnection: pgConn as typeof pgConn | null,
   schema: [],
   schemaContext: "[]",
   isLoadingSchema: false,
@@ -331,6 +339,7 @@ function installFetch(): void {
     if (text.includes("/api/db/objects/source")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as { path?: unknown; kind?: unknown };
       sourceReads.push({ path: body.path, kind: body.kind });
+      if (sourceHangs) return new Promise<Response>(() => {});
       return new Response(JSON.stringify(sourceAnswer.body), {
         status: sourceAnswer.status,
         headers: { "Content-Type": "application/json" },
@@ -370,6 +379,8 @@ beforeEach(() => {
   buildMetadata();
   sourceReads = [];
   sourceAnswer = { status: 200, body: readableDocument };
+  sourceHangs = false;
+  connectionManagerAnswer.activeConnection = pgConn;
   mockExecuteQuery.mockClear();
   mockExecuteHandedOverStatement.mockClear();
   installFetch();
@@ -405,6 +416,41 @@ describe("View Source opens a tab that reads the definition", () => {
     await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
     expect(screen.queryByTestId("query-toolbar")).toBeNull();
     expect(screen.queryByTestId("query-editor")).toBeNull();
+  });
+
+  test("deleting the last connection refuses in the pane rather than opening an editable one", async () => {
+    /*
+     * THE THIRD DOOR onto the empty-editor hazard, named in round 1 and left open (#789 fix
+     * round 1). This shell's pane branch was `sourceTab === undefined || conn.activeConnection
+     * === null`, on a docblock arguing the second half was a state the type admits and the
+     * product does not reach. It reaches it: a Source tab outlives the connection that opened
+     * it, and a person who deletes the active connection with one open got a tab still labelled
+     * `Source: app.order_total(integer)` holding an EMPTY, EDITABLE query editor with a live Run
+     * toolbar, which is the composition this whole surface exists to prevent.
+     *
+     * NOTHING IN HAND is the state that matters, because a definition already read stays on
+     * screen by design, so the route's answer is held in flight while the connection goes.
+     */
+    sourceHangs = true;
+    const view = render(<Studio />);
+    act(() => sidebarActions().onViewSource?.(ROUTINE));
+    await waitFor(() => expect(screen.getByTestId("object-source-loading")).toBeTruthy());
+
+    connectionManagerAnswer.activeConnection = null;
+    view.rerender(<Studio />);
+
+    expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "This connection is no longer open, so this definition cannot be read here.",
+    );
+    // The two halves of the hazard, asserted separately, and the tab still names the object.
+    expect(screen.queryByTestId("query-editor")).toBeNull();
+    expect(screen.queryByTestId("query-toolbar")).toBeNull();
+    expect(screen.queryByTestId("source-editor")).toBeNull();
+    expect(screen.getByTestId("object-source-name").textContent).toBe("app.order_total(integer)");
+    // And no second read went out for a connection that is gone.
+    expect(sourceReads).toHaveLength(1);
   });
 
   test("switching back to the query tab brings the toolbar and the editor back", async () => {

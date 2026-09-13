@@ -1035,6 +1035,75 @@ describe("ObjectSourceView", () => {
     expect(screen.queryByTestId("object-source-refused")).toBeNull();
   });
 
+  test("refuses when there is no connection to read with, rather than being handed one", async () => {
+    /*
+     * The THIRD door onto the empty-editor hazard, and the one round 1 named and left open
+     * (#789 fix round 1). Both shells branched on `sourceTab === undefined || activeConnection
+     * === null` and mounted the query toolbar plus the query editor for the second half, so a
+     * Source tab that was open when the last connection went away came back labelled
+     * `Source: <name>` over an EMPTY, EDITABLE buffer with a live Run button. The state is
+     * reached rather than merely admitted by the type: `use-connection-adapter.ts` auto-selects
+     * whenever the host's list is non-empty, so a null active connection is exactly "the host
+     * handed an empty connections array", which is what a host does when a person deletes the
+     * last connection in the host's own UI.
+     *
+     * So the branch is `sourceTab === undefined` alone in both shells and the viewer takes a
+     * nullable connection, because the connection is the one thing a read cannot be issued
+     * without. NO READ IS ISSUED: the reader's call count is asserted at zero, which is the
+     * half that keeps the standalone shell from asking a route for a connection that is gone.
+     */
+    const reader = readerFor(oneReadablePart);
+    render(
+      <ObjectSourceView
+        connection={null}
+        path={[...PATH]}
+        kind="package"
+        kindLabel="Package"
+        displayName="APP_ORDERS_PKG"
+        refreshToken={0}
+        reader={reader}
+        onChange={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "This connection is no longer open, so this definition cannot be read here.",
+    );
+    // The two halves of the hazard, asserted apart: no editor to type into, and the pane still
+    // names the object the tab was opened for.
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByTestId("object-source-name").textContent).toBe("APP_ORDERS_PKG");
+    expect(reader.calls).toBe(0);
+  });
+
+  test("keeps a definition already in hand when the connection goes away", async () => {
+    /*
+     * The same decision the host-withdrawal arm makes one level up: a definition on screen was
+     * really read from the engine a moment ago, and losing the connection is not a reason to
+     * replace a real definition with a sentence. What it must not become is an editable buffer,
+     * and the read-only editor with the text in it is not one.
+     */
+    const reader = readerFor(oneReadablePart);
+    render(
+      <ObjectSourceView
+        connection={null}
+        path={[...PATH]}
+        kind="package"
+        kindLabel="Package"
+        displayName="APP_ORDERS_PKG"
+        document={oneReadablePart}
+        refreshToken={0}
+        reader={reader}
+        onChange={() => {}}
+      />,
+    );
+
+    expect(editorValue()).toContain("CREATE OR REPLACE PACKAGE APP.APP_ORDERS_PKG");
+    expect(screen.queryByTestId("object-source-failure")).toBeNull();
+    expect(reader.calls).toBe(0);
+  });
+
   test("the barrel re-exports the live shape check, not a second copy of it", () => {
     // The barrel had no runtime importer anywhere in the tree, so its lines produced no `DA:`
     // record and the coverage gate could not see them. This is that importer.

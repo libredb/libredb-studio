@@ -563,12 +563,20 @@ export function StudioWorkspace({
                           definition to run, and a control that is present and refuses is a worse
                           answer than a control that is not there (#789 Phase 2).
 
-                          The connection is checked rather than asserted with a `!`. A Source tab
-                          is reached from a tree that needs a connection to draw, so this is a
-                          state the type admits and the product does not reach, and the branch is
-                          total rather than a crash waiting for a state nobody predicted.
+                          THE CONNECTION IS NO LONGER PART OF THIS BRANCH, and that conjunct was
+                          the third door onto the same hazard (#789 fix round 1). It read
+                          `|| conn.activeConnection === null`, on a docblock arguing the state
+                          was admitted by the type and not reached by the product. It is
+                          reached: `use-connection-adapter.ts` auto-selects whenever the host's
+                          list is non-empty, so a null active connection is exactly "the host
+                          handed an empty connections array", which a host does when a person
+                          deletes the last connection in its own UI while a Source tab is open.
+                          The tab then came back labelled `Source: <name>` over an EMPTY,
+                          EDITABLE buffer with a live Run button. The viewer now takes a
+                          nullable connection and refuses in its own grammar, so the pane stays
+                          a pane and no read is issued for a connection that is gone.
                         */}
-                        {sourceTab === undefined || conn.activeConnection === null ? (
+                        {sourceTab === undefined ? (
                           <>
                             <QueryToolbar
                               activeConnection={conn.activeConnection}

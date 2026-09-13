@@ -39,7 +39,20 @@ export interface ObjectSourcePatch {
 }
 
 export interface ObjectSourceViewProps {
-  readonly connection: DatabaseConnection;
+  /**
+   * The connection this definition was read from, and `null` when the shell has none.
+   *
+   * NULLABLE deliberately, and it is what closes the third door onto the empty-editor hazard
+   * (#789). Both shells used to branch `sourceTab === undefined || activeConnection === null`
+   * and mount the query toolbar plus the query editor for the second half, purely because this
+   * prop could not take a null. A Source tab open when the last connection went away then came
+   * back labelled `Source: <name>` over an EMPTY, EDITABLE buffer with a live Run button, which
+   * is the composition this whole surface exists to prevent. The state is REACHED and not only
+   * admitted by the type: `use-connection-adapter.ts` auto-selects whenever the host's list is
+   * non-empty, so a null active connection means the host handed an empty array, which is what
+   * a host does when a person deletes the last connection in the host's own UI.
+   */
+  readonly connection: DatabaseConnection | null;
   readonly path: readonly string[];
   readonly kind: string;
   /** The kind's own label from the declaration. The viewer never derives one from the id. */
@@ -64,6 +77,9 @@ const UNRENDERABLE = "The source read answered with a body this viewer cannot re
 
 /** The sentence for a well-formed definition that names a DIFFERENT object. Also our fact. */
 const MISMATCHED = "The source read answered with a definition for another object.";
+
+/** The sentence for a pane whose connection is gone. Also our fact, and the shell's own state. */
+const DISCONNECTED = "This connection is no longer open, so this definition cannot be read here.";
 
 /**
  * Whether this document is a definition of THIS pane's object (#789).
@@ -151,7 +167,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * control character no engine admits inside an identifier, so `["a.b"]` and `["a", "b"]`
    * cannot collide, while JSON escaping rewrites exotic names.
    */
-  const address = `${connection.id}/${pathKey(path)}/${kind}`;
+  const address = `${connection?.id ?? ""}/${pathKey(path)}/${kind}`;
   /**
    * EVERY address this instance has issued a read for, and not one address (#789).
    *
@@ -172,9 +188,14 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
   const needsRead = sourceDocument === undefined && failure === undefined;
 
   useEffect(() => {
-    if (!needsRead) {
+    if (!needsRead || connection === null) {
       // This address has been answered, so a later CLEAR (the stale banner's control) issues a
       // fresh read rather than finding the address already asked.
+      //
+      // A NULL CONNECTION stops here for the same reason a failure does: there is nothing to
+      // read with. Without it the default reader would post to `/api/db/objects/source` naming
+      // a connection the shell no longer holds, and in the embedded package that route does not
+      // exist at all.
       asked.current.delete(address);
       return;
     }
@@ -265,7 +286,15 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
       ? isSourceDocumentShape(sourceDocument)
         ? MISMATCHED
         : UNRENDERABLE
-      : undefined);
+      : undefined) ??
+    /*
+     * LAST, so it never overwrites a fact about a read that really happened, and conditioned on
+     * having nothing to show rather than on the connection alone: a definition already in hand
+     * was read from the engine a moment ago and stays on screen, which is the same decision the
+     * host-withdrawal arm makes one level up in `StudioWorkspace`. What it must not become is an
+     * editable buffer, and a read-only editor holding the definition is not one.
+     */
+    (renderableDocument === undefined && connection === null ? DISCONNECTED : undefined);
 
   const reread = useCallback(() => {
     onChange({ document: undefined, failure: undefined, readAtToken: undefined });

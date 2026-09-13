@@ -171,18 +171,29 @@ function workspace(options: {
   reader: WorkspaceObjectReader;
   executed?: string[];
   declared?: ProviderCapabilities | null;
+  /**
+   * An EMPTY host connection list, which is the one way this shell reaches a null active
+   * connection: `use-connection-adapter.ts` auto-selects whenever the list is non-empty, so
+   * `activeConnection === null` means exactly "the host handed no connections", which a host
+   * does when a person deletes the last one in the host's own UI while a Source tab is open.
+   */
+  connections?: "none";
 }) {
   const declared = options.declared === undefined ? capabilities : options.declared;
   return (
     <StudioWorkspace
-      connections={[
-        {
-          id: "host-conn-1",
-          name: "Adopter DB",
-          type: "postgres",
-          ...(declared === null ? {} : { capabilities: declared }),
-        },
-      ]}
+      connections={
+        options.connections === "none"
+          ? []
+          : [
+              {
+                id: "host-conn-1",
+                name: "Adopter DB",
+                type: "postgres",
+                ...(declared === null ? {} : { capabilities: declared }),
+              },
+            ]
+      }
       onQueryExecute={async (_connectionId, query) => {
         options.executed?.push(query);
         return { rows: [], fields: [], rowCount: 0, executionTime: 1 };
@@ -593,6 +604,49 @@ describe("the embedded workspace reads an object's source through the host", () 
     // outside the pane's own branch.
     act(() => (capturedBottomPanelProps.onLoadQuery as (q: string) => void)("DROP TABLE app.orders;"));
     expect(screen.queryByTestId("query-editor")).toBeNull();
+  });
+
+  test("a host that drops its last connection refuses in the pane rather than opening an editable one", async () => {
+    /*
+     * THE THIRD DOOR onto the empty-editor hazard, named in round 1 and left open (#789 fix
+     * round 1). The pane branch was `sourceTab === undefined || conn.activeConnection === null`,
+     * so a Source tab that was active when the host's connection list went empty mounted
+     * `QueryToolbar` plus `QueryEditor`: a tab labelled `Source: app.order_total(integer)` over
+     * an EMPTY, EDITABLE buffer with a live Run button, which is exactly the composition the
+     * host-withdrawal arm above closes through the other door.
+     *
+     * It is REACHED and not merely admitted by the type. `use-connection-adapter.ts` auto-selects
+     * whenever the list is non-empty, so a null active connection is precisely "the host handed
+     * an empty connections array", and a host hands one whenever a person deletes the last
+     * connection in the host's own UI. This drives that gesture directly.
+     */
+    /*
+     * NOTHING IN HAND is the state that matters, because a definition already read stays on
+     * screen by design, and this drives it with the gesture a harness can reach: a read still
+     * in flight when the host's list goes empty. The RELOAD reaches the identical state and is
+     * the one a person meets, because `use-tab-manager` persists a Source tab's ADDRESS and
+     * never its text; it cannot be driven here, measured, because `use-tab-manager.ts` computes
+     * `shouldPersistWorkspace` from `process.env.NODE_ENV !== "test"`.
+     */
+    const pending = { ...treeReader(), readObjectSource: () => new Promise<never>(() => {}) };
+    const view = render(workspace({ reader: pending as unknown as WorkspaceObjectReader }));
+    await openTree();
+    await viewSource();
+    await waitFor(() => expect(screen.getByTestId("object-source-loading")).toBeTruthy());
+
+    view.rerender(workspace({ reader: pending as unknown as WorkspaceObjectReader, connections: "none" }));
+
+    expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    // The pane is still a pane, and it says what happened in the viewer's failure grammar.
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "This connection is no longer open, so this definition cannot be read here.",
+    );
+    // The two halves of the hazard, asserted separately, and the tab still names the object.
+    expect(screen.queryByTestId("query-editor")).toBeNull();
+    expect(screen.queryByTestId("source-editor")).toBeNull();
+    expect(screen.queryByRole("button", { name: "RUN" })).toBeNull();
+    expect(screen.getByTestId("object-source-name").textContent).toBe("app.order_total(integer)");
   });
 
   test("a definition already in hand survives the host withdrawing the read", async () => {
