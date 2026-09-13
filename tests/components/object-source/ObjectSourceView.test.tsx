@@ -262,6 +262,15 @@ describe("ObjectSourceView", () => {
     );
     await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
 
+    /*
+     * THE FLOOR FIRST, because `.every` over an empty array is `true` and would certify nothing
+     * (#789, Task 23 fix round 1). The floor is not redundant with the `waitFor` above: the
+     * editor renders from the harness's own state, so a future component that seeded the
+     * document without ever calling `onChange` would satisfy the wait and leave `patches`
+     * empty. Measured: with the floor removed and the harness seeded with `twoParts` and no
+     * reader, the `.every` line passed over zero patches.
+     */
+    expect(patches.length).toBeGreaterThan(0);
     // Nothing named the part, and the first one is still the one on screen.
     expect(patches.every((patch) => !Object.hasOwn(patch, "activePartId"))).toBe(true);
     expect(screen.getByTestId("source-editor").getAttribute("data-path")?.endsWith("/spec")).toBe(true);
