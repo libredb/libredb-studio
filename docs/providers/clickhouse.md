@@ -1204,19 +1204,23 @@ same three values must still reach the server.
 
 ```bash
 docker compose -f database-compose.yml up -d clickhouse
+# The user and the password are the compose service's own, read from the file that sets
+# them rather than copied, so this block cannot go stale against it and carries no literal
+# credential of its own.
+CH_PASSWORD=$(awk '/CLICKHOUSE_PASSWORD/{print $2}' database-compose.yml)
 # every object below is created by docker/clickhouse-init/01-object-fixture.sql
-curl -s 'http://127.0.0.1:8123/?user=libredb&password=password123&database=demo' \
+curl -s "http://127.0.0.1:8123/?user=libredb&password=$CH_PASSWORD&database=demo" \
   --data-binary "SELECT formatQuery(create_table_query) FROM system.tables WHERE database='demo' AND name='orders' FORMAT TSVRaw"
-curl -s 'http://127.0.0.1:8123/?user=libredb&password=password123&database=demo' \
+curl -s "http://127.0.0.1:8123/?user=libredb&password=$CH_PASSWORD&database=demo" \
   --data-binary "SHOW CREATE TABLE demo.orders FORMAT TSVRaw"   # byte-identical to the line above
-curl -s 'http://127.0.0.1:8123/?user=libredb&password=password123&database=demo' \
+curl -s "http://127.0.0.1:8123/?user=libredb&password=$CH_PASSWORD&database=demo" \
   --data-binary "SELECT database, origin FROM system.dictionaries ORDER BY name FORMAT TSV"
-curl -s 'http://127.0.0.1:8123/?user=libredb&password=password123&database=demo' \
+curl -s "http://127.0.0.1:8123/?user=libredb&password=$CH_PASSWORD&database=demo" \
   --data-binary "SELECT name, origin, create_query FROM system.functions WHERE origin != 'System' FORMAT TSV"
 # the escaper, both ways round, against the fixture's own adversarial table
-curl -s 'http://127.0.0.1:8123/?user=libredb&password=password123&database=demo' \
+curl -s "http://127.0.0.1:8123/?user=libredb&password=$CH_PASSWORD&database=demo" \
   --data-binary "SELECT name FROM system.tables WHERE database='demo' AND name='bs_one\\\\' FORMAT TSV"
-curl -s 'http://127.0.0.1:8123/?user=libredb&password=password123&database=demo' \
+curl -s "http://127.0.0.1:8123/?user=libredb&password=$CH_PASSWORD&database=demo" \
   --data-binary "SELECT name FROM system.tables WHERE database='demo' AND name='bs_one\\' FORMAT TSV"
 ```
 
