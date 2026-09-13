@@ -771,8 +771,10 @@ docker exec libredb-cassandra cqlsh -e \
 `nodetool reloadtriggers` is load-bearing: without it the `CREATE TRIGGER` answers `Trigger class
 'probe.NoopTrigger' couldn't be loaded` (measured, and measured again after the reload, where it
 succeeds). None of that makes a trigger a thing the engine does not have; it makes it a thing an
-operator installs. Withholding the folder would hide an object somebody created. Phase 1 shows names
-rather than bodies anyway, so no kind here declares `hasSource`.
+operator installs. Withholding the folder would hide an object somebody created.
+`trigger` is the one kind here that declares no `hasSource`, and section 12.2 records which absence
+that is: the engine publishes no such text at all, because `DescribeStatement` has no TRIGGER target
+and a trigger's body is a Java class on the node's filesystem. Six kinds do declare it.
 
 **So a clean apply of the fixture leaves `trigger: 0`, and that is the correct reading, not a
 defect.** The block above is the only step in this fixture that needs a JDK on the machine applying

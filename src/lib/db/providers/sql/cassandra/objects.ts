@@ -70,8 +70,12 @@
  * answers "Trigger class 'probe.NoopTrigger' couldn't be loaded" (all measured). None
  * of that makes a trigger a thing the engine does not have; it makes it a thing an
  * operator installs. Withholding the folder would hide an object a person created,
- * which is the absence this epic keeps finding, and Phase 1 shows names rather than
- * bodies anyway - so no kind here declares `hasSource`.
+ * which is the absence this epic keeps finding. `trigger` is the one kind here that
+ * declares no `hasSource`, and Phase 2 measured which absence it is: `DescribeStatement`
+ * has no TRIGGER target at all (`DESCRIBE TRIGGER` answers code 8192, "no viable
+ * alternative at input", measured on 5.0.9), and a trigger's body is a Java class on the
+ * node's filesystem rather than anything the database holds. The other six kinds DO
+ * declare `hasSource`; see `CASSANDRA_OBJECT_KINDS` below, which is the list.
  *
  * Only `table` declares `acceptsRowWrites`. A materialized view refuses every write
  * ("Cannot directly modify a materialized view", measured), and the other five kinds
