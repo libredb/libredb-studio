@@ -162,7 +162,18 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
           onChange({ failure: UNRENDERABLE, readAtToken: tokenAtRead });
           return;
         }
-        onChange({ document: answer, activePartId: answer.parts[0].id, readAtToken: tokenAtRead });
+        /*
+         * NO `activePartId` in this patch, and the omission is the fix rather than an oversight
+         * (#789, Task 23). The shell merges by spread, so leaving the key out KEEPS whatever the
+         * tab already remembered, and `activePart` above makes that total by falling back to the
+         * first part when the new document holds no part of that id.
+         *
+         * Writing `answer.parts[0].id` here instead was measured in a real browser against Oracle
+         * XE 21.3.0.0.0: reading a package BODY, running a CREATE OR REPLACE to mark the tab
+         * stale, then pressing "Read again" silently put the reader back on the SPECIFICATION.
+         * That write duplicated the fallback it sat above and could only ever lose a selection.
+         */
+        onChange({ document: answer, readAtToken: tokenAtRead });
       },
       (error: unknown) => {
         if (asked.current !== address) return;

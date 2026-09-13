@@ -243,6 +243,14 @@ describe("ObjectSourceView", () => {
   });
 
   test("selects the first part when the document lands, so a switcher always has a selection", async () => {
+    /*
+     * The SELECTION is what this asserts, never the patch field. The landing patch used to carry
+     * `activePartId: parts[0].id` and this test asserted it; that write also destroyed a
+     * remembered selection on a re-read, which Task 23 measured in a browser, so the write is
+     * gone and `activePart`'s fallback is what makes the selection total (#789). Asserting the
+     * patch would have pinned the mechanism and defended the defect; asserting the rendering
+     * pins the property the test's own name states.
+     */
     const patches: ObjectSourcePatch[] = [];
     render(
       <Harness
@@ -254,7 +262,9 @@ describe("ObjectSourceView", () => {
     );
     await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
 
-    expect(patches[0]?.activePartId).toBe("spec");
+    // Nothing named the part, and the first one is still the one on screen.
+    expect(patches.every((patch) => !Object.hasOwn(patch, "activePartId"))).toBe(true);
+    expect(screen.getByTestId("source-editor").getAttribute("data-path")?.endsWith("/spec")).toBe(true);
     const tabs = screen.getAllByRole("tab");
     expect(tabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["true", "false"]);
   });
@@ -553,6 +563,34 @@ describe("ObjectSourceView", () => {
     expect(Object.hasOwn(clear!, "failure")).toBe(true);
     expect(Object.hasOwn(clear!, "readAtToken")).toBe(true);
     await waitFor(() => expect(screen.queryByTestId("object-source-stale")).toBeNull());
+  });
+
+  test("keeps the part the reader was on across a re-read, so the stale control does not move them", async () => {
+    /*
+     * Found in the browser on Oracle XE 21.3.0.0.0 (#789, Task 23), driving the ACTION rather
+     * than the render: reading APP.APP_ORDERS_PKG's BODY, running a CREATE OR REPLACE in a query
+     * tab to mark the tab stale, then pressing "Read again" put the reader back on the
+     * SPECIFICATION with nothing on screen saying so. The landing patch wrote
+     * `activePartId: answer.parts[0].id` unconditionally, which threw away a selection the tab
+     * still held and which `activePart`'s own fallback already made safe.
+     *
+     * The mutation that proves this test binds: restore that write in `ObjectSourceView.tsx` and
+     * this test fails on the second part being deselected.
+     */
+    const reader = readerFor(twoParts);
+    const { rerender } = render(<Harness reader={reader} refreshToken={0} />);
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+
+    await userEvent.click(screen.getByRole("tab", { name: "Package body" }));
+    expect(screen.getByTestId("source-editor").getAttribute("data-path")?.endsWith("/body")).toBe(true);
+
+    rerender(<Harness reader={reader} refreshToken={1} />);
+    await userEvent.click(screen.getByTestId("object-source-stale-reread"));
+    await waitFor(() => expect(reader.calls).toBe(2));
+    await waitFor(() => expect(screen.queryByTestId("object-source-stale")).toBeNull());
+
+    expect(screen.getByTestId("source-editor").getAttribute("data-path")?.endsWith("/body")).toBe(true);
+    expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-selected"))).toEqual(["false", "true"]);
   });
 
   test("re-reads after a failed read when the stale control is used, so a failure is not a dead end", async () => {
