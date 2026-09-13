@@ -45,7 +45,10 @@ CREATE TABLE IF NOT EXISTS memory.app.customers (
 CREATE OR REPLACE VIEW memory.app.customer_names AS
   SELECT id, name FROM memory.app.customers;
 
--- Three catalog-stored functions, two of them an OVERLOADED PAIR. Standing ruling 2 (#789)
+-- The catalog-stored functions the LISTING needs, two of them an OVERLOADED PAIR. This heading
+-- counts nothing for the same reason the one further down does: a digit here would say how many
+-- functions the block holds and would be read as how many the schema holds, and the two have
+-- already drifted apart once. Standing ruling 2 (#789)
 -- wants the engine's own disambiguated identifier, and `plus_one` alone would give two
 -- objects one address: this pair is the fixture that makes the argument-type segment
 -- observable instead of theoretical. `label` differs in arity as well as in type, so a

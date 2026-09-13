@@ -272,8 +272,13 @@ export function trinoMaterializedViewListSql(container: TrinoContainer): string 
  *
  * A `SHOW` statement and not a projection, because there is no relation to project:
  * `information_schema` holds eight views on this engine and none of them is a routine
- * catalog, and `system.jdbc.procedures` answers zero rows for a schema holding three
- * functions (measured). The column names below therefore cannot be aliased, which is why
+ * catalog, and `system.jdbc.procedures` is EMPTY: `SELECT count(*)` over the whole table
+ * answers 0 while `SHOW FUNCTIONS FROM memory.app` answers a row for every function this
+ * repository's fixture creates (re-measured on 476, 2026-09-13, with that fixture applied).
+ * The emptiness of the WHOLE TABLE is what is stated here, rather than a row count against
+ * one schema, because a per-schema count goes stale the moment the fixture gains a function
+ * and this sentence counts nothing (#789). The column names below therefore cannot be
+ * aliased, which is why
  * {@link TRINO_FUNCTION_COLUMNS} spells them with their spaces.
  */
 export function trinoFunctionListSql(catalog: string, schema: string): string {

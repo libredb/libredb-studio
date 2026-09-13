@@ -28,6 +28,8 @@
  * 5. `DELETE /v1/query/{id}` ANSWERS 204 for an id that never existed, so a
  *    cancellation is idempotent and its success proves nothing about the target.
  */
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import {
@@ -3191,5 +3193,112 @@ describe("Trino object source", () => {
     } finally {
       prototypeKind.mockRestore();
     }
+  });
+});
+
+/**
+ * Every function COUNT this engine's shipped files state, checked against the fixture that
+ * decides it (#789).
+ *
+ * WHY THIS GUARD EXISTS. Three shipped files carried the sentence "`system.jdbc.procedures`
+ * answers zero rows for a schema holding three functions". It was true when `memory.app`
+ * held three functions and this task's own fixture work made it false by adding four more,
+ * so one shipped document contradicted itself: `docs/providers/trino.md` said three in one
+ * paragraph and seven in another. A reviewer found two of the three by grep and missed the
+ * third, because a docblock wraps `three\n * functions` across a line and no grep for
+ * "three functions" can see it. That is the whole reason this is a test rather than a
+ * careful read: the population is every file the engine ships, the number is derived from
+ * the fixture, and a line wrap does not hide anything from it.
+ *
+ * The rule it enforces is the ledger's standing remedy for a stale numeral, which is to fix
+ * what the numeral COUNTS rather than the digit. A sentence in one of these files that
+ * counts functions must count the fixture's functions. If you need to count something else,
+ * name that thing instead: "two overloads", "three parameters", "four reply columns".
+ */
+describe("Trino function counts stated in shipped files", () => {
+  const TRINO_FIXTURE_FILE = join(import.meta.dir, "..", "..", "..", "docker", "trino-init", "01-object-fixture.sql");
+  const TRINO_PROVIDER_DIR = join(import.meta.dir, "..", "..", "..", "src", "lib", "db", "providers", "sql", "trino");
+  const TRINO_PROVIDER_DOC = join(import.meta.dir, "..", "..", "..", "docs", "providers", "trino.md");
+
+  /** Spelled-out numbers, because prose in this repository writes a small count as a word. */
+  const NUMBER_WORDS: Record<string, number> = {
+    zero: 0,
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+  };
+
+  /**
+   * A claim wrapped across two lines is still one claim.
+   *
+   * A TypeScript docblock continues with ` * `, a SQL comment with `-- ` and Markdown with
+   * nothing at all, so all three continuations collapse to a single space before the scan.
+   * Without this the guard is blind to exactly the instance the reviewer's grep missed.
+   */
+  function flatten(text: string): string {
+    return text.replace(/\r?\n[ \t]*(\*|--|\/\/)?[ \t]*/g, " ");
+  }
+
+  function countClaims(text: string): { phrase: string; count: number }[] {
+    // Up to two words may sit between the number and the noun, because a claim is written
+    // "three functions" in one file and "Three catalog-stored functions" in another. Measured
+    // over this engine's whole corpus, the wider form adds no false positive and adds the one
+    // claim the narrow form missed.
+    const pattern =
+      /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:[A-Za-z-]+\s+){0,2}functions?\b/gi;
+    return [...flatten(text).matchAll(pattern)].map((match) => {
+      const token = match[1].toLowerCase();
+      const count = Object.hasOwn(NUMBER_WORDS, token) ? NUMBER_WORDS[token] : Number(token);
+      return { phrase: match[0], count };
+    });
+  }
+
+  test("no shipped file states a function count the fixture does not hold", () => {
+    const fixture = readFileSync(TRINO_FIXTURE_FILE, "utf8");
+    // Statements only. `SHOW CREATE FUNCTION` appears several times in this file's own
+    // comments, and counting those would make the fixture disagree with itself.
+    const created = fixture.split(/\r?\n/).filter((line) => /^CREATE\s+(OR\s+REPLACE\s+)?FUNCTION\b/i.test(line));
+    if (created.length === 0) {
+      throw new Error(
+        "docker/trino-init/01-object-fixture.sql creates no function, so this guard would certify every count as correct",
+      );
+    }
+    // The served rows are the fake's copy of the same fixture (standing ruling 5i): if they
+    // drift apart, every count assertion below is measuring the wrong cluster.
+    expect(MEMORY_APP_FUNCTION_ROWS).toHaveLength(created.length);
+
+    const shipped = readdirSync(TRINO_PROVIDER_DIR)
+      .filter((entry) => entry.endsWith(".ts"))
+      .map((entry) => ({ name: `src/lib/db/providers/sql/trino/${entry}`, path: join(TRINO_PROVIDER_DIR, entry) }));
+    if (shipped.length === 0) {
+      throw new Error("no Trino provider source file was scanned, so this guard read nothing");
+    }
+    const scanned = [
+      ...shipped,
+      { name: "docs/providers/trino.md", path: TRINO_PROVIDER_DOC },
+      { name: "docker/trino-init/01-object-fixture.sql", path: TRINO_FIXTURE_FILE },
+    ];
+
+    const wrong: string[] = [];
+    const claims: string[] = [];
+    for (const file of scanned) {
+      for (const claim of countClaims(readFileSync(file.path, "utf8"))) {
+        claims.push(`${file.name}: ${claim.phrase}`);
+        if (claim.count !== created.length) wrong.push(`${file.name}: ${claim.phrase}`);
+      }
+    }
+
+    expect(wrong).toEqual([]);
+    // The inventory, so the guard cannot go quiet. A claim that disappears is as visible
+    // here as a claim that arrives, and a run that matched nothing at all fails by name
+    // rather than passing over an empty loop.
+    expect(claims).toEqual(["docs/providers/trino.md: seven functions"]);
   });
 });

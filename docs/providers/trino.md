@@ -757,8 +757,14 @@ shape the implementation. It takes a schema and has no catalog form
 columns are named `Function`, `Return Type`, `Argument Types`, `Function Type`, `Deterministic` and
 `Description`, with spaces, and no alias can rename them; and it cannot be wrapped in a subquery —
 `SELECT * FROM (SHOW FUNCTIONS FROM memory.app)` is a syntax error. There is no relation to read
-instead: `information_schema` has no routine catalog on this engine, and `system.jdbc.procedures`
-answers zero rows for a schema holding three functions.
+instead: `information_schema` has no routine catalog on this engine, and `system.jdbc.procedures` is
+empty. `SELECT count(*) FROM system.jdbc.procedures` answers `0` over the whole table, re-measured on
+476 on 2026-09-13 against a cluster with this repository's fixture applied, where
+`SHOW FUNCTIONS FROM memory.app` answered a row for every function that fixture creates. The
+emptiness of the WHOLE TABLE is what is stated here rather than a row count for one schema: a
+per-schema count is a digit that goes stale the moment the fixture gains a function, which is exactly
+what happened to the sentence this one replaces, and a claim about the whole table counts nothing
+(#789).
 
 So a **catalog-level** function count is `{ unavailable }` carrying that reason, and a catalog-level
 listing is refused with the same sentence, rather than fanning `SHOW FUNCTIONS` out over every schema

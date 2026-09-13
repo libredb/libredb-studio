@@ -904,8 +904,11 @@ export class TrinoProvider extends SQLBaseProvider {
    * A catalog-level call is REFUSED rather than fanned out over the catalog's schemas: the
    * fan-out is one full HTTP exchange per schema, unbounded on a Hive or Iceberg catalog,
    * and `SHOW FUNCTIONS` is the only surface there is - `information_schema` holds no
-   * routine catalog on this engine and `system.jdbc.procedures` answers zero rows for a
-   * schema holding three functions (measured on 476).
+   * routine catalog on this engine and `system.jdbc.procedures` is EMPTY, whole table,
+   * `SELECT count(*)` answering 0 while `SHOW FUNCTIONS FROM memory.app` answers a row for
+   * every function this repository's fixture creates (re-measured on 476, 2026-09-13). The
+   * emptiness of the whole table is stated rather than a row count for one schema so that
+   * the sentence counts nothing and cannot go stale when the fixture grows (#789).
    */
   private async listFunctions(capabilities: ProviderCapabilities, read: TrinoContainer): Promise<DatabaseObject[]> {
     if (read.schema === undefined) throw new QueryError(this.functionScopeRefusal(), this.type);
