@@ -548,7 +548,7 @@ export function StudioWorkspace({
                               onExecuteQuery={() => queryExec.executeQuery()}
                               onCancelQuery={queryExec.cancelQuery}
                               // Withheld, not `noop`: this shell runs no transaction,
-                              // no sandbox and no inline editing — `transactionActive`
+                              // no sandbox and no inline editing, so `transactionActive`
                               // and `editingEnabled` are hardcoded false above and
                               // nothing here can change them. While it passed
                               // `metadata={null}` the group never rendered and `noop`

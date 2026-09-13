@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D68, U17 · 28
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X16, U2–U21 · 10
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X17, U2–U21 · 11
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -1184,6 +1184,34 @@ is not a free read.
 
 **Done when:** an operation a provider declares globally runnable either has its own card copy or a
 recorded reason it is withheld.
+
+---
+
+### X17. A restored Source tab becomes an editable query tab when the host withdraws its source reader
+
+Measured on 2026-09-13 in the embedded shell, driven in a real browser (#789 Phase 2).
+
+`StudioWorkspace` reads an object's definition through an OPTIONAL host callback: a host that does
+not implement it is offered no View Source action at all, which is the documented shape of a thing a
+shell cannot do. But a Source TAB that is already open is persisted by its ADDRESS, and on the next
+session it is restored before the host's capabilities are consulted. If the host has stopped
+implementing the reader between sessions, the restored tab keeps its `Source: <name>` label and
+renders an ordinary EDITABLE query editor with a live RUN button, over an empty statement.
+
+The conjunction that produces it is deliberate and is documented by name at its site, and the arm is
+pinned by a test, so this is not an unnoticed branch. What is wrong is only what the user is shown: a
+tab labelled `Source` that accepts and runs arbitrary SQL.
+
+**Why it matters:** a person who reads the label as "this is the definition of that object" may type
+into it and run it against whatever the connection points at. The label is the whole defect: the
+editor is an ordinary query editor and behaves correctly as one.
+
+**Reproduce:** mount `StudioWorkspace` with a host implementing the object source reader, open a
+Source tab, persist the workspace, reload with the reader removed from the host, and read the tab's
+label against what the pane accepts.
+
+**Done when:** a restored source tab whose host can no longer answer a source read either closes, or
+is relabelled so that nothing on screen calls an editable query pane a Source view.
 
 ---
 

@@ -58,8 +58,8 @@ export function defineStudioThemes(monacoInstance: typeof Monaco): void {
   /*
    * Monaco paints its own canvas and knows nothing about the CSS token layer,
    * so the editor is the one surface that needs the palette written twice.
-   * Same syntax hues either side — they are chosen for contrast against the
-   * CODE, not against the chrome — with only the ground and the guides moved.
+   * Same syntax hues either side, because they are chosen for contrast against the
+   * CODE rather than against the chrome, with only the ground and the guides moved.
    * `editor.background` mirrors `--studio-canvas` in both themes so the pane
    * sits flush with the shell it lives in.
    */
