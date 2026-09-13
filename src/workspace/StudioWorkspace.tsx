@@ -331,17 +331,46 @@ export function StudioWorkspace({
   );
 
   /**
-   * The active tab's source address, but only where this shell can actually READ one (#789).
+   * The active tab's source address, whether or not this shell can still READ one (#789).
    *
-   * The conjunction is what makes every consumer below consistent, and the second half is
-   * reachable rather than defensive: `use-tab-manager` persists a Source tab's ADDRESS per
-   * connection, so a host that stops declaring `readObjectSource` between two sessions restores
-   * a tab whose pane would otherwise mount the viewer with no reader, and the viewer's own
-   * default is this application's route. Reading it as an ordinary tab instead means the pane,
-   * the toolbar and every statement entry point agree about one fact, and nothing asks a route
-   * that does not exist here.
+   * THIS OVERTURNS THE FIRST ANSWER, which conjoined `conn.sourceReader !== undefined` and read
+   * the tab as an ORDINARY one when the host stopped declaring `readObjectSource`. Half of that
+   * reasoning was right and is kept: the viewer's own default reader posts to
+   * `/api/db/objects/source`, this package ships no routes, so the pane must never fall through
+   * to it. What it got wrong is what a person then SAW. A Source tab's text is never persisted,
+   * only its address, so the tab came back named `Source: app.order_total(integer)` holding an
+   * EMPTY, EDITABLE editor with a live Run button, which is the empty-editor hazard this whole
+   * phase exists to prevent: an empty editor reads as "there is no source", and a user who types
+   * over it deletes the object.
+   *
+   * So the address stands on its own and the pane stays a pane. Every consumer below is still
+   * consistent, because they all read THIS value: no Run button, no toolbar and no statement
+   * loader on a Source tab, whatever the host currently declares. What the host's absence
+   * changes is the one thing it really means, which is that there is nothing to read with, and
+   * `sourceFailure` below says so in the viewer's own grammar.
    */
-  const sourceTab = conn.sourceReader === undefined ? undefined : tabMgr.currentTab.source;
+  const sourceTab = tabMgr.currentTab.source;
+
+  /**
+   * What the pane shows when the host has stopped reading definitions (#789).
+   *
+   * The tab's OWN failure first, because it is the engine's or the host's sentence about a read
+   * that really happened, and ours would overwrite a fact with a circumstance.
+   *
+   * Ours only when there is NOTHING TO SHOW, which is also what makes this load-bearing rather
+   * than cosmetic: with no document, no failure and no reader, the viewer would issue its read
+   * through `httpSourceReader` and ask a route that does not exist in this package. A failure
+   * makes `needsRead` false, so no read is issued at all and the pane refuses instead.
+   *
+   * A definition ALREADY IN HAND is left on screen. It was read from the engine a moment ago and
+   * a host handing a new reader object on a render is not a reason to throw a real definition
+   * away; what it must not become is an editor with a Run button, and it does not.
+   */
+  const sourceFailure =
+    sourceTab?.failure ??
+    (conn.sourceReader === undefined && sourceTab?.document === undefined
+      ? "This host no longer reads object definitions, so this definition cannot be read here."
+      : undefined);
 
   /**
    * What every statement entry point OUTSIDE the editor pane is handed while a Source tab is
@@ -597,7 +626,7 @@ export function StudioWorkspace({
                               }
                               displayName={objectPathLabel(sourceTab.path)}
                               document={sourceTab.document}
-                              failure={sourceTab.failure}
+                              failure={sourceFailure}
                               activePartId={sourceTab.activePartId}
                               /*
                                 A DECISION and not a stub. The standalone shell passes a

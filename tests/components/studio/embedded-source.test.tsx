@@ -88,6 +88,7 @@ mock.module("@/components/ui/resizable", () => {
 import { StudioWorkspace } from "@/workspace/StudioWorkspace";
 import type { WorkspaceObjectReader } from "@/workspace/types";
 import type { ObjectSourceDocument, ProviderCapabilities } from "@/lib/db/types";
+import type { QueryTab } from "@/lib/types";
 
 const DEFINITION = "CREATE FUNCTION app.order_total(integer) RETURNS numeric AS $$ SELECT 1 $$;";
 
@@ -474,7 +475,7 @@ describe("the embedded workspace reads an object's source through the host", () 
      * The CONTROL is written on the ordinary tab first, so a gate that simply broke the loader
      * for everybody could not pass this.
      */
-    const view = render(workspace({ reader: { ...treeReader(), readObjectSource: async () => readableDocument } }));
+    render(workspace({ reader: { ...treeReader(), readObjectSource: async () => readableDocument } }));
     await openTree();
     act(() => (capturedBottomPanelProps.onLoadQuery as (q: string) => void)("SELECT 4;"));
     await waitFor(() => expect(screen.getByTestId("query-editor").getAttribute("data-value")).toBe("SELECT 4;"));
@@ -492,12 +493,18 @@ describe("the embedded workspace reads an object's source through the host", () 
      * it, so an ungated loader writes a statement onto a tab that shows nothing and
      * `use-tab-manager` persists it. MEASURED: without this, an assertion that only switched
      * back to the query tab passed against the ungated loader, because the write landed on the
-     * OTHER tab. Withdrawing the host's read turns this same tab into an ordinary editor tab,
-     * which is the one gesture in this shell that makes its statement visible.
+     * OTHER tab.
+     *
+     * READ OFF THE PANEL'S OWN `currentTab` PROP, which is the active tab itself. The earlier
+     * spelling withdrew the host's reader to turn this tab back into an ordinary editor and read
+     * the statement out of it; that gesture no longer exists, because a tab whose address names
+     * an object now stays a definition pane and refuses instead of becoming an editable one
+     * (#789, external review of PR #820). This reads the same field directly, and it is checked
+     * to BE the Source tab first, so it cannot be satisfied by some other tab's empty statement.
      */
-    view.rerender(workspace({ reader: treeReader() }));
-    await waitFor(() => expect(screen.getByTestId("query-editor")).toBeTruthy());
-    expect(screen.getByTestId("query-editor").getAttribute("data-value")).toBe("");
+    const shownTab = capturedBottomPanelProps.currentTab as QueryTab;
+    expect(shownTab.source?.path).toEqual(ROUTINE.path);
+    expect(shownTab.query).toBe("");
   });
 
   test("a kind that declares no source is offered nothing and activates nothing", async () => {
@@ -535,16 +542,65 @@ describe("the embedded workspace reads an object's source through the host", () 
     expect(asked).toEqual([]);
   });
 
-  test("a host that withdraws the read leaves the tab it already opened as an ordinary one", async () => {
+  /*
+   * WHAT A HOST THAT STOPS READING DEFINITIONS LEAVES BEHIND, and the first answer was wrong
+   * (#789 Phase 2, external review of PR #820).
+   *
+   * The shell used to read the tab as an ORDINARY one whenever `conn.sourceReader` was absent,
+   * and this file pinned that as correct. The reasoning was sound as far as it went: the
+   * viewer's own default reader posts to `/api/db/objects/source` and this package ships no
+   * routes, so the pane must never fall through to it. What it missed is what a person then
+   * SEES. A Source tab's TEXT is never persisted, only its address, so the tab came back named
+   * `Source: app.order_total(integer)` holding an EMPTY, EDITABLE editor with a live Run button:
+   * the empty-editor hazard this whole phase exists to prevent, reached through a door nobody
+   * was watching. An empty editor reads as "there is no source", and a user who types over it
+   * deletes the object.
+   *
+   * The remedy keeps BOTH facts: the pane stays, it refuses in the viewer's own failure grammar,
+   * and it offers no Run and asks no route. The fear the old branch was written around is
+   * checked by this file's `afterEach`, which fails if any request went out at all.
+   */
+  test("a host that withdraws the read refuses in the pane rather than opening an editable one", async () => {
     /*
-     * Not defensive, and this is the gesture that reaches it without persistence: the host is
-     * ordinary JavaScript and may hand a different reader object on any render, including one
-     * that no longer declares `readObjectSource`. `use-tab-manager` also persists a Source
-     * tab's ADDRESS across sessions, so the same state arrives on a reload.
-     *
-     * The pane, the toolbar and every statement entry point then have to agree about ONE fact,
-     * because the viewer's own default reader is this application's route and this package
-     * ships none. Reading the tab as an ordinary one is what makes them agree.
+     * The state is "a Source tab with no text and no way to get any", and this drives it with
+     * the gesture a harness CAN reach: a host whose read is still in flight when it hands over a
+     * reader object that no longer declares the method. The RELOAD reaches the identical state
+     * and is the one a person actually meets, because `use-tab-manager` persists a Source tab's
+     * ADDRESS and never its text. It cannot be driven from here and that is measured rather than
+     * assumed: `use-tab-manager.ts` computes `shouldPersistWorkspace` from
+     * `process.env.NODE_ENV !== "test"` and `StudioWorkspace` passes no override, so nothing is
+     * written to `localStorage` in any test in this file.
+     */
+    const pending = { ...treeReader(), readObjectSource: () => new Promise<never>(() => {}) };
+    const view = render(workspace({ reader: pending as unknown as WorkspaceObjectReader }));
+    await openTree();
+    await viewSource();
+    await waitFor(() => expect(screen.getByTestId("object-source-loading")).toBeTruthy());
+
+    view.rerender(workspace({ reader: treeReader() }));
+
+    expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    // The pane says what happened, in the grammar every other failed read uses.
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "This host no longer reads object definitions, so this definition cannot be read here.",
+    );
+    // NOT an editor, and NOT a Run button: the two halves of the hazard, asserted separately.
+    expect(screen.queryByTestId("query-editor")).toBeNull();
+    expect(screen.queryByTestId("source-editor")).toBeNull();
+    expect(screen.queryByRole("button", { name: "RUN" })).toBeNull();
+    // And the statement loader still refuses to write onto this tab, which is the entry point
+    // outside the pane's own branch.
+    act(() => (capturedBottomPanelProps.onLoadQuery as (q: string) => void)("DROP TABLE app.orders;"));
+    expect(screen.queryByTestId("query-editor")).toBeNull();
+  });
+
+  test("a definition already in hand survives the host withdrawing the read", async () => {
+    /*
+     * The IN-SESSION shape, and it is the reason the refusal is conditioned on there being
+     * nothing to show rather than on the reader alone: the definition on screen was really read
+     * from the engine a moment ago, and a host handing a new reader object on a render is not a
+     * reason to throw it away. What it must not become is a Run button.
      */
     const withReader = { ...treeReader(), readObjectSource: async () => readableDocument };
     const view = render(workspace({ reader: withReader }));
@@ -554,13 +610,10 @@ describe("the embedded workspace reads an object's source through the host", () 
 
     view.rerender(workspace({ reader: treeReader() }));
 
-    // The tab is still there and still active, and it is now an ordinary editor tab.
     expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
-    expect(screen.queryByTestId("source-editor")).toBeNull();
-    expect(screen.getByTestId("query-editor")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "RUN" })).toBeTruthy();
-    // The whole point: nothing fell through to a route, because there is none here.
-    expect(requested).toEqual([]);
+    expect(shownText()).toBe(DEFINITION);
+    expect(screen.queryByTestId("query-editor")).toBeNull();
+    expect(screen.queryByRole("button", { name: "RUN" })).toBeNull();
   });
 
   test("the kind's own word comes from the declaration, and falls back to the kind id", async () => {
