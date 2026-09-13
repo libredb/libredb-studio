@@ -1518,6 +1518,44 @@ describe("POST /api/db/objects/source", () => {
     expect(second.truncated?.reason).toBe(sourceBoundTruncationReason(SOURCE_CHARACTER_LIMIT));
   });
 
+  test("drops a surrogate pair whole when the bound lands inside it, the way applySourceBound does", async () => {
+    /*
+     * ONE SLICER, and this is the test that makes the route use it (#789). The bound counts
+     * UTF-16 CODE UNITS, so it can land BETWEEN the two halves of an astral character: a
+     * PL/pgSQL body or a Lua library holding an emoji at exactly that offset. The route sliced
+     * with a bare `text.slice(0, limit)` while every one of the sixteen providers bounded
+     * through `applySourceBound`, which drops the orphaned half. MEASURED on the bare slice: the
+     * text came back ending in `\ud83d`, which is not a character, JSON serialises it as a lone
+     * escape and Monaco draws a replacement glyph.
+     *
+     * The pair sits ON the boundary by construction, so the assertion cannot pass by accident:
+     * the high half is the last unit a `slice(0, limit)` would keep.
+     */
+    const straddling = `${"a".repeat(SOURCE_CHARACTER_LIMIT - 1)}\u{1F600}b`;
+    // The floor: without it a future constant could move the pair off the boundary and this
+    // test would certify a bound that never cut a pair at all.
+    expect(straddling.charCodeAt(SOURCE_CHARACTER_LIMIT - 1)).toBe(0xd83d);
+    expect(straddling.charCodeAt(SOURCE_CHARACTER_LIMIT)).toBe(0xde00);
+    activeProvider = sourceProviderReading(documentWithOnePart(readablePart({ text: straddling })));
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    const body = await parseResponseJSON<ObjectSourceDocument>(response);
+    const [part] = body.parts;
+    if ("unavailable" in part) throw new Error("the double answers a readable part");
+    expect(part.text).toHaveLength(SOURCE_CHARACTER_LIMIT - 1);
+    const last = part.text.charCodeAt(part.text.length - 1);
+    expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+    // `truncated.limit` still names the CALLER's number and not the emitted length.
+    expect(part.truncated?.limit).toBe(SOURCE_CHARACTER_LIMIT);
+    expect(part.truncated?.reason).toBe(sourceBoundTruncationReason(SOURCE_CHARACTER_LIMIT));
+  });
+
   test("carries a refused part through untouched, because a refusal has no text to bound", async () => {
     const refusal: ObjectSourcePart = {
       id: "body",

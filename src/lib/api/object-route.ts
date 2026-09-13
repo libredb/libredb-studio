@@ -5,6 +5,7 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import {
   SOURCE_PART_LIMIT,
+  applySourceBound,
   containerDepth,
   declaredKinds,
   findKind,
@@ -336,9 +337,21 @@ function boundPart(part: ObjectSourcePart, limit: number): ObjectSourcePart {
   }
   if (isSourcePartUnavailable(part) || part.text.length <= limit) return part;
   const reason = sourceBoundTruncationReason(limit);
+  /*
+   * ONE SLICER for the fleet, and the route was the second one (#789). It cut with a bare
+   * `part.text.slice(0, limit)` while all sixteen providers cut through `applySourceBound`,
+   * which drops an orphaned surrogate half: the bound counts UTF-16 CODE UNITS, so it can land
+   * BETWEEN the two halves of an astral character, and MEASURED through this function, a text
+   * holding an emoji at exactly the boundary came back ending in `\ud83d`, which is not a
+   * character and which JSON serialises as a lone escape.
+   *
+   * Only `.text` is taken from it. The MARK is composed here, because this route's second bound
+   * has a fact the helper does not: a provider that already bounded at its own smaller limit
+   * keeps its own sentence and this one is JOINED to it rather than replacing it.
+   */
   return {
     ...part,
-    text: part.text.slice(0, limit),
+    text: applySourceBound(part.text, limit).text,
     truncated: { limit, reason: part.truncated === undefined ? reason : `${part.truncated.reason}; ${reason}` },
   };
 }
