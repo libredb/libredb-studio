@@ -3168,6 +3168,189 @@ describe("Elasticsearch object source", () => {
     expect(full.text).toBe(PIPELINE_TEXT);
     expect(full.truncated).toBeUndefined();
   });
+
+  /**
+   * `GET /_ingest/pipeline/probe_pipeline?nope=1`, HTTP 400, captured from
+   * Elasticsearch 9.1.4 on 2026-09-13 (#789).
+   *
+   * The only refusal either source endpoint could be MADE to produce on a cluster with
+   * security disabled. Both GETs answer `illegal_argument_exception` for every malformed
+   * request found - an unrecognised parameter here, a `master_timeout=bogus` there - and
+   * that name classifies as `engine`, so this is the refusal half of the read driven by
+   * a body the cluster really sent rather than by a status alone.
+   */
+  const UNRECOGNIZED_PARAMETER = engineFault(
+    400,
+    "illegal_argument_exception",
+    "request [/_ingest/pipeline/probe_pipeline] contains unrecognized parameter: [nope]",
+  );
+
+  test("a pipeline body this client cannot read is a REFUSAL and never an absence", async () => {
+    // The two are different facts and only one of them is actionable. An unreadable body
+    // reported as absence would put "No Elasticsearch pipeline named probe_pipeline" in
+    // front of a user looking at a row the tree is currently showing, which says the
+    // object is gone rather than that this client could not read what came back.
+    const provider = await connectProvider();
+
+    // The wrapper is not the object this file parses at all.
+    overridePath("/_ingest/pipeline/probe_pipeline", ok("[]"));
+    const [outer] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline")).parts;
+    if (!isSourcePartUnavailable(outer)) throw new Error("an unreadable wrapper was not refused");
+    expect(outer.unavailable).toBe("Elasticsearch answered an ingest pipeline definition the client could not read");
+    expect(Object.hasOwn(outer, "text")).toBe(false);
+
+    // The key the caller asked for is there and the value under it is not a definition.
+    overridePath("/_ingest/pipeline/probe_pipeline", ok('{"probe_pipeline":7}'));
+    const [inner] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline")).parts;
+    if (!isSourcePartUnavailable(inner)) throw new Error("an unreadable definition was not refused");
+    expect(inner.unavailable).toBe("Elasticsearch answered an ingest pipeline definition the client could not read");
+    expect(Object.hasOwn(inner, "text")).toBe(false);
+
+    // The control, so none of the above is a test of a broken fake: the same read
+    // against the same path still answers a definition when the body is the real one.
+    replyFor = defaultReply;
+    const [readable] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline")).parts;
+    if (isSourcePartUnavailable(readable)) throw new Error("the control read was refused");
+    expect(readable.text).toBe(PIPELINE_TEXT);
+  });
+
+  test("an index template entry this client cannot read is REFUSED rather than skipped", async () => {
+    // Skipping an unreadable entry would walk off the end of the array and report the
+    // object as ABSENT, which is the fact a user cannot act on: the tree is showing the
+    // template, so "No Elasticsearch template named probe_template" is a claim about the
+    // cluster where the truth is a claim about this client.
+    const provider = await connectProvider();
+    const unreadable: readonly (readonly [string, string])[] = [
+      ["the list is not an array", '{"index_templates":{}}'],
+      ["an entry is not an object", '{"index_templates":[7]}'],
+      ["an entry carries no name", '{"index_templates":[{"index_template":{"index_patterns":["x"]}}]}'],
+      [
+        "the named entry's definition is not an object",
+        '{"index_templates":[{"name":"probe_template","index_template":7}]}',
+      ],
+    ];
+
+    let refused = 0;
+    for (const [what, body] of unreadable) {
+      overridePath("/_index_template/probe_template", ok(body));
+      const [part] = (await provider.readObjectSource!(["probe_template"], "template")).parts;
+      if (!isSourcePartUnavailable(part)) throw new Error(`${what}: the read answered a text`);
+      expect(part.unavailable).toBe("Elasticsearch answered an index template definition the client could not read");
+      expect(Object.hasOwn(part, "text")).toBe(false);
+      refused += 1;
+    }
+    if (refused !== unreadable.length || refused === 0) {
+      throw new Error(`${refused} of ${unreadable.length} unreadable bodies were refused`);
+    }
+  });
+
+  test("every category the cluster ANSWERED in is a refusal, and it carries the cluster's own sentence", async () => {
+    // Three of the five arms on the refusal side of `isClusterRefusal`, and the switch
+    // is what decides whether a sentence the cluster wrote reaches the Source pane at
+    // all: a category moved to the raising half throws instead, and the pane then shows
+    // nothing. `auth` is driven by the per-endpoint test above.
+    //
+    // Only the FIRST body is a capture, and the other two are disclosed rather than
+    // presented as measurements: on Elasticsearch 9.1.4 with security disabled, every
+    // fault either source GET produces is `illegal_argument_exception`, so `syntax` and
+    // `unknown-object` cannot be provoked on these endpoints at all. They are still
+    // pinned, because the switch classifies the seam's CATEGORY and the seam is shared
+    // with the SQL surface, where both names are measured (see the fault table above).
+    const provider = await connectProvider();
+    const answered: readonly (readonly [string, string, string])[] = [
+      // engine, and this one is a capture.
+      [
+        "engine",
+        UNRECOGNIZED_PARAMETER,
+        "request [/_ingest/pipeline/probe_pipeline] contains unrecognized parameter: [nope]",
+      ],
+      // syntax.
+      [
+        "syntax",
+        engineFault(400, "parsing_exception", "line 1:1: mismatched input '['"),
+        "line 1:1: mismatched input '['",
+      ],
+      // unknown-object.
+      [
+        "unknown-object",
+        engineFault(400, "verification_exception", "Found 1 problem\nline 1:15: Unknown index [nope_missing]"),
+        "Found 1 problem\nline 1:15: Unknown index [nope_missing]",
+      ],
+    ];
+
+    let refused = 0;
+    for (const [category, body, sentence] of answered) {
+      overridePath("/_ingest/pipeline/probe_pipeline", fail(400, body));
+      const [part] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline")).parts;
+      if (!isSourcePartUnavailable(part)) throw new Error(`${category}: an answered fault was not a refusal`);
+      // Unprefixed and unrewritten, which is what the docblock promises for every arm
+      // but `auth` - where no body could be captured and the sentence is composed from
+      // the status instead.
+      expect(part.unavailable).toBe(sentence);
+      expect(Object.hasOwn(part, "text")).toBe(false);
+      refused += 1;
+    }
+    if (refused !== answered.length || refused === 0) {
+      throw new Error(`${refused} of ${answered.length} answered faults became refusals`);
+    }
+  });
+
+  test("an expired deadline and a cancellation RAISE, because nobody answered at all", async () => {
+    // The other two thirds of the docblock's sentence, and the same defect MongoDB
+    // shipped in this phase in the other direction. A deadline this client armed and a
+    // cancellation this client made are not statements about the object, so printing
+    // either in the Source pane as the object's own refusal would offer no raise, no
+    // retry and nothing to tell it from a real denial.
+    const provider = await connectProvider();
+
+    abortReason = { use: true, reason: new DOMException("The operation timed out.", "TimeoutError") };
+    const timedOut = provider.readObjectSource!(["probe_pipeline"], "pipeline");
+    await expect(timedOut).rejects.toBeInstanceOf(TimeoutError);
+    await expect(timedOut).rejects.toThrow(/ran past its deadline/);
+
+    abortReason = { use: true };
+    const cancelled = provider.readObjectSource!(["probe_pipeline"], "pipeline");
+    await expect(cancelled).rejects.toBeInstanceOf(QueryCancelledError);
+    await expect(cancelled).rejects.toThrow(/was cancelled/);
+  });
+
+  test("a declaration this provider cannot honour is refused BY NAME, before any request", async () => {
+    // Both guards compare the DECLARATION against this file, and the shipped declaration
+    // agrees with it - so, exactly as ruling 5g does for the container depth, the
+    // disagreement is swapped in through `getCapabilities`. Without the first guard a
+    // `?? "json"` would render a text that is not JSON as JSON with nothing saying so;
+    // without the second, a declared kind with no reader would call `undefined`.
+    const provider = await connectProvider();
+    const real = new ElasticsearchProvider(makeConnection()).getCapabilities();
+    const kinds = real.objectKinds ?? [];
+    const spy = spyOn(provider, "getCapabilities");
+    sent = [];
+
+    spy.mockReturnValue({
+      ...real,
+      objectKinds: kinds.map((kind) =>
+        kind.id === "pipeline" ? { ...kind, hasSource: true, sourceLanguage: undefined } : kind,
+      ),
+    });
+    await expect(provider.readObjectSource!(["probe_pipeline"], "pipeline")).rejects.toThrow(
+      /Elasticsearch declares source for the kind "pipeline" and no sourceLanguage/,
+    );
+
+    spy.mockReturnValue({
+      ...real,
+      objectKinds: kinds.map((kind) =>
+        kind.id === "index" ? { ...kind, hasSource: true, sourceLanguage: "json" } : kind,
+      ),
+    });
+    await expect(provider.readObjectSource!(["probe_orders"], "index")).rejects.toThrow(
+      /Elasticsearch declares source for the object kind "index" and has no reader for it/,
+    );
+
+    // Neither guard let a request out, which is the half that says they run before the
+    // read rather than after it.
+    expect(sent).toEqual([]);
+    spy.mockRestore();
+  });
 });
 
 /**

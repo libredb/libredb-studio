@@ -1049,13 +1049,35 @@ raises a `QueryError` naming it. That is deliberately **not** the rule the listi
 is a payload. Carrying the listing rule to a named object would print *"index template matching [x]
 not found"* in the Source pane as the cluster refusing to show a definition.
 
-**Only an answer from the cluster is a refusal.** A denied endpoint or a fault the cluster named
-becomes a refusal part carrying the cluster's own sentence, unprefixed. A dropped socket, an expired
+**Only an answer from the cluster is a refusal.** A denied endpoint, a fault the cluster named, or a
+body this client could not read becomes a refusal part carrying the cluster's own sentence,
+unprefixed - with one exception, the **denial**, whose sentence the transport composes from the
+status because no 401 or 403 body could be captured (see CANNOT below). A dropped socket, an expired
 client deadline and a cancellation **raise** instead: nobody answered, so a document carrying
 *"connect ECONNREFUSED"* as this object's own refusal would offer no raise, nothing to retry and
 nothing distinguishing it from a real denial. `isClusterRefusal()` in
 [`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts) is that split, written as a switch
-with no `default` so a new seam category fails the build instead of joining the wrong half.
+with no `default` so a new seam category fails the build instead of joining the wrong half. All eight
+of its arms are driven in the two integration suites, five to the refusal half and three to the
+raising one.
+
+**An unreadable body is a refusal and never an absence.** Where the answer is HTTP 200 and is not the
+shape this client parses - the wrapper is not an object, the value under the name is not an object,
+`index_templates` is not an array, an entry carries no `name` - the read reports
+*"Elasticsearch answered an ingest pipeline definition the client could not read"* (or *"an index
+template definition"*). Skipping the entry or reading it as nothing would say *"No Elasticsearch
+template named X"* about a row the tree is currently showing: a claim about the cluster where the
+truth is a claim about this client, and the one a user cannot act on.
+
+**An EMPTY definition cannot arrive, measured rather than assumed.** Design guarantee 2 asks for a
+refusal part where an engine answers empty or whitespace-only text, and neither endpoint here can
+produce one: `PUT /_ingest/pipeline/<id>` with `{}` is HTTP **400** (`parse_exception`, *"[processors]
+required property is missing"*), a body carrying only a `description` is the same 400, and
+`PUT /_index_template/<name>` with `{}` is HTTP **400** (`illegal_argument_exception`, *"Required
+[index_patterns]"*). The smallest definitions either endpoint stores are therefore
+`{"processors":[]}` and `{"index_patterns":["..."]}` (both `PUT` 200, both read back with those
+members), so the rendered text is always a JSON object with at least one member. Re-runnable against
+the compose service with those four `PUT`s; measured on 9.1.4 on 2026-09-13.
 
 **A refusal is per ENDPOINT.** These are two separate endpoints and a security plugin grants
 privileges per endpoint, so a pipeline read can be denied while a template read answers - the same

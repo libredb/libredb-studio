@@ -1366,9 +1366,14 @@ abstract class SearchProvider extends SQLBaseProvider {
    * such object", which covers both spellings the two endpoints use for it (measured
    * 2026-09-13: `{}` from the pipeline endpoint and the full error envelope from the
    * template endpoint), and this raises a `QueryError` naming the object. A cluster that
-   * ANSWERED and refused - a security plugin denying the endpoint, an engine fault -
-   * becomes a refusal part carrying the cluster's own sentence, unprefixed and
-   * unrewritten. A transport failure is neither: nobody answered at all, so it RAISES,
+   * ANSWERED and refused - a security plugin denying the endpoint, an engine fault, a
+   * body this client could not read - becomes a refusal part carrying the cluster's own
+   * sentence, unprefixed and unrewritten. ONE arm is the exception and both provider
+   * docs say so: a DENIAL carries the transport's own composed sentence
+   * ("Elasticsearch refused the credentials (HTTP 403)"), because security is disabled
+   * on both compose services and a bogus `Basic` header is ignored there, so no 401 or
+   * 403 body exists to carry through and the status is the only thing observed.
+   * A transport failure is neither: nobody answered at all, so it RAISES,
    * because "connect ECONNREFUSED" printed in the Source pane as this object's own
    * refusal has no raise, nothing to retry and nothing distinguishing it from a real
    * denial. That distinction is {@link isClusterRefusal}.
@@ -1379,6 +1384,15 @@ abstract class SearchProvider extends SQLBaseProvider {
    * answers. Neither refusal can be produced on the compose services - security is
    * disabled on both and a bogus `Basic` header is IGNORED (measured, HTTP 200 on both) -
    * and both provider docs say CANNOT rather than reporting around it.
+   *
+   * AN EMPTY DEFINITION CANNOT ARRIVE, which is why design guarantee 2's empty-text
+   * refusal arm is absent here rather than forgotten. Measured on Elasticsearch 9.1.4
+   * and OpenSearch 3.8.0 on 2026-09-13: `PUT /_ingest/pipeline/<id>` with `{}` is HTTP
+   * 400 (`parse_exception`, "[processors] required property is missing") and
+   * `PUT /_index_template/<name>` with `{}` is HTTP 400 (`illegal_argument_exception`,
+   * "Required [index_patterns]"), so the smallest definition either endpoint will store
+   * is `{"processors":[]}` or `{"index_patterns":[...]}`. The rendered text is a JSON
+   * object with at least one member and can be neither empty nor whitespace-only.
    *
    * WHAT THE TEXT IS: `form: "complete"`, because the endpoint answers the whole
    * definition rather than a summary of it, and `origin: "rendered"`, because this

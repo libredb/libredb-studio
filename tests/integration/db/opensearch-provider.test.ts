@@ -55,7 +55,7 @@ import { ElasticsearchProvider, OpenSearchProvider } from "@/lib/db/providers/sq
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
 import { type SearchErrorCategory, SearchTransportError } from "@/lib/db/providers/sql/search/transport";
 import type { ProviderCapabilities } from "@/lib/db/types";
-import { ConnectionError, QueryError } from "@/lib/db/errors";
+import { ConnectionError, QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
@@ -1826,5 +1826,216 @@ describe("OpenSearch object source", () => {
     // The bound value: the cluster was asked for the object's OWN name and for nothing
     // the container carries.
     expect(sentPaths).toEqual(["/_ingest/pipeline/probe_pipeline"]);
+  });
+
+  /** A CORE REST failure envelope, the snake_case shape this endpoint answers. */
+  function restFault(type: string, reason: string): string {
+    return JSON.stringify({ error: { root_cause: [{ type, reason }], type, reason }, status: 400 });
+  }
+
+  /**
+   * `GET /_ingest/pipeline/probe_pipeline?nope=1`, HTTP 400, captured from OpenSearch
+   * 3.8.0 on 2026-09-13 (#789), byte-identical to the Elasticsearch answer.
+   *
+   * The only refusal either source endpoint could be MADE to produce on a node with the
+   * security plugin disabled, and the name is `illegal_argument_exception`, which
+   * classifies as `engine`.
+   */
+  const UNRECOGNIZED_PARAMETER = restFault(
+    "illegal_argument_exception",
+    "request [/_ingest/pipeline/probe_pipeline] contains unrecognized parameter: [nope]",
+  );
+
+  /**
+   * Run one call with the client's deadline already expired.
+   *
+   * This suite installs no abort recorder of its own, so the signal the provider arms is
+   * replaced here and the fake `fetch` is wrapped to reject with the signal's reason the
+   * way a real one does. Both are restored before the call returns, so nothing leaks into
+   * the next test.
+   */
+  async function underAbortedDeadline<T>(reason: unknown, call: () => Promise<T>): Promise<T> {
+    const realTimeout = AbortSignal.timeout;
+    const installed = globalThis.fetch;
+    AbortSignal.timeout = (() => {
+      const controller = new AbortController();
+      if (reason === undefined) controller.abort();
+      else controller.abort(reason);
+      return controller.signal;
+    }) as typeof AbortSignal.timeout;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      // A real fetch handed an already-aborted signal rejects with the signal's reason,
+      // and that value is exactly what the transport deliberately does not trust.
+      if (init?.signal?.aborted === true) throw init.signal.reason;
+      return installed(input, init);
+    }) as typeof fetch;
+    try {
+      return await call();
+    } finally {
+      AbortSignal.timeout = realTimeout;
+      globalThis.fetch = installed;
+    }
+  }
+
+  test("a pipeline body this client cannot read is a REFUSAL and never an absence", async () => {
+    // An unreadable body reported as absence would say "No OpenSearch pipeline named
+    // probe_pipeline" about a row the tree is currently showing: a claim about the
+    // cluster where the truth is a claim about this client, and the one a user cannot
+    // act on.
+    const provider = await connectProvider();
+
+    replyFor = (path, body) => (path === "/_ingest/pipeline/probe_pipeline" ? ok("[]") : defaultReply(path, body));
+    const [outer] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline")).parts;
+    if (!isSourcePartUnavailable(outer)) throw new Error("an unreadable wrapper was not refused");
+    expect(outer.unavailable).toBe("OpenSearch answered an ingest pipeline definition the client could not read");
+    expect(Object.hasOwn(outer, "text")).toBe(false);
+
+    replyFor = (path, body) =>
+      path === "/_ingest/pipeline/probe_pipeline" ? ok('{"probe_pipeline":7}') : defaultReply(path, body);
+    const [inner] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline")).parts;
+    if (!isSourcePartUnavailable(inner)) throw new Error("an unreadable definition was not refused");
+    expect(inner.unavailable).toBe("OpenSearch answered an ingest pipeline definition the client could not read");
+    expect(Object.hasOwn(inner, "text")).toBe(false);
+
+    // The control, so none of the above is a test of a broken fake.
+    replyFor = defaultReply;
+    const [readable] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline")).parts;
+    if (isSourcePartUnavailable(readable)) throw new Error("the control read was refused");
+    expect(readable.text).toBe(PIPELINE_TEXT);
+  });
+
+  test("an index template entry this client cannot read is REFUSED rather than skipped", async () => {
+    // Skipping an unreadable entry walks off the end of the array and reports the object
+    // as absent, which is a different fact and the wrong one.
+    const provider = await connectProvider();
+    const unreadable: readonly (readonly [string, string])[] = [
+      ["the list is not an array", '{"index_templates":{}}'],
+      ["an entry is not an object", '{"index_templates":[7]}'],
+      ["an entry carries no name", '{"index_templates":[{"index_template":{"index_patterns":["x"]}}]}'],
+      [
+        "the named entry's definition is not an object",
+        '{"index_templates":[{"name":"probe_template","index_template":7}]}',
+      ],
+    ];
+
+    let refused = 0;
+    for (const [what, body] of unreadable) {
+      replyFor = (path, requested) =>
+        path === "/_index_template/probe_template" ? ok(body) : defaultReply(path, requested);
+      const [part] = (await provider.readObjectSource!(["probe_template"], "template")).parts;
+      if (!isSourcePartUnavailable(part)) throw new Error(`${what}: the read answered a text`);
+      expect(part.unavailable).toBe("OpenSearch answered an index template definition the client could not read");
+      expect(Object.hasOwn(part, "text")).toBe(false);
+      refused += 1;
+    }
+    if (refused !== unreadable.length || refused === 0) {
+      throw new Error(`${refused} of ${unreadable.length} unreadable bodies were refused`);
+    }
+  });
+
+  test("every category the cluster ANSWERED in is a refusal, and it carries the cluster's own sentence", async () => {
+    // Four of the five arms on the refusal side of `isClusterRefusal`, `auth` being the
+    // fifth and driven by the per-endpoint test above. A category moved to the raising
+    // half throws instead of answering a document, and the Source pane then shows the
+    // sentence the cluster wrote to nobody.
+    //
+    // Only the FIRST body is a capture and the rest are disclosed rather than presented
+    // as measurements: on OpenSearch 3.8.0 with the security plugin disabled, every fault
+    // either source GET produces is `illegal_argument_exception`, so the other three
+    // names cannot be provoked on these endpoints. They are pinned anyway, because the
+    // switch classifies the seam's CATEGORY and the seam is shared with the SQL surface,
+    // where all three names are measured (see the fault table above).
+    const provider = await connectProvider();
+    const answered: readonly (readonly [string, string, string])[] = [
+      [
+        "engine",
+        UNRECOGNIZED_PARAMETER,
+        "request [/_ingest/pipeline/probe_pipeline] contains unrecognized parameter: [nope]",
+      ],
+      [
+        "syntax",
+        restFault("EOFParserException", "Failed to parse query due to offending symbol"),
+        "Failed to parse query due to offending symbol",
+      ],
+      [
+        "unknown-object",
+        restFault("SemanticCheckException", "can't resolve Symbol(namespace=INDEX_NAME)"),
+        "can't resolve Symbol(namespace=INDEX_NAME)",
+      ],
+      ["unsupported", restFault("SQLFeatureNotSupportedException", "Unsupported operation"), "Unsupported operation"],
+    ];
+
+    let refused = 0;
+    for (const [category, body, sentence] of answered) {
+      replyFor = (path, requested) =>
+        path === "/_ingest/pipeline/probe_pipeline" ? { status: 400, body } : defaultReply(path, requested);
+      const [part] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline")).parts;
+      if (!isSourcePartUnavailable(part)) throw new Error(`${category}: an answered fault was not a refusal`);
+      // Unprefixed and unrewritten, which the docblock promises for every arm but `auth`,
+      // where no body could be captured and the sentence is composed from the status.
+      expect(part.unavailable).toBe(sentence);
+      expect(Object.hasOwn(part, "text")).toBe(false);
+      refused += 1;
+    }
+    if (refused !== answered.length || refused === 0) {
+      throw new Error(`${refused} of ${answered.length} answered faults became refusals`);
+    }
+  });
+
+  test("an expired deadline and a cancellation RAISE, because nobody answered at all", async () => {
+    // The other two thirds of the docblock's sentence, and the same defect MongoDB
+    // shipped in this phase in the other direction. A deadline this client armed and a
+    // cancellation this client made say nothing about the object, so neither may be
+    // printed in the Source pane as the object's own refusal.
+    const provider = await connectProvider();
+
+    const timedOut = underAbortedDeadline(new DOMException("The operation timed out.", "TimeoutError"), () =>
+      provider.readObjectSource!(["probe_pipeline"], "pipeline"),
+    );
+    await expect(timedOut).rejects.toBeInstanceOf(TimeoutError);
+    await expect(timedOut).rejects.toThrow(/ran past its deadline/);
+
+    const cancelled = underAbortedDeadline(undefined, () => provider.readObjectSource!(["probe_pipeline"], "pipeline"));
+    await expect(cancelled).rejects.toBeInstanceOf(QueryCancelledError);
+    await expect(cancelled).rejects.toThrow(/was cancelled/);
+  });
+
+  test("a declaration this provider cannot honour is refused BY NAME, before any request", async () => {
+    // Both guards compare the DECLARATION against the reader table, and the shipped
+    // declaration agrees with it, so the disagreement is swapped in through
+    // `getCapabilities` the way ruling 5g swaps the container depth in. Without the
+    // first, a `?? "json"` default would render a text that is not JSON as JSON with
+    // nothing anywhere saying so; without the second, a declared kind with no reader
+    // would call `undefined`.
+    const provider = await connectProvider();
+    const real = new OpenSearchProvider(makeConnection()).getCapabilities();
+    const kinds = real.objectKinds ?? [];
+    const spy = spyOn(provider, "getCapabilities");
+    sentPaths = [];
+
+    spy.mockReturnValue({
+      ...real,
+      objectKinds: kinds.map((kind) =>
+        kind.id === "pipeline" ? { ...kind, hasSource: true, sourceLanguage: undefined } : kind,
+      ),
+    });
+    await expect(provider.readObjectSource!(["probe_pipeline"], "pipeline")).rejects.toThrow(
+      /OpenSearch declares source for the kind "pipeline" and no sourceLanguage/,
+    );
+
+    spy.mockReturnValue({
+      ...real,
+      objectKinds: kinds.map((kind) =>
+        kind.id === "index" ? { ...kind, hasSource: true, sourceLanguage: "json" } : kind,
+      ),
+    });
+    await expect(provider.readObjectSource!(["probe_orders"], "index")).rejects.toThrow(
+      /OpenSearch declares source for the object kind "index" and has no reader for it/,
+    );
+
+    // Neither guard let a request out, which is the half that says they run before the
+    // read rather than after it.
+    expect(sentPaths).toEqual([]);
+    spy.mockRestore();
   });
 });
