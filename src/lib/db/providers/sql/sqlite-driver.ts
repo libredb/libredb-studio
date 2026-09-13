@@ -31,6 +31,16 @@ export type SQLiteDatabase = {
   exec(sql: string): void;
   prepare(sql: string): SQLiteStatement;
   close(): void;
+  /**
+   * Whether this handle currently has a transaction open, as SQLite itself reports it
+   * (`sqlite3_get_autocommit`), in the bun:sqlite spelling. Both drivers publish it and
+   * spell it differently — bun:sqlite `inTransaction`, node:sqlite `isTransaction` — so
+   * the node adapter below translates, exactly as it does for the read-only flag.
+   *
+   * Measured 2026-09-13 on bun:sqlite (Bun 1.4.2) and node:sqlite (Node 24.14.0): false
+   * on a fresh handle, true after `BEGIN`, false again after `ROLLBACK`.
+   */
+  readonly inTransaction: boolean;
 };
 
 /**
@@ -57,6 +67,8 @@ export type NodeDatabaseSyncLike = {
   exec(sql: string): void;
   prepare(sql: string): NodeStatementLike;
   close(): void;
+  /** node:sqlite's spelling of bun:sqlite's `inTransaction`. */
+  readonly isTransaction: boolean;
 };
 /** node:sqlite's own open options — only the ones this adapter maps. */
 export type NodeSQLiteOpenOptions = { readOnly?: boolean };
@@ -100,6 +112,9 @@ async function loadBunDriver(): Promise<SQLiteConstructor> {
  *   read-only flag DOES: node spells it `readOnly`, bun spells it `readonly`,
  *   and an adapter that dropped it would silently hand an agent execution
  *   profile a fully writable database handle (#328).
+ * - `inTransaction` is node:sqlite's `isTransaction` under bun:sqlite's name. The
+ *   provider reads it to tell whether a statement left a transaction open on the handle
+ *   (D71), and a handle whose answer never changed would report every script as clean.
  * - `get()` returns `undefined` on a miss where bun:sqlite returns `null`.
  * - `run()` reports `changes` as `number | bigint`; normalize to `number`.
  *
@@ -133,6 +148,10 @@ export function createNodeSQLiteDriver(DatabaseSyncCtor: NodeSQLiteModule["Datab
 
     close(): void {
       this.db.close();
+    }
+
+    get inTransaction(): boolean {
+      return this.db.isTransaction;
     }
   }
 

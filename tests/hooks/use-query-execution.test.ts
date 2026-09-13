@@ -1191,6 +1191,107 @@ describe("useQueryExecution", () => {
     expect(mockToastError).toHaveBeenCalled();
   });
 
+  // ── the script's unfinished transaction is reported, not swallowed (D71) ──
+
+  test("says the script's unfinished transaction was rolled back, after a failure", async () => {
+    mockGlobalFetch({
+      "/api/db/multi-query": {
+        ok: true,
+        json: {
+          multiStatement: true,
+          executedCount: 3,
+          statementCount: 3,
+          hasError: true,
+          openTransaction: "rolled-back",
+          rows: [],
+          fields: [],
+          rowCount: 0,
+          executionTime: 30,
+          statements: [
+            { index: 0, status: "success", rowCount: 0 },
+            { index: 1, status: "success", rowCount: 0 },
+            { index: 2, status: "error", error: 'relation "bad" does not exist' },
+          ],
+        },
+      },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("BEGIN; CREATE TABLE t(id int); SELECT * FROM bad;");
+    });
+
+    const description = (mockToastError.mock.calls.at(-1) as unknown[])[1] as { description?: string };
+    expect(description.description).toContain("rolled back");
+  });
+
+  test("says so after a script that ran clean and never committed", async () => {
+    mockGlobalFetch({
+      "/api/db/multi-query": {
+        ok: true,
+        json: {
+          multiStatement: true,
+          executedCount: 2,
+          statementCount: 2,
+          hasError: false,
+          openTransaction: "rolled-back",
+          rows: [],
+          fields: [],
+          rowCount: 0,
+          executionTime: 12,
+          statements: [
+            { index: 0, status: "success", rowCount: 0 },
+            { index: 1, status: "success", rowCount: 1 },
+          ],
+        },
+      },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("BEGIN; INSERT INTO t VALUES (1);");
+    });
+
+    const description = (mockToastSuccess.mock.calls.at(-1) as unknown[])[1] as { description?: string };
+    expect(description.description).toContain("rolled back");
+  });
+
+  test("says nothing about transactions when the script left none open", async () => {
+    mockGlobalFetch({
+      "/api/db/multi-query": {
+        ok: true,
+        json: {
+          multiStatement: true,
+          executedCount: 2,
+          statementCount: 2,
+          hasError: false,
+          rows: [],
+          fields: [],
+          rowCount: 0,
+          executionTime: 12,
+          statements: [
+            { index: 0, status: "success", rowCount: 0 },
+            { index: 1, status: "success", rowCount: 1 },
+          ],
+        },
+      },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1; SELECT 2;");
+    });
+
+    const description = (mockToastSuccess.mock.calls.at(-1) as unknown[])[1] as { description?: string };
+    expect(description.description).not.toContain("rolled back");
+  });
+
   // ── executeQuery refreshes schema after DDL ────────────────────────────
 
   test("executeQuery calls fetchSchema after DDL query", async () => {

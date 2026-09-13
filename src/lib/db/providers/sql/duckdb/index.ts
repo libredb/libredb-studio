@@ -54,6 +54,7 @@ import {
   type ObjectDetail,
   type ObjectDetailBatch,
   type ObjectSourceDocument,
+  type OpenQueryTransactionOutcome,
   type PerformanceMetrics,
   type ProviderCapabilities,
   type ProviderExecutionContext,
@@ -650,6 +651,27 @@ export class DuckDBProvider extends SQLBaseProvider {
         if (queryId) this.runningQueryIds.delete(queryId);
       }
     });
+  }
+
+  /**
+   * End a transaction a statement left open on this connection (D71).
+   *
+   * DuckDB holds ONE connection here (see `DuckDBClient`), so a transaction a script
+   * opened and did not finish stays open on the handle every later request borrows:
+   * `getOrCreateProvider` caches this provider per `connection.id` for the whole process.
+   * Measured 2026-09-13 through the product's own routes on v1.5.5, the loss was SILENT —
+   * the next user's INSERT answered HTTP 200 and read its own row back, and a later
+   * ROLLBACK discarded it with no error at any point.
+   *
+   * The ask and the act are one call because on this engine they cannot be separated:
+   * v1.5.5 publishes no transaction-state reading, so the engine's refusal of the
+   * ROLLBACK is the answer. `client.endOpenTransaction()` carries that measurement and
+   * raises anything that is not that refusal.
+   */
+  public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
+    this.ensureConnected();
+
+    return (await this.client!.endOpenTransaction()) ? "rolled-back" : "none";
   }
 
   /**

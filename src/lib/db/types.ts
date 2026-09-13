@@ -618,6 +618,18 @@ export interface QueryPrepareOptions {
 // Provider Interface (Strategy Pattern)
 // ============================================================================
 
+/**
+ * What `endOpenQueryTransaction()` found and did: `"none"` when the session carried no
+ * open transaction, `"rolled-back"` when it did and the transaction has been discarded.
+ *
+ * Discarded rather than committed, deliberately. A script that opened a transaction and
+ * never said COMMIT did not ask for its work to be kept, and committing on its behalf
+ * would write changes on an authority nobody gave. The caller is expected to tell the
+ * user which of the two happened; silence is what shipped, and silence is what let a
+ * script's unfinished transaction reach another user.
+ */
+export type OpenQueryTransactionOutcome = "none" | "rolled-back";
+
 export interface DatabaseProvider {
   /** Database type identifier */
   readonly type: DatabaseType;
@@ -657,6 +669,47 @@ export interface DatabaseProvider {
    * that lack it rather than falling back to `query()` (fail closed).
    */
   queryReadOnly?(sql: string, budget: ReadOnlyStatementBudget): Promise<QueryResult>;
+
+  /**
+   * End a transaction that a statement run through `query()` left open on the session
+   * `query()` runs on, and say whether there was one (D71).
+   *
+   * WHY IT EXISTS. `getOrCreateProvider` caches one provider per `connection.id` for the
+   * whole process, so a transaction that outlives the request belongs to whoever borrows
+   * that handle next. Measured 2026-09-13 through the product's own routes:
+   * `POST /api/db/multi-query` with `BEGIN; CREATE TABLE ...; SELECT * FROM <missing>`
+   * stops on the third statement and leaves the first one's transaction open. On
+   * PostgreSQL 17 the next request — a DIFFERENT user, on `POST /api/db/query` — answered
+   * HTTP 500 "current transaction is aborted, commands ignored until end of transaction
+   * block", and so did `POST /api/db/maintenance` minutes later; on SQLite and DuckDB the
+   * next user's INSERT answered 200 and read its own row back while an independent reader
+   * saw nothing, and a later ROLLBACK destroyed it with no error anywhere.
+   *
+   * WHY IT IS ONE CALL AND NOT AN ASK FOLLOWED BY A ROLLBACK. Two engines cannot separate
+   * them. On PostgreSQL the answer lives on ONE pooled client (`pg`'s ReadyForQuery status)
+   * and a rollback issued through a second pool checkout is not guaranteed to reach the
+   * same one, so the ask and the act have to name the same client. On DuckDB v1.5.5 there
+   * is no ask at all: `current_transaction_id()` answers in both states,
+   * `transaction_timestamp()` is an alias of `get_current_timestamp()`, and the client
+   * context carries only a connection id, so the engine's own refusal of a ROLLBACK is the
+   * only reading available. The RESULT still answers the question, which is what the
+   * caller needs in order to tell the user what became of the transaction they opened.
+   *
+   * `"none"` is an ANSWER, never a failure: an unconditional ROLLBACK is not an option
+   * because a rollback with nothing to roll back raises — measured on bun:sqlite 1.4.2 and
+   * DuckDB v1.5.5, both "cannot rollback - no transaction is active".
+   *
+   * OPTIONAL, for the reason `queryReadOnly` is: only a provider that can name the session
+   * its own `query()` ran on can answer truthfully, and a provider that cannot must say
+   * nothing rather than guess. `postgres`, `sqlite` and `duckdb` implement it, which are
+   * the three engines D71 was measured on. A caller shape-checks for it; there is no
+   * default, because a default that answered `"none"` would certify an absence nobody read.
+   *
+   * It does NOT touch the interactive transaction session `POST /api/db/transaction`
+   * drives (`beginTransaction()` and friends). That session holds a connection of its own
+   * that `query()` never runs on, so it is never the session this method names.
+   */
+  endOpenQueryTransaction?(): Promise<OpenQueryTransactionOutcome>;
 
   /**
    * Containers at `parent`, or the top level when `parent` is absent (#789).

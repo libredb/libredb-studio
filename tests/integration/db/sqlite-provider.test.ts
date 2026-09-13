@@ -298,6 +298,52 @@ describe("SQLiteProvider", () => {
   });
 
   // --------------------------------------------------------------------------
+  // A transaction left open on the handle (D71)
+  // --------------------------------------------------------------------------
+
+  describe("endOpenQueryTransaction()", () => {
+    test("rolls back a transaction a statement left open on this handle", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+      await provider.query("CREATE TABLE t (id INTEGER)");
+
+      await provider.query("BEGIN");
+      await provider.query("INSERT INTO t VALUES (1)");
+
+      expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
+
+      const after = await provider.query("SELECT count(*) AS n FROM t");
+      expect((after.rows[0] as Record<string, unknown>).n).toBe(0);
+    });
+
+    test("answers none when no transaction is open, instead of raising", async () => {
+      // The reason the route cannot simply issue ROLLBACK. Measured on
+      // bun:sqlite 1.4.2: a ROLLBACK with no transaction active throws
+      // "cannot rollback - no transaction is active", so an unconditional
+      // rollback would report an error on every script that ended cleanly.
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      expect(await provider.endOpenQueryTransaction()).toBe("none");
+      await expect(provider.query("ROLLBACK")).rejects.toThrow("cannot rollback - no transaction is active");
+    });
+
+    test("leaves a committed transaction alone", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+      await provider.query("CREATE TABLE t (id INTEGER)");
+
+      await provider.query("BEGIN");
+      await provider.query("INSERT INTO t VALUES (1)");
+      await provider.query("COMMIT");
+
+      expect(await provider.endOpenQueryTransaction()).toBe("none");
+      const after = await provider.query("SELECT count(*) AS n FROM t");
+      expect((after.rows[0] as Record<string, unknown>).n).toBe(1);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Capabilities
   // --------------------------------------------------------------------------
 
@@ -663,6 +709,7 @@ describe("SQLiteProvider", () => {
       const fakeDb = {
         exec: () => {},
         close: () => {},
+        inTransaction: false,
         prepare: (sql: string) => ({
           all: () => (sql.includes("dbstat") ? dbstat : owners),
           get: () => null,
@@ -684,6 +731,7 @@ describe("SQLiteProvider", () => {
       const fakeDb = {
         exec: () => {},
         close: () => {},
+        inTransaction: false,
         prepare: () => {
           throw new Error("no such table: dbstat");
         },
@@ -1084,6 +1132,9 @@ function interceptReads(provider: SQLiteProvider, match: string, intercept: (sql
   holder.db = {
     exec: (sql: string) => real.exec(sql),
     close: () => real.close(),
+    get inTransaction() {
+      return real.inTransaction;
+    },
     prepare: (sql: string) => (sql.includes(match) ? intercept(sql) : real.prepare(sql)),
   };
 }
@@ -2170,6 +2221,9 @@ describe("SQLiteProvider bulk column read (#789)", () => {
     holder.db = {
       exec: (sql: string) => real.exec(sql),
       close: () => real.close(),
+      get inTransaction() {
+        return real.inTransaction;
+      },
       prepare: (sql: string) => {
         seen.push(sql);
         return real.prepare(sql);

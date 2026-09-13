@@ -37,8 +37,24 @@ let mockQueryFn: (
   rowCount?: number;
 }>;
 
+/**
+ * The ReadyForQuery transaction-status byte the server sends after every statement:
+ * "I" idle, "T" in a transaction, "E" in a failed one. `pg` 8.23 records the last one
+ * per client and publishes it as `getTransactionStatus()`, which is how the provider
+ * can tell that a statement left a transaction open on the client it borrowed (D71).
+ * Tests set it to say what the server would have said.
+ */
+let mockTxStatus: "I" | "T" | "E" | null = "I";
+
 const mockClient = {
-  query: (sql: string, params?: unknown[]) => mockQueryFn(sql, params),
+  query: (sql: string, params?: unknown[]) => {
+    // The two statements that end a transaction on the wire also end it here, so a
+    // test can observe the provider's rollback rather than only the call to it.
+    const ended = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(sql);
+    if (ended) mockTxStatus = "I";
+    return mockQueryFn(sql, params);
+  },
+  getTransactionStatus: () => mockTxStatus,
   // Real pg signature: release(err?) — an error argument destroys the client
   // instead of returning it to the pool, which queryReadOnly relies on.
   release: (_destroy?: Error) => {},
@@ -972,6 +988,81 @@ describe("PostgresProvider", () => {
       } finally {
         providerStatics.TX_TIMEOUT_MS = originalTimeout;
       }
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // A transaction left open on a pooled client (D71)
+  // --------------------------------------------------------------------------
+
+  describe("endOpenQueryTransaction()", () => {
+    beforeEach(() => {
+      mockTxStatus = "I";
+    });
+
+    test("rolls back on the client the last statement ran on when the server says T", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const issued: string[] = [];
+      mockQueryFn = (sql: string) => {
+        issued.push(sql);
+        return defaultMockQuery(sql);
+      };
+
+      await provider.query("BEGIN");
+      mockTxStatus = "T";
+
+      expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
+      expect(issued.at(-1)).toBe("ROLLBACK");
+      // The rollback really reached the wire: the mock client moves its own status to "I"
+      // when it sees a COMMIT or a ROLLBACK, exactly as the server's ReadyForQuery does.
+      expect(String(mockTxStatus)).toBe("I");
+    });
+
+    test("rolls back an ABORTED transaction, which is the shape that poisons the pool", async () => {
+      // Measured on PostgreSQL 17 through the product's own routes: a script whose
+      // statement failed inside its own BEGIN released a client in state E, and every
+      // later request that drew that client answered HTTP 500 "current transaction is
+      // aborted, commands ignored until end of transaction block" — a different user,
+      // a different route, twelve retries over 60 seconds and eight minutes later.
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const issued: string[] = [];
+      mockQueryFn = (sql: string) => {
+        issued.push(sql);
+        return defaultMockQuery(sql);
+      };
+
+      await provider.query("SELECT 1");
+      mockTxStatus = "E";
+
+      expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
+      expect(issued.at(-1)).toBe("ROLLBACK");
+    });
+
+    test("answers none when the server says the client is idle", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const issued: string[] = [];
+      mockQueryFn = (sql: string) => {
+        issued.push(sql);
+        return defaultMockQuery(sql);
+      };
+
+      await provider.query("SELECT 1");
+
+      expect(await provider.endOpenQueryTransaction()).toBe("none");
+      expect(issued).not.toContain("ROLLBACK");
+    });
+
+    test("answers none when no statement has run on this provider yet", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      expect(await provider.endOpenQueryTransaction()).toBe("none");
     });
   });
 

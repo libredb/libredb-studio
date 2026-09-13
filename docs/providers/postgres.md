@@ -1161,6 +1161,23 @@ than inferred because the route's own gate is `isTransactionProvider(provider)`,
 check no client can read, so before #464 those controls rendered on every
 connection — including the ten providers that answer HTTP 400.
 
+### 8.1 `endOpenQueryTransaction()` — a transaction left open on a pooled client
+
+The lifecycle above is not the only way a transaction starts here.
+A `BEGIN` sent through `query()` opens one on the pooled client that call borrowed, and `query()` releases that client back to the pool without ending it.
+The pool does not make that benign, it widens it: the client is one of up to ten, it is handed out again at random, and the provider itself is cached per `connection.id` for the whole process.
+
+Measured 2026-09-13 on PostgreSQL 17 through the product's own routes.
+`POST /api/db/multi-query` with `BEGIN; CREATE TABLE d71_pg(id int); SELECT * FROM no_such_table` stopped on the third statement and released the client in status `E`.
+Every later request that drew that client answered HTTP 500 "current transaction is aborted, commands ignored until end of transaction block": a different user on `POST /api/db/query`, twelve retries over 60 seconds, 40 seconds of idleness, and `POST /api/db/maintenance` eight minutes later.
+`pg_stat_activity` showed the backend as `idle in transaction (aborted)` throughout.
+
+`endOpenQueryTransaction()` ends it and reports `"none"` or `"rolled-back"`.
+It reads the server's own answer rather than inferring one: `pg` records the ReadyForQuery status byte of every statement — `I` idle, `T` in a transaction, `E` in a failed one — and publishes it as `getTransactionStatus()` (pg 8.23).
+It targets the exact client the last `query()` ran on, kept in `lastQueryClient`, because a rollback issued through a fresh `pool.connect()` is not guaranteed to reach the same one and rolling back somebody else's transaction is worse than leaving this one open.
+The interactive session above is never touched: its client is checked out for the session's whole life, so `query()` never borrows it.
+`POST /api/db/multi-query` calls this in a `finally` and reports the outcome.
+
 ---
 
 ## 9. Maintenance

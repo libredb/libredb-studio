@@ -21,6 +21,7 @@ import {
   type ObjectDetailBatch,
   type ObjectSourceDocument,
   type ObjectKindSpec,
+  type OpenQueryTransactionOutcome,
   type QueryResult,
   type HealthInfo,
   type MaintenanceType,
@@ -1248,6 +1249,36 @@ export class SQLiteProvider extends SQLBaseProvider {
         executionTime,
       };
     });
+  }
+
+  /**
+   * End a transaction a statement left open on this handle (D71).
+   *
+   * SQLite states it itself: `sqlite3_get_autocommit` is published by both drivers this
+   * provider runs on (bun:sqlite `inTransaction`, node:sqlite `isTransaction`, bridged in
+   * `sqlite-driver.ts`), so the question is answered without a round trip and without
+   * reading the statement text. Reading the text was never an option: the transaction can
+   * be opened by a `BEGIN` inside a form no splitter sees through, and the leak is the
+   * missing rollback, not the keyword.
+   *
+   * The ask is separate from the act here, unlike DuckDB, because SQLite answers it. It
+   * matters: measured on bun:sqlite 1.4.2, `ROLLBACK` with no transaction active throws
+   * "cannot rollback - no transaction is active", so a route that rolled back
+   * unconditionally would report an error on every script that ended cleanly.
+   *
+   * Discarding rather than committing is argued at `OpenQueryTransactionOutcome`. On this
+   * engine the cost of NOT doing it was measured on 2026-09-13: the provider holds ONE
+   * handle, so the next user's INSERT joined the abandoned transaction, answered HTTP 200
+   * and read its own row back, while `sqlite3` in another process saw nothing and a second
+   * writer was refused with "database is locked".
+   */
+  public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
+    this.ensureConnected();
+
+    if (!this.db!.inTransaction) return "none";
+
+    this.db!.exec("ROLLBACK");
+    return "rolled-back";
   }
 
   /**

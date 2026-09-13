@@ -38,6 +38,7 @@ import {
   objectSourceSql,
   seedZeroCounts,
 } from "@/lib/db/providers/sql/duckdb/objects";
+import { openDuckDBClient } from "@/lib/db/providers/sql/duckdb/client";
 import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import { isSourcePartUnavailable, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
@@ -447,6 +448,76 @@ describe("query()", () => {
     await provider.connect();
 
     await expect(provider.query("SELECT * FROM nope")).rejects.toThrow(/Catalog Error: Table with name nope/);
+  });
+});
+
+// ============================================================================
+// A transaction left open on the handle (D71)
+// ============================================================================
+
+describe("endOpenQueryTransaction()", () => {
+  let provider: DuckDBProvider;
+
+  afterEach(async () => {
+    if (provider?.isConnected()) await provider.disconnect();
+  });
+
+  test("rolls back a transaction a statement left open on this connection", async () => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+    await provider.query("CREATE TABLE t (id INTEGER)");
+
+    await provider.query("BEGIN");
+    await provider.query("INSERT INTO t VALUES (1)");
+
+    expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
+    expect((await provider.query("SELECT count(*) AS n FROM t")).rows[0].n).toBe("0");
+  });
+
+  test("answers none when no transaction is open, and leaves the connection usable", async () => {
+    // Measured on DuckDB v1.5.5: the engine publishes no transaction-state
+    // reading - `current_transaction_id()` answers in both states,
+    // `transaction_timestamp()` is an alias of `get_current_timestamp()`, and
+    // the client context carries only a connection id - so the engine's own
+    // refusal is the answer, and the refusal costs the session nothing.
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+
+    expect(await provider.endOpenQueryTransaction()).toBe("none");
+    expect((await provider.query("SELECT 42 AS x")).rows[0].x).toBe(42);
+  });
+
+  test("leaves a committed transaction alone", async () => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+    await provider.query("CREATE TABLE t (id INTEGER)");
+
+    await provider.query("BEGIN");
+    await provider.query("INSERT INTO t VALUES (1)");
+    await provider.query("COMMIT");
+
+    expect(await provider.endOpenQueryTransaction()).toBe("none");
+    expect((await provider.query("SELECT count(*) AS n FROM t")).rows[0].n).toBe("1");
+  });
+
+  test("refuses to answer before connect()", async () => {
+    provider = new DuckDBProvider(makeConfig());
+
+    await expect(provider.endOpenQueryTransaction()).rejects.toThrow(DatabaseConfigError);
+  });
+
+  test("raises a rollback failure that is not the engine's own refusal", async () => {
+    // The one thing reading an error message must not do is read every message as the
+    // same answer. Only "cannot rollback - no transaction is active" means there was
+    // nothing to roll back; a rollback that failed for any other reason has left the
+    // session in a state nobody has established, and swallowing it would report that
+    // state as clean. Provoked here by closing the connection under an OPEN transaction,
+    // which answers "Failed to query: connection disconnected" (measured, v1.5.5).
+    const client = await openDuckDBClient(":memory:", { readOnly: false });
+    await client.run("BEGIN");
+    client.close();
+
+    await expect(client.endOpenTransaction()).rejects.toThrow("connection disconnected");
   });
 });
 

@@ -69,6 +69,20 @@ export interface DuckDBClient {
   /** True when the instance was opened read-only AND with external access disabled. */
   readonly readOnly: boolean;
   run(sql: string, params?: unknown[]): Promise<DuckDBStatementResult>;
+  /**
+   * Roll back a transaction left open on this connection, and say whether there was
+   * one to roll back (D71).
+   *
+   * It lives on the client rather than in the provider because DuckDB v1.5.5 publishes
+   * NO transaction-state reading, so the only answer available is the engine's own
+   * refusal of the ROLLBACK, and reading a driver error is driver vocabulary. Measured
+   * 2026-08-27 and re-measured 2026-09-13 on v1.5.5 / @duckdb/node-api 1.5.5-r.4:
+   * `current_transaction_id()` answers in both states (a new id per implicit
+   * transaction outside one, the transaction's own id inside), `transaction_timestamp()`
+   * is an alias of `get_current_timestamp()`, and the client context object carries only
+   * a connection id. `duckdb_functions()` lists no other candidate.
+   */
+  endOpenTransaction(): Promise<boolean>;
   /** Ask the engine to abandon whatever this connection is running. */
   interrupt(): void;
   close(): void;
@@ -93,6 +107,17 @@ export interface DuckDBOpenOptions {
  * text and is the one thing that ends the confusion, so it is kept verbatim.
  */
 const LOCK_CONFLICT_MARKER = "conflicting lock is held";
+
+/**
+ * DuckDB's own words for "you asked me to roll back and there is nothing open".
+ *
+ * Measured on v1.5.5: `ROLLBACK` on a connection with no transaction answers
+ * "TransactionContext Error: cannot rollback - no transaction is active", and the
+ * connection is untouched by the refusal — the very next statement runs normally. That
+ * is what makes an attempted rollback a safe way to ASK the question on an engine that
+ * publishes no other reading of it (see `DuckDBClient.endOpenTransaction`).
+ */
+const NO_TRANSACTION_MARKER = "cannot rollback - no transaction is active";
 
 /** The PID DuckDB named as holding the lock, when its message names one. */
 export function readLockHolderPid(message: string): number | null {
@@ -197,6 +222,19 @@ export async function openDuckDBClient(path: string, options: DuckDBOpenOptions)
         rows: reader.getRowObjectsJson() as Record<string, unknown>[],
         rowsChanged: reader.rowsChanged,
       };
+    },
+    async endOpenTransaction(): Promise<boolean> {
+      try {
+        await connection.run("ROLLBACK");
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Only the engine's own "there was nothing to roll back" is an answer. Anything
+        // else is a real failure and is raised: a rollback that failed for another
+        // reason has left the connection in a state this seam must not paper over.
+        if (message.includes(NO_TRANSACTION_MARKER)) return false;
+        throw error;
+      }
     },
     interrupt(): void {
       connection.interrupt();
