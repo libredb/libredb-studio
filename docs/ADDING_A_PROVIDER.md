@@ -218,14 +218,18 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 | Embedded (in-process, no wire protocol) | `BaseDatabaseProvider` | `embedded/libredb.ts` | [libredb.md](./providers/libredb.md) |
 
 **Implement the abstract methods** from the `DatabaseProvider` interface: `connect`, `disconnect`,
-`query`, the six object methods (`listContainers`, `countObjects`, `listObjects`, `describeObject`,
-`describeObjects`, `readObjectSource`), `getHealth`, `runMaintenance`, plus the monitoring set (`getOverview`,
+`query`, the five REQUIRED object methods (`listContainers`, `countObjects`, `listObjects`,
+`describeObject`, `describeObjects`), `getHealth`, `runMaintenance`, plus the monitoring set (`getOverview`,
 `getPerformanceMetrics`, `getSlowQueries`, `getActiveSessions`, `getTableStats`, `getIndexStats`,
-`getStorageStats`). None can be omitted, but a method whose data your engine does not expose returns
+`getStorageStats`). None of those can be omitted, but a method whose data your engine does not expose returns
 a neutral value rather than throwing. Mind the return types: the list-valued ones
 (`getSlowQueries`, `getActiveSessions`, `getTableStats`, `getIndexStats`, `getStorageStats`) return
 `[]`, while `getOverview()` and `getPerformanceMetrics()` return DTOs and need a zeroed object.
 `libredb.ts` is the reference for doing this honestly.
+
+The sixth object method is the one exception to both halves of that sentence, and the next section
+is about it: it is declared optional on the interface, it IS omitted by a provider whose engine
+publishes no definition text, and a neutral value is the one thing it must never answer.
 
 ### `readObjectSource`: the sixth object method (#789)
 
@@ -233,6 +237,16 @@ This one is paired with a DECLARATION, which is what makes it different from the
 pairing is enforced. A kind offers a Source tab only if its `ObjectKindSpec` sets `hasSource: true`,
 and a kind that sets it must also set `sourceLanguage`. Read the refusals off the declaration and
 never off the kind id.
+
+**It is OPTIONAL, and omitting it entirely is the right answer for an engine that publishes no
+definition text.** `readObjectSource?` is declared optional on `DatabaseProvider` in
+`src/lib/db/types.ts` for that reason: a provider with no source-bearing kind can never reach the
+method, so requiring it would put an unreachable throw in each. Two shipped providers are exactly
+that case and say so in their own docs, `druid` and `libredb`. If yours is a third, declare
+`hasSource` on no kind, write no method, and add your type-id to the committed ABSTAINER list in
+`tests/isolated/object-source-declarations.test.ts` beside those two. Do NOT write the method
+answering an empty document, an empty string or any other neutral value: the pairing fails by name
+on a method with no source-bearing kind, and an empty text is a RAISE everywhere in the table below.
 
 - **`hasSource: true`** on each kind whose definition text your engine really publishes. A kind
   whose text the engine does not hold simply does not set it, and the row then offers no View
@@ -277,13 +291,17 @@ whatever reads it has to treat emptiness as the absence and raise.
 **The two isolated tests a new provider must satisfy**, neither of which any provider suite can
 stand in for, because both read the WHOLE fleet at once:
 
-- `tests/isolated/object-source-declarations.test.ts` — the census. Add one row per new type-id to
-  `SOURCE_DECLARATIONS`, transcribed from what the engine publishes and not from your build, and
-  move the three committed totals. It also pins the PAIRING: a type-id declares source-bearing
-  kinds if and only if its built provider implements `readObjectSource`, so a declaration with no
-  method and a method with no declaration each fail by name.
-- `tests/isolated/monaco-language-ids.test.ts` — every declared `sourceLanguage` is an id the
-  INSTALLED editor bundle registers, extracted from the bundle rather than typed.
+- `tests/isolated/object-source-declarations.test.ts`, the census. THREE things move per new
+  type-id, and the third is the one a contributor misses: add one row to `SOURCE_DECLARATIONS`,
+  transcribed from what the engine publishes and not from your build; move the three committed
+  totals; and, if your engine declares no source-bearing kind, add the type-id to
+  `CENSUS_ABSTAINERS` as well. That list is asserted whole, so a new abstainer missing from it
+  fails the population assertion rather than the declaration one. The file also pins the PAIRING: a
+  type-id declares source-bearing kinds if and only if its built provider implements
+  `readObjectSource`, so a declaration with no method and a method with no declaration each fail by
+  name.
+- `tests/isolated/monaco-language-ids.test.ts`, where every declared `sourceLanguage` is checked
+  against the ids the INSTALLED editor bundle registers, extracted from the bundle rather than typed.
 
 **Override the metadata hooks** so the shared UI renders correctly:
 

@@ -64,6 +64,8 @@
  * `tests/run-components.sh` gives it a group of its own.
  */
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { TreeRowModel } from "@/components/object-tree/flatten";
 import { rowActions, type TreeRowActionHandlers } from "@/components/object-tree/row-actions";
 import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -180,6 +182,16 @@ const CENSUS_TYPES: readonly DatabaseType[] = [...EXTERNAL_DATABASE_TYPES, "libr
 const UNCONNECTED_SOURCE_KINDS: readonly string[] = CENSUS_TYPES.flatMap((type) =>
   SOURCE_DECLARATIONS[type].map((entry) => `${type}/${entry}`),
 ).sort();
+
+/**
+ * The type-ids that implement no `readObjectSource` at all, committed rather than derived.
+ *
+ * Deriving it from `SOURCE_DECLARATIONS` would make the population assertion below agree with any
+ * declaration whatsoever, which is the same independence the census keeps between its two halves.
+ * It is also the third thing a new provider has to move, and `docs/ADDING_A_PROVIDER.md` says so:
+ * the guard below asserts that the shipped checklist names every member of this list.
+ */
+const CENSUS_ABSTAINERS: readonly DatabaseType[] = Object.freeze(["druid", "libredb"]);
 
 /** MariaDB's two extra kinds, which arrive only once `VERSION()` has been measured. */
 const MARIADB_EXTRA_SOURCE_KINDS: readonly string[] = ["mysql/package/mysql", "mysql/sequence/mysql"];
@@ -335,6 +347,13 @@ describe("the fleet census of object source declarations", () => {
         );
       }
     }
+    // The zero-iteration case of the loop above certifies NOTHING: with no type-id censused,
+    // `mismatches` is empty because nothing was compared rather than because the fleet agrees. The
+    // population assertions below do fail on it, but they fail on an expect diff that names
+    // neither the loop nor the fact that nothing was read, so the loop refuses it by name first.
+    if (implementers.length + abstainers.length === 0) {
+      throw new Error("the pairing guard censused 0 type-ids, so it certifies nothing about the fleet");
+    }
     expect(mismatches).toEqual([]);
 
     // THE POPULATION, asserted rather than assumed, because a biconditional is satisfied by a
@@ -348,7 +367,7 @@ describe("the fleet census of object source declarations", () => {
     );
     // Druid and the embedded store are the fleet's two abstainers, and both are deliberate: each
     // provider doc records what its engine publishes instead of a definition text.
-    expect([...abstainers].sort()).toEqual(["druid", "libredb"]);
+    expect([...abstainers].sort()).toEqual([...CENSUS_ABSTAINERS].map(String).sort());
     expect(implementers.length + abstainers.length).toBe(CENSUS_TYPES.length);
   });
 
@@ -506,5 +525,81 @@ describe("the rows a person saw carrying no menu trigger", () => {
       // menus all came back empty would satisfy the assertion above for the wrong reason.
       expect(kinds.filter((kind) => rowMenuIds(capabilities, kind.id).length > 0).length).toBeGreaterThan(0);
     }
+  });
+});
+
+/**
+ * THE SHIPPED CHECKLIST AND THIS CENSUS, held to the same account (#789).
+ *
+ * `docs/ADDING_A_PROVIDER.md` is the file a new contributor follows, and it is the only place in
+ * the repository that describes `readObjectSource` to somebody who has not read the interface. It
+ * shipped this method inside the sentence "None can be omitted, but a method whose data your engine
+ * does not expose returns a neutral value rather than throwing", which is false for exactly this
+ * method and is refuted by the pairing test above: `DatabaseProvider.readObjectSource` is OPTIONAL,
+ * an engine that publishes no definition text omits it entirely, and a contributor who followed
+ * that sentence would implement a neutral-valued method, declare no `hasSource` kind, and fail the
+ * pairing by name with no idea why. An empty text is a RAISE here and never a neutral value.
+ *
+ * Prose cannot be type-checked, so the two claims a wrong checklist would make are pinned instead:
+ * the omission sentence does not cover this method, and the section that does describe it names
+ * every type-id the pairing test commits as an abstainer, which is the third thing a new provider
+ * has to move and which the checklist did not mention at all.
+ *
+ * Both guards refuse their own vacuity by name: a doc that lost the omission sentence, or a
+ * section heading that was renamed, would otherwise satisfy a `not.toMatch` for free.
+ */
+const CHECKLIST = "docs/ADDING_A_PROVIDER.md";
+
+const checklistText = (): string => readFileSync(path.join(path.resolve(import.meta.dir, "../.."), CHECKLIST), "utf8");
+
+/** The five object methods the interface really does require, as the checklist spells them. */
+const REQUIRED_OBJECT_METHODS: readonly string[] = Object.freeze([
+  "listContainers",
+  "countObjects",
+  "listObjects",
+  "describeObject",
+  "describeObjects",
+]);
+
+describe("the new-provider checklist agrees with the pairing this file enforces", () => {
+  test("the omission sentence does not cover readObjectSource, which is optional", () => {
+    const paragraphs = checklistText()
+      .split(/\n\s*\n/)
+      .filter((paragraph) => /\bcan be omitted\b/.test(paragraph));
+    // Vacuity, by name: a renamed or deleted sentence would leave nothing to assert against and
+    // every `not.toMatch` below would pass on an empty population.
+    if (paragraphs.length === 0) {
+      throw new Error(`${CHECKLIST} carries no "can be omitted" sentence, so this guard certifies nothing`);
+    }
+    for (const paragraph of paragraphs) {
+      // The control: this really is the method list, not some other sentence that reuses the words.
+      for (const required of REQUIRED_OBJECT_METHODS) {
+        expect(paragraph, `${CHECKLIST}: the omission sentence no longer lists ${required}`).toContain(required);
+      }
+      expect(
+        paragraph,
+        `${CHECKLIST}: the omission sentence covers the one object method that IS optional`,
+      ).not.toContain("readObjectSource");
+    }
+  });
+
+  test("the readObjectSource section names every type-id this file commits as an abstainer", () => {
+    const section = /### `readObjectSource`[\s\S]*?(?=\n### |\n## )/.exec(checklistText());
+    if (section === null) {
+      throw new Error(`${CHECKLIST} has no \`readObjectSource\` section, so this guard certifies nothing`);
+    }
+    if (CENSUS_ABSTAINERS.length === 0) {
+      throw new Error("the census commits no abstainer, so naming them in the checklist certifies nothing");
+    }
+    for (const abstainer of CENSUS_ABSTAINERS) {
+      expect(section[0], `${CHECKLIST}: the checklist does not name ${abstainer} among the abstainers`).toContain(
+        abstainer,
+      );
+    }
+    // The list a new abstainer has to join lives in this file, so the checklist has to say its
+    // name. Without this the third thing to update is discoverable only by failing the census.
+    expect(section[0], `${CHECKLIST}: the checklist never sends a new abstainer to this file`).toContain(
+      "object-source-declarations",
+    );
   });
 });
