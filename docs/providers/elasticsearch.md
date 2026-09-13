@@ -906,8 +906,10 @@ no alias is listed with a **present**, empty map.
 - **No view, function, procedure or trigger.** Neither product's SQL surface has `CREATE VIEW`, and
   OpenSearch's grammar contains no `CREATE` statement of any kind (`CREATE TABLE t (id BIGINT)`
   answers `SQLFeatureNotSupportedException`, *"Query must start with SELECT, DELETE, SHOW or
-  DESCRIBE"*). Elasticsearch 9.4 adds an **ES|QL views API as a technical preview**; a preview surface
-  gets no folder, and Phase 2 is where it is revisited.
+  DESCRIBE"*). Elasticsearch 9.4 adds an **ES|QL views API as a technical preview**, and #789 Phase 2
+  answered the question it left open by leaving it out: a preview surface gets no folder, so there is
+  no kind and nothing for the source read to read. A view kind here would also be a kind only one of
+  the two products this implementation serves could ever hold.
 - **No stored script.** Both products have them and neither has a list-all API: `GET /_scripts` is
   refused outright (*"Invalid index name [_scripts]"*), only get-by-id exists. An object that cannot be
   enumerated cannot be a tree node - the same call Redis's `EVAL` scripts got.
@@ -982,7 +984,11 @@ docker exec libredb-opensearch    bash /opt/search-init/01-object-fixture.sh
 
 It creates one instance of every declared kind: the index `probe_orders`, the alias
 `probe_orders_alias`, the ingest pipeline `probe_pipeline`, the composable index templates
-`probe_template` and `probe_stream_template`, and the data stream `probe_stream`.
+`probe_template` and `probe_stream_template`, and the data stream `probe_stream`. It creates two more
+ingest pipelines for the source read (#789), each carrying a claim this doc makes: `probe_json_edges`
+holds the values a JSON re-serialisation changes, and `probe pipe/slash` is named so that the
+percent-encoding is exercised by an object rather than by an argument. The script's own header says
+what each object is for.
 
 **The one measured difference between the two products, and it is not in the declaration.** The
 object surface's five kinds, their roles, their paths and their columns were driven against a live
@@ -994,6 +1000,104 @@ empty-pipeline case (HTTP 404) is TRANSIENT here rather than unreachable: it is 
 the built-ins, measured, and they come back about twenty seconds later (the object surface section
 above records that run). On OpenSearch it is the ordinary first-run state. See
 [opensearch.md](opensearch.md) for the other half of that sentence.
+
+#### Object source (#789)
+
+`readObjectSource(path, kind, limit?)` answers **one part** holding one object's definition, and two
+of the five kinds declare it: `pipeline` and `template`, both `sourceLanguage: "json"`. The other
+three declare nothing, and each absence is a different fact rather than one gap said three ways.
+
+| Kind | Request | The text | `form` | `origin` |
+|---|---|---|---|---|
+| `pipeline` | `GET /_ingest/pipeline/<name>` | the value under the `<name>` key | `complete` | `rendered` |
+| `template` | `GET /_index_template/<name>` | the `index_template` of the entry whose `name` matches | `complete` | `rendered` |
+
+`_index_template` and **not** `_template`, for the same reason the listing uses it: the legacy
+namespace's names may collide with the composable ones, so one kind fed by both would hold two
+objects at one path.
+
+**Why `index`, `alias` and `stream` declare nothing.**
+
+- **`index`.** `GET /<index>` answers settings the **server** wrote - `index.uuid`, `creation_date`,
+  `version.created`, `provided_name` - so what a Source tab would show is not a definition anybody
+  could re-apply, and the round trip from that answer back to a `PUT` that recreates the index could
+  not be established.
+- **`alias`.** One alias over N indices has **one definition per index** and a different create shape
+  (`POST /_aliases` with an actions array), while the tree deliberately deduplicates those N rows to
+  one object. There is no single text belonging to the row that exists.
+- **`stream`.** A data stream's definition **is** the matching index template, which is a different
+  object in a different folder of the same tree. Showing it here would present another object's
+  definition as this one's.
+
+**The definition is unwrapped, and the key is matched EXACTLY.** Both endpoints answer a wrapper: a
+pipeline arrives as `{"<name>": {...}}` and a template as `{"index_templates":[{"name":...,
+"index_template":{...}}]}`. Rendering the wrapper would show a reader a map whose only key is the name
+of the object they already opened. Taking "the only key" or entry zero instead of matching the name
+would be worse, and this is measured rather than defensive: **a `*` in the name is a wildcard on both
+endpoints**, so `GET /_ingest/pipeline/probe*` answers HTTP 200 carrying `probe_pipeline` and
+`GET /_index_template/probe*` answers **two** entries (both measured on 9.1.4, 2026-09-13). Encoding
+does not help either: `%2A` is decoded before the match and wildcards just the same. So the read takes
+the value under the exact name asked for, and a name the answer does not carry is an **absence**.
+
+**Absence RAISES, and the two endpoints spell it differently.** Measured on 2026-09-13:
+`GET /_ingest/pipeline/no_such` answers HTTP **404** with the body `{}`, and
+`GET /_index_template/no_such` answers HTTP **404** with the **full error envelope**
+(`resource_not_found_exception`, *"index template matching [no_such] not found"*). Both mean the
+object is not there, so the source read decides absence on the **status** for a named object and
+raises a `QueryError` naming it. That is deliberately **not** the rule the listings follow: a listing's
+404 has a second meaning ("there are none"), so a listing may read a 404 as empty only while the body
+is a payload. Carrying the listing rule to a named object would print *"index template matching [x]
+not found"* in the Source pane as the cluster refusing to show a definition.
+
+**Only an answer from the cluster is a refusal.** A denied endpoint or a fault the cluster named
+becomes a refusal part carrying the cluster's own sentence, unprefixed. A dropped socket, an expired
+client deadline and a cancellation **raise** instead: nobody answered, so a document carrying
+*"connect ECONNREFUSED"* as this object's own refusal would offer no raise, nothing to retry and
+nothing distinguishing it from a real denial. `isClusterRefusal()` in
+[`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts) is that split, written as a switch
+with no `default` so a new seam category fails the build instead of joining the wrong half.
+
+**A refusal is per ENDPOINT.** These are two separate endpoints and a security plugin grants
+privileges per endpoint, so a pipeline read can be denied while a template read answers - the same
+measurement `countObjects` rests on.
+
+**Neither refusal can be produced on the compose service: CANNOT.** `xpack.security.enabled` is
+`false` there, a bogus `Basic` header is IGNORED and the cluster answers HTTP 200 (measured
+2026-09-13), so no 401 or 403 body exists to capture from this container. Turning security on would be
+an image-configuration change that invalidates the measurements this section rests on. The refusal
+shape is therefore driven in the suite against the one signal HTTP itself fixes, and the sentence a
+denied read carries is the transport's own, `"Elasticsearch refused the credentials (HTTP 403)"`.
+
+**The name is percent-encoded, and that is what makes the fixture's odd object readable.** A pipeline
+name may hold a space **and** a slash (both `PUT` 200, measured), and
+`GET /_ingest/pipeline/probe%20pipe%2Fslash` answers the object while the same request with the slash
+unencoded is HTTP 400, *"no handler found for uri"*. The escaper is `encodeURIComponent` and
+`docker/search-init/01-object-fixture.sh` creates `probe pipe/slash` so the escaping is driven by a
+fixture rather than by an argument. A template name may **not** hold a space (HTTP 400,
+`invalid_index_template_exception`), so the pipeline endpoint is the only one where such an object can
+exist at all.
+
+**What the renderer does to the cluster's bytes, measured, because `origin: "rendered"` is a promise
+about exactly this.** There is no extended-JSON writer for a REST payload the way there is for BSON,
+and the definition is a **sub-document** of the answer rather than the answer, so the text cannot be
+the bytes the cluster sent. It is `JSON.parse` followed by `JSON.stringify` with a two-space indent,
+and three things change. Measured on 9.1.4 on 2026-09-13 against the fixture's `probe_json_edges`
+pipeline, which exists for this measurement:
+
+| The cluster answered | This product renders |
+|---|---|
+| `9223372036854775807` | `9223372036854776000` |
+| `1.0E30` | `1e+30` |
+| a map keyed `zz, 10, 2, aa` | the same map keyed `2, 10, zz, aa` |
+
+Nothing is **dropped** - every value is present, which is what keeps `form: "complete"` true - but a
+long past 2^53 loses precision, an exponent is re-spelled, and integer-like keys are hoisted ahead of
+the others by JavaScript's own property order. A definition holding such a value must not be copied
+out of the Source pane and `PUT` back unread. The three lines above are asserted in both integration
+suites against the captured payload, so a renderer that starts dropping something instead fails.
+
+**The bound is the caller's**, applied through the shared `applySourceBound`, and a text that fits is
+never marked.
 
 ---
 

@@ -49,6 +49,27 @@
 #     provider's own system-index rule hides: without this kind the tree can reach a
 #     data stream's data through nothing at all. `SELECT * FROM probe_stream`
 #     answers a column list on both products (measured).
+#  6. `probe_json_edges` is a second ingest pipeline, and it exists for the SOURCE read
+#     (#789) rather than for the listing. It carries the values a JSON re-serialisation
+#     changes: a long past 2^53, a `_meta` map with integer-like keys, and a value the
+#     server prints in exponent form. Measured on Elasticsearch 9.1.4 on 2026-09-13, the
+#     cluster answers `9223372036854775807` and JSON.parse plus JSON.stringify renders
+#     `9223372036854776000`, the `_meta` keys come back re-ordered, and `1.0E30` becomes
+#     `1e+30`. Both provider docs record those three as what this product's renderer does
+#     to the cluster's own bytes, and this object is what makes the claim re-runnable.
+#     The integer-like keys live inside a `set` processor's VALUE rather than in the
+#     pipeline's `_meta`, and that is a measured product difference rather than a style
+#     choice: OpenSearch 3.8.0 refuses `_meta` on an ingest pipeline outright ("pipeline
+#     [probe_json_edges] doesn't support one or more provided configuration parameters
+#     [_meta]", HTTP 400) while Elasticsearch 9.1.4 accepts it, and this script's claim to
+#     apply unchanged to both is worth more than the shorter spelling.
+#  7. `probe pipe/slash` is an ingest pipeline whose NAME holds a space and a slash, which
+#     both products accept. It is the object that makes the source read's percent-encoding
+#     non-vacuous: measured, `GET /_ingest/pipeline/probe%20pipe%2Fslash` answers the
+#     pipeline and the same request with the slash unencoded is HTTP 400, "no handler
+#     found for uri". A template name may NOT hold a space (HTTP 400,
+#     `invalid_index_template_exception`), so the pipeline endpoint is the only one where
+#     an adversarial name can live at all.
 set -euo pipefail
 
 SEARCH_URL="${SEARCH_URL:-http://localhost:9200}"
@@ -105,5 +126,21 @@ put /_index_template/probe_stream_template '{
   "template": { "mappings": { "properties": { "@timestamp": { "type": "date" } } } }
 }'
 put /_data_stream/probe_stream || true
+
+echo "6. ingest pipeline probe_json_edges, the renderer-fidelity object"
+put /_ingest/pipeline/probe_json_edges '{
+  "description": "libredb source-render fidelity fixture (#789)",
+  "processors": [
+    { "set": { "field": "big", "value": 9223372036854775807 } },
+    { "set": { "field": "sci", "value": 1e30 } },
+    { "set": { "field": "keys", "value": { "zz": 1, "10": "ten", "2": "two", "aa": 2 } } }
+  ]
+}'
+
+echo "7. ingest pipeline 'probe pipe/slash', the percent-encoding object"
+put '/_ingest/pipeline/probe%20pipe%2Fslash' '{
+  "description": "libredb source-read escaping fixture (#789)",
+  "processors": [ { "set": { "field": "escaped", "value": "yes" } } ]
+}'
 
 echo "Done."

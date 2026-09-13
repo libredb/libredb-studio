@@ -31,6 +31,7 @@ import type {
   SearchClusterHealth,
   SearchIndexInfo,
   SearchMappingField,
+  SearchObjectDefinition,
   SearchObjectInfo,
   SearchQueryResult,
   SearchTransport,
@@ -130,6 +131,15 @@ function createTransport(options: FakeOptions = {}) {
     },
     dataStreams: (): Promise<SearchObjectInfo[]> => {
       throw new Error("introspection listed data streams; getSchema describes indices");
+    },
+    // The two source reads (#789 Phase 2), the same story as the bulk mapping read
+    // above: the seam requires them and introspection must never make one, so each
+    // throws by name rather than answering a document nothing would notice.
+    pipelineSource: (): Promise<SearchObjectDefinition | null> => {
+      throw new Error("introspection read an ingest pipeline's source; getSchema describes indices");
+    },
+    templateSource: (): Promise<SearchObjectDefinition | null> => {
+      throw new Error("introspection read an index template's source; getSchema describes indices");
     },
 
     // See the file header for why `query()` in particular is a design boundary

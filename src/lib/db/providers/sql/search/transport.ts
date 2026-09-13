@@ -273,6 +273,19 @@ export interface SearchObjectInfo {
 }
 
 /**
+ * One object's own definition document, as the cluster holds it (#789 Phase 2).
+ *
+ * A parsed JSON object rather than text, because the endpoint's answer is not the
+ * definition: a pipeline arrives wrapped in a map keyed by its id and a template arrives
+ * as one entry of an array, so the bytes the server sent carry a wrapper this seam's
+ * caller must not be handed. Turning the document back into text is the PROVIDER's job,
+ * and `docs/providers/elasticsearch.md` and `docs/providers/opensearch.md` record what
+ * that rendering costs: a JSON re-serialisation is not byte-identical to what the
+ * cluster answered.
+ */
+export type SearchObjectDefinition = Readonly<Record<string, unknown>>;
+
+/**
  * Everything the provider needs from a search cluster.
  *
  * Deliberately small: nine calls, each answering one question the provider asks.
@@ -381,6 +394,42 @@ export interface SearchTransport {
    * tree at all - while `SELECT * FROM <stream>` answers on both products (measured).
    */
   dataStreams(signal?: AbortSignal): Promise<SearchObjectInfo[]>;
+
+  /**
+   * ONE ingest pipeline's own definition, or null when the cluster holds none by that
+   * name (#789 Phase 2).
+   *
+   * The definition and NOT the endpoint's answer: the per-object endpoint wraps it in a
+   * map keyed by the id asked for (measured on both products, 2026-09-13), and rendering
+   * that wrapper would show a reader a map whose only key is the name of the object they
+   * already opened. The implementation therefore unwraps it, and it must read the key
+   * EXACTLY: a `*` in the name is a wildcard on this endpoint, so a name nobody created
+   * can answer HTTP 200 carrying somebody else's pipeline.
+   *
+   * NULL IS ABSENCE AND A THROW IS A REFUSAL, and the split is measured rather than
+   * inherited from {@link SearchTransport.pipelines}. That listing may answer HTTP 404
+   * for "there are none", so it can only read a 404 as empty while the BODY is a
+   * payload. A named object has no such second meaning: `GET /_ingest/pipeline/no_such`
+   * answers 404 with `{}` and `GET /_index_template/no_such` answers 404 with the FULL
+   * error envelope, both on both products, and both mean the object is not there.
+   *
+   * @param name the object's own name, unencoded. Percent-encoding is the
+   *   implementation's problem: measured on both products, a pipeline name may hold a
+   *   space AND a slash, and the same GET with the slash unencoded is HTTP 400.
+   */
+  pipelineSource(name: string, signal?: AbortSignal): Promise<SearchObjectDefinition | null>;
+
+  /**
+   * ONE composable index template's own definition, or null when there is none by that
+   * name (#789 Phase 2).
+   *
+   * The per-object endpoint answers the LISTING shape here, an array under one key, so
+   * the implementation returns the entry whose NAME equals the one asked for and never
+   * the first entry: measured on both products, `GET /_index_template/probe*` answers
+   * every matching template, so entry zero is another object's definition whenever the
+   * name was not exact.
+   */
+  templateSource(name: string, signal?: AbortSignal): Promise<SearchObjectDefinition | null>;
 
   /** Cluster health and counts, for the monitoring surfaces. */
   health(signal?: AbortSignal): Promise<SearchClusterHealth>;

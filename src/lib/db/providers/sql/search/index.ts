@@ -83,7 +83,13 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+} from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import {
   type ActiveSessionDetails,
@@ -100,6 +106,8 @@ import {
   type ObjectDetail,
   type ObjectDetailBatch,
   type ObjectKindSpec,
+  type ObjectSourceDocument,
+  type ObjectSourcePart,
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
@@ -118,7 +126,9 @@ import { isSystemIndex, toColumns } from "./introspect";
 import {
   type SearchClusterHealth,
   type SearchDialectId,
+  type SearchErrorCategory,
   type SearchIndexInfo,
+  type SearchObjectDefinition,
   type SearchObjectInfo,
   type SearchQueryResult,
   type SearchTransport,
@@ -331,8 +341,10 @@ const SEARCH_KIND_STREAM = "stream";
  *   CREATE VIEW, and OpenSearch's grammar contains no CREATE statement of any kind
  *   (measured: `CREATE TABLE t (id BIGINT)` answers `SQLFeatureNotSupportedException`,
  *   "Query must start with SELECT, DELETE, SHOW or DESCRIBE"). Elasticsearch 9.4 adds
- *   an ES|QL views API as a TECHNICAL PREVIEW; a preview surface gets no folder, and
- *   Phase 2 revisits it.
+ *   an ES|QL views API as a TECHNICAL PREVIEW, and #789 Phase 2 ANSWERED that rather
+ *   than deferring it again: a preview surface gets no folder, so there is no kind and
+ *   nothing for the source read to read. It would also be a kind only ONE of the two
+ *   products this file serves could hold. Both provider docs carry the same answer.
  * - NO stored script. Both products have them and NEITHER has a list-all API:
  *   `GET /_scripts` is refused outright on both ("Invalid index name [_scripts]"),
  *   only get-by-id exists. An object that cannot be enumerated cannot be a tree node,
@@ -369,9 +381,71 @@ const SEARCH_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
   },
   { id: SEARCH_KIND_ALIAS, role: "relation", label: "Alias", labelPlural: "Aliases" },
   { id: SEARCH_KIND_STREAM, role: "relation", label: "Data Stream", labelPlural: "Data Streams" },
-  { id: SEARCH_KIND_PIPELINE, role: "config", label: "Ingest Pipeline", labelPlural: "Ingest Pipelines" },
-  { id: SEARCH_KIND_TEMPLATE, role: "config", label: "Index Template", labelPlural: "Index Templates" },
+  {
+    id: SEARCH_KIND_PIPELINE,
+    role: "config",
+    label: "Ingest Pipeline",
+    labelPlural: "Ingest Pipelines",
+    // The two kinds that HAVE a definition anybody wrote (#789 Phase 2). A pipeline and
+    // a template are JSON documents a user PUT, and the same document is what the
+    // per-object endpoint answers, so there is a text to show and it is the text they
+    // would send back. `json` is a real Monaco language id, one of the four rich ones
+    // rather than one of the 89 basic ones.
+    hasSource: true,
+    sourceLanguage: "json",
+  },
+  {
+    id: SEARCH_KIND_TEMPLATE,
+    role: "config",
+    label: "Index Template",
+    labelPlural: "Index Templates",
+    hasSource: true,
+    sourceLanguage: "json",
+  },
 ] as const);
+
+/**
+ * Which seam call answers a definition for which kind, and the THREE kinds that have no
+ * definition to answer (#789 Phase 2).
+ *
+ * Every absence here is a fact about the product, measured on Elasticsearch 9.1.4 and
+ * OpenSearch 3.8.0, and each is a DIFFERENT fact, which is why the three are written out
+ * rather than lumped together as "not supported":
+ *
+ * - `index`: `GET /<index>` answers settings the SERVER wrote (`index.uuid`,
+ *   `creation_date`, `version.created`, `provided_name`), so what a Source tab would
+ *   show is not a definition anybody could re-apply, and the round trip from that answer
+ *   back to a `PUT` that recreates the index could not be established.
+ * - `alias`: one alias over N indices has ONE DEFINITION PER INDEX and a different
+ *   create shape (`POST /_aliases` with an actions array), while the tree deliberately
+ *   deduplicates those N rows to one object. There is no single text belonging to the
+ *   row that exists.
+ * - `stream`: a data stream's definition IS the matching index template, which is a
+ *   DIFFERENT OBJECT in a DIFFERENT FOLDER of the same tree. Showing it here would
+ *   present another object's definition as this one's, which is exactly what the
+ *   per-object reads below refuse to do for a wildcard name.
+ *
+ * A table rather than a `switch`, for the same reason {@link SEARCH_OBJECT_READERS} is
+ * one: the only thing that differs per kind is the call. The DECLARATION decides whether
+ * a kind may be read at all and this table decides how, and `readObjectSource` throws by
+ * name when the two disagree rather than letting a declared kind fall through.
+ */
+const SEARCH_SOURCE_READERS: Readonly<
+  Record<
+    string,
+    (transport: SearchTransport, name: string, signal?: AbortSignal) => Promise<SearchObjectDefinition | null>
+  >
+> = Object.freeze({
+  [SEARCH_KIND_PIPELINE]: (transport, name, signal) => transport.pipelineSource(name, signal),
+  [SEARCH_KIND_TEMPLATE]: (transport, name, signal) => transport.templateSource(name, signal),
+});
+
+/** The part id and label of the one part either read answers with (#789). */
+const SEARCH_SOURCE_PART_ID = "definition";
+const SEARCH_SOURCE_PART_LABEL = "Definition";
+
+/** How many spaces the rendered JSON is indented by. */
+const SEARCH_SOURCE_INDENT = 2;
 
 /**
  * Which seam call answers for which kind.
@@ -410,6 +484,39 @@ const SEARCH_MAPPED_KINDS: readonly string[] = Object.freeze([
 // ============================================================================
 // Pure helpers
 // ============================================================================
+
+/**
+ * Whether a seam failure is the CLUSTER refusing, or nobody answering at all (#789).
+ *
+ * A source read has to tell those apart, because only the first is a refusal a Source
+ * pane may print as this object's own. A dropped socket, an expired client deadline and
+ * a cancellation are the SECOND: the cluster said nothing, so a document carrying
+ * "connect ECONNREFUSED" as the object's refusal would offer no raise, no retry and
+ * nothing to distinguish it from a real denial. MongoDB shipped exactly that defect in
+ * this phase and it was fixed rather than argued about.
+ *
+ * A `switch` with no `default` rather than a set, so a category added to the seam fails
+ * the typecheck here instead of quietly joining the raising half.
+ */
+function isClusterRefusal(category: SearchErrorCategory): boolean {
+  switch (category) {
+    // The cluster read the request and answered no: a denied endpoint (decided on the
+    // one status HTTP itself fixes), a fault it named, a body this client could not
+    // read. Each of these has a sentence worth putting in front of the user.
+    case "auth":
+    case "engine":
+    case "syntax":
+    case "unknown-object":
+    case "unsupported":
+      return true;
+    // Nobody answered, or this client stopped waiting. Neither is a statement about the
+    // object, so both raise.
+    case "unreachable":
+    case "timeout":
+    case "cancelled":
+      return false;
+  }
+}
 
 /**
  * One object's `ObjectDetail`, shared by the single and the bulk read (#789).
@@ -982,6 +1089,25 @@ abstract class SearchProvider extends SQLBaseProvider {
   }
 
   /**
+   * The object path a caller handed in, checked against the DECLARATION.
+   *
+   * Derived and never written out: one segment per declared container level plus the
+   * object's own name. No kind here declares `attachedTo`, so there is one shape. Shared
+   * by `describeObject` and `readObjectSource` so the two cannot come to disagree about
+   * what a path of the wrong length is, and so the sentence a caller reads is written
+   * once.
+   */
+  private requireObjectPath(path: readonly string[], kind: string): void {
+    const depth = containerDepth(this.getCapabilities());
+    if (path.length !== depth + 1) {
+      throw new QueryError(
+        `A ${this.product.label} "${kind}" path has ${depth + 1} segment(s), received ${JSON.stringify(path)}`,
+        this.type,
+      );
+    }
+  }
+
+  /**
    * There is no container level here, so there is nothing to list.
    *
    * An empty array and not a refusal: "this engine has no container above an object"
@@ -1094,16 +1220,8 @@ abstract class SearchProvider extends SQLBaseProvider {
       throw new QueryError(`${this.product.label} declares no object kind "${kind}"`, this.type);
     }
 
-    // Derived from the DECLARATION, not written out: one segment per declared
-    // container level plus the object's own name. No kind here declares `attachedTo`,
-    // so there is one shape.
+    this.requireObjectPath(path, kind);
     const depth = containerDepth(capabilities);
-    if (path.length !== depth + 1) {
-      throw new QueryError(
-        `A ${this.product.label} "${kind}" path has ${depth + 1} segment(s), received ${JSON.stringify(path)}`,
-        this.type,
-      );
-    }
 
     // Neither read is positional. The container is every segment the declaration
     // assigns to a level, and the object's own name is the LAST segment.
@@ -1226,6 +1344,126 @@ abstract class SearchProvider extends SQLBaseProvider {
       // sentence itself is shared (#789), so one event reads one way on every engine.
       return bounded ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
     });
+  }
+
+  /**
+   * One object's definition text (#789 Phase 2).
+   *
+   * TWO KINDS CAN ANSWER HERE AND THE DECLARATION SAYS WHICH: `pipeline` and `template`
+   * declare `hasSource`, and `index`, `alias` and `stream` declare nothing for three
+   * different measured reasons written out beside {@link SEARCH_SOURCE_READERS}. The
+   * refusal is read off the declaration and never off the kind id, so a kind this engine
+   * does not declare at all takes the same path.
+   *
+   * ONE REQUEST, AND IT NAMES THE OBJECT. There is no listing read first: the endpoint
+   * answers for a name directly, and reading the folder to prove the object exists would
+   * double every Source tab's cost to answer a question the endpoint answers itself. The
+   * kind decides which endpoint, so asking for a pipeline by the name of a template is
+   * an absence rather than a template rendered as a pipeline.
+   *
+   * ABSENCE RAISES AND ONLY A CLUSTER'S ANSWER IS A REFUSAL, and the two are told apart
+   * on the wire rather than by guessing. The seam answers null for "the cluster holds no
+   * such object", which covers both spellings the two endpoints use for it (measured
+   * 2026-09-13: `{}` from the pipeline endpoint and the full error envelope from the
+   * template endpoint), and this raises a `QueryError` naming the object. A cluster that
+   * ANSWERED and refused - a security plugin denying the endpoint, an engine fault -
+   * becomes a refusal part carrying the cluster's own sentence, unprefixed and
+   * unrewritten. A transport failure is neither: nobody answered at all, so it RAISES,
+   * because "connect ECONNREFUSED" printed in the Source pane as this object's own
+   * refusal has no raise, nothing to retry and nothing distinguishing it from a real
+   * denial. That distinction is {@link isClusterRefusal}.
+   *
+   * A REFUSAL IS PER ENDPOINT and not per cluster, which is the same measurement
+   * `countObjects` rests on: these are separate endpoints and a security plugin grants
+   * privileges per endpoint, so a pipeline read can be denied while a template read
+   * answers. Neither refusal can be produced on the compose services - security is
+   * disabled on both and a bogus `Basic` header is IGNORED (measured, HTTP 200 on both) -
+   * and both provider docs say CANNOT rather than reporting around it.
+   *
+   * WHAT THE TEXT IS: `form: "complete"`, because the endpoint answers the whole
+   * definition rather than a summary of it, and `origin: "rendered"`, because this
+   * product prints it. The bytes the cluster sent are NOT what a reader sees, and both
+   * provider docs record the three measured differences a JSON re-serialisation makes
+   * (a long past 2^53 loses precision, integer-like keys are hoisted, an exponent is
+   * re-spelled). Nothing is dropped, which is what keeps `complete` true.
+   *
+   * The object name is `path[path.length - 1]` and the container is every segment the
+   * declaration assigns to a level, never `path[0]`: standing ruling 5g, pinned in both
+   * suites by a two-level declaration swapped in through `spyOn` and driven to the URL
+   * the transport builds.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    this.ensureConnected();
+    const spec = findKind(this.getCapabilities(), kind);
+    if (spec?.hasSource !== true) {
+      throw new QueryError(`${this.product.label} declares no readable source for the kind "${kind}"`, this.type);
+    }
+    // The Monaco language is READ off the declaration and never defaulted. A `?? "json"`
+    // here is dead against the shipped declaration and silently wrong the moment it
+    // fires: a kind that gained `hasSource` without a language would be answered `json`
+    // for something that is not JSON, and the pane would pick a mode with nothing
+    // anywhere saying so.
+    const language = spec.sourceLanguage;
+    if (language === undefined) {
+      throw new QueryError(
+        `${this.product.label} declares source for the kind "${kind}" and no sourceLanguage, so its text has no ` +
+          "language to render in",
+        this.type,
+      );
+    }
+    if (!Object.hasOwn(SEARCH_SOURCE_READERS, kind)) {
+      throw new Error(`${this.product.label} declares source for the object kind "${kind}" and has no reader for it`);
+    }
+    this.requireObjectPath(path, kind);
+    const name = path[path.length - 1];
+
+    let definition: SearchObjectDefinition | null;
+    try {
+      definition = await SEARCH_SOURCE_READERS[kind](this.requireTransport(), name, this.deadline());
+    } catch (error) {
+      if (!(error instanceof SearchTransportError) || !isClusterRefusal(error.category)) {
+        throw this.mapSearchError(error);
+      }
+      // The cluster's own sentence, unprefixed, exactly as a folder badge carries it.
+      return this.sourceRefusal(path, kind, this.mapSearchError(error).message);
+    }
+    if (definition === null) {
+      throw new QueryError(`No ${this.product.label} ${kind} named ${name}`, this.type);
+    }
+
+    const bounded = applySourceBound(JSON.stringify(definition, null, SEARCH_SOURCE_INDENT), limit);
+    return {
+      path: [...path],
+      kind,
+      parts: [
+        {
+          id: SEARCH_SOURCE_PART_ID,
+          label: SEARCH_SOURCE_PART_LABEL,
+          text: bounded.text,
+          language,
+          // The endpoint answers the whole definition, so nothing of it is left out.
+          form: "complete",
+          // PRINTED BY THIS PRODUCT. The cluster answers a JSON document and this prints
+          // it; calling that `stored` would show a reader a rendering as an original.
+          origin: "rendered",
+          ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+        },
+      ],
+    };
+  }
+
+  /**
+   * One refusal document, built in ONE place (#789).
+   *
+   * The part is written as an object LITERAL carrying `unavailable` and nothing else,
+   * never spread from a branch that could also carry a `text`. A part holding both keys
+   * COMPILES, because TypeScript's excess-property check on a union admits any property
+   * declared on any member of it, and it narrows to the refusal arm while carrying a
+   * real definition - which would put a refusal sentence over text the cluster returned.
+   */
+  private sourceRefusal(path: readonly string[], kind: string, unavailable: string): ObjectSourceDocument {
+    const part: ObjectSourcePart = { id: SEARCH_SOURCE_PART_ID, label: SEARCH_SOURCE_PART_LABEL, unavailable };
+    return { path: [...path], kind, parts: [part] };
   }
 
   // ==========================================================================

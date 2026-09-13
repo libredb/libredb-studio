@@ -75,6 +75,7 @@ import {
   type SearchErrorCategory,
   type SearchIndexInfo,
   type SearchMappingField,
+  type SearchObjectDefinition,
   type SearchObjectInfo,
   type SearchQueryResult,
   type SearchRow,
@@ -273,6 +274,33 @@ const META_FIELDS = Object.freeze({ META: "_meta", MANAGED: "managed" } as const
  * something else.
  */
 const HTTP_NOT_FOUND = 404;
+
+/**
+ * How a nominated status is read, because the two endpoints that use one mean
+ * different things by it (#789).
+ *
+ * `whateverTheBodyCarries` is false for a LISTING, where a 404 has two meanings: the
+ * pipeline listing answers it for "there are none" while a missing plugin, a denied
+ * endpoint and an index-shaped 404 answer it too, so only a body that is a payload may
+ * be read as empty. It is true for a SINGLE OBJECT, where 404 has one meaning and the
+ * BODY is not a signal at all: measured on Elasticsearch 9.1.4 and OpenSearch 3.8.0 on
+ * 2026-09-13, `GET /_ingest/pipeline/no_such` answers 404 with `{}` and
+ * `GET /_index_template/no_such` answers 404 with the FULL error envelope
+ * (`resource_not_found_exception`, "index template matching [no_such] not found") for
+ * the same event. Reading the second as a refusal would put that sentence in the Source
+ * pane as the cluster's refusal to show a definition, for an object that is simply not
+ * there.
+ */
+interface AbsenceRule {
+  readonly status: number;
+  readonly whateverTheBodyCarries: boolean;
+}
+
+/** A listing's 404, which means "there are none" only while the body is a payload. */
+const LISTING_ABSENCE: AbsenceRule = { status: HTTP_NOT_FOUND, whateverTheBodyCarries: false };
+
+/** A named object's 404, which means the object is not there whatever the body says. */
+const OBJECT_ABSENCE: AbsenceRule = { status: HTTP_NOT_FOUND, whateverTheBodyCarries: true };
 
 /**
  * The paging token an engine attaches when it has not sent every row.
@@ -1261,7 +1289,7 @@ export class SearchHttpTransport implements SearchTransport {
    * {@link HTTP_NOT_FOUND}.
    */
   public async pipelines(signal?: AbortSignal): Promise<SearchObjectInfo[]> {
-    const body = await this.request(INGEST_PIPELINE_PATH, signal, undefined, HTTP_NOT_FOUND);
+    const body = await this.request(INGEST_PIPELINE_PATH, signal, undefined, LISTING_ABSENCE);
     if (body === null) return [];
 
     const payload = asRecord(body);
@@ -1304,6 +1332,81 @@ export class SearchHttpTransport implements SearchTransport {
       DATA_STREAM_FIELDS.NAME,
       null,
     );
+  }
+
+  /**
+   * ONE ingest pipeline's definition (#789 Phase 2).
+   *
+   * THE ID KEY IS READ EXACTLY, and that is a measurement rather than a defensive
+   * habit: on both products a `*` in the name is a WILDCARD on this endpoint, and
+   * `%2A` is decoded before the match, so `GET /_ingest/pipeline/probe%2A` answers HTTP
+   * 200 carrying every pipeline whose name starts with `probe`. Reading "the only key"
+   * or "the first key" would render another object's definition as this one's, which is
+   * the one failure the whole source design exists to prevent. A name the answer does
+   * not carry is ABSENCE, and the provider raises for it.
+   *
+   * `encodeURIComponent` and not the name verbatim: measured on both products, a
+   * pipeline may be called `probe pipe/slash`, `GET /_ingest/pipeline/probe%20pipe%2Fslash`
+   * answers it and the same request with the slash unencoded is HTTP 400, "no handler
+   * found for uri". `docker/search-init/01-object-fixture.sh` creates that object so the
+   * escaping is driven by a fixture rather than by an argument.
+   */
+  public async pipelineSource(name: string, signal?: AbortSignal): Promise<SearchObjectDefinition | null> {
+    const body = await this.request(
+      `${INGEST_PIPELINE_PATH}/${encodeURIComponent(name)}`,
+      signal,
+      undefined,
+      OBJECT_ABSENCE,
+    );
+    if (body === null) return null;
+
+    const payload = asRecord(body);
+    if (payload === null) throw unreadableBody(this.spec, "an ingest pipeline definition");
+    // `Object.hasOwn` and never `name in payload`, ruling 5g: a pipeline called
+    // `toString` would otherwise resolve up the prototype chain to a function.
+    if (!Object.hasOwn(payload, name)) return null;
+
+    const definition = asRecord(payload[name]);
+    if (definition === null) throw unreadableBody(this.spec, "an ingest pipeline definition");
+    return definition;
+  }
+
+  /**
+   * ONE composable index template's definition (#789 Phase 2).
+   *
+   * The per-object endpoint answers the LISTING shape, an array under one key, so the
+   * entry is found BY NAME. `entries[0]` is what the design specified and it is wrong
+   * for the same measured reason the pipeline read matches its key exactly:
+   * `GET /_index_template/probe*` answers two entries on both products, and entry zero
+   * is then another template's definition under the name the caller asked for.
+   */
+  public async templateSource(name: string, signal?: AbortSignal): Promise<SearchObjectDefinition | null> {
+    const body = await this.request(
+      `${INDEX_TEMPLATE_PATH}/${encodeURIComponent(name)}`,
+      signal,
+      undefined,
+      OBJECT_ABSENCE,
+    );
+    if (body === null) return null;
+
+    const what = "an index template definition";
+    const payload = asRecord(body);
+    const entries = payload === null ? null : payload[TEMPLATE_FIELDS.LIST];
+    if (!Array.isArray(entries)) throw unreadableBody(this.spec, what);
+
+    for (const raw of entries as unknown[]) {
+      const entry = asRecord(raw);
+      // An entry this client cannot read is refused rather than skipped, the same rule
+      // `listedObjects` follows: skipping would report the object as absent, which is a
+      // different fact and the one a user cannot act on.
+      if (entry === null || textField(entry, TEMPLATE_FIELDS.NAME) === null) throw unreadableBody(this.spec, what);
+      if (entry[TEMPLATE_FIELDS.NAME] !== name) continue;
+
+      const definition = asRecord(entry[TEMPLATE_FIELDS.BODY]);
+      if (definition === null) throw unreadableBody(this.spec, what);
+      return definition;
+    }
+    return null;
   }
 
   public async health(signal?: AbortSignal): Promise<SearchClusterHealth> {
@@ -1357,11 +1460,11 @@ export class SearchHttpTransport implements SearchTransport {
     signal?: AbortSignal,
     body?: string,
     /**
-     * A status this endpoint uses to say "there is nothing here", answered as `null`
-     * instead of a failure - but only when the body is a payload rather than the error
-     * envelope. Exactly one caller passes one; see {@link HTTP_NOT_FOUND}.
+     * How this endpoint says "there is nothing here", answered as `null` instead of a
+     * failure. Two callers' worth of rule and the difference between them is measured;
+     * see {@link AbsenceRule} and {@link HTTP_NOT_FOUND}.
      */
-    absentStatus?: number,
+    absence?: AbsenceRule,
   ): Promise<unknown> {
     let response: Response;
     let text: string;
@@ -1390,7 +1493,9 @@ export class SearchHttpTransport implements SearchTransport {
     // arrive with the same code (see {@link HTTP_NOT_FOUND}). A folder badged 0 where
     // the truth is "the engine would not answer" is the exact confusion `KindCount`
     // has two states to prevent.
-    if (response.status === absentStatus && !carriesFailureEnvelope(text)) return null;
+    if (response.status === absence?.status && (absence.whateverTheBodyCarries || !carriesFailureEnvelope(text))) {
+      return null;
+    }
     if (!response.ok) throw responseFailure(this.spec, response.status, text);
 
     return parseJson(text);
