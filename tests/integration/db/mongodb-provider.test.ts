@@ -353,7 +353,7 @@ mock.module("mongodb", () => ({
 // ============================================================================
 
 const { MongoDBProvider } = await import("@/lib/db/providers/document/mongodb");
-const { DatabaseConfigError } = await import("@/lib/db/errors");
+const { DatabaseConfigError, ConnectionError } = await import("@/lib/db/errors");
 const { assertObjectSurface } = await import("../../helpers/object-surface-conformance");
 const { isSourcePartUnavailable } = await import("@/lib/db/object-kinds");
 
@@ -531,6 +531,22 @@ const OBJECT_FIXTURE_CONFIGSTORE_VIEW_SOURCE = `{
     "version": "57.1"
   }
 }`;
+
+/**
+ * One rejection shaped like the SERVER's own error reply (#789).
+ *
+ * MEASURED against mongodb 7.6.0 and MongoDB 8.2.12: an unauthorized `listCollections` rejects
+ * with a `MongoServerError`, whose `name` and `constructor.name` are both that string. The
+ * provider tells a refusal from a transport failure by that NAME rather than by `instanceof`,
+ * because this suite replaces the whole driver module and an `instanceof` against its export
+ * would be `instanceof undefined` here. So the fake has to carry the name too, or every refusal
+ * test would be driving the transport arm instead.
+ */
+function serverErrorReply(message: string): Error {
+  const error = new Error(message);
+  error.name = "MongoServerError";
+  return error;
+}
 
 function resetObjectSurfaceMocks(): void {
   mockDatabaseList = [];
@@ -2229,10 +2245,14 @@ describe("object surface", () => {
   test("carries the server's own sentence, unprefixed, when the catalog read is refused", async () => {
     // Measured on 8.2.12 with a role holding `read` on `configstore` only. The refusal is per
     // DATABASE and not per object, because both kinds come from ONE `listCollections`.
+    //
+    // The injected error carries the NAME the driver gives a server error reply, because that
+    // name is what tells a refusal from a transport failure. Measured against mongodb 7.6.0
+    // and MongoDB 8.2.12: an unauthorized `listCollections` rejects with a `MongoServerError`.
     const sentence =
       "not authorized on app to execute command { listCollections: 1, filter: {}, cursor: {}, " +
       'nameOnly: false, authorizedCollections: false, $db: "app" }';
-    mockListCollectionsError.app = new Error(sentence);
+    mockListCollectionsError.app = serverErrorReply(sentence);
 
     const document = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
     const [part] = document.parts;
@@ -2242,6 +2262,65 @@ describe("object surface", () => {
     // Recipe rule 8: a refusal test that only asserts the sentence is satisfied by a part
     // carrying a real definition too, because such a part narrows to this arm.
     expect(Object.hasOwn(part, "text")).toBe(false);
+
+    // THE POSITIVE CONTROL, in the SAME session, and it is what makes the claim above a fact
+    // about PRIVILEGE rather than a fact about the connection. Without it a change that failed
+    // the whole connection, or that cached one database's failure across the others, would keep
+    // this test green while the shipped doc's headline sentence became false. It is the same
+    // pair the doc's own two-command recipe uses.
+    const control = await objectProvider.readObjectSource!(["configstore", "dark_settings"], "view");
+    const [readable] = control.parts;
+    expect(Object.hasOwn(readable, "unavailable")).toBe(false);
+    if (isSourcePartUnavailable(readable)) throw new Error(`configstore was refused too: ${readable.unavailable}`);
+    expect(readable.text).toBe(OBJECT_FIXTURE_CONFIGSTORE_VIEW_SOURCE);
+  });
+
+  /**
+   * A TRANSPORT failure is not the engine refusing this object, and the two must not arrive as
+   * the same document (#789).
+   *
+   * MEASURED against mongodb 7.6.0 and a MongoDB 8.2.12 container created for the measurement.
+   * A server error reply rejects with `MongoServerError` (`name` and `constructor.name` both
+   * that, prototype chain `MongoServerError < MongoError < Error`), carrying `code: 13`,
+   * `codeName: "Unauthorized"` and the "not authorized on app ..." sentence. A transport
+   * failure rejects with something else entirely: nothing listening on the port gives
+   * `MongoServerSelectionError` ("connect ECONNREFUSED 127.0.0.1:27999", chain
+   * `MongoServerSelectionError < MongoSystemError < MongoError < Error`), an unroutable host
+   * gives the same class reading "Socket 'connect' timed out after 1502ms", and a client closed
+   * underneath the read gives `MongoNotConnectedError` ("Client must be connected before
+   * running operations").
+   *
+   * The old catch presented all of those as this view's own refusal: a 200 document whose one
+   * part read "connect ECONNREFUSED" as MongoDB's sentence about the object, with no raise, no
+   * destructive-state row and nothing telling it apart from a real `not authorized`.
+   *
+   * The NAME and not `instanceof`: this suite replaces the whole driver module with
+   * `mock.module`, so an `instanceof` against the driver's export would be `instanceof
+   * undefined` here, which is the same reason the Redis read keys on `ReplyError` by name.
+   */
+  test("raises a transport failure instead of printing it as this view's own refusal", async () => {
+    for (const [name, message] of [
+      ["MongoServerSelectionError", "connect ECONNREFUSED 127.0.0.1:27999"],
+      ["MongoNotConnectedError", "Client must be connected before running operations"],
+    ] as const) {
+      const failure = new Error(message);
+      failure.name = name;
+      mockListCollectionsError.app = failure;
+      await expect(objectProvider.readObjectSource!(["app", "active_customers"], "view")).rejects.toThrow(
+        new RegExp(
+          `Failed to read the MongoDB view "active_customers" in app: ${message.replace(/[.*+?^$()|[\]\\]/g, "\\$&")}`,
+        ),
+      );
+      await expect(objectProvider.readObjectSource!(["app", "active_customers"], "view")).rejects.toBeInstanceOf(
+        ConnectionError,
+      );
+    }
+
+    // The CONTROL that makes the two arms different rather than the catch simply being gone: the
+    // server's own error reply, in the same shape, still answers a refusal document.
+    mockListCollectionsError.app = serverErrorReply("not authorized on app to execute command { listCollections: 1 }");
+    const document = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
+    expect(isSourcePartUnavailable(document.parts[0])).toBe(true);
   });
 
   test("reports a row that carried no definition rather than rendering an empty one", async () => {
@@ -2262,18 +2341,47 @@ describe("object surface", () => {
   });
 
   test("reports a row whose definition is present but the wrong shape", async () => {
-    // Each half of the guard on its own, so neither can be deleted without a red. A `viewOn`
-    // that is not a name and a `pipeline` that is not a list are both rows this provider must
-    // refuse rather than print.
-    mockCollectionsByDb.app = [{ name: "active_customers", type: "view", options: { viewOn: "", pipeline: [] } }];
-    const blank = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
-    expect(isSourcePartUnavailable(blank.parts[0])).toBe(true);
-
-    mockCollectionsByDb.app = [
-      { name: "active_customers", type: "view", options: { viewOn: "customers", pipeline: { $match: {} } } },
+    // Each arm of the guard on its own, so none of them can be deleted without a red. A
+    // `viewOn` that is not a name, a `pipeline` that is not a list, and an `options` that is
+    // `null` are all rows this provider must refuse rather than print or crash on.
+    //
+    // `options: null` is the arm line coverage cannot see: `typeof null === "object"`, so the
+    // null half of the guard sits on the same physical line as the typeof half and lcov reports
+    // it hit either way. Without the guard the read reaches `definition.viewOn` and throws
+    // `TypeError: Cannot read properties of null`, which escapes as an unmapped TypeError and
+    // the route turns it into a 500 rather than the declared refusal.
+    //
+    // Recipe rule 8 on EVERY arm: `isSourcePartUnavailable` alone is satisfied by a hybrid part
+    // carrying a real definition, and by a part carrying the WRONG refusal sentence, so each arm
+    // asserts the absence of `text` and the sentence itself.
+    const expected =
+      'The listCollections row MongoDB answered for active_customers in app carries no "viewOn" and ' +
+      '"pipeline", so this view has no definition to show';
+    const rows: Record<string, unknown>[] = [
+      { viewOn: "", pipeline: [] },
+      { viewOn: "customers", pipeline: { $match: {} } },
     ];
-    const notAList = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
-    expect(isSourcePartUnavailable(notAList.parts[0])).toBe(true);
+    for (const options of rows) {
+      mockCollectionsByDb.app = [{ name: "active_customers", type: "view", options }];
+      const document = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
+      const [part] = document.parts;
+      expect(isSourcePartUnavailable(part)).toBe(true);
+      if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(Object.hasOwn(part, "text")).toBe(false);
+      expect(part.unavailable).toBe(expected);
+    }
+
+    // `options: null`, which the typed fixture record cannot express, so it is cast at the one
+    // place a real driver reply could carry it.
+    mockCollectionsByDb.app = [
+      { name: "active_customers", type: "view", options: null as unknown as Record<string, unknown> },
+    ];
+    const nulled = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
+    const [part] = nulled.parts;
+    expect(isSourcePartUnavailable(part)).toBe(true);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(Object.hasOwn(part, "text")).toBe(false);
+    expect(part.unavailable).toBe(expected);
   });
 
   test("raises for a view the catalog does not hold, and never answers a refusal for it", async () => {
@@ -2287,6 +2395,64 @@ describe("object surface", () => {
     await expect(objectProvider.readObjectSource!(["app", "customers"], "view")).rejects.toThrow(
       /No MongoDB view named customers in app/,
     );
+  });
+
+  /**
+   * The part's `language` comes from the DECLARATION, and the provider owns that link (#789).
+   *
+   * Design guarantee 6.3.4 says a readable part's `language` EQUALS the kind's declared
+   * `sourceLanguage` wherever the kind declares one. The declaration here says `json`, so a
+   * literal `"json"` in the provider satisfies every other test in this file while the link
+   * itself is unwritten: measured, replacing the whole expression with the literal left the
+   * suite at 130 pass 0 fail. Swapping a different language into the declaration is what makes
+   * the link mutatable, and it is the same `spyOn` shape standing ruling 5g uses for the path.
+   */
+  test("takes the part's language from the DECLARATION, not from a literal in the read", async () => {
+    const capabilities = objectProvider.getCapabilities();
+    const spy = spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      objectKinds: (capabilities.objectKinds ?? []).map((kind) =>
+        kind.hasSource === true ? { ...kind, sourceLanguage: "yaml" } : kind,
+      ),
+    });
+    try {
+      const document = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(part.language).toBe("yaml");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  /**
+   * A kind declaring `hasSource` and no `sourceLanguage` is a DECLARATION defect, and it raises
+   * here rather than being papered over with a default (#789).
+   *
+   * The old code read `spec.sourceLanguage ?? "json"`. That fallback is dead against the shipped
+   * declaration and silently wrong the moment it fires: a kind that gained `hasSource` without a
+   * language would be answered `json` for, say, a validator expression, guarantee 6.3.4 would be
+   * satisfied vacuously, and the pane would pick the wrong Monaco mode with nothing anywhere
+   * saying so. The declaration test would go red, but the PROVIDER would still answer.
+   */
+  test("refuses a kind declaring source with no language rather than guessing one", async () => {
+    const capabilities = objectProvider.getCapabilities();
+    const spy = spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      objectKinds: (capabilities.objectKinds ?? []).map((kind) =>
+        kind.hasSource === true ? { ...kind, sourceLanguage: undefined } : kind,
+      ),
+    });
+    try {
+      await expect(objectProvider.readObjectSource!(["app", "active_customers"], "view")).rejects.toThrow(
+        /MongoDB declares source for the kind "view" and no sourceLanguage/,
+      );
+      // Nothing was read: the declaration is refused before a database is opened, exactly as the
+      // kind check above it is.
+      expect(mongoOpenedDatabases).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("refuses a kind whose declaration carries no source, and one this engine never declares", async () => {
@@ -2378,12 +2544,19 @@ describe("object surface", () => {
 
   test("refuses a declaration carrying no database level rather than reading one named undefined", async () => {
     const capabilities = objectProvider.getCapabilities();
-    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+    // Restored in a `finally` like every other spy in this file. `objectProvider` is rebuilt in
+    // `beforeEach` so nothing today inherits it, but a spy that outlives its own assertion would
+    // hand a one-level `catalog`-only declaration to any test appended after this one.
+    const spy = spyOn(objectProvider, "getCapabilities").mockReturnValue({
       ...capabilities,
       containerLevels: [{ id: "catalog", label: "Cluster", labelPlural: "Clusters" }],
     });
-    await expect(objectProvider.readObjectSource!(["cluster0", "active_customers"], "view")).rejects.toThrow(
-      /needs a "schema" container level and a segment for it/,
-    );
+    try {
+      await expect(objectProvider.readObjectSource!(["cluster0", "active_customers"], "view")).rejects.toThrow(
+        /needs a "schema" container level and a segment for it/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -553,16 +553,14 @@ order for them is the JSON one, so a provider sorting the wrong way would pass b
 two **different** orders across two fresh containers holding the same fixture, so ordering is the
 provider's own guarantee either way rather than something inherited from the server.
 
----
-
-## Object source (#789)
+### Object source (#789)
 
 `readObjectSource(path, kind, limit?)` answers one object's definition text.
 Everything here was measured on 2026-09-13 against a live **MongoDB 8.2.12** holding the committed
 fixture, [`docker/mongodb-init/01-object-fixture.js`](../../docker/mongodb-init/01-object-fixture.js),
 applied through the mount by the recipe in [§11](#11-testing).
 
-### Per kind
+#### Per kind
 
 | Kind | `hasSource` | Statement | What the text IS | Monaco language |
 |---|---|---|---|---|
@@ -578,7 +576,7 @@ escaper here and nothing to quote.
 MongoDB stores no statement for a view: `options` is a BSON document, and the JSON a reader sees is
 printed by this product. Calling it `stored` would show a reconstruction as an original.
 
-### The whole `options` document, not two fields of it
+#### The whole `options` document, not two fields of it
 
 The first design of this read rendered `viewOn` and `pipeline` alone. **Measured, that is
 incomplete.** A view created with a collation answers `options` carrying `collation` beside the
@@ -595,14 +593,14 @@ instead, which is also exactly what `createCollection` was given. For an ordinar
 holds `viewOn` and `pipeline` and nothing else, so the common case is unchanged.
 `configstore.dark_settings` in the fixture is the view that carries the collation.
 
-### Extended JSON, because `JSON.stringify` loses a value in silence
+#### Extended JSON, because `JSON.stringify` loses a value in silence
 
 A pipeline may hold BSON values, and `JSON.stringify` renders a regular expression as `{}`.
 Measured on the fixture's `configstore.dark_settings`, whose pipeline holds `/^th/i` and a date:
 
 | Value | `JSON.stringify` | `BSON.EJSON.stringify`, relaxed |
 |---|---|---|
-| `/^th/i` | `{}` — the pattern is gone, with no error anywhere | `{ "$regularExpression": { "pattern": "^th", "options": "i" } }` |
+| `/^th/i` | `{}`, the pattern gone with no error anywhere | `{ "$regularExpression": { "pattern": "^th", "options": "i" } }` |
 | `new Date("2026-01-01T00:00:00Z")` | `"2026-01-01T00:00:00.000Z"` | `{ "$date": "2026-01-01T00:00:00Z" }` |
 
 So the read uses `BSON.EJSON.stringify` in **relaxed** mode. Relaxed rather than canonical because
@@ -611,7 +609,7 @@ buy type fidelity a view definition does not turn on. For a pipeline holding no 
 renderings are byte-identical, which is why `app.active_customers` alone cannot tell them apart and
 `configstore.dark_settings` exists.
 
-### The refusal is per DATABASE, not per object
+#### The refusal is per DATABASE, not per object
 
 This is unusual in this fleet and it follows from the read: both kinds come from **one**
 `listCollections`, so a caller who cannot run it cannot read any object in that database rather
@@ -656,7 +654,36 @@ what drives it. It exists because a catalog row is a DOCUMENT: a misspelt field 
 `undefined` rather than failing to compile, and an unguarded render would put `{}` in a reader's
 editor as though it were the definition.
 
-### Absence raises
+#### A transport failure raises, and is never printed as the engine's refusal
+
+A refusal carries the sentence **the server said**. When nobody answered at all there is no such
+sentence, so the read raises a `ConnectionError` naming the object and the database rather than
+answering a document. Measured against **mongodb 7.6.0** and MongoDB 8.2.12, from a container
+created for the measurement:
+
+| What happened | `error.name` | Prototype chain | Message | Treated as |
+|---|---|---|---|---|
+| the server refused the command | `MongoServerError` | `MongoServerError < MongoError < Error` | `not authorized on app to execute command { listCollections: 1, ... }` (`code: 13`, `codeName: Unauthorized`) | a refusal part |
+| nothing listening on the port | `MongoServerSelectionError` | `MongoServerSelectionError < MongoSystemError < MongoError < Error` | `connect ECONNREFUSED 127.0.0.1:27999` | raises |
+| unroutable host | `MongoServerSelectionError` | as above | `Socket 'connect' timed out after 1502ms (connectTimeoutMS: 1500)` | raises |
+| client closed underneath the read | `MongoNotConnectedError` | `MongoNotConnectedError < MongoAPIError < MongoDriverError < MongoError < Error` | `Client must be connected before running operations` | raises |
+
+The test is the **name** rather than `instanceof`, because the integration suite replaces the whole
+driver module and an `instanceof` against its export would be `instanceof undefined` there. The same
+rule is written on the Redis read, which keys on `ReplyError`.
+
+This is scoped to the source read. `countObjects` still reports **any** failed `listCollections` as
+`{ unavailable }` on every kind, which is the Phase 1 behaviour of the whole fleet rather than
+something measured here; a badge is a weaker surface than an editor pane, and changing it is a
+fleet-wide decision rather than one provider's.
+
+#### The language comes from the declaration, and a declaration missing it raises
+
+The part's `language` is `view`'s declared `sourceLanguage` and is never defaulted. A kind that
+declared `hasSource` and no `sourceLanguage` would raise here rather than be answered `json`, so a
+Source tab can never open in a Monaco mode no declaration asked for.
+
+#### Absence raises
 
 A view simply **not being in the listing** is absence on this engine. There is no error to carry, so
 `readObjectSource(["app", "no_such_view"], "view")` raises a `QueryError` naming the segment rather
@@ -664,11 +691,11 @@ than answering a refusal part, which would invent an engine sentence that was ne
 decides the match exactly as it does in `describeObject`, so asking for a view by the name of a
 collection is a miss rather than a collection rendered as a view.
 
-### Why `collection` declares nothing
+#### Why `collection` declares nothing
 
 Of the three absences, this is the second: MongoDB publishes something, and this product judges it
-is not a definition. A collection's `options` is a **property sheet** — a validator, a capped size,
-a time series spec — rather than a definition anybody authored, and measured on 8.2.12 an **ordinary
+is not a definition. A collection's `options` is a **property sheet**, a validator, a capped size or a
+time series spec, rather than a definition anybody authored, and measured on 8.2.12 an **ordinary
 collection's `options` is `{}`**, so a Source tab on that kind would open on nothing for the common
 case. A tab that can never fill is worse than no tab. What a collection's options do carry is
 reachable through `describeObject`, which is where an object's properties belong.

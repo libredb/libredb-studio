@@ -455,6 +455,37 @@ function refusalReason(error: unknown): string {
 }
 
 /**
+ * Whether a driver rejection is the SERVER's own error reply, rather than a transport failure
+ * (#789 Phase 2).
+ *
+ * MEASURED against mongodb 7.6.0 and a MongoDB 8.2.12 container created for the measurement. A
+ * server error reply rejects with `MongoServerError`: `name` and `constructor.name` are both
+ * that, the prototype chain is `MongoServerError < MongoError < Error`, and an unauthorized
+ * `listCollections` arrives that way carrying `code: 13`, `codeName: "Unauthorized"` and the
+ * "not authorized on <db> to execute command { listCollections: 1, ... }" sentence. A TRANSPORT
+ * failure rejects with something else entirely: nothing listening on the port gives
+ * `MongoServerSelectionError` reading "connect ECONNREFUSED 127.0.0.1:27999"
+ * (`MongoServerSelectionError < MongoSystemError < MongoError < Error`), an unroutable host gives
+ * the same class reading "Socket 'connect' timed out after 1502ms", and a client closed
+ * underneath the read gives `MongoNotConnectedError` reading "Client must be connected before
+ * running operations".
+ *
+ * The two are not the same fact and must not arrive as the same document. On a refusal the
+ * SERVER answered "no" and its sentence is the honest thing to show; on a transport failure
+ * nobody answered at all, so presenting "connect ECONNREFUSED" as this object's own refusal
+ * would be a symptom rendered as a fact about the object, with no raise and nothing to tell it
+ * apart from a real `not authorized`. The same rule is written on the Redis read, which keys on
+ * `ReplyError`.
+ *
+ * The NAME and not `instanceof`: the integration suite replaces the whole driver module with
+ * `mock.module`, so an `instanceof` against the driver's export would be `instanceof undefined`
+ * there, and the name is the one fact both the real driver and a double can carry.
+ */
+function isServerErrorReply(error: unknown): boolean {
+  return error instanceof Error && error.name === "MongoServerError";
+}
+
+/**
  * WHICH KIND one `listCollections` row is, or `undefined` for a namespace the server
  * owns.
  *
@@ -1817,6 +1848,16 @@ export class MongoDBProvider extends BaseDatabaseProvider {
    * `not authorized on <db> to execute command { listCollections: 1, ... }`, and that
    * sentence is carried unprefixed, exactly as `countObjects` carries it.
    *
+   * A REFUSAL IS ALSO ONLY THE SERVER'S OWN ERROR REPLY. A transport failure RAISES a
+   * `ConnectionError` naming the object and the database, because it is nobody answering rather
+   * than the server answering "no", and the two must not arrive as one document.
+   * `isServerErrorReply` carries the measurement that tells `MongoServerError` from
+   * `MongoServerSelectionError` and `MongoNotConnectedError`.
+   *
+   * THE PART'S LANGUAGE IS READ OFF THE DECLARATION AND NEVER DEFAULTED. A kind declaring
+   * `hasSource` and no `sourceLanguage` raises here rather than being answered `json`, so design
+   * guarantee 6.3.4 cannot be satisfied vacuously by a fallback nothing drives.
+   *
    * A VIEW THE CATALOG DOES NOT HOLD RAISES, and it has to: a row simply not being in the
    * listing is ABSENCE on this engine, there is no error to carry, and answering a document
    * would invent one. The kind decides the match as it does in `describeObject`, so asking
@@ -1835,6 +1876,19 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     if (spec?.hasSource !== true) {
       throw new QueryError(`MongoDB declares no readable source for the kind "${kind}"`, "mongodb");
     }
+    // The Monaco language is READ off the declaration and never defaulted. A `?? "json"` here is
+    // dead against the shipped declaration and silently wrong the moment it fires: a kind that
+    // gained `hasSource` without a language would be answered `json` for something that is not
+    // JSON, design guarantee 6.3.4 would hold vacuously, and the pane would pick a wrong mode
+    // with nothing anywhere saying so. A declaration missing half of itself is a defect in the
+    // declaration, so it raises exactly as the kind check above it does.
+    const language = spec.sourceLanguage;
+    if (language === undefined) {
+      throw new QueryError(
+        `MongoDB declares source for the kind "${kind}" and no sourceLanguage, so its text has no language to render in`,
+        "mongodb",
+      );
+    }
     assertObjectPathShape(capabilities, path, kind);
     const database = containerSegment(capabilities, path, "schema");
     const name = path[path.length - 1];
@@ -1843,6 +1897,17 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     try {
       infos = await this.collectionInfos(database);
     } catch (error) {
+      // ONLY the server's own error reply is a refusal. A transport failure is nobody answering
+      // at all, and answering a document for it would put "connect ECONNREFUSED" in the Source
+      // pane as this object's own refusal, with no raise, no destructive state, no retry
+      // affordance and nothing distinguishing it from a real `not authorized`.
+      // `isServerErrorReply` carries the measurement that tells the two shapes apart.
+      if (!isServerErrorReply(error)) {
+        throw new ConnectionError(
+          `Failed to read the MongoDB ${kind} ${JSON.stringify(name)} in ${database}: ${refusalReason(error)}`,
+          "mongodb",
+        );
+      }
       return this.sourceRefusal(path, kind, refusalReason(error));
     }
 
@@ -1873,7 +1938,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
           id: MONGODB_SOURCE_PART_ID,
           label: MONGODB_SOURCE_PART_LABEL,
           text: bounded.text,
-          language: spec.sourceLanguage ?? "json",
+          language,
           // The whole `options` document, so nothing of the definition is left out.
           form: "complete",
           // PRINTED BY THIS PRODUCT. MongoDB stores no statement for a view, so calling this
