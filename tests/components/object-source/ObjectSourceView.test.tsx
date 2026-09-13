@@ -404,6 +404,43 @@ describe("ObjectSourceView", () => {
     expect(editorValue()).toContain("PACKAGE BODY");
   });
 
+  test("moves focus with the arrow keys when a part id holds a quote and a bracket", async () => {
+    /*
+     * A part id is an ENGINE's word, so it can carry any character an identifier can, and the
+     * first spelling of the focus move built a CSS selector out of it:
+     * `[role="tab"][data-part-id="${target.id}"]`. A quote closes the attribute value early and
+     * `querySelector` raises `SyntaxError: ... is not a valid selector`, which happens inside a
+     * React event handler and takes the arrow key with it, while the CLICK path, which carries
+     * the id as a value rather than as syntax, keeps working. Standing ruling 2 records
+     * `"char"(integer)` as a MEASURED PostgreSQL routine identity, so this is not an invented
+     * shape. Matched through `dataset` the way `ObjectTree.tsx` already does, because there is
+     * no `CSS.escape` in every runtime this renders in.
+     */
+    const quoted: ObjectSourceDocument = {
+      path: [...PATH],
+      kind: "package",
+      parts: [
+        { ...oneReadablePart.parts[0], id: '"char"(integer)' },
+        { ...twoParts.parts[1], id: "body[1]" },
+      ],
+    };
+    render(<Harness reader={readerFor(quoted)} />);
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+
+    const tabs = screen.getAllByRole("tab");
+    tabs[0]!.focus();
+    await userEvent.keyboard("{ArrowRight}");
+
+    await waitFor(() => expect(editorValue()).toContain("PACKAGE BODY"));
+    // Focus FOLLOWS activation here too, and this is the half the selector broke.
+    expect(window.document.activeElement).toBe(screen.getAllByRole("tab")[1]!);
+
+    // And back, so the id carrying a BRACKET is exercised as the move's target as well.
+    await userEvent.keyboard("{ArrowLeft}");
+    await waitFor(() => expect(editorValue()).toContain("FUNCTION total"));
+    expect(window.document.activeElement).toBe(screen.getAllByRole("tab")[0]!);
+  });
+
   test("switching to the second part shows its text and asks for no second read", async () => {
     const reader = readerFor(twoParts);
     render(<Harness reader={reader} />);

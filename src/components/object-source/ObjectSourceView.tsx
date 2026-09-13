@@ -259,9 +259,20 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
     event.preventDefault();
     const target = parts[(wanted + parts.length) % parts.length];
     onChange({ activePartId: target.id });
-    event.currentTarget
+    /*
+     * Matched through `dataset` and never through a built selector, the way `ObjectTree.tsx`
+     * already matches a row id. A part id is the ENGINE's word: the first spelling interpolated
+     * it into `[role="tab"][data-part-id="..."]`, and MEASURED on happy-dom 20, a part id of
+     * `"char"(integer)`, which standing ruling 2 records as a real PostgreSQL routine identity,
+     * raised `DOMException: ... is not a valid selector` out of this handler and the arrow key
+     * did nothing, while the click path kept working because it carries the id as a VALUE. There
+     * is no `CSS.escape` in every runtime this renders in, so the id never becomes syntax.
+     */
+    const buttons = event.currentTarget
       .closest('[role="tablist"]')
-      ?.querySelector<HTMLButtonElement>(`[role="tab"][data-part-id="${target.id}"]`)
+      ?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+    Array.from(buttons ?? [])
+      .find((candidate) => candidate.dataset.partId === target.id)
       ?.focus();
   };
 
