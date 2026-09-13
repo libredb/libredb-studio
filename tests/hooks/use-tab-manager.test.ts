@@ -1219,6 +1219,47 @@ describe("useTabManager opens a Source tab", () => {
     expect(result.current.tabs[0].query).toBe("SELECT 1;");
   });
 
+  test("two opens of the SAME object inside one batch mint one tab, not two", () => {
+    // Round 1 finding 3. The dedup used to read the `tabs` of the render that installed the
+    // callback and append with `setTabs(prev => ...)`, so two calls inside ONE React batch
+    // both saw the pre-batch list, both missed, and both appended: the tab strip then held
+    // two tabs with identical names, the first orphaned and read by nothing. Two separate
+    // DOM events flush between them, which is why no gesture in the shell could reach it and
+    // why the dedup test above, which switches tabs in between, cannot see it either. Task
+    // 20's embedded adapter calls this same function from a host callback, where a batch of
+    // two is not exotic.
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: defaultMetadata, schema: [] }),
+    );
+
+    act(() => {
+      result.current.openSourceTab(orderTotal);
+      result.current.openSourceTab(orderTotal);
+    });
+
+    expect(result.current.tabs.map((tab) => tab.name)).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(result.current.activeTabId).toBe(result.current.tabs[1].id);
+  });
+
+  test("two opens of two DIFFERENT objects inside one batch mint both, and the last is active", () => {
+    // The control for the test above: the fix must not turn a batch into a single append.
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: defaultMetadata, schema: [] }),
+    );
+
+    act(() => {
+      result.current.openSourceTab(orderTotal);
+      result.current.openSourceTab({ path: ["app", "order_summary"], name: "order_summary", kind: "view" });
+    });
+
+    expect(result.current.tabs.map((tab) => tab.name)).toEqual([
+      "Query 1",
+      "Source: app.order_total(integer)",
+      "Source: app.order_summary",
+    ]);
+    expect(result.current.activeTabId).toBe(result.current.tabs[2].id);
+  });
+
   test("a stored tab whose source key is missing restores as an ordinary tab", async () => {
     // Every record written before this field existed is this case, and there is no migration:
     // the absence has to read as "not a Source tab" rather than as an empty address.
@@ -1238,5 +1279,154 @@ describe("useTabManager opens a Source tab", () => {
 
     await waitFor(() => expect(result.current.currentTab.id).toBe("old"));
     expect(result.current.currentTab.source).toBeUndefined();
+  });
+
+  test("View Source on an object whose RESTORED tab is already open focuses it and mints nothing", async () => {
+    /*
+     * The id a Source tab gets from this hook is derived from its address, and this is the
+     * one case where the open tab's id was NOT chosen by this hook: a workspace restored from
+     * `localStorage` keeps whatever id the record carried, including one written before the
+     * id was derived at all. Without the find against the committed list, the open tab is
+     * matched by nothing, the derived id names no tab, and the reader lands on `tabs[0]`.
+     */
+    localStorage.setItem(
+      "libredb_workspace_tabs_v1:source-focus",
+      JSON.stringify({
+        activeTabId: "tab-1",
+        tabs: [
+          { id: "tab-1", name: "Query 1", query: "", type: "sql" },
+          {
+            id: "a-minted-id-from-an-older-record",
+            name: "Source: app.order_total(integer)",
+            query: "",
+            type: "sql",
+            source: { path: ["app", "order_total(integer)"], kind: "function" },
+          },
+        ],
+      }),
+    );
+
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ id: "source-focus" }),
+        metadata: defaultMetadata,
+        schema: [],
+        persistWorkspace: true,
+      }),
+    );
+
+    await waitFor(() => expect(result.current.tabs).toHaveLength(2));
+    act(() => {
+      result.current.openSourceTab(orderTotal);
+    });
+
+    expect(result.current.tabs).toHaveLength(2);
+    expect(result.current.activeTabId).toBe("a-minted-id-from-an-older-record");
+    expect(result.current.currentTab.id).toBe("a-minted-id-from-an-older-record");
+  });
+
+  test("a stored source that is not an ADDRESS is dropped, and the tab restores as an ordinary one", async () => {
+    /*
+     * Round 1 finding 2, and it is a crash class this field introduced rather than a
+     * tightening of one that already existed.
+     *
+     * The other persisted fields are strings that nothing dereferences, so a hand-edited or
+     * truncated `name` is at worst a wrong label. `source` is the first persisted field that
+     * is DEREFERENCED: the shell branches its whole editor pane on it, and the viewer
+     * computes `pathKey(path)` at the top of its body. MEASURED before the check existed: a
+     * stored `source: {}` restored as a tab whose `source` was `{}`, the pane took the source
+     * arm, and `pathKey(undefined)` threw "undefined is not an object (evaluating
+     * path.join)". There is no error boundary around that pane, so the whole shell
+     * white-screens and the reader cannot reach the tab strip to close the offending tab.
+     *
+     * `source: null` was safe only by accident: it throws inside the LOAD effect's own
+     * try/catch and degrades to one empty tab, which loses every OTHER tab in the workspace.
+     * All five shapes below are now dropped key by key, so the rest of the record survives.
+     */
+    localStorage.setItem(
+      "libredb_workspace_tabs_v1:source-shapes",
+      JSON.stringify({
+        activeTabId: "keep",
+        tabs: [
+          { id: "empty", name: "A", query: "", type: "sql", source: {} },
+          { id: "null", name: "B", query: "", type: "sql", source: null },
+          { id: "string-path", name: "C", query: "", type: "sql", source: { path: "app.f", kind: "function" } },
+          { id: "no-kind", name: "D", query: "", type: "sql", source: { path: ["app", "f"] } },
+          { id: "kind-number", name: "E", query: "", type: "sql", source: { path: ["app", "f"], kind: 7 } },
+          {
+            id: "keep",
+            name: "Source: app.order_total(integer)",
+            query: "",
+            type: "sql",
+            source: { path: ["app", "order_total(integer)"], kind: "function" },
+          },
+        ],
+      }),
+    );
+
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ id: "source-shapes" }),
+        metadata: defaultMetadata,
+        schema: [],
+        persistWorkspace: true,
+      }),
+    );
+
+    await waitFor(() => expect(result.current.tabs).toHaveLength(6));
+    // Every malformed address is gone, and the tab it was attached to is still here: a bad
+    // key costs its own tab's source arm and nothing else in the workspace.
+    expect(result.current.tabs.filter((tab) => tab.source !== undefined).map((tab) => tab.id)).toEqual(["keep"]);
+    expect(result.current.tabs.map((tab) => tab.name)).toEqual([
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "Source: app.order_total(integer)",
+    ]);
+    // The control, in the same record: a well-formed address survives untouched, so the
+    // assertion above cannot pass by dropping every source key.
+    expect(result.current.currentTab.source).toEqual({ path: ["app", "order_total(integer)"], kind: "function" });
+  });
+
+  test("a stored source carrying EXTRA keys restores as the address alone", async () => {
+    // A record written by a future version, or hand-edited: the document is exactly what this
+    // field refuses to carry, so restoring one would put a text nobody re-read back on screen
+    // under a caption claiming it was read from the server.
+    localStorage.setItem(
+      "libredb_workspace_tabs_v1:source-extra",
+      JSON.stringify({
+        activeTabId: "t",
+        tabs: [
+          {
+            id: "t",
+            name: "Source: app.f",
+            query: "",
+            type: "sql",
+            source: {
+              path: ["app", "f"],
+              kind: "function",
+              document: { path: ["app", "f"], kind: "function", parts: [] },
+              failure: "stale",
+              activePartId: "definition",
+              readAtToken: 3,
+            },
+          },
+        ],
+      }),
+    );
+
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ id: "source-extra" }),
+        metadata: defaultMetadata,
+        schema: [],
+        persistWorkspace: true,
+      }),
+    );
+
+    await waitFor(() => expect(result.current.currentTab.id).toBe("t"));
+    expect(result.current.currentTab.source).toEqual({ path: ["app", "f"], kind: "function" });
   });
 });

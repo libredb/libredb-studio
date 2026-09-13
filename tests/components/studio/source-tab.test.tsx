@@ -50,6 +50,8 @@ mock.module("@monaco-editor/react", () => ({
 }));
 
 let capturedSidebarProps: Record<string, unknown> = {};
+let capturedPaletteProps: Record<string, unknown> = {};
+let capturedMobileHeaderProps: Record<string, unknown> = {};
 
 mock.module("@/hooks/use-auth", () => ({
   useAuth: () => ({ user: { username: "admin", role: "admin" }, isAdmin: true, handleLogout: () => {} }),
@@ -196,7 +198,17 @@ mock.module("@/components/sidebar", () => ({
 mock.module("@/components/MobileNav", () => ({ MobileNav: () => null }));
 mock.module("@/components/schema-explorer", () => ({ SchemaExplorer: () => <div data-testid="schema-explorer" /> }));
 mock.module("@/components/ConnectionModal", () => ({ ConnectionModal: () => null }));
-mock.module("@/components/CommandPalette", () => ({ CommandPalette: () => null }));
+/*
+ * The palette and the mobile header are captured rather than stubbed away, because round 1's
+ * finding 1 is about the props this shell hands them: both hold a Run entry point that is
+ * live over the ACTIVE TAB, and neither is inside the editor pane the Source branch replaces.
+ */
+mock.module("@/components/CommandPalette", () => ({
+  CommandPalette: (props: Record<string, unknown>) => {
+    capturedPaletteProps = props;
+    return null;
+  },
+}));
 mock.module("@/components/SchemaDiagram", () => ({ SchemaDiagram: () => null }));
 mock.module("@/components/DataImportModal", () => ({ DataImportModal: () => null }));
 mock.module("@/components/QuerySafetyDialog", () => ({ QuerySafetyDialog: () => null }));
@@ -224,7 +236,10 @@ mock.module("@/components/studio/index", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { StudioTabBar } = require("@/components/studio/StudioTabBar");
   return {
-    StudioMobileHeader: () => <div data-testid="mobile-header" />,
+    StudioMobileHeader: (props: Record<string, unknown>) => {
+      capturedMobileHeaderProps = props;
+      return <div data-testid="mobile-header" />;
+    },
     StudioDesktopHeader: () => <div data-testid="desktop-header" />,
     StudioTabBar,
     QueryToolbar: () => <div data-testid="query-toolbar">QueryToolbar</div>,
@@ -242,7 +257,7 @@ mock.module("@/components/ui/resizable", () => ({
 const { default: Studio } = await import("@/components/Studio");
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { QueryTab } from "@/lib/types";
 import { StudioTabBar } from "@/components/studio/StudioTabBar";
@@ -319,6 +334,8 @@ function tabNames(): string[] {
 beforeEach(() => {
   localStorage.clear();
   capturedSidebarProps = {};
+  capturedPaletteProps = {};
+  capturedMobileHeaderProps = {};
   capabilitiesOverride = { objectKinds: KINDS };
   buildMetadata();
   sourceReads = [];
@@ -465,6 +482,168 @@ describe("View Source opens a tab that reads the definition", () => {
     await waitFor(() => expect(screen.getByText("This engine cannot read a definition for that kind.")).toBeTruthy());
     expect(screen.queryByTestId("source-editor")).toBeNull();
     expect(screen.queryByTestId("query-editor")).toBeNull();
+  });
+});
+
+/**
+ * Every OTHER way to run a statement, while the tab on screen is a definition (#789 Phase 2,
+ * round 1 finding 1).
+ *
+ * The editor pane branches, so a Source tab draws no Run button. Three entry points are
+ * outside that pane and every one of them addressed `currentTab` and stayed live over a
+ * Source tab: the command palette's "Run Query", its two query loaders, and the mobile
+ * header's RUN. MEASURED before the gate existed: `updateCurrentTab({ query })` leaves a
+ * Source tab a Source tab, so the pane still showed the read-only definition while the tab
+ * held a statement nothing on screen displayed, and Run then executed it. With no statement
+ * loaded the same Run executed the empty string, because `use-query-execution` has no
+ * empty-query guard and `queryEditorRef.current` is null while the editor is unmounted.
+ *
+ * Every test here writes its CONTROL on the ordinary tab first, so a gate that simply broke
+ * the entry point for everyone could not pass.
+ */
+describe("no statement runs while the tab on screen is a definition", () => {
+  /** One captured prop, called the way its own component calls it. */
+  function fire(props: Record<string, unknown>, name: string, argument?: string): void {
+    act(() => (props[name] as (value?: string) => void)(argument));
+  }
+
+  async function openSourceTab(): Promise<void> {
+    act(() => sidebarActions().onViewSource?.(ROUTINE));
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+  }
+
+  test("the palette's Run Query executes on a query tab and does nothing on a Source tab", async () => {
+    render(<Studio />);
+    fire(capturedPaletteProps, "onExecuteQuery");
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+
+    await openSourceTab();
+    fire(capturedPaletteProps, "onExecuteQuery");
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+
+    // And the pane is untouched by the attempt: still the definition, still no query editor.
+    expect((screen.getByTestId("source-editor") as HTMLTextAreaElement).value).toBe(DEFINITION);
+    expect(screen.queryByTestId("query-editor")).toBeNull();
+  });
+
+  test("the palette's saved and history loaders write into a query tab and never into a Source tab", async () => {
+    render(<Studio />);
+    // The control, on the ordinary tab: both loaders reach the editor.
+    fire(capturedPaletteProps, "onLoadSavedQuery", "SELECT 1;");
+    await waitFor(() => expect(screen.getByTestId("query-editor").getAttribute("data-value")).toBe("SELECT 1;"));
+    fire(capturedPaletteProps, "onLoadHistoryQuery", "SELECT 2;");
+    await waitFor(() => expect(screen.getByTestId("query-editor").getAttribute("data-value")).toBe("SELECT 2;"));
+
+    await openSourceTab();
+    fire(capturedPaletteProps, "onLoadSavedQuery", "DROP TABLE app.orders;");
+    fire(capturedPaletteProps, "onLoadHistoryQuery", "DROP TABLE app.customers;");
+
+    /*
+     * `currentQuery` is the mobile header's own prop and it is the active tab's query, which
+     * is the only place a reader of this suite can see what a Source tab is holding: the pane
+     * deliberately does not display it. An empty string here is the statement never arriving,
+     * which is the half that makes the Run assertion below more than a statement about Run.
+     */
+    expect(capturedMobileHeaderProps.currentQuery).toBe("");
+    fire(capturedPaletteProps, "onExecuteQuery");
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+    expect((screen.getByTestId("source-editor") as HTMLTextAreaElement).value).toBe(DEFINITION);
+  });
+
+  test("the mobile header's RUN executes on a query tab and does nothing on a Source tab", async () => {
+    render(<Studio />);
+    fire(capturedMobileHeaderProps, "onExecuteQuery");
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+    // EXPLAIN is the same execution by another name, and the same header draws it.
+    fire(capturedMobileHeaderProps, "onExplain");
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
+
+    await openSourceTab();
+    fire(capturedMobileHeaderProps, "onExecuteQuery");
+    fire(capturedMobileHeaderProps, "onExplain");
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
+  });
+
+  test("switching back to the query tab makes every one of them live again", async () => {
+    // The gate is on the ACTIVE TAB and not on the session: a shell that latched would take
+    // the Run button away for the rest of the session and no assertion above would notice.
+    render(<Studio />);
+    await openSourceTab();
+    act(() => {
+      screen.getAllByRole("tab")[0].click();
+    });
+    await waitFor(() => expect(screen.getByTestId("query-toolbar")).toBeTruthy());
+
+    fire(capturedPaletteProps, "onLoadSavedQuery", "SELECT 3;");
+    await waitFor(() => expect(screen.getByTestId("query-editor").getAttribute("data-value")).toBe("SELECT 3;"));
+    fire(capturedPaletteProps, "onExecuteQuery");
+    fire(capturedMobileHeaderProps, "onExecuteQuery");
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * The tab STRIP's keyboard, over a Source tab whose id is derived from the object's address.
+ */
+describe("the tab strip's arrow keys work over a Source tab", () => {
+  test("an object whose name carries a double quote still hands the strip a usable id", async () => {
+    /*
+     * `StudioTabBar.activateTabAt` moves focus with
+     * `querySelector('[role="tab"][data-tab-id="<id>"]')`, so a tab id carrying a double
+     * quote or a backslash is not a wrong selector, it is an INVALID one: `querySelector`
+     * throws a SyntaxError and the arrow key takes the whole strip down. Tab ids used to be
+     * random, and a Source tab's id is now derived from its address, so an object name is
+     * suddenly inside that selector. Oracle quotes reserved-word routine names, which is the
+     * measured case standing ruling 2 already records (`"char"(integer)`).
+     */
+    render(<Studio />);
+    act(() => sidebarActions().onViewSource?.({ path: ["app", '"char"(integer)'], name: "char", kind: "function" }));
+    await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
+
+    const [query, source] = screen.getAllByRole("tab");
+    act(() => {
+      query.focus();
+      fireEvent.keyDown(query, { key: "ArrowLeft" });
+    });
+
+    // ArrowLeft from the first tab wraps onto the LAST, which is the Source tab: the id being
+    // moved to is the one that goes into the selector, so this is the direction that reaches
+    // it. Measured in this environment: happy-dom's `querySelector` throws a DOMException on
+    // an invalid selector exactly as a browser does.
+    expect(document.activeElement).toBe(source);
+    expect(source.getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+/**
+ * The kind's LABEL, which comes from the declaration and falls back to the id.
+ */
+describe("the pane captions a Source tab with the kind's own word", () => {
+  test("the declaration's label is what is shown", async () => {
+    render(<Studio />);
+    act(() => sidebarActions().onViewSource?.(ROUTINE));
+    await waitFor(() => expect(screen.getByTestId("object-source-kind").textContent).toBe("Function"));
+  });
+
+  test("a kind the declaration does not carry falls back to the kind id, never to a blank", async () => {
+    // The row menu cannot produce this row, and a persisted tab can: a workspace restored
+    // against a provider whose declaration has since lost the kind, or a connection edited to
+    // a different engine, reaches the pane with a kind nothing declares. A blank caption over
+    // a definition is the one thing this surface refuses to draw.
+    render(<Studio />);
+    act(() =>
+      sidebarActions().onViewSource?.({ path: ["app", "mystery"], name: "mystery", kind: "materialized-view" }),
+    );
+    await waitFor(() => expect(screen.getByTestId("object-source-kind").textContent).toBe("materialized-view"));
+  });
+
+  test("before the metadata read answers, the caption is the kind id rather than a crash", async () => {
+    // `metadata` is null until the provider answers, and a restored Source tab mounts the
+    // pane before then. Reading `metadata.capabilities` here without the null arm throws.
+    metadataAnswer = { metadata: null };
+    render(<Studio />);
+    act(() => sidebarActions().onViewSource?.(ROUTINE));
+    await waitFor(() => expect(screen.getByTestId("object-source-kind").textContent).toBe("function"));
   });
 });
 

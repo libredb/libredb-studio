@@ -154,6 +154,30 @@ export default function Studio() {
   /** Present exactly when the active tab is a Source tab, and it is what the pane branches on. */
   const sourceTab = tabMgr.currentTab.source;
 
+  /**
+   * What every statement entry point OUTSIDE the editor pane is handed while a Source tab is
+   * active (#789 Phase 2, round 1 finding 1).
+   *
+   * The pane below branches around the toolbar AND the editor together, so a Source tab draws
+   * no Run button. That covers the desktop editor and nothing else: the command palette's
+   * "Run Query", its saved-query and history loaders, and the mobile header's RUN and EXPLAIN
+   * all address `currentTab` and were live over a Source tab.
+   *
+   * MEASURED before this existed: `updateCurrentTab({ query })` leaves a Source tab a Source
+   * tab, so a statement loaded from the palette landed on a tab whose pane shows a read-only
+   * definition and displays no query at all, and Run then executed it. With nothing loaded the
+   * same Run executed the empty string, because `use-query-execution` has no empty-query guard
+   * and `queryEditorRef.current` is null while `QueryEditor` is unmounted.
+   *
+   * A no-op rather than an absent control, because the two components that draw these take
+   * them as REQUIRED props and neither is this task's to change. That is the smaller half of
+   * the answer: the item should not be drawn at all, on the same argument the pane already
+   * makes, and hiding it is filed for the shells that own those two files (#789). What is
+   * closed here is the half that matters, which is that nothing runs and nothing is written
+   * onto a tab that cannot show it.
+   */
+  const runsTheActiveTab = sourceTab === undefined;
+
   const { setTabs, activeTabId } = tabMgr;
   const onSourceChange = useCallback(
     (patch: ObjectSourcePatch) => {
@@ -671,14 +695,20 @@ export default function Studio() {
               onLogout={handleLogout}
               onSaveQuery={() => setIsSaveQueryModalOpen(true)}
               onClearQuery={() => tabMgr.updateCurrentTab({ query: "" })}
-              onExecuteQuery={() => queryExec.executeQuery()}
+              onExecuteQuery={() => {
+                if (!runsTheActiveTab) return;
+                queryExec.executeQuery();
+              }}
               onCancelQuery={() => queryExec.cancelQuery()}
               {...transactionHandlers}
               onToggleEditing={onToggleEditing}
               onImport={() => setIsImportModalOpen(true)}
               onExplain={
                 metadata?.capabilities.supportsExplain
-                  ? () => queryExec.executeQuery(undefined, undefined, true)
+                  ? () => {
+                      if (!runsTheActiveTab) return;
+                      queryExec.executeQuery(undefined, undefined, true);
+                    }
                   : undefined
               }
               // Absent while the runtime is off, so the header carries no control
@@ -853,12 +883,22 @@ export default function Studio() {
                               kind={sourceTab.kind}
                               /*
                                 The kind's own word from the DECLARATION, falling back to the
-                                id only where metadata has not landed: the viewer never
-                                derives a label from an id, and this shell is where the
-                                declaration is held.
+                                id: the viewer never derives a label from an id, and this shell
+                                is where the declaration is held.
+
+                                Both arms of the fallback are reachable and each has its own
+                                test. `metadata` is null until the provider answers, and a
+                                restored Source tab mounts this pane before then; and a
+                                declaration that does not carry the tab's kind, which a
+                                workspace restored against an edited connection produces,
+                                makes `findKind` answer undefined. A blank caption over a
+                                definition is the one thing this line refuses to draw. The
+                                dead `metadata === undefined` half that stood here in round 1
+                                is gone: `useProviderMetadata` answers `ProviderMetadata |
+                                null`, so that arm narrowed nothing (#789 round 1 finding 4).
                               */
                               kindLabel={
-                                (metadata === undefined || metadata === null
+                                (metadata === null
                                   ? undefined
                                   : findKind(metadata.capabilities, sourceTab.kind)?.label) ?? sourceTab.kind
                               }
@@ -1115,12 +1155,17 @@ export default function Studio() {
         onSelectConnection={conn.setActiveConnection}
         onTableClick={onTableClick}
         onAddConnection={() => setIsConnectionModalOpen(true)}
-        onExecuteQuery={() => queryExec.executeQuery()}
+        onExecuteQuery={() => {
+          if (!runsTheActiveTab) return;
+          queryExec.executeQuery();
+        }}
         onLoadSavedQuery={(q) => {
+          if (!runsTheActiveTab) return;
           tabMgr.updateCurrentTab({ query: q });
           queryExec.setBottomPanelMode("results");
         }}
         onLoadHistoryQuery={(q) => {
+          if (!runsTheActiveTab) return;
           tabMgr.updateCurrentTab({ query: q });
           queryExec.setBottomPanelMode("results");
         }}

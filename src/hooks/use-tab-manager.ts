@@ -20,6 +20,22 @@ const DEFAULT_TAB: QueryTab = {
   type: "sql",
 };
 
+/** The tab a Source read is mounted in: an ADDRESS, an empty query and no result (#789). */
+function sourceTab(id: string, object: DatabaseObject): QueryTab {
+  return {
+    id,
+    // The QUALIFIED path and not the object's label: two containers may hold a routine of the
+    // same name, and the tab strip is the only place a reader can tell two open Source tabs
+    // apart.
+    name: `Source: ${objectPathLabel(object.path)}`,
+    query: "",
+    result: null,
+    isExecuting: false,
+    type: "sql",
+    source: { path: object.path, kind: object.kind },
+  };
+}
+
 const WORKSPACE_STORAGE_PREFIX = "libredb_workspace_tabs_v1";
 
 interface PersistedTabState {
@@ -46,6 +62,36 @@ interface PersistedTabState {
    * to make it happen.
    */
   source?: { path: readonly string[]; kind: string };
+}
+
+/**
+ * Is what came back out of `JSON.parse` an ADDRESS, rather than something shaped like one?
+ *
+ * This is the first persisted field anything DEREFERENCES, and that is the whole reason it
+ * needs a check the other four do not (#789 Phase 2, round 1 finding 2). `id`, `name`,
+ * `query` and `type` are strings that get rendered; a truncated or hand-edited one is a wrong
+ * label. `source` is branched on by the editor pane and its `path` is read by the viewer's
+ * `pathKey(path)` on the first line of its body, so a record carrying `source: {}` renders a
+ * pane that throws "undefined is not an object (evaluating 'path.join')". MEASURED before this
+ * function existed: that throw happens during a mount rather than inside the LOAD effect's
+ * `try`, nothing here catches it, there is no error boundary around the pane, and the whole
+ * shell white-screens with the reader unable to reach the tab strip to close the tab.
+ *
+ * `source: null` was survivable only by accident: it threw on `tab.source.path` INSIDE the
+ * effect's `try`, so the fallback ran and every other tab in the workspace was lost with it.
+ * Both shapes are now dropped key by key, so a bad address costs its own tab's source arm and
+ * nothing else. An unreadable stored value is not a state to recover into: the entry says the
+ * tab is a Source tab and cannot say for which object, and the honest answer is the ordinary
+ * empty tab the record's other four fields already describe.
+ *
+ * The elements of `path` are deliberately NOT walked. A non-string segment reaches the route,
+ * which validates the whole request shape server-side and answers its own sentence, and the
+ * viewer renders that sentence: one refusal in the pane beats a second vocabulary here.
+ */
+function isStoredSourceAddress(value: unknown): value is { path: readonly string[]; kind: string } {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as { path?: unknown; kind?: unknown };
+  return Array.isArray(candidate.path) && typeof candidate.kind === "string";
 }
 
 interface PersistedWorkspaceState {
@@ -110,11 +156,13 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
         type: tab.type,
         result: null,
         isExecuting: false,
-        // The address only, and an absent key stays absent: every record written before this
-        // field existed is a tab that is not a Source tab, and there is no migration because
-        // "no source" is exactly what those records mean. The three read-state fields are
-        // deliberately not restored, so the viewer issues the read (#789).
-        ...(tab.source === undefined ? {} : { source: { path: tab.source.path, kind: tab.source.kind } }),
+        // The address only, and an absent OR malformed key stays absent: every record written
+        // before this field existed is a tab that is not a Source tab, and there is no
+        // migration because "no source" is exactly what those records mean. The three
+        // read-state fields are deliberately not restored, so the viewer issues the read
+        // (#789). See `isStoredSourceAddress` for why this one field is checked and the other
+        // four are not.
+        ...(isStoredSourceAddress(tab.source) ? { source: { path: tab.source.path, kind: tab.source.kind } } : {}),
       }));
 
       const hasActiveTab = restoredTabs.some((tab) => tab.id === parsed.activeTabId);
@@ -310,29 +358,52 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
   const openSourceTab = useCallback(
     (object: DatabaseObject) => {
       const key = pathKey(object.path);
-      const open = tabs.find(
-        (tab) => tab.source !== undefined && tab.source.kind === object.kind && pathKey(tab.source.path) === key,
-      );
+      const matchesAddress = (tab: QueryTab): boolean =>
+        tab.source !== undefined && tab.source.kind === object.kind && pathKey(tab.source.path) === key;
+      /*
+       * A Source tab already open for this address is FOCUSED rather than minted again, and
+       * the read from `tabs` here is the committed list, which is what carries the id of a
+       * tab restored from `localStorage` with an id this function did not choose.
+       */
+      const open = tabs.find(matchesAddress);
       if (open !== undefined) {
         setActiveTabId(open.id);
         return;
       }
-      const newId = newLocalId();
-      setTabs((prev) => [
-        ...prev,
-        {
-          id: newId,
-          // The QUALIFIED path and not the object's label: two containers may hold a routine
-          // of the same name, and the tab strip is the only place a reader can tell two open
-          // Source tabs apart.
-          name: `Source: ${objectPathLabel(object.path)}`,
-          query: "",
-          result: null,
-          isExecuting: false,
-          type: "sql",
-          source: { path: object.path, kind: object.kind },
-        },
-      ]);
+      /*
+       * The id is DERIVED FROM THE ADDRESS rather than minted, and that is what makes two
+       * opens inside one React batch safe (#789 Phase 2, round 1 finding 3).
+       *
+       * The defect: the dedup above reads the `tabs` of the render that built this callback,
+       * so two calls in ONE batch both miss and, with a minted id, both append. The tab strip
+       * then held two tabs with identical names, the first orphaned and read by nothing. Two
+       * separate DOM events flush between them, which is why no gesture in this shell reaches
+       * it; a host callback calling the embedded adapter twice does.
+       *
+       * MEASURED, and it is why the dedup was not simply moved inside the updater, which is
+       * the obvious fix: `setActiveTabId` runs when the event runs, while the updater runs at
+       * the next render, so an id resolved inside the updater is not yet known at the moment
+       * the active tab is set. With that shape the strip held one tab and `activeTabId` named
+       * the second call's unused id, so `currentTab` fell back to `tabs[0]` and the reader
+       * pressing View Source twice landed on the query tab.
+       *
+       * Deriving the id closes both halves at once: both calls in the batch compute the same
+       * id, so the second finds the first's append inside the updater and neither the strip
+       * nor the active id can disagree. Uniqueness is not weakened: the address of a Source
+       * tab is unique by construction, because this is the only function that mints one and
+       * it refuses to mint a second for an address already open.
+       *
+       * ENCODED, and that is not decoration. Every other tab id in this shell is random
+       * alphanumeric, and `StudioTabBar` moves focus with
+       * `querySelector('[role="tab"][data-tab-id="<id>"]')`, so putting an object NAME inside
+       * an id puts it inside a CSS selector. MEASURED: an Oracle-shaped routine segment,
+       * `"char"(integer)`, made that selector invalid and the arrow key threw a DOMException
+       * that took the whole strip down. `encodeURIComponent` leaves only characters an
+       * attribute selector accepts, and it is applied to each part separately so the two
+       * cannot run together: an encoded kind cannot contain the separator.
+       */
+      const newId = `source:${encodeURIComponent(object.kind)}:${encodeURIComponent(key)}`;
+      setTabs((prev) => (prev.some(matchesAddress) ? prev : [...prev, sourceTab(newId, object)]));
       setActiveTabId(newId);
     },
     [tabs],
