@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { httpSourceReader, isSourceDocumentShape } from "@/components/object-source/source-reader";
+import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -104,6 +105,33 @@ describe("isSourceDocumentShape", () => {
       isSourceDocumentShape({ ...document, parts: [{ ...readable, truncated: { limit: "10", reason: "r" } }] }),
     ).toBe(false);
     expect(isSourceDocumentShape({ ...document, parts: [{ ...readable, truncated: null }] })).toBe(false);
+  });
+
+  test("rejects a truncation reason longer than a text is allowed to be", () => {
+    /*
+     * THE ONE HOST-SUPPLIED RENDERED STRING THE FIRST ROUND'S BOUND MISSED (#789 fix round 1).
+     * Round 1 bounded the text and the refusal SENTENCE with the argument that a refusal is a
+     * text this component renders, and then did not apply it here: `ObjectSourceView` renders
+     * `part.truncated.reason` verbatim into the warning banner, from the same unbounded host
+     * path, on the one seam with no route in front of it. MEASURED before the bound landed: a
+     * part carrying `reason: "r".repeat(SOURCE_CHARACTER_LIMIT * 5)` passed this predicate, so
+     * five million characters reached a `<div>`.
+     *
+     * The CONTROL below sits exactly ON the bound and passes either way, which is what makes
+     * this an off-by-one assertion rather than a refusal of everything large.
+     */
+    expect(
+      isSourceDocumentShape({
+        ...document,
+        parts: [{ ...readable, truncated: { limit: 10, reason: "r".repeat(SOURCE_CHARACTER_LIMIT + 1) } }],
+      }),
+    ).toBe(false);
+    expect(
+      isSourceDocumentShape({
+        ...document,
+        parts: [{ ...readable, truncated: { limit: 10, reason: "r".repeat(SOURCE_CHARACTER_LIMIT) } }],
+      }),
+    ).toBe(true);
   });
 
   test("rejects a path that is not an array of strings", () => {

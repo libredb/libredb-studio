@@ -65,9 +65,23 @@ function isFilledString(value: unknown): value is string {
  * A mark whose reason is missing would draw an empty warning banner above a text, which is a
  * second spelling of the collapse this whole design exists to prevent: an attention state with
  * nothing in it reads as decoration.
+ *
+ * THE REASON IS BOUNDED BY THE SAME NUMBER AS A TEXT, and it is the one host-supplied rendered
+ * string round 1's bound missed (#789 fix round 1). That round bounded the text and the refusal
+ * sentence on the rule "it is a text this component renders", and `ObjectSourceView` renders
+ * `part.truncated.reason` verbatim into the warning banner from the same unbounded host path.
+ * MEASURED before this line: a part carrying a five-million-character reason passed this
+ * predicate, so the whole of it reached a `<div>` on the one seam that has no route in front of
+ * it. An overrun is a failed read here for the same reason it is for a text: this seam cannot
+ * cut a sentence honestly, so it says the body is one it cannot render.
  */
 function isTruncationShape(value: unknown): boolean {
-  return isRecord(value) && typeof value.limit === "number" && isFilledString(value.reason);
+  return (
+    isRecord(value) &&
+    typeof value.limit === "number" &&
+    isFilledString(value.reason) &&
+    value.reason.length <= SOURCE_CHARACTER_LIMIT
+  );
 }
 
 function isPartShape(part: unknown): boolean {
@@ -114,7 +128,8 @@ function isPartShape(part: unknown): boolean {
  * function, so without these two lines a host could hand the shell tens of megabytes per part
  * and any number of parts, and the only thing between that and Monaco was this predicate. The
  * refusal SENTENCE is bounded by the same number as a text, because it is a text this component
- * renders and the route carries it through untouched.
+ * renders and the route carries it through untouched, and so is a truncation mark's REASON, which
+ * is the third such string and the one that rule missed the first time (see `isTruncationShape`).
  *
  * AN OVERRUN IS A FAILED READ, never a silent truncation, and that is a decision rather than a
  * shortcut: `truncated` is a claim about WHERE the cut was made and by whom, and this seam
