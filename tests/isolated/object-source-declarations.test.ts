@@ -39,11 +39,12 @@
  * MEASURED TWICE, and it is stronger than the first wording of this paragraph said. That wording
  * claimed a half declaration "fails only that provider's own local declaration assertion", which
  * is false: it fails NOTHING outside this file's guards. Two mutants, each run against the whole
- * of `tests/unit` and diffed against a baseline of the same run:
+ * of `tests/unit` and diffed against a baseline of the same run, when this file still lived there:
  *
  * - `sourceLanguage: "sql"` added to mssql's `table` with no `hasSource`: the failure set grew by
  *   exactly two lines, this file's `no kind declares a sourceLanguage without hasSource` and
- *   `tests/unit/editor/monaco-language-ids.test.ts`'s membership guard. No mssql assertion fired.
+ *   the membership guard in `monaco-language-ids.test.ts`, which moved beside this file. No
+ *   mssql assertion fired.
  * - `sourceLanguage: "pgsql"` added to postgres's `table`: the same two lines and nothing else.
  *
  * The provider suites cannot see it by construction: each one's local pairing assertion maps
@@ -51,6 +52,16 @@
  * so a kind that gained only a language moves in neither list. This file is the only place that
  * sees every provider's declarations at once, so the half-declaration guard lives here, and it is
  * not a duplicate of anything: deleting it makes the class invisible again.
+ *
+ * WHY THIS FILE LIVES UNDER `tests/isolated/` (#789). It builds providers through the REAL
+ * `createDatabaseProvider`, which is the whole point: a declaration census that read a double
+ * would certify the double. Every file under `tests/api/` mocks `@/lib/db` with a
+ * `createDatabaseProvider: mock()` answering undefined, and that mock reaches
+ * `@/lib/db/factory` through the index re-export, so in a shared process this file reads
+ * `provider.getCapabilities` off undefined. Measured 2026-09-13: alone it is green; beside
+ * `tests/api/db-objects.test.ts` it is not. Nothing this file can do prevents it, because
+ * mocking the factory is what the api layer is for, so the isolation sits here and
+ * `tests/run-components.sh` gives it a group of its own.
  */
 import { describe, expect, test } from "bun:test";
 import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -125,7 +136,7 @@ const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection>> = Ob
  *
  * `plsql`, `tsql` and `cql` are absent on purpose: they are not language ids the installed editor
  * registers, so Oracle, SQL Server and Cassandra render under `sql`. That fact is guarded, from
- * the installed bundle rather than from this comment, in `tests/unit/editor/monaco-language-ids.test.ts`.
+ * the installed bundle rather than from this comment, in `tests/isolated/monaco-language-ids.test.ts`.
  */
 const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = Object.freeze({
   postgres: ["view/pgsql", "materialized_view/pgsql", "function/pgsql", "procedure/pgsql", "trigger/pgsql"],
@@ -175,7 +186,7 @@ const MARIADB_EXTRA_SOURCE_KINDS: readonly string[] = ["mysql/package/mysql", "m
  * The version string a MariaDB server answers `SELECT VERSION()` with, measured on
  * `mariadb:latest` (12.3.2) by the mysql provider task on 2026-09-11.
  *
- * SECOND OWNER, DISCLOSED RATHER THAN HOISTED. `tests/unit/editor/monaco-language-ids.test.ts`
+ * SECOND OWNER, DISCLOSED RATHER THAN HOISTED. `tests/isolated/monaco-language-ids.test.ts`
  * carries the same constant and the same private-field write, for the same structural reason: an
  * unconnected mysql provider answers the MySQL six and both files need the MariaDB two. Standing
  * ruling 5h says to report a helper about to be written again rather than hoist it while another

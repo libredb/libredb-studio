@@ -1084,7 +1084,7 @@ its real declared columns with the primary key marked (the relational signal); (
 collection shows the generic `id`/`document` columns (the document signal); and (d) raw kv
 namespaces still group as `key`/`value` pseudo-tables.
 
-The **single-writer reuse** (D3/B49) is asserted in `tests/unit/db/factory.test.ts` rather than
+The **single-writer reuse** (D3/B49) is asserted in `tests/isolated/factory.test.ts` rather than
 here, because it is the factory's behaviour and it needs the real factory — which this file cannot
 import, since `tests/api/db/test-connection.test.ts` replaces `@/lib/db/factory` process-wide with
 `mock.module`. Two suites there run on the real package and real temp files: *single-writer file

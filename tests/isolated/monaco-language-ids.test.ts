@@ -46,6 +46,16 @@
  *
  * Measured on monaco-editor 0.56.0, 2026-09-13: 89 basic ids, 4 rich ids, and exactly one of the
  * four rich ids (`json`) absent from the 89.
+ *
+ * WHY THIS FILE LIVES UNDER `tests/isolated/` (#789). It builds providers through the REAL
+ * `createDatabaseProvider`, which is the whole point: a declaration census that read a double
+ * would certify the double. Every file under `tests/api/` mocks `@/lib/db` with a
+ * `createDatabaseProvider: mock()` answering undefined, and that mock reaches
+ * `@/lib/db/factory` through the index re-export, so in a shared process this file reads
+ * `provider.getCapabilities` off undefined. Measured 2026-09-13: alone it is green; beside
+ * `tests/api/db-objects.test.ts` it is not. Nothing this file can do prevents it, because
+ * mocking the factory is what the api layer is for, so the isolation sits here and
+ * `tests/run-components.sh` gives it a group of its own.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
@@ -112,7 +122,7 @@ const unconnected = (type: DatabaseType): DatabaseConnection =>
 /**
  * MariaDB's own `VERSION()` string, measured on `mariadb:latest` 12.3.2 by the mysql task.
  *
- * SECOND OWNER, DISCLOSED RATHER THAN HOISTED. `tests/unit/db/object-source-declarations.test.ts`
+ * SECOND OWNER, DISCLOSED RATHER THAN HOISTED. `tests/isolated/object-source-declarations.test.ts`
  * carries the same constant and the same private-field write, because the census needs the MariaDB
  * branch for the same structural reason this file does. Standing ruling 5h says to report a helper
  * about to be written again rather than hoist it while another implementer holds the checkout, and

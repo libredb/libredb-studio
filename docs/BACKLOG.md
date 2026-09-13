@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D67, U17 · 27
+- [Drivers and connections](#drivers-and-connections) — D1–D68, U17 · 28
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X13, U2–U21 · 7
@@ -598,7 +598,7 @@ list it lands on still shows a bare name.
 ### D56. A Druid lookup's JSON definition is unreachable from the one URL a connection carries
 
 Fifteen of the seventeen shipped type-ids read object source under #789, measured by the census in
-`tests/unit/db/object-source-declarations.test.ts`; druid and libredb are the two that read none.
+`tests/isolated/object-source-declarations.test.ts`; druid and libredb are the two that read none.
 Two of Druid's three kinds have nothing to read: a datasource and a system table were never written
 down as a statement, measured from the parser's own refusal, which enumerates every statement it
 expected and includes no form of `CREATE`. The third is different. A `lookup` IS authored, as a JSON
@@ -865,6 +865,33 @@ collides with every one of them.
 
 **Done when:** one definition of each replaces the copies, with the sqlite and libsql source read
 sharing its statement.
+
+### D68. `bun run test` is red on a shared process, and only CI's per-file isolation hides it
+
+`bun run test` is the pre-commit command CLAUDE.md documents, and it runs
+`bun test tests/unit tests/api tests/integration` in ONE bun process. `mock.module()` is
+process-wide, so a mock one layer needs reaches every file in that process. CI runs
+`tests/run-core.sh` instead, one process per file, and is blind to the whole class by
+construction.
+
+Measured 2026-09-13, and the same numbers at `acf50738` and on the #789 branch, so it predates
+that epic: every file under `tests/api/` mocks `@/lib/auth` with stubbed `signJWT`, `verifyJWT`,
+`getSession`, `login` and `logout`, which is that layer's standard pattern. Run
+`tests/unit/lib/auth.test.ts`, `tests/unit/lib/auth-jwt-config.test.ts` and
+`tests/unit/seed/resolve-connection.test.ts` beside `tests/api/db-objects.test.ts` and the four
+files together are 31 fail; each of them alone is 0 fail.
+
+The cost is not a red gate, because no gate runs that shape. It is that a contributor following
+CLAUDE.md sees 31 failures on a clean checkout and cannot tell them from their own.
+
+#789 removed its own three instances by moving the files with the unshareable assumption into
+`tests/isolated/`, where `tests/run-components.sh` gives each a process and
+`tests/unit/component-runner-coverage.test.ts` makes an unregistered one a red test. The same
+remedy does not fit here: it is not three files but a whole layer's mocking pattern against three
+unit files that legitimately want the real module. `docs/TOOLCHAIN.md` carries the diagnosis.
+
+**Done when:** `bun run test` on a clean checkout is green, either because the auth mocking pattern
+stops reaching `tests/unit`, or because the documented command runs the same isolation CI does.
 
 ## Value interpolation
 

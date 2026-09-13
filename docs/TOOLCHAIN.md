@@ -238,7 +238,9 @@ That is not a reason to accept a red developer command. A test file that breaks 
 whether or not a gate notices, and the repair is to move the file whose assumption is unshareable
 rather than to bend the files around it.
 
-The one instance measured so far, in #789, and the rule it establishes:
+Two instances measured in #789, and the rule they establish.
+
+The first is a file that must load a module before anything else does:
 
 - `tests/isolated/factory.test.ts` mocks six native driver packages and `@/lib/ssh/tunnel`, then
   imports `@/lib/db/factory` under a temporary `NODE_ENV=production` so the SIGTERM and SIGINT
@@ -261,6 +263,26 @@ The one instance measured so far, in #789, and the rule it establishes:
 - The file therefore moved from `tests/unit/db/factory.test.ts` to `tests/isolated/factory.test.ts`
   with its own group in `tests/run-components.sh`. `tests/unit/component-runner-coverage.test.ts`
   makes an unregistered file in `tests/isolated/` a red test, so the isolation cannot be forgotten.
+
+The second is the mirror image: a file that must read a module the rest of a layer replaces.
+
+- `tests/isolated/object-source-declarations.test.ts` censuses what all seventeen providers
+  declare, and `tests/isolated/monaco-language-ids.test.ts` checks every declared source language
+  against the ids the installed Monaco registers. Both build providers through the REAL
+  `createDatabaseProvider`, which is the point: a census that read a double would certify the
+  double.
+- Every file under `tests/api/` mocks `@/lib/db` with a `createDatabaseProvider: mock()` that
+  answers undefined, which is that layer's standard pattern, and the mock reaches
+  `@/lib/db/factory` through the index re-export. Measured 2026-09-13: the census beside
+  `tests/api/db-objects.test.ts` is 3 fail, the language guard beside it is 1 fail, and each of
+  them alone is 0 fail.
+- Nothing either file can do prevents that, so both moved to `tests/isolated/` with a shared group.
+
+A pre-existing instance of the same class is NOT fixed and is filed as `docs/BACKLOG.md` D68: the
+same `tests/api/` mocks of `@/lib/auth` take `tests/unit/lib/auth.test.ts`,
+`tests/unit/lib/auth-jwt-config.test.ts` and `tests/unit/seed/resolve-connection.test.ts` from 0 to
+31 failures in a shared process. Measured identical at `acf50738` and on the #789 branch, so it
+predates the epic.
 
 The rule: when a test file can only pass while it is the first to load some module, it belongs in
 `tests/isolated/` with a group of its own and a docblock saying which module and what the failure

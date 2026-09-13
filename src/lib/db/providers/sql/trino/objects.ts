@@ -831,7 +831,7 @@ export function trinoUnreadableSourceReason(statement: TrinoSourceStatement, nam
  * A `"` toggles the quoted state, which handles Trino's doubled-quote escape without a case
  * of its own: `""` toggles twice and lands back where it started.
  */
-export function trinoParenthesisedList(text: string): string | null {
+function trinoParenthesisedList(text: string): string | null {
   let quoted = false;
   let depth = 0;
   let start = -1;
@@ -869,7 +869,7 @@ export function trinoParenthesisedList(text: string): string | null {
  * the same signature on BOTH sides of the comparison. A guard for a state that changes no
  * answer is a covered line nothing executes (standing ruling 5b, #789), so it is gone.
  */
-export function trinoSplitTopLevel(list: string): string[] {
+function trinoSplitTopLevel(list: string): string[] {
   const parts: string[] = [];
   let quoted = false;
   let depth = 0;
@@ -913,7 +913,7 @@ export function trinoSplitTopLevel(list: string): string[] {
  * whole text, which is the best reading available for something this shape. A branch would
  * be one more line no statement can reach.
  */
-export function trinoParameterType(parameter: string): string {
+function trinoParameterType(parameter: string): string {
   const text = parameter.trim();
   return text.slice(text.indexOf(" ") + 1).trim();
 }
@@ -941,7 +941,7 @@ export function trinoParameterType(parameter: string): string {
  * is not a type Trino will parse, so no pair of real signatures collides, but the form is
  * lossy and this is where that is written down.
  */
-export function trinoNormalisedSignature(types: readonly string[]): string {
+function trinoNormalisedSignature(types: readonly string[]): string {
   return types.map((type) => type.toLowerCase().replace(/[\s"]/g, "")).join(",");
 }
 

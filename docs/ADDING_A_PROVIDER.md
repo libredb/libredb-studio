@@ -869,7 +869,7 @@ range) is still checked on its numeral only, deliberately, so that no numeral go
 **And the tests for every exhaustive map**, which are the real checklist — several are exhaustive
 *by construction* (`Record<DatabaseType, …>` in `db-ui-config`, `PICKER_COVERAGE` in the
 connection-form test), so the compiler and those tests refuse to pass until each is updated:
-`tests/unit/db/factory.test.ts`, `tests/unit/lib/db-ui-config.test.ts`,
+`tests/isolated/factory.test.ts`, `tests/unit/lib/db-ui-config.test.ts`,
 `tests/unit/lib/db-icons.test.tsx`, `tests/unit/lib/connection-string-parser.test.ts`,
 `tests/unit/lib/query-generators.test.ts`, `tests/unit/seed/types.test.ts`,
 `tests/hooks/use-connection-form.test.ts`,

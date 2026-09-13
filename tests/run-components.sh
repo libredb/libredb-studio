@@ -30,7 +30,7 @@ FAIL=0
 # green summary line reported a group count no run had.
 # Drifted again before this line was touched: it read 30 while 32 `run_group` calls
 # existed, so every green run reported a group count no run had. 33 is the grep below.
-TOTAL_GROUPS=43
+TOTAL_GROUPS=44
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -107,6 +107,19 @@ run_group "Group 0b: Factory singleton" \
 # `@/lib/ssh/tunnel` or `@/lib/db/compatibility` instead reproduces nothing.
 run_group "Group 0b2: Factory cache and execution profiles" \
   tests/isolated/factory.test.ts
+
+# Group 0b3: The fleet census of object source declarations and the editor language guard (#789).
+# Both build all seventeen providers through the REAL `createDatabaseProvider`, which is the only
+# way to census what each provider declares rather than what somebody typed. Every file under
+# `tests/api/` mocks `@/lib/db` with a `createDatabaseProvider: mock()` that answers undefined,
+# and that mock reaches `@/lib/db/factory` through the index re-export, so both files read
+# `provider.getCapabilities` off undefined the moment they share a process with the api layer.
+# Measured 2026-09-13: census plus `tests/api/db-objects.test.ts` is 3 fail, the language guard
+# plus the same file is 1 fail, and each of them alone is 0 fail. There is nothing either file can
+# do about it: mocking the factory is what the api layer is for.
+run_group "Group 0b3: Object source declaration census" \
+  tests/isolated/object-source-declarations.test.ts \
+  tests/isolated/monaco-language-ids.test.ts
 
 # Group 0c: exports CJS shim (isolated — importing it pulls @/lib/db/factory into the
 # module cache, which breaks factory.test.ts's first-import signal-handler capture).
