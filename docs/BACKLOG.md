@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D69, U17 · 29
+- [Drivers and connections](#drivers-and-connections) — D1–D70, U17 · 30
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X16, U2–U21 · 10
@@ -924,6 +924,35 @@ guards, holds for nine of seventeen type-ids only.
 **Done when:** the six call `requireSourceKind`, with the five provider suites' assertions moved onto
 the guard's three sentences in the same commit, and the route layer either reuses one of those
 sentences or its docblock says why a 400 raised before the provider is a different fact.
+
+### D70. The DuckDB multi-statement sentence is an inference in a measurement's voice, and the tail does run
+
+`docs/providers/duckdb.md` section 3.11 says a multi-statement string runs the first statement only, that the rest is
+silently discarded, and that there is no error and no second result.
+`src/lib/db/providers/sql/duckdb/index.ts:699-703` says `client.run()` executes only the FIRST statement and that the
+method guarantees the tail is never executed.
+
+Measured 2026-09-13 on DuckDB v1.5.5 through `@duckdb/node-api` 1.5.5-r.4, while grounding #778 Phase 3.
+`CREATE TABLE probe_c(i INTEGER); CREATE TABLE probe_c(i INTEGER)` answers
+`Catalog Error: Table with name "probe_c" already exists!`, which is the SECOND statement's error, and `duckdb_tables()`
+then holds `probe_c`.
+`DROP VIEW probe_v; CREATE VIEW probe_v AS SELECT * FROM no_such_table_here` raises the second statement's error and
+leaves the view dropped.
+So the tail runs, the failure rolls nothing back, and the discard is neither silent nor a discard.
+
+The measurement quoted in section 3.11 is real and it is about the RESULT: `runAndReadAll` returns the first statement's
+rows and not the second's.
+The sentence built on it is about EXECUTION, which nobody ran, and the two are different claims.
+This is the same class as the entries this file already carries about inferences written in a measurement's voice.
+
+The security consequence is bounded rather than open, and the bound should be stated rather than assumed: the guard
+beside the docblock reads the whole string before the call, so a forbidden form hiding in the tail is still refused, and
+`access_mode` is fixed read-only on that path.
+What is wrong is the stated reason, which is the load-bearing half of a security docblock.
+
+**Done when:** the code docblock and all three places in the provider doc say what was measured, which is that the first
+statement's rows are returned and the tail still runs, or the claim is re-measured on a version where it holds and that
+version is named.
 
 ## Value interpolation
 
