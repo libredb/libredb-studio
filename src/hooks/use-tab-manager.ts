@@ -2,10 +2,11 @@
 
 import { useState, useCallback, useEffect, useMemo } from "react";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
+import type { DatabaseObject } from "@/lib/db/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { generateTableQuery, generateSelectQuery, objectSegment } from "@/lib/query-generators";
-import { pathKey } from "@/lib/db/object-path";
+import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import { resolveTabType } from "@/lib/editor/tab-language";
 import { logger } from "@/lib/logger";
 import { newLocalId } from "@/lib/ids";
@@ -26,6 +27,25 @@ interface PersistedTabState {
   name: string;
   query: string;
   type: QueryTab["type"];
+  /**
+   * A Source tab's ADDRESS, and never one character of its definition (#789 Phase 2).
+   *
+   * `SourceTabState` also carries the document, the failure sentence, the active part and the
+   * read token; none of the four is written here, and the reason is arithmetic rather than
+   * taste. This record is one `JSON.stringify` of the WHOLE workspace, written by the
+   * `setItem` below with no `try`/`catch` around it, against an origin quota of about 5 MiB
+   * that ten other collections in this application already share. A definition the user did
+   * not type is unbounded from the shell's point of view - the route bounds one part at a
+   * million characters - so persisting it is a `QuotaExceededError` waiting for a large enough
+   * object, and the symptom would not be a broken Source tab: an uncaught throw in that timer
+   * stops tab persistence for EVERYTHING.
+   *
+   * So a restored Source tab carries the address alone and RE-READS, which costs one request
+   * per restored tab and is the same read the tab issued when it was opened. The viewer
+   * already treats "no document and no failure" as its cue to read, so nothing else is needed
+   * to make it happen.
+   */
+  source?: { path: readonly string[]; kind: string };
 }
 
 interface PersistedWorkspaceState {
@@ -90,6 +110,11 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
         type: tab.type,
         result: null,
         isExecuting: false,
+        // The address only, and an absent key stays absent: every record written before this
+        // field existed is a tab that is not a Source tab, and there is no migration because
+        // "no source" is exactly what those records mean. The three read-state fields are
+        // deliberately not restored, so the viewer issues the read (#789).
+        ...(tab.source === undefined ? {} : { source: { path: tab.source.path, kind: tab.source.kind } }),
       }));
 
       const hasActiveTab = restoredTabs.some((tab) => tab.id === parsed.activeTabId);
@@ -133,6 +158,8 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
           name: tab.name,
           query: tab.query,
           type: tab.type,
+          // Two fields of `SourceTabState` and never the other four: see `PersistedTabState`.
+          ...(tab.source === undefined ? {} : { source: { path: tab.source.path, kind: tab.source.kind } }),
         })),
       };
       storage.setItem(workspaceKey, JSON.stringify(serialized));
@@ -260,6 +287,57 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
     [metadata, schema],
   );
 
+  /**
+   * Open one object's DEFINITION in a read-only Source tab, or focus the one already open
+   * against that object (#789 Phase 2).
+   *
+   * The tab carries the ADDRESS and nothing else. It holds no document, no failure and no
+   * read token, and that absence is the instruction: the viewer reads when it is handed
+   * neither, so a freshly opened tab and a tab restored from storage take the same path.
+   *
+   * The match is `pathKey(path)` plus the KIND, and both halves are load-bearing.
+   * `pathKey` rather than a join or a `JSON.stringify` per standing ruling 5g: its separator
+   * is a control character no engine admits inside an identifier, so `["a.b"]` and
+   * `["a", "b"]` cannot collide, while JSON escaping rewrites exotic names. And the kind,
+   * because one name addresses more than one object of different kinds in one container on
+   * MySQL, MariaDB and DuckDB, measured in this epic, so matching on the path alone would
+   * focus the procedure's tab for a reader who asked for the table's definition.
+   *
+   * `type` is the neutral `"sql"`. Nothing reads it on a Source tab: the tab bar's icon and
+   * the editor pane both branch on `source` being present, and the definition's own Monaco
+   * language travels on the PART the provider built rather than on the tab.
+   */
+  const openSourceTab = useCallback(
+    (object: DatabaseObject) => {
+      const key = pathKey(object.path);
+      const open = tabs.find(
+        (tab) => tab.source !== undefined && tab.source.kind === object.kind && pathKey(tab.source.path) === key,
+      );
+      if (open !== undefined) {
+        setActiveTabId(open.id);
+        return;
+      }
+      const newId = newLocalId();
+      setTabs((prev) => [
+        ...prev,
+        {
+          id: newId,
+          // The QUALIFIED path and not the object's label: two containers may hold a routine
+          // of the same name, and the tab strip is the only place a reader can tell two open
+          // Source tabs apart.
+          name: `Source: ${objectPathLabel(object.path)}`,
+          query: "",
+          result: null,
+          isExecuting: false,
+          type: "sql",
+          source: { path: object.path, kind: object.kind },
+        },
+      ]);
+      setActiveTabId(newId);
+    },
+    [tabs],
+  );
+
   return {
     tabs,
     setTabs,
@@ -276,5 +354,6 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
     updateTabById,
     handleTableClick,
     handleGenerateSelect,
+    openSourceTab,
   };
 }

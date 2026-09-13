@@ -10,6 +10,7 @@ import "../helpers/mock-navigation";
 import { useTabManager } from "@/hooks/use-tab-manager";
 import type { DatabaseConnection } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import type { DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 
 // Helper to create a minimal connection
@@ -1001,5 +1002,241 @@ describe("useTabManager addresses an object by its path", () => {
     });
 
     expect(result.current.tabs[1].query).toBe("SELECT * FROM app.customers LIMIT 50;");
+  });
+});
+
+/**
+ * The Source tab (#789 Phase 2).
+ *
+ * A Source tab carries an ADDRESS and never the text. The reason is arithmetic rather than
+ * taste: `PersistedTabState` is one `JSON.stringify` of the whole workspace written by a
+ * `setItem` with no `try`/`catch` inside a 500 ms timer, against an origin quota of about
+ * 5 MiB that ten other collections already share. A definition the user did not type, put
+ * into a persisted text field, is a `QuotaExceededError` waiting for a large enough object,
+ * and the observable symptom is not a broken Source tab: it is that tab persistence silently
+ * stops for EVERYTHING. So a restored Source tab re-reads, and the assertions below pin the
+ * address travelling and the document not.
+ */
+describe("useTabManager opens a Source tab", () => {
+  const orderTotal: DatabaseObject = {
+    path: ["app", "order_total(integer)"],
+    name: "order_total",
+    kind: "function",
+  };
+
+  test("opens a tab carrying the ADDRESS and nothing else, and activates it", () => {
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: defaultMetadata, schema: [] }),
+    );
+
+    act(() => {
+      result.current.openSourceTab(orderTotal);
+    });
+
+    expect(result.current.tabs).toHaveLength(2);
+    const tab = result.current.tabs[1];
+    expect(result.current.activeTabId).toBe(tab.id);
+    expect(tab.source).toEqual({ path: ["app", "order_total(integer)"], kind: "function" });
+    // The whole address and the whole label: the tab is named after the QUALIFIED path,
+    // because two containers may hold a routine of the same name and the tab strip is the
+    // only place a reader can tell two open Source tabs apart.
+    expect(tab.name).toBe("Source: app.order_total(integer)");
+    // No document, no failure, no read token: the viewer is what reads, and it reads because
+    // the tab carries neither a document nor a failure.
+    expect(tab.source?.document).toBeUndefined();
+    expect(tab.source?.failure).toBeUndefined();
+    expect(tab.source?.readAtToken).toBeUndefined();
+    expect(tab.query).toBe("");
+    expect(tab.result).toBeNull();
+  });
+
+  test("a second View Source on the same object FOCUSES the open tab instead of minting one", () => {
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: defaultMetadata, schema: [] }),
+    );
+
+    act(() => {
+      result.current.openSourceTab(orderTotal);
+    });
+    const first = result.current.tabs[1].id;
+    act(() => {
+      result.current.setActiveTabId("default");
+    });
+    act(() => {
+      result.current.openSourceTab({ ...orderTotal, name: "a different label entirely" });
+    });
+
+    expect(result.current.tabs).toHaveLength(2);
+    expect(result.current.activeTabId).toBe(first);
+  });
+
+  test("the match is on the path and the KIND, so one name in two roles opens two tabs", () => {
+    // Measured on MySQL, MariaDB and DuckDB: one name addresses more than one object of
+    // different kinds in one container. Matching on the path alone would show a reader the
+    // procedure's definition when they asked for the table's.
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: defaultMetadata, schema: [] }),
+    );
+
+    act(() => {
+      result.current.openSourceTab({ path: ["app", "audit"], name: "audit", kind: "table" });
+    });
+    act(() => {
+      result.current.openSourceTab({ path: ["app", "audit"], name: "audit", kind: "procedure" });
+    });
+
+    expect(result.current.tabs).toHaveLength(3);
+    expect(result.current.tabs.map((tab) => tab.source?.kind)).toEqual([undefined, "table", "procedure"]);
+  });
+
+  test("the match is on pathKey and never on a joined string, so two depths cannot collide", () => {
+    // Standing ruling 5g. `["a.b"]` and `["a", "b"]` are different objects on every engine
+    // that admits a dot in an identifier, and a key built by joining on "." says they are one.
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: defaultMetadata, schema: [] }),
+    );
+
+    act(() => {
+      result.current.openSourceTab({ path: ["a.b"], name: "a.b", kind: "view" });
+    });
+    act(() => {
+      result.current.openSourceTab({ path: ["a", "b"], name: "b", kind: "view" });
+    });
+
+    expect(result.current.tabs).toHaveLength(3);
+    expect(result.current.tabs[2].source?.path).toEqual(["a", "b"]);
+  });
+
+  test("a tab that is NOT a Source tab is never matched, whatever it is called", () => {
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: defaultMetadata, schema: [] }),
+    );
+
+    act(() => {
+      result.current.updateCurrentTab({ name: "Source: app.order_total(integer)" });
+    });
+    act(() => {
+      result.current.openSourceTab(orderTotal);
+    });
+
+    expect(result.current.tabs).toHaveLength(2);
+    expect(result.current.tabs[1].source).toBeDefined();
+  });
+
+  test("persists the ADDRESS and never the document", async () => {
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ id: "source-persist" }),
+        metadata: defaultMetadata,
+        schema: [],
+        persistWorkspace: true,
+      }),
+    );
+
+    act(() => {
+      result.current.openSourceTab(orderTotal);
+    });
+    const tabId = result.current.tabs[1].id;
+    // A document the size of a real definition, put on the tab the way the viewer puts it.
+    act(() => {
+      result.current.updateTabById(tabId, {
+        source: {
+          path: orderTotal.path,
+          kind: "function",
+          activePartId: "definition",
+          readAtToken: 3,
+          document: {
+            path: orderTotal.path,
+            kind: "function",
+            parts: [
+              {
+                id: "definition",
+                label: "Function",
+                text: "CREATE FUNCTION order_total(integer) RETURNS numeric AS $$ SELECT 1 $$;",
+                language: "sql",
+                form: "complete",
+                origin: "regenerated",
+              },
+            ],
+          },
+        },
+      });
+    });
+
+    await waitFor(
+      () => {
+        const raw = localStorage.getItem("libredb_workspace_tabs_v1:source-persist");
+        expect(raw).toBeTruthy();
+        const parsed = JSON.parse(raw ?? "{}") as { tabs: Array<Record<string, unknown>> };
+        const persisted = parsed.tabs[1];
+        expect(persisted.source).toEqual({ path: ["app", "order_total(integer)"], kind: "function" });
+        // The whole record, so a field added to `SourceTabState` later cannot ride along
+        // into storage unnoticed: the text is what the quota cannot take.
+        expect(raw).not.toContain("CREATE FUNCTION");
+        expect(raw).not.toContain("activePartId");
+        expect(raw).not.toContain("readAtToken");
+      },
+      { timeout: 2000 },
+    );
+  });
+
+  test("a restored Source tab carries the address and NO document, so it re-reads", async () => {
+    localStorage.setItem(
+      "libredb_workspace_tabs_v1:source-restore",
+      JSON.stringify({
+        activeTabId: "tab-src",
+        tabs: [
+          { id: "tab-1", name: "Query 1", query: "SELECT 1;", type: "sql" },
+          {
+            id: "tab-src",
+            name: "Source: app.order_total(integer)",
+            query: "",
+            type: "sql",
+            source: { path: ["app", "order_total(integer)"], kind: "function" },
+          },
+        ],
+      }),
+    );
+
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ id: "source-restore" }),
+        metadata: defaultMetadata,
+        schema: [],
+        persistWorkspace: true,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.tabs).toHaveLength(2);
+      expect(result.current.currentTab.id).toBe("tab-src");
+    });
+    expect(result.current.currentTab.source).toEqual({ path: ["app", "order_total(integer)"], kind: "function" });
+    expect(result.current.currentTab.source?.document).toBeUndefined();
+    // The control: an ordinary tab beside it restores exactly as it always did, with no
+    // `source` key invented for it.
+    expect(result.current.tabs[0].source).toBeUndefined();
+    expect(result.current.tabs[0].query).toBe("SELECT 1;");
+  });
+
+  test("a stored tab whose source key is missing restores as an ordinary tab", async () => {
+    // Every record written before this field existed is this case, and there is no migration:
+    // the absence has to read as "not a Source tab" rather than as an empty address.
+    localStorage.setItem(
+      "libredb_workspace_tabs_v1:source-legacy",
+      JSON.stringify({ activeTabId: "old", tabs: [{ id: "old", name: "Query 1", query: "SELECT 1;", type: "sql" }] }),
+    );
+
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ id: "source-legacy" }),
+        metadata: defaultMetadata,
+        schema: [],
+        persistWorkspace: true,
+      }),
+    );
+
+    await waitFor(() => expect(result.current.currentTab.id).toBe("old"));
+    expect(result.current.currentTab.source).toBeUndefined();
   });
 });
