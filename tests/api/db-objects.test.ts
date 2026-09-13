@@ -6,6 +6,10 @@ import { createMockProvider } from "../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { INVENTORY_LIMIT, INVENTORY_PAIR_LIMIT } from "@/lib/api/object-route";
 import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
+// The CLIENT's shape check, imported into the route's own suite on purpose: the route carries a
+// refusal sentence through untouched and the client refuses that document, and one test pinning
+// both ends is the only thing that keeps the pair from drifting into a contradiction (#789).
+import { isSourceDocumentShape } from "@/components/object-source/source-reader";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { QueryError } from "@/lib/db/errors";
 import type {
@@ -1556,7 +1560,22 @@ describe("POST /api/db/objects/source", () => {
     expect(part.truncated?.reason).toBe(sourceBoundTruncationReason(SOURCE_CHARACTER_LIMIT));
   });
 
-  test("carries a refused part through untouched, because a refusal has no text to bound", async () => {
+  test("carries a refused part through untouched, and the CLIENT is where that document is refused", async () => {
+    /*
+     * TWO FILES ON THIS BRANCH PIN ONE INPUT, and this docblock is what stops the pair reading
+     * as a contradiction (#789 fix round 1). The route keeps an over-long refusal SENTENCE
+     * whole, deliberately: the sentence is the engine's or the provider's own words, and the
+     * refused arm carries no `truncated` mark in the type, so slicing it would ship half a
+     * sentence with nothing on screen saying a cut was made.
+     *
+     * What a person then sees is NOT this document. `isSourceDocumentShape` bounds the sentence
+     * at the client seam, so on the standalone path this 1,000,010-character refusal reaches the
+     * viewer, fails the shape check and draws "The source read answered with a body this viewer
+     * cannot render." instead of the engine's sentence. The route's name used to promise a
+     * guarantee that does not hold end to end; the assertion below now pins BOTH ends, so a
+     * later change to either side makes one of them fail rather than leaving the pair silently
+     * inconsistent.
+     */
     const refusal: ObjectSourcePart = {
       id: "body",
       label: "Body",
@@ -1576,6 +1595,9 @@ describe("POST /api/db/objects/source", () => {
     const [part] = body.parts;
     if (!("unavailable" in part)) throw new Error("the double answers a refused part");
     expect(part.unavailable).toHaveLength(SOURCE_CHARACTER_LIMIT + 10);
+    // The other end of the same input, in one assertion: what the route carries, the client
+    // refuses. Without this line the two files pin opposite behaviours and neither says so.
+    expect(isSourceDocumentShape(body)).toBe(false);
   });
 
   test("refuses a part that carries both a refusal and a text, rather than shipping one over the other", async () => {
