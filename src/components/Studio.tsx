@@ -156,23 +156,56 @@ export default function Studio() {
 
   /**
    * What every statement entry point OUTSIDE the editor pane is handed while a Source tab is
-   * active (#789 Phase 2, round 1 finding 1).
+   * active (#789 Phase 2, round 1 finding 1, completed in round 2).
    *
    * The pane below branches around the toolbar AND the editor together, so a Source tab draws
-   * no Run button. That covers the desktop editor and nothing else: the command palette's
-   * "Run Query", its saved-query and history loaders, and the mobile header's RUN and EXPLAIN
-   * all address `currentTab` and were live over a Source tab.
+   * no Run button. That covers the desktop editor and NOTHING else, and the population is
+   * larger than it looks, because "outside the editor pane" includes two surfaces that are
+   * rendered outside the branch rather than merely mounted elsewhere. Every one of these
+   * addresses `currentTab` and every one was live over a Source tab. The list is exhaustive as
+   * of round 2, taken by reading each `updateCurrentTab` and each execute call in this file
+   * rather than from the five the first round happened to name:
+   *
+   * - the command palette's "Run Query", and its saved-query and history loaders;
+   * - the mobile header's RUN and its EXPLAIN, which is the same execution by another name;
+   * - the BOTTOM PANEL's `onLoadQuery`. `BottomPanel` is rendered below the editor pane and
+   *   outside its branch, and `BottomPanel.tsx` wires that one prop to both `QueryHistory`'s
+   *   and `SavedQueries`' `onSelectQuery`. That makes it the plainest desktop gesture in the
+   *   class: open a Source tab, open History in the bottom panel, click a past query.
+   * - the AGENT RAIL's `onApplyStatement` and its `onRunStatement`. The second is the only
+   *   entry point here that both WRITES and EXECUTES, so over a Source tab it ran a statement
+   *   while the pane showed a read-only definition and nothing on screen said what ran.
    *
    * MEASURED before this existed: `updateCurrentTab({ query })` leaves a Source tab a Source
    * tab, so a statement loaded from the palette landed on a tab whose pane shows a read-only
    * definition and displays no query at all, and Run then executed it. With nothing loaded the
    * same Run executed the empty string, because `use-query-execution` has no empty-query guard
-   * and `queryEditorRef.current` is null while `QueryEditor` is unmounted.
+   * and `queryEditorRef.current` is null while `QueryEditor` is unmounted. The write is not
+   * transient either: `use-tab-manager`'s SAVE effect persists `query` per tab, so the
+   * statement outlived the session on a tab that never showed it.
    *
-   * A no-op rather than an absent control, because the two components that draw these take
-   * them as REQUIRED props and neither is this task's to change. That is the smaller half of
-   * the answer: the item should not be drawn at all, on the same argument the pane already
-   * makes, and hiding it is filed for the shells that own those two files (#789). What is
+   * What this predicate deliberately does NOT gate, so the next reader does not reopen it. The
+   * class is an entry point that addresses the ACTIVE TAB'S STATEMENT: it reads the tab's query
+   * to run it, or writes a statement into the tab. Three groups fall outside that and each stays
+   * live over a Source tab on purpose:
+   *
+   * - `CreateTableModal`, `DataImportModal` and `TestDataGenerator` call `executeQuery(sql)` with
+   *   THEIR OWN statement, aimed at an object the reader picked in the tree, and the tab is only
+   *   where the answer lands. `executeQuery` with an override never writes `query`, so nothing is
+   *   put on the tab, and `BottomPanel` draws the result below the definition. Gating these would
+   *   take away a working action because an unrelated tab happens to be open.
+   * - `QuerySafetyDialog`'s Proceed and the unlimited-rows dialog's Load All continue an execution
+   *   that is already under way, so they are reachable only through something already allowed.
+   * - the mobile header's `onClearQuery` writes the EMPTY string, which is the value a Source tab
+   *   already holds: `openSourceTab` appends with `query: ""` and, with the entry points above
+   *   closed, nothing can put a statement there. A gate here would be a line no mutation could
+   *   kill, and on a workspace persisted by an older build it would preserve the stale statement
+   *   this predicate exists to keep out.
+   *
+   * A no-op rather than an absent control, because every component that draws these takes them
+   * as REQUIRED props and none of those files is this task's to change. That is the smaller
+   * half of the answer: the item should not be drawn at all, on the same argument the pane
+   * already makes, and hiding it is filed for the shells that own those files (#789). What is
    * closed here is the half that matters, which is that nothing runs and nothing is written
    * onto a tab that cannot show it.
    */
@@ -608,7 +641,10 @@ export default function Studio() {
       onSheetOpenChange={setIsAgentSheetOpen}
       prefill={agentPrefill.request}
       connectionType={conn.activeConnection?.type ?? null}
-      onApplyStatement={(sql) => tabMgr.updateCurrentTab({ query: sql })}
+      onApplyStatement={(sql) => {
+        if (!runsTheActiveTab) return;
+        tabMgr.updateCurrentTab({ query: sql });
+      }}
       /*
           The handover a run's answer can record (§2.1): the statement goes
           into the editor AND is run there. Through the hook's own entry point
@@ -625,6 +661,7 @@ export default function Studio() {
           server executes is the ledger's, not this component's copy of it.
         */
       onRunStatement={(sql, runId) => {
+        if (!runsTheActiveTab) return;
         tabMgr.updateCurrentTab({ query: sql });
         void queryExec.executeHandedOverStatement(runId, sql);
       }}
@@ -945,7 +982,10 @@ export default function Studio() {
                         onCellChange={editing.handleCellChange}
                         onApplyChanges={editing.handleApplyChanges}
                         onDiscardChanges={editing.handleDiscardChanges}
-                        onLoadQuery={(q) => tabMgr.updateCurrentTab({ query: q })}
+                        onLoadQuery={(q) => {
+                          if (!runsTheActiveTab) return;
+                          tabMgr.updateCurrentTab({ query: q });
+                        }}
                         onLoadMore={
                           tabMgr.currentTab.result?.pagination?.hasMore ? queryExec.handleLoadMore : undefined
                         }

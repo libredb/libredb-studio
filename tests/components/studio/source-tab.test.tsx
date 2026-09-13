@@ -52,6 +52,19 @@ mock.module("@monaco-editor/react", () => ({
 let capturedSidebarProps: Record<string, unknown> = {};
 let capturedPaletteProps: Record<string, unknown> = {};
 let capturedMobileHeaderProps: Record<string, unknown> = {};
+let capturedBottomPanelProps: Record<string, unknown> = {};
+let capturedAgentRailProps: Record<string, unknown> = {};
+
+/*
+ * The agent rail is ABSENT unless the server says the runtime is on, so round 2's finding 1
+ * cannot be reached at all with the real probe hook: `useAgentCapability` starts false and
+ * this suite answers `{}` to every fetch it does not recognise. The rail's two statement
+ * entry points are part of the same class as the palette's, so the flag is turned on for the
+ * test that drives them and left off everywhere else, which keeps every other test in this
+ * file mounting the shell it was written against.
+ */
+let agentCapabilityAnswer = false;
+mock.module("@/hooks/use-agent-capability", () => ({ useAgentCapability: () => agentCapabilityAnswer }));
 
 mock.module("@/hooks/use-auth", () => ({
   useAuth: () => ({ user: { username: "admin", role: "admin" }, isAdmin: true, handleLogout: () => {} }),
@@ -112,6 +125,7 @@ mock.module("@/hooks/use-connection-manager", () => ({
 }));
 
 const mockExecuteQuery = mock(() => {});
+const mockExecuteHandedOverStatement = mock((...args: unknown[]) => args);
 
 const queryExecutionAnswer = {
   bottomPanelMode: "results",
@@ -120,7 +134,7 @@ const queryExecutionAnswer = {
   executeQuery: mockExecuteQuery,
   cancelQuery: () => {},
   forceExecuteQuery: () => {},
-  executeHandedOverStatement: () => {},
+  executeHandedOverStatement: mockExecuteHandedOverStatement,
   safetyCheckQuery: null,
   setSafetyCheckQuery: () => {},
   unlimitedWarningOpen: false,
@@ -217,7 +231,12 @@ mock.module("@/components/CodeGenerator", () => ({ CodeGenerator: () => null }))
 mock.module("@/components/TestDataGenerator", () => ({ TestDataGenerator: () => null }));
 mock.module("@/components/CreateTableModal", () => ({ CreateTableModal: () => null }));
 mock.module("@/components/SaveQueryModal", () => ({ SaveQueryModal: () => null }));
-mock.module("@/components/agent/AgentRail", () => ({ AgentRail: () => null }));
+mock.module("@/components/agent/AgentRail", () => ({
+  AgentRail: (props: Record<string, unknown>) => {
+    capturedAgentRailProps = props;
+    return null;
+  },
+}));
 
 mock.module("@/components/QueryEditor", () => {
   const Editor = React.forwardRef((props: Record<string, unknown>, ref: React.Ref<HTMLDivElement>) => (
@@ -243,7 +262,15 @@ mock.module("@/components/studio/index", () => {
     StudioDesktopHeader: () => <div data-testid="desktop-header" />,
     StudioTabBar,
     QueryToolbar: () => <div data-testid="query-toolbar">QueryToolbar</div>,
-    BottomPanel: () => <div data-testid="bottom-panel" />,
+    /*
+     * Captured, not stubbed away: `onLoadQuery` is wired to QueryHistory's and SavedQueries'
+     * `onSelectQuery` inside this panel, and the panel is rendered OUTSIDE the branch the
+     * Source pane replaces, so it is a statement entry point that survives a Source tab.
+     */
+    BottomPanel: (props: Record<string, unknown>) => {
+      capturedBottomPanelProps = props;
+      return <div data-testid="bottom-panel" />;
+    },
     BottomPanelMode: {},
   };
 });
@@ -336,11 +363,15 @@ beforeEach(() => {
   capturedSidebarProps = {};
   capturedPaletteProps = {};
   capturedMobileHeaderProps = {};
+  capturedBottomPanelProps = {};
+  capturedAgentRailProps = {};
+  agentCapabilityAnswer = false;
   capabilitiesOverride = { objectKinds: KINDS };
   buildMetadata();
   sourceReads = [];
   sourceAnswer = { status: 200, body: readableDocument };
   mockExecuteQuery.mockClear();
+  mockExecuteHandedOverStatement.mockClear();
   installFetch();
 });
 
@@ -564,6 +595,61 @@ describe("no statement runs while the tab on screen is a definition", () => {
     expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
   });
 
+  test("the bottom panel's history and saved loaders write into a query tab and never into a Source tab", async () => {
+    /*
+     * The plainest desktop gesture in this whole class, and the one the editor pane's branch
+     * cannot cover: `BottomPanel` is rendered OUTSIDE it, and `BottomPanel.tsx` wires this one
+     * prop to `QueryHistory`'s and `SavedQueries`' `onSelectQuery`. So a reader with a Source
+     * tab on screen who opens History in the bottom panel and clicks a past query wrote that
+     * statement onto a tab that displays nothing, and the tab persistence then stored it.
+     */
+    render(<Studio />);
+    // The control, on the ordinary tab: the loader reaches the editor.
+    fire(capturedBottomPanelProps, "onLoadQuery", "SELECT 4;");
+    await waitFor(() => expect(screen.getByTestId("query-editor").getAttribute("data-value")).toBe("SELECT 4;"));
+
+    await openSourceTab();
+    fire(capturedBottomPanelProps, "onLoadQuery", "DROP TABLE app.orders;");
+
+    expect(capturedMobileHeaderProps.currentQuery).toBe("");
+    expect((screen.getByTestId("source-editor") as HTMLTextAreaElement).value).toBe(DEFINITION);
+    expect(screen.queryByTestId("query-editor")).toBeNull();
+  });
+
+  test("the agent rail's Apply and Run write into a query tab and never into a Source tab", async () => {
+    /*
+     * The rail is the one entry point in this class that both WRITES and EXECUTES: `onRunStatement`
+     * puts the statement on the active tab and then sends it to the hand-over route. Over a Source
+     * tab that is a statement running while the pane shows a read-only definition, with nothing on
+     * screen saying what ran.
+     */
+    agentCapabilityAnswer = true;
+    render(<Studio />);
+    // The control, on the ordinary tab: both reach the editor, and Run also runs.
+    fire(capturedAgentRailProps, "onApplyStatement", "SELECT 5;");
+    await waitFor(() => expect(screen.getByTestId("query-editor").getAttribute("data-value")).toBe("SELECT 5;"));
+    act(() => (capturedAgentRailProps.onRunStatement as (sql: string, runId: string) => void)("SELECT 6;", "run-1"));
+    await waitFor(() => expect(screen.getByTestId("query-editor").getAttribute("data-value")).toBe("SELECT 6;"));
+    expect(mockExecuteHandedOverStatement).toHaveBeenCalledTimes(1);
+    // The run's own id and the run's own statement, in the order the hand-over entry point takes.
+    expect(mockExecuteHandedOverStatement).toHaveBeenLastCalledWith("run-1", "SELECT 6;");
+
+    await openSourceTab();
+    fire(capturedAgentRailProps, "onApplyStatement", "DROP TABLE app.orders;");
+    expect(capturedMobileHeaderProps.currentQuery).toBe("");
+
+    act(() =>
+      (capturedAgentRailProps.onRunStatement as (sql: string, runId: string) => void)(
+        "DROP TABLE app.customers;",
+        "run-2",
+      ),
+    );
+    expect(capturedMobileHeaderProps.currentQuery).toBe("");
+    expect(mockExecuteHandedOverStatement).toHaveBeenCalledTimes(1);
+    expect(mockExecuteHandedOverStatement).toHaveBeenLastCalledWith("run-1", "SELECT 6;");
+    expect((screen.getByTestId("source-editor") as HTMLTextAreaElement).value).toBe(DEFINITION);
+  });
+
   test("switching back to the query tab makes every one of them live again", async () => {
     // The gate is on the ACTIVE TAB and not on the session: a shell that latched would take
     // the Run button away for the rest of the session and no assertion above would notice.
@@ -576,9 +662,29 @@ describe("no statement runs while the tab on screen is a definition", () => {
 
     fire(capturedPaletteProps, "onLoadSavedQuery", "SELECT 3;");
     await waitFor(() => expect(screen.getByTestId("query-editor").getAttribute("data-value")).toBe("SELECT 3;"));
+    fire(capturedBottomPanelProps, "onLoadQuery", "SELECT 4;");
+    await waitFor(() => expect(screen.getByTestId("query-editor").getAttribute("data-value")).toBe("SELECT 4;"));
     fire(capturedPaletteProps, "onExecuteQuery");
     fire(capturedMobileHeaderProps, "onExecuteQuery");
     expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
+  });
+
+  test("switching back makes the agent rail's two entry points live again as well", async () => {
+    // Same control as above for the rail, which needs its own render because the capability
+    // flag is read once per mount.
+    agentCapabilityAnswer = true;
+    render(<Studio />);
+    await openSourceTab();
+    act(() => {
+      screen.getAllByRole("tab")[0].click();
+    });
+    await waitFor(() => expect(screen.getByTestId("query-toolbar")).toBeTruthy());
+
+    fire(capturedAgentRailProps, "onApplyStatement", "SELECT 7;");
+    await waitFor(() => expect(screen.getByTestId("query-editor").getAttribute("data-value")).toBe("SELECT 7;"));
+    act(() => (capturedAgentRailProps.onRunStatement as (sql: string, runId: string) => void)("SELECT 8;", "run-3"));
+    await waitFor(() => expect(screen.getByTestId("query-editor").getAttribute("data-value")).toBe("SELECT 8;"));
+    expect(mockExecuteHandedOverStatement).toHaveBeenCalledTimes(1);
   });
 });
 
