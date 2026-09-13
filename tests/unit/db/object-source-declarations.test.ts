@@ -35,9 +35,22 @@
  * filters the fleet's source assertions on `hasSource === true`, so a kind carrying a
  * `sourceLanguage` with NO `hasSource` is invisible to every other gate in this repository:
  * the row menu never offers View Source, the route refuses the kind, and nothing goes red.
- * Measured: adding `sourceLanguage` alone to a kind fails only that provider's own local
- * declaration assertion. This file is the only place that sees every provider's declarations
- * at once, so the half-declaration guard lives here.
+ *
+ * MEASURED TWICE, and it is stronger than the first wording of this paragraph said. That wording
+ * claimed a half declaration "fails only that provider's own local declaration assertion", which
+ * is false: it fails NOTHING outside this file's guards. Two mutants, each run against the whole
+ * of `tests/unit` and diffed against a baseline of the same run:
+ *
+ * - `sourceLanguage: "sql"` added to mssql's `table` with no `hasSource`: the failure set grew by
+ *   exactly two lines, this file's `no kind declares a sourceLanguage without hasSource` and
+ *   `tests/unit/editor/monaco-language-ids.test.ts`'s membership guard. No mssql assertion fired.
+ * - `sourceLanguage: "pgsql"` added to postgres's `table`: the same two lines and nothing else.
+ *
+ * The provider suites cannot see it by construction: each one's local pairing assertion maps
+ * `hasSource === true` kinds to `[id, sourceLanguage]` and the OTHER direction to bare kind ids,
+ * so a kind that gained only a language moves in neither list. This file is the only place that
+ * sees every provider's declarations at once, so the half-declaration guard lives here, and it is
+ * not a duplicate of anything: deleting it makes the class invisible again.
  */
 import { describe, expect, test } from "bun:test";
 import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -161,6 +174,17 @@ const MARIADB_EXTRA_SOURCE_KINDS: readonly string[] = ["mysql/package/mysql", "m
 /**
  * The version string a MariaDB server answers `SELECT VERSION()` with, measured on
  * `mariadb:latest` (12.3.2) by the mysql provider task on 2026-09-11.
+ *
+ * SECOND OWNER, DISCLOSED RATHER THAN HOISTED. `tests/unit/editor/monaco-language-ids.test.ts`
+ * carries the same constant and the same private-field write, for the same structural reason: an
+ * unconnected mysql provider answers the MySQL six and both files need the MariaDB two. Standing
+ * ruling 5h says to report a helper about to be written again rather than hoist it while another
+ * implementer holds the checkout, and a shared module would be a third file this task does not
+ * own, so the two copies stay and this note is the pointer between them.
+ *
+ * Neither copy can drift in SILENCE, measured in fix round 1: a string that stops matching
+ * `objectKindsFor`'s `/mariadb/i` makes its own file go red by name. Here it is the named throw in
+ * the half-declaration guard plus the MariaDB triple set; there it is `toContain("mysql/package")`.
  */
 const MARIADB_VERSION_STRING = "12.3.2-MariaDB-ubu2404";
 

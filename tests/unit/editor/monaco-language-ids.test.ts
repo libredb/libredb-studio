@@ -14,11 +14,22 @@
  *   `basic-languages/monaco.contribution.js`. `sql`, `pgsql`, `mysql`, `lua` and `redis` are all
  *   there, and `plsql`, `tsql` and `cql` are NOT, which is the whole reason Oracle, SQL Server and
  *   Cassandra declare `sql` rather than their own dialect.
- * - The four RICH languages (`css`, `html`, `json`, `typescript`) are NOT among those 89. They are
- *   separate worker-backed modules under `vs/language/`. `json` is the declared language of five
- *   source-bearing kinds across the two search products and MongoDB, so a guard that extracted the
- *   89 and then asserted `json` was among them would be asserting a value the test itself wrote,
- *   and it would fail for a reason that has nothing to do with any declaration.
+ * - The four RICH languages (`css`, `html`, `json`, `typescript`) are separate worker-backed
+ *   modules under `vs/language/`, each giving its id a full language service rather than the
+ *   tokenizer a basic contribution registers. Three of those four ids are ALSO registered by the
+ *   basic contribution, and `json` IS THE ONE THAT IS NOT: measured on 0.56.0, of the 89 basic ids
+ *   `css`, `html` and `typescript` are present and `json` is absent. That single absence is the
+ *   whole reason the rich half of this guard is load-bearing, because `json` is the declared
+ *   language of five source-bearing kinds across the two search products and MongoDB, and a guard
+ *   that extracted only the 89 would report all five as unregistered.
+ *
+ *   CORRECTED IN FIX ROUND 1 AND THE OLD WORDING IS RECORDED HERE ON PURPOSE. This paragraph
+ *   previously said all four rich ids were absent from the 89, which is false for three of them.
+ *   A maintainer who checked that sentence, found `css` in `basic`, and concluded the paragraph
+ *   was wrong about the mechanism could delete the `readdirSync` half, which silently unregisters
+ *   `json` and un-guards those five kinds. The four `basic.has(...)` assertions in the first test
+ *   below now pin each of the four ids individually, so the sentence cannot go stale again in
+ *   silence: a monaco bump that moves any of them fails here rather than in prose.
  *
  * So both sets are EXTRACTED from their own location, and the extraction is proved non-empty and
  * proved to contain what it should BEFORE any membership assertion runs.
@@ -33,7 +44,8 @@
  * contribution file were measured byte-identical with `cmp`, so the package directory is the same
  * bundle one step earlier and it is the one that is always on disk after `bun install`.
  *
- * Measured on monaco-editor 0.56.0, 2026-09-13: 89 basic ids, 4 rich ids.
+ * Measured on monaco-editor 0.56.0, 2026-09-13: 89 basic ids, 4 rich ids, and exactly one of the
+ * four rich ids (`json`) absent from the 89.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
@@ -66,7 +78,7 @@ const BASIC_LANGUAGE_COUNT = 89;
  * the count assertion is what tells us this pattern found the registrations rather than something
  * that merely looks like them.
  */
-export function extractBasicLanguageIds(source: string): ReadonlySet<string> {
+function extractBasicLanguageIds(source: string): ReadonlySet<string> {
   const ids = new Set<string>();
   const pattern = /\{id:"([A-Za-z0-9_.+-]+)",(?:extensions|aliases|firstLine|mimetypes|loader):/g;
   for (const match of source.matchAll(pattern)) {
@@ -97,27 +109,56 @@ const unconnected = (type: DatabaseType): DatabaseConnection =>
     createdAt: new Date(0),
   }) as DatabaseConnection;
 
-/** MariaDB's own `VERSION()` string, measured on `mariadb:latest` 12.3.2 by the mysql task. */
+/**
+ * MariaDB's own `VERSION()` string, measured on `mariadb:latest` 12.3.2 by the mysql task.
+ *
+ * SECOND OWNER, DISCLOSED RATHER THAN HOISTED. `tests/unit/db/object-source-declarations.test.ts`
+ * carries the same constant and the same private-field write, because the census needs the MariaDB
+ * branch for the same structural reason this file does. Standing ruling 5h says to report a helper
+ * about to be written again rather than hoist it while another implementer holds the checkout, and
+ * a shared module for it would be a third file this task does not own, so the two copies stay and
+ * this note is the pointer between them.
+ *
+ * The duplication cannot drift in SILENCE, which is the part that matters and which was measured
+ * in fix round 1: a copy whose string stops matching `objectKindsFor`'s `/mariadb/i` makes its own
+ * file go red by name. Here that is `toContain("mysql/package")` in the membership test; in the
+ * census it is the named throw plus the MariaDB triple set. So a re-measured version updated in
+ * one file only fails the other rather than quietly censusing six kinds.
+ */
 const MARIADB_VERSION_STRING = "12.3.2-MariaDB-ubu2404";
+
+/**
+ * The mysql provider with a MariaDB server's version already measured onto it.
+ *
+ * Isolated here rather than written inline inside the fleet loop, so this file holds ONE place
+ * that knows about MariaDB instead of a type-id branch in the middle of a population walk. The
+ * private `measuredServerVersion` is written directly rather than stubbing `getCapabilities`,
+ * because a stub would answer a kind list this test typed and the point of the guard is that the
+ * code produces it. If the field is ever renamed the write lands on nothing, the MySQL six answer,
+ * and the membership test's `mysql/package` control fails by name.
+ */
+const MARIADB_CAPABLE_TYPE: DatabaseType = "mysql";
+
+const withMeasuredMariaDBVersion = <T>(provider: T): T => {
+  (provider as unknown as { measuredServerVersion: string | undefined }).measuredServerVersion = MARIADB_VERSION_STRING;
+  return provider;
+};
 
 /**
  * Every `sourceLanguage` any provider in the fleet declares, with the kind it came from.
  *
  * The MariaDB branch is included, because `createDatabaseProvider("mysql")` is unconnected and
  * `objectKindsFor(undefined)` answers the MySQL six: MariaDB's `package` and `sequence` would
- * otherwise never be language-checked at all. The private measured version is written directly so
- * the real `objectKindsFor` runs; a stub of `getCapabilities` would return a list this test typed.
+ * otherwise never be language-checked at all. `withMeasuredMariaDBVersion` above is the only place
+ * in this file that knows which type-id that is.
  */
 async function everyDeclaredSourceLanguage(): Promise<
   readonly { readonly where: string; readonly language: string }[]
 > {
   const found: { readonly where: string; readonly language: string }[] = [];
   for (const type of [...EXTERNAL_DATABASE_TYPES, "libredb"] as readonly DatabaseType[]) {
-    const provider = await createDatabaseProvider(unconnected(type));
-    if (type === "mysql") {
-      (provider as unknown as { measuredServerVersion: string | undefined }).measuredServerVersion =
-        MARIADB_VERSION_STRING;
-    }
+    const built = await createDatabaseProvider(unconnected(type));
+    const provider = type === MARIADB_CAPABLE_TYPE ? withMeasuredMariaDBVersion(built) : built;
     for (const kind of declaredKinds(provider.getCapabilities())) {
       if (kind.sourceLanguage !== undefined) found.push({ where: `${type}/${kind.id}`, language: kind.sourceLanguage });
     }
@@ -143,7 +184,17 @@ describe("the installed editor's language ids", () => {
     // The rich languages, read from their own directory rather than assumed into the set above.
     // `json` lives here, and it is the declared language of five source-bearing kinds.
     expect(rich).toEqual(["css", "html", "json", "typescript"]);
-    expect(basic.has("json")).toBe(false);
+    // Each of the four rich ids pinned INDIVIDUALLY against the basic set, which is the assertion
+    // that would have caught the false sentence this docblock used to carry. Three of the four are
+    // registered by the basic contribution as well; `json` is the one that is not, and that single
+    // absence is why the rich half of `registered` below is load-bearing at all. A monaco bump that
+    // adds a basic `json`, or that drops one of the other three, fails here by id.
+    expect({
+      css: basic.has("css"),
+      html: basic.has("html"),
+      json: basic.has("json"),
+      typescript: basic.has("typescript"),
+    }).toEqual({ css: true, html: true, json: false, typescript: true });
   });
 
   test("every declared sourceLanguage is an id the installed editor registers", async () => {
