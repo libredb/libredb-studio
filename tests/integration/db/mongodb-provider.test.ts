@@ -6,6 +6,12 @@
  */
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import type { DatabaseConnection } from "@/lib/types";
+// The REAL Extended JSON serializer, taken before `mock.module` replaces the driver below
+// and handed straight back to the mock, so the source read's rendering is exercised against
+// the implementation that ships rather than against a double of it (#789). A double here
+// would make every assertion about the rendered text an assertion about the test's own code,
+// which is the shape standing ruling 5b catalogues as a fake that cannot see a change.
+import * as realMongoDriver from "mongodb";
 
 // ============================================================================
 // Mock Setup — MUST come before provider import
@@ -339,6 +345,7 @@ mock.module("mongodb", () => ({
   ObjectId: MockObjectId,
   Binary: MockBinary,
   Decimal128: MockDecimal128,
+  BSON: realMongoDriver.BSON,
 }));
 
 // ============================================================================
@@ -348,6 +355,7 @@ mock.module("mongodb", () => ({
 const { MongoDBProvider } = await import("@/lib/db/providers/document/mongodb");
 const { DatabaseConfigError } = await import("@/lib/db/errors");
 const { assertObjectSurface } = await import("../../helpers/object-surface-conformance");
+const { isSourcePartUnavailable } = await import("@/lib/db/object-kinds");
 
 // ============================================================================
 // Test Config
@@ -421,8 +429,108 @@ const OBJECT_FIXTURE_ODDNAMES: MockCollectionInfo[] = [
   { name: "x\\a", type: "collection" },
 ];
 
-/** `listCollections` on `configstore`, verbatim. */
-const OBJECT_FIXTURE_CONFIGSTORE: MockCollectionInfo[] = [{ name: "settings", type: "collection" }];
+/**
+ * `listCollections` on `configstore`, verbatim.
+ *
+ * `dark_settings` is the ADVERSARIAL view and it is the only object in the fixture that can
+ * tell two renderings of a view apart (#789). Measured on MongoDB 8.2.12: `options` carries
+ * `collation` as well as `viewOn` and `pipeline`, expanded by the server from the two fields
+ * the fixture asked for to the ten below, so a read rendering only the design's two fields
+ * would drop it while calling itself complete; and the pipeline holds a REGULAR EXPRESSION
+ * and a DATE, which `JSON.stringify` renders as `{}` and an ISO string while MongoDB
+ * Extended JSON renders as `$regularExpression` and `$date`. `app.active_customers` carries
+ * no BSON value at all, so the two renderings are byte-identical there and only this view
+ * refutes the lossy one.
+ *
+ * `system.views` appears here for the same reason it appears in `app`: the server creates it
+ * the moment the first view in a database is created, and it is excluded by the reserved
+ * prefix rather than by anything this fixture wrote.
+ */
+const OBJECT_FIXTURE_CONFIGSTORE: MockCollectionInfo[] = [
+  { name: "settings", type: "collection" },
+  { name: "system.views", type: "collection" },
+  {
+    name: "dark_settings",
+    type: "view",
+    options: {
+      viewOn: "settings",
+      pipeline: [{ $match: { key: /^th/i, changed: { $gt: new Date("2026-01-01T00:00:00Z") } } }],
+      collation: {
+        locale: "tr",
+        caseLevel: false,
+        caseFirst: "off",
+        strength: 2,
+        numericOrdering: false,
+        alternate: "non-ignorable",
+        maxVariable: "punct",
+        normalization: false,
+        backwards: false,
+        version: "57.1",
+      },
+    },
+  },
+];
+
+/**
+ * The definition text `app.active_customers` reads as, byte for byte (#789).
+ *
+ * Captured from a live MongoDB 8.2.12 holding `docker/mongodb-init/01-object-fixture.js`,
+ * through the same `BSON.EJSON.stringify` the provider calls. This view's pipeline holds no
+ * BSON value, so plain `JSON.stringify` produces the same bytes and only the other view
+ * below can tell the two renderings apart.
+ */
+const OBJECT_FIXTURE_APP_VIEW_SOURCE = `{
+  "viewOn": "customers",
+  "pipeline": [
+    {
+      "$match": {
+        "city": "Istanbul"
+      }
+    }
+  ]
+}`;
+
+/**
+ * The definition text `configstore.dark_settings` reads as, byte for byte (#789).
+ *
+ * Also captured from the live container, and it is what refutes the two shapes this read
+ * could otherwise have taken. `collation` is present, so a read rendering only `viewOn` and
+ * `pipeline` would drop it while claiming `form: "complete"`. The regular expression renders
+ * as `$regularExpression` and the date as `$date`, where `JSON.stringify` renders them as
+ * `{}` and an ISO string, losing the pattern with no error anywhere.
+ */
+const OBJECT_FIXTURE_CONFIGSTORE_VIEW_SOURCE = `{
+  "viewOn": "settings",
+  "pipeline": [
+    {
+      "$match": {
+        "key": {
+          "$regularExpression": {
+            "pattern": "^th",
+            "options": "i"
+          }
+        },
+        "changed": {
+          "$gt": {
+            "$date": "2026-01-01T00:00:00Z"
+          }
+        }
+      }
+    }
+  ],
+  "collation": {
+    "locale": "tr",
+    "caseLevel": false,
+    "caseFirst": "off",
+    "strength": 2,
+    "numericOrdering": false,
+    "alternate": "non-ignorable",
+    "maxVariable": "punct",
+    "normalization": false,
+    "backwards": false,
+    "version": "57.1"
+  }
+}`;
 
 function resetObjectSurfaceMocks(): void {
   mockDatabaseList = [];
@@ -1555,6 +1663,28 @@ describe("object surface", () => {
     expect(ids).not.toContain("materialized_view");
   });
 
+  test("declares source on exactly the kinds that have a definition text", () => {
+    const kinds = objectProvider.getCapabilities().objectKinds ?? [];
+    const declared = kinds
+      .filter((kind) => kind.hasSource === true)
+      .map((kind) => [kind.id, kind.sourceLanguage] as const)
+      .sort();
+    // A view IS its definition: `options.viewOn` and `options.pipeline` come back on the
+    // same `listCollections` row that classified it, and this product renders them as
+    // JSON, which is a rich Monaco language the editor really registers.
+    expect(declared).toEqual([["view", "json"]]);
+    // The other direction, so a kind added later cannot quietly gain a Source tab. A
+    // COLLECTION declares nothing: measured on 8.2.12, an ordinary collection's `options`
+    // is `{}`, so a Source tab would open on nothing for the common case, and what options
+    // a collection does carry are a property sheet rather than a definition anybody wrote.
+    expect(
+      kinds
+        .filter((kind) => kind.hasSource !== true)
+        .map((kind) => kind.id)
+        .sort(),
+    ).toEqual(["collection"]);
+  });
+
   // --------------------------------------------------------------------------
   // Conformance
   // --------------------------------------------------------------------------
@@ -1564,6 +1694,10 @@ describe("object surface", () => {
       containers: [["app"], ["configstore"], ["oddnames"]],
       kinds: { collection: 4, view: 1 },
       sampleObject: { path: ["app", "customers"], kind: "collection" },
+      // AUTHORED, and it has to be: there is no listing that produces a name the catalog
+      // does not hold. A view simply not being in the `listCollections` answer is absence
+      // here, and absence RAISES rather than answering a refusal part (#789).
+      absentSource: { path: ["app", "no_such_view"], kind: "view" },
     });
   });
 
@@ -1666,7 +1800,7 @@ describe("object surface", () => {
 
   test("reads the database the CONTAINER names, not the one the session is in", async () => {
     const counts = await objectProvider.countObjects(["configstore"]);
-    expect(counts).toEqual({ collection: { count: 1 }, view: { count: 0 } });
+    expect(counts).toEqual({ collection: { count: 1 }, view: { count: 1 } });
     expect(mongoOpenedDatabases).toEqual(["configstore"]);
 
     mongoOpenedDatabases = [];
@@ -2013,5 +2147,243 @@ describe("object surface", () => {
     expect(batch.details.map((detail) => detail.path)).toEqual([["cluster0", "app", "customers"]]);
     expect(batch.details[0].columns.map((column) => column.name)).toEqual(["_id", "city", "name"]);
     expect(new Set(mongoOpenedDatabases)).toEqual(new Set(["app"]));
+  });
+
+  // --------------------------------------------------------------------------
+  // readObjectSource, the definition read (#789 Phase 2)
+  // --------------------------------------------------------------------------
+
+  /**
+   * The population comes from the DECLARATION and never from a number typed here.
+   *
+   * Recipe rule 6, and it is the assertion that decides whether the rest of this section is
+   * worth anything. A wrong FIELD or KEY in a driver reply reads as `undefined`, this provider
+   * correctly turns that into a REFUSAL, and a refusal passes the conformance walk, passes
+   * every count and every length assertion. So the read TEXT is pinned per declared
+   * source-bearing kind, and the kinds are taken from `objectKinds` so a kind that quietly
+   * became a refusal is named rather than counted.
+   *
+   * Zero-iteration case, which is the whole risk: a declaration carrying no source-bearing
+   * kind, or a fixture holding no object of one, would make every assertion below vacuous, so
+   * both throw BY NAME before anything is asserted.
+   */
+  test("every kind that declares source answers its own definition text and not a refusal", async () => {
+    const declared = (objectProvider.getCapabilities().objectKinds ?? []).filter((kind) => kind.hasSource === true);
+    if (declared.length === 0) {
+      throw new Error("no kind declares hasSource, so this test would certify nothing");
+    }
+
+    const read: Record<string, string> = {};
+    for (const kind of declared) {
+      const listed = await objectProvider.listObjects(["app"], kind.id);
+      if (listed.length === 0) {
+        throw new Error(`the fixture holds no ${kind.id} in app, so its source read is driven by nothing`);
+      }
+      const document = await objectProvider.readObjectSource!(listed[0].path, kind.id);
+      expect(document.path).toEqual(listed[0].path);
+      expect(document.kind).toBe(kind.id);
+      expect(document.parts).toHaveLength(1);
+      const [part] = document.parts;
+      // BEFORE the narrowing. A part carrying both keys compiles and narrows to the refusal
+      // arm, so a check written after `isSourcePartUnavailable` cannot see one.
+      expect(Object.hasOwn(part, "unavailable")).toBe(false);
+      if (isSourcePartUnavailable(part)) throw new Error(`${kind.id} answered a refusal: ${part.unavailable}`);
+      expect(part.id).toBe("definition");
+      expect(part.label).toBe("Definition");
+      // From the DECLARATION, and a declaration carrying none is refused rather than compared
+      // against `undefined`, which any language would satisfy.
+      const language = kind.sourceLanguage;
+      if (language === undefined) {
+        throw new Error(`${kind.id} declares hasSource and no sourceLanguage, so a Source tab has no language`);
+      }
+      expect(part.language).toBe(language);
+      // The whole `options` document is rendered, so nothing of the definition is left out.
+      expect(part.form).toBe("complete");
+      // PRINTED BY THIS PRODUCT. MongoDB stores no statement for a view, and `stored` here
+      // would show a reader a rendering as an original.
+      expect(part.origin).toBe("rendered");
+      expect(part.truncated).toBeUndefined();
+      read[kind.id] = part.text;
+    }
+
+    expect(read).toEqual({ view: OBJECT_FIXTURE_APP_VIEW_SOURCE });
+  });
+
+  test("renders every field the row carries and every BSON value inside it", async () => {
+    // The adversarial view, and the only object in the fixture that can tell two renderings
+    // apart. `collation` is in the text, so the read is not the design's two fields; the
+    // pattern is in the text, so the read is not `JSON.stringify`, which renders a regular
+    // expression as `{}` and loses it with no error anywhere.
+    const document = await objectProvider.readObjectSource!(["configstore", "dark_settings"], "view");
+
+    expect(document.path).toEqual(["configstore", "dark_settings"]);
+    const [part] = document.parts;
+    expect(Object.hasOwn(part, "unavailable")).toBe(false);
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.text).toBe(OBJECT_FIXTURE_CONFIGSTORE_VIEW_SOURCE);
+    expect(part.form).toBe("complete");
+    // The database the CONTAINER names, not the one the session opened.
+    expect(mongoOpenedDatabases).toEqual(["configstore"]);
+  });
+
+  test("carries the server's own sentence, unprefixed, when the catalog read is refused", async () => {
+    // Measured on 8.2.12 with a role holding `read` on `configstore` only. The refusal is per
+    // DATABASE and not per object, because both kinds come from ONE `listCollections`.
+    const sentence =
+      "not authorized on app to execute command { listCollections: 1, filter: {}, cursor: {}, " +
+      'nameOnly: false, authorizedCollections: false, $db: "app" }';
+    mockListCollectionsError.app = new Error(sentence);
+
+    const document = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(true);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.unavailable).toBe(sentence);
+    // Recipe rule 8: a refusal test that only asserts the sentence is satisfied by a part
+    // carrying a real definition too, because such a part narrows to this arm.
+    expect(Object.hasOwn(part, "text")).toBe(false);
+  });
+
+  test("reports a row that carried no definition rather than rendering an empty one", async () => {
+    // OUR sentence and not the server's, declared as such in docs/providers/mongodb.md: the
+    // read SUCCEEDED and the row carried nothing, so MongoDB said nothing to carry. This is
+    // the arm that makes a misspelt field name a visible refusal instead of `{}` in an editor.
+    mockCollectionsByDb.app = [{ name: "active_customers", type: "view" }];
+
+    const document = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(true);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.unavailable).toBe(
+      'The listCollections row MongoDB answered for active_customers in app carries no "viewOn" and ' +
+        '"pipeline", so this view has no definition to show',
+    );
+    expect(Object.hasOwn(part, "text")).toBe(false);
+  });
+
+  test("reports a row whose definition is present but the wrong shape", async () => {
+    // Each half of the guard on its own, so neither can be deleted without a red. A `viewOn`
+    // that is not a name and a `pipeline` that is not a list are both rows this provider must
+    // refuse rather than print.
+    mockCollectionsByDb.app = [{ name: "active_customers", type: "view", options: { viewOn: "", pipeline: [] } }];
+    const blank = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
+    expect(isSourcePartUnavailable(blank.parts[0])).toBe(true);
+
+    mockCollectionsByDb.app = [
+      { name: "active_customers", type: "view", options: { viewOn: "customers", pipeline: { $match: {} } } },
+    ];
+    const notAList = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
+    expect(isSourcePartUnavailable(notAList.parts[0])).toBe(true);
+  });
+
+  test("raises for a view the catalog does not hold, and never answers a refusal for it", async () => {
+    // A row simply not being in the listing is ABSENCE on this engine: there is no error to
+    // carry, so answering a document would invent one.
+    await expect(objectProvider.readObjectSource!(["app", "no_such_view"], "view")).rejects.toThrow(
+      /No MongoDB view named no_such_view in app/,
+    );
+    // The name IS in the catalog, as a collection. The KIND decides, so this is a miss rather
+    // than a collection rendered as a view.
+    await expect(objectProvider.readObjectSource!(["app", "customers"], "view")).rejects.toThrow(
+      /No MongoDB view named customers in app/,
+    );
+  });
+
+  test("refuses a kind whose declaration carries no source, and one this engine never declares", async () => {
+    // Read off the DECLARATION and never off the kind id. `collection` is declared and has no
+    // definition text; `index` is not declared at all; both take the same path.
+    await expect(objectProvider.readObjectSource!(["app", "customers"], "collection")).rejects.toThrow(
+      /declares no readable source for the kind "collection"/,
+    );
+    await expect(objectProvider.readObjectSource!(["app", "customers"], "index")).rejects.toThrow(
+      /declares no readable source for the kind "index"/,
+    );
+  });
+
+  test("refuses an object path of the wrong length before it opens a database", async () => {
+    await expect(objectProvider.readObjectSource!(["active_customers"], "view")).rejects.toThrow(
+      /"view" path is \[database, name\]/,
+    );
+    await expect(objectProvider.readObjectSource!(["app", "sub", "active_customers"], "view")).rejects.toThrow(
+      /"view" path is \[database, name\]/,
+    );
+    expect(mongoOpenedDatabases).toEqual([]);
+  });
+
+  test("bounds the text at the caller's limit and says so in the caller's own number", async () => {
+    const whole = OBJECT_FIXTURE_APP_VIEW_SOURCE.length;
+    const document = await objectProvider.readObjectSource!(["app", "active_customers"], "view", 20);
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(whole).toBeGreaterThan(20);
+    expect(part.text).toBe(OBJECT_FIXTURE_APP_VIEW_SOURCE.slice(0, 20));
+    expect(part.truncated).toEqual({
+      limit: 20,
+      reason: "the source read was bounded at 20 characters by its caller",
+    });
+  });
+
+  /**
+   * Standing ruling 5g on the sixth method, and recipe rule 9's second declaration with it.
+   *
+   * MongoDB declares ONE container level, so `path[0]` for the database and `path[1]` for the
+   * name are behaviour-identical here and no fixture on this engine can tell those spellings
+   * from the derived ones. Swapping a two-level declaration in through `getCapabilities` and
+   * driving it to the database the driver was BOUND with is what kills them. The SECOND
+   * declaration swaps the two levels over and feeds the path in the swapped order, where the
+   * same three values must still reach the server: a declaration whose level order happens to
+   * match the path certifies nothing about which one was read.
+   */
+  test("derives the database and the name from the DECLARATION, not from a position", async () => {
+    const capabilities = objectProvider.getCapabilities();
+    const spy = spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      containerLevels: [
+        { id: "catalog", label: "Cluster", labelPlural: "Clusters" },
+        { id: "schema", label: "Database", labelPlural: "Databases" },
+      ],
+    });
+    try {
+      const document = await objectProvider.readObjectSource!(["cluster0", "app", "active_customers"], "view");
+      expect(document.path).toEqual(["cluster0", "app", "active_customers"]);
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(part.text).toBe(OBJECT_FIXTURE_APP_VIEW_SOURCE);
+      // The BOUND VALUE. `path[0]` would have opened `cluster0`, which holds nothing here.
+      expect(mongoOpenedDatabases).toEqual(["app"]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    // The swapped declaration: the database level is now FIRST and the path is fed in that
+    // order, so an implementation reading the second segment as the database opens `cluster0`.
+    const swapped = spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      containerLevels: [
+        { id: "schema", label: "Database", labelPlural: "Databases" },
+        { id: "catalog", label: "Cluster", labelPlural: "Clusters" },
+      ],
+    });
+    try {
+      mongoOpenedDatabases = [];
+      const document = await objectProvider.readObjectSource!(["app", "cluster0", "active_customers"], "view");
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(part.text).toBe(OBJECT_FIXTURE_APP_VIEW_SOURCE);
+      expect(mongoOpenedDatabases).toEqual(["app"]);
+    } finally {
+      swapped.mockRestore();
+    }
+  });
+
+  test("refuses a declaration carrying no database level rather than reading one named undefined", async () => {
+    const capabilities = objectProvider.getCapabilities();
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      containerLevels: [{ id: "catalog", label: "Cluster", labelPlural: "Clusters" }],
+    });
+    await expect(objectProvider.readObjectSource!(["cluster0", "active_customers"], "view")).rejects.toThrow(
+      /needs a "schema" container level and a segment for it/,
+    );
   });
 });

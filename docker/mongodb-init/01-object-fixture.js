@@ -32,7 +32,16 @@
 //    sort one way by code point and another way by `JSON.stringify`. They live in their
 //    own database so the `app` counts stay about the kinds rather than about sorting.
 // 6. `active_customers` is a view, and its `options.viewOn` and `options.pipeline` come
-//    back on the same `listCollections` call that classified it. Phase 2 reads them.
+//    back on the same `listCollections` call that classified it. Phase 2 reads them, and
+//    this one is the ORDINARY view: `options` holds those two keys and nothing else.
+// 7. `configstore.dark_settings` is the ADVERSARIAL view, and it exists to refute two
+//    shapes the source read could otherwise have taken (#789). Measured on MongoDB 8.2.12:
+//    a view's `options` also carries `collation` when it was created with one, so a read
+//    rendering only `viewOn` and `pipeline` would drop it while calling itself complete;
+//    and a pipeline may hold BSON values, so `JSON.stringify` renders the `/^th/i` below as
+//    `{}` and loses it in silence, while MongoDB Extended JSON renders it as
+//    `$regularExpression`. For `active_customers`, whose pipeline holds no BSON value, the
+//    two renderings are byte-identical, so only this view can tell them apart.
 
 const app = db.getSiblingDB("app");
 
@@ -71,5 +80,24 @@ oddnames.createCollection("x\\a");
 
 const configstore = db.getSiblingDB("configstore");
 configstore.settings.insertMany([{ key: "theme", value: "dark" }]);
+// The adversarial view of note 7. A regular expression and a date in the pipeline, and a
+// collation the server expands to ten fields of its own.
+configstore.createCollection("dark_settings", {
+  viewOn: "settings",
+  pipeline: [{ $match: { key: /^th/i, changed: { $gt: new Date("2026-01-01T00:00:00Z") } } }],
+  collation: { locale: "tr", strength: 2 },
+});
+
+// 8. `libredb_nolist` holds `read` on `configstore` and on nothing else, so it makes the
+//    object surface's REFUSAL re-runnable rather than a measurement in a report. Measured on
+//    8.2.12: asking it for `app` answers `not authorized on app to execute command
+//    { listCollections: 1, ... }`, which both `countObjects` and `readObjectSource` carry
+//    verbatim, while `configstore` still reads normally and is the control that makes the
+//    refusal a fact about privilege rather than about the connection (#789).
+db.getSiblingDB("admin").createUser({
+  user: "libredb_nolist",
+  pwd: "libredb_nolist",
+  roles: [{ role: "read", db: "configstore" }],
+});
 
 print("libredb object fixture applied: app, configstore, oddnames");

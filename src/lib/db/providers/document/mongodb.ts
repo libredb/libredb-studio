@@ -4,6 +4,14 @@
  */
 
 import { MongoClient, ObjectId, Binary, Decimal128, type Db, type Document, type MongoClientOptions } from "mongodb";
+// The Extended JSON serializer, reached through a NAMESPACE import rather than named beside
+// `MongoClient` above. Measured on bun 1.4.2: `import { BSON } from "mongodb"` fails at load with
+// "Export named 'BSON' not found", because the driver's CommonJS entry declares it as the innermost
+// term of a chained `exports.A = exports.B = ... = void 0` and then installs it with
+// `Object.defineProperty`, which bun's named-export detection does not see. The runtime export is
+// real - `require("mongodb").BSON` answers it - so the namespace form reaches the same object with
+// no extra dependency (#789).
+import * as mongodbDriver from "mongodb";
 import { BaseDatabaseProvider } from "../../base-provider";
 import {
   type DatabaseConnection,
@@ -34,8 +42,11 @@ import {
   type ObjectDetail,
   type ObjectDetailBatch,
   type ObjectKindSpec,
+  type ObjectSourceDocument,
+  type ObjectSourcePart,
 } from "../../types";
 import {
+  applySourceBound,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
@@ -249,6 +260,14 @@ const MONGODB_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
     labelPlural: "Views",
     // No `acceptsRowWrites`. A view is read-only and the server says so on the same
     // call that classifies it: `info.readOnly` is true on every one, measured.
+    //
+    // A view IS its definition and this is the one kind here that has one (#789). The
+    // `options` document on its `listCollections` row is exactly what `createCollection`
+    // took, so the text this product renders from it is the whole definition rather than a
+    // summary of one. `json` is a Monaco RICH language the installed editor really
+    // registers, unlike `plsql`, `tsql` and `cql`, which are not language ids at all.
+    hasSource: true,
+    sourceLanguage: "json",
   },
 ] as const);
 
@@ -476,6 +495,81 @@ function objectsFrom(container: readonly string[], kind: string, infos: readonly
     objects.push({ path: [...container, name], name, kind });
   }
   return objects.sort((left, right) => comparePaths(left.path, right.path));
+}
+
+/**
+ * The one part id and label a MongoDB source document carries (#789).
+ *
+ * One part, always, because one `listCollections` row holds the whole definition: there is
+ * no MongoDB shape like an Oracle package's specification and body for a second part to be.
+ */
+const MONGODB_SOURCE_PART_ID = "definition";
+const MONGODB_SOURCE_PART_LABEL = "Definition";
+
+/** The indent the rendered definition is printed with. Two, as the rest of this product prints JSON. */
+const MONGODB_SOURCE_INDENT = 2;
+
+/**
+ * The path shape one object of one kind takes, checked before anything is read.
+ *
+ * DERIVED from the declaration and never from a literal: one segment per declared container
+ * level, then the object's own name. No kind here declares `attachedTo`, so there is exactly
+ * one shape. Shared by `describeObject` and `readObjectSource` so the two cannot come to
+ * disagree about what a path of the wrong length is, and so the sentence a caller reads is
+ * written once.
+ */
+function assertObjectPathShape(capabilities: ProviderCapabilities, path: readonly string[], kind: string): void {
+  const shape = [...declaredLevels(capabilities).map((level) => level.label.toLowerCase()), "name"];
+  if (path.length !== shape.length) {
+    throw new QueryError(
+      `A MongoDB "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`,
+      "mongodb",
+    );
+  }
+}
+
+/**
+ * One catalog row's definition, rendered as MongoDB Extended JSON, or `undefined` when the
+ * row carried none (#789).
+ *
+ * WHAT THE TEXT IS. `options` is the document `createCollection` was given, so this is the
+ * whole definition and not a summary: `form: "complete"`. It is printed BY THIS PRODUCT
+ * rather than handed back by the server, so `origin: "rendered"` - MongoDB stores no
+ * statement for a view and there is nothing here anybody typed.
+ *
+ * THE WHOLE `options` DOCUMENT AND NOT TWO FIELDS OF IT, which is a measurement rather than
+ * a preference. On MongoDB 8.2.12 a view created with a collation answers `options` carrying
+ * `collation` beside `viewOn` and `pipeline`, expanded by the server from the two fields the
+ * fixture asked for to ten. Rendering only the two would drop it while still claiming
+ * `complete`. For an ordinary view `options` holds exactly `viewOn` and `pipeline`, so the
+ * common case is unchanged. `docker/mongodb-init/01-object-fixture.js` builds both.
+ *
+ * EXTENDED JSON AND NOT `JSON.stringify`, and this one is a silent-loss measurement. A
+ * pipeline may hold BSON values, and `JSON.stringify` renders a regular expression as `{}`:
+ * measured, the fixture's `/^th/i` disappears with no error anywhere, which is a
+ * reconstruction presented as an original by the exact route `origin` exists to prevent.
+ * `BSON.EJSON.stringify` in RELAXED mode renders it as `$regularExpression` and a date as
+ * `$date`, and for a pipeline holding no BSON value the two are byte-identical. Relaxed
+ * rather than canonical because canonical prints every integer as `$numberInt`, which would
+ * make an ordinary pipeline unreadable for the type fidelity a view definition does not turn
+ * on.
+ *
+ * THE UNDEFINED ARM IS THE GUARD RECIPE RULE 6 ASKS FOR. A catalog row is a DOCUMENT, so a
+ * misspelt field name reads as `undefined` rather than failing to compile, and rendering
+ * `{}` over it would put an empty definition in a reader's editor. Both fields must be
+ * present and of the right shape or the read reports a refusal instead. The reduced row that
+ * carries neither is real but this provider cannot ask for it: measured on 8.2.12, a
+ * `listCollections` answering name and type alone arrives only for
+ * `{ nameOnly: true, authorizedCollections: true }`, and `collectionInfos()` sends neither
+ * flag, so on a MongoDB server this arm is unreachable and the suite is what drives it.
+ */
+function renderedDefinition(info: Document): string | undefined {
+  const options = info.options;
+  if (typeof options !== "object" || options === null) return undefined;
+  const definition = options as Document;
+  if (typeof definition.viewOn !== "string" || definition.viewOn === "") return undefined;
+  if (!Array.isArray(definition.pipeline)) return undefined;
+  return mongodbDriver.BSON.EJSON.stringify(definition, undefined, MONGODB_SOURCE_INDENT, { relaxed: true });
 }
 
 // ============================================================================
@@ -1677,17 +1771,9 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       throw new QueryError(`MongoDB declares no object kind "${kind}"`, "mongodb");
     }
 
-    // Derived, not counted. One segment per declared container level plus the name. No
-    // kind here declares `attachedTo`, so there is one shape, and it comes from the
-    // declaration rather than from a literal written out here.
-    const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-    const shape = [...levels, "name"];
-    if (path.length !== shape.length) {
-      throw new QueryError(
-        `A MongoDB "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`,
-        "mongodb",
-      );
-    }
+    // Derived, not counted. One segment per declared container level plus the name, and
+    // shared with `readObjectSource` so both refuse the same shape in the same words.
+    assertObjectPathShape(capabilities, path, kind);
 
     // Neither read is positional. The database comes from the segment the DECLARATION
     // assigns to the `schema` level, and the object's own name is the LAST segment.
@@ -1705,6 +1791,113 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     const indexes = kind === MONGODB_KIND_VIEW ? [] : await collection.indexes();
 
     return this.objectDetailFrom(path, sample, indexes);
+  }
+
+  /**
+   * One object's definition text (#789 Phase 2).
+   *
+   * ONE kind can answer here and the DECLARATION says which: `view` declares `hasSource` and
+   * `collection` does not. That is a product judgement rather than a technical limit and it
+   * is worth stating, because the engine would answer something either way: a collection's
+   * `options` is a property sheet (a validator, a capped size, a time series spec) rather
+   * than a definition anybody authored, and measured on 8.2.12 an ORDINARY collection's
+   * `options` is `{}`, so a Source tab on that kind would open on nothing for the common
+   * case. The refusal is read off the declaration and never off the kind id, so a kind this
+   * engine does not declare at all takes the same path.
+   *
+   * THE READ IS THE CATALOG READ EVERY OTHER OBJECT METHOD MAKES. `listCollections` answers
+   * the definition on the same row that classifies the object, so there is no second
+   * statement to send and nothing here can look at a different set from the count or the
+   * listing.
+   *
+   * A REFUSAL HERE IS PER DATABASE AND NOT PER OBJECT, which is unusual in this fleet and is
+   * a consequence of that: both kinds come from ONE command, so a caller who cannot run it
+   * cannot read any object in the database rather than this one. Measured on 8.2.12, a role
+   * holding `read` on one database is refused another with
+   * `not authorized on <db> to execute command { listCollections: 1, ... }`, and that
+   * sentence is carried unprefixed, exactly as `countObjects` carries it.
+   *
+   * A VIEW THE CATALOG DOES NOT HOLD RAISES, and it has to: a row simply not being in the
+   * listing is ABSENCE on this engine, there is no error to carry, and answering a document
+   * would invent one. The kind decides the match as it does in `describeObject`, so asking
+   * for a view by the name of a collection is a miss rather than a collection rendered as a
+   * view.
+   *
+   * The database comes from the segment the DECLARATION assigns to the `schema` level and the
+   * name is `path[path.length - 1]`, never `path[0]` and never `path[1]`: standing ruling 5g,
+   * pinned in the suite by two swapped-in two-level declarations driven to the database the
+   * driver was BOUND with.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec?.hasSource !== true) {
+      throw new QueryError(`MongoDB declares no readable source for the kind "${kind}"`, "mongodb");
+    }
+    assertObjectPathShape(capabilities, path, kind);
+    const database = containerSegment(capabilities, path, "schema");
+    const name = path[path.length - 1];
+
+    let infos: Document[];
+    try {
+      infos = await this.collectionInfos(database);
+    } catch (error) {
+      return this.sourceRefusal(path, kind, refusalReason(error));
+    }
+
+    const info = infos.find((candidate) => readText(candidate.name) === name && mongoObjectKind(candidate) === kind);
+    if (info === undefined) {
+      throw new QueryError(`No MongoDB ${kind} named ${name} in ${database}`, "mongodb");
+    }
+
+    const rendered = renderedDefinition(info);
+    if (rendered === undefined) {
+      // OUR sentence and not the server's, and that is declared rather than smuggled: the
+      // read SUCCEEDED and the row it answered carried no definition, so MongoDB said
+      // nothing there is anything to carry. `docs/providers/mongodb.md` records it as ours.
+      return this.sourceRefusal(
+        path,
+        kind,
+        `The listCollections row MongoDB answered for ${name} in ${database} carries no "viewOn" and ` +
+          `"pipeline", so this ${kind} has no definition to show`,
+      );
+    }
+
+    const bounded = applySourceBound(rendered, limit);
+    return {
+      path: [...path],
+      kind,
+      parts: [
+        {
+          id: MONGODB_SOURCE_PART_ID,
+          label: MONGODB_SOURCE_PART_LABEL,
+          text: bounded.text,
+          language: spec.sourceLanguage ?? "json",
+          // The whole `options` document, so nothing of the definition is left out.
+          form: "complete",
+          // PRINTED BY THIS PRODUCT. MongoDB stores no statement for a view, so calling this
+          // `stored` would show a reader a rendering as an original.
+          origin: "rendered",
+          ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+        },
+      ],
+    };
+  }
+
+  /**
+   * One refusal document, built in ONE place (#789).
+   *
+   * The part is written as an object LITERAL carrying `unavailable` and nothing else, never
+   * spread from a branch that could also carry a `text`. A part holding both keys COMPILES,
+   * because TypeScript's excess-property check on a union admits any property declared on any
+   * member of it, and it narrows to the refusal arm while carrying a real definition, which
+   * would put a refusal sentence over text the engine returned. Four instances of that shape
+   * were found in this epic before it was written down.
+   */
+  private sourceRefusal(path: readonly string[], kind: string, unavailable: string): ObjectSourceDocument {
+    const part: ObjectSourcePart = { id: MONGODB_SOURCE_PART_ID, label: MONGODB_SOURCE_PART_LABEL, unavailable };
+    return { path: [...path], kind, parts: [part] };
   }
 
   /**

@@ -330,10 +330,12 @@ than trusted.
 
 One container level, the database, and two kinds:
 
-| Kind | Role | Source | Path |
-|---|---|---|---|
-| `collection` | relation, `acceptsRowWrites` | `listCollections`, every `type` that is not `view` | `[database, collection]` |
-| `view` | relation | `listCollections`, `type: "view"` | `[database, view]` |
+| Kind | Role | Read from | Path | Declares `hasSource` |
+|---|---|---|---|---|
+| `collection` | relation, `acceptsRowWrites` | `listCollections`, every `type` that is not `view` | `[database, collection]` | No |
+| `view` | relation | `listCollections`, `type: "view"` | `[database, view]` | Yes, `json` |
+
+The `hasSource` column is [§6 Object source](#object-source-789).
 
 `acceptsRowWrites` on `collection` is the **per-kind** half and is deliberately not conjoined with
 this provider's engine-wide `supportsInlineRowEdit: false` ([§9](#9-capabilities--labels)). That flag
@@ -445,8 +447,8 @@ either would need `collStats` or `estimatedDocumentCount` **per collection**, on
 and this folder is the one a person opens to see what is there. `describeObject` is where a single
 object's detail is paid for.
 
-A view's `options.viewOn` and `options.pipeline` arrive on the same `listCollections` call that
-classified it, so Phase 2's Source tab needs no second read. Phase 1 renders neither.
+A view's `options` arrives on the same `listCollections` call that classified it, so the Source tab
+below needs no second read. `describeObject` itself renders none of it.
 
 #### What `describeObjects` answers, and the one half this engine cannot bulk-read
 
@@ -550,6 +552,126 @@ order for them is the JSON one, so a provider sorting the wrong way would pass b
 `listDatabases` came back alphabetical in both live measurements and `listCollections` came back in
 two **different** orders across two fresh containers holding the same fixture, so ordering is the
 provider's own guarantee either way rather than something inherited from the server.
+
+---
+
+## Object source (#789)
+
+`readObjectSource(path, kind, limit?)` answers one object's definition text.
+Everything here was measured on 2026-09-13 against a live **MongoDB 8.2.12** holding the committed
+fixture, [`docker/mongodb-init/01-object-fixture.js`](../../docker/mongodb-init/01-object-fixture.js),
+applied through the mount by the recipe in [§11](#11-testing).
+
+### Per kind
+
+| Kind | `hasSource` | Statement | What the text IS | Monaco language |
+|---|---|---|---|---|
+| `view` | Yes | the `listCollections` call this provider already makes, reading the row's `options` | `form: complete`, `origin: rendered`: the whole definition, printed as JSON **by this product** | `json` |
+| `collection` | No | not read | see [the absence](#why-collection-declares-nothing) | not applicable |
+
+There is no second statement and no second round trip: `listCollections` answers the definition on
+the same row that classifies the object, so the source read looks at exactly the set `countObjects`
+and `listObjects` look at. The driver takes the name as a **value**, so there is no identifier
+escaper here and nothing to quote.
+
+`origin` is `rendered` and not `stored`, and that is the honest arm rather than a modest one.
+MongoDB stores no statement for a view: `options` is a BSON document, and the JSON a reader sees is
+printed by this product. Calling it `stored` would show a reconstruction as an original.
+
+### The whole `options` document, not two fields of it
+
+The first design of this read rendered `viewOn` and `pipeline` alone. **Measured, that is
+incomplete.** A view created with a collation answers `options` carrying `collation` beside the
+other two, expanded by the server from the two fields the fixture asked for to ten:
+
+```
+db.createCollection("dark_settings", { viewOn: "settings", pipeline: [...], collation: { locale: "tr", strength: 2 } })
+```
+
+so the row comes back with `locale`, `caseLevel`, `caseFirst`, `strength`, `numericOrdering`,
+`alternate`, `maxVariable`, `normalization`, `backwards` and `version`. Rendering two fields would
+drop all of it while still calling the text `complete`. The whole `options` document is rendered
+instead, which is also exactly what `createCollection` was given. For an ordinary view `options`
+holds `viewOn` and `pipeline` and nothing else, so the common case is unchanged.
+`configstore.dark_settings` in the fixture is the view that carries the collation.
+
+### Extended JSON, because `JSON.stringify` loses a value in silence
+
+A pipeline may hold BSON values, and `JSON.stringify` renders a regular expression as `{}`.
+Measured on the fixture's `configstore.dark_settings`, whose pipeline holds `/^th/i` and a date:
+
+| Value | `JSON.stringify` | `BSON.EJSON.stringify`, relaxed |
+|---|---|---|
+| `/^th/i` | `{}` — the pattern is gone, with no error anywhere | `{ "$regularExpression": { "pattern": "^th", "options": "i" } }` |
+| `new Date("2026-01-01T00:00:00Z")` | `"2026-01-01T00:00:00.000Z"` | `{ "$date": "2026-01-01T00:00:00Z" }` |
+
+So the read uses `BSON.EJSON.stringify` in **relaxed** mode. Relaxed rather than canonical because
+canonical prints every integer as `$numberInt`, which would make an ordinary pipeline unreadable to
+buy type fidelity a view definition does not turn on. For a pipeline holding no BSON value the two
+renderings are byte-identical, which is why `app.active_customers` alone cannot tell them apart and
+`configstore.dark_settings` exists.
+
+### The refusal is per DATABASE, not per object
+
+This is unusual in this fleet and it follows from the read: both kinds come from **one**
+`listCollections`, so a caller who cannot run it cannot read any object in that database rather
+than this one. Measured with a role holding `read` on `configstore` only, asking `app`:
+
+```
+not authorized on app to execute command { listCollections: 1, filter: {}, cursor: {},
+nameOnly: false, authorizedCollections: false, lsid: { ... }, $db: "app" }
+```
+
+That sentence is carried **unprefixed** into the part's `unavailable`, exactly as `countObjects`
+carries it into `{ unavailable }`. The fixture creates the principal, so this is re-runnable rather
+than a number in a report:
+
+```bash
+# The refusal, and then the control that makes it a fact about privilege rather than the connection
+mongosh -u libredb_nolist -p libredb_nolist --authenticationDatabase admin \
+  --eval 'db.getSiblingDB("app").getCollectionInfos()'          # not authorized on app
+mongosh -u libredb_nolist -p libredb_nolist --authenticationDatabase admin \
+  --eval 'db.getSiblingDB("configstore").getCollectionInfos()'  # reads normally
+```
+
+The `lsid` in the sentence is the session id and differs per connection, which is why the suite pins
+a representative sentence and asserts the provider passes the server's own words through untouched
+rather than pinning the UUID. It is not routed through this provider's error mapping, which
+would put this product's words in front of the server's.
+
+There is a **second refusal and its sentence is OURS rather than the server's**, declared here
+rather than left for a reader to discover. When the read succeeds and the row it answered carries no
+`viewOn` and `pipeline`, MongoDB has said nothing there is anything to carry, so the part reads:
+
+```
+The listCollections row MongoDB answered for <name> in <database> carries no "viewOn" and
+"pipeline", so this <kind> has no definition to show
+```
+
+The reduced row that would produce it is real: measured, `listCollections` answers name and type
+alone for `{ nameOnly: true, authorizedCollections: true }`, which is how a caller holding
+collection-level privileges rather than a database-level `read` sees anything at all. This provider
+sends **neither flag**, so on a MongoDB server that arm is unreachable and the integration suite is
+what drives it. It exists because a catalog row is a DOCUMENT: a misspelt field name reads as
+`undefined` rather than failing to compile, and an unguarded render would put `{}` in a reader's
+editor as though it were the definition.
+
+### Absence raises
+
+A view simply **not being in the listing** is absence on this engine. There is no error to carry, so
+`readObjectSource(["app", "no_such_view"], "view")` raises a `QueryError` naming the segment rather
+than answering a refusal part, which would invent an engine sentence that was never said. The kind
+decides the match exactly as it does in `describeObject`, so asking for a view by the name of a
+collection is a miss rather than a collection rendered as a view.
+
+### Why `collection` declares nothing
+
+Of the three absences, this is the second: MongoDB publishes something, and this product judges it
+is not a definition. A collection's `options` is a **property sheet** — a validator, a capped size,
+a time series spec — rather than a definition anybody authored, and measured on 8.2.12 an **ordinary
+collection's `options` is `{}`**, so a Source tab on that kind would open on nothing for the common
+case. A tab that can never fill is worse than no tab. What a collection's options do carry is
+reachable through `describeObject`, which is where an object's properties belong.
 
 ---
 
@@ -860,6 +982,8 @@ docker exec <container> mongosh -u <user> -p <password> --quiet --file /tmp/01-o
 #   app.active_customers                          a view on app.customers
 #   by_thing                                      the SAME index name on two collections
 #   configstore.settings                          a database whose name starts with "config"
+#   configstore.dark_settings                     a view with a collation and BSON in its pipeline
+#   libredb_nolist                                a user with `read` on configstore and nothing else
 #   oddnames.{x"a, x-a, x\a}                      names that sort differently under JSON escaping
 ```
 
