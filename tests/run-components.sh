@@ -30,7 +30,7 @@ FAIL=0
 # green summary line reported a group count no run had.
 # Drifted again before this line was touched: it read 30 while 32 `run_group` calls
 # existed, so every green run reported a group count no run had. 33 is the grep below.
-TOTAL_GROUPS=40
+TOTAL_GROUPS=41
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -366,6 +366,15 @@ run_group "Group 21: ui/scroll-area" \
 # globalThis.fetch for the default-reader case.
 run_group "Group 27: Object source viewer" \
   tests/components/object-source/ObjectSourceView.test.tsx
+
+# Group 28: The standalone shell's Source tab (#789). Its own group, for three reasons that
+# each rule out sharing one: it replaces @monaco-editor/react with mock.module, which is
+# process-wide, and both Group 15 (QueryEditor.test.tsx) and Group 27 install a DIFFERENT
+# double of that same module; it mocks the same child families as Group 1 while deliberately
+# using the REAL use-tab-manager and the REAL StudioTabBar, which Group 1 replaces; and it
+# answers globalThis.fetch for the source route.
+run_group "Group 28: Studio source tab" \
+  tests/components/studio/source-tab.test.tsx
 
 # Summary
 echo ""
