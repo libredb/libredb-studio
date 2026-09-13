@@ -49,8 +49,8 @@
  * objects. Standing ruling 4 against #789 Tasks 20 and 23.
  */
 
-import { ChartColumn, Code, Funnel, Plus, Search, Trash2, WandSparkles, type LucideIcon } from "lucide-react";
-import { findKind, kindAcceptsRowWrites } from "@/lib/db/object-kinds";
+import { ChartColumn, Code, FileCode, Funnel, Plus, Search, Trash2, WandSparkles, type LucideIcon } from "lucide-react";
+import { findKind, kindAcceptsRowWrites, kindHasSource } from "@/lib/db/object-kinds";
 import {
   maintenanceControl,
   type DatabaseObject,
@@ -82,6 +82,14 @@ export interface TreeRowActionHandlers {
    * Task 25 owns qualifying it.
    */
   readonly onCreateObject?: () => void;
+  /**
+   * Open this object's DEFINITION TEXT, read-only (#789 Phase 2).
+   *
+   * The one handler here that no shell is obliged to have. A shell that cannot mount the
+   * source viewer simply does not pass it and the item is not drawn, which is the same rule
+   * the maintenance and create handlers already follow.
+   */
+  readonly onViewSource?: (object: DatabaseObject) => void;
 }
 
 /** One item of a row's menu. `id` is stable and is what a test asserts; `label` is read. */
@@ -190,6 +198,34 @@ function objectActions(
         run: () => maintenance(object),
       });
     }
+  }
+
+  /*
+   * View Source, and the ONE gate in this file that does not ask the role (#789 Phase 2).
+   *
+   * Every action above addresses ROWS, which is why every one of them asks `role`. This one
+   * addresses the definition TEXT, a different fact about a kind that the provider declares
+   * as one, so the gate is the declaration for that kind and nothing else. No `isRelation`
+   * conjunction, deliberately: the kinds this feature exists for carry `role: "routine"`,
+   * `"attached"`, `"group"` and `"config"`, none of which has ever been offered a single
+   * action, so a conjunction would withhold the item from exactly the rows it is for.
+   *
+   * The consequence is expected rather than a side effect: `ObjectTree.hasRowMenu` is
+   * `actionsFor(row).length > 0`, so those rows now show the visible ellipsis trigger and
+   * announce `aria-haspopup="menu"` for the first time. That single predicate is also what
+   * keeps a visible trigger from ever opening an empty menu, which is why no second gate is
+   * added beside it.
+   *
+   * LAST in the sequence, so no existing row's menu is reordered by this addition. On the
+   * rows this feature is for it is the only item, so its position there is moot.
+   *
+   * Phase 3's EDIT gate is not this gate and must not be built from it: editing asks four
+   * conjuncts, three of them per-PART facts that live in the opened tab's state rather than
+   * on the row (a truncated part is not editable, and a refused part has no text at all).
+   */
+  const viewSource = handlers.onViewSource;
+  if (viewSource !== undefined && kindHasSource(capabilities, kind.id)) {
+    actions.push({ id: "view-source", label: "View Source", icon: FileCode, run: () => viewSource(object) });
   }
   return actions;
 }

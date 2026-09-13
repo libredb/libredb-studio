@@ -51,6 +51,7 @@ function allHandlers(record: string[] = []): TreeRowActionHandlers {
     onGenerateTestData: () => record.push("generate-test-data"),
     onOpenMaintenance: () => record.push("maintenance"),
     onCreateObject: () => record.push("create"),
+    onViewSource: () => record.push("view-source"),
   };
 }
 
@@ -381,5 +382,104 @@ describe("a kind whose rows are derived groupings", () => {
 
   test("the same kind without the flag IS offered Profile", () => {
     expect(idsFor(ordinary)).toContain("profile");
+  });
+});
+
+/**
+ * View Source, the FIRST action whose gate is not `role === "relation"` (#789 Phase 2).
+ *
+ * Every other action in this file addresses ROWS, so every other gate asks the role. This one
+ * addresses the definition TEXT, which is a different fact about a kind and is declared as one:
+ * `hasSource` on the kind spec, read through `kindHasSource`. There is deliberately NO role
+ * conjunction, and the consequence is the point rather than a side effect: a routine, a trigger,
+ * a `group` kind and a `config` kind have had no row menu at all until now, so this is the item
+ * that gives those rows their first one.
+ *
+ * The two facts are ORTHOGONAL and both directions are pinned below, because a conjunction with
+ * the role would pass the routine case and fail nothing else in this file:
+ *
+ * - a routine that declares source is offered it, and it is the only item on that row;
+ * - a relation that declares source keeps every row action it had AND gains this one, last;
+ * - a relation that declares none is offered its row actions and not this one;
+ * - a routine that declares none is offered nothing at all, exactly as before.
+ */
+describe("View Source is gated on the kind's declared source, and on nothing else", () => {
+  const sourceTable = { ...table, hasSource: true, sourceLanguage: "sql" } as const;
+  const sourceRoutine = { ...routine, hasSource: true, sourceLanguage: "sql" } as const;
+  /** A trigger: `role: "attached"`, a kind whose rows the tree has always drawn menu-less. */
+  const sourceTrigger = {
+    id: "trigger",
+    role: "attached",
+    label: "Trigger",
+    labelPlural: "Triggers",
+    attachedTo: "table",
+    hasSource: true,
+    sourceLanguage: "sql",
+  } as const;
+  /** Declares nothing, and is the control for every assertion that a kind WITH source gains one. */
+  const sequence = { id: "sequence", role: "group", label: "Sequence", labelPlural: "Sequences" } as const;
+
+  const withSourceKinds = capabilitiesOf({
+    objectKinds: [sourceTable, view, sourceRoutine, sourceTrigger, sequence],
+    supportsInlineRowEdit: true,
+  });
+
+  const objectOf = (kindId: string): DatabaseObject => ({ path: ["app", "x"], name: "x", kind: kindId });
+
+  test("offers View Source on a ROUTINE row, which has never had a menu at all", () => {
+    expect(idsFor(objectRow("function"), withSourceKinds, allHandlers(), objectOf("function"))).toEqual([
+      "view-source",
+    ]);
+  });
+
+  test("offers it on an ATTACHED row too, so the gate is not a second spelling of one role", () => {
+    expect(idsFor(objectRow("trigger"), withSourceKinds, allHandlers(), objectOf("trigger"))).toEqual(["view-source"]);
+  });
+
+  test("offers View Source on a relation row WITHOUT reordering anything that was there", () => {
+    // LAST in the sequence. The order is asserted whole rather than with `toContain`, because
+    // the reason this item is pushed last is that no existing row's menu may be reordered.
+    expect(idsFor(objectRow("table"), withSourceKinds, allHandlers(), objectOf("table"))).toEqual([
+      "generate-select",
+      "profile",
+      "generate-code",
+      "generate-test-data",
+      "view-source",
+    ]);
+  });
+
+  test("withholds it for a kind that declares no source, whatever its role", () => {
+    // A relation that declares none keeps its row actions and gains nothing, and a `group`
+    // kind that declares none is still offered nothing at all.
+    expect(idsFor(objectRow("view"), withSourceKinds, allHandlers(), objectOf("view"))).toEqual([
+      "generate-select",
+      "profile",
+      "generate-code",
+    ]);
+    expect(idsFor(objectRow("sequence"), withSourceKinds, allHandlers(), objectOf("sequence"))).toEqual([]);
+  });
+
+  test("withholds it when the shell passes no handler, which is how a shell says it cannot", () => {
+    expect(idsFor(objectRow("function"), withSourceKinds, {}, objectOf("function"))).toEqual([]);
+  });
+
+  test("hands the handler the object the row was built from, and reads its own label", () => {
+    const seen: DatabaseObject[] = [];
+    const object = objectOf("function");
+    const actions = rowActions({
+      row: objectRow("function"),
+      object,
+      capabilities: withSourceKinds,
+      handlers: { onViewSource: (target) => seen.push(target) },
+    });
+    expect(actions.map((action) => action.label)).toEqual(["View Source"]);
+    actions[0].run();
+    expect(seen).toEqual([object]);
+  });
+
+  test("a folder of a source-bearing kind is still offered nothing, because a folder has no source", () => {
+    expect(rowActions({ row: folderRow("function"), capabilities: withSourceKinds, handlers: allHandlers() })).toEqual(
+      [],
+    );
   });
 });

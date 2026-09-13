@@ -728,3 +728,124 @@ describe("the row names itself, and never the control inside it", () => {
     expect(screen.getByRole("treeitem", { name: "ZZ ARCHIVE 7" })).toBe(archive);
   });
 });
+
+/**
+ * View Source, and the rows that get their FIRST menu from it (#789 Phase 2).
+ *
+ * Every assertion above this point was written while every action in `row-actions.ts` was
+ * gated on `role === "relation"`, which is why a routine row is asserted throughout as the row
+ * that has no trigger, no `aria-haspopup` and no menu. This describe is the other side of that
+ * fact: hand the SAME tree a declaration where the routine kind carries `hasSource`, and the
+ * one predicate `ObjectTree` owns, `actionsFor(row).length > 0`, turns all three on at once.
+ * Nothing in `TreeRow.tsx` or `ObjectTree.tsx` changed for this, and that is what is being
+ * checked here rather than assumed.
+ *
+ * It is driven as a person drives it, not rendered and read. Phase 1's QA lesson is that what
+ * a person DOES with a row is a third thing beyond what they SEE and what a model is TOLD, and
+ * a suite that only opens the menu never learns whether the item runs. So each entry point is
+ * ACTIVATED: the pointer through the visible trigger, and the keyboard through the ContextMenu
+ * key and Enter, with the object the handler received asserted both times.
+ */
+const withSource = {
+  ...oneLevel,
+  objectKinds: [
+    { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+    { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+    // The one difference from `oneLevel`, and the whole subject of this describe.
+    {
+      id: "function",
+      role: "routine",
+      label: "Function",
+      labelPlural: "Functions",
+      hasSource: true,
+      sourceLanguage: "sql",
+    },
+  ],
+} as ProviderCapabilities;
+
+/** Opens the same three folders as `openTree`, against the source-bearing declaration. */
+async function openSourceTree(seen: DatabaseObject[]): Promise<void> {
+  installFetch();
+  render(
+    <ObjectTree
+      connection={connectionOf()}
+      capabilities={withSource}
+      actions={{ ...allHandlers([]), onViewSource: (object) => seen.push(object) }}
+    />,
+  );
+  await screen.findByRole("treeitem", { name: /Functions/ });
+  await userEvent.click(row(/Functions/));
+  await waitFor(() => expect(screen.getByText("order_total")).toBeTruthy());
+  await userEvent.click(row(/Tables/));
+  await waitFor(() => expect(screen.getByText("orders")).toBeTruthy());
+}
+
+describe("View Source gives a routine row its first menu", () => {
+  test("the routine row now has a trigger and announces a menu, where before it had neither", async () => {
+    const seen: DatabaseObject[] = [];
+    await openSourceTree(seen);
+    const routine = row(/order_total/);
+    expect(routine.getAttribute("aria-haspopup")).toBe("menu");
+    expect(within(routine).getByTestId("tree-row-menu-trigger")).toBeTruthy();
+  });
+
+  test("the menu holds View Source alone, and the browser's own menu is taken", async () => {
+    const seen: DatabaseObject[] = [];
+    await openSourceTree(seen);
+    // `false` means the page took the gesture. It answers `true` for this same row in the
+    // describe above, where the kind declares no source: the two together are the gate.
+    expect(fireEvent.contextMenu(row(/order_total/))).toBe(false);
+    expect(menuItems()).toEqual(["View Source"]);
+  });
+
+  test("ACTIVATING it from the trigger hands the shell the object the row was built from", async () => {
+    const seen: DatabaseObject[] = [];
+    await openSourceTree(seen);
+    await userEvent.click(trigger("Actions for order_total"));
+    await userEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: "View Source" }));
+
+    // The OBJECT, so the shell has the path and the kind: a label could not address it.
+    expect(seen).toEqual([{ path: ["app", "order_total(integer)"], name: "order_total", kind: "function" }]);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  test("ACTIVATING it from the keyboard alone does the same thing", async () => {
+    const seen: DatabaseObject[] = [];
+    await openSourceTree(seen);
+    const tabStop = screen.getAllByRole("treeitem").find((item) => item.getAttribute("tabindex") === "0");
+    tabStop?.focus();
+    // To the Functions folder's one row, which is the LAST row of the tree, so it is reached
+    // by End rather than by a hand-counted run of ArrowDowns that a fixture change invalidates.
+    await userEvent.keyboard("{Home}{End}");
+    expect(document.activeElement?.getAttribute("data-row-id")).toBe("app/order_total(integer)/function");
+
+    await userEvent.keyboard("{ContextMenu}");
+    expect(document.activeElement?.textContent).toBe("View Source");
+    await userEvent.keyboard("{Enter}");
+    expect(seen.map((object) => object.name)).toEqual(["order_total"]);
+  });
+
+  test("a relation that declares no source is offered its own actions and not this one", async () => {
+    // The control that makes the four assertions above a statement about the DECLARATION:
+    // the same tree, the same handlers, a kind that declares nothing.
+    const seen: DatabaseObject[] = [];
+    await openSourceTree(seen);
+    fireEvent.contextMenu(row(/orders/));
+    expect(menuItems()).toEqual(["Generate Query", "Profile Table", "Generate Code", "Generate Test Data"]);
+  });
+
+  test("a shell that cannot show source withholds the item, and the routine row is menu-less again", async () => {
+    // The embedded shell's case, and the second half of the gate: the DECLARATION offers
+    // source and the SHELL passes no handler.
+    installFetch();
+    render(<ObjectTree connection={connectionOf()} capabilities={withSource} actions={allHandlers([])} />);
+    await screen.findByRole("treeitem", { name: /Functions/ });
+    await userEvent.click(row(/Functions/));
+    await waitFor(() => expect(screen.getByText("order_total")).toBeTruthy());
+
+    expect(within(row(/order_total/)).queryByTestId("tree-row-menu-trigger")).toBeNull();
+    expect(row(/order_total/).hasAttribute("aria-haspopup")).toBe(false);
+    expect(fireEvent.contextMenu(row(/order_total/))).toBe(true);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+});
