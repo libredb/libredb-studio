@@ -1293,6 +1293,17 @@ concatenated CLOB cannot express:
   `body` part.
 - the two halves carry independent `STATUS` values, which `APP_BROKEN_PKG` exhibits.
 
+#### A kind declaring source and no `sourceLanguage` RAISES
+
+`readObjectSource` refuses with
+`Oracle declares readable source for the kind "<kind>" and no sourceLanguage to render it with`, before
+a connection is taken from the pool. There is no fallback to a literal `sql`: an unregistered or absent
+Monaco id degrades to plain text with no throw and nothing observable, so a fallback would hide a
+deleted declaration behind a Source tab that had quietly stopped highlighting. All nine declared
+languages are pinned by the isolated census
+(`tests/isolated/object-source-declarations.test.ts`), so the only way to reach this arm is a
+declaration somebody removed.
+
 #### ORA-31603 says "not found in schema" for an object you merely cannot read
 
 This is the single most important thing to know about this surface, because since #765 the tree lists
@@ -1309,6 +1320,17 @@ ORA-31603: object "REPORT_DAILY" of type TABLE not found in schema "REPORTING"
 The identical error, word for word, comes back for `REPORTING.NO_SUCH_TABLE`, which really does not
 exist. Oracle's own message cannot tell the two apart, and shipping it unqualified tells a user their
 objects are gone.
+
+**The code is read off `errorNum`, not off the message.** node-oracledb carries the Oracle error
+number as a numeric `errorNum` on the error it rejects with, in both modes: thin assigns it in
+`lib/thin/protocol/protocol.js` (`err.errorNum = message.errorInfo.num`) and every prebuilt thick addon
+under `build/Release` exports the same property name
+(`strings oracledb-6.10.0-linux-x64.node | grep -x errorNum`), both checked against oracledb 6.10.0.
+Scanning the MESSAGE for `ORA-31603` would make a failure that merely quotes that text, a wrapped
+error or a logged one, look like a missing object, and the second question would then be asked about
+the wrong fact. An error carrying a different `errorNum` raises even when its text quotes this code.
+An error carrying no numeric `errorNum` at all, which is what a rejection composed outside the driver
+looks like, still falls to the text scan, and that arm is asked second.
 
 So on ORA-31603 the provider asks a SECOND question:
 

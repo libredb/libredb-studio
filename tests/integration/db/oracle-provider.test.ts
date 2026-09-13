@@ -4016,6 +4016,8 @@ describe("Oracle object source", () => {
     ddl?: Record<string, string>;
     visible?: readonly string[];
     ddlValue?: unknown;
+    /** What GET_DDL rejects with when the fixture holds no text, defaulting to the live sentence. */
+    raise?: () => unknown;
   }): (sql: string, params?: unknown[], opts?: unknown) => Promise<unknown> {
     return async (sql: string, params?: unknown[], opts?: unknown) => {
       sent.push({ sql, params: [...(params ?? [])], opts: (opts ?? {}) as Record<string, unknown> });
@@ -4024,6 +4026,7 @@ describe("Oracle object source", () => {
         if (options.ddlValue !== undefined) return { rows: [{ DDL: options.ddlValue }] };
         const text = (options.ddl ?? {})[key];
         if (text === undefined) {
+          if (options.raise !== undefined) throw options.raise();
           throw new Error(ora31603(String((params ?? [])[0]), String((params ?? [])[1]), String((params ?? [])[2])));
         }
         return { rows: [{ DDL: text }] };
@@ -4329,6 +4332,101 @@ describe("Oracle object source", () => {
     await expect(provider.readObjectSource!(["REPORTING", "NO_SUCH_TABLE"], "table")).rejects.toBeInstanceOf(
       QueryError,
     );
+    await provider.disconnect();
+  });
+
+  /*
+    ORA-31603 IS READ OFF `errorNum`, NOT OFF THE SENTENCE (#789, the external review of
+    PR #820). node-oracledb carries the Oracle error number as a NUMERIC field on the error it
+    rejects with, in both modes: thin sets it at `lib/thin/protocol/protocol.js:206`
+    (`err.errorNum = message.errorInfo.num`) and the thick binding exports the same property
+    name from every prebuilt addon in `build/Release` (`strings oracledb-6.10.0-linux-x64.node
+    | grep -x errorNum`). Scanning the MESSAGE for "ORA-31603" is the same defect class as
+    keying on a sentence: a backtrace frame, an object name or a quoted nested error carrying
+    that text makes a read that failed for another reason look like a missing object, and the
+    answer to that mistake is a refusal part or a raise about the wrong fact.
+
+    The sentence scan survives as the arm for an error that carries NO numeric `errorNum` at
+    all, which is what a rejection composed outside the driver looks like, and it is checked
+    second rather than first.
+  */
+  test("an ORA-31603 whose errorNum is present is settled by the NUMBER, not by the text", async () => {
+    mockExecuteFn = driver({
+      visible: [],
+      // The message says nothing a scan could match: the number is the only signal.
+      raise: () => Object.assign(new Error("the server declined the metadata read"), { errorNum: 31603 }),
+    });
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    await expect(provider.readObjectSource!(["REPORTING", "NO_SUCH_TABLE"], "table")).rejects.toThrow(
+      /Oracle holds no table called "NO_SUCH_TABLE" in REPORTING/,
+    );
+    await provider.disconnect();
+  });
+
+  test("an error whose errorNum is a DIFFERENT number RAISES, even when its text quotes ORA-31603", async () => {
+    // The false positive the scan cannot refuse. This is ORA-01031, and its message quotes the
+    // other code the way a wrapped or logged error does.
+    mockExecuteFn = async (sql: string, params?: unknown[], opts?: unknown) => {
+      sent.push({ sql, params: [...(params ?? [])], opts: (opts ?? {}) as Record<string, unknown> });
+      throw Object.assign(new Error("ORA-01031: insufficient privileges while handling ORA-31603"), {
+        errorNum: 1031,
+      });
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    await expect(provider.readObjectSource!(["APP", "APP_ORDER_TOTAL"], "function")).rejects.toThrow(
+      /ORA-01031: insufficient privileges/,
+    );
+    // The second question was never asked: nothing ambiguous had to be settled.
+    expect(sent).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("an error carrying NO errorNum still falls to the code scan, so a composed rejection is not lost", async () => {
+    // The arm that keeps the captured live message working: `ora31603(...)` in this file is
+    // the ten-line sentence Oracle XE 21.3.0.0.0 really sends, and a plain `Error` carrying it
+    // and no numeric field is what a rejection composed outside the driver looks like.
+    mockExecuteFn = driver({ visible: [] });
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    await expect(provider.readObjectSource!(["REPORTING", "NO_SUCH_TABLE"], "table")).rejects.toThrow(
+      /Oracle holds no table called "NO_SUCH_TABLE" in REPORTING/,
+    );
+    await provider.disconnect();
+  });
+
+  /*
+    A kind declaring source and NO `sourceLanguage` RAISES (#789, the external review of
+    PR #820). The arm used to read `spec.sourceLanguage ?? "sql"`. Counted across the fleet at
+    that point: nine of the eleven providers that read source threw here and exactly two fell
+    back, this one and `redis.ts`. The census in
+    `tests/isolated/object-source-declarations.test.ts` pins all nine Oracle languages, so the
+    only way to reach this arm is a declaration somebody deleted, and an unregistered Monaco id
+    degrades to plain text with nothing observable, so the literal hid the deletion behind a
+    tab that had quietly stopped highlighting.
+  */
+  test("a source-bearing kind that declares no language RAISES rather than falling back to a literal", async () => {
+    mockExecuteFn = driver({ ddl: { "FUNCTION APP_ORDER_TOTAL": FUNCTION_DDL } });
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+    const capabilities = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      objectKinds: (capabilities.objectKinds ?? []).map((kind) =>
+        kind.id === "function" ? { ...kind, sourceLanguage: undefined } : kind,
+      ),
+    } as ReturnType<typeof provider.getCapabilities>);
+
+    await expect(provider.readObjectSource!(["APP", "APP_ORDER_TOTAL"], "function")).rejects.toThrow(
+      /Oracle declares readable source for the kind "function" and no sourceLanguage to render it with/,
+    );
+    // Nothing was sent: the declaration is checked before the connection is taken from the
+    // pool, so a lost language cannot cost a round trip either.
+    expect(sent).toHaveLength(0);
     await provider.disconnect();
   });
 

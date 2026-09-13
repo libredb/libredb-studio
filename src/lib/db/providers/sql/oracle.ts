@@ -629,14 +629,30 @@ function wrapFormatMarker(ddl: string, owner: string, name: string): string | un
 /**
  * Whether this driver error is Oracle reporting the object as not found (#789, ruling C).
  *
- * ORA-31603 is the ONE code this path treats specially, and it is matched on the code rather
- * than on the sentence because the sentence is localised and the code is not. Every other
- * failure, including ORA-31600 for a metadata type this provider spelled wrongly, goes
- * through `mapDatabaseError` and raises, because only this one code is ambiguous between an
- * absence and a refusal.
+ * ORA-31603 is the ONE code this path treats specially. Every other failure, including
+ * ORA-31600 for a metadata type this provider spelled wrongly, goes through
+ * `mapDatabaseError` and raises, because only this one code is ambiguous between an absence
+ * and a refusal.
+ *
+ * THE NUMBER DECIDES, NOT THE SENTENCE. node-oracledb carries the Oracle error number as a
+ * NUMERIC `errorNum` on the error it rejects with, in both modes: thin assigns it in
+ * `lib/thin/protocol/protocol.js` (`err.errorNum = message.errorInfo.num`) and every prebuilt
+ * thick addon in `build/Release` exports the same property name (checked with
+ * `strings oracledb-6.10.0-linux-x64.node | grep -x errorNum`), both against oracledb 6.10.0.
+ * Scanning the MESSAGE for "ORA-31603" is the defect class this repository keeps finding
+ * under other names: a backtrace frame, an object name or a wrapped error quoting that text
+ * makes a read that failed for an unrelated reason look like a missing object, and the answer
+ * is then a refusal part or a raise about the wrong fact. An error carrying a DIFFERENT
+ * number is refused here even when its text quotes this code.
+ *
+ * The text scan survives as the arm for an error carrying NO numeric `errorNum` at all, which
+ * is what a rejection composed outside the driver looks like, and it is asked second.
  */
 function isObjectNotFoundError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("ORA-31603");
+  if (!(error instanceof Error)) return false;
+  const errorNum = (error as Error & { errorNum?: unknown }).errorNum;
+  if (typeof errorNum === "number") return errorNum === 31603;
+  return error.message.includes("ORA-31603");
 }
 
 /**
@@ -2180,10 +2196,21 @@ export class OracleProvider extends SQLBaseProvider {
     if (spec?.hasSource !== true) {
       throw new QueryError(`Oracle declares no readable source for the kind "${kind}"`, "oracle");
     }
+    const language = spec.sourceLanguage;
+    if (language === undefined) {
+      // No fallback to a literal "sql". An unregistered or absent Monaco id degrades to plain
+      // text with no throw and nothing observable, so a kind that declared source and lost its
+      // language would ship a Source tab that had quietly stopped highlighting. The isolated
+      // census pins all nine declared languages, so this arm is only ever reached by a
+      // declaration somebody deleted (#789).
+      throw new QueryError(
+        `Oracle declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
+        "oracle",
+      );
+    }
     assertObjectPathShape(capabilities, spec, path);
     const owner = ownerSegment(capabilities, path);
     const name = path[path.length - 1];
-    const language = spec.sourceLanguage ?? "sql";
     const [head, ...rest] = sourcePartPlans(kind);
 
     const conn = await this.pool!.getConnection();
