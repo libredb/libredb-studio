@@ -1081,11 +1081,14 @@ So a screen reader announces the tab and its selected state and can never say wh
 governs, and there is no way to move from a tab to its content.
 
 The basis for the "nowhere in `src/`" form of this claim has moved and the entry says so rather than
-repeating it: `grep -rn 'role="tabpanel"' src/` now returns exactly one hit,
+repeating it: `grep -rn 'tabpanel' src/` now returns exactly one hit,
 `src/components/object-source/ObjectSourceView.tsx:347`, which is the Source view's own part
-switcher added by #789. That one is the complete pattern, including the rule the studio bar will
-need: only the SELECTED tab may carry `aria-controls`, because only the active panel is in the tree
-and a reference to an absent element is an `aria-valid-attr-value` violation of its own.
+switcher added by #789. The pattern is bare on purpose: that role is written as an object property,
+`{ role: "tabpanel", ... }`, and never as a JSX attribute, so grepping the attribute form matches
+nothing, which would read as an absence that is not there. The switcher is the complete pattern,
+including the rule the studio bar will need: only the SELECTED tab may carry `aria-controls`,
+because only the active panel is in the tree and a reference to an absent element is an
+`aria-valid-attr-value` violation of its own.
 
 It is not a one-line fix, which is why it is here. The panel is ONE element shared by every tab, so
 its `id` has to key on `activeTabId`, and the same element is the mount point for the schema diagram

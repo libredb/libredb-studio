@@ -326,3 +326,99 @@ describe("no citation outlives the entry it names", () => {
     expect([...dangling, ...asPr]).toEqual([]);
   });
 });
+
+/**
+ * A `grep` command an entry PRINTS is a claim, and it has to answer what the entry says it answers.
+ *
+ * `X15` shipped the sentence "`grep -rn 'role="tabpanel"' src/` now returns exactly one hit,
+ * `src/components/object-source/ObjectSourceView.tsx:347`". The FACT was true: that file carries the
+ * only `tabpanel` role in the tree and neither shell carries one. The COMMAND was false, and by two
+ * characters: the role is written as an object property, `{ role: "tabpanel", ... }`, not as a JSX
+ * attribute, so the quoted form matches zero lines. Whoever ran the printed command got nothing and
+ * had to decide whether the entry or the tree was wrong. That is the dead-pointer failure the
+ * citation guard above exists to prevent, one level down: the pointer resolves and the BASIS does
+ * not, and the whole purpose of that sentence was to hand the next reader a re-runnable basis.
+ *
+ * So every backticked `grep` in the file is executed here, from the repository root, and its hit
+ * count is compared with the outcome the sentence states. The accepted phrasings are a closed set on
+ * purpose - "returns nothing", "returns exactly one hit", "returns exactly N hits" - and a command
+ * followed by anything else fails BY NAME rather than being skipped, because a claim nothing checks
+ * is the shape this whole file was written against.
+ *
+ * What this deliberately does NOT check: the `file:line` an entry names beside a single hit. That
+ * would tie the backlog to a line number in a file it does not own, so an unrelated edit one line
+ * above would turn this red, and a guard that cries wolf is a guard people learn to skip. The
+ * reviewer verified that location by hand and so did I; what a machine holds from here is the count.
+ */
+describe("a quoted grep command answers what the entry says it answers", () => {
+  /** The command span, plus the prose up to the next code span, which is where the outcome is. */
+  const CLAIM = /`(grep [^`]+)`([^`]{0,200})/g;
+  /** `grep -rn 'pattern' path [path...]`: the only shape this guard knows how to run. */
+  const SHAPE = /^grep (-[a-zA-Z]+) '([^']+)' (\S+(?: +\S+)*)$/;
+  /** The closed set of outcomes. `nothing`, `no hit` and `no hits` are the same zero. */
+  const OUTCOME = /^[\s,;:]*(?:now |still )?returns (nothing|no hits?|exactly one hit|exactly \d+ hits)\b/;
+
+  const expectedHits = (prose: string): number | null => {
+    const match = OUTCOME.exec(prose.replace(/\s+/g, " "));
+    if (match === null) return null;
+    if (match[1] === "exactly one hit") return 1;
+    const counted = /^exactly (\d+) hits$/.exec(match[1]);
+    return counted === null ? 0 : Number(counted[1]);
+  };
+
+  /** Its own copy rather than the citation guard's, so that guard is not edited to share it. */
+  const lineAt = (index: number): number => BACKLOG.slice(0, index).split("\n").length;
+
+  const claims = [...BACKLOG.matchAll(CLAIM)].map((match) => ({
+    command: match[1],
+    prose: match[2],
+    where: `${BACKLOG_PATH}:${lineAt(match.index)}`,
+  }));
+
+  const run = (command: string): number => {
+    const shape = SHAPE.exec(command);
+    if (shape === null) throw new Error(`${BACKLOG_PATH} quotes a grep this guard cannot run: ${command}`);
+    const result = Bun.spawnSync({
+      cmd: ["grep", shape[1], "--", shape[2], ...shape[3].split(/ +/)],
+      cwd: ROOT,
+    });
+    // grep answers 1 for "no lines matched", which is an outcome here rather than a failure.
+    if (result.exitCode !== 0 && result.exitCode !== 1) {
+      throw new Error(`${command} failed with ${result.exitCode}: ${result.stderr.toString()}`);
+    }
+    return result.stdout
+      .toString()
+      .split("\n")
+      .filter((line) => line !== "").length;
+  };
+
+  test("the extractor found every grep the file quotes", () => {
+    // test.each over an empty list registers no test at all, so the parse is pinned against the
+    // raw text first. The pin counts every `grep -` in the document rather than every backticked
+    // one, so a command written in a fenced block, or with no backticks at all, is a failure here
+    // rather than a claim that quietly escapes the check. `grepping` in prose is not one.
+    expect(claims.length).toBe([...BACKLOG.matchAll(/grep -/g)].length);
+    expect(claims.length).toBeGreaterThan(0);
+  });
+
+  test("the runner counts what grep counts", () => {
+    // Paired controls. A runner that always answers zero would make every "returns nothing" claim
+    // pass, and one that always answers the same number would make every count claim pass.
+    expect(run(`grep -rn 'Every ID is unique across the whole file' ${BACKLOG_PATH}`)).toBe(1);
+    expect(run("grep -rn 'no-such-string-in-this-repository-8f3a' src/")).toBe(0);
+  });
+
+  test.each(claims.map((claim) => [claim.where, claim] as const))(
+    "the grep quoted at %s answers what the entry says",
+    (where, claim) => {
+      const expected = expectedHits(claim.prose);
+      if (expected === null) {
+        throw new Error(
+          `${where} quotes \`${claim.command}\` and states no outcome this guard can check. ` +
+            `Follow it with "returns nothing", "returns exactly one hit" or "returns exactly N hits".`,
+        );
+      }
+      expect(run(claim.command)).toBe(expected);
+    },
+  );
+});
