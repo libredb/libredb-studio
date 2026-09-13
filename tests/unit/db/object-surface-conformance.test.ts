@@ -1054,8 +1054,8 @@ describe("assertObjectSurface and the object source read", () => {
    * exercised by nothing and passed in silence. Oracle declares nine source-bearing kinds,
    * so an expectation naming eight truthfully and the ninth at zero certified that ninth
    * unread. Requiring a non-zero instead would be wrong, because legitimate zeros are already
-   * committed here: Trino counts `view` at 0 and Druid counts `lookup` and `system_table` at
-   * 0. So what is required is the REASON, and the reason is held to four bars: it exists, it
+   * committed here: Trino counts `materialized_view` at 0 and Druid counts `lookup` and
+   * `system_table` at 0. So what is required is the REASON, and the reason is held to four bars: it exists, it
    * is not blank, it is not one of four named verdicts, and `listObjects` agrees the fixture
    * really holds none of the kind.
    *

@@ -132,9 +132,11 @@ export interface ObjectSurfaceExpectation {
    * An expectation that names eight of an engine's nine source-bearing kinds truthfully and
    * the ninth at zero certifies that ninth unread.
    *
-   * A non-zero is deliberately NOT demanded instead, because legitimate zeros exist and this
-   * repository already commits three: Trino counts `view` at 0 beside a materialized view at
-   * 1 (`tests/integration/db/trino-provider.test.ts`), and Druid counts `lookup` and
+   * A non-zero is deliberately NOT demanded instead, because legitimate zeros are already
+   * committed here, and the two suites that carry one are the list rather than a digit that
+   * goes stale: Trino counts `materialized_view` at 0, because the compose cluster configures
+   * no Iceberg catalog and only a Hive-metastore-backed one creates a materialized view on 476
+   * (`tests/integration/db/trino-provider.test.ts`), and Druid counts `lookup` and
    * `system_table` at 0 (`tests/integration/db/druid-provider.test.ts`). So the bar is the
    * repository's own grammar for an absence, the one `KindCount` already uses in its
    * `{ unavailable }` arm: an absence that says WHICH absence it is, in the engine's or the
