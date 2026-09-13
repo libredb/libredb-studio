@@ -42,6 +42,7 @@ import {
   containerDepth,
   declaredKinds,
   findKind,
+  requireSourceKind,
 } from "../../object-kinds";
 import { comparePaths } from "../../object-path";
 import {
@@ -2488,23 +2489,7 @@ export class PostgresProvider extends SQLBaseProvider {
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
-    const spec = findKind(capabilities, kind);
-    if (spec === undefined) {
-      throw new QueryError(`PostgreSQL declares no object kind "${kind}"`, "postgres");
-    }
-    if (spec.hasSource !== true) {
-      throw new QueryError(`PostgreSQL publishes no definition text for the kind "${kind}"`, "postgres");
-    }
-    if (spec.sourceLanguage === undefined) {
-      // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
-      // observable, so a kind that declared source and forgot its language would ship a Source
-      // tab that silently stopped highlighting. The declaration is the only source of the
-      // language and there is no literal here to fall back to.
-      throw new QueryError(
-        `PostgreSQL declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
-        "postgres",
-      );
-    }
+    const spec = requireSourceKind(capabilities, kind, { displayName: "PostgreSQL", type: "postgres" });
     assertObjectPathShape(capabilities, spec, kind, path);
 
     const depth = containerDepth(capabilities);

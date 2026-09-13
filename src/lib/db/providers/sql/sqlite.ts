@@ -54,6 +54,7 @@ import {
   containerDepth,
   declaredKinds,
   findKind,
+  requireSourceKind,
 } from "../../object-kinds";
 import { comparePaths } from "../../object-path";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
@@ -1673,23 +1674,7 @@ export class SQLiteProvider extends SQLBaseProvider {
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
-    const spec = findKind(capabilities, kind);
-    if (spec === undefined) {
-      throw new QueryError(`SQLite declares no object kind "${kind}"`, "sqlite");
-    }
-    if (spec.hasSource !== true) {
-      throw new QueryError(`SQLite publishes no definition text for the kind "${kind}"`, "sqlite");
-    }
-    if (spec.sourceLanguage === undefined) {
-      // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
-      // observable, so a kind that declared source and forgot its language would ship a
-      // Source tab that silently stopped highlighting. The declaration is the only source of
-      // the language and there is no literal here to fall back to.
-      throw new QueryError(
-        `SQLite declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
-        "sqlite",
-      );
-    }
+    const spec = requireSourceKind(capabilities, kind, { displayName: "SQLite", type: "sqlite" });
     assertObjectPathShape(capabilities, spec, kind, path);
     if (!Object.hasOwn(SOURCE_CATALOG_TYPES, kind)) {
       throw new QueryError(

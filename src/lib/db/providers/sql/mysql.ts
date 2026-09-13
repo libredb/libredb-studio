@@ -47,6 +47,7 @@ import {
   containerDepth,
   declaredKinds,
   findKind,
+  requireSourceKind,
 } from "../../object-kinds";
 import { comparePaths } from "../../object-path";
 import { formatBytes } from "../../utils/pool-manager";
@@ -2594,23 +2595,7 @@ export class MySQLProvider extends SQLBaseProvider {
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
-    const spec = findKind(capabilities, kind);
-    if (spec === undefined) {
-      throw new QueryError(`MySQL declares no object kind "${kind}"`, "mysql");
-    }
-    if (spec.hasSource !== true) {
-      throw new QueryError(`MySQL publishes no definition text for the kind "${kind}"`, "mysql");
-    }
-    if (spec.sourceLanguage === undefined) {
-      // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
-      // observable, so a kind that declared source and forgot its language would ship a Source
-      // tab that silently stopped highlighting. The declaration is the only source of the
-      // language and there is no literal here to fall back to.
-      throw new QueryError(
-        `MySQL declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
-        "mysql",
-      );
-    }
+    const spec = requireSourceKind(capabilities, kind, { displayName: "MySQL", type: "mysql" });
     assertObjectPathShape(capabilities, spec, kind, path);
     if (!Object.hasOwn(MYSQL_SOURCE_PART_PLANS, kind)) {
       throw new QueryError(

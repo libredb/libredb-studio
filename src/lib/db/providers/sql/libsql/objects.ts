@@ -48,6 +48,7 @@ import {
   containerDepth,
   declaredKinds,
   findKind,
+  requireSourceKind,
 } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import { readNumber, readText } from "./introspect";
@@ -1104,23 +1105,7 @@ export async function readLibSQLObjectSource(
   kind: string,
   limit?: number,
 ): Promise<ObjectSourceDocument> {
-  const spec = findKind(reader.capabilities, kind);
-  if (spec === undefined) {
-    throw new QueryError(`libSQL declares no object kind "${kind}"`, "libsql");
-  }
-  if (spec.hasSource !== true) {
-    throw new QueryError(`libSQL publishes no definition text for the kind "${kind}"`, "libsql");
-  }
-  if (spec.sourceLanguage === undefined) {
-    // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
-    // observable, so a kind that declared source and forgot its language would ship a Source
-    // tab that silently stopped highlighting. The declaration is the only source of the
-    // language and there is no literal here to fall back to.
-    throw new QueryError(
-      `libSQL declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
-      "libsql",
-    );
-  }
+  const spec = requireSourceKind(reader.capabilities, kind, { displayName: "libSQL", type: "libsql" });
   assertObjectPathShape(reader.capabilities, spec, kind, path);
   if (!Object.hasOwn(SOURCE_CATALOG_TYPES, kind)) {
     throw new QueryError(

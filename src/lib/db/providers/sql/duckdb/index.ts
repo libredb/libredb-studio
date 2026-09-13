@@ -71,6 +71,7 @@ import {
   containerDepth,
   declaredKinds,
   findKind,
+  requireSourceKind,
 } from "../../../object-kinds";
 import {
   DatabaseConfigError,
@@ -1092,23 +1093,7 @@ export class DuckDBProvider extends SQLBaseProvider {
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
-    const spec = findKind(capabilities, kind);
-    if (spec === undefined) {
-      throw new QueryError(`DuckDB declares no object kind "${kind}"`, "duckdb");
-    }
-    if (spec.hasSource !== true) {
-      throw new QueryError(`DuckDB publishes no definition text for the kind "${kind}"`, "duckdb");
-    }
-    if (spec.sourceLanguage === undefined) {
-      // An unregistered or absent Monaco id degrades to plain text with no throw and
-      // nothing observable, so a kind that declared source and forgot its language would
-      // ship a Source tab that silently stopped highlighting. The declaration is the only
-      // source of the language and there is no literal here to fall back to.
-      throw new QueryError(
-        `DuckDB declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
-        "duckdb",
-      );
-    }
+    const spec = requireSourceKind(capabilities, kind, { displayName: "DuckDB", type: "duckdb" });
 
     const read = objectRead(capabilities, spec, path);
     const sql = objectSourceSql(kind);

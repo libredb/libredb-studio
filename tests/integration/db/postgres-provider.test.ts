@@ -4691,11 +4691,15 @@ describe("PostgreSQL object source", () => {
 
     // `sequence` IS declared and has no source; `package` is not declared at all. Two
     // different facts and two different sentences, and neither is an empty document.
+    // The ENGINE's own name is part of each sentence, and pinning it is what the entry guard
+    // being shared owes: since #789's hoist the display name reaches `requireSourceKind` as an
+    // argument, so a provider passing the wrong literal would otherwise attribute PostgreSQL's
+    // refusal to another engine with nothing here noticing.
     await expect(provider.readObjectSource(["app", "invoice_number_seq"], "sequence")).rejects.toThrow(
-      /publishes no definition text for the kind "sequence"/,
+      /PostgreSQL publishes no definition text for the kind "sequence"/,
     );
     await expect(provider.readObjectSource(["app", "x"], "package")).rejects.toThrow(
-      /declares no object kind "package"/,
+      /PostgreSQL declares no object kind "package"/,
     );
     await provider.disconnect();
   });

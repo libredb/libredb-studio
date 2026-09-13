@@ -65,6 +65,7 @@ import {
   containerDepth,
   declaredKinds,
   findKind,
+  requireSourceKind,
 } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import type {
@@ -1352,23 +1353,7 @@ export async function readObjectSource(
   kind: string,
   limit?: number,
 ): Promise<ObjectSourceDocument> {
-  const spec = findKind(capabilities, kind);
-  if (spec === undefined) {
-    throw new QueryError(`ClickHouse declares no object kind "${kind}"`, PROVIDER);
-  }
-  if (spec.hasSource !== true) {
-    throw new QueryError(`ClickHouse publishes no definition text for the kind "${kind}"`, PROVIDER);
-  }
-  if (spec.sourceLanguage === undefined) {
-    // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
-    // observable, so a kind that declared source and forgot its language would ship a Source
-    // tab that silently stopped highlighting. The declaration is the only source of the
-    // language and there is no literal here to fall back to.
-    throw new QueryError(
-      `ClickHouse declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
-      PROVIDER,
-    );
-  }
+  const spec = requireSourceKind(capabilities, kind, { displayName: "ClickHouse", type: PROVIDER });
   assertObjectPathShape(capabilities, kind, path);
   const catalog = objectCatalog(kind);
   if (catalog === undefined) {

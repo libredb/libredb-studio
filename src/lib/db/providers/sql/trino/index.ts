@@ -60,6 +60,7 @@ import {
   containerDepth,
   declaredKinds,
   findKind,
+  requireSourceKind,
 } from "@/lib/db/object-kinds";
 import {
   type ActiveSessionDetails,
@@ -1096,26 +1097,7 @@ export class TrinoProvider extends SQLBaseProvider {
    */
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
     const capabilities = this.getCapabilities();
-    const spec = findKind(capabilities, kind);
-    if (spec === undefined) {
-      throw new QueryError(`${this.dialect.displayName} declares no object kind "${kind}"`, this.type);
-    }
-    if (spec.hasSource !== true) {
-      throw new QueryError(
-        `${this.dialect.displayName} publishes no definition text for the kind "${kind}"`,
-        this.type,
-      );
-    }
-    if (spec.sourceLanguage === undefined) {
-      // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
-      // observable, so a kind that declared source and forgot its language would ship a
-      // Source tab that silently stopped highlighting. The declaration is the only source of
-      // the language and there is no literal here to fall back to.
-      throw new QueryError(
-        `${this.dialect.displayName} declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
-        this.type,
-      );
-    }
+    const spec = requireSourceKind(capabilities, kind, { displayName: this.dialect.displayName, type: this.type });
 
     const read = objectRead(capabilities, spec, path);
     const statement = trinoSourceStatementFor(kind);
