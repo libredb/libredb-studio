@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D68, U17 · 28
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X13, U2–U21 · 7
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X15, U2–U21 · 9
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -936,8 +936,11 @@ goes away in a major, with this work.
 
 ## Studio UI and query execution
 
-`U2` came out of the #384 review. The `X` entries came out of the #422 export review — each was
-named, weighed and left out of that PR, so they are recorded rather than re-derived.
+`U2` came out of the #384 review. `X2` to `X13` came out of the #422 export review: each was
+named, weighed and left out of that PR, so they are recorded rather than re-derived. `X14` and `X15`
+came out of the #789 object-source design's own measurement passes: both are pre-existing, neither
+is in the seam that epic touches, and both were re-measured against the tree before being written
+here.
 
 ### X2. An export writes the page the grid holds, not the result the user asked for
 
@@ -1038,6 +1041,61 @@ derived groupings, read beside the engine-wide flag the way `kindAcceptsRowWrite
 `supportsInlineRowEdit` - or the engine-wide gate is deliberately kept with that decision written at
 `libredb.ts`'s `tablesAreDerivedGroupings` site and in `docs/providers/libredb.md`. Either way
 LibreDB's `table` and `collection` stop being refused by a flag that was never about them.
+
+### X14. The workspace write that persists every tab has no quota guard
+
+`src/hooks/use-tab-manager.ts:213` writes the whole workspace with
+`storage.setItem(workspaceKey, JSON.stringify(serialized))` inside a 500 ms `setTimeout`, with no
+`try`/`catch` anywhere between the timer callback and the call. Every other localStorage writer in
+this application already has one: `src/lib/storage/local-storage.ts:64` and `:82` both wrap their
+`setItem`, log `Failed to write to localStorage` and answer `false`, so the guard is a pattern this
+writer skipped rather than a pattern nobody has.
+
+The quota it writes against is shared. `STORAGE_COLLECTIONS` (`src/lib/storage/types.ts:28-38`) is
+ten collections, connections and history and the audit log among them, and all of them plus this
+record live inside one origin quota of about 5 MiB. The record itself is unbounded from the shell's
+point of view because `PersistedTabState.query` copies each tab's editor text verbatim.
+
+The symptom is not a lost tab. A `QuotaExceededError` thrown inside a timer callback is not caught
+by React and not caught here, so it reaches the window's error handler, tab persistence stops for
+the WHOLE workspace, and nothing tells the user; the next tab change schedules the same timer and
+throws again. Found while designing #789 and not fixed there, because Phase 2 touches this record
+only to add one address-only field: a Source tab persists its `path` and `kind` and never one
+character of the definition it read, for exactly this reason, which narrows the exposure and closes
+nothing. The reasoning is in the `PersistedTabState` docblock at `use-tab-manager.ts:40-60`.
+
+**Done when:** the write is guarded the way `local-storage.ts` guards its own, and the failure is
+observable rather than swallowed - a user whose workspace has stopped persisting is told, since a
+silent `false` here means the tabs on screen are no longer the tabs that will come back.
+
+### X15. The studio tab bar is half the WAI-ARIA tabs pattern
+
+`StudioTabBar.tsx` has the tab half and none of the panel half. Measured 2026-09-13: `:98` is
+`role="tablist"` with `aria-label="Editor tabs"`, `:150-153` gives every tab `role="tab"`,
+`aria-selected` and a roving `tabIndex`, and `:72-79` implements Arrow, Home and End activation. No
+tab carries `aria-controls`, and no element in either shell carries `role="tabpanel"`: the region
+the tabs actually govern is the bare `<main className="flex-1 overflow-hidden relative">` at
+`src/components/Studio.tsx:777` and at `src/workspace/StudioWorkspace.tsx:494`.
+
+So a screen reader announces the tab and its selected state and can never say which region the tab
+governs, and there is no way to move from a tab to its content.
+
+The basis for the "nowhere in `src/`" form of this claim has moved and the entry says so rather than
+repeating it: `grep -rn 'role="tabpanel"' src/` now returns exactly one hit,
+`src/components/object-source/ObjectSourceView.tsx:347`, which is the Source view's own part
+switcher added by #789. That one is the complete pattern, including the rule the studio bar will
+need: only the SELECTED tab may carry `aria-controls`, because only the active panel is in the tree
+and a reference to an absent element is an `aria-valid-attr-value` violation of its own.
+
+It is not a one-line fix, which is why it is here. The panel is ONE element shared by every tab, so
+its `id` has to key on `activeTabId`, and the same element is the mount point for the schema diagram
+overlay, which is not the tab's content at all. Both shells render the bar, so the fix lands twice
+and is verified twice.
+
+**Done when:** the editor region carries `role="tabpanel"`, an id derived from `activeTabId` and
+`aria-labelledby` naming the selected tab, the selected tab alone carries the matching
+`aria-controls`, and both shells are checked, since a UI change verified in one is not verified in
+the other.
 
 ---
 
