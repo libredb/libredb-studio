@@ -1,3 +1,40 @@
+/**
+ * The provider factory's cache, execution profiles, single-writer borrow and shutdown handlers.
+ *
+ * WHY THIS FILE LIVES UNDER `tests/isolated/` AND NOT `tests/unit/db/` (#789).
+ *
+ * It can only pass while it is the FIRST thing in its bun process to evaluate
+ * `@/lib/db/factory`. Two of its setup steps happen exactly once per process and cannot be
+ * repeated: the `mock.module()` calls below, which stand in for six native driver packages
+ * and `@/lib/ssh/tunnel` so that real providers can be constructed without a server, and the
+ * `await import("@/lib/db/factory")` under a temporary `NODE_ENV=production`, which is how the
+ * SIGTERM and SIGINT handlers the module registers on load are captured by diffing
+ * `process.listeners`.
+ *
+ * If any other file in the same process has already evaluated the factory, this file inherits
+ * an already-built module. Nothing registered a shutdown handler at an observable moment, so
+ * the three `shutdown signal handlers` tests fail; and `getOrCreateProvider` caches a provider
+ * built on unmocked drivers, whose entry then throws inside the `clearProviderCache()` in
+ * `beforeEach` and fails every remaining test in the file.
+ *
+ * MEASURED 2026-09-13, so the claim is not an inference from the design:
+ *
+ * - This file alone: 99 pass 0 fail.
+ * - Plus a three-line probe under `tests/unit/` whose only content is
+ *   `import { createDatabaseProvider } from "@/lib/db/factory"`: 44 pass 56 fail. Three of the
+ *   56 are the shutdown tests and 53 are the cascade from the `beforeEach`.
+ * - The same probe importing `@/lib/ssh/tunnel` instead, or `@/lib/db/compatibility`, or doing
+ *   nothing at all: 100 pass 0 fail. So it is the factory specifier and nothing else.
+ * - Both CLI orders give the same 56. bun does not run test files in the order they are
+ *   listed, measured by tracing the console output, so which file wins is not something the
+ *   other file can arrange.
+ *
+ * `tests/isolated/exports-shim.test.ts`'s group comment in `tests/run-components.sh` already
+ * named this hazard from the other side, and the fix there was to move the OTHER file out.
+ * That stopped working when #789 added two `tests/unit` files that construct every provider
+ * through the real factory: a fleet census cannot do its job without importing it. So the
+ * isolation now sits on the file that needs it, and `bun test tests/unit` is clean again.
+ */
 import { describe, test, expect, mock, beforeEach, beforeAll, afterAll } from "bun:test";
 import { open as libreOpen, kv as libreKv } from "@libredb/libredb";
 import { captureContextSnapshot } from "@/lib/agent/context-snapshot";

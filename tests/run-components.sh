@@ -30,7 +30,7 @@ FAIL=0
 # green summary line reported a group count no run had.
 # Drifted again before this line was touched: it read 30 while 32 `run_group` calls
 # existed, so every green run reported a group count no run had. 33 is the grep below.
-TOTAL_GROUPS=42
+TOTAL_GROUPS=43
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -91,6 +91,22 @@ run_group "Group 0a: useStorageSync hook" \
 # Group 0b: Factory singleton (isolated — mocks provider modules which contaminates provider unit tests)
 run_group "Group 0b: Factory singleton" \
   tests/isolated/factory-singleton.test.ts
+
+# Group 0b2: The factory's cache, execution profiles and shutdown handlers (#789).
+# Isolated for the reason Group 0c's comment already named from the other side: this file
+# can only pass while it is the FIRST thing in its process to evaluate `@/lib/db/factory`.
+# It mocks six native driver packages and `@/lib/ssh/tunnel`, then imports the factory under
+# NODE_ENV=production to capture the SIGTERM and SIGINT handlers the module registers on load.
+# Both of those happen once per process, so any earlier evaluation of the factory by another
+# file leaves this one with an already-built module: no handler to capture, and unmocked
+# drivers behind `getOrCreateProvider`, whose cached entry then throws inside the
+# `clearProviderCache()` in `beforeEach` and fails every remaining test in the file.
+# Measured 2026-09-13: a three-line probe under `tests/unit/` whose only content is an import
+# of `@/lib/db/factory` takes this file from 99 pass 0 fail to 44 pass 56 fail, in either CLI
+# order, because bun does not run files in the order they are listed. A probe importing
+# `@/lib/ssh/tunnel` or `@/lib/db/compatibility` instead reproduces nothing.
+run_group "Group 0b2: Factory cache and execution profiles" \
+  tests/isolated/factory.test.ts
 
 # Group 0c: exports CJS shim (isolated — importing it pulls @/lib/db/factory into the
 # module cache, which breaks factory.test.ts's first-import signal-handler capture).
