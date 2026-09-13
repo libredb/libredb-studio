@@ -85,9 +85,19 @@ const DISCONNECTED = "This connection is no longer open, so this definition cann
  * Whether this document is a definition of THIS pane's object (#789).
  *
  * A source document carries the address it answers for, and every provider in the fleet writes
- * it as `path: [...path]` beside the `kind` it was asked for, 55 sites, so a document naming
- * anything else came from a HOST that answered the wrong question or from a shell holding one
- * state slot for two objects. Without this check such a document renders under the asked-for
+ * it as `path: [...path]` beside the `kind` it was asked for, so a document naming anything
+ * else came from a HOST that answered the wrong question or from a shell holding one state
+ * slot for two objects.
+ *
+ * THE NUMBER THAT STOOD HERE COUNTED A DIFFERENT POPULATION, and it is corrected rather than
+ * deleted. It said 55 sites, which is how often `path: [...path]` occurs under `src/lib/db`
+ * altogether. MEASURED on this tree: 24 of those build a source DOCUMENT, counted by
+ * `grep -rn -A6 'path: \[\.\.\.path\]' src/lib/db | grep -cE '\bparts\b'`, and the other
+ * 31 are `describeObject` returns of the shape `{ path: [...path], columns, indexes,
+ * foreignKeys }`, which carry no `kind` and are not this claim's subject. The claim itself is
+ * unchanged and holds at all 24. What actually holds a provider to it is the conformance
+ * helper, which compares a document's `path` and `kind` against the request it was built from,
+ * not the count. Without this check such a document renders under the asked-for
  * name, in the header and on the tab, with nothing on screen saying so: the same fault the
  * `search` and `mongodb` providers were fixed for one level down.
  *
