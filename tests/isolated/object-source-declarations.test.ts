@@ -295,6 +295,63 @@ describe("the fleet census of object source declarations", () => {
     expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(60);
   });
 
+  /*
+    THE PAIRING, WHICH THE CENSUS PINNED NOWHERE UNTIL THE EXTERNAL REVIEW OF PR #820 (#789).
+
+    Everything above this test reads DECLARATIONS. A kind can declare `hasSource` with no
+    `readObjectSource` behind it, which is Phase 1's exact hole in its Phase 2 spelling: the row
+    menu offers View Source, the route resolves the kind, and the read then lands on a method the
+    provider never implemented. The only guard that saw it was `assertObjectSurface`, which needs
+    a LIVE ENGINE, so on a machine with no containers the guard did not exist at all, and a CI
+    job that skips the integration engines is that machine.
+
+    The relation is a BICONDITIONAL, and both directions are real defects rather than one defect
+    and one tidiness rule:
+
+    - a method with no source-bearing kind is a reader nothing can reach, so the method is either
+      dead or the declaration that fed it was deleted;
+    - a source-bearing kind with no method is a Source tab that fails at the read.
+
+    Both were mutated. With `hasSource` stripped from redis's `function`, the first arm fails by
+    name; with `hasSource: true` added to a druid kind, the second does. The numbers are in the
+    task report.
+  */
+  test("a type-id declares source-bearing kinds if and only if it implements readObjectSource", async () => {
+    const implementers: string[] = [];
+    const abstainers: string[] = [];
+    const mismatches: string[] = [];
+    for (const type of CENSUS_TYPES) {
+      const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
+      const sourceKinds = declaredKinds(provider.getCapabilities()).filter((kind) => kind.hasSource === true);
+      // `typeof` on the built provider and not `"readObjectSource" in provider`: the property is
+      // optional on the interface, so an `in` test walks the prototype chain and would answer
+      // true for anything the base class ever grows under that name.
+      const implemented = typeof provider.readObjectSource === "function";
+      (implemented ? implementers : abstainers).push(type);
+      if (implemented !== sourceKinds.length > 0) {
+        mismatches.push(
+          `${type}: ${sourceKinds.length} source-bearing kind(s) and readObjectSource is ` +
+            `${implemented ? "implemented" : "absent"}`,
+        );
+      }
+    }
+    expect(mismatches).toEqual([]);
+
+    // THE POPULATION, asserted rather than assumed, because a biconditional is satisfied by a
+    // population that holds only one side of it. A run that reached no abstainer certifies
+    // nothing about the "declares source with no method" direction, and a run that reached no
+    // implementer certifies nothing about the other.
+    expect([...implementers].sort()).toEqual(
+      CENSUS_TYPES.filter((type) => SOURCE_DECLARATIONS[type].length > 0)
+        .map((type) => String(type))
+        .sort(),
+    );
+    // Druid and the embedded store are the fleet's two abstainers, and both are deliberate: each
+    // provider doc records what its engine publishes instead of a definition text.
+    expect([...abstainers].sort()).toEqual(["druid", "libredb"]);
+    expect(implementers.length + abstainers.length).toBe(CENSUS_TYPES.length);
+  });
+
   test("no kind declares a sourceLanguage without hasSource, which every other gate is blind to", async () => {
     // The population is the unconnected fleet PLUS the MariaDB branch, and the second half is
     // here because of a mutation this task ran rather than because of a worry. MEASURED: with the

@@ -29,7 +29,10 @@ FAIL=0
 # the third drift was caught (#331 T5): 26 was declared while 27 calls existed, so the
 # green summary line reported a group count no run had.
 # Drifted again before this line was touched: it read 30 while 32 `run_group` calls
-# existed, so every green run reported a group count no run had. 33 is the grep below.
+# existed, so every green run reported a group count no run had. The comment then went
+# stale a fourth time by naming a DIGIT for the current value, which is the one thing
+# here that cannot stay true: the value is whatever that grep prints, never a number
+# written in prose.
 TOTAL_GROUPS=44
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
