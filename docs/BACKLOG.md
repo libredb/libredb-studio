@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D68, U17 · 28
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X15, U2–U21 · 9
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X16, U2–U21 · 10
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -1099,6 +1099,48 @@ and is verified twice.
 `aria-labelledby` naming the selected tab, the selected tab alone carries the matching
 `aria-controls`, and both shells are checked, since a UI change verified in one is not verified in
 the other.
+
+### X16. Opened at `127.0.0.1`, the dev server serves a page that never becomes interactive
+
+MEASURED on 2026-09-13 against Next.js 16.3.4 with Turbopack, in two independent browsers
+(Playwright's Chromium and Chrome over CDP), while doing the browser QA for #789.
+
+`bun dev` prints `http://localhost:<port>`. Open the SAME server at `http://127.0.0.1:<port>`
+instead and the page renders its server HTML and then does nothing at all: no button responds, the
+login form submits natively to `/login?` and clears itself, and `POST /api/auth/login` is never
+made. `Object.keys(document.querySelector('#email'))` carries no `__react*` key, so React never
+hydrated. The only console output is one repeated
+`WebSocket connection to 'ws://127.0.0.1:<port>/_next/hmr' failed: Error during WebSocket
+handshake: net::ERR_INVALID_HTTP_RESPONSE`.
+
+THE CAUSE IS THE DEV SERVER'S OWN ORIGIN CHECK ON THAT SOCKET, isolated with a control rather than
+inferred. The same upgrade request, differing only in one header, run from the shell:
+
+| Request to `/_next/hmr` | Answer |
+| --- | --- |
+| no `Origin` header | `HTTP/1.1 101 Switching Protocols` |
+| `Origin: http://localhost:<port>` | `HTTP/1.1 101 Switching Protocols` |
+| `Origin: http://127.0.0.1:<port>` | the connection is closed with no HTTP response at all |
+| `Origin: http://192.168.1.66:<port>` | the connection is closed with no HTTP response at all |
+
+That empty answer is what the browser reports as `ERR_INVALID_HTTP_RESPONSE`, and the dev client's
+bootstrap does not survive it. The chain closes both ways: served by the same process at the same
+moment, `http://localhost:<port>/login` hydrates and `http://127.0.0.1:<port>/login` does not.
+
+Next 16 has a configuration key for exactly this and this repository sets none:
+`grep -rn 'allowedDevOrigins' src/ next.config.ts` returns nothing. The production path is
+unaffected, measured: `bun run build` plus `bun run start` hydrates at `127.0.0.1` and every part of
+#789's browser pass ran there.
+
+It is filed rather than fixed because the value is a decision rather than a typo. The key names the
+origins a developer's browser may drive the dev server from, so widening it widens a control Next
+added deliberately, and `127.0.0.1` and a LAN address are not the same call. The cost of leaving it
+is a developer who types the loopback address, or opens the LAN URL `bun dev` also prints, meeting a
+dead page with one obscure console line.
+
+**Done when:** `bun dev` opened at `127.0.0.1` and at the LAN address the banner prints is
+interactive, either by configuring `allowedDevOrigins` or by not printing a URL that does not work,
+and a note in `docs/TOOLCHAIN.md` records which and why.
 
 ---
 
