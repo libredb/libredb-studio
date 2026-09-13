@@ -3394,8 +3394,11 @@ describe("object source", () => {
         { id: "projection", role: "config", label: "Projection", labelPlural: "Projections", hasSource: true },
       ],
     });
+    // The engine's name is part of the refusal and it now reaches the shared guard as an argument
+    // (#789), so a provider passing the wrong literal would attribute ClickHouse's refusal to
+    // another engine. Pin it here as well as on the two arms above.
     await expect(provider.readObjectSource([OBJECT_DATABASE, "p"], "projection")).rejects.toThrow(
-      /declares readable source for the kind "projection" and no sourceLanguage to render it with/,
+      /ClickHouse declares readable source for the kind "projection" and no sourceLanguage to render it with/,
     );
 
     // Declared readable, with a language, and no catalog behind it.

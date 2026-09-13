@@ -318,7 +318,17 @@ describe("requireSourceKind", () => {
   });
 
   test("every raise is a QueryError carrying the engine's own type id, never a bare Error", () => {
-    for (const kind of ["materialized_view", "column", "trigger"]) {
+    // This loop is the only place in the repository that asserts `raised.provider` and
+    // `instanceof QueryError` for all three arms, so a zero-iteration state would let the helper
+    // answer a bare Error with no provider id and leave this file green. The floor therefore counts
+    // the iterations the loop actually ran, over the same named const it iterates. Measured on
+    // 2026-09-13: the previous floor asserted `toHaveLength(3)` on a SECOND freshly written literal,
+    // so replacing the loop's array with `[] as string[]` still reported 35 pass 0 fail, with
+    // expect() calls falling from 60 to 48 as the only trace. With the counter below, the same
+    // emptying fails this test by name.
+    const arms = ["materialized_view", "column", "trigger"];
+    let raisedArms = 0;
+    for (const kind of arms) {
       let raised: unknown;
       try {
         requireSourceKind(sourceKinds, kind, { displayName: "Trino", type: "trino" });
@@ -330,9 +340,11 @@ describe("requireSourceKind", () => {
       expect(raised.provider).toBe("trino");
       expect(raised.message).toContain("Trino");
       expect(raised.message).toContain(`"${kind}"`);
+      raisedArms += 1;
     }
-    // The loop above certifies nothing if it never ran, and the three ids are the three arms.
-    expect(["materialized_view", "column", "trigger"]).toHaveLength(3);
+    if (raisedArms !== 3) {
+      throw new Error(`requireSourceKind arms: expected 3 iterations, ran ${raisedArms}`);
+    }
   });
 
   test("an engine declaring no kinds at all raises the unknown-kind sentence, not a crash", () => {

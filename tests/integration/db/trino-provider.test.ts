@@ -3137,8 +3137,11 @@ describe("Trino object source", () => {
       ...real,
       objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables", hasSource: true }],
     });
+    // The engine's name is part of the refusal and it now reaches the shared guard as an argument
+    // (#789), so a provider passing the wrong literal would attribute Trino's refusal to another
+    // engine. Pin it here as well as on the two arms above.
     await expect(provider.readObjectSource!(["memory", "app", "customers"], "table")).rejects.toThrow(
-      'declares readable source for the kind "table" and no sourceLanguage to render it with',
+      'Trino declares readable source for the kind "table" and no sourceLanguage to render it with',
     );
     noLanguage.mockRestore();
   });
