@@ -1,7 +1,14 @@
 // src/workspace/types.ts
 import type { DatabaseType, SavedQuery, QueryWarning } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
-import type { Container, DatabaseObject, KindCount, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import type {
+  Container,
+  DatabaseObject,
+  KindCount,
+  ObjectSourceDocument,
+  ProviderCapabilities,
+  ProviderLabels,
+} from "@/lib/db/types";
 
 // === Connection (platform → studio) ===
 
@@ -86,6 +93,28 @@ export interface WorkspaceObjectReader {
   countObjects(connectionId: string, container: readonly string[]): Promise<Record<string, KindCount>>;
   /** The objects of one container and one kind, which is one opened folder. */
   listObjects(connectionId: string, container: readonly string[], kind: string): Promise<readonly DatabaseObject[]>;
+  /**
+   * One object's definition text, if this host can read one (#789 Phase 2).
+   *
+   * OPTIONAL, and the absence is the documented shape of a thing a shell cannot do rather than
+   * an error: when it is missing the workspace passes no `onViewSource`, so the tree offers no
+   * action, activation opens no tab, and nothing can fail. An adopter who does nothing sees the
+   * tree exactly as it is today; an adopter who implements one method gets the feature.
+   *
+   * That distinction is what keeps this from repeating B76, whose regression was a surface that
+   * ERRORED on every connection: the tree self-fetched `/api/db/objects/*` through a payload
+   * this shell cannot fill, and every engine refused it by name. An absent affordance is not a
+   * regression; a read that cannot succeed is.
+   *
+   * A host implementing this owes the same guarantees a provider does, because nothing
+   * type-checks a host and the provider conformance helper never runs against one: at least one
+   * part, never a part carrying both a text and a refusal, never an empty text, never an empty
+   * refusal sentence, unique part ids, a Monaco language id the editor registers, and a RAISE
+   * rather than a document for an object it cannot find. What the workspace does NOT trust is
+   * checked at the seam: a document failing that check is reported as a failed read, with the
+   * viewer's own sentence, and never rendered.
+   */
+  readObjectSource?(connectionId: string, path: readonly string[], kind: string): Promise<ObjectSourceDocument>;
 }
 
 // === User (platform → studio) ===

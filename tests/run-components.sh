@@ -30,7 +30,7 @@ FAIL=0
 # green summary line reported a group count no run had.
 # Drifted again before this line was touched: it read 30 while 32 `run_group` calls
 # existed, so every green run reported a group count no run had. 33 is the grep below.
-TOTAL_GROUPS=41
+TOTAL_GROUPS=42
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -375,6 +375,17 @@ run_group "Group 27: Object source viewer" \
 # answers globalThis.fetch for the source route.
 run_group "Group 28: Studio source tab" \
   tests/components/studio/source-tab.test.tsx
+
+# Group 29: The EMBEDDED shell's Source tab (#789). Its own group for Group 28's three reasons
+# and one more that is this file's alone. It installs a process-wide @monaco-editor/react double,
+# as Groups 15, 27 and 28 each install a different one; it mounts the REAL adapter, the REAL
+# sidebar, the REAL use-tab-manager and the REAL StudioTabBar, all of which Group 17 replaces
+# process-wide; and it replaces globalThis.fetch to prove NO route is asked, which is the whole
+# point on this shell, since the published package ships no API routes at all. It is separate
+# from Group 26, which is the same shell's tree, because this one also doubles the studio barrel
+# to capture the bottom panel's props.
+run_group "Group 29: Embedded workspace source tab" \
+  tests/components/studio/embedded-source.test.tsx
 
 # Summary
 echo ""

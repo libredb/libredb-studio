@@ -5,6 +5,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { ObjectSource } from "@/components/object-tree";
+import type { ObjectSourceReader } from "@/components/object-source";
 import { useReadGeneration } from "@/hooks/use-read-generation";
 import type { WorkspaceConnection, WorkspaceObjectReader } from "@/workspace/types";
 
@@ -169,6 +170,30 @@ export function useConnectionAdapter({
     [onObjectsFetch],
   );
 
+  /**
+   * The source read's own seam, which is not a tree read (#789 Phase 2).
+   *
+   * Beside `objectSource` and deliberately not a fourth arm inside it. That switch is
+   * exhaustive with no `default`, so a fourth arm would have to produce a value for a host that
+   * declared no `readObjectSource`, which is a state the seam does not reach at all: this value
+   * is `undefined` in exactly that case, and an absent reader is what removes the affordance.
+   * The tree's request union is also the tree CACHE's vocabulary, and a definition is not a
+   * cached listing.
+   *
+   * `undefined` when the host declared nothing, which is the B76 answer rather than an errored
+   * read: no reader, so no `onViewSource`, so no menu item, so no tab, so nothing to fail.
+   *
+   * `useMemo` for the same reason `objectSource` is one: the viewer's read effect lists its
+   * reader among its dependencies, so a value rebuilt on every render would re-run it, and the
+   * connection arrives as an ARGUMENT rather than through this closure so the identity does not
+   * move when the selection does.
+   */
+  const sourceReader = useMemo<ObjectSourceReader | undefined>(() => {
+    const read = onObjectsFetch.readObjectSource;
+    if (read === undefined) return undefined;
+    return (conn, path, kind) => read(conn.id, path, kind);
+  }, [onObjectsFetch]);
+
   const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
 
   // The embedded shell's stand-in for `useProviderMetadata`: it has no
@@ -202,6 +227,8 @@ export function useConnectionAdapter({
     objectScanDeferred: activeConnection !== null && scanDeferred(activeConnection),
     loadObjects,
     objectSource,
+    /** The host's own source read, or `undefined` where it declared none. */
+    sourceReader,
     schemaContext,
   };
 }
