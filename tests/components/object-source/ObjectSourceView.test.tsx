@@ -69,6 +69,7 @@ import {
   type ObjectSourcePatch,
   type ObjectSourceReader,
 } from "@/components/object-source";
+import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
 import type { ObjectSourceDocument } from "@/lib/db/types";
 import { STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib/editor/monaco-theme";
@@ -801,6 +802,96 @@ describe("ObjectSourceView", () => {
     expect(screen.queryByRole("tablist")).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.getByText("The text for object 'customer_summary' is encrypted.")).toBeTruthy();
+  });
+
+  /**
+   * THE HOST PATH HAS NO ROUTE IN FRONT OF IT, so the two bounds live in the shape check (#789).
+   *
+   * `/api/db/objects/source` applies `SOURCE_CHARACTER_LIMIT` and `SOURCE_PART_LIMIT` to every
+   * answer it serialises, and the EMBEDDED shell calls none of it: the document comes back from a
+   * host function and goes straight into this component. Without the bounds a host could hand the
+   * shell tens of megabytes per part and any number of parts.
+   *
+   * An overrun is reported as a FAILED READ and never as a silent truncation, because this seam
+   * cannot say whether the host already cut the text and a mark it composed would be a claim
+   * about a cut it did not make.
+   */
+  test("refuses a host part whose text is longer than the route's own character bound", async () => {
+    const huge: ObjectSourceDocument = {
+      path: [...PATH],
+      kind: "package",
+      parts: [{ ...oneReadablePart.parts[0], text: "x".repeat(SOURCE_CHARACTER_LIMIT + 1) }],
+    };
+    render(<Harness reader={readerFor(huge)} />);
+
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "The source read answered with a body this viewer cannot render.",
+    );
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  test("accepts a host part sitting exactly ON the character bound, so the bound is not off by one", async () => {
+    // The CONTROL for the test above: the bound is what the route itself emits after cutting, so
+    // refusing a text OF that length would refuse every truncated definition the route answers.
+    const exact: ObjectSourceDocument = {
+      path: [...PATH],
+      kind: "package",
+      parts: [{ ...oneReadablePart.parts[0], text: "x".repeat(SOURCE_CHARACTER_LIMIT) }],
+    };
+    render(<Harness reader={readerFor(exact)} />);
+
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+    expect(editorValue()).toHaveLength(SOURCE_CHARACTER_LIMIT);
+  });
+
+  test("refuses a host document carrying more parts than the route will carry", async () => {
+    const many = {
+      path: [...PATH],
+      kind: "package",
+      parts: Array.from({ length: SOURCE_PART_LIMIT + 1 }, (_unused, index) => ({
+        ...oneReadablePart.parts[0],
+        id: `p${index}`,
+        label: `Part ${index}`,
+      })),
+    } as unknown as ObjectSourceDocument;
+    render(<Harness reader={readerFor(many)} />);
+
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  test("accepts a host document holding exactly the part bound, so the bound is not off by one", async () => {
+    const many = {
+      path: [...PATH],
+      kind: "package",
+      parts: Array.from({ length: SOURCE_PART_LIMIT }, (_unused, index) => ({
+        ...oneReadablePart.parts[0],
+        id: `p${index}`,
+        label: `Part ${index}`,
+      })),
+    } as unknown as ObjectSourceDocument;
+    render(<Harness reader={readerFor(many)} />);
+
+    await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(SOURCE_PART_LIMIT));
+  });
+
+  test("refuses a host refusal SENTENCE longer than a text is allowed to be", async () => {
+    /*
+     * A refusal is a text this component renders, and the route carries it through untouched on
+     * the reasoning that a refusal has nothing to bound. So the sentence was the one string on
+     * this surface with no bound at all, on both paths.
+     */
+    const shouting: ObjectSourceDocument = {
+      path: [...PATH],
+      kind: "package",
+      parts: [{ id: "body", label: "Package body", unavailable: "u".repeat(SOURCE_CHARACTER_LIMIT + 1) }],
+    };
+    render(<Harness reader={readerFor(shouting)} />);
+
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(screen.queryByTestId("object-source-refused")).toBeNull();
   });
 
   test("the barrel re-exports the live shape check, not a second copy of it", () => {

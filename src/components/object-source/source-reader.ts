@@ -1,5 +1,6 @@
 import { appFetch } from "@/lib/config/base-path";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
+import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT } from "@/lib/db/object-kinds";
 import type { ObjectSourceDocument, ObjectSourceForm, ObjectSourceOrigin } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -76,8 +77,11 @@ function isPartShape(part: unknown): boolean {
   // Both keys at once is the collapse, and it is checked BEFORE either arm is examined,
   // because each arm on its own would accept the part.
   if (Object.hasOwn(part, "unavailable") && Object.hasOwn(part, "text")) return false;
-  if (Object.hasOwn(part, "unavailable")) return isFilledString(part.unavailable);
+  if (Object.hasOwn(part, "unavailable")) {
+    return isFilledString(part.unavailable) && part.unavailable.length <= SOURCE_CHARACTER_LIMIT;
+  }
   if (!isFilledString(part.text)) return false;
+  if (part.text.length > SOURCE_CHARACTER_LIMIT) return false;
   if (!isFilledString(part.language)) return false;
   if (!FORMS.includes(part.form as string)) return false;
   if (!ORIGINS.includes(part.origin as string)) return false;
@@ -104,6 +108,21 @@ function isPartShape(part: unknown): boolean {
  *     measured in its source: an unreadable definition in a WRITABLE editor holding one line;
  *   - a truncation mark with no reason is a warning banner with nothing in it.
  *
+ * THE TWO BOUNDS ARE CHECKED HERE TOO, and that is the half the first round left open (#789).
+ * The route applies `SOURCE_CHARACTER_LIMIT` and `SOURCE_PART_LIMIT` to every answer it
+ * serialises, and the EMBEDDED shell has no route at all: its document comes from a host
+ * function, so without these two lines a host could hand the shell tens of megabytes per part
+ * and any number of parts, and the only thing between that and Monaco was this predicate. The
+ * refusal SENTENCE is bounded by the same number as a text, because it is a text this component
+ * renders and the route carries it through untouched.
+ *
+ * AN OVERRUN IS A FAILED READ, never a silent truncation, and that is a decision rather than a
+ * shortcut: `truncated` is a claim about WHERE the cut was made and by whom, and this seam
+ * cannot make it honestly. It does not know whether the host already cut the text, so a mark
+ * composed here would either restate the host's bound as ours or hide that two cuts happened.
+ * The viewer's failure grammar says what it can say, which is that the read answered a body it
+ * cannot render.
+ *
  * Two parts sharing one id is rejected for a different reason, and it is the switcher's:
  * `activePartId` addresses a part by id, so two parts under one id make the selection
  * unresolvable and a click on the second tab select the first.
@@ -113,6 +132,7 @@ export function isSourceDocumentShape(value: unknown): value is ObjectSourceDocu
   if (!Array.isArray(value.path) || !value.path.every((segment) => typeof segment === "string")) return false;
   if (typeof value.kind !== "string") return false;
   if (!Array.isArray(value.parts) || value.parts.length === 0) return false;
+  if (value.parts.length > SOURCE_PART_LIMIT) return false;
   if (!value.parts.every(isPartShape)) return false;
   const ids = new Set((value.parts as Record<string, unknown>[]).map((part) => part.id as string));
   if (ids.size !== value.parts.length) return false;
