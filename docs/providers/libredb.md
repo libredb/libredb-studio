@@ -795,6 +795,57 @@ own database (`findOpenSingleWriterProvider`). The suite pins it: it asserts tha
 of the fixture throws while the provider holds it, then drives all four object methods and a
 the object surface through the held handle.
 
+#### Object source (#789): the absence is measured, and one of the three kinds is interesting
+
+No kind declares `hasSource`, this provider implements no `readObjectSource`, and
+`assertObjectSurface` certifies that pairing directly: a declaration with no method behind it fails
+the suite by name. The provider's own suite pins the same absence from the other side, kind by kind
+and through `kindHasSource()`, which is the derivation the route and the row menu read.
+
+**The measurement was re-run for #789 rather than carried over**, because a version bump could have
+changed the answer and the whole value of this section is that the absence is measured instead of
+assumed. Against `@libredb/libredb` **0.2.2**, the exact version this repository resolves:
+
+- The package's whole export surface is **twelve names** - `CATALOG_PREFIX`, `LibreDbError`,
+  `RESERVED_MARKER`, `catalog`, `doc`, `isReservedKey`, `kv`, `nodeFileSystem`, `open`,
+  `readonlyFileSystem`, `table`, `version`.
+- A `Database` handle publishes `close` and `transact`. The `kv` lens publishes `get`, `set`,
+  `delete`, `prefix`, `range`; the `doc` lens `get`, `put`, `delete`, `find`, `all`; the `table` lens
+  `get`, `insert`, `delete`, `all`, `select`, `where`, `join`, `name`.
+- There is no view, no routine, no procedure, no trigger, no index, no sequence and no constraint
+  anywhere in any of them, and **nothing takes or returns a definition text**. Every reader answers
+  keys, documents or rows.
+
+That covers `collection` and `keyspace` outright, and each for its own reason. A cataloged document
+namespace records `{ kind: "document" }` and nothing else - documents are schemaless, so existence
+and kind are all there is to record - and a `keyspace` row is a prefix this server DERIVED from a
+bounded key scan rather than an object anybody named
+([the derived-grouping refusal](#the-derived-grouping-refusal-and-the-declaration-that-carries-it)),
+so there is no authored anything for it to have.
+
+**`table` is the one that needed a decision, and the answer is still no.** A relational table's
+catalog entry does carry a structure, and it is genuinely persisted: `recordRelational` writes a
+`CatalogEntry` as JSON under the reserved catalog key, and `catalog(db)` reads it back as
+`{ primaryKey, columns }`. So the flat claim "nothing here is written down" would be too strong.
+Three measured facts keep it out of the source surface anyway:
+
+- **It is already on screen, as itself.** That same map is exactly what `describeObject()` answers as
+  the table's columns ([above](#what-describeobject-answers)). A Source tab over it would be a second
+  rendering of a panel that already shows it in the form the user wants it in.
+- **Nothing could re-apply an edited one.** #789 is the read half of #778, which is editing a
+  definition, and this engine has no statement to submit an edit through: the grammar is
+  `get` / `put` / `delete` / `prefix` / `range` ([§5.1](#51-command-grammar)), `supportsCreateTable`
+  is false, and the package itself refuses the operation - `recordRelational` validates a passed
+  schema against the persisted one and **throws on mismatch**, because there is no schema migration
+  in 0.2.x. A Source tab that can only ever be read is a worse answer than no tab.
+- **Showing it as a statement would mean inventing one.** There is no `CREATE TABLE` in this engine,
+  so any statement-shaped rendering would be a sentence no one can run against the database it claims
+  to describe, which is the fabrication the `origin` arms exist to prevent.
+
+So the absence here is a CANNOT-usefully rather than a not-yet, and it is recorded in this file
+rather than filed, because there is no deferred work behind it: the day this package grows a routine,
+a view or a schema-altering statement is the day the question is worth reopening.
+
 ---
 
 ## 7. Monitoring & health

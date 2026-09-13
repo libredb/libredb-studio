@@ -52,7 +52,7 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { DRUID_CONTAINER_LEVELS, DRUID_OBJECT_KINDS } from "@/lib/db/providers/sql/druid/objects";
-import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import { callerBoundTruncationReason, kindHasSource } from "@/lib/db/object-kinds";
 import { getExplainStrategy } from "@/lib/explain";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { ExplainTreeNode } from "@/lib/explain/types";
@@ -1919,6 +1919,46 @@ describe("object surface", () => {
     // Druid SQL has no row-level DML at all, which is the same measurement behind
     // `supportsInlineRowEdit: false`, so no kind accepts a row write.
     expect((capabilities.objectKinds ?? []).every((kind) => kind.acceptsRowWrites === undefined)).toBe(true);
+    await provider.disconnect();
+  });
+
+  /**
+   * The ABSENCE, asserted in both directions (#789).
+   *
+   * Druid contributes no Source tab, and this is what says so on purpose rather than by
+   * nobody having written a read yet. The population is pinned BY NAME first, because a
+   * `some`, a `filter` and an `every` over an empty array each answer the thing this test
+   * wants to hear, so a declaration that lost every kind would certify the absence of
+   * source over nothing at all.
+   *
+   * `kindHasSource` is driven per kind rather than only the raw field: that derivation is
+   * what the route and the row menu read, so it is the answer that decides whether a Source
+   * tab can be opened at all, and a kind could in principle satisfy one and not the other.
+   *
+   * The pairing itself - a declaration and a method that must agree - lives outside every
+   * loop in `assertObjectSurface`, and the conformance test below is what drives it. Which
+   * of the three reasons each kind's absence is, is in `docs/providers/druid.md` section 6.1.
+   */
+  test("declares no source-bearing kind and implements no source read", async () => {
+    const provider = await connectProvider();
+    const capabilities = provider.getCapabilities();
+    const kinds = capabilities.objectKinds ?? [];
+
+    expect(kinds.map((kind) => kind.id)).toEqual(["datasource", "lookup", "system_table"]);
+    expect(kinds.filter((kind) => kind.hasSource === true).map((kind) => kind.id)).toEqual([]);
+    expect(kinds.filter((kind) => kind.hasSource !== true).map((kind) => kind.id)).toEqual([
+      "datasource",
+      "lookup",
+      "system_table",
+    ]);
+    expect(kinds.filter((kind) => kind.sourceLanguage !== undefined).map((kind) => kind.id)).toEqual([]);
+    expect(kinds.map((kind) => kindHasSource(capabilities, kind.id))).toEqual([false, false, false]);
+    // Through the INTERFACE, because `DruidProvider` does not declare the optional member at
+    // all: `provider.readObjectSource` is a compile error on the concrete class, which is a
+    // stronger guarantee than this assertion and the reason the widening is deliberate.
+    const source: DatabaseProvider = provider;
+    expect(source.readObjectSource).toBeUndefined();
+
     await provider.disconnect();
   });
 

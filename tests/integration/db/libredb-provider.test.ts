@@ -14,10 +14,11 @@ import {
 } from "@/lib/db/providers/embedded/libredb";
 import { ConnectionError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseProvider } from "@/lib/db/types";
 import { open, kv, doc, table, CATALOG_PREFIX } from "@libredb/libredb";
 import { buildObjectFixture } from "../../../docker/libredb-init/01-object-fixture";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
-import { containerDepth } from "@/lib/db/object-kinds";
+import { containerDepth, kindHasSource } from "@/lib/db/object-kinds";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -595,8 +596,26 @@ describe("LibreDBProvider object surface (#789)", () => {
     // No kind accepts row writes: the grammar has get/put/delete/prefix/range and no
     // INSERT, so Generate Test Data and the create-object item have nothing to emit.
     expect(capabilities.objectKinds?.some((kind) => kind.acceptsRowWrites === true)).toBe(false);
-    // Nothing here has readable source: the package publishes no routine of any kind.
-    expect(capabilities.objectKinds?.some((kind) => kind.hasSource === true)).toBe(false);
+    // Nothing here has readable source, and this is the whole of that claim rather than
+    // the half a `some` can carry (#789). The population is pinned by the assertion above,
+    // so the three below are not being taken over an empty array: `@libredb/libredb` 0.2.2
+    // publishes no view, routine, procedure, trigger, index, sequence or constraint, and
+    // the one structure the catalog does persist for a `table` is the SAME column map
+    // `describeObject` already answers. `docs/providers/libredb.md` section 6.1 records
+    // which absence each kind is.
+    const kinds = capabilities.objectKinds ?? [];
+    expect(kinds.filter((kind) => kind.hasSource === true).map((kind) => kind.id)).toEqual([]);
+    expect(kinds.filter((kind) => kind.sourceLanguage !== undefined).map((kind) => kind.id)).toEqual([]);
+    // The derivation the route and the row menu actually read, per kind, rather than the
+    // raw field alone.
+    expect(kinds.map((kind) => kindHasSource(capabilities, kind.id))).toEqual([false, false, false]);
+    // The other half of the pairing `assertObjectSurface` certifies below: a declaration
+    // with no method behind it would surface as a 400 at runtime rather than a red build.
+    // Through the INTERFACE, because `LibreDBProvider` does not declare the optional member at
+    // all: `provider.readObjectSource` is a compile error on the concrete class, which is a
+    // stronger guarantee than this assertion and the reason the widening is deliberate.
+    const source: DatabaseProvider = provider;
+    expect(source.readObjectSource).toBeUndefined();
   });
 
   test("object surface conformance against the fixture", async () => {

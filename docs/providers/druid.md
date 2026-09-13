@@ -1297,6 +1297,68 @@ through `spyOn` and driving the reads to a bound value - with a catalog segment 
 something other than `druid`, because Druid's catalog and its main schema share that name and a test
 written with the engine's own names would certify the defect it exists to catch.
 
+#### Object source (#789): nothing to read, and three different reasons
+
+Druid contributes **no Source tab and no `unavailable` sentence**, and that is a different answer
+from "the read was refused". No kind declares `hasSource`, the provider implements no
+`readObjectSource`, and `assertObjectSurface` certifies that pairing directly: a declaration with no
+method behind it, or a method with no declaration in front of it, fails the suite by name. The
+provider's own suite pins the same absence from the other side, kind by kind and through
+`kindHasSource()`, which is the derivation the route and the row menu read.
+
+The three kinds are absent from the source surface for **three different reasons**, and collapsing
+them into one "Druid has no source" sentence would lose the only one of them that is work somebody
+could do:
+
+| Kind | Why there is no source read | Which fact it is |
+|---|---|---|
+| `datasource` | the engine publishes no definition text for it, anywhere | the engine has no such text at all |
+| `system_table` | the engine publishes no definition text for it, anywhere | the engine has no such text at all |
+| `lookup` | it HAS a JSON definition, and it lives on a REST API this provider's transport cannot address | it exists somewhere this product does not reach, and it is filed |
+
+**`datasource` and `system_table`: there is no text, so there is nothing to refuse.** This is the
+same measurement the declaration rests on, one level down. `CREATE` in any form is a syntax error and
+the parser answers by enumerating every statement it expected, with no form of `CREATE` among them
+(the refusal is quoted in full under [the declaration](#the-declaration) above). A datasource comes
+into existence by ingestion, and a system table is compiled into the Broker; neither was ever written
+down as a statement, so there is no stored text, no regenerable statement and nothing to render. A
+refusal part would be worse than the absence, because a refusal sentence tells a user the read failed
+when in truth there was never anything to read.
+
+**`lookup`: the definition exists and this transport cannot address it.** A lookup is the one kind
+here that a person really does author, as a JSON spec, and four separate facts make reading it a
+transport change rather than a source read:
+
+- **Where the definition is.** A lookup is registered by posting its spec to the Coordinator, and
+  `GET /druid/coordinator/v1/lookups/config/{tier}/{id}` answers that spec back. DOCUMENTED against
+  the Druid 37.0.0 API reference and **not** measured against a cluster here, which is exactly why
+  the first step of the filed work is to measure it.
+- **What SQL answers instead, and why it is not the definition.** Measured on 37.0.0:
+  `SELECT * FROM lookup.<name>` returns the key and value PAIRS, and `INFORMATION_SCHEMA.COLUMNS`
+  describes them as `k` and `v`. Those pairs are the lookup's CONTENT. The spec's type (`map` versus
+  `cachedNamespace`), its polling period and the namespace it extracts from appear nowhere in SQL, so
+  rendering the pairs under a caption that says "definition" would show a user something that is not
+  the definition, which is the failure the `rendered` origin exists to prevent.
+- **Why it is the transport that would have to change.**
+  [`transport.ts`](../../src/lib/db/providers/sql/druid/transport.ts) publishes exactly two members,
+  `query(sql, opts)` and `close()`, and `query` takes a SQL string: there is no member that can
+  address any other path on the cluster. Nor can provider logic reach around it, because
+  [`tests/unit/db/druid/seam-guard.test.ts`](../../tests/unit/db/druid/seam-guard.test.ts) parses
+  every file in the provider directory and **fails the build** when a bare `fetch` or an endpoint
+  path appears outside [`http-transport.ts`](../../src/lib/db/providers/sql/druid/http-transport.ts).
+  So the smallest honest version of this read is a new seam member plus its one implementation, which
+  is a change to the contract every other read in this provider shares.
+- **And the connection may not reach the Coordinator at all.** The connection carries one host and
+  one port ([§3.3](#33-router-8888-or-broker-8082--both-work-identically)). A Broker-only deployment
+  serves the SQL endpoint and no Coordinator API whatsoever, and a Router serves it only when
+  `druid.router.managementProxy.enabled` is set, which `database-compose.yml` does set for this
+  repository's own cluster and a production deployment need not. So the read would have to be able to
+  come back empty-handed for a reason that is about the deployment rather than about the object,
+  which is a refusal sentence this provider does not have today.
+
+That last one is the reason `lookup` is a **deferral and not an absence**, and it is filed in
+[`docs/BACKLOG.md`](../BACKLOG.md) with this measurement rather than only here.
+
 ## 7. Monitoring & health
 
 Every read below degrades to empty/zero when the failure `isMonitoringUnavailable()` —
