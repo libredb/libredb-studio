@@ -54,7 +54,13 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+} from "@/lib/db/object-kinds";
 import {
   type ActiveSessionDetails,
   type Container,
@@ -68,6 +74,7 @@ import {
   type MaintenanceType,
   type ObjectDetail,
   type ObjectDetailBatch,
+  type ObjectSourceDocument,
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
@@ -99,6 +106,7 @@ import {
   TRINO_MATERIALIZED_VIEW_KIND,
   type KindCountRow,
   type TrinoContainer,
+  type TrinoObjectRead,
   applyKindCounts,
   objectDetailFromRows,
   objectKey,
@@ -114,8 +122,15 @@ import {
   trinoMaterializedViewListSql,
   trinoObjectColumnsSql,
   trinoObjectCountsSql,
+  TRINO_SOURCE_PART_ID,
+  trinoArgumentSignature,
+  trinoCreateSignature,
+  trinoObjectSourceSql,
   trinoRelationListSql,
   trinoSchemaListSql,
+  trinoSourceStatementFor,
+  trinoTranslationRefusal,
+  trinoUnreadableSourceReason,
 } from "./objects";
 import { comparePaths } from "@/lib/db/object-path";
 import {
@@ -356,11 +371,19 @@ export class TrinoProvider extends SQLBaseProvider {
         // into `memory.app.customers` succeeds while `tpch` answers that its connector does
         // not support modifying table rows. The declaration is about the engine's model, and
         // the connector's own refusal is the better message for the case it cannot.
-        { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+        {
+          id: "table",
+          role: "relation",
+          label: "Table",
+          labelPlural: "Tables",
+          acceptsRowWrites: true,
+          hasSource: true,
+          sourceLanguage: "sql",
+        },
         // No `acceptsRowWrites` on either view kind, measured on 476: an INSERT answers
         // "Inserting into views is not supported" and "Inserting into materialized views is
         // not supported" respectively, on every connector.
-        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views", hasSource: true, sourceLanguage: "sql" },
         // Supported by SOME connectors only, Iceberg among them, and declared anyway: the
         // kind exists in the engine's model and `system.metadata.materialized_views` is an
         // engine-level catalog, so a catalog holding none answers an honest 0 rather than a
@@ -371,6 +394,8 @@ export class TrinoProvider extends SQLBaseProvider {
           role: "relation",
           label: "Materialized View",
           labelPlural: "Materialized Views",
+          hasSource: true,
+          sourceLanguage: "sql",
         },
         // Catalog-stored SQL functions, from release 431 and on the Hive and Memory
         // connectors only. Declared because it was CONFIRMED on the build
@@ -379,7 +404,14 @@ export class TrinoProvider extends SQLBaseProvider {
         // `SHOW FUNCTIONS FROM memory.app` lists it. Leaving the kind out would make a
         // function somebody wrote invisible in the tree, which is a worse absence than an
         // empty folder.
-        { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+        {
+          id: "function",
+          role: "routine",
+          label: "Function",
+          labelPlural: "Functions",
+          hasSource: true,
+          sourceLanguage: "sql",
+        },
       ],
     };
   }
@@ -1027,6 +1059,158 @@ export class TrinoProvider extends SQLBaseProvider {
       .sort((left, right) => comparePaths(left.path, right.path));
 
     return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
+  }
+
+  // ==========================================================================
+  // The source read (#789)
+  // ==========================================================================
+
+  /**
+   * One object's definition text, as `SHOW CREATE <form>` regenerates it.
+   *
+   * FOUR KINDS, ONE PART EACH, and all four are `regenerated` rather than `stored`. Trino
+   * keeps no copy of the statement anybody typed: measured on 476, a view created as
+   * `CREATE VIEW memory.app.customer_names AS SELECT id, name FROM memory.app.customers`
+   * reads back as `CREATE VIEW memory.app.customer_names SECURITY DEFINER AS\nSELECT\n  id\n,
+   * name\nFROM\n  memory.app.customers`, with a security clause the author never wrote and
+   * the projection reformatted. Each is `complete`, because each is a statement that runs as
+   * given rather than a body or a bare SELECT.
+   *
+   * THE VIEW KIND CARRIES A LIMIT THIS METHOD CANNOT SEE, and the provider doc states it
+   * rather than the wire. A Hive-NATIVE view reached through a `hive` connector is not a
+   * Trino view at all: what comes back is a MACHINE TRANSLATION of a statement nobody wrote
+   * in Trino SQL, and nothing in the reply distinguishes it from a view Trino itself created.
+   * That is exactly why `origin` does not claim `stored` for any view here, and why the
+   * translation FAILURE - the case where the machine cannot do it - is carried as a REFUSAL
+   * with the engine's own sentence instead of being raised.
+   *
+   * A ROUTINE IS RESOLVED IN TWO STEPS and a relation in one, and the branch is on the
+   * declared `role` rather than on the kind id, the rule `CLAUDE.md` states for everything
+   * under `src/lib/db`. The reason is a property of a routine rather than of Trino's spelling
+   * of one: overloads share a name, so the path's last segment is the disambiguated
+   * `plus_one(bigint)` form {@link functionSegment} minted, and `SHOW CREATE FUNCTION` takes
+   * the BARE name and answers one row per overload.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`${this.dialect.displayName} declares no object kind "${kind}"`, this.type);
+    }
+    if (spec.hasSource !== true) {
+      throw new QueryError(
+        `${this.dialect.displayName} publishes no definition text for the kind "${kind}"`,
+        this.type,
+      );
+    }
+    if (spec.sourceLanguage === undefined) {
+      // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
+      // observable, so a kind that declared source and forgot its language would ship a
+      // Source tab that silently stopped highlighting. The declaration is the only source of
+      // the language and there is no literal here to fall back to.
+      throw new QueryError(
+        `${this.dialect.displayName} declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
+        this.type,
+      );
+    }
+
+    const read = objectRead(capabilities, spec, path);
+    const statement = trinoSourceStatementFor(kind);
+    // The bare name and the signature to match, for a routine; the segment itself and no
+    // signature for a relation, whose reply is one row.
+    const resolved: { name: string; signature?: string } =
+      spec.role === "routine" ? await this.resolveOverload(read) : { name: read.name };
+
+    const sql = trinoObjectSourceSql(statement, read.catalog, read.schema, resolved.name);
+    let rows: TrinoRow[];
+    try {
+      rows = await this.runObjectRows(sql);
+    } catch (error) {
+      // ONLY the translation failure becomes a refusal. Every other failure is rethrown, so
+      // an object that is not there RAISES rather than telling a user its definition cannot
+      // be read (design guarantee 6, #789). Measured on 476, the absence sentences are
+      // `Table 'memory.app.no_such_table' does not exist` and
+      // `Relation 'memory.app.customer_names' is a view, not a table`, both of which name the
+      // object and neither of which is a statement about readability.
+      const refusal = trinoTranslationRefusal(error);
+      if (refusal === undefined) throw error;
+      return {
+        path: [...path],
+        kind,
+        parts: [{ id: TRINO_SOURCE_PART_ID, label: statement.column, unavailable: refusal }],
+      };
+    }
+
+    const row =
+      resolved.signature === undefined
+        ? rows[0]
+        : rows.find((candidate) => trinoCreateSignature(candidate[statement.column]) === resolved.signature);
+    if (row === undefined) {
+      throw new QueryError(`No Trino ${kind} named ${read.name} in ${read.catalog}.${read.schema}`, this.type, sql);
+    }
+
+    const definition = row[statement.column];
+    if (typeof definition !== "string" || definition.trim() === "") {
+      return {
+        path: [...path],
+        kind,
+        parts: [
+          {
+            id: TRINO_SOURCE_PART_ID,
+            label: statement.column,
+            unavailable: trinoUnreadableSourceReason(statement, read.name, definition),
+          },
+        ],
+      };
+    }
+
+    const bounded = applySourceBound(definition, limit);
+    return {
+      path: [...path],
+      kind,
+      parts: [
+        {
+          id: TRINO_SOURCE_PART_ID,
+          label: statement.column,
+          text: bounded.text,
+          language: spec.sourceLanguage,
+          // Both are per-kind facts that happen to agree across all four kinds here, and
+          // both are written once rather than per branch: every `SHOW CREATE` form answers a
+          // statement that runs as given, and none of them is the author's own bytes.
+          form: "complete",
+          origin: "regenerated",
+          ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+        },
+      ],
+    };
+  }
+
+  /**
+   * One routine path segment resolved back into the bare name and the signature to match.
+   *
+   * Through `SHOW FUNCTIONS`, which is the statement that MINTED the segment: the match is
+   * `functionSegment(name, argumentTypes) === segment`, reconstructed with the same function
+   * `listObjects` builds the path with, so nothing here parses the segment. That matters,
+   * because the segment is NOT unambiguously parseable: the fixture holds a function called
+   * `we(ird`, whose segment `we(ird(bigint)` has its first parenthesis inside the name.
+   *
+   * A segment no row reconstructs is ABSENCE and it raises naming the segment. The engine's
+   * own sentence for it would not do: measured on 476, `SHOW CREATE FUNCTION` answers
+   * `Function not found` for a name that is not there, which names neither the function nor
+   * the schema.
+   */
+  private async resolveOverload(read: TrinoObjectRead): Promise<{ name: string; signature: string }> {
+    const sql = trinoFunctionListSql(read.catalog, read.schema);
+    const rows = await this.runObjectRows(sql);
+    for (const row of rows) {
+      const name = readObjectIdentifier(row[TRINO_FUNCTION_COLUMNS.name]);
+      const argumentTypes = row[TRINO_FUNCTION_COLUMNS.argumentTypes];
+      if (name === null || typeof argumentTypes !== "string") continue;
+      if (functionSegment(name, argumentTypes) === read.name) {
+        return { name, signature: trinoArgumentSignature(argumentTypes) };
+      }
+    }
+    throw new QueryError(`No Trino function ${read.name} in ${read.catalog}.${read.schema}`, this.type, sql);
   }
 
   // ==========================================================================

@@ -52,19 +52,25 @@ import {
 } from "@/lib/db/providers/sql/trino/introspect";
 import {
   TRINO_MATERIALIZED_VIEW_KIND,
+  TRINO_SOURCE_PART_ID,
+  trinoArgumentSignature,
   trinoBulkColumnsSql,
   trinoFunctionListSql,
   trinoObjectTargetSql,
   trinoMaterializedViewListSql,
   trinoObjectColumnsSql,
   trinoObjectCountsSql,
+  trinoCreateSignature,
+  trinoObjectSourceSql,
   trinoRelationListSql,
   trinoSchemaListSql,
+  trinoSourceStatementFor,
 } from "@/lib/db/providers/sql/trino/objects";
 import { TrinoProvider } from "@/lib/db/providers/sql/trino/index";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
+import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 
 const CATALOG = "tpch";
@@ -1366,12 +1372,76 @@ const FUNCTION_COLUMNS: Column[] = [
   { name: "Description", type: "varchar" },
 ];
 
-/** Two overloads of one name, which is why a function's path segment carries its types. */
+/**
+ * `memory.app`'s functions, captured VERBATIM from `SHOW FUNCTIONS FROM memory.app` on a live
+ * trinodb/trino:476 on 2026-09-13 after applying `docker/trino-init/01-object-fixture.sql`.
+ *
+ * Six rows and not one of them is padding. `plus_one` twice is why a path segment carries its
+ * argument types at all. `hard` is the row whose `Argument Types` rendering DIFFERS from the
+ * one `SHOW CREATE FUNCTION` prints for the same overload, which is what the source read's
+ * signature comparison exists for. `answer` is the empty argument list. `we(ird` is a name
+ * holding an open parenthesis, so the first `(` in its segment belongs to the NAME.
+ */
 const MEMORY_APP_FUNCTION_ROWS: unknown[][] = [
+  ["answer", "bigint", "", "scalar", true, ""],
+  ["hard", "varchar", 'decimal(10,2), array(varchar), row("a" bigint,"b" varchar)', "scalar", true, ""],
   ["label", "varchar", "bigint, varchar", "scalar", true, ""],
   ["plus_one", "bigint", "bigint", "scalar", true, ""],
   ["plus_one", "double", "double", "scalar", true, ""],
+  ["rowparen", "bigint", 'row("a)b" bigint,"c" varchar)', "scalar", true, ""],
+  ["we(ird", "bigint", "bigint", "scalar", true, ""],
 ];
+
+// ----------------------------------------------------------------------------
+// The source read (#789)
+// ----------------------------------------------------------------------------
+// Every definition below is the VERBATIM reply of the statement above it, captured from the
+// same live trinodb/trino:476 on 2026-09-13. They are what makes the reply-column spelling,
+// the whitespace and the overload rendering facts rather than guesses.
+
+/** `SHOW CREATE` answers exactly one column, and its name is also the part's label. */
+const SOURCE_COLUMNS: Record<string, Column[]> = {
+  "Create Table": [{ name: "Create Table", type: "varchar" }],
+  "Create View": [{ name: "Create View", type: "varchar" }],
+  "Create Materialized View": [{ name: "Create Materialized View", type: "varchar" }],
+  "Create Function": [{ name: "Create Function", type: "varchar" }],
+};
+
+const CREATE_CUSTOMERS = "CREATE TABLE memory.app.customers (\n   id bigint,\n   name varchar\n)";
+const CREATE_ORDERS = "CREATE TABLE memory.app.orders (\n   id bigint,\n   customer_id bigint,\n   total double\n)";
+/** `SECURITY DEFINER` is the engine's, not the author's: the fixture never wrote it. */
+const CREATE_CUSTOMER_NAMES =
+  "CREATE VIEW memory.app.customer_names SECURITY DEFINER AS\nSELECT\n  id\n, name\nFROM\n  memory.app.customers";
+const CREATE_ORDER_TOTALS =
+  "CREATE MATERIALIZED VIEW iceberg.warehouse.order_totals\nWITH (\n   format = 'PARQUET',\n   format_version = 2,\n   location = 'file:/data/warehouse/hive/order_totals-8d3c899bf07c4dff8ce49fbc3cf87bde',\n   max_commit_retry = 4,\n   storage_schema = 'warehouse'\n) AS\nSELECT\n  id\n, total\nFROM\n  hivelake.warehouse.orders";
+/** The DOUBLE overload comes back FIRST, which is why "take the first row" is wrong. */
+const CREATE_PLUS_ONE_DOUBLE =
+  "CREATE FUNCTION memory.app.plus_one(x double)\nRETURNS double\nRETURN (x + DECIMAL '1.0')";
+const CREATE_PLUS_ONE_BIGINT = "CREATE FUNCTION memory.app.plus_one(x bigint)\nRETURNS bigint\nRETURN (x + 1)";
+/**
+ * The renderings that DIFFER. `SHOW FUNCTIONS` says
+ * `decimal(10,2), array(varchar), row("a" bigint,"b" varchar)` for this very overload, so a
+ * raw string comparison of the two matches nothing.
+ */
+const CREATE_HARD =
+  "CREATE FUNCTION memory.app.hard(amount decimal(10, 2), tags array(varchar), r ROW(a bigint, b varchar))\nRETURNS varchar\nRETURN CAST(amount AS varchar)";
+const CREATE_ANSWER = "CREATE FUNCTION memory.app.answer()\nRETURNS bigint\nRETURN 42";
+/**
+ * A ROW FIELD name holding a CLOSE PARENTHESIS, which round-trips through both renderings.
+ * A scan for the parameter list's matching `)` that was not quote aware stops at the one
+ * inside `"a)b"` and reads the parameter list as `r ROW("a`.
+ */
+const CREATE_ROWPAREN = 'CREATE FUNCTION memory.app.rowparen(r ROW("a)b" bigint, c varchar))\nRETURNS bigint\nRETURN 1';
+/** The first `(` in this statement is inside the quoted NAME, not the parameter list. */
+const CREATE_WEIRD = 'CREATE FUNCTION memory.app."we(ird"(x bigint)\nRETURNS bigint\nRETURN x';
+
+/** One `SHOW CREATE` reply, in the shape the coordinator sends it. */
+function sourceRows(column: string, definitions: readonly string[]): (id: string) => Reply {
+  return rows(
+    SOURCE_COLUMNS[column],
+    definitions.map((definition) => [definition]),
+  );
+}
 
 const ICEBERG = { catalog: "iceberg" } as const;
 const ICEBERG_WAREHOUSE = { catalog: "iceberg", schema: "warehouse" } as const;
@@ -1567,6 +1637,112 @@ function serveObjectSurface(): void {
       ["app", "orders", "total", "double", "YES"],
     ]),
   );
+  // The bounded pair the conformance helper's bulk probe sends: a caller limit of 1 asks the
+  // cluster for `LIMIT 2`, so the read itself says it stopped short.
+  serveInstead(
+    trinoObjectTargetSql(MEMORY_APP, "table", 2),
+    rows(OBJECT_NAME_COLUMNS, [
+      ["app", "customers"],
+      ["app", "orders"],
+    ]),
+  );
+  serveInstead(
+    trinoBulkColumnsSql(MEMORY_APP, "table", 2),
+    rows(BULK_COLUMN_COLUMNS, [
+      ["app", "customers", "id", "bigint", "YES"],
+      ["app", "customers", "name", "varchar", "YES"],
+      ["app", "orders", "id", "bigint", "YES"],
+      ["app", "orders", "customer_id", "bigint", "YES"],
+      ["app", "orders", "total", "double", "YES"],
+    ]),
+  );
+  serveInstead(trinoObjectTargetSql(MEMORY_APP, "view"), rows(OBJECT_NAME_COLUMNS, [["app", "customer_names"]]));
+  serveInstead(
+    trinoBulkColumnsSql(MEMORY_APP, "view"),
+    rows(BULK_COLUMN_COLUMNS, [
+      ["app", "customer_names", "id", "bigint", "YES"],
+      ["app", "customer_names", "name", "varchar", "YES"],
+    ]),
+  );
+  serveInstead(trinoObjectTargetSql(MEMORY_APP, TRINO_MATERIALIZED_VIEW_KIND), rows(OBJECT_NAME_COLUMNS, []));
+  serveInstead(trinoBulkColumnsSql(MEMORY_APP, TRINO_MATERIALIZED_VIEW_KIND), rows(BULK_COLUMN_COLUMNS, []));
+
+  // The flat reading for `memory`, which the conformance helper's join guard needs at the
+  // container the contract now runs in.
+  serveInstead(
+    trinoTableListSql("memory"),
+    rows(TABLE_LIST_COLUMNS, [
+      ["app", "customer_names"],
+      ["app", "customers"],
+      ["app", "orders"],
+    ]),
+  );
+  serveInstead(
+    trinoColumnListSql("memory"),
+    rows(COLUMN_LIST_COLUMNS, [
+      ["app", "customer_names", "id", "bigint", "YES", null],
+      ["app", "customer_names", "name", "varchar", "YES", null],
+      ["app", "customers", "id", "bigint", "YES", null],
+      ["app", "customers", "name", "varchar", "YES", null],
+      ["app", "orders", "id", "bigint", "YES", null],
+      ["app", "orders", "customer_id", "bigint", "YES", null],
+      ["app", "orders", "total", "double", "YES", null],
+    ]),
+  );
+
+  serveSourceReads();
+}
+
+/**
+ * The source reads (#789), keyed on the exported statement each one sends.
+ *
+ * Registered by object and never by fragment, so a `SHOW CREATE VIEW` cannot be answered a
+ * `SHOW CREATE TABLE`'s page: the four forms differ only in a keyword mid-statement, which is
+ * exactly the shape `serveInstead` exists for.
+ */
+function serveSourceReads(): void {
+  const at = (kind: string, catalog: string, schema: string, name: string): string =>
+    trinoObjectSourceSql(trinoSourceStatementFor(kind), catalog, schema, name);
+
+  serveInstead(at("table", "memory", "app", "customers"), sourceRows("Create Table", [CREATE_CUSTOMERS]));
+  serveInstead(at("table", "memory", "app", "orders"), sourceRows("Create Table", [CREATE_ORDERS]));
+  serveInstead(at("view", "memory", "app", "customer_names"), sourceRows("Create View", [CREATE_CUSTOMER_NAMES]));
+  serveInstead(
+    at(TRINO_MATERIALIZED_VIEW_KIND, "iceberg", "warehouse", "order_totals"),
+    sourceRows("Create Materialized View", [CREATE_ORDER_TOTALS]),
+  );
+  // ONE statement, TWO rows, and the one the caller did not ask for comes back first.
+  serveInstead(
+    at("function", "memory", "app", "plus_one"),
+    sourceRows("Create Function", [CREATE_PLUS_ONE_DOUBLE, CREATE_PLUS_ONE_BIGINT]),
+  );
+  serveInstead(at("function", "memory", "app", "hard"), sourceRows("Create Function", [CREATE_HARD]));
+  serveInstead(at("function", "memory", "app", "answer"), sourceRows("Create Function", [CREATE_ANSWER]));
+  serveInstead(at("function", "memory", "app", "rowparen"), sourceRows("Create Function", [CREATE_ROWPAREN]));
+  serveInstead(at("function", "memory", "app", "we(ird"), sourceRows("Create Function", [CREATE_WEIRD]));
+
+  // The two ABSENCES, each carrying the engine's own verbatim refusal rather than a page the
+  // provider would then have to interpret. Both were measured on 476 on 2026-09-13.
+  serveInstead(
+    at("table", "memory", "app", "no_such_table"),
+    refusal({
+      message: "line 1:1: Table 'memory.app.no_such_table' does not exist",
+      errorCode: 44,
+      errorName: "TABLE_NOT_FOUND",
+      errorType: "USER_ERROR",
+      errorLocation: { lineNumber: 1, columnNumber: 1 },
+    }),
+  );
+  serveInstead(
+    at("table", "memory", "app", "customer_names"),
+    refusal({
+      message: "line 1:1: Relation 'memory.app.customer_names' is a view, not a table",
+      errorCode: 44,
+      errorName: "TABLE_NOT_FOUND",
+      errorType: "USER_ERROR",
+      errorLocation: { lineNumber: 1, columnNumber: 1 },
+    }),
+  );
 }
 
 /** A provider pinned at the catalog AND the schema the fixture's objects live in. */
@@ -1603,15 +1779,43 @@ describe("object surface", () => {
     ]);
   });
 
+  /**
+   * The shared contract, run in `memory.app` rather than in a catalog (#789).
+   *
+   * The container is NAMED, and it has to be, because `function` gained `hasSource`. A
+   * catalog-level function count is `{ unavailable }` by design here - `SHOW FUNCTIONS` takes
+   * a schema and cannot be aggregated - and a `hasSource` kind answering that arm is a dead
+   * end the helper itself names: naming the kind throws on the unavailable count and omitting
+   * it throws as unexercised. The engine's honest answer is a real number one level down.
+   */
   test("satisfies the shared object surface contract", async () => {
-    const provider = await objectProvider();
+    const provider = await objectProvider({ database: "memory", schema: "app" });
 
     await assertObjectSurface(provider, {
       containers: FIXTURE_CATALOGS,
-      // `view` at 0 is not padding: it is the declared-and-empty case, which only renders
-      // as a 0 badge because every declared kind is seeded before the rows overwrite it.
-      kinds: { table: 2, materialized_view: 1, view: 0 },
-      sampleObject: { path: ["iceberg", "warehouse", "orders"], kind: "table" },
+      container: ["memory", "app"],
+      kinds: { table: 2, view: 1, function: 7, materialized_view: 0 },
+      sampleObject: { path: ["memory", "app", "orders"], kind: "table" },
+      emptyKinds: {
+        // THIS DEPLOYMENT CANNOT HOLD ONE, which is the stronger of the two absences the
+        // helper asks to be told apart, and it is measured rather than assumed. A
+        // materialized view needs an Iceberg catalog, and on 476 only a HIVE-METASTORE-backed
+        // one will create it: probed for #789 on 2026-09-13 against a fully working Iceberg
+        // JDBC catalog on a PostgreSQL 18 - schema created, table created, two rows inserted
+        // - `CREATE MATERIALIZED VIEW` still answered
+        // `createMaterializedView is not supported for Iceberg JDBC catalogs`. The compose
+        // cluster configures no Iceberg catalog at all, so `memory.app` holds none and no
+        // container on it can. docs/providers/trino.md carries the commands that build a
+        // cluster which can.
+        materialized_view:
+          "The compose cluster configures no Iceberg catalog, and a materialized view needs one: " +
+          "measured on 476, the Iceberg JDBC and REST catalog types both refuse createMaterializedView " +
+          "and only a Hive-metastore-backed Iceberg catalog creates one.",
+      },
+      // An authored path whose last segment names nothing, under a kind the source loop
+      // really read, so the raise it drives has a positive control. Measured on 476, the
+      // engine's own sentence is `Table 'memory.app.no_such_table' does not exist`.
+      absentSource: { path: ["memory", "app", "no_such_table"], kind: "table" },
     });
   });
 });
@@ -1753,7 +1957,7 @@ describe("Trino object containers, listings and detail", () => {
       table: { count: 2 },
       view: { count: 1 },
       materialized_view: { count: 0 },
-      function: { count: 3 },
+      function: { count: 7 },
     });
   });
 
@@ -1836,9 +2040,23 @@ describe("Trino object containers, listings and detail", () => {
     // differ. Measured on 476, `plus_one(bigint)` and `plus_one(double)` coexist in one
     // schema, so a bare `plus_one` would give two objects one address.
     expect(await provider.listObjects!(["memory", "app"], "function")).toEqual([
+      { path: ["memory", "app", "answer()"], name: "answer", kind: "function" },
+      {
+        path: ["memory", "app", 'hard(decimal(10,2), array(varchar), row("a" bigint,"b" varchar))'],
+        name: "hard",
+        kind: "function",
+      },
       { path: ["memory", "app", "label(bigint, varchar)"], name: "label", kind: "function" },
       { path: ["memory", "app", "plus_one(bigint)"], name: "plus_one", kind: "function" },
       { path: ["memory", "app", "plus_one(double)"], name: "plus_one", kind: "function" },
+      {
+        path: ["memory", "app", 'rowparen(row("a)b" bigint,"c" varchar))'],
+        name: "rowparen",
+        kind: "function",
+      },
+      // The name's own parenthesis is carried into the segment untouched, so the FIRST `(`
+      // here belongs to the name and the last `)` closes the argument list.
+      { path: ["memory", "app", "we(ird(bigint)"], name: "we(ird", kind: "function" },
     ]);
   });
 
@@ -2451,5 +2669,472 @@ describe("Trino path ordering", () => {
     // Never `JSON.stringify`: serialised, the deeper path sorts FIRST because `,` is below
     // `]`, which is the defect standing ruling 5g rules out as a path key.
     expect(JSON.stringify(["a", "b"]) < JSON.stringify(["a"])).toBe(true);
+  });
+});
+
+/**
+ * The source read (#789).
+ *
+ * Every payload these drive was captured verbatim from a live trinodb/trino:476 on
+ * 2026-09-13 after applying `docker/trino-init/01-object-fixture.sql`, plus one materialized
+ * view built on the Hive-metastore cluster `docs/providers/trino.md` writes out in full,
+ * because the compose cluster cannot hold one.
+ *
+ * The population of every per-kind assertion below comes from the DECLARATION and never from
+ * a number typed here: a wrong reply column reads as `undefined`, the provider correctly
+ * turns that into a REFUSAL, and a refusal passes the conformance walk, passes a
+ * whole-statement pin and passes every count and length assertion. So the text itself is
+ * pinned per kind, over the kinds `getCapabilities()` says are readable.
+ */
+describe("Trino object source", () => {
+  /** Every source-bearing kind the declaration holds, with the first object of each. */
+  const FIXTURE_SOURCES: { kind: string; path: readonly string[]; definition: string }[] = [
+    { kind: "table", path: ["memory", "app", "customers"], definition: CREATE_CUSTOMERS },
+    { kind: "view", path: ["memory", "app", "customer_names"], definition: CREATE_CUSTOMER_NAMES },
+    {
+      kind: "materialized_view",
+      path: ["iceberg", "warehouse", "order_totals"],
+      definition: CREATE_ORDER_TOTALS,
+    },
+    { kind: "function", path: ["memory", "app", "plus_one(bigint)"], definition: CREATE_PLUS_ONE_BIGINT },
+  ];
+
+  test("declares source on exactly the kinds that have a definition text", () => {
+    const kinds = new TrinoProvider(makeConnection()).getCapabilities().objectKinds ?? [];
+    const declared = kinds
+      .filter((kind) => kind.hasSource === true)
+      .map((kind) => [kind.id, kind.sourceLanguage] as const)
+      .sort();
+
+    // All four, all `sql`. Every one of them is read with a `SHOW CREATE` form that answers a
+    // runnable Trino statement, so there is no kind here whose text is a body or a fragment.
+    expect(declared).toEqual([
+      ["function", "sql"],
+      ["materialized_view", "sql"],
+      ["table", "sql"],
+      ["view", "sql"],
+    ]);
+    // The other direction, so a kind added later cannot quietly gain a Source tab. Trino
+    // declares NO kind without a definition text: there is no `index`, no `trigger` and no
+    // `procedure` in its model at all.
+    expect(
+      kinds
+        .filter((kind) => kind.hasSource !== true)
+        .map((kind) => kind.id)
+        .sort(),
+    ).toEqual([]);
+  });
+
+  /**
+   * The population is the DECLARATION's, so a kind that gains `hasSource` without a fixture
+   * entry fails here by name rather than going unread.
+   */
+  test("the fixture holds an object of every source-bearing kind", () => {
+    const declared = (new TrinoProvider(makeConnection()).getCapabilities().objectKinds ?? [])
+      .filter((kind) => kind.hasSource === true)
+      .map((kind) => kind.id)
+      .sort();
+
+    expect(FIXTURE_SOURCES.map((entry) => entry.kind).sort()).toEqual(declared);
+  });
+
+  test.each(FIXTURE_SOURCES)(
+    "reads the whole definition of a $kind, and says what the text is",
+    async ({ kind, path, definition }) => {
+      const provider = await objectProvider({ database: "memory", schema: "app" });
+      const document = await provider.readObjectSource!(path, kind);
+
+      expect(document.path).toEqual([...path]);
+      expect(document.kind).toBe(kind);
+      expect(document.parts).toHaveLength(1);
+      const [part] = document.parts;
+      expect(isSourcePartUnavailable(part)).toBe(false);
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      // THE WHOLE TEXT, byte for byte, and not a distinctive substring. A wrong reply column
+      // reads as `undefined` and becomes a refusal, which the narrowing above catches; a
+      // reply column that is right but a statement that is wrong answers ANOTHER object's
+      // definition, which only the whole text can see.
+      expect(part.text).toBe(definition);
+      expect(part.language).toBe("sql");
+      // Every `SHOW CREATE` form answers a statement that runs as given, so none of them is
+      // `partial`; and none of them is the author's own bytes, so none is `stored`. The view
+      // is the proof of the second: the fixture never wrote `SECURITY DEFINER`.
+      expect(part.form).toBe("complete");
+      expect(part.origin).toBe("regenerated");
+      expect(part.truncated).toBeUndefined();
+    },
+  );
+
+  test("the part's label is the engine's own name for the column it came from", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    const labels = [];
+    for (const { kind, path } of FIXTURE_SOURCES) {
+      labels.push([kind, (await provider.readObjectSource!(path, kind)).parts[0].label]);
+    }
+
+    // Not a friendlier word of this product's own: `SHOW CREATE` is a statement rather than a
+    // projection, so these names cannot be aliased and they are what the engine calls the
+    // text. Binding the label to the same constant the READ keys on also makes a wrong reply
+    // column visible, instead of it turning a definition into a refusal in silence.
+    expect(labels).toEqual([
+      ["table", "Create Table"],
+      ["view", "Create View"],
+      ["materialized_view", "Create Materialized View"],
+      ["function", "Create Function"],
+    ]);
+  });
+
+  test("sends the three-part name with every segment quoted, per kind", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    for (const { kind, path } of FIXTURE_SOURCES) {
+      await provider.readObjectSource!(path, kind);
+    }
+
+    // The statement whole, per kind, and not a token out of it. The name is an IDENTIFIER
+    // position with no bind channel on this transport at all, so the quoting is the only
+    // thing between a caller-supplied segment and statement text.
+    expect(sqlWith("SHOW CREATE TABLE")).toBe('SHOW CREATE TABLE "memory"."app"."customers"');
+    expect(sqlWith("SHOW CREATE VIEW")).toBe('SHOW CREATE VIEW "memory"."app"."customer_names"');
+    expect(sqlWith("SHOW CREATE MATERIALIZED VIEW")).toBe(
+      'SHOW CREATE MATERIALIZED VIEW "iceberg"."warehouse"."order_totals"',
+    );
+    // The BARE name, never the segment: `SHOW CREATE FUNCTION` takes a name and answers one
+    // row per overload.
+    expect(sqlWith("SHOW CREATE FUNCTION")).toBe('SHOW CREATE FUNCTION "memory"."app"."plus_one"');
+  });
+
+  test("a name holding a double quote cannot close the identifier it is inside", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+
+    await provider.readObjectSource!(["memory", "app", 'ev"il'], "table").catch(() => undefined);
+
+    expect(sqlWith("SHOW CREATE TABLE")).toBe('SHOW CREATE TABLE "memory"."app"."ev""il"');
+  });
+
+  // --------------------------------------------------------------------------
+  // Overload resolution
+  // --------------------------------------------------------------------------
+
+  test("picks the overload the path names, which is NOT the first row the engine sent", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+
+    // Measured on 476: `SHOW CREATE FUNCTION memory.app.plus_one` answers the DOUBLE overload
+    // first and the BIGINT one second, so a provider taking `rows[0]` would hand every caller
+    // of `plus_one(bigint)` the other function's body.
+    const bigint = await provider.readObjectSource!(["memory", "app", "plus_one(bigint)"], "function");
+    const double = await provider.readObjectSource!(["memory", "app", "plus_one(double)"], "function");
+
+    expect((bigint.parts[0] as { text: string }).text).toBe(CREATE_PLUS_ONE_BIGINT);
+    expect((double.parts[0] as { text: string }).text).toBe(CREATE_PLUS_ONE_DOUBLE);
+  });
+
+  test("matches an overload whose two renderings are not the same text", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    const segment = 'hard(decimal(10,2), array(varchar), row("a" bigint,"b" varchar))';
+
+    const document = await provider.readObjectSource!(["memory", "app", segment], "function");
+
+    // The whole point of the signature form. `SHOW FUNCTIONS` renders this overload as
+    // `decimal(10,2), array(varchar), row("a" bigint,"b" varchar)` and `SHOW CREATE FUNCTION`
+    // renders the SAME overload as
+    // `amount decimal(10, 2), tags array(varchar), r ROW(a bigint, b varchar)`: a space, a
+    // case change and a quoting change, all in one signature.
+    expect((document.parts[0] as { text: string }).text).toBe(CREATE_HARD);
+    expect(CREATE_HARD).toContain("ROW(a bigint, b varchar)");
+    expect(segment).toContain('row("a" bigint,"b" varchar)');
+  });
+
+  test("matches the empty argument list and a name whose first parenthesis is its own", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+
+    expect(
+      ((await provider.readObjectSource!(["memory", "app", "answer()"], "function")).parts[0] as { text: string }).text,
+    ).toBe(CREATE_ANSWER);
+    // `we(ird(bigint)`: the first `(` belongs to the NAME on both sides of the comparison, so
+    // a scan that was not quote aware would read the parameter list as `ird"(x bigint`.
+    expect(
+      ((await provider.readObjectSource!(["memory", "app", "we(ird(bigint)"], "function")).parts[0] as { text: string })
+        .text,
+    ).toBe(CREATE_WEIRD);
+  });
+
+  test("matches an overload whose ROW field name holds a close parenthesis", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+
+    // The object that proves both quote-aware scans are load-bearing. Measured on 476: a
+    // top-level PARAMETER name may be quoted but may hold no space, comma or parenthesis -
+    // all three are refused at creation with a bare `Internal error` - while a ROW FIELD name
+    // may hold all of them, and this one round-trips. Without it in the fixture, deleting the
+    // quote awareness left the whole suite green.
+    const document = await provider.readObjectSource!(
+      ["memory", "app", 'rowparen(row("a)b" bigint,"c" varchar))'],
+      "function",
+    );
+
+    expect((document.parts[0] as { text: string }).text).toBe(CREATE_ROWPAREN);
+    expect(trinoCreateSignature(CREATE_ROWPAREN)).toBe("row(a)bbigint,cvarchar)");
+  });
+
+  test("the signature form is what the two renderings agree on, and nothing more", () => {
+    // Pinned directly as well as through the reads above, because this is the derivation the
+    // whole function read rests on and the reads would still pass if it were accidentally
+    // an identity on the fixture's simpler overloads.
+    expect(trinoArgumentSignature('decimal(10,2), array(varchar), row("a" bigint,"b" varchar)')).toBe(
+      "decimal(10,2),array(varchar),row(abigint,bvarchar)",
+    );
+    expect(trinoCreateSignature(CREATE_HARD)).toBe("decimal(10,2),array(varchar),row(abigint,bvarchar)");
+    expect(trinoArgumentSignature("")).toBe("");
+    expect(trinoCreateSignature(CREATE_ANSWER)).toBe("");
+    expect(trinoCreateSignature(CREATE_WEIRD)).toBe("bigint");
+    expect(trinoCreateSignature(CREATE_PLUS_ONE_DOUBLE)).toBe("double");
+    // A reply value that is not text, and a statement with no parameter list at all, are both
+    // "no signature" rather than an empty one: an empty signature is the zero-argument
+    // function, and conflating the two would match `answer()` to a row that is not a function.
+    expect(trinoCreateSignature(42)).toBeNull();
+    expect(trinoCreateSignature("CREATE FUNCTION memory.app.broken")).toBeNull();
+  });
+
+  // --------------------------------------------------------------------------
+  // Absence RAISES, and only the translation failure refuses
+  // --------------------------------------------------------------------------
+
+  test("an object that is not there RAISES, naming the segment, and never answers a refusal", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+
+    await expect(provider.readObjectSource!(["memory", "app", "no_such_table"], "table")).rejects.toThrow(
+      "Table 'memory.app.no_such_table' does not exist",
+    );
+    // A relation of the WRONG kind is absence too, and the engine says which: measured on
+    // 476, `SHOW CREATE TABLE` on a view answers "is a view, not a table".
+    await expect(provider.readObjectSource!(["memory", "app", "customer_names"], "table")).rejects.toThrow(
+      "is a view, not a table",
+    );
+  });
+
+  test("a function segment no listing reconstructs RAISES naming the segment", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+
+    // The engine's own sentence would not do here. Measured on 476, `SHOW CREATE FUNCTION`
+    // answers the bare `Function not found`, which names neither the function nor the schema.
+    await expect(provider.readObjectSource!(["memory", "app", "plus_one(varchar)"], "function")).rejects.toThrow(
+      "No Trino function plus_one(varchar) in memory.app",
+    );
+    // And it never reached `SHOW CREATE FUNCTION` at all: the listing already said so.
+    expect(sentAnything("SHOW CREATE FUNCTION")).toBe(false);
+  });
+
+  test("a Hive view that cannot be translated is a REFUSAL carrying the engine's own sentence", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    // DOCUMENTED AND NOT MEASURED ON THIS CLUSTER, stated in advance rather than reported
+    // around: reaching a Hive-NATIVE view needs a `hive` connector catalog holding a view
+    // that Hive itself created, which `database-compose.yml` does not configure and which no
+    // statement this provider can send will produce. The sentence is Trino's own
+    // `HIVE_VIEW_TRANSLATION_ERROR` message and the match is on its fixed prefix.
+    const sentence =
+      "Failed to translate Hive view 'legacy.daily_totals': line 1:8: mismatched input 'FROM'. Expecting: '.', 'AS'";
+    serveInstead(
+      trinoObjectSourceSql(trinoSourceStatementFor("view"), "memory", "app", "customer_names"),
+      refusal({ message: sentence, errorCode: 65551, errorName: "HIVE_VIEW_TRANSLATION_ERROR", errorType: "EXTERNAL" }),
+    );
+
+    const document = await provider.readObjectSource!(["memory", "app", "customer_names"], "view");
+
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(true);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    // UNPREFIXED, so the engine's words reach the reader rather than this product's.
+    expect(part.unavailable).toBe(sentence);
+    // A refusal part carrying a TEXT as well would narrow to this arm and satisfy the
+    // assertion above while putting the refusal over a definition the engine returned. The
+    // union does not make that shape a compile error (#789), so it is asserted.
+    expect(Object.hasOwn(part, "text")).toBe(false);
+  });
+
+  test("a reply that is not a definition is a refusal that says which shape it was", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    const statement = trinoObjectSourceSql(trinoSourceStatementFor("table"), "memory", "app", "customers");
+
+    for (const [value, expected] of [
+      ["   \n  ", "with a text holding nothing but whitespace"],
+      [42, "as number rather than as text"],
+      [null, "as null rather than as text"],
+    ] as const) {
+      serveInstead(statement, rows(SOURCE_COLUMNS["Create Table"], [[value]]));
+      const document = await provider.readObjectSource!(["memory", "app", "customers"], "table");
+      const [part] = document.parts;
+      if (!isSourcePartUnavailable(part)) throw new Error(`expected a refusal for ${String(value)}`);
+      expect(part.unavailable).toContain(expected);
+      // Names the column AND the statement form, so a refusal caused by a wrong reply column
+      // reads as the mistake it is rather than as a fact about the object.
+      expect(part.unavailable).toContain('the "Create Table" column of SHOW CREATE TABLE for customers');
+      expect(Object.hasOwn(part, "text")).toBe(false);
+    }
+  });
+
+  test("a statement answering no row at all RAISES rather than answering an empty document", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    serveInstead(
+      trinoObjectSourceSql(trinoSourceStatementFor("table"), "memory", "app", "customers"),
+      rows(SOURCE_COLUMNS["Create Table"], []),
+    );
+
+    await expect(provider.readObjectSource!(["memory", "app", "customers"], "table")).rejects.toThrow(
+      "No Trino table named customers in memory.app",
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // The bound
+  // --------------------------------------------------------------------------
+
+  test("a caller's bound cuts the text and is reported with the caller's own number", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+
+    const document = await provider.readObjectSource!(["memory", "app", "customers"], "table", 12);
+
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.text).toBe(CREATE_CUSTOMERS.slice(0, 12));
+    expect(part.truncated?.limit).toBe(12);
+    // And an unbounded read of the same object reports nothing, so the mark is never on a
+    // text that was read whole.
+    const whole = await provider.readObjectSource!(["memory", "app", "customers"], "table");
+    expect((whole.parts[0] as { truncated?: unknown }).truncated).toBeUndefined();
+  });
+
+  // --------------------------------------------------------------------------
+  // The derivations, which no fixture of this engine's own shape can distinguish
+  // --------------------------------------------------------------------------
+
+  test("derives the object name and the container from the DECLARATION, not from a position", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    const real = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+        { id: "schema", label: "Namespace", labelPlural: "Namespaces" },
+      ],
+    });
+
+    try {
+      await provider.readObjectSource!(["cat", "sch", "obj"], "table").catch(() => undefined);
+      expect(sqlWith("SHOW CREATE TABLE")).toBe('SHOW CREATE TABLE "cat"."sch"."obj"');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  /**
+   * The SAME derivation against a declaration whose two levels are SWAPPED.
+   *
+   * The test above cannot kill a hardcoded `catalog = path[0]`, because Trino's real
+   * declaration is already catalog-then-schema and the swapped-in one matches it. This one
+   * can: the levels are declared schema first, the path is fed in that order, and the same
+   * three values must still reach the server in the server's own order.
+   */
+  test("reads each container segment by its declared LEVEL, not by its position in the path", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    const real = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+      ],
+    });
+
+    try {
+      await provider.readObjectSource!(["sch", "cat", "obj"], "table").catch(() => undefined);
+      // `cat` is the CATALOG because the declaration says the second level is the catalog,
+      // and it reaches the statement's first position because that is where Trino's three-part
+      // name puts a catalog.
+      expect(sqlWith("SHOW CREATE TABLE")).toBe('SHOW CREATE TABLE "cat"."sch"."obj"');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("refuses a kind it does not declare, a kind with no source, and a kind with no language", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    const real = provider.getCapabilities();
+
+    await expect(provider.readObjectSource!(["memory", "app", "x"], "trigger")).rejects.toThrow(
+      'Trino declares no object kind "trigger"',
+    );
+
+    const noSource = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+    });
+    await expect(provider.readObjectSource!(["memory", "app", "customers"], "table")).rejects.toThrow(
+      'Trino publishes no definition text for the kind "table"',
+    );
+    noSource.mockRestore();
+
+    // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
+    // observable, so a kind declaring source and no language would ship a Source tab that
+    // silently stopped highlighting.
+    const noLanguage = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables", hasSource: true }],
+    });
+    await expect(provider.readObjectSource!(["memory", "app", "customers"], "table")).rejects.toThrow(
+      'declares readable source for the kind "table" and no sourceLanguage to render it with',
+    );
+    noLanguage.mockRestore();
+  });
+
+  test("a source-bearing kind with no SHOW CREATE form of its own is refused by name", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    const real = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [
+        {
+          id: "sequence",
+          role: "relation",
+          label: "Sequence",
+          labelPlural: "Sequences",
+          hasSource: true,
+          sourceLanguage: "sql",
+        },
+      ],
+    });
+
+    try {
+      await expect(provider.readObjectSource!(["memory", "app", "s"], "sequence")).rejects.toThrow(
+        'Trino declares readable source for the kind "sequence" and no SHOW CREATE form for it',
+      );
+    } finally {
+      spy.mockRestore();
+    }
+
+    // `Object.hasOwn` and not `in`: a kind id is an OPEN string, so `in` walks the prototype
+    // chain and a DECLARED kind spelled `toString` would be accepted as readable, reaching a
+    // statement built from a function off `Object.prototype`. The kind has to be declared to
+    // get here at all, which is what the first spy above could not do.
+    const prototypeKind = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [
+        {
+          id: "toString",
+          role: "relation",
+          label: "To String",
+          labelPlural: "To Strings",
+          hasSource: true,
+          sourceLanguage: "sql",
+        },
+      ],
+    });
+    try {
+      await expect(provider.readObjectSource!(["memory", "app", "s"], "toString")).rejects.toThrow(
+        'Trino declares readable source for the kind "toString" and no SHOW CREATE form for it',
+      );
+      expect(sentAnything("SHOW CREATE")).toBe(false);
+    } finally {
+      prototypeKind.mockRestore();
+    }
   });
 });

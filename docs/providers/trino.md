@@ -887,29 +887,62 @@ through the provider itself on trinodb/trino:476:
 | Container | table | view | materialized_view | function |
 |---|---|---|---|---|
 | `memory` | 2 | 1 | 0 | unavailable |
-| `memory.app` | 2 | 1 | 0 | 3 |
+| `memory.app` | 2 | 1 | 0 | 7 |
 | `tpch.tiny` | 8 | 0 | 0 | 0 |
 
-`memory.app` holds `orders` and `customers`, the view `customer_names`, and the three functions
-`plus_one(bigint)`, `plus_one(double)` and `label(bigint, varchar)`. The overloaded pair is the
-fixture that makes the argument-type path segment observable rather than theoretical, and the server
-returns `orders` before `customers`, which is what makes the provider's own sort observable rather
-than incidental.
+`memory.app` holds `orders` and `customers`, the view `customer_names`, and seven functions. Not one
+of the seven is padding, and four of them exist only because the **source read** (#789) below needs
+an object that defeats a shortcut:
+
+| Function | What it is there for |
+|---|---|
+| `plus_one(bigint)`, `plus_one(double)` | The overloaded pair. A bare name would give two objects one address, which is why a path segment carries its argument types at all. |
+| `label(bigint, varchar)` | Differs in arity as well as in type, so a segment carrying only the first argument type would still be wrong. |
+| `hard(decimal(10,2), array(varchar), row("a" bigint,"b" varchar))` | The overload whose two renderings DIFFER. See the source section. |
+| `answer()` | The empty argument list. |
+| `we(ird(bigint)` | A function NAME holding an open parenthesis, so the first `(` in the segment belongs to the name. |
+| `rowparen(row("a)b" bigint,"c" varchar))` | A ROW field name holding a CLOSE parenthesis, which is what makes the source read's quote-aware scans load-bearing. |
+
+The server returns `orders` before `customers`, which is what makes the provider's own sort
+observable rather than incidental.
 
 ##### `materialized_view` is 0 on this cluster, and that is the true answer
 
 **The compose cluster configures no Iceberg catalog**, so it can hold no materialized view at all: the
 kind is an engine-level concept but only some connectors implement it, and on 476 only a
-Hive-metastore-backed Iceberg catalog will CREATE one. The Iceberg JDBC and REST catalog types both
-answer `createMaterializedView is not supported for Iceberg JDBC catalogs`, so "configure Iceberg and
-you get materialized views" is wrong.
+Hive-metastore-backed Iceberg catalog will CREATE one.
 
-An Iceberg catalog here would mean a metastore service, a warehouse volume and a second image in
-`database-compose.yml` for one object kind, which is a bigger change than the object surface owns. A
-live probe against this cluster will therefore see `materialized_view: 0` in every container. **That
-is the engine answering honestly, not a broken fixture**: the kind stays declared because the engine
-has the concept and `system.metadata.materialized_views` is an engine-level catalog, and #789's
-`KindCount` keeps "this engine has no such concept" and "this container holds none" apart.
+**The JDBC catalog was PROBED for #789 rather than ruled out on paper, and it was refused with the
+catalog fully working.** That distinction is the whole value of the measurement: "the JDBC route does
+not work" and "the JDBC route works and only this one statement is refused" call for different next
+attempts. Measured on 2026-09-13 against trinodb/trino:476 with an Iceberg JDBC catalog on a
+PostgreSQL 18:
+
+1. Trino 476 never initialises the JDBC catalog's own tables. Against an empty database every
+   statement fails `Cannot check and eventually update SQL schema`, and the PostgreSQL log names the
+   cause: `ERROR: relation "iceberg_tables" does not exist` for
+   `ALTER TABLE iceberg_tables ADD COLUMN iceberg_type VARCHAR(5)`. Creating the two V1 tables
+   (`iceberg_tables`, `iceberg_namespace_properties`) by hand clears it.
+2. `fs.hadoop.enabled=true` is then required for a `file://` warehouse. `fs.native-local.enabled`
+   plus `local.location` is not a substitute: the coordinator refuses to START with
+   `Invalid configuration property local.location: file does not exist: file:/data/warehouse` for a
+   directory that exists and is writable inside the container.
+3. With both in place the catalog is live. `CREATE SCHEMA iceberg.warehouse` answers `CREATE SCHEMA`,
+   `CREATE TABLE iceberg.warehouse.orders (id bigint, total double)` answers `CREATE TABLE`, and
+   `INSERT INTO iceberg.warehouse.orders VALUES (1, 10.0), (2, 20.0)` answers `INSERT: 2 rows`.
+4. And then `CREATE MATERIALIZED VIEW iceberg.warehouse.order_totals AS SELECT id, total FROM
+   iceberg.warehouse.orders` answers
+   **`createMaterializedView is not supported for Iceberg JDBC catalogs`**.
+
+So "configure Iceberg and you get materialized views" is wrong, and it is wrong for a reason a reader
+can now check rather than take on trust. The REST catalog type answers the same for REST.
+
+An Iceberg catalog here would therefore mean a METASTORE SERVICE, a warehouse volume and a second
+image in `database-compose.yml` for one object kind, which is a bigger change than the object surface
+owns. A live probe against this cluster will therefore see `materialized_view: 0` in every container.
+**That is the engine answering honestly, not a broken fixture**: the kind stays declared because the
+engine has the concept and `system.metadata.materialized_views` is an engine-level catalog, and
+#789's `KindCount` keeps "this engine has no such concept" and "this container holds none" apart.
 
 ##### Reproducing the Iceberg measurements
 
@@ -958,6 +991,163 @@ the measurement the anti-join above exists for: it is why `iceberg` answers two 
 For the catalog-isolation finding, add a second catalog file pointing at a metastore that is not
 there, `hive.metastore.uri=thrift://nosuchhost:9083`, and read
 `SELECT * FROM system.metadata.materialized_views` unfiltered.
+
+### Object source (#789)
+
+All four declared kinds gain `hasSource`, all four with `sourceLanguage: "sql"`, and **no kind here
+declares nothing**: Trino holds no object without a definition text, because it holds no trigger, no
+stored procedure and no index at all.
+
+Every row below was measured on trinodb/trino:476 on 2026-09-13, against the `memory` catalog
+`database-compose.yml` configures plus an Iceberg catalog on an Apache Hive 4.0.1 standalone
+metastore built exactly as the block above describes.
+
+| kind | statement | reply column | form | origin |
+|---|---|---|---|---|
+| `table` | `SHOW CREATE TABLE <catalog>.<schema>.<name>` | `Create Table` | `complete` | `regenerated` |
+| `view` | `SHOW CREATE VIEW <catalog>.<schema>.<name>` | `Create View` | `complete` | `regenerated` |
+| `materialized_view` | `SHOW CREATE MATERIALIZED VIEW <catalog>.<schema>.<name>` | `Create Materialized View` | `complete` | `regenerated` |
+| `function` | `SHOW CREATE FUNCTION <catalog>.<schema>.<bare name>` | `Create Function`, **one row per overload** | `complete` | `regenerated` |
+
+The reply column is also the **part's label**, rendered as the engine spells it. `SHOW CREATE` is a
+statement rather than a projection, so these names cannot be aliased and they are the engine's own
+word for the text. Binding the label to the same constant the read keys on also makes a wrong reply
+column visible: a misspelled column reads as `undefined`, turns a readable definition into a refusal,
+and a refusal passes a conformance walk and every count assertion in silence.
+
+#### Every text is `regenerated`, and no view claims otherwise
+
+Trino keeps no copy of the statement anybody typed. The view is the clearest proof: the fixture
+creates `customer_names` as
+
+```sql
+CREATE OR REPLACE VIEW memory.app.customer_names AS
+  SELECT id, name FROM memory.app.customers;
+```
+
+and the source read answers
+
+```
+CREATE VIEW memory.app.customer_names SECURITY DEFINER AS
+SELECT
+  id
+, name
+FROM
+  memory.app.customers
+```
+
+with a security clause the author never wrote and the projection reformatted. Each of the four is
+`complete` rather than `partial`, because each is a statement that runs as given rather than a body
+or a bare `SELECT`.
+
+#### A Hive-native view returns a MACHINE TRANSLATION, and this provider cannot tell you so
+
+This is a limit of the surface, and it is stated here rather than carried on the wire, because there
+is nothing truthful to put there.
+
+A **Hive-native** view, one that Hive itself created and that is reached through a `hive` connector,
+is not a Trino view. What `SHOW CREATE VIEW` answers for it is a machine translation into Trino SQL
+of a statement nobody ever wrote in Trino SQL. **Nothing in the reply distinguishes it from a view
+Trino created itself**, so this provider does not claim the difference: `origin` is `regenerated` for
+every view and never `stored`, which is true of both cases, and a reader who needs to know which one
+they are looking at has to know it from the catalog they opened.
+
+When the translation FAILS, the engine says so, and that sentence is carried as a **refusal part**
+rather than raised:
+
+```
+Failed to translate Hive view '<name>': <the parser's reason>
+```
+
+It is matched on that fixed prefix, so the view's name and the parser's reason both reach the reader
+untouched and unprefixed. Two things about it are declared rather than implied:
+
+- **It is NOT MEASURED on this cluster, and that is said in advance rather than reported around.**
+  Reaching a Hive-native view needs a `hive` connector catalog holding a view Hive created, which
+  `database-compose.yml` does not configure and which no statement this provider can send will
+  produce. The spelling is Trino's own `HIVE_VIEW_TRANSLATION_ERROR` message, implemented from the
+  documentation.
+- **It is matched on the SENTENCE and not on the kind.** Only a `view` can produce one today, but a
+  branch keyed on the kind would have to be edited again the day another can.
+
+Every other failure is RAISED, so an object that is not there is never reported as one whose
+definition cannot be read. Measured on 476, those sentences name the object:
+
+```
+line 1:1: Table 'memory.app.no_such_table' does not exist
+line 1:1: Relation 'memory.app.customer_names' is a view, not a table
+line 1:1: Relation 'memory.app.customer_names' is a view, not a materialized view
+```
+
+#### A function is TWO reads, because its two renderings are not the same text
+
+`SHOW CREATE FUNCTION` takes a **bare name** and answers **one row per overload**, and it carries no
+`Argument Types` column of its own. A path segment addresses one overload (`plus_one(bigint)`), so
+the row belonging to it has to be found, and `rows[0]` is measurably wrong: on 476
+`SHOW CREATE FUNCTION memory.app.plus_one` answers the **double** overload first.
+
+**The match is made on `SHOW FUNCTIONS`'s own `Function` and `Argument Types` pair**, which is the
+statement that minted the segment in the first place. The read asks `SHOW FUNCTIONS FROM
+<catalog>.<schema>` first and looks for the row whose `name(argumentTypes)` **reconstructs** the path
+segment. Nothing parses the segment, and that is deliberate: the segment is not unambiguously
+parseable, because the fixture holds a function called `we(ird` whose segment `we(ird(bigint)` has its
+first parenthesis inside the name. A segment no row reconstructs is absence and it raises naming the
+segment, because the engine's own sentence there is the bare `Function not found`, which names
+neither the function nor the schema.
+
+Then the create row is chosen by comparing **signatures**, and a raw string comparison matches
+nothing. Measured for the fixture's `hard`:
+
+| Source | Rendering |
+|---|---|
+| `SHOW FUNCTIONS` `Argument Types` | `decimal(10,2), array(varchar), row("a" bigint,"b" varchar)` |
+| `SHOW CREATE FUNCTION` parameter list | `amount decimal(10, 2), tags array(varchar), r ROW(a bigint, b varchar)` |
+
+Three differences in one signature: a space inside `decimal(10, 2)`, `ROW` in upper case against
+`row`, and field names quoted on one side and bare on the other. So both sides are reduced to the
+form the two renderings agree on: the parameter NAME dropped, then the case, the whitespace and the
+double quotes removed, split at TOP-LEVEL commas only so `decimal(10,2)` stays one argument.
+
+**What that form costs, said plainly.** Removing the whitespace also removes the boundary between a
+ROW field's name and its type, so `row(a bigint)` and a hypothetical `row(ab igint)` reduce to the
+same string. The second is not a type Trino will parse, so no pair of real signatures collides.
+
+**What a parameter name may and may not hold**, measured on 476 on 2026-09-13, because it is what
+decides how much scanning the comparison needs:
+
+| Shape | Answer |
+|---|---|
+| A quoted name for a reserved word, `"order" bigint` | Accepted, and renders quoted |
+| A parameter name holding a SPACE, `"my arg" bigint` | Refused at creation: `Internal error` |
+| A parameter name holding a COMMA, `"a,b" bigint` | Refused at creation: `Internal error` |
+| A parameter name holding a PARENTHESIS, `"we(ird" bigint` | Refused at creation: `Internal error` |
+| A ROW FIELD name holding a CLOSE PARENTHESIS, `row("a)b" bigint, c varchar)` | **Accepted**, and round-trips through both renderings |
+
+The last row is why the two scans are quote aware, and the fixture holds `rowparen` so that is an
+object rather than an argument: a scan for the parameter list's matching `)` that ignored quoting
+would stop at the `)` inside `"a)b"`. The first four rows are why the parameter NAME is dropped by
+taking everything after the first space, with no quote-aware branch: a quoted name always ends
+before a space, so the simple rule reads every name Trino will accept, and the quote-aware branch
+that was written here first was deleted after a mutation proved it changed no answer.
+
+#### The escaper
+
+The three-part name is an **identifier position** and this transport has no parameter channel at all:
+it sends a statement as text. Every segment therefore goes through `quoteIdentifier` in
+[`trino/objects.ts`](../../src/lib/db/providers/sql/trino/objects.ts), the same function the rest of
+the object surface uses, which wraps the segment in double quotes and **doubles** any double quote
+inside it. A table called `ev"il` is addressed as `"memory"."app"."ev""il"`.
+
+Doubling is the correct and complete escape here, which is not true of every engine in this repo:
+`docs/providers/clickhouse.md` records that ClickHouse also processes a BACKSLASH inside a quoted
+identifier, so doubling the quote alone is unsafe there. Trino's quoted identifier has no backslash
+escape, so there is one character to protect and it is doubled.
+
+#### Which kinds declare nothing, and why the list is empty
+
+None. Every kind Trino declares has a definition text and gains `hasSource`. The kinds a reader might
+expect to find missing here are not declared at all: Trino has no trigger, no stored procedure and no
+index anywhere in its model, so there is no folder for them and no source question to answer.
 
 ---
 
