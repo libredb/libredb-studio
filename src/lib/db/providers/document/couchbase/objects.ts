@@ -157,7 +157,24 @@ export const COUCHBASE_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
     // collection is an ordinary `UPSERT`. See `kindAcceptsRowWrites()` in object-kinds.ts.
     acceptsRowWrites: true,
   },
-  { id: COUCHBASE_KIND_FUNCTION, role: "routine", label: "Function", labelPlural: "Functions" },
+  {
+    id: COUCHBASE_KIND_FUNCTION,
+    role: "routine",
+    label: "Function",
+    labelPlural: "Functions",
+    // The ONE kind here with a definition text (#789 Phase 2). `system:functions` carries a
+    // SQL++ user-defined function's body in `definition.text`, so there is something the
+    // engine published to show. The other two declare nothing, each for its own reason: a
+    // collection is schemaless and there is nothing to read, and `system:indexes` has NO
+    // field carrying the CREATE INDEX text, so a Source tab there could only show a
+    // statement this product composed from the keys. The index KEYS are in
+    // `describeObject`, which is where a fact the catalog does publish belongs.
+    hasSource: true,
+    // SQL++, and `sql` is the closest id the installed monaco-editor 0.56.0 registers.
+    // There is no `n1ql` and no `sqlpp` in its 89 ids, and an unregistered id degrades to
+    // plain text with no throw and nothing observable.
+    sourceLanguage: "sql",
+  },
   {
     id: COUCHBASE_KIND_INDEX,
     role: "config",
@@ -171,6 +188,16 @@ export const COUCHBASE_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
     attachedTo: COUCHBASE_KIND_COLLECTION,
   },
 ] as const);
+
+/**
+ * The one part id and label a Couchbase source document carries (#789).
+ *
+ * `id` is provider-local: core reads it as an identity WITHIN one document, for the part
+ * switcher's selection key and nothing else. There is exactly one part here, because a SQL++
+ * function has one body; the two-part shape belongs to engines with a separate specification.
+ */
+export const COUCHBASE_SOURCE_PART_ID = "body";
+export const COUCHBASE_SOURCE_PART_LABEL = "Function body";
 
 /** The scope the server owns. Its collections (`_mobile`, `_query`) are not a person's. */
 const COUCHBASE_SYSTEM_SCOPE = "_system";
@@ -246,8 +273,18 @@ export const INDEXES_SQL = [
  * rule a test can drive. The catalog is namespace-wide and small - one row per
  * user-defined function on the whole cluster - so reading all of it and placing each row
  * in code costs nothing and keeps the placement rule in one visible place.
+ *
+ * `f.definition` is the SOURCE READ (#789 Phase 2), and it rides on the SAME statement the
+ * listing already sends rather than on a second one. Two consequences, both deliberate:
+ * `readObjectSource` cannot come to look at a different set of functions from `listObjects`
+ * and `countObjects`, and the function's identity reaches NO statement at all. It is matched
+ * in code against the rows the listing itself produces, so there is neither a bind nor an
+ * interpolated identifier here and therefore no escaper to get wrong. Measured on Server
+ * 8.0.2 Community, one row's `definition` is
+ * `{"#language":"inline","expression":"(`price` - ((`price` * `pct`) / 100))",`
+ * `"parameters":["price","pct"],"text":"price - (price * pct / 100)"}`.
  */
-export const FUNCTIONS_SQL = "SELECT f.identity AS identity FROM system:functions AS f";
+export const FUNCTIONS_SQL = "SELECT f.identity AS identity, f.definition AS definition FROM system:functions AS f";
 
 // ============================================================================
 // Row shapes
@@ -270,9 +307,16 @@ export interface CouchbaseObjectRow extends CouchbaseRow {
   is_primary?: unknown;
 }
 
-/** One row of `FUNCTIONS_SQL`. `identity` is the only field this provider reads. */
+/**
+ * One row of `FUNCTIONS_SQL`.
+ *
+ * `identity` places the function in the tree and `definition` carries its body (#789).
+ * Both are `unknown` because a `system:` keyspace omits rather than nulls, and because a
+ * misspelt field in the projection would otherwise read as a typed value that is not there.
+ */
 export interface CouchbaseFunctionRow extends CouchbaseRow {
   identity?: unknown;
+  definition?: unknown;
 }
 
 export interface ContainerNameRow extends CouchbaseRow {
@@ -495,6 +539,59 @@ export interface FunctionIdentity {
   readonly bucket: string;
   readonly scope: string;
   readonly name: string;
+}
+
+/**
+ * The bucket, the scope and the name one FUNCTION path addresses (#789 Phase 2).
+ *
+ * The mirror of `resolveFunctionIdentity` on the other side of the wire: that one reads
+ * where a catalog row says it lives, this one reads where a path says it lives, and
+ * `readObjectSource` matches the two. Both are read BY LEVEL and by last segment, never by
+ * position: the bucket and the scope come from `containerSegments()`, so a declaration that
+ * reordered the two levels moves both with it, and the name is `path[path.length - 1]`, so a
+ * kind addressed at a fourth segment still names the function rather than its base object.
+ */
+export function functionAddress(capabilities: ProviderCapabilities, path: readonly string[]): FunctionIdentity {
+  const segments = containerSegments(capabilities, path);
+  return {
+    bucket: requiredSegment(segments, "catalog"),
+    scope: requiredSegment(segments, "schema"),
+    name: path[path.length - 1],
+  };
+}
+
+/**
+ * One `system:functions` row's BODY, or `undefined` for a row that carries none (#789).
+ *
+ * WHAT THE TEXT IS. `definition.text` is the body a person typed, measured: the fixture's
+ * `CREATE OR REPLACE FUNCTION ... { price - (price * pct / 100) }` answers exactly
+ * `price - (price * pct / 100)` in `text`, while `definition.expression` beside it answers
+ * the engine's normalisation `(\`price\` - ((\`price\` * \`pct\`) / 100))`. That difference is
+ * the whole argument for `origin: "stored"` rather than `"regenerated"`, and it is why the
+ * read takes `text` and not `expression`. It is a BODY and not a statement, so the part is
+ * `form: "partial"`: the parameter list is in `definition.parameters` and the
+ * `CREATE FUNCTION` header is nowhere, and composing the three into one statement would show
+ * a reader something this product wrote rather than something the engine published.
+ *
+ * THE UNDEFINED ARM IS WHAT RECIPE RULE 6 ASKS FOR, and it is also the EXTERNAL function
+ * case. A catalog row is a JSON document, so a misspelt field reads as `undefined` rather
+ * than failing to compile, and answering an empty string over it would put a blank editor in
+ * front of a reader. Couchbase keeps an EXTERNAL JavaScript function's body in a library on
+ * the evaluator endpoint rather than in this catalog, so its row carries no `text` at all and
+ * takes this arm. That branch is UNVERIFIABLE on the image this repository runs: Community
+ * Edition refuses to create such a function ("Functions of type javascript are only supported
+ * in Enterprise Edition", measured verbatim on Server 8.0.2 Community, 2026-09-13), so it is
+ * driven by the suite and never by a live cluster. `docs/providers/couchbase.md` says so.
+ *
+ * A whitespace-only body takes the same arm, because an empty definition is not a definition.
+ * It is not producible on 8.0.2 either: `CREATE FUNCTION f() {   }` is error 3000, a syntax
+ * error at the closing brace.
+ */
+export function functionBodyText(row: CouchbaseFunctionRow): string | undefined {
+  const definition = asRecord(row.definition);
+  if (definition === undefined) return undefined;
+  const body = text(definition.text);
+  return body === undefined || body.trim() === "" ? undefined : body;
 }
 
 export function resolveFunctionIdentity(row: CouchbaseFunctionRow): FunctionIdentity | undefined {

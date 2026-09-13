@@ -55,6 +55,20 @@
 #  7. `_default`.`airline` carries the SAME collection name as `inventory`.`airline`, with
 #     an index of the same name over a DIFFERENT key, so a scope-blind filter on a
 #     collection's indexes reports the wrong keys rather than merely the wrong count.
+#  8. The two `discount` functions are also what the SOURCE READ is measured on
+#     (#789 Phase 2). Measured on Server 8.0.2 Community, `system:functions`
+#     answers `inventory`.`discount` as
+#     {"#language":"inline","expression":"(`price` - ((`price` * `pct`) / 100))",
+#      "parameters":["price","pct"],"text":"price - (price * pct / 100)"}.
+#     `text` is the body AS AUTHORED and `expression` is the engine's
+#     normalisation of it, which is the measurement behind reading `text` and
+#     captioning the part `origin: "stored"`. The two bodies differ from each
+#     other, so a read that matched on the name alone answers the wrong one
+#     rather than the same one by luck. There is no EXTERNAL JavaScript function
+#     here and there cannot be: Community Edition refuses to create one
+#     ("Functions of type javascript are only supported in Enterprise Edition",
+#     measured verbatim), which is why the provider's no-body refusal branch is
+#     driven by its suite and not by this fixture.
 #
 # The `_system` scope and its collections (`_mobile`, `_query`) are the server's
 # own and are created by it, not here. They are what the `_system` exclusion is
@@ -121,7 +135,11 @@ n1ql "CREATE INDEX \`ix_name\` IF NOT EXISTS ON \`$BUCKET\`.\`_default\`.\`airli
 #    Enterprise Edition", measured, which is why the provider never classifies on
 #    definition.`#language`.
 n1ql "CREATE OR REPLACE FUNCTION \`$BUCKET\`.\`inventory\`.\`discount\`(price, pct) { price - (price * pct / 100) }"
-n1ql "CREATE OR REPLACE FUNCTION \`$BUCKET\`.\`_default\`.\`discount\`(x) { x }"
+#    The body is `x / 2` and not a single token on purpose: the object-surface
+#    conformance helper bounds the LONGEST definition it read and refuses a
+#    definition under two characters, because a one-character text cannot be told
+#    bounded from unbounded (#789).
+n1ql "CREATE OR REPLACE FUNCTION \`$BUCKET\`.\`_default\`.\`discount\`(x) { x / 2 }"
 
 # 4. A GLOBAL function, which must never reach the tree.
 n1ql "CREATE OR REPLACE FUNCTION \`celsius\`(f) { (f - 32) / 1.8 }"

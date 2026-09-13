@@ -22,7 +22,13 @@
  */
 
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+} from "@/lib/db/object-kinds";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import {
   type ActiveSession,
@@ -38,6 +44,8 @@ import {
   type MaintenanceType,
   type ObjectDetail,
   type ObjectDetailBatch,
+  type ObjectSourceDocument,
+  type ObjectSourcePart,
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
@@ -66,8 +74,12 @@ import {
   COUCHBASE_OBJECT_KINDS,
   containerRead,
   type ContainerNameRow,
+  COUCHBASE_SOURCE_PART_ID,
+  COUCHBASE_SOURCE_PART_LABEL,
   type CouchbaseFunctionRow,
   type CouchbaseObjectRow,
+  functionAddress,
+  functionBodyText,
   FUNCTIONS_SQL,
   INDEXES_SQL,
   isInsideContainer,
@@ -883,6 +895,141 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     // reported here. The sentence itself is shared (#789), so one event reads one way on
     // every engine.
     return bounded ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
+  }
+
+  /**
+   * One object's definition text (#789 Phase 2).
+   *
+   * ONE kind can answer here and the DECLARATION says which, never the kind id: `function`
+   * declares `hasSource` and `collection` and `index` do not. Both absences are facts about
+   * the engine rather than gaps. A collection is SCHEMALESS, so there is no definition
+   * anybody wrote for one. An index is the interesting one: `system:indexes` publishes the
+   * index's name, its keys, its `using` and its state, and NO field carrying the
+   * `CREATE INDEX` text, so a Source tab there could only show a statement this product
+   * composed out of the keys. That is the same fabrication rule the DuckDB macro is captioned
+   * `partial` to avoid, reached from the other side: there the engine publishes a body and
+   * the caption says how much of the definition it is, here the engine publishes no body at
+   * all and the kind declares nothing.
+   *
+   * THE READ IS THE CATALOG READ THE LISTING ALREADY MAKES. `FUNCTIONS_SQL` gained
+   * `f.definition` beside the `f.identity` it always read, so the source read and the listing
+   * cannot come to look at different sets of functions, and the function's identity reaches
+   * NO statement: it is matched in code against the rows the listing itself produces, exactly
+   * as `kindObjects` places them. There is no bind and no interpolated identifier here, so
+   * this engine's source read has no escaper to get wrong.
+   *
+   * A FUNCTION THE CATALOG DOES NOT HOLD RAISES, and on this engine that covers a case worth
+   * naming, because it is not a bug: `system:functions` FILTERS BY PERMISSION rather than
+   * refusing. Measured on Server 8.0.2 Community on 2026-09-13, a `bucket_full_access[travel]`
+   * user reading the whole catalog is answered the two `travel` functions and NOT the global
+   * one, and a `ro_admin` user is answered zero rows with `"status": "success"`. So a caller
+   * who may not see a function meets ABSENCE, indistinguishable from a function that was
+   * never created, and the raise is the honest answer to both. `docs/providers/couchbase.md`
+   * records it.
+   *
+   * A REFUSED STATEMENT RAISES TOO, through `objectRows`, rather than becoming a refusal
+   * part. The read is namespace-wide and says nothing about this object in particular, and
+   * `countObjects` already carries the cluster's own sentence for that same read as
+   * `{ unavailable }` per kind, which is where a whole-surface refusal belongs. This is
+   * declared in the provider doc rather than left to be inferred.
+   *
+   * The bucket and the scope come from the segments the DECLARATION assigns to the `catalog`
+   * and `schema` levels and the name is `path[path.length - 1]`, never `path[0]`, `path[1]`
+   * or `path[2]`: standing ruling 5g, pinned in the suite by a declaration that swaps the two
+   * levels over and by one that pushes the name to a fourth segment.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec?.hasSource !== true) {
+      throw new QueryError(`Couchbase declares no readable source for the kind "${kind}"`, this.type);
+    }
+    // The Monaco language is READ off the declaration and never defaulted. A `?? "sql"` here
+    // is dead against the shipped declaration and silently wrong the moment it fires: a kind
+    // that gained `hasSource` without a language would be answered `sql` for something that
+    // is not SQL++, and the pane would pick a wrong mode with nothing anywhere saying so.
+    const language = spec.sourceLanguage;
+    if (language === undefined) {
+      throw new QueryError(
+        `Couchbase declares source for the kind "${kind}" and no sourceLanguage, so its text has no language to render in`,
+        this.type,
+      );
+    }
+    // The same shape check `describeObject` makes, in the same words, so a caller cannot be
+    // told two different things about one path.
+    checkObjectPath(capabilities, spec, path);
+    const address = functionAddress(capabilities, path);
+
+    const rows = await this.objectRows<CouchbaseFunctionRow>(FUNCTIONS_SQL);
+    const row = rows.find((candidate) => {
+      const identity = resolveFunctionIdentity(candidate);
+      return (
+        identity !== undefined &&
+        identity.bucket === address.bucket &&
+        identity.scope === address.scope &&
+        identity.name === address.name
+      );
+    });
+    if (row === undefined) {
+      throw new QueryError(
+        `No Couchbase ${kind} named ${address.name} in ${address.bucket}.${address.scope}`,
+        this.type,
+      );
+    }
+
+    const body = functionBodyText(row);
+    if (body === undefined) {
+      // OUR sentence and not the cluster's, declared rather than smuggled: the read SUCCEEDED
+      // and the row it answered carries no body, so Couchbase said nothing there is anything
+      // to carry. `docs/providers/couchbase.md` records it as ours and records that this arm
+      // cannot be driven against Community Edition.
+      return this.sourceRefusal(
+        path,
+        kind,
+        `The system:functions row Couchbase answered for ${address.name} in ${address.bucket}.${address.scope} ` +
+          `carries no inline definition text. Couchbase keeps an external JavaScript function's body in a library ` +
+          `on the evaluator endpoint rather than in this catalog, so there is nothing here to show.`,
+      );
+    }
+
+    const bounded = applySourceBound(body, limit);
+    return {
+      path: [...path],
+      kind,
+      parts: [
+        {
+          id: COUCHBASE_SOURCE_PART_ID,
+          label: COUCHBASE_SOURCE_PART_LABEL,
+          text: bounded.text,
+          language,
+          // A BODY and not a statement: no parameter list and no CREATE FUNCTION header.
+          form: "partial",
+          // The author's own bytes. `definition.expression` beside it is the engine's
+          // normalisation, and taking that one would have made this `regenerated`.
+          origin: "stored",
+          ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+        },
+      ],
+    };
+  }
+
+  /**
+   * One refusal document, built in ONE place (#789).
+   *
+   * The part is an object LITERAL carrying `unavailable` and nothing else, never spread from
+   * a branch that could also carry a `text`. A part holding both keys COMPILES, because
+   * TypeScript's excess-property check on a union admits any property declared on any member
+   * of it, and it narrows to the refusal arm while carrying a real definition, which would
+   * put a refusal sentence over text the engine returned.
+   */
+  private sourceRefusal(path: readonly string[], kind: string, unavailable: string): ObjectSourceDocument {
+    const part: ObjectSourcePart = {
+      id: COUCHBASE_SOURCE_PART_ID,
+      label: COUCHBASE_SOURCE_PART_LABEL,
+      unavailable,
+    };
+    return { path: [...path], kind, parts: [part] };
   }
 
   // ==========================================================================

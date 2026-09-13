@@ -11,6 +11,7 @@ import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { CouchbaseProvider } from "@/lib/db/providers/document/couchbase";
 import { COUCHBASE_CONTAINER_LEVELS, COUCHBASE_OBJECT_KINDS } from "@/lib/db/providers/document/couchbase/objects";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { isSourcePartUnavailable, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
 
 // ============================================================================
 // Connection
@@ -1070,15 +1071,46 @@ const OBJECT_INDEX_ROWS = [
   },
 ];
 
+/**
+ * The `definition` sub-document of a `system:functions` row, captured verbatim from
+ * Couchbase Server 8.0.2 Community on 2026-09-13 (#789).
+ *
+ * `text` is the body AS AUTHORED and `expression` is the engine's normalisation of it: the
+ * fixture typed `price - (price * pct / 100)` and the cluster answered that string in
+ * `text` beside `(`price` - ((`price` * `pct`) / 100))` in `expression`. That difference is
+ * the measurement behind `origin: "stored"`, and it is in the double so a read switched to
+ * `expression` answers a DIFFERENT string rather than the same one.
+ */
+function inlineDefinition(text: string, expression: string, parameters: string[]): Record<string, unknown> {
+  return { "#language": "inline", expression, parameters, text };
+}
+
 const OBJECT_FUNCTION_ROWS = [
   // GLOBAL: it belongs to the `default:` namespace, above every bucket, so it has
   // no container in a bucket/scope tree and must never be listed.
-  { identity: { name: "celsius", namespace: "default", type: "global" } },
+  {
+    identity: { name: "celsius", namespace: "default", type: "global" },
+    definition: inlineDefinition("(f - 32) / 1.8", "((`f` - 32) / 1.8)", ["f"]),
+  },
   // Another bucket's scope function. The statement reads the whole namespace, so the
-  // bucket is matched in code and this row is what makes that check killable.
-  { identity: { bucket: "other", scope: "inventory", name: "discount", namespace: "default", type: "scope" } },
-  { identity: { bucket: BUCKET, scope: "_default", name: "discount", namespace: "default", type: "scope" } },
-  { identity: { bucket: BUCKET, scope: "inventory", name: "discount", namespace: "default", type: "scope" } },
+  // bucket is matched in code and this row is what makes that check killable. Its body
+  // differs from every travel body, so a source read that lost the bucket comparison
+  // answers this string rather than merely the same one by luck.
+  {
+    identity: { bucket: "other", scope: "inventory", name: "discount", namespace: "default", type: "scope" },
+    definition: inlineDefinition("price * 0", "(`price` * 0)", ["price"]),
+  },
+  {
+    identity: { bucket: BUCKET, scope: "_default", name: "discount", namespace: "default", type: "scope" },
+    definition: inlineDefinition("x / 2", "(`x` / 2)", ["x"]),
+  },
+  {
+    identity: { bucket: BUCKET, scope: "inventory", name: "discount", namespace: "default", type: "scope" },
+    definition: inlineDefinition("price - (price * pct / 100)", "(`price` - ((`price` * `pct`) / 100))", [
+      "price",
+      "pct",
+    ]),
+  },
 ];
 
 /**
@@ -1167,7 +1199,16 @@ describe("CouchbaseProvider object surface (#789)", () => {
         labelPlural: "Collections",
         acceptsRowWrites: true,
       },
-      { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+      {
+        id: "function",
+        role: "routine",
+        label: "Function",
+        labelPlural: "Functions",
+        // The one kind here with a definition text (#789 Phase 2): `system:functions`
+        // carries a SQL++ function's body in `definition.text`.
+        hasSource: true,
+        sourceLanguage: "sql",
+      },
       // `attachedTo` and not a bare container-level kind: measured on 8.0.2, one
       // index NAME lives on two collections of one scope, so the collection segment
       // is what makes the last segment unique within its parent.
@@ -1182,6 +1223,11 @@ describe("CouchbaseProvider object surface (#789)", () => {
       containers: [[BUCKET]],
       kinds: { collection: 5, function: 2, index: 5 },
       sampleObject: { path: [BUCKET, "inventory", "airline"], kind: "collection" },
+      // A function name that is not in `system:functions`. The read must RAISE naming it,
+      // never answer a document and never answer a refusal part: on this engine a missing
+      // row is absence, and it is also what a caller who may not see the function meets,
+      // because `system:functions` filters by permission rather than refusing.
+      absentSource: { path: [BUCKET, "inventory", "no_such_function"], kind: "function" },
     });
   });
 
@@ -1719,6 +1765,223 @@ describe("CouchbaseProvider object surface (#789)", () => {
     await expect(objectProvider.countObjects(["inventory"])).rejects.toThrow(
       /needs a "catalog" container level and a segment for it/,
     );
+  });
+
+  // --------------------------------------------------------------------------
+  // readObjectSource (#789 Phase 2)
+  // --------------------------------------------------------------------------
+
+  test("declares source on exactly the kinds that have a definition text", () => {
+    const kinds = objectProvider.getCapabilities().objectKinds ?? [];
+    const declared = kinds
+      .filter((kind) => kind.hasSource === true)
+      .map((kind) => [kind.id, kind.sourceLanguage] as const)
+      .sort();
+    expect(declared).toEqual([["function", "sql"]]);
+    // The other direction, so a kind added later cannot quietly gain a Source tab.
+    // `collection` is schemaless and there is nothing to read; `index` has no field in
+    // `system:indexes` carrying the CREATE INDEX text, so a tab there would show a
+    // statement this product invented rather than one the engine published.
+    expect(
+      kinds
+        .filter((kind) => kind.hasSource !== true)
+        .map((kind) => kind.id)
+        .sort(),
+    ).toEqual(["collection", "index"]);
+  });
+
+  /** The one statement the source read sends, pinned as text (#789 recipe rule 6). */
+  const FUNCTIONS_STATEMENT = "SELECT f.identity AS identity, f.definition AS definition FROM system:functions AS f";
+
+  test("reads the definition of a scope function and says what the text is", async () => {
+    const document = await objectProvider.readObjectSource!([BUCKET, "inventory", "discount"], "function");
+
+    expect(document.path).toEqual([BUCKET, "inventory", "discount"]);
+    expect(document.kind).toBe("function");
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(false);
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    // The WHOLE text and not a substring, and it is the body AS AUTHORED. Measured on
+    // 8.0.2, `definition.expression` for this function is
+    // "(`price` - ((`price` * `pct`) / 100))", so a read that took the engine's
+    // normalisation instead would answer a different string here.
+    expect(part.text).toBe("price - (price * pct / 100)");
+    expect(part.language).toBe("sql");
+    // A BODY, not a statement: the parameter list and the CREATE FUNCTION header are not
+    // in `definition.text`, and composing them into one would be a statement this product
+    // invented rather than one the engine published.
+    expect(part.form).toBe("partial");
+    // The author's own bytes, which is what the `text`/`expression` difference proves.
+    expect(part.origin).toBe("stored");
+    expect(part.truncated).toBeUndefined();
+  });
+
+  test("reads the OTHER scope's function of the same name, and the other bucket's is never it", async () => {
+    // Recipe rule 6: a whole-statement pin cannot see a wrong reply FIELD, and a wrong
+    // identity match answers a neighbouring row rather than a refusal. Three rows in the
+    // catalog are called `discount` and each carries a different body, so the text is what
+    // says which row was found.
+    const inDefault = await objectProvider.readObjectSource!([BUCKET, "_default", "discount"], "function");
+    const [defaultPart] = inDefault.parts;
+    if (isSourcePartUnavailable(defaultPart)) throw new Error("narrowing");
+    expect(defaultPart.text).toBe("x / 2");
+
+    const inOtherBucket = await objectProvider.readObjectSource!(["other", "inventory", "discount"], "function");
+    const [otherPart] = inOtherBucket.parts;
+    if (isSourcePartUnavailable(otherPart)) throw new Error("narrowing");
+    expect(otherPart.text).toBe("price * 0");
+  });
+
+  test("reads the definition on the catalog read the listing already makes, and asks for both fields", async () => {
+    // The fake routes on statement content, so this is the only assertion that can see the
+    // projection change. `f.definition` is what this task added: without it every row's
+    // `definition` reads as undefined, every read becomes a refusal, and a refusal passes
+    // the conformance walk and every count assertion alike.
+    queryBodies = [];
+    await objectProvider.readObjectSource!([BUCKET, "inventory", "discount"], "function");
+    expect(statementsIssued()).toEqual([FUNCTIONS_STATEMENT]);
+    // No identifier reaches the statement: the identity is matched in code against the
+    // rows the listing itself produces, so there is no escaper here to get wrong.
+    expect(queryBodies[0].args).toBeUndefined();
+  });
+
+  test("carries a refusal, and no text beside it, for a row whose definition holds no body", async () => {
+    // The EXTERNAL JavaScript function case. Community Edition refuses to create one at
+    // all ("Functions of type javascript are only supported in Enterprise Edition",
+    // measured on 8.0.2), so this row shape is authored here rather than captured.
+    queryHandler = (statement) =>
+      statement.includes("system:functions")
+        ? queryPayload([
+            {
+              identity: { bucket: BUCKET, scope: "inventory", name: "discount", type: "scope" },
+              definition: { "#language": "javascript", library: "mylib", object: "add", parameters: ["a"] },
+            },
+          ])
+        : objectQueryPayload(statement);
+
+    const document = await objectProvider.readObjectSource!([BUCKET, "inventory", "discount"], "function");
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(true);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.unavailable).toContain("evaluator endpoint");
+    expect(part.unavailable).toContain("discount");
+    // Recipe rule 8: a part carrying BOTH keys narrows to the refusal arm and satisfies the
+    // assertion above while carrying a real definition, so the absence of `text` is what
+    // has to be asserted.
+    expect(Object.hasOwn(part, "text")).toBe(false);
+  });
+
+  test("refuses a row carrying no definition at all, and one whose text is blank", async () => {
+    for (const definition of [undefined, { "#language": "inline", text: "   " }, { "#language": "inline", text: 7 }]) {
+      queryHandler = (statement) =>
+        statement.includes("system:functions")
+          ? queryPayload([{ identity: { bucket: BUCKET, scope: "inventory", name: "discount" }, definition }])
+          : objectQueryPayload(statement);
+      const [part] = (await objectProvider.readObjectSource!([BUCKET, "inventory", "discount"], "function")).parts;
+      expect(isSourcePartUnavailable(part)).toBe(true);
+      expect(Object.hasOwn(part, "text")).toBe(false);
+    }
+  });
+
+  test("raises for a function the catalog does not hold, naming the object", async () => {
+    await expect(
+      objectProvider.readObjectSource!([BUCKET, "inventory", "no_such_function"], "function"),
+    ).rejects.toThrow(/no_such_function/);
+  });
+
+  test("raises for a GLOBAL function addressed through a bucket, which is not where it lives", async () => {
+    // `celsius` IS in the catalog the read walks, and it carries a readable body, so a
+    // match that ignored the bucket and the scope would answer it a document here.
+    await expect(objectProvider.readObjectSource!([BUCKET, "_default", "celsius"], "function")).rejects.toThrow(
+      /celsius/,
+    );
+  });
+
+  test("refuses a kind that declares no source, reading the DECLARATION and never the kind id", async () => {
+    for (const kind of ["collection", "index", "view"]) {
+      await expect(objectProvider.readObjectSource!([BUCKET, "inventory", "airline"], kind)).rejects.toThrow(
+        new RegExp(`declares no readable source for the kind "${kind}"`),
+      );
+    }
+  });
+
+  test("refuses a declaration that gained hasSource and no sourceLanguage rather than defaulting one", async () => {
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...objectProvider.getCapabilities(),
+      objectKinds: [{ id: "function", role: "routine", label: "Function", labelPlural: "Functions", hasSource: true }],
+    });
+    await expect(objectProvider.readObjectSource!([BUCKET, "inventory", "discount"], "function")).rejects.toThrow(
+      /no sourceLanguage/,
+    );
+  });
+
+  test("refuses a path of the wrong depth for the kind, in the same words describeObject uses", async () => {
+    await expect(objectProvider.readObjectSource!([BUCKET, "discount"], "function")).rejects.toThrow(
+      /"function" path is \[bucket, scope, name\]/,
+    );
+  });
+
+  test("bounds a definition at the caller's limit and says so in the engine-neutral sentence", async () => {
+    const document = await objectProvider.readObjectSource!([BUCKET, "inventory", "discount"], "function", 5);
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.text).toBe("price");
+    expect(part.truncated).toEqual({ limit: 5, reason: sourceBoundTruncationReason(5) });
+  });
+
+  test("derives the bucket and the scope from the DECLARATION, not from a position", async () => {
+    // Recipe rule 9. Couchbase's shipped declaration is ALREADY two-level, so a spyOn
+    // swapping in a two-level `containerLevels` matches the real one and would pass for an
+    // implementation hardcoding `bucket = path[0]` and `scope = path[1]`. The second
+    // declaration swaps the two levels over and the path is fed in the swapped order, so
+    // the SAME row must still be found and the same body returned.
+    const spy = spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...objectProvider.getCapabilities(),
+      containerLevels: [
+        { id: "schema", label: "Scope", labelPlural: "Scopes" },
+        { id: "catalog", label: "Bucket", labelPlural: "Buckets" },
+      ],
+    });
+    try {
+      const document = await objectProvider.readObjectSource!(["inventory", BUCKET, "discount"], "function");
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(part.text).toBe("price - (price * pct / 100)");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("derives the function NAME from the last segment, not from a position", async () => {
+    // The name is `path[path.length - 1]` and never `path[2]`, and the two are
+    // behaviour-identical while a function sits at exactly three segments. So the
+    // DECLARATION is varied instead: a `function` kind handed an `attachedTo` is addressed
+    // at four segments, and `path[2]` then names the base object while the last segment
+    // names the function itself.
+    const spy = spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...objectProvider.getCapabilities(),
+      objectKinds: [
+        {
+          id: "function",
+          role: "routine",
+          label: "Function",
+          labelPlural: "Functions",
+          hasSource: true,
+          sourceLanguage: "sql",
+          attachedTo: "collection",
+        },
+      ],
+    });
+    try {
+      const document = await objectProvider.readObjectSource!([BUCKET, "inventory", "airline", "discount"], "function");
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(part.text).toBe("price - (price * pct / 100)");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   // --------------------------------------------------------------------------

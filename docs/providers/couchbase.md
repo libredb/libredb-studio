@@ -605,7 +605,7 @@ provider in [`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)
 | Kind | Role | Path | Source |
 |------|------|------|--------|
 | `collection` | relation | `[bucket, scope, collection]` | `system:keyspaces` |
-| `function` | routine | `[bucket, scope, function]` | `system:functions` |
+| `function` | routine | `[bucket, scope, function]` | `system:functions`, and the only kind here declaring `hasSource` ([§6b](#6b-object-source-789)) |
 | `index` | config, `attachedTo: collection` | `[bucket, scope, collection, index]` | `system:indexes` |
 
 A collection declares `acceptsRowWrites: true`. That is the per-kind fact and it is deliberately
@@ -727,7 +727,9 @@ A rejected `INFER` yields **no columns rather than an error**: the collection be
 `bookings` empty so that stays measured. `foreignKeys` is always `[]` for the same reason
 `declaresForeignKeys: false` is declared: SQL++ has no referential constraint.
 
-A function's parameters and its body, and an index's keys as a first-class detail, are Phase 2.
+A function's BODY is read by `readObjectSource` instead ([§6b](#6b-object-source-789)), not by
+`describeObject`. A function's parameter list and an index's keys as a first-class detail remain
+unmodelled.
 
 ### 6a.7b `describeObjects`, the bulk column read
 
@@ -835,6 +837,10 @@ What it holds, so the counts below can be derived rather than remembered:
   service reports as the pre-scopes bucket-level row ([§6a.3](#6a3-the-two-row-shapes-and-the-bucket-level-one)).
 - **Functions:** `discount` in `inventory` and `discount` in `_default`. The global `celsius` is
   deliberately outside the tree ([§6a.5](#6a5-a-global-function-is-excluded)) and is not counted.
+  The two bodies differ on purpose, `price - (price * pct / 100)` against `x / 2`, so a source read
+  matching on the name alone answers the wrong one rather than the same one by luck, and neither is
+  a single character, because the object-surface conformance helper refuses a definition under two
+  characters as one a bound cannot be told from no bound.
 - **Indexes:** `ix_name` on each of `inventory`.`airline`, `inventory`.`hotel` and
   `_default`.`airline`, the primary index on `inventory`.`airline`, and the bucket-level primary
   index, which the `couchbase-init` sidecar creates before running the script.
@@ -850,6 +856,134 @@ by scope, with `_default`.`_default` and the bucket-level index falling into `_d
 the numbers `tests/integration/db/couchbase-provider.test.ts` asserts and the numbers a live
 provider answered against the fixture on 2026-09-11. **They move whenever the script gains an
 object**, so anything stated as a total elsewhere in this document is stated against this list.
+
+---
+
+## 6b. Object source (#789)
+
+`readObjectSource(path, kind, limit?)` answers one object's definition text. Everything below was
+measured against **Couchbase Server 8.0.2 Community** running
+[`docker/couchbase-init/01-object-fixture.sh`](../../docker/couchbase-init/01-object-fixture.sh), on
+2026-09-13, including one end-to-end run of the provider itself against that node.
+
+### 6b.1 Per kind
+
+| Kind | `hasSource` | Statement | What the text IS | Monaco id |
+|------|-------------|-----------|------------------|-----------|
+| `function` | Yes | `SELECT f.identity AS identity, f.definition AS definition FROM system:functions AS f` | `definition.text`, the body as authored: `form: "partial"`, `origin: "stored"` | `sql` |
+| `collection` | No | none | the engine publishes no such text at all | not applicable |
+| `index` | No | none | the engine publishes no such text at all | not applicable |
+
+**`form: "partial"`, and it is a fact rather than a hedge.** `definition.text` is a BODY. The
+parameter list is a separate field (`definition.parameters`) and there is no `CREATE FUNCTION`
+header anywhere in the row, so what the pane shows is less than the statement that created the
+object. Composing the three into one statement would show a reader something this product wrote
+rather than something the engine published.
+
+**`origin: "stored"`, and the measurement that decides it.** The row carries the author's bytes
+AND the engine's normalisation of them, side by side. The fixture's
+`CREATE OR REPLACE FUNCTION travel.inventory.discount(price, pct) { price - (price * pct / 100) }`
+answers:
+
+```json
+{"#language":"inline",
+ "expression":"(`price` - ((`price` * `pct`) / 100))",
+ "parameters":["price","pct"],
+ "text":"price - (price * pct / 100)"}
+```
+
+`text` is what was typed; `expression` is a reconstruction. The read takes `text`, so the origin is
+`stored`. Taking `expression` would have made it `regenerated` and would have shown a reader
+backticks and parentheses they never wrote.
+
+### 6b.2 Why `collection` and `index` declare nothing
+
+- **`collection` is schemaless.** A Couchbase collection has whatever fields its documents carry.
+  There is no definition anybody authored, which is the same fact `describeObject` states by
+  INFERring columns from a document sample rather than reading a schema.
+- **`index` publishes no statement.** `system:indexes` carries an index's name, its `index_key`, its
+  `is_primary`, its `using` and its state, and **no field holding the `CREATE INDEX` text**. A
+  Source tab there could therefore only show a statement composed out of the keys, which is a
+  statement this product invented rather than one the engine published. The index KEYS are a fact
+  the catalog does publish, and they are in `describeObject`
+  ([§6a.7](#6a7-describeobject)), which is where they belong.
+
+### 6b.3 The statement, the escaper, and what reaches the wire
+
+`FUNCTIONS_SQL` gained `f.definition` beside the `f.identity` it always read. It is the SAME
+statement the listing sends, so `readObjectSource`, `listObjects` and `countObjects` cannot come to
+look at different sets of functions.
+
+**No identifier and no bind reaches this statement.** The function's identity is matched IN CODE
+against the rows the read returns, exactly as `kindObjects` places them
+([§6a.5](#6a5-a-global-function-is-excluded) is the same rule, applied to the global function). So
+there is no escaper in this engine's source read to get wrong. That is the whole answer to the
+identifier-quoting question every other provider in #789 has to settle: the catalog is
+namespace-wide and small, one row per user-defined function on the cluster, so reading all of it and
+matching in code costs nothing and keeps one visible placement rule.
+
+### 6b.4 The refusals, and the one that CANNOT be verified on this image
+
+| Cause | What happens | Whose sentence | Verified live |
+|-------|--------------|----------------|---------------|
+| The row carries no readable `definition.text` | a refusal part carrying `unavailable`, no `text` | ours, see below | No, and it cannot be. See below |
+| No row matches the path | RAISES `QueryError` naming the object, `No Couchbase function named <name> in <bucket>.<scope>` | ours | Yes |
+| The statement itself is refused | RAISES, through the ordinary error map | the cluster's | Yes, in the suite |
+
+**The unverifiable branch, stated in advance rather than discovered.** An **EXTERNAL JavaScript
+function's** body does not live in `system:functions` at all: Couchbase keeps it in a library on the
+evaluator endpoint (`<query-node>:8093/evaluator/v1/libraries/<library>`), which the query service
+does not expose and which this provider's transport does not speak. Its catalog row therefore
+carries no `definition.text`, and the read answers the refusal part above. **That branch cannot be
+driven against the image this repository runs.** Community Edition refuses to create such a function
+at all:
+
+```
+CREATE OR REPLACE FUNCTION `travel`.`inventory`.`extfn`(a) LANGUAGE JAVASCRIPT AS "add" AT "mylib"
+-> error 3000: Functions of type javascript are only supported in Enterprise Edition
+```
+
+measured verbatim on Server 8.0.2 Community on 2026-09-13, with `/pools` reporting
+`"isEnterprise": false`. So the branch is written, and it is driven by
+`tests/integration/db/couchbase-provider.test.ts` against an authored row rather than by a live
+cluster. A whitespace-only body takes the same branch and is equally unproducible here:
+`CREATE FUNCTION f() {   }` is error 3000, a syntax error at the closing brace.
+
+The refusal sentence is **ours and not the cluster's**, declared rather than smuggled: the read
+SUCCEEDS and the row it answers carries no body, so Couchbase said nothing there is anything to
+carry. It names the object and says where the body actually lives.
+
+**A refused STATEMENT raises rather than becoming a refusal part**, and that is a decision. The read
+is namespace-wide, so its failure says nothing about this object in particular, and `countObjects`
+already carries the cluster's own sentence for the same read as `{ unavailable }` per kind
+([§6a](#6a-the-object-surface-789)), which is where a whole-surface refusal belongs.
+
+### 6b.5 `system:functions` FILTERS BY PERMISSION, so a privilege problem arrives as absence
+
+Measured on 8.0.2 Community on 2026-09-13, with Community Edition's three roles (`admin`,
+`ro_admin`, `bucket_full_access`):
+
+| Caller | `SELECT f.identity, f.definition FROM system:functions` |
+|--------|--------------------------------------------------------|
+| `admin` | all three rows, including the global `celsius` |
+| `bucket_full_access[travel]` | the two `travel` rows, and NOT `celsius` |
+| `ro_admin` | zero rows, `"status": "success"` |
+
+None of the three is an error. So a caller who may not see a function meets **absence**,
+indistinguishable from a function that was never created, and the read raises for both. That is the
+honest answer to both and it is why Couchbase is not on the phase's live-refusal list: this engine
+has no privilege-driven refusal for object source to carry.
+
+### 6b.6 The derivations
+
+The bucket and the scope come from the segments the DECLARATION assigns to the `catalog` and
+`schema` levels; the function's name is `path[path.length - 1]`. Never `path[0]`, `path[1]` or
+`path[2]`. Couchbase's declaration is already two-level, so a test swapping in a two-level
+`containerLevels` would match the real one and pass for a hardcoded implementation. The suite
+therefore drives two varied declarations instead: one that SWAPS the two levels over, fed a path in
+the swapped order, where the same row must still be found; and one giving `function` an `attachedTo`
+so it is addressed at four segments, where `path[2]` names the base object while the last segment
+names the function.
 
 ---
 
@@ -1062,7 +1196,8 @@ Validation, connect/disconnect, capabilities, labels, `prepareQuery`, query exec
 shaping, the full error map, endpoint discovery (including `alternateAddresses` and the fallback
 port), SRV resolution and its fallback, TLS material, `request_plus` **and** the `not_bounded`
 override, collection listing, INFER flavour union, index mapping, every monitoring method and its
-degraded path, all three maintenance operations, and the explain strategy.
+degraded path, all three maintenance operations, the explain strategy, the whole object surface, and the source
+read with both of its refusal branches and both of its derivation pins ([§6b](#6b-object-source-789)).
 
 ### 11.3 Run it
 
