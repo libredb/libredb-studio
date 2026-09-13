@@ -662,7 +662,12 @@ describe("ObjectSourceView", () => {
   });
 
   test("re-reads when the address changes", async () => {
-    const answers: Record<string, ObjectSourceDocument> = { one: oneReadablePart, two: twoParts };
+    // Each answer names the object it is FOR, which is what every provider in the fleet writes
+    // (`path: [...path]`, 55 sites) and what the viewer now checks before rendering one.
+    const answers: Record<string, ObjectSourceDocument> = {
+      one: { ...oneReadablePart, path: ["APP", "one"] },
+      two: { ...twoParts, path: ["APP", "two"] },
+    };
     const asked: string[] = [];
     const reader: ObjectSourceReader = async (_connection, path) => {
       const name = path[path.length - 1] ?? "";
@@ -802,6 +807,142 @@ describe("ObjectSourceView", () => {
     expect(screen.queryByRole("tablist")).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.getByText("The text for object 'customer_summary' is encrypted.")).toBeTruthy();
+  });
+
+  /**
+   * A LATE ANSWER BELONGS TO THE OBJECT THAT ASKED FOR IT, and one ref could not say that.
+   *
+   * The first spelling kept ONE `asked` ref holding the last address issued, and dropped any
+   * answer whose address no longer matched it. Dropping on UNMOUNT is intended and documented:
+   * the read a reader started before switching tabs is there when they switch back, because the
+   * unmounted instance still writes through the `onChange` it held. But a shell that reuses ONE
+   * mounted pane for a second object, which is what both shells do when the reader switches
+   * between two Source tabs, moves the address on the SAME instance, and the first object's
+   * answer was then thrown away in silence: its tab went back to "nothing read" and paid for a
+   * second round trip on the next visit.
+   *
+   * The answer is written through the `onChange` captured when the read was ISSUED, and in both
+   * shells that callback names the tab that asked, so the write lands on the right tab. What
+   * stops the OTHER shape, a shell holding one state slot for two objects, is the identity check
+   * below rather than a dropped answer.
+   */
+  test("writes an answer for the object that asked, even after the pane moved to another", async () => {
+    const released: Record<string, (value: unknown) => void> = {};
+    const reader: ObjectSourceReader = (_connection, path) =>
+      new Promise((resolve) => {
+        released[path[path.length - 1] ?? ""] = resolve;
+      });
+    const patches: { readonly tab: string; readonly patch: ObjectSourcePatch }[] = [];
+    function OnePane({ name }: { readonly name: string }) {
+      // The real shells' writer: its identity moves with the ACTIVE tab, so the callback the
+      // viewer captured when it issued the read names the tab that asked for it.
+      const onChange = React.useCallback(
+        (patch: ObjectSourcePatch) => {
+          patches.push({ tab: name, patch });
+        },
+        [name],
+      );
+      return (
+        <ObjectSourceView
+          connection={connection}
+          path={["APP", name]}
+          kind="package"
+          kindLabel="Package"
+          displayName={name}
+          refreshToken={0}
+          reader={reader}
+          onChange={onChange}
+        />
+      );
+    }
+    const { rerender } = render(<OnePane name="one" />);
+    await waitFor(() => expect(released.one).toBeTruthy());
+    rerender(<OnePane name="two" />);
+    await waitFor(() => expect(released.two).toBeTruthy());
+
+    // The FIRST object answers last, after the same pane has moved on.
+    await act(async () => {
+      released.one({ ...oneReadablePart, path: ["APP", "one"] });
+    });
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.tab).toBe("one");
+    expect(patches[0]?.patch.document?.path).toEqual(["APP", "one"]);
+  });
+
+  /**
+   * A DOCUMENT NAMES THE OBJECT IT IS FOR, and the pane refuses one that names another (#789).
+   *
+   * Every provider in the fleet writes `path: [...path]` and `kind` onto the document it
+   * answers, so this is a check against a HOST and against a shell that holds one state slot for
+   * two objects: without it, a well-formed definition for another object renders under the
+   * asked-for name, in the header and in the tab, with nothing on screen saying so. That is the
+   * same fault `search` and `mongodb` were fixed for one level down, and it is the one shape a
+   * late answer can still take now that late answers are kept.
+   */
+  test("refuses a document that names another object, rather than drawing it under this name", () => {
+    render(
+      <ObjectSourceView
+        connection={connection}
+        path={[...PATH]}
+        kind="package"
+        kindLabel="Package"
+        displayName="APP_ORDERS_PKG"
+        document={{ ...oneReadablePart, path: ["APP", "SOMETHING_ELSE"] }}
+        refreshToken={0}
+        readAtToken={0}
+        reader={readerFor(oneReadablePart)}
+        onChange={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "The source read answered with a definition for another object.",
+    );
+    expect(screen.queryByRole("textbox")).toBeNull();
+    // The header still says what was ASKED for, so the sentence is about this pane's object.
+    expect(screen.getByTestId("object-source-name").textContent).toBe("APP_ORDERS_PKG");
+  });
+
+  test("refuses a document that names this object under another KIND", () => {
+    // The kind is half the address: one name can be a table and a routine in one schema on
+    // MySQL, which standing ruling 3 records as measured, so the path alone does not identify.
+    render(
+      <ObjectSourceView
+        connection={connection}
+        path={[...PATH]}
+        kind="package"
+        kindLabel="Package"
+        displayName="APP_ORDERS_PKG"
+        document={{ ...oneReadablePart, kind: "procedure" }}
+        refreshToken={0}
+        readAtToken={0}
+        reader={readerFor(oneReadablePart)}
+        onChange={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "The source read answered with a definition for another object.",
+    );
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  test("reports a READER that answers another object's definition as a failed read", async () => {
+    const patches: ObjectSourcePatch[] = [];
+    render(
+      <Harness
+        reader={readerFor({ ...oneReadablePart, path: ["APP", "SOMETHING_ELSE"] })}
+        onPatch={(patch) => {
+          patches.push(patch);
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.failure).toBe("The source read answered with a definition for another object.");
+    expect(patches[0]?.document).toBeUndefined();
   });
 
   /**

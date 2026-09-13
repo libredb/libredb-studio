@@ -829,23 +829,25 @@ describe("a host document that fails the shape check is a failed read, not a ren
   });
 
   /*
-   * RECIPE RULE 12 DOES NOT BIND THIS SHELL THE WAY IT BINDS A PROVIDER, and the difference was
-   * measured rather than argued (#789 Phase 2, fix round 1).
+   * RECIPE RULE 12 BINDS THIS SHELL DIFFERENTLY FROM A PROVIDER, and the answer moved once
+   * (#789 Phase 2, external review of PR #820).
    *
    * The rule asks a provider to assert that a REFUSAL DOCUMENT carries its own identity, because
    * a refusal builder that hardcodes a path attributes the sentence to the wrong object. Here the
-   * document comes from a HOST, so "the document's own identity" is the test's own fixture and
-   * asserting it would be circular. MEASURED on the round-1 form of this test: a host answering
-   * `path: ["MUTANT"], kind: "MUTANTKIND"` instead of echoing the request left it at 1 pass 0
-   * fail with 8 expect calls, because `ObjectSourceView` never dereferences `document.path` or
-   * `document.kind` at all and `StudioWorkspace` captions from the TAB ADDRESS.
+   * document comes from a HOST, so asserting the fixture's own identity would be circular.
+   * MEASURED on the round-1 form of this test: a host answering `path: ["MUTANT"], kind:
+   * "MUTANTKIND"` left it at 1 pass 0 fail with 8 expect calls, because `ObjectSourceView` never
+   * dereferenced `document.path` or `document.kind` at all and `StudioWorkspace` captions from
+   * the TAB ADDRESS. The conclusion drawn then was that the caption was the whole invariant.
    *
-   * So the invariant this shell actually owes is the STRONGER one, and it is what is driven
-   * below: the caption names the object the row asked for EVEN WHEN the document claims another
-   * identity, and the host was asked for that same object. A later author who moves the caption
-   * onto `document.path` breaks the first half by name.
+   * THAT WAS HALF OF IT. The caption being right is necessary and not sufficient: the pane was
+   * still DRAWING another object's document under this object's name, with nothing on screen
+   * saying so, which is the fault `search` and `mongodb` were fixed for one level down. The
+   * viewer now checks the document's own address and reports a mismatch as a FAILED READ, and
+   * both halves are driven here: the sentence says the read answered for another object, and the
+   * caption still names the object the row asked for.
    */
-  test("a refusal is captioned by the object ASKED for, even when the document claims another", async () => {
+  test("a document claiming another object is a failed read, captioned by the object ASKED for", async () => {
     const asked: unknown[][] = [];
     renderWorkspace({
       ...treeReader(),
@@ -853,7 +855,7 @@ describe("a host document that fails the shape check is a failed read, not a ren
         asked.push([id, path, kind]);
         return {
           // Deliberately NOT the request: a host is ordinary JavaScript and this is the shape
-          // that attributes a refusal to the wrong object if anything downstream trusts it.
+          // that attributes a definition or a refusal to the wrong object.
           path: ["other_schema", "somebody_elses_function(text)"],
           kind: "procedure",
           parts: [{ id: "definition", label: "Function", unavailable: "The definition is wrapped." }],
@@ -863,10 +865,13 @@ describe("a host document that fails the shape check is a failed read, not a ren
     await openTree();
     await viewSource();
 
-    await waitFor(() => expect(screen.getByTestId("object-source-refused")).toBeTruthy());
-    expect(screen.getByTestId("object-source-refused-message").textContent).toBe("The definition is wrapped.");
-    // The pane is captioned by the object that was ASKED for, so a refusal cannot be attributed
-    // to a different object than the row it was opened from.
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "The source read answered with a definition for another object.",
+    );
+    // The host's sentence is NOT drawn, because it is about an object nobody opened.
+    expect(screen.queryByTestId("object-source-refused")).toBeNull();
+    // The pane is still captioned by the object that was ASKED for.
     expect(screen.getByTestId("object-source-name").textContent).toBe("app.order_total(integer)");
     expect(screen.getByTestId("object-source-kind").textContent).toBe("Function");
     expect(screen.queryByTestId("source-editor")).toBeNull();

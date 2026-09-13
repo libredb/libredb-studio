@@ -62,6 +62,28 @@ export interface ObjectSourceViewProps {
 /** The sentence for a body neither shell can draw, which is OUR fact and not the engine's. */
 const UNRENDERABLE = "The source read answered with a body this viewer cannot render.";
 
+/** The sentence for a well-formed definition that names a DIFFERENT object. Also our fact. */
+const MISMATCHED = "The source read answered with a definition for another object.";
+
+/**
+ * Whether this document is a definition of THIS pane's object (#789).
+ *
+ * A source document carries the address it answers for, and every provider in the fleet writes
+ * it as `path: [...path]` beside the `kind` it was asked for, 55 sites, so a document naming
+ * anything else came from a HOST that answered the wrong question or from a shell holding one
+ * state slot for two objects. Without this check such a document renders under the asked-for
+ * name, in the header and on the tab, with nothing on screen saying so: the same fault the
+ * `search` and `mongodb` providers were fixed for one level down.
+ *
+ * The KIND is half the address. Standing ruling 3 records it as measured that one name can be a
+ * table and a routine in one MySQL database, so the path alone does not identify an object.
+ *
+ * `pathKey` and never `JSON.stringify`, per standing ruling 5g.
+ */
+function namesThisObject(document: ObjectSourceDocument, path: readonly string[], kind: string): boolean {
+  return document.kind === kind && pathKey(document.path) === pathKey(path);
+}
+
 /**
  * The active part, and the fallback that makes the switcher's selection total.
  *
@@ -130,16 +152,34 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * cannot collide, while JSON escaping rewrites exotic names.
    */
   const address = `${connection.id}/${pathKey(path)}/${kind}`;
-  const asked = useRef<string | undefined>(undefined);
+  /**
+   * EVERY address this instance has issued a read for, and not one address (#789).
+   *
+   * A single ref held the LAST address and every answer whose address no longer matched it was
+   * thrown away. Dropping an answer on UNMOUNT is intended and is documented below; dropping one
+   * because the SAME PANE moved from object A to object B is the opposite, and both shells reach
+   * it, because a reader switching between two Source tabs re-renders one mounted viewer with a
+   * new address rather than mounting a second one. A's answer was discarded in silence, its tab
+   * went back to "nothing read", and the next visit paid for a second round trip.
+   *
+   * A set, so an answer is kept when THIS instance asked for it, whatever it is showing now. The
+   * answer is written through the `onChange` captured when the read was ISSUED, and in both
+   * shells that callback names the tab that asked. What stops a shell holding ONE state slot for
+   * two objects from drawing A's definition under B's name is `namesThisObject` above, which is
+   * a check on the document rather than a race the reader cannot see.
+   */
+  const asked = useRef<Set<string>>(new Set());
   const needsRead = sourceDocument === undefined && failure === undefined;
 
   useEffect(() => {
     if (!needsRead) {
-      asked.current = undefined;
+      // This address has been answered, so a later CLEAR (the stale banner's control) issues a
+      // fresh read rather than finding the address already asked.
+      asked.current.delete(address);
       return;
     }
-    if (asked.current === address) return;
-    asked.current = address;
+    if (asked.current.has(address)) return;
+    asked.current.add(address);
     /*
      * The counter's value AT THE MOMENT THE READ WAS ISSUED, not when it landed. A DDL that
      * runs while this read is in flight cannot be attributed to either side of it, so recording
@@ -149,17 +189,21 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
      */
     const tokenAtRead = refreshToken;
     /*
-     * No cleanup and no mounted guard, deliberately. An answer is dropped only when the
-     * ADDRESS has moved on, which the ref records. A viewer unmounted by a tab switch still
-     * writes its answer through `onChange`, and that is wanted rather than tolerated: the
-     * patch lands on the tab's own state, so the read a user started before switching away is
-     * there when they switch back instead of being issued a second time.
+     * No cleanup, no mounted guard and NO DROP, deliberately. A viewer unmounted by a tab
+     * switch still writes its answer through `onChange`, and that is wanted rather than
+     * tolerated: the patch lands on the tab's own state, so the read a user started before
+     * switching away is there when they switch back instead of being issued a second time.
+     * The same reasoning covers the pane that moved from one object to another without
+     * unmounting, which the single-address ref used to throw away.
      */
     void (reader ?? httpSourceReader)(connection, path, kind).then(
       (answer) => {
-        if (asked.current !== address) return;
         if (!isSourceDocumentShape(answer)) {
           onChange({ failure: UNRENDERABLE, readAtToken: tokenAtRead });
+          return;
+        }
+        if (!namesThisObject(answer, path, kind)) {
+          onChange({ failure: MISMATCHED, readAtToken: tokenAtRead });
           return;
         }
         /*
@@ -176,7 +220,6 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
         onChange({ document: answer, readAtToken: tokenAtRead });
       },
       (error: unknown) => {
-        if (asked.current !== address) return;
         onChange({
           failure: error instanceof Error ? error.message : String(error),
           readAtToken: tokenAtRead,
@@ -203,11 +246,26 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * would loop on the same bad value. The stale banner's control is the way back.
    */
   const renderableDocument = useMemo(
-    () => (sourceDocument !== undefined && isSourceDocumentShape(sourceDocument) ? sourceDocument : undefined),
-    [sourceDocument],
+    () =>
+      sourceDocument !== undefined &&
+      isSourceDocumentShape(sourceDocument) &&
+      namesThisObject(sourceDocument, path, kind)
+        ? sourceDocument
+        : undefined,
+    [sourceDocument, path, kind],
   );
+  /*
+   * The two refusals are DIFFERENT sentences, because they are different facts: a body this
+   * viewer cannot render is malformed, and a definition for another object is well formed and
+   * about something else. One sentence for both would tell a reader nothing about which.
+   */
   const shownFailure =
-    failure ?? (sourceDocument !== undefined && renderableDocument === undefined ? UNRENDERABLE : undefined);
+    failure ??
+    (sourceDocument !== undefined && renderableDocument === undefined
+      ? isSourceDocumentShape(sourceDocument)
+        ? MISMATCHED
+        : UNRENDERABLE
+      : undefined);
 
   const reread = useCallback(() => {
     onChange({ document: undefined, failure: undefined, readAtToken: undefined });
