@@ -64,10 +64,12 @@
  * `tests/run-components.sh` gives it a group of its own.
  */
 import { describe, expect, test } from "bun:test";
+import type { TreeRowModel } from "@/components/object-tree/flatten";
+import { rowActions, type TreeRowActionHandlers } from "@/components/object-tree/row-actions";
 import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
-import { declaredKinds } from "@/lib/db/object-kinds";
-import type { DatabaseConnection, ObjectKindSpec } from "@/lib/db/types";
+import { declaredKinds, findKind } from "@/lib/db/object-kinds";
+import type { DatabaseConnection, DatabaseObject, ObjectKindSpec, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -326,5 +328,126 @@ describe("the fleet census of object source declarations", () => {
       .filter((row) => row.kind.hasSource === true && row.kind.sourceLanguage === undefined)
       .map((row) => triple(row.type, row.kind));
     expect(languageless).toEqual([]);
+  });
+});
+
+/**
+ * THE OTHER HALF OF THE QA NEGATIVE, AND WHY IT LIVES BESIDE THE CENSUS (#789).
+ *
+ * The browser round for Phase 2 was asked to show that a row whose kind declares no definition
+ * offers no "View Source". On most engines that is read off an OPEN menu, and a screenshot of the
+ * open menu is evidence anybody can look at. On four rows in the fleet the negative is one step
+ * stronger and one step harder to photograph: the row has NO actions at all, so the tree draws no
+ * ellipsis trigger and announces no `aria-haspopup`, and the trigger it does not draw is one that
+ * only paints on the hovered or selected row anyway. A screenshot of a row with nothing on it and
+ * a screenshot of a row whose trigger is merely unhovered are the same picture.
+ *
+ * So that claim was carried by prose about a DOM query run against a container that has since been
+ * removed, which standing ruling 5i says is not evidence. This is the same claim as a derivation
+ * from the shipped declarations, which anybody can re-run: `ObjectTree`'s `hasRowMenu` is
+ * `actionsFor(row).length > 0` and nothing else, so a kind whose row yields an empty action list
+ * is exactly a row with no trigger.
+ *
+ * TWO WAYS THIS COULD CERTIFY NOTHING, and the control below kills both. `rowActions` answers `[]`
+ * for a kind the provider does not declare, and it answers `[]` for an object row whose object is
+ * absent, so an empty list is the value this assertion would get from a typo in a kind id or from
+ * a fixture that forgot the object. Every entry therefore names a SIBLING kind on the same
+ * provider whose row must yield a NON-EMPTY list, built by the same helper from the same handlers
+ * and the same object shape. A run where the handlers went missing, the object went missing or the
+ * capabilities came back empty fails on the control rather than passing on the negative.
+ */
+interface ZeroActionRow {
+  readonly type: DatabaseType;
+  /** The kind the QA round recorded as carrying no menu trigger at all. */
+  readonly kind: string;
+  /** A kind on the SAME provider that must carry one, so an empty list cannot be an accident. */
+  readonly control: string;
+}
+
+/**
+ * The four rows the standalone browser round recorded as carrying no trigger, with the engine and
+ * the screenshot each was recorded on: postgres `sequence` (round 1), cassandra `trigger` (18),
+ * couchbase `index` (27) and druid `lookup` (19). Not a derived list: it is transcribed from what
+ * a person saw, and the point of the test is that the build agrees with it.
+ */
+const ZERO_ACTION_ROWS: readonly ZeroActionRow[] = Object.freeze([
+  { type: "postgres", kind: "sequence", control: "function" },
+  { type: "cassandra", kind: "trigger", control: "function" },
+  { type: "couchbase", kind: "index", control: "function" },
+  { type: "druid", kind: "lookup", control: "datasource" },
+]);
+
+/** Everything the standalone shell passes, so a missing action is the DECLARATION, not the shell. */
+function everyHandler(): TreeRowActionHandlers {
+  return {
+    onGenerateSelect: () => {},
+    onProfileObject: () => {},
+    onGenerateCode: () => {},
+    onGenerateTestData: () => {},
+    onOpenMaintenance: () => {},
+    onCreateObject: () => {},
+    onViewSource: () => {},
+  };
+}
+
+/** One object row of the named kind, built the way `flatten.ts` builds one, and its action ids. */
+function rowMenuIds(capabilities: ProviderCapabilities, kindId: string): readonly string[] {
+  const path = ["census_container", "census_object"];
+  const object: DatabaseObject = { path, name: "census_object", kind: kindId };
+  const row: TreeRowModel = {
+    id: `census_container/census_object/${kindId}`,
+    kind: "object",
+    label: "census_object",
+    depth: 2,
+    setSize: 1,
+    posInSet: 1,
+    path,
+    kindId,
+  };
+  return rowActions({ row, object, capabilities, handlers: everyHandler() }).map((action) => action.id);
+}
+
+describe("the rows a person saw carrying no menu trigger", () => {
+  test("carry none from the shipped declarations, each beside a sibling that carries one", async () => {
+    // The zero-iteration case of the loop below certifies nothing about any engine, so it is
+    // refused by name rather than passing quietly.
+    if (ZERO_ACTION_ROWS.length === 0) {
+      throw new Error("the row-menu negative inspected 0 rows, so it certifies nothing about the fleet");
+    }
+
+    const drivenNegatives: string[] = [];
+    for (const entry of ZERO_ACTION_ROWS) {
+      const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[entry.type])).getCapabilities();
+      // An undeclared kind draws no folder and no row, so an empty menu for one is not the
+      // negative the brief asks for. Both names are resolved against the declaration first.
+      if (findKind(capabilities, entry.kind) === undefined) {
+        throw new Error(`${entry.type} declares no ${entry.kind} kind, so an empty row menu says nothing about it`);
+      }
+      if (findKind(capabilities, entry.control) === undefined) {
+        throw new Error(`${entry.type} declares no ${entry.control} kind, so the control cannot run`);
+      }
+      expect(rowMenuIds(capabilities, entry.kind)).toEqual([]);
+      expect(rowMenuIds(capabilities, entry.control).length).toBeGreaterThan(0);
+      drivenNegatives.push(`${entry.type}/${entry.kind}`);
+    }
+    expect(drivenNegatives).toEqual(ZERO_ACTION_ROWS.map((entry) => `${entry.type}/${entry.kind}`));
+  });
+
+  test("the two engines that declare no source anywhere offer View Source on no kind at all", async () => {
+    // Druid and libredb are the fleet's whole-engine negative: with every folder expanded the
+    // browser found the string "View Source" nowhere in the document. Here that is every declared
+    // kind's menu, so a future kind gaining `hasSource` on either engine fails by name.
+    for (const type of ["druid", "libredb"] as const) {
+      const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
+      const kinds = declaredKinds(capabilities);
+      if (kinds.length === 0) {
+        throw new Error(`${type} declared no kinds, so "no kind offers View Source" is vacuously true`);
+      }
+      const offering = kinds.filter((kind) => rowMenuIds(capabilities, kind.id).includes("view-source"));
+      expect(offering.map((kind) => `${type}/${kind.id}`)).toEqual([]);
+      // The control: these rows are not actionless, they simply have no source. An engine whose
+      // menus all came back empty would satisfy the assertion above for the wrong reason.
+      expect(kinds.filter((kind) => rowMenuIds(capabilities, kind.id).length > 0).length).toBeGreaterThan(0);
+    }
   });
 });
