@@ -127,14 +127,16 @@ const readableDocument = {
 
 const realFetch = globalThis.fetch;
 let requested: string[] = [];
+let installedFetch: typeof globalThis.fetch | undefined;
 
 /** Every request the workspace issues, by pathname, so a read that went to a route is visible. */
 function installFetch(): void {
   requested = [];
-  globalThis.fetch = mock(async (url: string | URL) => {
+  installedFetch = mock(async (url: string | URL) => {
     requested.push(new URL(String(url), "http://localhost:3000").pathname);
     return Response.json({ error: "no route here" }, { status: 404 });
   }) as never;
+  globalThis.fetch = installedFetch;
 }
 
 /** The tree half every test needs, with no source method on it. */
@@ -234,9 +236,33 @@ beforeEach(() => {
   installFetch();
 });
 
+/**
+ * The B76 guard, and it runs after EVERY test rather than only in the four that named it.
+ *
+ * MEASURED before it was widened (fix round 1): `requested` was printed from this hook whenever
+ * it was non-empty and the whole file ran 18 pass 0 fail with NOT ONE LINE printed, so
+ * `globalThis.fetch` is never called at all here. The earlier per-test form filtered to
+ * `/api/db/objects` and reported the earlier round's justification for the narrowing, that the
+ * workspace legitimately fetches other things while a tree is on screen. It does not, and the
+ * narrowing cost real cover: a Source read that went out under a base-path prefix, under a
+ * renamed route, or as a provider-meta or storage-config read pulled in by the viewer would all
+ * have passed the filtered form, which is the same shape as the regression this file exists to
+ * prevent. The package ships NO API routes, so the honest assertion is that no route is asked at
+ * all.
+ *
+ * The throw above it is what stops this from certifying nothing: an assertion over `requested`
+ * is vacuously true for a test that never installed the probe, so the probe's own identity is
+ * checked and named before the array is read.
+ */
 afterEach(() => {
-  globalThis.fetch = realFetch;
+  const probe = globalThis.fetch;
   cleanup();
+  globalThis.fetch = realFetch;
+  if (installedFetch === undefined || probe !== installedFetch) {
+    throw new Error("the fetch probe was not installed for this test, so its no-route guard certified nothing");
+  }
+  installedFetch = undefined;
+  expect(requested).toEqual([]);
 });
 
 /**
@@ -272,7 +298,7 @@ describe("the embedded workspace reads an object's source through the host", () 
     expect(screen.getByTestId("object-source-kind").textContent).toBe("Function");
     expect(screen.getByTestId("object-source-name").textContent).toBe("app.order_total(integer)");
     // The control for the negative below is everything above: a definition is on screen.
-    expect(requested.filter((path) => path.startsWith("/api/db/objects"))).toEqual([]);
+    expect(requested).toEqual([]);
   });
 
   test("passes NO source reader and NO onViewSource when the host implements nothing", async () => {
@@ -289,7 +315,7 @@ describe("the embedded workspace reads an object's source through the host", () 
     expect(fireEvent.contextMenu(routine)).toBe(true);
     expect(screen.queryByRole("menu")).toBeNull();
     expect(screen.queryByText("View Source")).toBeNull();
-    expect(requested.filter((path) => path.startsWith("/api/db/objects"))).toEqual([]);
+    expect(requested).toEqual([]);
   });
 
   test("activating a source-bearing row opens nothing when the host implements nothing", async () => {
@@ -300,19 +326,79 @@ describe("the embedded workspace reads an object's source through the host", () 
     // No second tab, and no read: the activation branch is gated on the same fact the menu is.
     expect(tabNames()).toEqual(["Query 1"]);
     expect(screen.queryByTestId("object-source-view")).toBeNull();
-    expect(requested.filter((path) => path.startsWith("/api/db/objects"))).toEqual([]);
+    expect(requested).toEqual([]);
   });
 
-  test("the tree's other rows are what they are today for a host that implements nothing", async () => {
+  /*
+   * THE NON-REGRESSION HALF, and it is wider than the round-1 form (#789 Phase 2, fix round 1).
+   *
+   * The brief asked for "the tree is byte-for-byte what it is today for a host that implements
+   * nothing". Round 1 shipped a single relation row's three menu labels, which exercised no
+   * sequence row, no container row and no counts, so a regression that altered either would have
+   * passed. Byte-for-byte over rendered HTML is not the right assertion either: it would pin
+   * class names and break on any styling change. What is pinned instead is every fact a reader
+   * can see: the full ordered row list with its badges, and the menu of all three row shapes the
+   * declaration produces. Every value below was MEASURED against this tree with a host that
+   * declares no `readObjectSource`.
+   */
+  test("the tree's rows and badges are exactly what they are today for a host that implements nothing", async () => {
     renderWorkspace(treeReader());
     await openTree();
 
-    // The relation row keeps the menu it already had, so the absence above is the source item
-    // alone rather than the row menu collapsing.
+    // The container, its three kind folders each badged from `countObjects`, and the four object
+    // rows the host listed, in the order the tree draws them.
+    expect(screen.getAllByRole("treeitem").map((item) => item.textContent)).toEqual([
+      "app",
+      "Tables1",
+      "orders",
+      "Functions1",
+      "order_total",
+      "tax_rate",
+      "Sequences1",
+      "order_id_seq",
+    ]);
+  });
+
+  /*
+   * ONE TEST PER ROW SHAPE, and that is forced rather than chosen. The row menu is a Radix
+   * context menu and it does not reopen on a second row inside one mount: measured, both a
+   * second `contextMenu` after an Escape and a fresh `render` after `cleanup()` within the same
+   * test left no `role="menu"` in the document, the second one even after a full `waitFor`
+   * timeout. So the three shapes get three mounts, which is what the runner gives them anyway.
+   *
+   * View Source is absent on ALL THREE because the host declared no read. Generate Test Data is
+   * absent on the relation because the declaration gives `table` no `acceptsRowWrites`. Every
+   * list below was MEASURED against this tree.
+   */
+  test("a relation row keeps the menu it has today for a host that implements nothing", async () => {
+    renderWorkspace(treeReader());
+    await openTree();
     fireEvent.contextMenu(row(/orders/));
-    // MEASURED against the tree as it stands before this task: three items, and Generate Test
-    // Data is absent because the declaration above gives `table` no `acceptsRowWrites`.
     expect(menuItems()).toEqual(["Generate Query", "Profile Table", "Generate Code"]);
+  });
+
+  test("a source-bearing routine row draws NO menu at all for a host that implements nothing", async () => {
+    renderWorkspace(treeReader());
+    await openTree();
+    /*
+     * MEASURED: with no reader, View Source is the ONLY item this tree would have offered a
+     * routine, so withholding it leaves the row with no menu trigger and no menu. That is the
+     * before-this-task shape, and it is the row the feature turns on: the same row with a reader
+     * declared offers View Source, which the activation test above drives.
+     */
+    const routine = row(/order_total/);
+    expect(within(routine).queryByTestId("tree-row-menu-trigger")).toBeNull();
+    expect(fireEvent.contextMenu(routine)).toBe(true);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  test("a row of a kind that declares no source draws NO menu at all, with or without a reader", async () => {
+    renderWorkspace(treeReader());
+    await openTree();
+    const sequence = row(/order_id_seq/);
+    expect(within(sequence).queryByTestId("tree-row-menu-trigger")).toBeNull();
+    expect(fireEvent.contextMenu(sequence)).toBe(true);
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 
   test("a relation activates as a query and a routine activates as its source", async () => {
@@ -474,7 +560,7 @@ describe("the embedded workspace reads an object's source through the host", () 
     expect(screen.getByTestId("query-editor")).toBeTruthy();
     expect(screen.getByRole("button", { name: "RUN" })).toBeTruthy();
     // The whole point: nothing fell through to a route, because there is none here.
-    expect(requested.filter((path) => path.startsWith("/api/db/objects"))).toEqual([]);
+    expect(requested).toEqual([]);
   });
 
   test("the kind's own word comes from the declaration, and falls back to the kind id", async () => {
@@ -609,6 +695,59 @@ describe("the embedded workspace reads an object's source through the host", () 
     expect(screen.queryByTestId("object-source-stale")).toBeNull();
   });
 
+  /*
+   * A HOST IS NOT A PROMISE FACTORY, and the two shapes below are the ones a declared
+   * `Promise<ObjectSourceDocument>` does not buy at runtime (#789 Phase 2, fix round 1).
+   *
+   * Both reach the viewer's read effect, which does `(reader ?? httpSourceReader)(...).then(...)`.
+   * A reader that throws BEFORE returning throws inside the effect, and a reader that returns a
+   * non-thenable makes `.then` a `TypeError` in the same place. Neither is a rejected promise, so
+   * neither reaches the viewer's error arm: measured on the round-1 adapter, the first escaped as
+   * an uncaught `Error` out of `commitHookEffectListMount` and the second as
+   * `TypeError: undefined is not an object`, and in a real adopter that is a render-phase throw
+   * taking the host's whole page down rather than one tab.
+   *
+   * The adopter shape that produces the first is ordinary: `readObjectSource(id, path, kind) {
+   * return this.clients[id].readSource(path, kind); }` against a connection whose client has not
+   * been built yet dereferences `undefined` before any await.
+   */
+  test("a host that throws BEFORE returning a promise is a failed read, not a crash", async () => {
+    renderWorkspace({
+      ...treeReader(),
+      // Deliberately not `async`: an `async` method could not produce this shape at all.
+      readObjectSource: (() => {
+        throw new Error("The tenant's client was never built");
+      }) as WorkspaceObjectReader["readObjectSource"],
+    });
+    await openTree();
+    await viewSource();
+
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe("The tenant's client was never built");
+    expect(screen.queryByTestId("source-editor")).toBeNull();
+    // The rest of the shell is still mounted, which is the half that says this was one tab's
+    // failure rather than the workspace coming down.
+    expect(screen.getByRole("treeitem", { name: /order_total/ })).toBeTruthy();
+  });
+
+  test("a host that returns something that is not a promise is a failed read, not a crash", async () => {
+    renderWorkspace({
+      ...treeReader(),
+      readObjectSource: (() => undefined) as unknown as WorkspaceObjectReader["readObjectSource"],
+    });
+    await openTree();
+    await viewSource();
+
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    // Not the host's own sentence, because there is none: a non-thenable answer is a body the
+    // viewer cannot render, and it is reported in that grammar.
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "The source read answered with a body this viewer cannot render.",
+    );
+    expect(screen.queryByTestId("source-editor")).toBeNull();
+    expect(screen.getByRole("treeitem", { name: /order_total/ })).toBeTruthy();
+  });
+
   test("reports the host's own sentence when its read raises", async () => {
     renderWorkspace({
       ...treeReader(),
@@ -689,15 +828,37 @@ describe("a host document that fails the shape check is a failed read, not a ren
     expect(screen.queryByTestId("source-editor")).toBeNull();
   });
 
-  test("a refusal document carries its OWN identity, and it is the one that was asked for", async () => {
+  /*
+   * RECIPE RULE 12 DOES NOT BIND THIS SHELL THE WAY IT BINDS A PROVIDER, and the difference was
+   * measured rather than argued (#789 Phase 2, fix round 1).
+   *
+   * The rule asks a provider to assert that a REFUSAL DOCUMENT carries its own identity, because
+   * a refusal builder that hardcodes a path attributes the sentence to the wrong object. Here the
+   * document comes from a HOST, so "the document's own identity" is the test's own fixture and
+   * asserting it would be circular. MEASURED on the round-1 form of this test: a host answering
+   * `path: ["MUTANT"], kind: "MUTANTKIND"` instead of echoing the request left it at 1 pass 0
+   * fail with 8 expect calls, because `ObjectSourceView` never dereferences `document.path` or
+   * `document.kind` at all and `StudioWorkspace` captions from the TAB ADDRESS.
+   *
+   * So the invariant this shell actually owes is the STRONGER one, and it is what is driven
+   * below: the caption names the object the row asked for EVEN WHEN the document claims another
+   * identity, and the host was asked for that same object. A later author who moves the caption
+   * onto `document.path` breaks the first half by name.
+   */
+  test("a refusal is captioned by the object ASKED for, even when the document claims another", async () => {
+    const asked: unknown[][] = [];
     renderWorkspace({
       ...treeReader(),
-      readObjectSource: async (_id, path, kind) =>
-        ({
-          path,
-          kind,
+      readObjectSource: async (id, path, kind) => {
+        asked.push([id, path, kind]);
+        return {
+          // Deliberately NOT the request: a host is ordinary JavaScript and this is the shape
+          // that attributes a refusal to the wrong object if anything downstream trusts it.
+          path: ["other_schema", "somebody_elses_function(text)"],
+          kind: "procedure",
           parts: [{ id: "definition", label: "Function", unavailable: "The definition is wrapped." }],
-        }) as unknown as ObjectSourceDocument,
+        } as unknown as ObjectSourceDocument;
+      },
     });
     await openTree();
     await viewSource();
@@ -709,5 +870,8 @@ describe("a host document that fails the shape check is a failed read, not a ren
     expect(screen.getByTestId("object-source-name").textContent).toBe("app.order_total(integer)");
     expect(screen.getByTestId("object-source-kind").textContent).toBe("Function");
     expect(screen.queryByTestId("source-editor")).toBeNull();
+    // And the address the host was handed is that same object, so the caption is not right by
+    // accident while the read went somewhere else.
+    expect(asked).toEqual([["host-conn-1", ["app", "order_total(integer)"], "function"]]);
   });
 });

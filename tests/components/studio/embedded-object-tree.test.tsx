@@ -2,7 +2,7 @@ import "../../setup-dom";
 import "../../helpers/mock-navigation";
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setupFramerMotionMock, setupMonacoMock } from "../../helpers/mock-monaco";
 
@@ -122,6 +122,48 @@ describe("the embedded workspace's object tree", () => {
     // The control for this negative is everything above: three reads answered and three sets of
     // rows are on screen, so a read that had gone to a route would have been counted here.
     expect(paths.filter((path) => path.startsWith("/api/db/objects"))).toEqual([]);
+  });
+
+  /*
+   * THE NON-REGRESSION HALF of the optional `readObjectSource` member (#789 Phase 2).
+   *
+   * The member is optional so that an adopter who does nothing sees the tree exactly as it was,
+   * and this file is the one that predates it: a host here declares three methods and no source
+   * read. Pinned below is everything such an adopter can see, so a change that alters a container
+   * row, a badge or a row menu for a host implementing nothing fails here rather than in the
+   * source suite that was written alongside the feature. Every value was MEASURED against this
+   * mount.
+   */
+  test("a host that declares no source read sees the tree it saw before the member existed", async () => {
+    installFetch();
+    renderWorkspace({
+      listContainers: async () => [{ path: ["app"], level: 0, name: "app", isSessionDefault: true }],
+      countObjects: async () => ({ table: { count: 2 } }),
+      listObjects: async () => [
+        { path: ["app", "orders"], name: "orders", kind: "table" },
+        { path: ["app", "customers"], name: "customers", kind: "table" },
+      ],
+    });
+
+    await waitFor(() => expect(screen.getByText("Tables")).toBeTruthy());
+    await userEvent.click(screen.getByText("Tables"));
+    await waitFor(() => expect(screen.getByText("orders")).toBeTruthy());
+
+    // The container, its one badged folder and the two object rows, in the order drawn.
+    expect(screen.getAllByRole("treeitem").map((item) => item.textContent)).toEqual([
+      "app",
+      "Tables2",
+      "orders",
+      "customers",
+    ]);
+
+    // And the relation row's menu, which is where a View Source item would appear if the
+    // affordance were ever offered without a host method behind it.
+    fireEvent.contextMenu(screen.getByRole("treeitem", { name: /orders/ }));
+    const items = within(screen.getByRole("menu"))
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent ?? "");
+    expect(items).toEqual(["Generate Query", "Profile Table", "Generate Code"]);
   });
 
   test("refuses a host answer the tree cannot render, rather than unmounting on it", async () => {

@@ -187,11 +187,23 @@ export function useConnectionAdapter({
    * reader among its dependencies, so a value rebuilt on every render would re-run it, and the
    * connection arrives as an ARGUMENT rather than through this closure so the identity does not
    * move when the selection does.
+   *
+   * `async` IS LOAD-BEARING and it is the whole host-trust guard on this seam. A host is
+   * ordinary JavaScript, so the declared `Promise<ObjectSourceDocument>` is not a runtime
+   * guarantee, and the viewer's read effect does `reader(...).then(...)` with no `try`. Measured
+   * on the plain-arrow form: a host that threw before returning gave an uncaught `Error` out of
+   * `commitHookEffectListMount`, and a host that returned `undefined` gave
+   * `TypeError: undefined is not an object (evaluating '...then')` at the same place. Both are
+   * render-phase throws, so they take the adopter's whole page down rather than one tab. The
+   * `async` wrapper turns the first into a rejection the viewer's error arm already renders with
+   * the host's own sentence, and the second into a resolved non-document the viewer's shape
+   * check already refuses. Two tests in
+   * `tests/components/studio/embedded-source.test.tsx` drive exactly these two shapes.
    */
   const sourceReader = useMemo<ObjectSourceReader | undefined>(() => {
     const read = onObjectsFetch.readObjectSource;
     if (read === undefined) return undefined;
-    return (conn, path, kind) => read(conn.id, path, kind);
+    return async (conn, path, kind) => read(conn.id, path, kind);
   }, [onObjectsFetch]);
 
   const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);

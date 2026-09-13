@@ -113,6 +113,12 @@ export interface WorkspaceObjectReader {
    * rather than a document for an object it cannot find. What the workspace does NOT trust is
    * checked at the seam: a document failing that check is reported as a failed read, with the
    * viewer's own sentence, and never rendered.
+   *
+   * The declared return type is not a runtime guarantee either, and the seam does not assume it
+   * is. A method that THROWS before returning, or that returns anything which is not a thenable,
+   * is turned into a failed read by the adapter rather than into a render-phase throw: measured
+   * on the first form of this seam, both took the whole embedded workspace down instead of one
+   * tab. See `sourceReader` in `src/workspace/hooks/use-connection-adapter.ts`.
    */
   readObjectSource?(connectionId: string, path: readonly string[], kind: string): Promise<ObjectSourceDocument>;
 }
