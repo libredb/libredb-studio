@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D55, U17 · 16
+- [Drivers and connections](#drivers-and-connections) — D1–D67, U17 · 27
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X13, U2–U21 · 7
@@ -544,6 +544,12 @@ The connection's own port is read for management (`:367`) and never for the quer
 Measured on Couchbase CE 8.0.2 during the object-model epic's live acceptance: a node published on
 38091/38093 failed while the same node on 8091/8093 worked.
 
+Reproduced on a second port pair on 2026-09-13, against Couchbase Server 8.0.2 Community published on
+host ports 18091/18093 (#789). `connect()` succeeds over the management port, and the first
+query-service call fails with `Couchbase request failed: Unable to connect. Is the computer able to
+access the url?`, because the node map advertises 8093 and nothing listens there on the host.
+Publishing 8091/8093 makes the same provider work unchanged, which is the control.
+
 Couchbase's own answer to this is `alternateAddresses.external`, which the transport already prefers
 when the cluster publishes it (`:473-477`), so an operator-configured cluster is fine today. What is
 not handled is the ordinary developer case of a stock image published on other ports, where nothing
@@ -555,20 +561,6 @@ is a major already carrying seventeen providers.
 **Done when:** a Couchbase connection reaches the query service on a node published behind a port
 mapping, with the precedence between the node map, the external addresses and the user's own port
 stated where a reader meets it.
-
-### D53. The libSQL object fixture exists only as prose
-
-Every other engine's object fixture is a file under `docker/*-init/` mounted by
-`database-compose.yml`. libSQL's is a fenced SQL block in `docs/providers/libsql.md:584`, so it is
-applied by hand and cannot drift-check against the suite that depends on it. Standing ruling 5i in
-the object-model epic says a fixture is a deliverable rather than scaffolding, and this one is the
-exception nobody chose.
-
-Applying it also needs a client that does not split `CREATE TRIGGER ... BEGIN ... END` on the
-semicolon, which is a real trap for anyone reproducing the suite and is currently unwritten.
-
-**Done when:** the libSQL fixture is a file applied the way the other sixteen are, or the doc says
-why it cannot be and how to apply it safely.
 
 ### D54. The data profiler can only profile columns on PostgreSQL-family engines
 
@@ -602,6 +594,277 @@ the maintenance deep link onto the object path in #789, which now carries the fu
 list it lands on still shows a bare name.
 
 **Done when:** a row in that list is identifiable without relying on what marked it.
+
+### D56. A Druid lookup's JSON definition is unreachable from the one URL a connection carries
+
+Fifteen of the seventeen shipped type-ids read object source under #789, measured by the census in
+`tests/unit/db/object-source-declarations.test.ts`; druid and libredb are the two that read none.
+Two of Druid's three kinds have nothing to read: a datasource and a system table were never written
+down as a statement, measured from the parser's own refusal, which enumerates every statement it
+expected and includes no form of `CREATE`. The third is different. A `lookup` IS authored, as a JSON
+spec, and `GET /druid/coordinator/v1/lookups/config/{tier}/{id}` answers that spec back. Nothing in
+this product can ask for it.
+
+What SQL answers instead is the lookup's key and value PAIRS (`SELECT * FROM lookup.<name>`, columns
+`k` and `v`, measured on Apache Druid 37.0.0). Those are its content. The spec's type (`map` versus
+`cachedNamespace`), its polling period and the namespace it extracts from appear nowhere in SQL, so
+rendering the pairs under a caption that says "definition" would show a user something that is not
+the definition.
+
+Three things make this a transport change rather than a source read:
+
+- `src/lib/db/providers/sql/druid/transport.ts` publishes exactly two members, `query(sql, opts)`
+  and `close()`. `query` takes a SQL string, so no member can address any other path on the cluster.
+- `tests/unit/db/druid/seam-guard.test.ts` parses every file in the provider directory and fails the
+  build when a bare `fetch` or an endpoint path appears outside `http-transport.ts`, so provider
+  logic cannot reach around the seam either.
+- A connection carries ONE host and ONE port. A Broker-only deployment serves the SQL endpoint and no
+  Coordinator API at all, and a Router serves it only when `druid.router.managementProxy.enabled` is
+  set, which `database-compose.yml` sets for this repository's own cluster and a production
+  deployment need not. So the read has to be able to come back empty-handed for a reason about the
+  DEPLOYMENT rather than about the object, which needs a refusal sentence this provider does not
+  have.
+
+Two further things anyone taking this on has to settle before writing code, both open:
+
+- The endpoint above is DOCUMENTED against the Druid 37.0.0 API reference and was NOT measured
+  against a cluster here, so measuring it is step one.
+- Which tier to ask for. The path takes a tier, `__default` being the usual one, and a Router-only
+  deployment gives no list of tiers to a caller who has not already reached the Coordinator. Whether
+  to enumerate tiers first, or to ask `__default` and refuse by name, is the design question.
+- Writing back is not symmetrical with reading. Posting a lookup spec requires its `version` field to
+  be BUMPED, so #778's edit half cannot round-trip a read spec unchanged, and the version handling is
+  part of the work rather than a detail after it.
+
+**Done when:** a Druid lookup shows its own JSON spec, or the object surface says in the engine's own
+terms why this deployment cannot reach it.
+
+### D57. MariaDB's `package` and `sequence` folders are never drawn in the standalone tree
+
+`POST /api/db/provider-meta` reads `getCapabilities()` off a provider it never connects
+(`src/app/api/db/provider-meta/route.ts:44`, #457), and `MySQLProvider.objectKinds` is the one
+declaration in the fleet resolved from the server's own `VERSION()` string, so an unconnected
+provider answers the MySQL six and the client's copy of the declaration never gains MariaDB's two.
+The tree draws its folders from that copy (`src/components/object-tree/flatten.ts`), so the two kinds
+have no folder and their source cannot be reached from the tree.
+
+Both kinds are fully implemented behind the API: a connected provider counts, lists, describes and,
+since #789, reads the source of both. Only the client's copy is stale.
+
+The smallest correct fix reads the connected provider out of the factory cache and re-reads
+`provider-meta` once the connection is warm, about ten lines. A `peekConnectedProvider(connectionId)`
+on `factory.ts` that returns the already-connected instance opens no socket and keeps
+`tests/unit/db-tunnel-discipline.test.ts` green, measured. The design question inside it is WHEN to
+re-read: an unconditional re-read costs a round trip on all seventeen engines and changes the
+capabilities object identity, invalidating every memo keyed on it.
+
+Two limits measured while writing this. It is NOT fleet-wide: `ProviderCapabilities` has exactly
+three connection-resolved values, `objectKinds`, `supportsExplain` and `explainFormat`, so a correct
+fix also changes when the EXPLAIN affordance is offered on PostgreSQL and the four MySQL-wire
+relatives, and that is a behaviour change rather than a repair. And the embedded half cannot be
+closed the same way, because a host declares its own capabilities to `StudioWorkspace`, so closing it
+there is a published-surface change.
+
+**Done when:** a MariaDB connection draws its Packages and Sequences folders in both shells, or the
+provider doc says which surface cannot have them and why.
+
+### D58. A ClickHouse function with a non-SQL origin has never been read live
+
+The source read's refusal arm for `ExecutableUserDefined` and `WasmUserDefined` is driven in the
+suite by a server answering an empty `create_query`, and killed by mutation, but no such function has
+ever existed on the fixture. Creating one needs a `*_function.xml` in the server configuration
+directory beside the script it runs, and `database-compose.yml` mounts neither directory.
+
+What is owed once the compose file is free to change: add a `*_function.xml` mount and a script
+directory to the clickhouse service, create one executable function in `docker/clickhouse-init/`, and
+read it back through the real provider to confirm the server answers an empty `create_query` and an
+`origin` of `ExecutableUserDefined`, which is what the refusal sentence claims.
+
+Cost if wrong: the sentence names an origin the server does not report that way, and a reader is told
+a body is an external program on a server that spells the absence differently. The Enum8 vocabulary
+is measured (`Enum8('System' = 0, 'SQLUserDefined' = 1, 'ExecutableUserDefined' = 2, 'WasmUserDefined'
+= 3)`), so only the empty-`create_query` half is unmeasured.
+
+**Done when:** one executable function exists in the fixture and its refusal is read back from a
+running server rather than from a double.
+
+### D59. A Trino materialized view has no fixture here, and the cheap route is measured shut
+
+`docker/trino-init/01-object-fixture.sql` seeds no materialized view, so the one object kind whose
+source read this repository cannot reproduce is `trino.materialized_view`. The read IS implemented
+and IS tested, against a payload captured from a live cluster, but the cluster that produced it is
+not one `database-compose.yml` can start.
+
+THE CHEAP ROUTE WAS PROBED AND REFUSED, and the measurement is the point of this entry, so the next
+attempt starts from a fact rather than from the same hope. Measured 2026-09-13 on trinodb/trino:476
+with an Iceberg JDBC catalog on PostgreSQL 18:
+
+- The JDBC catalog WORKS. `CREATE SCHEMA` answered `CREATE SCHEMA`, `CREATE TABLE
+  iceberg.warehouse.orders (id bigint, total double)` answered `CREATE TABLE`, and `INSERT INTO
+  iceberg.warehouse.orders VALUES (1, 10.0), (2, 20.0)` answered `INSERT: 2 rows`.
+- `CREATE MATERIALIZED VIEW iceberg.warehouse.order_totals AS SELECT id, total FROM
+  iceberg.warehouse.orders` answered `createMaterializedView is not supported for Iceberg JDBC
+  catalogs`.
+- Two traps on the way: Trino 476 never creates the JDBC catalog's own `iceberg_tables`, so every
+  statement fails `Cannot check and eventually update SQL schema` until the two Iceberg V1 tables are
+  created by hand; and a `file://` warehouse needs `fs.hadoop.enabled=true`, where
+  `fs.native-local.enabled` plus `local.location` refuses to START the coordinator with `Invalid
+  configuration property local.location: file does not exist: file:/data/warehouse` for a directory
+  that exists and is writable inside the container.
+- The materialized view WAS then created on an `apache/hive:4.0.1` standalone metastore, which is
+  what produced the measured `Create Materialized View` reply column.
+
+So the remaining price is a metastore service and a warehouse volume in `database-compose.yml`, and
+the decision to pay it is a compose-file decision rather than an object-surface one.
+`docs/providers/trino.md` carries the full command set meanwhile.
+
+**Done when:** `database-compose.yml` starts a cluster on which the shipped fixture creates a
+materialized view, or the provider doc is accepted as the permanent home of those commands.
+
+### D60. `countObjects` reports a MongoDB transport failure as the engine's own refusal
+
+`src/lib/db/providers/document/mongodb.ts` `countObjects` catches every `listCollections` rejection
+and answers `{ unavailable: <the error message> }` for every declared kind.
+
+Measured against mongodb 7.6.0 and MongoDB 8.2.12: only a `MongoServerError` is the server's own
+error reply. A `MongoServerSelectionError` ("connect ECONNREFUSED ...") or a `MongoNotConnectedError`
+("Client must be connected before running operations") is a transport failure the server never
+answered, and the tree then badges a folder with a socket message as though MongoDB had refused the
+read.
+
+#789 fixed this for `readObjectSource` only (`isServerErrorReply` in the same file), because
+`KindCount`'s `unavailable` arm is a contract shared by the whole fleet and one provider moving alone
+would make the fleet inconsistent.
+
+The decision to take is whether `KindCount.unavailable` means "the engine refused" fleet-wide, in
+which case every provider's count catch needs the same discrimination and a transport failure should
+raise.
+
+**Done when:** a test per provider drives a transport-shaped rejection through `countObjects` and
+asserts it raises rather than badging, and the same for `listObjects`.
+
+### D61. Elasticsearch and OpenSearch object source re-serialises the cluster's JSON, so three values are re-spelled
+
+`readObjectSource` renders a pipeline's or a template's definition with `JSON.parse` followed by
+`JSON.stringify`, because the definition is a sub-document of the endpoint's answer and there is no
+extended-JSON writer for a REST payload.
+
+Measured on Elasticsearch 9.1.4 and OpenSearch 3.8.0 on 2026-09-13 against `probe_json_edges` in
+`docker/search-init/01-object-fixture.sh`: the cluster answers `9223372036854775807` and the pane
+shows `9223372036854776000`, `1.0E30` becomes `1e+30`, and a map keyed `zz, 10, 2, aa` is rendered
+`2, 10, zz, aa`.
+
+Nothing is dropped, so `form: "complete"` is true, and both provider docs record all three under
+"Object source (#789)". A faithful rendering would need the sub-document sliced out of the response
+TEXT rather than re-serialised, which is a small JSON scanner nobody owns today.
+
+It matters for #778 Phase 3: a definition holding a long past 2^53 must not be edited and PUT back
+from the pane.
+
+**Done when:** either the pane shows the cluster's own bytes, or the edit half is refused on a
+definition whose re-serialisation is not byte-identical to what was read.
+
+### D62. Two PostgreSQL source refusals are unverified on CockroachDB and Materialize
+
+`PostgresProvider.readObjectSource` reports exactly two SQLSTATEs as a refusal part, 42883 (`pg_get_*`
+absent) and 42703 (`pg_proc.prokind` absent), and both arms exist because this type id also serves
+CockroachDB and Materialize.
+
+The sentences in `tests/integration/db/postgres-provider.test.ts` are the SHAPE PostgreSQL 18.4
+answers for a missing function and a missing column, measured; neither fork was brought up. The
+provider carries no string of its own, so a wording difference cannot break it, and what is
+unverified is only the claim that those two SQLSTATEs are what a fork answers there.
+
+**Done when:** each fork is brought up, a view's and a routine's source is asked for through the
+shipped statements, and the SQLSTATE and the sentence are recorded in `docs/providers/postgres.md`.
+If either answers a third code, that arm is a code change and not a doc change.
+
+### D63. `postgres.ts`'s `describeObject` still binds `[path[0], path[1]]`
+
+Standing ruling 5g's second spelling, in `describeObject` in
+`src/lib/db/providers/sql/postgres.ts`. It is behaviour-identical at depth 1 and silently wrong at
+depth 2, and the source read does not use it. The object-model epic assigned it to a final sweep
+rather than to the task that found it, so it is recorded here rather than left in a work file.
+
+**Done when:** the name is `path[path.length - 1]` and the container is
+`path.slice(0, containerDepth(capabilities))`, plus the two-level `spyOn` test driven all the way to
+the binds, the way `readObjectSource` is already pinned.
+
+### D64. The PostgreSQL trigger LISTING join is unpinned, so the tree could list no trigger at all
+
+`LIST_TRIGGERS_SQL` in `src/lib/db/providers/sql/postgres.ts` joins
+`pg_catalog.pg_class c ON c.oid = t.tgrelid`, which is what makes a trigger's row name its base table.
+Mutating that one column to `tgconstrrelid` leaves the whole suite green.
+
+Measured 2026-09-13: with the mutation applied, `bun test tests/integration/db/postgres-provider.test.ts`
+is 205 pass 0 fail, identical to the unmutated control. `tgconstrrelid` is 0 for every ordinary
+trigger, so a real server would join nothing and the Triggers folder would list nothing, while the
+count beside it kept counting. Nothing in the tree would say so.
+
+The SOURCE statement added by #789 IS pinned as text at
+`tests/integration/db/postgres-provider.test.ts:4393`; this is the Phase 1 LISTING statement beside
+it, which is not.
+
+**Done when:** the listing statement is pinned as text the way the source statement is, and the
+mutation above fails by name.
+
+### D65. A provider suite whose double dispatches on the statement the test builds cannot see the statement change
+
+Five mutants of one class survived the PostgreSQL suite until its first fix round: three predicate
+deletions, one relkind swap and one pretty flag. All of them are edits to statement TEXT that leave
+the binds untouched, and all are invisible to a double that routes by the `pg_get_*` function name
+the test itself constructed.
+
+#789 closed this for the SOURCE statements: each provider task pinned its own source statement as
+text and reported its mutation numbers. The Phase 1 listing and counting statements across the fleet
+were not swept the same way, and D64 is the one instance that has been measured.
+
+**Done when:** every provider's listing and counting statements are pinned as text, one assertion per
+statement, with the mutation numbers recorded rather than a sample of them.
+
+### D66. The SQLite kind-vocabulary guard scrapes source text, so a kind can be declared and unmapped
+
+The guard in `tests/unit/lib/agent/context-snapshot.test.ts` scrapes `SQLITE_OBJECT_KINDS` with a
+`{ id: "..."` regex that only matches a SINGLE-LINE entry, so a kind written across two lines drops
+out of the population the guard compares.
+
+Measured 2026-09-13, both directions. Exploding an EXISTING entry past 120 columns is a LOUD red: two
+declared ids against the agent side's four, 1 fail, "Expected - 0 / Received + 2", with `table` and
+`trigger` unmatched. So that half is safe. But adding a FIFTH kind as a multi-line entry drops it from
+the guard's population AND it is absent from `COMPOSED_KIND_WORDS`, both sides shrink together, and
+the guard passes at 1 pass 0 fail, while the same kind written on one line fails.
+
+So the defect is a kind that is declared and unmapped, not a formatter. The provider keeps its entries
+on one line so they stay scrapable and says so in a comment.
+
+**Done when:** the guard reads the declaration through
+`createDatabaseProvider("sqlite").getCapabilities()` instead of scraping source text, and a
+multi-line entry for an unmapped kind fails it.
+
+### D67. `assertObjectPathShape` is written out eight times, and four more shapes twice or three times
+
+Measured in the tree on 2026-09-13: `assertObjectPathShape` is DEFINED, not imported, in eight
+provider files (`postgres.ts`, `mysql.ts`, `oracle.ts`, `sqlite.ts`, `libsql/objects.ts`,
+`clickhouse/objects.ts`, `cassandra/objects.ts`, `document/mongodb.ts`). It belongs beside
+`containerDepth` in `src/lib/db/object-kinds.ts`, which is where `comparePaths` already went: that
+one was written four times, was hoisted to `src/lib/db/object-path.ts`, and is now imported by every
+caller, so the pattern is settled and only this helper is left behind.
+
+Four more shapes are duplicated verbatim by the source reads:
+
+- `OBJECT_SOURCE_SQL` and `SOURCE_CATALOG_TYPES`, twice, in `sqlite.ts` and `libsql/objects.ts`.
+- `blankDefinitionShape` and `blankDefinitionReason`, three times, in those two plus
+  `duckdb/objects.ts`. The last two carry three sentences each, so there are copies of six sentences
+  that must not drift, and only the duckdb pair is exported.
+
+libSQL IS SQLite and the two source reads are the same statement against two transports, which is why
+that pair is worth taking first.
+
+None was hoisted when it was found because concurrent implementers held the checkout and a hoist
+collides with every one of them.
+
+**Done when:** one definition of each replaces the copies, with the sqlite and libsql source read
+sharing its statement.
 
 ## Value interpolation
 

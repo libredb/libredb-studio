@@ -233,10 +233,11 @@ export function TreeRow({
       {/*
         The visible way in (Task 33). `hasActions` is the SAME answer the right click asks
         and the same one `aria-haspopup` above announces, so a row that offers nothing shows
-        no trigger and the two entry points cannot drift apart. Every action is gated on
-        `role === "relation"` today, which is why a routine, a trigger and a sequence have
-        none; Phase 3's source editing gives routines actions, and this trigger then appears
-        on them with no change here.
+        no trigger and the two entry points cannot drift apart. Most actions are gated on
+        `role === "relation"`, and View Source is the one that is not: #789 gates it on the
+        kind's own `hasSource` declaration, so a routine, a trigger and a sequence now show
+        this trigger wherever their engine declares a definition text for them, with no
+        change here. A kind that declares neither still shows nothing.
       */}
       {hasActions === true && (
         <button
