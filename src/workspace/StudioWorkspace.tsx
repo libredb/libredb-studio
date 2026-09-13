@@ -365,6 +365,13 @@ export function StudioWorkspace({
    * A definition ALREADY IN HAND is left on screen. It was read from the engine a moment ago and
    * a host handing a new reader object on a render is not a reason to throw a real definition
    * away; what it must not become is an editor with a Run button, and it does not.
+   *
+   * THE ONE PATH THIS DOES NOT COVER, named here because a later change would open it: a tab
+   * holding a document whose state is CLEARED while the host declares no reader would issue the
+   * read. The only control that clears one is the viewer's stale banner, and this shell passes a
+   * hardcoded `refreshToken={0}` below, so nothing here is ever marked stale and the banner is
+   * never drawn. A shell that starts counting DDL has to hand this conjunction a reader that
+   * refuses, or the read goes to a route this package does not ship.
    */
   const sourceFailure =
     sourceTab?.failure ??
