@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { QueryError } from "@/lib/db/errors";
 import type { ObjectSourcePart, ProviderCapabilities } from "@/lib/db/types";
 import {
   containerDepth,
@@ -14,6 +15,7 @@ import {
   sourceBoundTruncationReason,
   SOURCE_CHARACTER_LIMIT,
   SOURCE_PART_LIMIT,
+  requireSourceKind,
 } from "@/lib/db/object-kinds";
 
 const base = { queryLanguage: "sql" } as unknown as ProviderCapabilities;
@@ -268,6 +270,74 @@ describe("the source bounds", () => {
   test("the bound sentence names the number and the caller", () => {
     expect(sourceBoundTruncationReason(1_000_000)).toBe(
       "the source read was bounded at 1,000,000 characters by its caller",
+    );
+  });
+});
+
+describe("requireSourceKind", () => {
+  const engine = { displayName: "SQLite", type: "sqlite" } as const;
+
+  const sourceKinds = {
+    ...base,
+    objectKinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables", hasSource: true, sourceLanguage: "sql" },
+      { id: "column", role: "relation", label: "Column", labelPlural: "Columns" },
+      { id: "trigger", role: "trigger", label: "Trigger", labelPlural: "Triggers", hasSource: true },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  test("answers the declared kind with its language narrowed to a string", () => {
+    const spec = requireSourceKind(sourceKinds, "table", engine);
+
+    expect(spec.id).toBe("table");
+    // The narrowing is the point: the caller reads `spec.sourceLanguage` with no `??` and no
+    // second undefined check, which is what nine providers each wrote for themselves.
+    const language: string = spec.sourceLanguage;
+    expect(language).toBe("sql");
+  });
+
+  test("a kind the engine never declared raises, naming the engine and the kind", () => {
+    expect(() => requireSourceKind(sourceKinds, "materialized_view", engine)).toThrow(
+      new QueryError('SQLite declares no object kind "materialized_view"', "sqlite"),
+    );
+  });
+
+  test("a declared kind that publishes no definition text raises, and it is a different sentence", () => {
+    expect(() => requireSourceKind(sourceKinds, "column", engine)).toThrow(
+      new QueryError('SQLite publishes no definition text for the kind "column"', "sqlite"),
+    );
+  });
+
+  test("a source-bearing kind with no sourceLanguage raises rather than defaulting to one", () => {
+    expect(() => requireSourceKind(sourceKinds, "trigger", engine)).toThrow(
+      new QueryError(
+        'SQLite declares readable source for the kind "trigger" and no sourceLanguage to render it with',
+        "sqlite",
+      ),
+    );
+  });
+
+  test("every raise is a QueryError carrying the engine's own type id, never a bare Error", () => {
+    for (const kind of ["materialized_view", "column", "trigger"]) {
+      let raised: unknown;
+      try {
+        requireSourceKind(sourceKinds, kind, { displayName: "Trino", type: "trino" });
+      } catch (error) {
+        raised = error;
+      }
+      expect(raised).toBeInstanceOf(QueryError);
+      if (!(raised instanceof QueryError)) throw new Error("narrowing");
+      expect(raised.provider).toBe("trino");
+      expect(raised.message).toContain("Trino");
+      expect(raised.message).toContain(`"${kind}"`);
+    }
+    // The loop above certifies nothing if it never ran, and the three ids are the three arms.
+    expect(["materialized_view", "column", "trigger"]).toHaveLength(3);
+  });
+
+  test("an engine declaring no kinds at all raises the unknown-kind sentence, not a crash", () => {
+    expect(() => requireSourceKind(base, "table", engine)).toThrow(
+      new QueryError('SQLite declares no object kind "table"', "sqlite"),
     );
   });
 });

@@ -5,7 +5,8 @@
  * is answered here, in one place, so the defaults cannot drift: an absent
  * `acceptsRowWrites` reads as false in every caller because there is only one caller.
  */
-import type { KindCount, ObjectKindSpec, ObjectSourcePart, ProviderCapabilities } from "@/lib/db/types";
+import { QueryError } from "@/lib/db/errors";
+import type { DatabaseType, KindCount, ObjectKindSpec, ObjectSourcePart, ProviderCapabilities } from "@/lib/db/types";
 
 /**
  * How many container levels this engine declares, as the tree models them.
@@ -210,4 +211,56 @@ export function applySourceBound(
   const last = cut.charCodeAt(cut.length - 1);
   const kept = last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
   return { text: kept, truncated: { limit, reason: sourceBoundTruncationReason(limit) } };
+}
+
+/**
+ * The entry guard every `readObjectSource` opens with, in ONE place (#789 Phase 2).
+ *
+ * Hoisted in the same spirit as `applySourceBound` above it and for the same measured reason
+ * standing ruling 5h gives for `comparePaths`: this preamble was written NINE times, verbatim,
+ * across `sqlite`, `libsql`, `clickhouse`, `cassandra`, `trino`, `postgres`, `mssql`, `mysql`
+ * and `duckdb`, and SonarCloud's duplication report on PR #820 named one of its copies as a
+ * block repeating across five providers at once. The only thing that ever differed between the
+ * nine was the engine's display name and its type id, so both are arguments.
+ *
+ * THREE SEPARATE FACTS, THREE SEPARATE SENTENCES, and collapsing them would lose a distinction
+ * a caller acts on. A kind the engine never declared is a caller asking for something that does
+ * not exist here; a declared kind with no `hasSource` is the engine having no such text at all;
+ * a source-bearing kind with no `sourceLanguage` is a DECLARATION missing half of itself, and
+ * it raises rather than defaulting because an unregistered or absent Monaco id degrades to
+ * plain text with no throw and nothing observable, so a kind that declared source and forgot
+ * its language would ship a Source tab that had quietly stopped highlighting. The wording of
+ * all three is carried over unchanged from the nine copies, because the provider suites assert
+ * on those sentences and a reworded throw would be a behaviour change hiding inside a hoist.
+ *
+ * THE ENGINE IS ONE ARGUMENT rather than two adjacent strings: `displayName` and `type` are
+ * both strings, a positional pair of them can be swapped silently, and an object at the call
+ * site names each one. There is no display-name registry to read either from: `compatibility.ts`
+ * holds no such map and `ProviderLabels` carries entity words rather than a product name, so
+ * inventing one to serve one message would be a larger change than this one. Each provider
+ * already writes its own name as a literal and passes that literal.
+ *
+ * The return narrows `sourceLanguage` to `string`, which is the whole point of the third throw:
+ * the caller reads `spec.sourceLanguage` with no `??` and no second undefined check.
+ */
+export function requireSourceKind(
+  capabilities: ProviderCapabilities,
+  kind: string,
+  engine: { readonly displayName: string; readonly type: DatabaseType },
+): ObjectKindSpec & { readonly sourceLanguage: string } {
+  const spec = findKind(capabilities, kind);
+  if (spec === undefined) {
+    throw new QueryError(`${engine.displayName} declares no object kind "${kind}"`, engine.type);
+  }
+  if (spec.hasSource !== true) {
+    throw new QueryError(`${engine.displayName} publishes no definition text for the kind "${kind}"`, engine.type);
+  }
+  const { sourceLanguage } = spec;
+  if (sourceLanguage === undefined) {
+    throw new QueryError(
+      `${engine.displayName} declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
+      engine.type,
+    );
+  }
+  return { ...spec, sourceLanguage };
 }
