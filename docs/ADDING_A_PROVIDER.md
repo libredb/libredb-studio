@@ -218,14 +218,72 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 | Embedded (in-process, no wire protocol) | `BaseDatabaseProvider` | `embedded/libredb.ts` | [libredb.md](./providers/libredb.md) |
 
 **Implement the abstract methods** from the `DatabaseProvider` interface: `connect`, `disconnect`,
-`query`, the five object methods (`listContainers`, `countObjects`, `listObjects`, `describeObject`,
-`describeObjects`), `getHealth`, `runMaintenance`, plus the monitoring set (`getOverview`,
+`query`, the six object methods (`listContainers`, `countObjects`, `listObjects`, `describeObject`,
+`describeObjects`, `readObjectSource`), `getHealth`, `runMaintenance`, plus the monitoring set (`getOverview`,
 `getPerformanceMetrics`, `getSlowQueries`, `getActiveSessions`, `getTableStats`, `getIndexStats`,
 `getStorageStats`). None can be omitted, but a method whose data your engine does not expose returns
 a neutral value rather than throwing. Mind the return types: the list-valued ones
 (`getSlowQueries`, `getActiveSessions`, `getTableStats`, `getIndexStats`, `getStorageStats`) return
 `[]`, while `getOverview()` and `getPerformanceMetrics()` return DTOs and need a zeroed object.
 `libredb.ts` is the reference for doing this honestly.
+
+### `readObjectSource`: the sixth object method (#789)
+
+This one is paired with a DECLARATION, which is what makes it different from the other five, and the
+pairing is enforced. A kind offers a Source tab only if its `ObjectKindSpec` sets `hasSource: true`,
+and a kind that sets it must also set `sourceLanguage`. Read the refusals off the declaration and
+never off the kind id.
+
+- **`hasSource: true`** on each kind whose definition text your engine really publishes. A kind
+  whose text the engine does not hold simply does not set it, and the row then offers no View
+  Source at all, which is the correct answer rather than a failure to read.
+- **`sourceLanguage`** is a Monaco language id, handed straight to the editor as the model's
+  language. Monaco does NOT raise on an id it never registered: it falls back to plain text, so a
+  wrong id ships a Source tab that is simply not highlighted and nothing goes red. `plsql`, `tsql`
+  and `cql` are not registered by the installed bundle, which is why Oracle, SQL Server and
+  Cassandra all declare `sql`.
+- **No fallback literal in the method.** A kind that declares `hasSource` and no `sourceLanguage`
+  RAISES a `QueryError` naming the kind, before any round trip. Every provider that reads source
+  does this, and the two that once wrote `?? "sql"` and `?? "lua"` were corrected: a literal there
+  hides a deleted declaration behind a tab that has quietly stopped highlighting.
+- **Check the path shape**, with the same function and the same sentence `describeObject` uses. The
+  HTTP route bounds an empty path, but the method is published through `@libredb/studio` and is
+  called by the embedded host seam and by the conformance helper, none of which sees the route.
+
+**A REFUSAL and an ABSENCE are different answers and must not arrive as one.** This is the rule the
+whole surface is built on:
+
+| The engine… | The answer | Why |
+|---|---|---|
+| declined the read, and said so | a PART carrying `unavailable`, holding the engine's own sentence **unprefixed** and with no `text` | the reader needs the server's words to act on. A part is never both `unavailable` and `text` |
+| holds no such object | RAISE a `QueryError` naming the object | a document invented for a dropped object is a claim the engine never made |
+| answered nothing, or an empty text | RAISE | an empty text puts an empty editor over a definition nobody read, which is the shape this contract exists to make unrepresentable |
+| never answered at all (a dropped socket, a timeout) | RAISE a `ConnectionError` | nobody answering is not the server answering "no", and a transport message rendered as this object's refusal is a symptom presented as a fact |
+
+Emptiness is sometimes absence itself: measured on Redis 8.10.0,
+`FUNCTION LIST LIBRARYNAME no_such_library WITHCODE` answers an empty array rather than an error, so
+whatever reads it has to treat emptiness as the absence and raise.
+
+**Every part carries `origin` and `form`, and both are facts about the TEXT rather than decoration:**
+
+- `origin` is `stored` when the bytes are the author's own, as the engine kept them, and
+  `regenerated` when the engine composed the statement from its catalog. Oracle's
+  `DBMS_METADATA.GET_DDL` is `regenerated`; SQLite's `sqlite_schema.sql` is `stored`. Say which in
+  the provider doc, with the measurement.
+- `form` is `complete` when the text runs as given, and `body` when it is the definition's body
+  without the `CREATE` statement around it. A caller that pastes a `body` into an editor and runs it
+  gets a syntax error, so the two must not be conflated.
+
+**The two isolated tests a new provider must satisfy**, neither of which any provider suite can
+stand in for, because both read the WHOLE fleet at once:
+
+- `tests/isolated/object-source-declarations.test.ts` — the census. Add one row per new type-id to
+  `SOURCE_DECLARATIONS`, transcribed from what the engine publishes and not from your build, and
+  move the three committed totals. It also pins the PAIRING: a type-id declares source-bearing
+  kinds if and only if its built provider implements `readObjectSource`, so a declaration with no
+  method and a method with no declaration each fail by name.
+- `tests/isolated/monaco-language-ids.test.ts` — every declared `sourceLanguage` is an id the
+  INSTALLED editor bundle registers, extracted from the bundle rather than typed.
 
 **Override the metadata hooks** so the shared UI renders correctly:
 
