@@ -1124,7 +1124,12 @@ export class TrinoProvider extends SQLBaseProvider {
     const sql = trinoObjectSourceSql(statement, read.catalog, read.schema, resolved.name);
     let rows: TrinoRow[];
     try {
-      rows = await this.runObjectRows(sql);
+      // NOT `runObjectRows`, and that is the whole reason this one read is spelled out here.
+      // `mapTrinoError` turns everything in the `engine` category into a bare `QueryError`
+      // carrying the message alone, which throws away the `errorName` the coordinator sent
+      // and leaves an English sentence as the only thing left to branch on. The fault name is
+      // what the branch below keys on, so the failure has to reach it unmapped.
+      rows = (await this.requireTransport().query(sql)).rows;
     } catch (error) {
       // ONLY the translation failure becomes a refusal. Every other failure is rethrown, so
       // an object that is not there RAISES rather than telling a user its definition cannot
@@ -1133,7 +1138,9 @@ export class TrinoProvider extends SQLBaseProvider {
       // `Relation 'memory.app.customer_names' is a view, not a table`, both of which name the
       // object and neither of which is a statement about readability.
       const refusal = trinoTranslationRefusal(error);
-      if (refusal === undefined) throw error;
+      // Mapped HERE and not before the check, so a raise still reaches a caller as the
+      // provider error every other read answers, with the statement attached.
+      if (refusal === undefined) throw this.mapTrinoError(error, sql);
       return {
         path: [...path],
         kind,

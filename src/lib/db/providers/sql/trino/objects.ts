@@ -76,7 +76,7 @@ import type {
   ProviderCapabilities,
 } from "@/lib/db/types";
 import { TRINO_METADATA_SCHEMA, TRINO_UNKNOWN_TEXT } from "./introspect";
-import type { TrinoRow } from "./transport";
+import { TrinoTransportError, type TrinoRow } from "./transport";
 
 /** The canonical type-id, for the errors raised here. */
 const TYPE_ID = "trino";
@@ -672,6 +672,22 @@ export function functionSegment(name: string, argumentTypes: string): string {
 // ============================================================================
 
 /**
+ * The one part id every Trino source document carries.
+ *
+ * Provider-local, and core reads it as an identity WITHIN ONE DOCUMENT and for nothing else
+ * (#789). Trino answers exactly one text per object: there is no spec-and-body split here,
+ * because the engine holds no object whose definition comes in two pieces.
+ */
+export const TRINO_SOURCE_PART_ID = "definition";
+
+export interface TrinoSourceStatement {
+  /** The object keyword `SHOW CREATE` takes: `TABLE`, `VIEW`, `MATERIALIZED VIEW`, `FUNCTION`. */
+  readonly object: string;
+  /** The reply's only column, which is also the part's label. */
+  readonly column: string;
+}
+
+/**
  * The `SHOW CREATE` form one source-bearing kind is read with, and the single column its
  * reply carries.
  *
@@ -689,22 +705,6 @@ export function functionSegment(name: string, argumentTypes: string): string {
  * passes a whole-statement pin and every count assertion (the epic's recipe rule 6), so
  * binding the label to the same constant puts that mistake in front of a reader.
  */
-/**
- * The one part id every Trino source document carries.
- *
- * Provider-local, and core reads it as an identity WITHIN ONE DOCUMENT and for nothing else
- * (#789). Trino answers exactly one text per object: there is no spec-and-body split here,
- * because the engine holds no object whose definition comes in two pieces.
- */
-export const TRINO_SOURCE_PART_ID = "definition";
-
-export interface TrinoSourceStatement {
-  /** The object keyword `SHOW CREATE` takes: `TABLE`, `VIEW`, `MATERIALIZED VIEW`, `FUNCTION`. */
-  readonly object: string;
-  /** The reply's only column, which is also the part's label. */
-  readonly column: string;
-}
-
 const TRINO_SOURCE_STATEMENTS: Readonly<Record<string, TrinoSourceStatement>> = {
   table: { object: "TABLE", column: "Create Table" },
   view: { object: "VIEW", column: "Create View" },
@@ -740,23 +740,46 @@ export function trinoObjectSourceSql(
 }
 
 /**
- * The sentence Trino emits when a Hive-native view cannot be translated into Trino SQL.
+ * The engine's own fault NAME for a Hive-native view that cannot be translated into Trino SQL.
  *
  * DOCUMENTED AND NOT MEASURED HERE, stated in advance rather than reported around. Reaching
  * it needs a `hive` connector catalog holding a view that Hive itself created, which the
  * compose cluster does not configure and which no statement this provider can send will
- * produce. The spelling is Trino's own `HIVE_VIEW_TRANSLATION_ERROR` message,
- * `Failed to translate Hive view '%s': %s`, and the match is on its fixed PREFIX so the
- * view's name and the parser's reason - the two `%s` - are carried through untouched.
+ * produce. The message it comes with is Trino's own `Failed to translate Hive view '%s': %s`,
+ * and that message is what the refusal part carries, untouched in whichever shape it arrives
+ * and unprefixed by any word of this product's own.
  *
- * It is matched on the SENTENCE and not on the kind, because the sentence is what identifies
- * it: only a `view` can produce one today, but a provider that keyed the branch on the kind
- * would have to be edited again the day another one can.
+ * THE NAME AND NOT THE MESSAGE IS WHAT THE BRANCH IS KEYED ON, and the first round of this
+ * work had it the other way round. A `startsWith` on the sentence bets on a wording that is
+ * demonstrably not uniform on this engine: of the failure replies captured verbatim from 476
+ * in `tests/integration/db/trino-provider.test.ts`, `line 1:1: mismatched input 'SELEKT'.`
+ * and `line 1:1: Table 'memory.app.no_such_table' does not exist` carry the source location
+ * the analyzer attached, while `This connector does not support creating tables`, thrown by
+ * a connector rather than by the analyzer, is bare. Which shape a message takes is a property
+ * of where the throw came from, and for THIS branch, the one branch that cannot be reached on
+ * any cluster this repository can start, that property is unmeasurable. So a location prefix
+ * on the sentence would silently turn the declared refusal back into a raise, which is the
+ * exact case the branch exists for.
+ *
+ * The name is not unmeasurable. `errorName` is on the wire on every failed statement,
+ * {@link TrinoTransportError} already carries it as `code` (its own docblock calls it "the
+ * engine's stable fault name"), and it does not move when a release rewords a sentence.
+ *
+ * It is matched on the FAULT and not on the kind, because the fault is what identifies it:
+ * only a `view` can produce one today, but a provider that keyed the branch on the kind would
+ * have to be edited again the day another one can.
+ *
+ * Module-private: the only reader is the predicate below, and the tests reach the fault
+ * through the verbatim wire payload they serve rather than through this constant.
  */
-export const TRINO_HIVE_VIEW_TRANSLATION_PREFIX = "Failed to translate Hive view ";
+const TRINO_HIVE_VIEW_TRANSLATION_FAULT = "HIVE_VIEW_TRANSLATION_ERROR";
 
 /**
  * The engine's own translation-failure sentence, or `undefined` for any other failure.
+ *
+ * Takes the transport's UNMAPPED error, because {@link TrinoTransportError.code} is the thing
+ * being read and `mapTrinoError` discards it: everything in the `engine` category becomes a
+ * bare `QueryError` carrying the message alone.
  *
  * A failure that is NOT this one is rethrown by the caller rather than dressed as a refusal:
  * a missing object must RAISE (design guarantee 6), and turning every failure into an
@@ -764,8 +787,8 @@ export const TRINO_HIVE_VIEW_TRANSLATION_PREFIX = "Failed to translate Hive view
  * object simply is not there.
  */
 export function trinoTranslationRefusal(error: unknown): string | undefined {
-  if (!(error instanceof Error)) return undefined;
-  return error.message.startsWith(TRINO_HIVE_VIEW_TRANSLATION_PREFIX) ? error.message : undefined;
+  if (!(error instanceof TrinoTransportError)) return undefined;
+  return error.code === TRINO_HIVE_VIEW_TRANSLATION_FAULT ? error.message : undefined;
 }
 
 /**

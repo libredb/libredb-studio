@@ -2929,7 +2929,8 @@ describe("Trino object source", () => {
     // around: reaching a Hive-NATIVE view needs a `hive` connector catalog holding a view
     // that Hive itself created, which `database-compose.yml` does not configure and which no
     // statement this provider can send will produce. The sentence is Trino's own
-    // `HIVE_VIEW_TRANSLATION_ERROR` message and the match is on its fixed prefix.
+    // `HIVE_VIEW_TRANSLATION_ERROR` message, and the branch is keyed on that fault NAME
+    // rather than on the wording: see the two tests below it.
     const sentence =
       "Failed to translate Hive view 'legacy.daily_totals': line 1:8: mismatched input 'FROM'. Expecting: '.', 'AS'";
     serveInstead(
@@ -2949,6 +2950,60 @@ describe("Trino object source", () => {
     // assertion above while putting the refusal over a definition the engine returned. The
     // union does not make that shape a compile error (#789), so it is asserted.
     expect(Object.hasOwn(part, "text")).toBe(false);
+  });
+
+  /**
+   * The SAME refusal, with the coordinator's source-location prefix on the message (#789).
+   *
+   * The wording of a Trino failure message is NOT a stable shape, and this file's own
+   * verbatim 476 captures are the proof: `line 1:1: mismatched input 'SELEKT'.`,
+   * `line 1:15: Catalog 'nosuchcat' not found` and
+   * `line 1:1: Table 'memory.app.no_such_table' does not exist` all carry the location the
+   * analyzer attached, while `This connector does not support creating tables` and
+   * `Query was canceled` are bare. Which shape a message takes is a property of WHERE the
+   * throw came from, and the Hive-native view is the one branch here that cannot be reached
+   * on any cluster this repository can start, so that property is unmeasurable for it.
+   *
+   * `errorName` is not unmeasurable. It is on the wire on every failure, the transport
+   * already parses it into `TrinoTransportError.code`, and it does not move when a release
+   * rewords a sentence or when the analyzer prepends a location. So the branch is keyed on
+   * the fault NAME and the engine's sentence is carried through whichever shape it arrives
+   * in.
+   */
+  test("the translation refusal survives a message the coordinator prefixed with a location", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    const sentence = "line 1:1: Failed to translate Hive view 'legacy.daily_totals': line 1:8: mismatched input 'FROM'";
+    serveInstead(
+      trinoObjectSourceSql(trinoSourceStatementFor("view"), "memory", "app", "customer_names"),
+      refusal({ message: sentence, errorCode: 65551, errorName: "HIVE_VIEW_TRANSLATION_ERROR", errorType: "EXTERNAL" }),
+    );
+
+    const document = await provider.readObjectSource!(["memory", "app", "customer_names"], "view");
+
+    const [part] = document.parts;
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.unavailable).toBe(sentence);
+    expect(Object.hasOwn(part, "text")).toBe(false);
+  });
+
+  test("a failure that only READS like the translation one still RAISES, because its fault name differs", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    // The control the assertion above owes. A branch keyed on the fault name must refuse a
+    // message wearing the same words under another name, or the two tests together would
+    // pass for an implementation that answers a refusal to everything.
+    serveInstead(
+      trinoObjectSourceSql(trinoSourceStatementFor("view"), "memory", "app", "customer_names"),
+      refusal({
+        message: "Failed to translate Hive view 'legacy.daily_totals': the metastore is unreachable",
+        errorCode: 65536,
+        errorName: "HIVE_METASTORE_ERROR",
+        errorType: "EXTERNAL",
+      }),
+    );
+
+    await expect(provider.readObjectSource!(["memory", "app", "customer_names"], "view")).rejects.toThrow(
+      "the metastore is unreachable",
+    );
   });
 
   test("a reply that is not a definition is a refusal that says which shape it was", async () => {

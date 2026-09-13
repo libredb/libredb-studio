@@ -1059,15 +1059,25 @@ rather than raised:
 Failed to translate Hive view '<name>': <the parser's reason>
 ```
 
-It is matched on that fixed prefix, so the view's name and the parser's reason both reach the reader
-untouched and unprefixed. Two things about it are declared rather than implied:
+The whole sentence reaches the reader untouched, so the view's name and the parser's reason are the
+engine's words rather than this product's. Three things about it are declared rather than implied:
 
 - **It is NOT MEASURED on this cluster, and that is said in advance rather than reported around.**
   Reaching a Hive-native view needs a `hive` connector catalog holding a view Hive created, which
   `database-compose.yml` does not configure and which no statement this provider can send will
-  produce. The spelling is Trino's own `HIVE_VIEW_TRANSLATION_ERROR` message, implemented from the
-  documentation.
-- **It is matched on the SENTENCE and not on the kind.** Only a `view` can produce one today, but a
+  produce.
+- **It is matched on the engine's stable fault NAME, `HIVE_VIEW_TRANSLATION_ERROR`, and not on the
+  wording of the message.** The first implementation matched the message's fixed prefix, and that is
+  a bet on a shape this engine does not keep uniform. Of the failure replies captured verbatim from
+  476 in this repository, `line 1:1: mismatched input 'SELEKT'.` and
+  `line 1:1: Table 'memory.app.no_such_table' does not exist` carry the source location the analyzer
+  attached, while `This connector does not support creating tables`, thrown by a connector rather
+  than by the analyzer, is bare. Which shape a message takes is a property of where the throw came
+  from, and for the one branch that cannot be reached on any cluster this repository can start, that
+  property is unmeasurable: a location prefix would silently turn the declared refusal back into a
+  raise. `errorName` is on the wire on every failed statement and does not move when a release
+  rewords a sentence.
+- **It is matched on the FAULT and not on the kind.** Only a `view` can produce one today, but a
   branch keyed on the kind would have to be edited again the day another can.
 
 Every other failure is RAISED, so an object that is not there is never reported as one whose

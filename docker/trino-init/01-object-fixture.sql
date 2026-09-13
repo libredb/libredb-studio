@@ -62,12 +62,15 @@ CREATE OR REPLACE FUNCTION memory.app.label(id bigint, prefix varchar)
   RETURNS varchar
   RETURN prefix || CAST(id AS varchar);
 
--- Three more functions, and none of them is padding: each one defeats a shortcut the
--- source read (#789) would otherwise take. `SHOW CREATE FUNCTION` answers ONE ROW PER
--- OVERLOAD and carries no `Argument Types` column of its own, so the row belonging to a
--- path segment has to be found by comparing the segment's argument types against the
--- parameter list rendered inside each CREATE statement, and the two renderings are NOT the
--- same text. Measured on 476, for `hard`:
+-- EVERY FUNCTION BELOW THIS LINE exists for the source read (#789), and none of them is
+-- padding: each one defeats a shortcut the read would otherwise take, and the comment above
+-- each one says which. This heading deliberately counts nothing, so it cannot go stale the
+-- way a digit would when the list grows.
+--
+-- `SHOW CREATE FUNCTION` answers ONE ROW PER OVERLOAD and carries no `Argument Types` column
+-- of its own, so the row belonging to a path segment has to be found by comparing the
+-- segment's argument types against the parameter list rendered inside each CREATE statement,
+-- and the two renderings are NOT the same text. Measured on 476, for `hard`:
 --
 --   SHOW FUNCTIONS ... `Argument Types`   decimal(10,2), array(varchar), row("a" bigint,"b" varchar)
 --   SHOW CREATE FUNCTION ... parameters   amount decimal(10, 2), tags array(varchar), r ROW(a bigint, b varchar)
