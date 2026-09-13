@@ -61,3 +61,54 @@ CREATE OR REPLACE FUNCTION memory.app.plus_one(x double)
 CREATE OR REPLACE FUNCTION memory.app.label(id bigint, prefix varchar)
   RETURNS varchar
   RETURN prefix || CAST(id AS varchar);
+
+-- Three more functions, and none of them is padding: each one defeats a shortcut the
+-- source read (#789) would otherwise take. `SHOW CREATE FUNCTION` answers ONE ROW PER
+-- OVERLOAD and carries no `Argument Types` column of its own, so the row belonging to a
+-- path segment has to be found by comparing the segment's argument types against the
+-- parameter list rendered inside each CREATE statement, and the two renderings are NOT the
+-- same text. Measured on 476, for `hard`:
+--
+--   SHOW FUNCTIONS ... `Argument Types`   decimal(10,2), array(varchar), row("a" bigint,"b" varchar)
+--   SHOW CREATE FUNCTION ... parameters   amount decimal(10, 2), tags array(varchar), r ROW(a bigint, b varchar)
+--
+-- three differences in one signature: a space inside `decimal(10, 2)`, `ROW` in upper case
+-- against `row`, and field names quoted on one side and bare on the other. A provider
+-- comparing the two strings would miss every overload of a type more structured than a
+-- scalar, and would then report a function that exists as absent.
+CREATE OR REPLACE FUNCTION memory.app.hard(amount decimal(10,2), tags array(varchar), r row(a bigint, b varchar))
+  RETURNS varchar
+  RETURN CAST(amount AS varchar);
+
+-- The EMPTY argument list, which is the boundary of that comparison: the segment is
+-- `answer()` and the rendered parameter list is the empty string, so a matcher that split
+-- on commas without a zero-length arm would answer one phantom argument.
+CREATE OR REPLACE FUNCTION memory.app.answer()
+  RETURNS bigint
+  RETURN 42;
+
+-- A function whose NAME carries an open parenthesis. The path segment is `we(ird(bigint)`
+-- and the CREATE statement opens `CREATE FUNCTION memory.app."we(ird"(x bigint)`, so the
+-- FIRST `(` in either string belongs to the name and not to the parameter list. Both scans
+-- have to be quote aware, and this object is what makes that non-vacuous rather than
+-- defensive: measured on 476, the name round-trips through `SHOW FUNCTIONS` as `we(ird`.
+CREATE OR REPLACE FUNCTION memory.app."we(ird"(x bigint)
+  RETURNS bigint
+  RETURN x;
+
+-- A ROW FIELD NAME HOLDING A CLOSE PARENTHESIS, which is the object that proves the two
+-- quote-aware scans in the source read are load-bearing rather than defensive. Measured on
+-- 476 on 2026-09-13, the whole battery: a top-level PARAMETER name may be quoted (`"order"`
+-- for a reserved word) but may NOT hold a space, a comma or a parenthesis - all three are
+-- refused at creation with a bare `Internal error` - while a ROW FIELD name may hold any of
+-- them, and this one round-trips through BOTH renderings:
+--
+--   SHOW FUNCTIONS ... `Argument Types`   row("a)b" bigint,"c" varchar)
+--   SHOW CREATE FUNCTION ... parameters   r ROW("a)b" bigint, c varchar)
+--
+-- so a scan for the parameter list's matching `)` that was not quote aware would stop at the
+-- `)` inside the field name and read the parameter list as `r ROW("a`. Without this object in
+-- the fixture, deleting that quote awareness left the whole suite green.
+CREATE OR REPLACE FUNCTION memory.app.rowparen(r row("a)b" bigint, c varchar))
+  RETURNS bigint
+  RETURN 1;

@@ -648,9 +648,21 @@ services:
     #
     # THERE IS NO ICEBERG CATALOG HERE, and that is a deliberate limit rather than an
     # oversight. A materialized view is the one object kind Trino cannot create without one,
-    # and on 476 only a HIVE-METASTORE-backed Iceberg catalog will create one at all: the
-    # JDBC and REST catalog types both answer `createMaterializedView is not supported`. So
-    # an Iceberg catalog here would mean a metastore service, a warehouse volume and a
+    # and on 476 only a HIVE-METASTORE-backed Iceberg catalog will create one at all.
+    #
+    # THE CHEAP ROUTE WAS PROBED FOR #789 AND REFUSED, so the next person does not have to
+    # spend the same afternoon finding out. The hope was that Trino's Iceberg connector would
+    # take `iceberg.catalog.type=jdbc` against the `postgres` service above, giving a
+    # materialized-view fixture for the price of one properties file and a warehouse volume
+    # with NO new image in this file. Measured on 2026-09-13, the JDBC catalog was brought
+    # all the way up and WORKS - `CREATE SCHEMA`, `CREATE TABLE` and a two-row `INSERT` all
+    # succeeded - and `CREATE MATERIALIZED VIEW` still answered
+    # `createMaterializedView is not supported for Iceberg JDBC catalogs`. Two traps found on
+    # the way, both recorded in docs/providers/trino.md: Trino 476 never creates the JDBC
+    # catalog's own `iceberg_tables` table, and a `file://` warehouse needs
+    # `fs.hadoop.enabled=true` rather than the native local filesystem.
+    #
+    # So an Iceberg catalog here would mean a metastore service, a warehouse volume and a
     # second image in this file for one object kind. The object surface therefore answers
     # `materialized_view: 0` everywhere on this cluster, which is the TRUE answer for it, and
     # docs/providers/trino.md carries the catalog properties and the exact statements that
