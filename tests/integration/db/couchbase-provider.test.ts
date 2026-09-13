@@ -1861,6 +1861,15 @@ describe("CouchbaseProvider object surface (#789)", () => {
         : objectQueryPayload(statement);
 
     const document = await objectProvider.readObjectSource!([BUCKET, "inventory", "discount"], "function");
+    // The REFUSAL document's own identity, which nothing else in this repository asserts.
+    // `assertSourceDocument` compares path and kind, but it only walks documents built from
+    // the provider's own listing, and every couchbase listing row is readable, so no refusal
+    // document's identity is ever checked there. Composing the refusal path from the matched
+    // catalog row rather than from the request is the obvious refactor once `row` is in
+    // scope, and it would attribute the sentence to a different function: the viewer keys and
+    // captions the pane by `document.path`.
+    expect(document.path).toEqual([BUCKET, "inventory", "discount"]);
+    expect(document.kind).toBe("function");
     expect(document.parts).toHaveLength(1);
     const [part] = document.parts;
     expect(isSourcePartUnavailable(part)).toBe(true);
