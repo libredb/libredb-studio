@@ -41,10 +41,17 @@
 -- rather than no row at all - measured on SQL Server 2022 RTM-CU26 (16.0.4265.3), and that
 -- is what makes a denial distinguishable from an absence. CHECK_POLICY is OFF because the
 -- host's own password policy is not this fixture's to satisfy.
+--
+-- The password is the login's own name, which is the convention every other credential in
+-- this repository's fixtures follows (`postgres`, `root`, `admin`, `druid`). It was a
+-- realistic-looking string until 2026-09-13, and a secret scanner reported the pull request
+-- that added it: a fixture credential shaped like a real password is indistinguishable from
+-- one, to a scanner and to a reader. A value that obviously belongs to its own fixture says
+-- what it is without a comment.
 IF SUSER_ID('src_probe') IS NOT NULL
   DROP LOGIN src_probe;
 GO
-CREATE LOGIN src_probe WITH PASSWORD = 'Task09Probe!', CHECK_POLICY = OFF;
+CREATE LOGIN src_probe WITH PASSWORD = 'src_probe', CHECK_POLICY = OFF;
 GO
 
 -- ============================================================================
