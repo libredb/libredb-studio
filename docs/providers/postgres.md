@@ -598,9 +598,33 @@ Measured: `pg_get_viewdef` answers NULL for an oid that is not a view.
 PostgreSQL utters no sentence for that, so a refusal part would carry OUR silence dressed as the server's answer, and an empty part would put an empty editor over a definition nobody read.
 The raise is a `QueryError` naming the object's own segment.
 
-**Two refusals exist and both are a wire-compatible FORK missing a catalog surface.**
-This type id also serves CockroachDB and Materialize, so both arms are reachable.
-A server without the function answers SQLSTATE `42883`, whose sentence has the shape `function pg_catalog.pg_get_viewdef(oid, boolean) does not exist`; a server without `pg_proc.prokind` answers SQLSTATE `42703`, `column p.prokind does not exist`.
+**Two refusal arms exist for a wire-compatible FORK missing a catalog surface, and NEITHER FORK REACHES THEM.**
+This was measured on both forks on 2026-09-13 and the earlier wording here, "so both arms are reachable", was wrong. The arms fire on SQLSTATE `42883` (the function is absent) and `42703` (`pg_proc.prokind` is absent), which are the codes PostgreSQL 18.4 answers and the shapes the suite pins.
+
+| Fork | `pg_get_viewdef` | `pg_get_functiondef` | `pg_proc.prokind` | `pg_get_triggerdef` | What the provider does |
+|---|---|---|---|---|---|
+| CockroachDB v26.2.5 | works | works | present | works | reads the source. Neither refusal arm is needed |
+| Materialize v26.40.0 | works on a plain view, **NULL on a materialized view** | `XX000` | `XX000` | `XX000` | RAISES on all four, because `XX000` is neither of the two codes and a NULL definition is read as an absence |
+
+Re-run it, one container at a time, with the exact statements this file ships:
+
+```
+docker run -d --name <yours> -p <yours>:26257 cockroachdb/cockroach:v26.2.5 start-single-node --insecure --accept-sql-without-tls
+docker run -d --name <yours> -p <yours>:6875 materialize/materialized:v26.40.0
+psql "postgresql://root@127.0.0.1:<yours>/defaultdb?sslmode=disable"     # CockroachDB
+psql "postgresql://materialize@127.0.0.1:<yours>/materialize?sslmode=disable"   # Materialize
+```
+
+then `\set VERBOSITY verbose` and run each statement from `viewSourceSql()`, `SOURCE_ROUTINE_SQL` and `SOURCE_TRIGGER_SQL`.
+
+CockroachDB v26.2.5 answers every one of them, including `pg_get_functiondef` on a `CREATE FUNCTION` and `p.prokind = 'f'`, so nothing there is refused and nothing there is missing.
+
+Materialize v26.40.0 answers `XX000` for each absent surface, verbatim
+`function "pg_catalog.pg_get_functiondef" does not exist` and `column "p.prokind" does not exist`. `XX000` is `internal_error`, not `undefined_function` or `undefined_column`, so `isMissingCatalogSurface()` does not match and the read RAISES rather than answering a refusal part. The SQLSTATE is the server's and not the harness's: in the same session `SELECT 1/0` answers `22012` and `SELEC 1` answers `42601`, while an unknown table answers `XX000` too.
+
+A third Materialize fact, and it is the sharper one: `pg_get_viewdef` returns **NULL** for a `MATERIALIZED VIEW` (`relkind = 'm'`) while returning the definition for a plain view in the same schema. A NULL definition is read here as an absence, so a materialized view that exists is reported as an object the catalog does not hold.
+
+Widening the arms to `XX000` is NOT an obvious fix and is deliberately not done here: `XX000` is Materialize's generic internal error, so keying on it would turn a real internal failure into this object's refusal, which is the exact confusion the refusal-versus-absence rule exists to prevent. That is a code decision, filed rather than taken.
 Each is reported as the part's `unavailable`, the server's own sentence unprefixed and NOT passed through `mapDatabaseError()`, for the reason the count refusal gives one section up: the mapper's prefix would put this product's words in front of the server's.
 Measured, and it is why the plain spelling is load-bearing rather than cosmetic: `mapDatabaseError()` returns both sentences above unchanged, and rewrites a message containing "permission denied" into `Authentication failed: ...`.
 Everything else RAISES, including a transport failure, because nobody answering is not the server answering "no", and "Connection terminated unexpectedly" rendered as this object's own refusal is a symptom presented as a fact about the object.
