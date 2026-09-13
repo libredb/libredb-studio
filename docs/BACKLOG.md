@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D73, U17 · 33
+- [Drivers and connections](#drivers-and-connections) — D1–D75, U17 · 35
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X18, U2–U21 · 12
@@ -1033,6 +1033,46 @@ statement MEANS, and none of them is reset.
 
 **Done when:** either the pool resets a connection on release, or every route that mutates session state
 restores it in a `finally`, and the choice is written down where the next writer of a route will read it.
+
+### D74. The single-statement query route has D71's shape and needs only ONE request
+
+`src/app/api/db/query/route.ts` resolves a connection, takes a provider from `getOrCreateProvider`
+(`:72`) and executes. It has no `finally`, no transaction handling and nothing that asks whether a
+transaction is open.
+That is the same missing `finally` D71 names on `/api/db/multi-query`, over the same process-wide provider
+cache, reached by a single request rather than by a script.
+
+READ, 2026-09-14, and stated as READ deliberately: the route's text was verified and the mechanism is
+identical, but NOBODY HAS RUN a lone `BEGIN` through this route.
+D71's own reproduction drove the SECOND request through `/api/db/query` and watched it fail on a client
+another route had poisoned, which establishes that this route shares the poisoned handle and not that it
+can create one.
+
+The reason to record it separately rather than widen D71: D71's fix is scoped to the route its entry
+names, and closing that route leaves this one with the same defect and one fewer statement needed to reach
+it.
+
+**Done when:** a lone `BEGIN` is sent through this route and what happens is recorded, and then either the
+route ends what it opened or the entry says with evidence why it cannot.
+
+### D75. D71's fix covers three type-ids, and the other fourteen still leak
+
+PR #823 adds the provider-side surface that answers whether a transaction is open, and implements it on
+`postgres`, `sqlite` and `duckdb`, which are the three engines D71 was measured on.
+The surface is optional and has no default, so the other fourteen type-ids answer nothing and the route
+cannot end what a script left open there.
+
+So after #823 merges, a script that opens a transaction and fails on MySQL, MariaDB, SQL Server, Oracle,
+ClickHouse, Trino, Cassandra, MongoDB, Redis, Couchbase, Elasticsearch, OpenSearch, libSQL or LibreDB
+still leaves it open on the cached provider, with whatever consequence that engine has.
+
+This is a declared boundary rather than a fallback: the shape check carries no default and the absence is
+visible in the type.
+It is recorded because a boundary nobody wrote down becomes a fallback the next reader trusts.
+
+**Done when:** each remaining type-id either implements the surface, or its provider doc says which
+absence it is: the engine has no transaction to leave open, the driver cannot be asked, or nobody has
+measured it yet.
 
 ## Value interpolation
 
