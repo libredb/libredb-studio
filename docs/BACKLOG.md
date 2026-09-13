@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D68, U17 · 28
+- [Drivers and connections](#drivers-and-connections) — D1–D69, U17 · 29
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X16, U2–U21 · 10
@@ -892,6 +892,38 @@ unit files that legitimately want the real module. `docs/TOOLCHAIN.md` carries t
 
 **Done when:** `bun run test` on a clean checkout is green, either because the auth mocking pattern
 stops reaching `tests/unit`, or because the documented command runs the same isolation CI does.
+
+### D69. Six type-ids still open `readObjectSource` with their own entry guard, and one of its sentences is less true
+
+`requireSourceKind` in `src/lib/db/object-kinds.ts` is the one entry guard for `readObjectSource`:
+it raises separately for a kind the engine never declared, for a declared kind that publishes no
+definition text, and for a source-bearing kind carrying no `sourceLanguage`. Measured on 2026-09-13,
+nine providers call it (sqlite, libsql, duckdb, clickhouse, cassandra, postgres, mssql, mysql,
+trino) and six type-ids do not: couchbase, mongodb, redis, elasticsearch and opensearch (one shared
+module) and oracle.
+
+All five of those modules COLLAPSE the first two facts into one throw. They test
+`spec?.hasSource !== true` and answer `<Engine> declares no readable source for the kind "X"`, so a
+kind the engine has never heard of and a declared kind with no definition text arrive as the same
+sentence. That sentence is not merely shorter, it is less true: it tells the caller the kind exists
+and has no source. Three of them (couchbase, mongodb, search) also spell the third arm differently,
+"declares source for the kind X and no sourceLanguage, so its text has no language to render in"
+rather than "declares readable source for the kind X and no sourceLanguage to render it with".
+
+A fourth spelling of the same refusal lives at the route layer: `src/lib/api/object-route.ts` raises
+`<type> declares no readable source for kind "X"` as an `ObjectRouteError` with a 400, before any
+provider is consulted. It guards a different fact and answers a different error type, so it is not
+simply a call site, but it is a fourth wording of one refusal.
+
+None of the six was converted when the guard was hoisted (#789), because converting them rewords
+between one and two throws each, five provider suites assert on the exact wording, and a reworded
+throw is a behaviour change that does not belong folded inside a refactor. The cost of leaving them
+is that the hoist's second-order gain, that a new provider cannot silently forget one of the three
+guards, holds for nine of seventeen type-ids only.
+
+**Done when:** the six call `requireSourceKind`, with the five provider suites' assertions moved onto
+the guard's three sentences in the same commit, and the route layer either reuses one of those
+sentences or its docblock says why a 400 raised before the provider is a different fact.
 
 ## Value interpolation
 
