@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D70, U17 · 30
+- [Drivers and connections](#drivers-and-connections) — D1–D73, U17 · 33
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X16, U2–U21 · 10
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X18, U2–U21 · 12
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -665,6 +665,16 @@ relatives, and that is a behaviour change rather than a repair. And the embedded
 closed the same way, because a host declares its own capabilities to `StudioWorkspace`, so closing it
 there is a published-surface change.
 
+Measured end to end 2026-09-13 against MariaDB `12.3.2-MariaDB-ubu2404` in a browser, while grounding
+#778 Phase 3: the tree drew Tables, Views, Stored Procedures, Functions, Triggers and Events and no
+Packages folder; `POST /api/db/provider-meta` answered those same six kinds; and at the same moment, for
+the same connection, `POST /api/db/objects/source` answered the package's specification and body in full.
+So the CONNECTED provider declares and serves `package`, and the declaration the CLIENT holds does not
+carry it. The object was reachable only by hand-writing a restored tab.
+
+This is load-bearing for the editing phase rather than cosmetic: any client-side predicate built on
+`provider-meta`'s answer is, on MariaDB, built on the wrong server's declaration.
+
 **Done when:** a MariaDB connection draws its Packages and Sequences folders in both shells, or the
 provider doc says which surface cannot have them and why.
 
@@ -953,6 +963,76 @@ What is wrong is the stated reason, which is the load-bearing half of a security
 **Done when:** the code docblock and all three places in the provider doc say what was measured, which is that the first
 statement's rows are returned and the tail still runs, or the claim is re-measured on a version where it holds and that
 version is named.
+
+### D71. A `BEGIN` left unfinished by `/api/db/multi-query` outlives the request on the cached provider
+
+`POST /api/db/multi-query` splits with `splitStatements`, executes one statement at a time, and breaks
+out of its loop on the first error (`src/app/api/db/multi-query/route.ts:146`) without rolling anything
+back.
+The provider handle it borrowed is cached per `connection.id` process-wide (`src/lib/db/factory.ts`), so
+an unfinished `BEGIN` outlives the request and belongs to whoever borrows that handle next.
+
+Measured 2026-09-13 through the product's own route on three engines, while grounding #778 Phase 3.
+
+On SQLite and DuckDB, where the provider holds ONE handle, the loss is silent: the next request's
+`INSERT` answers HTTP 200 and reads its own row back, an independent reader sees nothing, an independent
+writer is refused with `database is locked`, and a later rollback destroys the write with no error at any
+point.
+
+On PostgreSQL the pool does not make it benign, it widens it.
+The write is refused rather than swallowed, with `current transaction is aborted, commands ignored until
+end of transaction block` as HTTP 500, and the poisoned client is never retired: twelve retries over 60
+seconds all failed, 40 seconds of idleness did not clear it, and eight minutes later the same message
+reached `POST /api/db/maintenance` for a different user.
+The client is one of up to ten and is picked at random, so the connection does not fail, it fails
+INTERMITTENTLY for every user on every route until the provider is evicted after 30 idle minutes.
+
+Do not close this by making the splitter reject `BEGIN`.
+The same shape arrives from a `BEGIN` inside a statement the splitter cannot see through, and the leak is
+the missing `finally`, not the keyword.
+
+**Done when:** the route ends any transaction it left open, in a `finally`, by asking the provider whether
+one is open, and the question of whether a script may leave a transaction open at all is answered
+deliberately rather than by omission.
+
+### D72. `/api/db/transaction` lets one Studio user roll back another Studio user's work
+
+`txActive` and `txClient` are per provider, therefore per `connection.id`, therefore shared by every
+Studio user on that connection (`src/lib/db/providers/sql/postgres.ts:2072-2082`).
+
+Measured 2026-09-13 on PostgreSQL 18.4 through the product's own route, two sessions, one connection id:
+the first user's `begin` answered `Transaction started`, their `INSERT` answered `rowCount 1` with
+`inTransaction true`; the second user's `begin` was refused `Transaction already active` as HTTP 400,
+which looks correct and is the only signal they get; their `status` answered `inTransaction true` and
+their `rollback` answered `Transaction rolled back` as HTTP 200, and the first user's row was gone.
+
+The 400 is what makes this hard to see: the second user is told the transaction is not theirs to start,
+and is then allowed to end it.
+
+**Done when:** a transaction is owned by the session that opened it, and a rollback from any other session
+is refused rather than performed. The 5-minute `TX_TIMEOUT_MS` auto-rollback needs the same ownership
+question answered.
+
+### D73. Session state written by one HTTP request is read by every later request, across Studio users
+
+The provider cache is one entry per `connection.id` process-wide, so a `SET` that survives the statement
+survives the request and reaches the next borrower whoever they are.
+
+Measured 2026-09-13 on PostgreSQL 18.4 through the product: a `SET` issued by a `user`-role session was
+read back by an `admin` session on the same backend pid, was not visible on a different connection id,
+and was not visible to a fresh psql session.
+Concurrent requests were served by different backends, so the leak is the cached provider rather than any
+serialisation.
+
+The same class is already measured on two other engines by this epic's Phase 3 grounding: `resetOnRelease`
+is false on the MySQL pool, and a `USE` persists on the SQL Server pool through both of node-mssql's send
+paths.
+
+It is not only cosmetic state. `search_path`, `sql_mode`, `USE` and `SET ROLE` all change what a later
+statement MEANS, and none of them is reset.
+
+**Done when:** either the pool resets a connection on release, or every route that mutates session state
+restores it in a `finally`, and the choice is written down where the next writer of a route will read it.
 
 ## Value interpolation
 
@@ -1247,6 +1327,40 @@ is not a free read.
 recorded reason it is withheld.
 
 ---
+
+### X17. A truncated part is captioned "Complete as shown."
+
+The object Source pane can show, four lines apart on the same screen, the caption
+`Rebuilt by the engine from its catalog. Complete as shown.` and the banner
+`the source read was bounded at 1,000,000 characters by its caller`.
+
+`sourceCaption(form, origin)` reads `form` and nothing else
+(`src/components/object-source/source-caption.ts:33-41`), the banner reads `part.truncated`
+(`src/components/object-source/ObjectSourceView.tsx:490`), and `form` stays `"complete"` on a truncated
+part because the two fields answer different questions: `form` says whether the text is a whole statement
+or a bare body, and `truncated` says whether all of it arrived.
+
+Measured 2026-09-13 in a browser against a real object over the bound, built for this purpose, while
+grounding #778 Phase 3. No fixture in the tree was long enough to reach it before that, which is why
+Phase 2 shipped it.
+
+It is the most dangerous sentence on that screen for the editing phase, because it tells the user the text
+is complete immediately before an edit surface offers to submit it back.
+
+**Done when:** the caption reads both fields, and a part carrying `truncated` never claims completeness in
+any wording.
+
+### X18. The add-connection button has no accessible name
+
+MEASURED 2026-09-13 in a browser: the icon-only button beside `Show ERD Diagram` carries no `title`, no
+`aria-label` and no text content, while its neighbour carries one.
+
+`jsx-a11y` is a hard oxlint gate in this repo and this survived it, so the finding is two things: the
+button, and the fact that the rule in force does not cover an icon-only button with an SVG child. Fixing
+only the first leaves the next one to be found by hand.
+
+**Done when:** the button has an accessible name, and the lint rule that should have caught it either
+covers this shape or is recorded as not covering it.
 
 ## Dependencies
 
