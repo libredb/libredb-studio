@@ -1022,6 +1022,110 @@ describe("assertObjectSurface and the object source read", () => {
     );
   });
 
+  test("refuses a provider that declares an editable kind and implements neither method", async () => {
+    // `acceptsSourceEdits: true` lands on the `function` kind and nothing else moves, so the double
+    // still counts, lists and describes exactly what the expectation says.
+    const provider = sourceProvider({ getCapabilities: () => capabilities({ acceptsSourceEdits: true }) });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /declares 1 editable kind\(s\) and does not implement both buildObjectEdit and applyObjectEdit/,
+    );
+  });
+
+  test("refuses a provider that implements the pair and declares no editable kind", async () => {
+    // The OTHER direction, and it is the one a biconditional with one population cannot see. An
+    // apply with no declaration is reachable by deleting one line from a provider, and nothing
+    // else in this repository would notice.
+    const provider = sourceProvider({
+      buildObjectEdit: async () => ({
+        built: false,
+        refusal: { refusal: "unsupported", sentence: "no", at: { within: "none" } },
+      }),
+      applyObjectEdit: async () => ({ outcome: "interrupted", committed: "unknown", sentence: "no", duration: 0 }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /declares 0 editable kind\(s\) and implements both buildObjectEdit and applyObjectEdit/,
+    );
+  });
+
+  test("refuses a provider that implements only one of the pair", async () => {
+    const provider = sourceProvider({
+      getCapabilities: () => capabilities({ acceptsSourceEdits: true }),
+      buildObjectEdit: async () => ({
+        built: false,
+        refusal: { refusal: "unsupported", sentence: "no", at: { within: "none" } },
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /declares 1 editable kind\(s\) and does not implement both buildObjectEdit and applyObjectEdit/,
+    );
+  });
+
+  // THE OTHER HALF OF "only one of the pair", and it is here because the brief's four tests left
+  // it open: every one of them omits `applyObjectEdit`, so the `applyObjectEdit` conjunct alone
+  // refuses them and the `buildObjectEdit` conjunct is driven by nothing. MEASURED: replacing
+  // `typeof provider.buildObjectEdit === "function"` with `true` left all 84 tests green. This
+  // double is the only population in which that term decides the verdict (#789 Phase 3).
+  test("refuses a provider that implements only applyObjectEdit, which is ruling 1a violated", async () => {
+    const provider = sourceProvider({
+      getCapabilities: () => capabilities({ acceptsSourceEdits: true }),
+      applyObjectEdit: async () => ({ outcome: "interrupted", committed: "unknown", sentence: "no", duration: 0 }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /declares 1 editable kind\(s\) and does not implement both buildObjectEdit and applyObjectEdit/,
+    );
+  });
+
+  test("a provider that declares nothing and implements nothing passes, which is fourteen of seventeen", async () => {
+    // The zero-iteration case, asserted rather than assumed: this is the state of most of the
+    // fleet, so if it threw, every abstaining provider's suite would be red. The positive test at
+    // `:1005` already drives this double; this one names WHY it must keep passing.
+    await expect(assertObjectSurface(sourceProvider() as never, expectation)).resolves.toBeUndefined();
+  });
+
+  test("a provider that declares an editable kind whose build ANSWERS NOTHING is refused", async () => {
+    // The pairing above certifies that the two methods EXIST. This certifies that the build
+    // ANSWERS, which is a different fact: a declaration with a stub behind it that returns
+    // `undefined` passes the pairing and fails here.
+    const provider = sourceProvider({
+      getCapabilities: () => capabilities({ acceptsSourceEdits: true }),
+      buildObjectEdit: (async () => undefined) as never,
+      applyObjectEdit: async () => ({ outcome: "interrupted", committed: "unknown", sentence: "no", duration: 0 }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /buildObjectEdit\("function"\) answered no ObjectEditBuild/,
+    );
+  });
+
+  test("an editable kind the expectation counts at ZERO is refused, because nothing drives its build", async () => {
+    // The loop's zero-iteration case, refused BY NAME. An editable kind with no object in the
+    // fixture is a `buildObjectEdit` no assertion reaches, which is this epic's signature defect
+    // wearing a declaration.
+    //
+    // THE `countObjects` OVERRIDE IS LOAD-BEARING AND IS THE ONLY TEST IN THIS STEP THAT NEEDS
+    // ONE. `assertObjectSurface` compares every `expected.kinds` entry against `countObjects`
+    // BEFORE it calls `assertSourceSurface`, so an expectation counting `function` at 0 against
+    // the block's default `function: { count: 2 }` dies on that comparison and never reaches 9a.
+    // MEASURED by running the real helper against this exact double while this plan was repaired:
+    // without the line below it throws `expect(received).toBe(expected) / Expected: 0 /
+    // Received: 2`, and with it the refusal 9a raises is the one this test asserts.
+    const provider = sourceProvider({
+      getCapabilities: () => capabilities({ acceptsSourceEdits: true }),
+      countObjects: async () => ({ table: { count: 2 }, view: { count: 1 }, function: { count: 0 } }),
+      buildObjectEdit: async () => ({
+        built: false,
+        refusal: { refusal: "unsupported", sentence: "no", at: { within: "none" } },
+      }),
+      applyObjectEdit: async () => ({ outcome: "interrupted", committed: "unknown", sentence: "no", duration: 0 }),
+    });
+    await expect(
+      assertObjectSurface(provider as never, {
+        ...expectation,
+        kinds: { ...expectation.kinds, function: 0 },
+        emptyKinds: { function: "this fixture holds no routine yet" },
+      }),
+    ).rejects.toThrow(/declares the editable kind "function" and the expectation counts it at 0/);
+  });
+
   test("an expectation with no absentSource is refused, so the absence raise is always driven", async () => {
     const { absentSource: _absentSource, ...noAbsent } = expectation;
     await expect(assertObjectSurface(sourceProvider() as never, noAbsent)).rejects.toThrow(/names no absentSource/);

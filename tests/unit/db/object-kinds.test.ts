@@ -16,6 +16,8 @@ import {
   SOURCE_CHARACTER_LIMIT,
   SOURCE_PART_LIMIT,
   requireSourceKind,
+  kindAcceptsSourceEdits,
+  requireEditableKind,
 } from "@/lib/db/object-kinds";
 
 const base = { queryLanguage: "sql" } as unknown as ProviderCapabilities;
@@ -350,6 +352,89 @@ describe("requireSourceKind", () => {
   test("an engine declaring no kinds at all raises the unknown-kind sentence, not a crash", () => {
     expect(() => requireSourceKind(base, "table", engine)).toThrow(
       new QueryError('SQLite declares no object kind "table"', "sqlite"),
+    );
+  });
+});
+
+describe("kindAcceptsSourceEdits", () => {
+  const capabilities = {
+    objectKinds: [
+      {
+        id: "function",
+        role: "routine",
+        label: "Function",
+        labelPlural: "Functions",
+        hasSource: true,
+        sourceLanguage: "pgsql",
+        acceptsSourceEdits: true,
+      },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views", hasSource: true, sourceLanguage: "pgsql" },
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  test("true only where the kind declared it", () => {
+    expect(kindAcceptsSourceEdits(capabilities, "function")).toBe(true);
+    // Absent reads as FALSE, the same default `hasSource` and `acceptsRowWrites` take, and the
+    // permissive default is wrong here for the same reason: only the provider knows.
+    expect(kindAcceptsSourceEdits(capabilities, "view")).toBe(false);
+    expect(kindAcceptsSourceEdits(capabilities, "table")).toBe(false);
+    expect(kindAcceptsSourceEdits(capabilities, "no_such_kind")).toBe(false);
+  });
+
+  test("it is NOT conjoined with hasSource", () => {
+    // A kind that declares an edit and no source is a broken DECLARATION, and this derivation
+    // must not hide it by answering false: the census is what refuses it, by name, and it can
+    // only do that if this function reports what the declaration really says.
+    const broken = {
+      objectKinds: [{ id: "x", role: "routine", label: "X", labelPlural: "Xs", acceptsSourceEdits: true }],
+    } as unknown as ProviderCapabilities;
+    expect(kindAcceptsSourceEdits(broken, "x")).toBe(true);
+  });
+});
+
+describe("requireEditableKind", () => {
+  const engine = { displayName: "PostgreSQL", type: "postgres" } as const;
+  const capabilities = {
+    objectKinds: [
+      {
+        id: "function",
+        role: "routine",
+        label: "Function",
+        labelPlural: "Functions",
+        hasSource: true,
+        sourceLanguage: "pgsql",
+        acceptsSourceEdits: true,
+      },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views", hasSource: true, sourceLanguage: "pgsql" },
+      {
+        id: "nolang",
+        role: "routine",
+        label: "No language",
+        labelPlural: "No languages",
+        hasSource: true,
+        acceptsSourceEdits: true,
+      },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  test("returns the spec with sourceLanguage narrowed to string", () => {
+    const spec = requireEditableKind(capabilities, "function", engine);
+    // `.length` compiles only because the return type narrows it; that is the whole point of
+    // the third throw below.
+    expect(spec.sourceLanguage.length).toBeGreaterThan(0);
+    expect(spec.id).toBe("function");
+  });
+
+  test("three separate facts get three separate sentences", () => {
+    expect(() => requireEditableKind(capabilities, "ghost", engine)).toThrow(
+      'PostgreSQL declares no object kind "ghost"',
+    );
+    expect(() => requireEditableKind(capabilities, "view", engine)).toThrow(
+      'PostgreSQL does not apply an edited definition for the kind "view"',
+    );
+    expect(() => requireEditableKind(capabilities, "nolang", engine)).toThrow(
+      'PostgreSQL declares an editable kind "nolang" and no sourceLanguage to render it with',
     );
   });
 });

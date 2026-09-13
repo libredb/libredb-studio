@@ -145,6 +145,18 @@ export function kindHasSource(capabilities: ProviderCapabilities, id: string): b
 }
 
 /**
+ * Whether THIS KIND accepts an edited definition back (#789 Phase 3).
+ *
+ * Absent and undeclared both read as FALSE, and it is NOT conjoined with `hasSource` for the
+ * reason `kindHasSource` is not conjoined with anything: a kind that declared an edit and no
+ * source is a broken DECLARATION, and the census refuses it by name. A derivation that hid it by
+ * answering false would take the only guard that can see it away.
+ */
+export function kindAcceptsSourceEdits(capabilities: ProviderCapabilities, id: string): boolean {
+  return findKind(capabilities, id)?.acceptsSourceEdits === true;
+}
+
+/**
  * The narrowing predicate for a refused part (#789 Phase 2).
  *
  * The `readonly` on every member is LOAD-BEARING and measured against TypeScript 6.0.3: a
@@ -259,6 +271,49 @@ export function requireSourceKind(
   if (sourceLanguage === undefined) {
     throw new QueryError(
       `${engine.displayName} declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
+      engine.type,
+    );
+  }
+  return { ...spec, sourceLanguage };
+}
+
+/**
+ * The entry guard every `buildObjectEdit` opens with, in ONE place (#789 Phase 3).
+ *
+ * Hoisted before the first provider is written, rather than after nine copies of it exist:
+ * `assertObjectPathShape` is written out eight times in this tree (D67) and `requireSourceKind`
+ * exists because nine copies of the same preamble tripped the duplication gate on PR #820 (D69).
+ * Three providers will call this one on day one and a later phase adds more.
+ *
+ * THREE SEPARATE FACTS, THREE SEPARATE SENTENCES, and collapsing them would lose a distinction a
+ * caller acts on: a kind the engine never declared, a declared kind this engine will not write
+ * back, and an editable kind with no `sourceLanguage`, which is a DECLARATION missing half of
+ * itself. The third raises rather than defaulting for the reason `requireSourceKind` gives: an
+ * unregistered or absent Monaco id degrades to plain text with no throw and nothing observable.
+ *
+ * THE ENGINE IS ONE ARGUMENT rather than two adjacent strings, for `requireSourceKind`'s measured
+ * reason: both are strings, a positional pair of them can be swapped silently, and an object at
+ * the call site names each one.
+ */
+export function requireEditableKind(
+  capabilities: ProviderCapabilities,
+  kind: string,
+  engine: { readonly displayName: string; readonly type: DatabaseType },
+): ObjectKindSpec & { readonly sourceLanguage: string } {
+  const spec = findKind(capabilities, kind);
+  if (spec === undefined) {
+    throw new QueryError(`${engine.displayName} declares no object kind "${kind}"`, engine.type);
+  }
+  if (spec.acceptsSourceEdits !== true) {
+    throw new QueryError(
+      `${engine.displayName} does not apply an edited definition for the kind "${kind}"`,
+      engine.type,
+    );
+  }
+  const { sourceLanguage } = spec;
+  if (sourceLanguage === undefined) {
+    throw new QueryError(
+      `${engine.displayName} declares an editable kind "${kind}" and no sourceLanguage to render it with`,
       engine.type,
     );
   }
