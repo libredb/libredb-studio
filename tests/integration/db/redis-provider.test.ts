@@ -1520,7 +1520,17 @@ describe("RedisProvider", () => {
       expect(part.language).toBe("luau");
     });
 
-    test("a source-bearing kind that declares no language falls back to this engine's own", async () => {
+    /*
+      A source-bearing kind that declares no `sourceLanguage` RAISES, and this test replaces
+      one that asserted the opposite (#789, the external review of PR #820). The old arm read
+      `spec.sourceLanguage ?? "lua"`. Counted across the fleet at that point: nine of the
+      eleven providers that read source threw here and exactly two fell back, this one and
+      `oracle.ts`. A fallback in two of eleven is not a safety net, because the census in
+      `tests/isolated/object-source-declarations.test.ts` pins every declared language, so the
+      only way to reach the arm is a declaration somebody deleted - and the literal then hides
+      that deletion behind a Source tab that still highlights.
+    */
+    test("a source-bearing kind that declares no language RAISES rather than falling back to a literal", async () => {
       spyOn(provider, "getCapabilities").mockReturnValue({
         ...provider.getCapabilities(),
         objectKinds: [
@@ -1535,10 +1545,54 @@ describe("RedisProvider", () => {
         ],
       } as ReturnType<typeof provider.getCapabilities>);
 
-      const document = await provider.readObjectSource!(["0", "libredb_probe"], "function");
-      const [part] = document.parts;
-      if (isSourcePartUnavailable(part)) throw new Error("the fixture library is readable");
-      expect(part.language).toBe("lua");
+      await expect(provider.readObjectSource!(["0", "libredb_probe"], "function")).rejects.toThrow(
+        /Redis declares readable source for the kind "function" and no sourceLanguage to render it with/,
+      );
+      // Nothing was sent: the declaration is checked before the round trip, so a lost
+      // language cannot cost a command either.
+      expect(commandsSent()).not.toContain("FUNCTION LIST LIBRARYNAME libredb_probe WITHCODE");
+    });
+
+    /*
+      THE PATH SHAPE, which `describeObject` has checked since Phase 1 and this method did
+      not (#789, the external review of PR #820). The HTTP route bounds an empty path, but
+      this METHOD is published through `@libredb/studio`, is reached by the embedded host
+      seam and by the conformance helper, and none of those three sees the route. Without the
+      check, `path[path.length - 1]` on an empty path is `undefined` and the provider sends
+      `FUNCTION LIST LIBRARYNAME undefined`.
+
+      Both directions are driven, because a length check written as `<` or as `>` passes one
+      of them: a path SHORTER than the declaration allows and a path LONGER than it allows.
+    */
+    test("a path that is not [database, name] is refused, in describeObject's own words", async () => {
+      await expect(provider.readObjectSource!([], "function")).rejects.toThrow(
+        'A Redis "function" path is [database, name], received []',
+      );
+      await expect(provider.readObjectSource!(["libredb_probe"], "function")).rejects.toThrow(
+        'A Redis "function" path is [database, name], received ["libredb_probe"]',
+      );
+      await expect(provider.readObjectSource!(["0", "sub", "libredb_probe"], "function")).rejects.toThrow(
+        'A Redis "function" path is [database, name], received ["0","sub","libredb_probe"]',
+      );
+      // Vacuity control: the same method on a WELL-SHAPED path still reads the library, so
+      // the three refusals above are the shape check and not a broken fixture.
+      expect((await provider.readObjectSource!(["0", "libredb_probe"], "function")).parts).toHaveLength(1);
+    });
+
+    test("the refused shape follows the DECLARED levels, so a two-level declaration accepts three segments", async () => {
+      // The message and the bound both come from `declaredLevels`, never from a literal 2.
+      spyOn(provider, "getCapabilities").mockReturnValue({
+        ...provider.getCapabilities(),
+        containerLevels: [
+          { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+          { id: "schema", label: "Database", labelPlural: "Databases" },
+        ],
+      } as ReturnType<typeof provider.getCapabilities>);
+
+      await expect(provider.readObjectSource!(["0", "libredb_probe"], "function")).rejects.toThrow(
+        'A Redis "function" path is [catalog, database, name], received ["0","libredb_probe"]',
+      );
+      expect((await provider.readObjectSource!(["main", "0", "libredb_probe"], "function")).parts).toHaveLength(1);
     });
 
     /**

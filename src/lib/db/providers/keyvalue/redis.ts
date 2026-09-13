@@ -205,6 +205,31 @@ function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerL
 }
 
 /**
+ * The path SHAPE both object reads share, with ONE writer for the rule and its sentence.
+ *
+ * Derived, not counted: the depth comes from `containerDepth()` through `declaredLevels`,
+ * and the names in the message are the declared labels, so the check and its message cannot
+ * disagree. Neither kind declares `attachedTo`, so there is one shape rather than two.
+ *
+ * `describeObject` has checked this since Phase 1 and `readObjectSource` did not, which the
+ * external review of PR #820 found (#789). The HTTP route bounds an empty path, but both
+ * methods are published through `@libredb/studio`, are reached by the embedded host seam and
+ * by the conformance helper, and none of those three sees the route. Measured on the
+ * unchecked method: an empty path made `path[path.length - 1]` `undefined`, and ioredis then
+ * threw `undefined is not an object (evaluating 'arg.toUpperCase')` out of the command
+ * encoder, which is this file's defect arriving as the driver's.
+ */
+function assertObjectPathShape(capabilities: ProviderCapabilities, kind: string, path: readonly string[]): void {
+  const levels = declaredLevels(capabilities);
+  if (path.length === levels.length + 1) return;
+  throw new QueryError(
+    `A Redis "${kind}" path is [${[...levels.map((level) => level.label.toLowerCase()), "name"].join(", ")}], ` +
+      `received ${JSON.stringify(path)}`,
+    "redis",
+  );
+}
+
+/**
  * The segment of `path` belonging to the declared container level `id`.
  *
  * NEVER `path[0]`, which standing ruling 5g forbids as a class rather than as instances: a
@@ -1197,18 +1222,8 @@ export class RedisProvider extends BaseDatabaseProvider {
       throw new QueryError(`Redis declares no object kind "${kind}"`, "redis");
     }
 
-    // Derived, not counted: the depth comes from `containerDepth()` through
-    // `declaredLevels`, and the names in the message are the declared labels, so the check
-    // and its message cannot disagree. Neither kind declares `attachedTo`, so there is one
-    // shape rather than two.
+    assertObjectPathShape(capabilities, kind, path);
     const levels = declaredLevels(capabilities);
-    if (path.length !== levels.length + 1) {
-      throw new QueryError(
-        `A Redis "${kind}" path is [${[...levels.map((level) => level.label.toLowerCase()), "name"].join(", ")}], ` +
-          `received ${JSON.stringify(path)}`,
-        "redis",
-      );
-    }
 
     if (kind !== "keyspace") return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
 
@@ -1268,7 +1283,16 @@ export class RedisProvider extends BaseDatabaseProvider {
    * object. `isServerErrorReply` carries the measurement that tells the two apart.
    *
    * The name is `path[path.length - 1]` and never `path[1]`: standing ruling 5g, and the
-   * integration suite pins it by swapping a two-level declaration in.
+   * integration suite pins it by swapping a two-level declaration in. The path SHAPE that
+   * makes the last segment meaningful is checked by `assertObjectPathShape`, the same
+   * function and the same sentence `describeObject` uses, because the HTTP route is not the
+   * only caller: this method is published through `@libredb/studio` and reached by the
+   * embedded host seam and by the conformance helper, none of which passes through a route.
+   *
+   * A kind that declares source and no `sourceLanguage` RAISES rather than falling back to
+   * a literal "lua", which the external review of PR #820 corrected (#789). An unregistered
+   * Monaco id degrades to plain text with no throw and nothing observable, so the fallback
+   * hid a deleted declaration behind a tab that had quietly stopped highlighting.
    */
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
     this.ensureConnected();
@@ -1277,6 +1301,20 @@ export class RedisProvider extends BaseDatabaseProvider {
     if (spec?.hasSource !== true) {
       throw new QueryError(`Redis declares no readable source for the kind "${kind}"`, "redis");
     }
+    const language = spec.sourceLanguage;
+    if (language === undefined) {
+      // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
+      // observable, so a kind that declared source and forgot its language would ship a
+      // Source tab that silently stopped highlighting. The declaration is the only source of
+      // the language and there is no literal here to fall back to: the census in
+      // `tests/isolated/object-source-declarations.test.ts` pins every declared language, so
+      // this arm is only ever reached by a declaration somebody deleted.
+      throw new QueryError(
+        `Redis declares readable source for the kind "${kind}" and no sourceLanguage to render it with`,
+        "redis",
+      );
+    }
+    assertObjectPathShape(capabilities, kind, path);
     const name = path[path.length - 1];
     let reply: unknown;
     try {
@@ -1319,7 +1357,7 @@ export class RedisProvider extends BaseDatabaseProvider {
           id: "definition",
           label: "Definition",
           text: bounded.text,
-          language: spec.sourceLanguage ?? "lua",
+          language,
           form: "complete",
           origin: "stored",
           ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),

@@ -850,6 +850,24 @@ The command is `FUNCTION LIST LIBRARYNAME <name> WITHCODE`, sent once. It is ser
 no database: measured, one `FUNCTION LOAD` is visible from every numbered database and `SELECT` does
 not change what it answers.
 
+**The path SHAPE is checked here, by the same function and the same sentence `describeObject` uses.**
+`assertObjectPathShape` derives the accepted length and the labels in its message from
+`declaredLevels`, so a path is refused with `A Redis "function" path is [database, name], received []`
+rather than reaching the command. Both methods need it because neither is reached only through the
+HTTP route: they are published through `@libredb/studio` and called by the embedded host seam and by
+the conformance helper, and none of those sees the route's own bound. Measured before the check
+existed: an empty path made the name `undefined` and ioredis threw
+`undefined is not an object (evaluating 'arg.toUpperCase')` out of its command encoder, which is this
+provider's defect arriving as the driver's.
+
+**A kind declaring `hasSource` and no `sourceLanguage` RAISES** with
+`Redis declares readable source for the kind "function" and no sourceLanguage to render it with`,
+before the round trip. There is no fallback to a literal `lua`: an unregistered or absent Monaco id
+degrades to plain text with no throw and nothing observable, so a fallback would hide a deleted
+declaration behind a Source tab that had quietly stopped highlighting. The isolated census
+(`tests/isolated/object-source-declarations.test.ts`) pins every declared language, so the only way to
+reach this arm is a declaration somebody removed.
+
 | Field | Value | Why |
 |---|---|---|
 | `id` | `definition` | one part, always: a library has one Lua text |
