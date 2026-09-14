@@ -126,7 +126,7 @@ import {
   trinoObjectTargetSql,
   containerRead,
   functionSegment,
-  trinoCreateIdentity,
+  trinoCreateFunctionIdentity,
   listedObject,
   objectRead,
   readIdentifier as readObjectIdentifier,
@@ -469,6 +469,14 @@ export class TrinoProvider extends SQLBaseProvider {
           // the read text although the author never typed it, so an edit round-trips a security
           // principal the reader never chose, and this phase has no test for that consequence
           // class on this engine.
+          //
+          // UN-DEFERRING `view` IS NOT A ONE-LINE CHANGE, and the second half of the reason is
+          // recorded here rather than found later: the build and the post-apply control both read
+          // an edited text through `trinoCreateFunctionIdentity`, which takes the first top-level
+          // parenthesis pair in the statement as a PARAMETER LIST. A view has none, so that reader
+          // answers nonsense or nothing for every view text, and its own docblock spells out both
+          // shapes. Whoever flips this flag has to give the identity a view-shaped reading in the
+          // same change.
           //
           // `table` and `materialized_view` are REFUSED BY THE ENGINE, measured on the memory
           // connector: `CREATE OR REPLACE TABLE` answers "This connector does not support
@@ -1333,7 +1341,7 @@ export class TrinoProvider extends SQLBaseProvider {
     path: readonly string[],
     kind: string,
     spec: ObjectKindSpec,
-  ): Promise<{ sql: string; name: string; signature: string; definition: string | undefined }> {
+  ): Promise<{ sql: string; name: string; signature: string; definition: string | undefined; overloads: number }> {
     const read = objectRead(this.getCapabilities(), spec, path);
     const parts = trinoFunctionSegmentParts(read.name);
     if (parts === null) {
@@ -1356,6 +1364,13 @@ export class TrinoProvider extends SQLBaseProvider {
       name: parts.name,
       signature,
       definition: typeof definition === "string" ? definition : undefined,
+      // HOW MANY OVERLOADS OF THIS NAME THE REPLY CARRIED, which is a count and not a reading:
+      // `SHOW CREATE FUNCTION <name>` answers one row per overload, so this is the engine's own
+      // answer to "how many objects wear this name", untouched by any normalisation this file
+      // performs. The apply's post-apply control is the only reader (#789 Phase 3): it is the one
+      // question about a write that cannot inherit a blind spot from the identity reader, because
+      // it never reads an identity.
+      overloads: rows.length,
     };
   }
 
@@ -1481,19 +1496,32 @@ export class TrinoProvider extends SQLBaseProvider {
     //    not the width that split the header, so the old comment's "fails safe either way" was
     //    true of the population it imagined and false of the one that exists.
     //
-    //    {@link trinoCreateIdentity} is the reader, and it is the same parameter-list scan the
-    //    overload resolution and the post-apply verification use, so a build and an apply cannot
-    //    disagree about which object a text names.
+    //    {@link trinoCreateFunctionIdentity} is the reader, and it is the same parameter-list scan
+    //    the overload resolution and the post-apply verification use, so a build and an apply
+    //    cannot disagree about which object a text names.
+    //
+    //    WHAT THE COMPARISON ACTUALLY IS, written out because the sentences here were wrong about
+    //    it until the PR #831 review measured them (item 3). BOTH SIDES ARE `CREATE` TEXTS: the
+    //    submitted side is the reader's own bytes and the current side is the identity read out of
+    //    `definition`, which is the SERVER'S OWN `SHOW CREATE FUNCTION` output. The path segment is
+    //    not one of the two sides; it is only what `address` prints, so the sentence names the
+    //    object the way the tree does. Because neither side is a `SHOW FUNCTIONS` cell, the
+    //    comparison is NOT the case-folded, whitespace-free and quote-free form that the overload
+    //    resolution has to use: it is the form Trino's OWN identifier rules make equal, folding an
+    //    undelimited identifier to lower case and keeping a delimited one, and it applies to the
+    //    NAME half exactly as it does to the types. That is what makes
+    //    `memory.app.PLUS_ONE(x bigint)` and `memory.app."Plus_One"(x bigint)` BUILD against
+    //    `memory.app.plus_one`, all three measured in place on 476, where the byte-exact name
+    //    comparison this check carried before refused them.
     //
     //    Both identities are shown, because the reader's next action is to put the original one
     //    back or to create the new function deliberately, and neither is possible from a sentence
-    //    that only says no. The submitted side is rendered from the reader's OWN bytes and the
-    //    current side is the path segment the plan is addressed to, which is the engine's own
-    //    rendering: the two spell a type list the way each source spelled it, and the comparison
-    //    that produced this refusal is the case-folded, whitespace-free and quote-free form both
-    //    of them reduce to.
+    //    that only says no. Each side spells its type list the way its own source spelled it,
+    //    which is why the refusal can show `ROW("ab" bigint)` beside `row("a b" bigint)`: those
+    //    two really are two objects on this engine, and a sentence printing the comparison form
+    //    would print one string twice.
     const address = `${read.catalog}.${read.schema}.${read.name}`;
-    const submitted = trinoCreateIdentity(request.text, ["CREATE", statement.object]);
+    const submitted = trinoCreateFunctionIdentity(request.text, ["CREATE", statement.object]);
     if (submitted === null) {
       return refuse(
         "identity",
@@ -1504,7 +1532,7 @@ export class TrinoProvider extends SQLBaseProvider {
           "in the SQL editor instead",
       );
     }
-    const current = trinoCreateIdentity(definition, ["CREATE", statement.object]);
+    const current = trinoCreateFunctionIdentity(definition, ["CREATE", statement.object]);
     if (submitted.key !== current?.key) {
       return refuse(
         "identity",
@@ -1657,9 +1685,12 @@ export class TrinoProvider extends SQLBaseProvider {
     // addressed one replaced the addressed one, and a statement whose parameter list is a
     // different one did not.
     //
-    // THE CATALOG'S OWN ROW SET WAS TRIED FIRST AND MEASURED UNSOUND IN BOTH DIRECTIONS, which
-    // is recorded here because it is the obvious repair and the next reader will propose it
-    // again. A fork does ADD a row, MEASURED in this container: two rows for
+    // THE CATALOG'S OWN ROW SET WAS TRIED AS THE RULE AND MEASURED UNSOUND IN BOTH DIRECTIONS,
+    // which is recorded here because it is the obvious repair and the next reader will propose it
+    // again. It is not unused: the control at the end of this method asks it, over the one
+    // population where the two readings of the sent text disagree, and the comment there says why
+    // that narrowing is what keeps it honest. A fork does ADD a row, MEASURED in this container:
+    // two rows for
     // `memory.app.plus_one` before, three after a `CREATE OR REPLACE FUNCTION
     // memory.app.plus_one(x varchar)`, the addressed `(x bigint)` row byte-identical, and the
     // new row FIRST in the reply. But:
@@ -1674,18 +1705,17 @@ export class TrinoProvider extends SQLBaseProvider {
     //     gains a row, and a legitimate in-place apply would be reported as somebody else's
     //     object. That is the same shape of false alarm this whole repair is removing.
     //
-    // WHAT THE SENT-STATEMENT QUESTION IS A CONTROL ON, since it reads the same bytes the build
-    // checked: the build compares the whole FIRST LINE, and this compares the PARAMETER LIST
-    // wherever it is. The named UNMEASURED case in the build's docblock, a formatter that WRAPS
-    // a long parameter list onto a second line, is exactly a first-line rule that would pass an
-    // argument-list change, and this catches that one. It is not a control on the parameter-list
-    // reader itself, and this comment does not claim to be one: `trinoFunctionSegmentParts` and
-    // `trinoCreateSignature` are the same code on both sides, and the suite's round trip over
-    // every function in the fixture is what holds them.
+    // WHAT THE SENT-STATEMENT QUESTION IS AND IS NOT A CONTROL ON, stated exactly because this
+    // comment claimed more than it had (#831 review, item 2). It reads the same bytes the build
+    // checked, with the same reader, so it is a control on the PLAN: a plan this provider did not
+    // build, or built before somebody else changed the object, is caught here. It is NOT a control
+    // on the identity reading itself, and cannot be, because a second reading of the same text by
+    // the same code answers the same thing. The question that IS a control on that reading is the
+    // engine's row count, asked at the end of this method.
     //
     // `undone` is FALSE because Trino has no transaction to take it back and this design will
     // not issue a DROP. Through the product this arm is a CONTROL and not an everyday outcome:
-    // the build's first-line check already refuses an edited header, so the suite reaches it
+    // the build's own identity check already refuses an edited identity, so the suite reaches it
     // with a plan built by hand, which is the only way to reach a control on a rule.
     const after = await this.readOverload(plan.path, plan.kind, spec);
     // THE IDENTITY AND NOT THE SIGNATURE ALONE, and the difference is a hole this control had.
@@ -1697,21 +1727,22 @@ export class TrinoProvider extends SQLBaseProvider {
     // does: `rename_probe2` beside `rename_probe`, two rows where there was one.
     //
     // The comparison is the SENT bytes against the PRE-IMAGE the digest check just accepted, read
-    // by the same {@link trinoCreateIdentity} the build compares with, so the control and the rule
-    // it is a control on cannot disagree about what an identity is while disagreeing about a text.
+    // by the same {@link trinoCreateFunctionIdentity} the build compares with. That is what stops
+    // the two from disagreeing about what an identity IS, and it is also exactly why this
+    // comparison alone is not a control on the build's rule: the arm below it is.
     const sentStatement = trinoSourceStatementFor(plan.kind);
     // The SENT bytes carry the clause this provider spliced, so their keyword prefix is the one
     // this provider wrote, and the constant is where it comes from: three things already have to
     // agree about those eleven characters and a literal here would be a fourth.
-    const wrote = trinoCreateIdentity(step.text, ["CREATE", TRINO_REPLACE_CLAUSE.trim(), sentStatement.object]);
-    const addressed = trinoCreateIdentity(current, ["CREATE", sentStatement.object]);
+    const wrote = trinoCreateFunctionIdentity(step.text, ["CREATE", TRINO_REPLACE_CLAUSE.trim(), sentStatement.object]);
+    const addressed = trinoCreateFunctionIdentity(current, ["CREATE", sentStatement.object]);
     if (wrote === null) {
       // A plan whose statement no header can be read out of at all. It cannot say the addressed
       // object was written and it cannot name what was, so it says the first and omits the second,
       // which is the arm the dialog already renders without a name.
       return { outcome: "applied-elsewhere", undone: false, duration: Date.now() - started };
     }
-    if (wrote.key !== addressed?.key) {
+    if (addressed === null || wrote.key !== addressed.key) {
       return {
         outcome: "applied-elsewhere",
         undone: false,
@@ -1720,7 +1751,7 @@ export class TrinoProvider extends SQLBaseProvider {
         // being told only that one is.
         //
         // IT IS THE RENDERING AND NOT THE COMPARISON SIGNATURE, and that distinction is the whole
-        // reason {@link TrinoCreateIdentity} carries both. The signature is lower-cased and has
+        // reason {@link TrinoCreateFunctionIdentity} carries both. The signature is lower-cased and has
         // its whitespace and its quotes removed, which is what makes the engine's two renderings
         // of one list comparable and what makes it unreadable: measured with the shipped helper
         // on the fixture's own `hard` shape, a `wrote` built from the signature prints
@@ -1743,6 +1774,48 @@ export class TrinoProvider extends SQLBaseProvider {
         wrote: functionSegment(wrote.name, wrote.argumentTypes.join(", ")),
         duration: Date.now() - started,
       };
+    }
+    // THE CONTROL ON THE READING ABOVE, and it is a DIFFERENT QUESTION rather than the same one
+    // asked twice (#789 Phase 3, PR #831 review item 2). The arm above asks
+    // {@link trinoCreateFunctionIdentity}, which is the reader the BUILD refuses with. A control
+    // that shares its rule's reading is guaranteed to be blind to exactly the population the rule
+    // is blind to, and that is not a theory: MEASURED on trinodb/trino:476 in container
+    // `trino-t32r1` on host port 18633 on 2026-09-15, an edit that deleted one space inside a
+    // quoted ROW field name forked the catalog, and BOTH the build's check and this one called it
+    // an in-place edit, so the reader was told `applied` twice over.
+    //
+    // So this asks the ENGINE. `SHOW CREATE FUNCTION <name>` answers ONE ROW PER OVERLOAD, both
+    // reads above already made that round trip, and a count is the one question about a write that
+    // cannot inherit a blind spot from an identity reader: it never reads an identity. If the
+    // write ADDED an overload of the addressed name, the statement created an object instead of
+    // replacing one, whatever any reading of its text says.
+    //
+    // IT IS ASKED ONLY WHERE THE TWO READINGS OF THE SENT TEXT DISAGREE, and that condition is
+    // what keeps it from lying. The trigger is the BYTE-EXACT identity: the name and the argument
+    // types as the statement WRITES them, against the same two read out of the pre-image the
+    // digest check just accepted. When they are byte-identical the reader did not touch the header
+    // at all, and a row gained in that window is another session's sibling overload, which is an
+    // ordinary event this provider must report as `applied` - the test named for it pins that, and
+    // it is why the row count is NOT the rule. When they differ the reader DID edit the header and
+    // the folding reading called the edit identity-preserving, which on 476 is a parameter rename,
+    // a re-quoting or a case change, all measured in place; a gained row there says that reading
+    // was wrong about this text.
+    //
+    // WHAT IT STILL CANNOT TELL APART, said plainly: inside that narrow population a sibling
+    // overload created by another session in the window between the two reads is reported as a
+    // fork. That is a conjunction of two rare events rather than the everyday false alarm the
+    // count-alone rule would be, and the trade is deliberate: the alternative is a control that
+    // cannot catch its own rule being wrong, which is the state this repair is removing.
+    const exact =
+      wrote.name === addressed.name &&
+      wrote.argumentTypes.length === addressed.argumentTypes.length &&
+      wrote.argumentTypes.every((type, index) => type === addressed.argumentTypes[index]);
+    if (!exact && after.overloads > before.overloads) {
+      // NOTHING IS NAMED. The sent statement declares the identity the plan addresses, so the only
+      // name this arm holds is the addressed object's, and that is precisely the object that was
+      // not written: printing it would name the wrong object in the one sentence whose job is to
+      // name the right one. The dialog already renders this shape, without a name.
+      return { outcome: "applied-elsewhere", undone: false, duration: Date.now() - started };
     }
     // The addressed row's text after the write. It is the EMPTY STRING only when the reply no
     // longer carries the addressed overload at all, which is an out-of-band DROP between the

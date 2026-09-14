@@ -3392,6 +3392,18 @@ const CANONICALIZED = READ_TEXT.replace(
   "RETURN (x + 1)",
   "RETURN ((x  +  1)) -- I reformatted this and added a comment",
 );
+/**
+ * A header edit the identity reading calls harmless and the BYTES do not, which is the population
+ * the post-apply control's own question is asked over.
+ *
+ * MEASURED on trinodb/trino:476 in container `trino-t32r1` on host port 18633 on 2026-09-15:
+ * `CREATE OR REPLACE FUNCTION memory.app.plus_one(x BIGINT) RETURNS bigint RETURN x + 9` over
+ * `plus_one(x bigint)` replaced it IN PLACE, one row before and one after, and `SHOW CREATE
+ * FUNCTION` came back carrying the reader's own capitals while `SHOW FUNCTIONS` still published
+ * `bigint`. So an unfolded type rendering is not a fork, and the control below is what asks the
+ * engine whether this design is right about that for a given text.
+ */
+const RECASED = READ_TEXT.replace("(x bigint)", "(x BIGINT)").replace("RETURN (x + 1)", "RETURN (x + 9)");
 /** The one edit that FORKS on 476, and the row the coordinator then answers for it, verbatim. */
 const FORKING_TEXT = READ_TEXT.replace("(x bigint)", "(x varchar)").replace("RETURN (x + 1)", "RETURN (length(x) + 1)");
 const CREATE_PLUS_ONE_VARCHAR =
@@ -4280,6 +4292,37 @@ describe("Trino object edit: the apply", () => {
     // the same NAME in that window adds a row to the reply. This apply is an ordinary in-place
     // edit and the reader must be told it landed.
     const outcome = await applyAgainst({ before: READ_TEXT, after: EDITED, gained: [CREATE_PLUS_ONE_VARCHAR] });
+    expect(outcome.outcome).toBe("applied");
+  });
+
+  test("a header edit the reading calls harmless, plus a row that write should not have added, is a fork", async () => {
+    // THE CONTROL ON THE IDENTITY READING, and it is a DIFFERENT question rather than the same
+    // one asked twice. The arm above it compares the SENT statement's identity against the
+    // addressed one with `trinoCreateFunctionIdentity`, which is the reader the BUILD refuses
+    // with: sharing it means the control is blind to exactly the population the rule is blind to,
+    // and that is how a live fork on 476 answered `applied` rather than `applied-elsewhere`
+    // before this repair.
+    //
+    // So the control asks the ENGINE instead, and only where the two readings of the sent text
+    // disagree: the reader changed the header, the identity reading called the change
+    // identity-preserving, and the write nonetheless left `SHOW CREATE FUNCTION` answering MORE
+    // rows than it did before. A parameter rename is that population, MEASURED in place on 476,
+    // and a gained row there says the reading was wrong about this text.
+    const outcome = await applyAgainst({ before: READ_TEXT, after: RECASED, gained: [CREATE_PLUS_ONE_VARCHAR] });
+    if (outcome.outcome !== "applied-elsewhere") throw new Error("narrowing");
+    expect(outcome.undone).toBe(false);
+    // NOTHING IS NAMED, and that is the honest end of this arm rather than an omission: the sent
+    // statement declares the identity the plan addresses, so the only name this reading holds is
+    // the addressed object's, which is precisely the object that was not written.
+    expect(outcome.wrote).toBeUndefined();
+  });
+
+  test("the same header edit with no row gained is `applied`, so the control is not a blanket refusal", async () => {
+    // The other half of that population. Without it the arm above would fire on every header edit
+    // this design deliberately widened to allow, and a reader who renamed a parameter would be
+    // told their edit went somewhere else. MEASURED on 476: a rename is replaced in place, one row
+    // before and one after.
+    const outcome = await applyAgainst({ before: READ_TEXT, after: RECASED });
     expect(outcome.outcome).toBe("applied");
   });
 

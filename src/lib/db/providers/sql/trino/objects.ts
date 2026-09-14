@@ -859,7 +859,7 @@ function trinoParenthesisedSpan(text: string): { readonly open: number; readonly
 /**
  * The text inside the first TOP-LEVEL parentheses, or `null` when the text has none.
  *
- * The OFFSETS are the primitive and this is the slice, because {@link trinoCreateIdentity} needs
+ * The OFFSETS are the primitive and this is the slice, because {@link trinoCreateFunctionIdentity} needs
  * what comes BEFORE the list as well and two scanners for one parenthesis pair would be two
  * readings that could disagree about which pair it is.
  */
@@ -989,7 +989,7 @@ function trinoCreateArgumentTypes(createStatement: unknown): readonly string[] |
 /**
  * One parenthesised list read as its parameter TYPES, one element per parameter.
  *
- * ONE WRITER, because {@link trinoCreateArgumentTypes} and {@link trinoCreateIdentity} both need
+ * ONE WRITER, because {@link trinoCreateArgumentTypes} and {@link trinoCreateFunctionIdentity} both need
  * it and they find the list by different routes: the first slices it and the second already holds
  * the offsets of the pair it came from. Two copies of `split, then drop the names` is two readings
  * that can drift, and this file's whole overload comparison rests on them not drifting.
@@ -1135,8 +1135,25 @@ function trinoFoldIdentifiers(text: string, foldQuotedCase: boolean): string {
 }
 
 /**
- * The IDENTITY a `CREATE` statement declares: the qualified name it writes and the argument
- * types it declares, or `null` when neither can be read out of it (#789 Phase 3).
+ * The IDENTITY a `CREATE FUNCTION` statement declares: the qualified name it writes and the
+ * argument types it declares, or `null` when neither can be read out of it (#789 Phase 3).
+ *
+ * IT IS FUNCTION SHAPED, WHICH THE NAME SAYS BECAUSE NOTHING ELSE HERE CAN. The reader takes the
+ * FIRST TOP-LEVEL PARENTHESIS PAIR in the whole statement as the PARAMETER LIST, and only a
+ * routine has one. The keyword list is the caller's, so the words `MATERIALIZED VIEW` or `VIEW`
+ * can be handed in and the walk will accept them, and the answer for a view would be nonsense
+ * rather than an error: `CREATE VIEW memory.app.v AS SELECT count(*) FROM t` yields the name
+ * `memory.app.v AS SELECT count` and an argument list of `*`, and `CREATE VIEW memory.app.v AS
+ * SELECT 1` has no parenthesis anywhere and takes the `null` arm, whose caller then tells the
+ * reader that a definition opens with a name and "the parameter list in parentheses", which a
+ * view has never had.
+ *
+ * NOTHING BUILDS THAT POPULATION TODAY and this paragraph is what stops it being built by
+ * accident: `function` is the only kind on this engine that declares `acceptsSourceEdits`, which
+ * the provider's kind table states and the suite pins by value. The `view` deferral comment
+ * beside that declaration names this reader, so whoever un-defers `view` has to give the identity
+ * a view-shaped reading first. A guard here instead would be a branch over an empty population,
+ * which this file's own precedent refuses (standing ruling 5b, #789).
  *
  * THIS REPLACES A FIRST-LINE COMPARISON, AND THE POPULATION THAT KILLED THAT COMPARISON IS
  * MEASURED. The build compared `text.split("\n")[0]` on both sides, which certifies the identity
@@ -1205,7 +1222,7 @@ function trinoFoldIdentifiers(text: string, foldQuotedCase: boolean): string {
  * signature never holds a quote at all. It stays because this key is an identity comparison ahead
  * of a write and the framing costs one call.
  */
-export interface TrinoCreateIdentity {
+export interface TrinoCreateFunctionIdentity {
   /** The qualified name exactly as the statement writes it, `memory.app.plus_one`. */
   readonly name: string;
   /** One element per parameter, the TYPE as written, the parameter name dropped. */
@@ -1214,7 +1231,10 @@ export interface TrinoCreateIdentity {
   readonly key: string;
 }
 
-export function trinoCreateIdentity(createStatement: string, keywords: readonly string[]): TrinoCreateIdentity | null {
+export function trinoCreateFunctionIdentity(
+  createStatement: string,
+  keywords: readonly string[],
+): TrinoCreateFunctionIdentity | null {
   const span = trinoParenthesisedSpan(createStatement);
   if (span === null) return null;
   const head = createStatement.slice(0, span.open);
