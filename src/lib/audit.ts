@@ -16,6 +16,23 @@ export type AuditEventType =
    * to run (#328).
    */
   | "agent_operation"
+  /**
+   * A tree-driven DDL: one event for the decision to apply an edited definition and one for
+   * what the engine did with it, joined by one correlation id (#789 Phase 3).
+   *
+   * Distinct from `query_execution` on purpose, and the distinction is measured rather than
+   * argued: three DDL statements through `POST /api/db/query` added ZERO events to this ring
+   * while one VACUUM on the same connection in the same minute added exactly one, so this arm is
+   * the first record of a user's WRITE anywhere in this product and an operator filtering the log
+   * has to be able to tell it from an editor statement.
+   *
+   * The claim it makes is narrow and deliberately so: it records that an edit was applied AT THIS
+   * ADDRESS, with this strategy, and with this outcome. It does NOT claim the round trip carried
+   * nothing else, and it cannot, because the day-one PostgreSQL unit is a multi-statement simple
+   * query with the reader's text concatenated into it and this repository has measured itself
+   * unable to count the statements in a routine body.
+   */
+  | "object_edit"
   // Phase 1 auth events
   | "login_success"
   | "login_failure"
@@ -83,7 +100,20 @@ export type AuditReason =
   // single-purpose credential. Distinct from `no_session` on purpose: this path
   // never wanted a session, so recording one vocabulary for both would make a
   // forged drive token indistinguishable in the trail from an expired login.
-  | "no_agent_drive_token";
+  | "no_agent_drive_token"
+  // The object edit path (#789 Phase 3). Eight codes for one apply's decidable outcomes, mapped
+  // from `ObjectEditOutcome` by a total record in src/lib/db/object-edit.ts, so a new outcome
+  // with no reading here fails to compile. `object_edit_plan_invalid` is the analogue of
+  // `no_agent_drive_token` and exists for the same recorded reason: without it a forged or
+  // tampered plan is indistinguishable in the trail from an ordinary failure.
+  | "object_edit_collateral_loss"
+  | "object_edit_applied_elsewhere"
+  | "object_edit_conflict"
+  | "object_edit_concurrent_update"
+  | "object_edit_refused"
+  | "object_edit_guard_refused"
+  | "object_edit_interrupted"
+  | "object_edit_plan_invalid";
 
 export interface AuditEvent {
   id: string;
@@ -114,8 +144,10 @@ export interface AuditEvent {
    * decision allowed it, the execution outcome. Server-generated per execution
    * (src/lib/db/operations/execution.ts) and opaque — it identifies an
    * execution, never a session, a user or a token, so it stays safe to log
-   * while remaining the key an operator groups by. Only `agent_operation`
-   * events set it.
+   * while remaining the key an operator groups by.
+   *
+   * Set by `agent_operation` events and by `object_edit` events, which are the two paths that
+   * emit a decision and an outcome as two records of one action (#789 Phase 3).
    */
   correlationId?: string;
 }
