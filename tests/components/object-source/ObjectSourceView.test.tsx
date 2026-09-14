@@ -2512,6 +2512,29 @@ const SECOND_STEP_TEXT =
 
 const A_DOCUMENT = functionDocument(A_PATH, A_TEXT);
 const B_DOCUMENT = functionDocument(B_PATH, B_TEXT);
+
+/**
+ * A build answer TAB A CAN ACTUALLY ACCEPT, and the reason this fixture exists at all (#789,
+ * review fix round 2).
+ *
+ * `BUILT` above carries `PLAN`, whose `path` is `EDIT_PATH`, and every tab in `TwoSourceTabs`
+ * renders `A_PATH` or `B_PATH`. MEASURED: landing `BUILT` in this harness reaches
+ * `!namesThisObject(answer.plan, path, kind)` in `runBuild`'s resolve arm, which calls
+ * `setPreview(undefined)` and raises the unreadable refusal, so no dialog can EVER open in this
+ * describe. A tab-switch test that landed `BUILT` therefore asserted a null that was null because
+ * the answer was refused, and it survived the mutation that unbinds the dialog from the address.
+ * That is this epic's own named failure mode, a guard over a population nothing builds, and it is
+ * what this fixture removes: `A_BUILT` names tab A's address, so the resolve arm's happy path runs
+ * and the dialog's address binding is the only thing left that can close it.
+ */
+const A_PLAN: ObjectEditPlan = { ...PLAN, planId: "plan-for-tab-a", path: [...A_PATH] };
+
+const A_BUILT = {
+  built: true,
+  plan: A_PLAN,
+  preimage: { text: A_TEXT, language: "sql" } satisfies ObjectEditPreimage,
+  planToken: "token-for-tab-a",
+};
 const A_READER = readerFor(A_DOCUMENT);
 const B_READER = readerFor(B_DOCUMENT);
 
@@ -2767,15 +2790,42 @@ describe("ObjectSourceView across two Source tabs", () => {
     expect(screen.getByTestId("diff-editor").getAttribute("data-modified")).not.toContain(STEP_TEXT);
   });
 
+  test("a build ACCEPTED for this tab opens the dialog, which is the control for the tab-switch test", async () => {
+    /*
+     * THE CONTROL, and it is not optional here (#789, review fix round 2). The negative below
+     * asserts that no dialog opens after a tab switch. A negative like that is worth nothing
+     * unless the same answer, landing on the tab it was built for, DOES open one: the first
+     * spelling of the negative landed `BUILT`, whose plan names `EDIT_PATH`, so `runBuild`
+     * refused it for naming another object and the dialog was null for a reason that had nothing
+     * to do with the tab switch. This test is what makes that mistake loud: it goes red the
+     * moment `A_BUILT` stops being an answer tab A accepts.
+     */
+    const { applier, build } = applierDouble();
+    build.mockResolvedValueOnce(A_BUILT as never);
+    render(<TwoSourceTabs active="a" applier={applier} />);
+    await enterEditMode();
+    await type(`${A_TEXT} -- edited on A`);
+    await click("object-source-preview");
+
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy());
+    expect(screen.queryByTestId("object-source-edit-refused")).toBeNull();
+    expect(screen.getByTestId("object-source-apply-dialog").textContent).toContain("app.fa(integer)");
+  });
+
   test("a build that lands after the reader moved to another tab does not open over that tab", async () => {
     /*
      * DEFENCE IN DEPTH, and the population is named honestly rather than implied (#789, review
-     * fix round 1). Unlike the refusal test above, this one is NOT something a reader can drive
-     * today: while the build is in flight the modal is open, a mouse press on the strip hits the
-     * overlay and closes the dialog, focus is trapped, and the one document-level shortcut that
-     * moves the active tab unmounts this pane instead of re-addressing it (filed as D82). The
-     * rerender below moves the address at a moment no shipped shell moves it. It is kept because
-     * the binding it pins is one word of the rule every other piece of pane state carries.
+     * fix rounds 1 and 2). Unlike the refusal test above, this one is NOT something a reader can
+     * drive today: while the build is in flight the modal is open, a mouse press on the strip hits
+     * the overlay and closes the dialog, focus is trapped, and the one document-level shortcut
+     * that moves the active tab unmounts this pane instead of re-addressing it (filed as D82). The
+     * rerender below moves the address at a moment no shipped shell moves it.
+     *
+     * What it now certifies, which the round-1 spelling did NOT: the answer landed is `A_BUILT`,
+     * addressed to tab A, so the resolve arm's happy path runs and the only thing left holding the
+     * dialog shut is `previewHere`. MEASURED both ways: with `previewHere` unbound to the address
+     * this test fails, and with `BUILT` landed instead of `A_BUILT` it passes with the binding
+     * removed, which is what it used to do.
      */
     const { applier, build } = applierDouble();
     let land: (value: unknown) => void = () => {};
@@ -2793,7 +2843,7 @@ describe("ObjectSourceView across two Source tabs", () => {
 
     rerender(<TwoSourceTabs active="b" applier={applier} />);
     await act(async () => {
-      land(BUILT);
+      land(A_BUILT);
       await Promise.resolve();
     });
 
