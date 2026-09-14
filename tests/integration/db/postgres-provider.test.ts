@@ -5628,6 +5628,26 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         carries: "a closing parenthesis inside the QUOTED FUNCTION NAME",
       },
       {
+        object: "app.mix(integer,integer)",
+        path: ["app", "mix(integer,integer)"],
+        definition:
+          'CREATE OR REPLACE FUNCTION app.mix("a\')b" integer, c integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n',
+        revision: "ecb1f5d2562bd96a4f4ad967338bed9d",
+        forked: ["c integer", "c bigint"],
+        hidesTheChange: true,
+        carries: "a single quote AND a closing parenthesis inside a quoted parameter name",
+      },
+      {
+        object: "app.mix2(text,integer)",
+        path: ["app", "mix2(text,integer)"],
+        definition:
+          "CREATE OR REPLACE FUNCTION app.mix2(a text DEFAULT '\")'::text, b integer DEFAULT 1)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n",
+        revision: "e68f2d00e27138bb28835dda6b02a7f0",
+        forked: ["b integer DEFAULT 1", "b bigint DEFAULT 1"],
+        hidesTheChange: true,
+        carries: "a double quote AND a closing parenthesis inside a DEFAULT string literal",
+      },
+      {
         object: "app.pn(integer,integer)",
         path: ["app", "pn(integer,integer)"],
         definition:
@@ -5671,7 +5691,7 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
       test("every fixture's revision IS the md5 of its definition, and the population is the measured five", () => {
         // The population is asserted BEFORE it is looped over, because a loop over an empty or a
         // shortened list certifies nothing and this epic has shipped that defect six times.
-        expect(PAREN_HEADER_FIXTURES.length).toBe(5);
+        expect(PAREN_HEADER_FIXTURES.length).toBe(7);
         for (const fixture of PAREN_HEADER_FIXTURES) {
           expect(createHash("md5").update(fixture.definition).digest("hex")).toBe(fixture.revision);
         }
@@ -5734,6 +5754,11 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         const build = await buildAgainst(fixture, truncated);
         if (build.built) throw new Error("expected a refusal");
         expect(build.refusal.refusal).toBe("identity");
+        // The WHOLE text is what the sentence then shows the reader, which is the answer the
+        // `indexOf` reading gave for the same case and the only one that tells them what the
+        // server received. Mutating the no-answer arm to an empty string leaves the refusal in
+        // place and empties the sentence, so this assertion is what makes that arm measured.
+        expect(build.refusal.sentence).toContain(truncated);
       });
     });
   });
