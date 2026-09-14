@@ -23,17 +23,31 @@ import type { DatabaseConnection } from "@/lib/types";
  *
  * WHAT THIS SEAM DOES WITH A HOST-SUPPLIED VALUE OF ARBITRARY SIZE, stated because it is the one
  * boundary in this phase with no second line of defence, and because leaving it unstated is how
- * an accident reads as a decision. `httpSourceApplier` NEVER sees a host value: it speaks only to
- * this application's own two routes, and both of them bound what they answer with
- * `EDIT_PLAN_EXECUTABLE_LIMIT`. On the EMBEDDED shell the applier is the host's own object, so
- * nothing in this file is on that path at all, and the value the host returns is bounded by
- * whoever narrows it. As measured at this commit, that is nobody:
- * `src/lib/api/object-edit-wire.ts` bounds no string in any of its four predicates, so the
- * unbounded arm is closed downstream by `ApplyPreviewDialog`, which refuses to draw a diff above
- * `EDIT_PLAN_EXECUTABLE_LIMIT`, and is still OPEN for every other string a host can supply
- * (`refusal.sentence`, `refusal.hint`, `plan.revision.reason`, each consequence's `fact`). That
- * is a gap this task reports and does not close here, because a bound invented at a seam that
- * only ever talks to a bounded route would be a number no host path passes through.
+ * an accident reads as a decision.
+ *
+ * `httpSourceApplier` NEVER sees a host value: its only two callees are `appFetch` against two
+ * routes of this application's own. That is the true half and it is all this module can say.
+ * WHAT THOSE TWO ROUTES ANSWER IS NOT BOUNDED BY ANYTHING TODAY, and this comment used to claim
+ * the opposite. MEASURED again in fix round 1 at this commit: `src/app/api/db/objects/` holds
+ * containers, counts, describe, inventory, list, search and source, so NEITHER ROUTE EXISTS YET,
+ * and `EDIT_PLAN_EXECUTABLE_LIMIT` is named in exactly three files, none of them a route
+ * (`src/lib/db/object-edit.ts`, this file and `ApplyPreviewDialog.tsx`). So this is an OBLIGATION on whoever writes those two handlers and never a discharged
+ * one: the plan text they answer is bounded by `EDIT_PLAN_EXECUTABLE_LIMIT` in
+ * `src/lib/db/object-edit.ts`, and the outcome and refusal SENTENCES they answer are bounded by
+ * nothing at all, so each of them owes its own bound and its own test.
+ *
+ * On the EMBEDDED shell the applier will be the host's own object, so nothing in this file will
+ * be on that path at all, and the value the host returns is bounded by whoever narrows it. That
+ * shell is a later wave of this phase: measured at this commit, `grep -rn httpSourceApplier src/`
+ * finds no consumer outside this directory, so every sentence here about a shell is design intent
+ * and not a description of code that runs. As measured at
+ * this commit, that is nobody: `src/lib/api/object-edit-wire.ts` bounds no string in any of its
+ * four predicates, so the unbounded arm is closed downstream by `ApplyPreviewDialog`, which
+ * refuses to draw a diff above `EDIT_PLAN_EXECUTABLE_LIMIT`, and is still OPEN for every other
+ * string a host can supply (`refusal.sentence`, `refusal.hint`, `plan.revision.reason`, each
+ * consequence's `fact`). That is a gap this task reports and does not close here, because the
+ * owner is the predicate that narrows the host's value and not a seam the host path never
+ * traverses.
  *
  * `planToken` is `string | undefined` BECAUSE A HOST HAS NO KEY. The binding between a host's
  * preview and a host's apply is the host's own; this server's token does not exist there and is
@@ -53,9 +67,11 @@ export interface ObjectSourceApplier {
 /**
  * A failed request to one of the two edit routes, carrying the route's own error CODE.
  *
- * The code is what lets a reader be told an expired plan apart from a failure: the routes answer
- * `EDIT_PLAN_INVALID` for a plan that no longer verifies, and the dialog's response to that is to
- * rebuild the preview rather than to report that the edit failed. A plain `Error` collapses the
+ * The code is what lets a reader be told an expired plan apart from a failure: the routes are to
+ * answer `EDIT_PLAN_INVALID` for a plan that no longer verifies, and the dialog's response to
+ * that is to rebuild the preview rather than to report that the edit failed. Both routes are
+ * unwritten at this commit, so that is the contract this class is built for and not an observed
+ * behaviour. A plain `Error` collapses the
  * two into one sentence, and the sentence alone cannot be branched on: it is prose, it is
  * localisable, and matching substrings against it is the defect this repository already carries
  * in its own error mapper (MEASURED on PostgreSQL 18.4, an ownership refusal answers HTTP 500
@@ -69,6 +85,8 @@ export class ObjectEditRequestError extends Error {
 
   constructor(message: string, code?: string) {
     super(message);
+    // Asserted by the applier tests, because a handler that branches on `error.name` receives
+    // "Error" without it: `Error.name` is the constructor's own and a subclass does not set it.
     this.name = "ObjectEditRequestError";
     this.code = code;
   }
@@ -106,7 +124,11 @@ async function postJson(path: string, body: unknown, whenSilent: (status: number
 }
 
 /**
- * The default applier: this application's own two routes.
+ * The default applier: this application's own two routes, `POST /api/db/objects/edit-plan` and
+ * `POST /api/db/objects/edit-apply`, NEITHER OF WHICH EXISTS AT THIS COMMIT. The two URLs and the
+ * two request bodies are a contract taken from this phase's design, asserted in
+ * `tests/unit/components/object-source-applier.test.ts` against a recorded `fetch`, and the first
+ * thing that will measure them against a live handler is this phase's end-to-end spec.
  *
  * `buildConnectionPayload` sends a managed seed by id and anything else in full, which is how
  * every other db route is called and the only way a connection the server has never heard of can

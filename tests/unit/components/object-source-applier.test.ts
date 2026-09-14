@@ -129,6 +129,13 @@ describe("httpSourceApplier.build", () => {
     const raised = await httpSourceApplier.build(connection, REQUEST).catch((error: unknown) => error);
 
     expect(raised).toBeInstanceOf(ObjectEditRequestError);
+    // `name` is asserted as well as `instanceof`, and they are not the same assertion (#789 fix
+    // round 1). A subclass inherits `Error`'s own `name`, so without the explicit assignment this
+    // reads "Error"; `instanceof` still holds and every existing test still passes, which is
+    // measured: deleting the line killed nothing. A handler that branches on `error.name`, which
+    // is the only branch available across a serialisation boundary or in a `catch` typed as
+    // `unknown`, would silently take the wrong arm.
+    expect((raised as Error).name).toBe("ObjectEditRequestError");
     expect((raised as ObjectEditRequestError).message).toBe("That plan is no longer valid.");
     expect((raised as ObjectEditRequestError).code).toBe("EDIT_PLAN_INVALID");
   });
@@ -170,8 +177,14 @@ describe("httpSourceApplier.apply", () => {
 
     await httpSourceApplier.apply(connection, PLAN, undefined, []);
 
-    expect(Object.hasOwn(seen?.body ?? {}, "planToken")).toBe(false);
-    expect(seen?.body.acknowledged).toEqual([]);
+    // The request is asserted to have HAPPENED before its shape is asserted (#789 fix round 1).
+    // `Object.hasOwn(seen?.body ?? {}, ...)` alone answers false when `fetch` was never called at
+    // all, because the fallback `{}` carries no key either, so an absent request would read as a
+    // passing absence assertion. Every negative here stands on this positive.
+    expect(seen).toBeDefined();
+    const body = seen?.body ?? {};
+    expect(Object.hasOwn(body, "planToken")).toBe(false);
+    expect(body.acknowledged).toEqual([]);
   });
 
   test("raises the route's own sentence and its CODE when the apply is refused", async () => {
@@ -180,6 +193,7 @@ describe("httpSourceApplier.apply", () => {
     const raised = await httpSourceApplier.apply(connection, PLAN, "jws.one", []).catch((error: unknown) => error);
 
     expect(raised).toBeInstanceOf(ObjectEditRequestError);
+    expect((raised as Error).name).toBe("ObjectEditRequestError");
     expect((raised as ObjectEditRequestError).message).toBe("This plan has expired.");
     expect((raised as ObjectEditRequestError).code).toBe("EDIT_PLAN_INVALID");
   });

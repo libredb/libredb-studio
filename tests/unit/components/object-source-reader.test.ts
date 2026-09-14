@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { partEditability, type SourceEditablePart } from "@/components/object-source/source-editable";
 import { httpSourceReader, isSourceDocumentShape } from "@/components/object-source/source-reader";
 import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/types";
@@ -175,6 +176,28 @@ describe("isSourceDocumentShape", () => {
       parts: [{ id: "d", label: "D", unavailable: "no", edit: { offered: true } }],
     };
     expect(isSourceDocumentShape(refusal)).toBe(true);
+  });
+
+  test("an over-long reason under `offered: true` leaves the document readable, because nothing renders it", () => {
+    /*
+     * THE BOUND IS ONE ARM WIDE, and this test is the population check that fix round 1 was
+     * missing (#789 Phase 3). Round 1 checked the length wherever `reason` was a string, on the
+     * argument that "a host shipping megabytes under an `offered: true` is handing this seam the
+     * same value with a different label on it". MEASURED with the real `partEditability` below:
+     * on the `offered: true` arm it answers `{ editable: true }` and never looks at `reason` at
+     * all, so no component renders that string and there is nothing on that arm for a bound to
+     * protect. Refusing the document over it cost the READ of every part in it for a field that
+     * decides only an affordance, which is this epic's signature defect, a guard wider than the
+     * population that renders.
+     *
+     * The assertion on `partEditability` is not decoration: it is the only thing that keeps this
+     * test honest if `source-editable.ts` ever starts rendering the `offered: true` reason, at
+     * which point the arm gains a renderer and this test must be reconsidered rather than
+     * silently outlived.
+     */
+    const part = { ...readable, edit: { offered: true, reason: "n".repeat(SOURCE_CHARACTER_LIMIT + 1) } };
+    expect(isSourceDocumentShape({ ...document, parts: [part] })).toBe(true);
+    expect(partEditability(part as SourceEditablePart)).toEqual({ editable: true });
   });
 
   test("rejects an edit refusal whose reason is longer than a text is allowed to be", () => {

@@ -16,12 +16,18 @@
  * otherwise: knip named eighteen re-exported lines there as reaching nobody, and a barrel that
  * re-exports everything cannot be read as a statement about what the outside uses (#789).
  *
- * The apply seam's three names are here for the same test: BOTH shells name them (#789 Phase 3).
- * The standalone shell builds its `onApply` from `httpSourceApplier`, the embedded shell builds
- * an `ObjectSourceApplier` from its host's `objectEditor` exactly as it builds a reader from the
- * host's source method, and both of them tell an expired plan apart from a failure by reading
- * `ObjectEditRequestError`'s `code`. Nothing else from `source-applier.ts` is re-exported:
- * `postJson` and the bound helpers are this folder's own.
+ * The apply seam's three names are here for the same test, and the test is passed by INTENT and
+ * not yet by a consumer (#789 Phase 3). Both shells are to name them: the standalone one will
+ * build its `onApply` from `httpSourceApplier`, the embedded one will build an
+ * `ObjectSourceApplier` from its host's `objectEditor` exactly as it builds a reader from the
+ * host's source method, and both will tell an expired plan apart from a failure by reading
+ * `ObjectEditRequestError`'s `code`. MEASURED in fix round 1 at this commit:
+ * `grep -rnE "httpSourceApplier|objectEditor|sourceApplier" src/` finds nothing outside this
+ * directory, because both shells land in later waves of this phase, so the only consumer through
+ * this file today is the barrel test in `tests/unit/components/object-source-applier.test.ts`,
+ * which exists so that a dropped line here fails now rather than in a wave nobody is reading this
+ * file. Nothing else from `source-applier.ts` is re-exported: `postJson` and the bound helpers are
+ * this folder's own.
  */
 export { ObjectSourceView, type ObjectSourcePatch } from "./ObjectSourceView";
 export { httpSourceApplier, ObjectEditRequestError, type ObjectSourceApplier } from "./source-applier";

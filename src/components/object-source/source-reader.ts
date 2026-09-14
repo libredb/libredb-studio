@@ -97,14 +97,23 @@ function isTruncationShape(value: unknown): boolean {
  * arm additionally requires a filled `reason`. Absence and malformation both read as not
  * editable, so nothing downstream has to be told them apart.
  *
- * WHAT IS REFUSED IS AN OVER-LONG `reason`, and the rule is the one the three strings above it
- * already follow. `partEditability` answers `provider-refused` carrying `edit.reason` VERBATIM
- * and unprefixed (`source-editable.ts:110-112`), and the pane renders that sentence, so this is
- * the FOURTH host-supplied rendered string on a seam with no route in front of it and the first
- * one this phase adds. Nothing downstream bounds it: measured at this commit, `partEditability`
- * does not look at the length. The length is checked wherever `reason` is a string, `offered`
- * being irrelevant to it: a host that ships megabytes under an `offered: true` is handing this
- * seam the same value with a different label on it.
+ * WHAT IS REFUSED IS AN OVER-LONG REFUSAL SENTENCE, on exactly one arm, and the rule is the one
+ * the three strings above it already follow. `partEditability` in `source-editable.ts` answers
+ * `provider-refused` carrying `edit.reason` VERBATIM and unprefixed when `offered` is `false` and
+ * the reason is a filled string, and the pane renders that sentence, so that arm is the FOURTH
+ * host-supplied rendered string on a seam with no route in front of it and the first one this
+ * phase adds. Nothing downstream bounds it: measured at this commit, `partEditability` does not
+ * look at the length.
+ *
+ * THE `offered: true` ARM IS NOT CHECKED, and fix round 1 narrowed the helper to say so. Round 1
+ * checked the length wherever `reason` was a string, arguing that a host shipping megabytes under
+ * an `offered: true` was handing this seam the same value with a different label on it. MEASURED
+ * against the real `partEditability`: on that arm it answers `{ editable: true }` and never reads
+ * `reason`, so no component renders the string and the bound protected nothing while costing the
+ * READ of every part in the document. A guard wider than the population that renders is the
+ * defect this phase keeps finding, so the guard now covers the arm that has a renderer and only
+ * that arm. `tests/unit/components/object-source-reader.test.ts` pins both halves, the second one
+ * by calling `partEditability` itself, so the day that arm gains a renderer the test says so.
  *
  * AN OVERRUN IS A FAILED READ and never a silent truncation, which is `isSourceDocumentShape`'s
  * own stated rule for `text`, `unavailable` and `truncated.reason`: this seam cannot cut a
@@ -112,12 +121,24 @@ function isTruncationShape(value: unknown): boolean {
  * 2 adopter, because `edit` is a field this phase invents and no document written before it
  * carries one.
  *
- * The alternative, refusing only the AFFORDANCE and keeping the document, cannot be written from
- * this predicate: it answers a boolean over the whole document and deletes nothing, and the
- * decision it would have to change lives in a different module.
+ * THAT CONSEQUENCE IS A DECLARED DIVERGENCE FROM THIS TASK'S SPECIFICATION, recorded here because
+ * a reader of this line deserves to know it is contested and not settled. The specification's
+ * first half asks for the weaker consequence, the part alone losing its affordance, and its
+ * second half asks for "the same rule that bounds the refusal sentence and the truncation
+ * reason", which in this file IS `return false` over the document. Both cannot hold at once: this
+ * predicate answers a boolean over a whole document and deletes nothing, so the weaker
+ * consequence can only be written in `partEditability`, which is another task's file. The rule
+ * was followed and the consequence was not, and the alternative is one length test there. The
+ * cost of the choice, stated plainly: a host that answers `offered: false` with a reason over the
+ * limit loses the READ of every part in that document.
  */
 function editReasonOverruns(value: unknown): boolean {
-  return isRecord(value) && typeof value.reason === "string" && value.reason.length > SOURCE_CHARACTER_LIMIT;
+  return (
+    isRecord(value) &&
+    value.offered === false &&
+    typeof value.reason === "string" &&
+    value.reason.length > SOURCE_CHARACTER_LIMIT
+  );
 }
 
 function isPartShape(part: unknown): boolean {
