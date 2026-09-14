@@ -5568,20 +5568,32 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
      * g interval hour to second(2), h bit(4))` was rendered
      * `app.tm(a numeric, b character varying, c character, d time without time zone,
      * e timestamp without time zone, f numeric, g interval, h bit)`, with every parenthesis gone.
-     * What DOES carry a parenthesis before the parameter list closes, all five measured on 18.4 by
-     * creating the object and reading `pg_get_functiondef` back:
+     * What DOES carry a parenthesis before the parameter list closes, all SEVEN measured on 18.4 by
+     * creating the object and reading `pg_get_functiondef` back, in the order the array below
+     * holds them:
      *
      *     CREATE FUNCTION app.dc(a integer DEFAULT abs(-1), b integer DEFAULT 2) ...
      *     CREATE FUNCTION app.dl(a text DEFAULT ')', b integer DEFAULT 1) ...
      *     CREATE FUNCTION app.dp(a text DEFAULT '(', b integer DEFAULT 1) ...
      *     CREATE FUNCTION app."we)ird"(a integer, b integer) ...
+     *     CREATE FUNCTION app.mix("a')b" integer, c integer) ...
+     *     CREATE FUNCTION app.mix2(a text DEFAULT '")', b integer DEFAULT 1) ...
      *     CREATE FUNCTION app.pn("a)b" integer, c integer) ...
      *
      * A DEFAULT holding a call, a DEFAULT holding either parenthesis inside a string literal, a
-     * quoted function NAME holding one and a quoted PARAMETER name holding one. All five are
+     * quoted function NAME holding one, a quoted PARAMETER name holding one, and the two
+     * MIXED-QUOTE shapes that are why the scan tracks both quote kinds and has each ignore the
+     * other: a `'` inside a quoted identifier, and a `"` inside a string literal. All seven are
      * ordinary PostgreSQL and none of them is hypothetical: the renderings below are the bytes the
      * server answered, and each `revision` is the `md5(pg_get_functiondef(oid))` it answered for
      * exactly those bytes, asserted rather than described by the first test under this block.
+     *
+     * RE-MEASURED on 2026-09-15 by #789 task 34, on its own `postgres:18` container answering
+     * `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1)`: all seven `CREATE FUNCTION` statements above plus
+     * `app.np()` were applied to a fresh database and `md5(pg_get_functiondef(oid))` answered the
+     * eight constants below, every one of them byte for byte, so the population is re-runnable and
+     * not a transcription. The typmod rendering above was re-measured in the same session and
+     * answered the same eight-parameter line, with every parenthesis gone.
      *
      * `app.np()`, a function with no parameters at all, is the case where the first `)` IS the
      * right one, and it is here so that the fix is measured to leave it alone.
@@ -5688,7 +5700,7 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         return build;
       }
 
-      test("every fixture's revision IS the md5 of its definition, and the population is the measured five", () => {
+      test("every fixture's revision IS the md5 of its definition, and the population is the measured seven", () => {
         // The population is asserted BEFORE it is looped over, because a loop over an empty or a
         // shortened list certifies nothing and this epic has shipped that defect six times.
         expect(PAREN_HEADER_FIXTURES.length).toBe(7);
@@ -5706,7 +5718,7 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
           const forked = fixture.definition.replace(from, to);
           expect(forked).not.toBe(fixture.definition);
           // WHICH of these the first-`)` reading actually false-accepted, asserted per fixture
-          // rather than assumed for all five: the change is hidden from it only when it falls
+          // rather than assumed for all seven: the change is hidden from it only when it falls
           // after the first `)`, and `app.dp` carries an OPENING parenthesis in its literal, so
           // its first `)` is still the header's own and the old reading refused it correctly.
           // That fixture is here for the depth counter instead: count the `(` inside the literal
@@ -5729,6 +5741,49 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
           expect(build.plan.path).toEqual([...fixture.path]);
         });
       }
+
+      /**
+       * THE EDIT THIS FIX NEWLY REFUSES, which is a deliberate narrowing and not an oversight
+       * (#789 Phase 3, task 34, from the review of task 31's fix).
+       *
+       * Changing a LATER parameter's DEFAULT is an ordinary in-place replace on PostgreSQL, and
+       * until `c2437ec1` this build ACCEPTED it whenever an earlier `)` cut the header short. It
+       * is now refused as `identity`, because inside the rendered header a changed DEFAULT and a
+       * changed argument list are the same bytes to a byte comparison and this design has no
+       * parser for the header. The refusal's own sentence names the way out, the SQL editor.
+       *
+       * MEASURED on 2026-09-15 by #789 task 34 against its own `postgres:18` container answering
+       * `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1)`, on the `app.dc` this block's first fixture is:
+       * `CREATE OR REPLACE FUNCTION app.dc(a integer DEFAULT abs(-1), b integer DEFAULT 3)` over
+       * the `DEFAULT 2` form left ONE `pg_proc` row with `oid = 16385` unmoved and `xmin` moving
+       * 754 to 762, and `pg_get_functiondef` then rendered `b integer DEFAULT 3`. So the engine
+       * performs this edit in place, and the apply's post-condition would have seen the addressed
+       * row rewritten and answered `applied`. The cost of the fix is therefore a REFUSAL on a
+       * population the product used to serve, and it is written down here rather than discovered.
+       *
+       * THE CONTROL, which is what stops this test asserting a refusal that has nothing to do with
+       * the header's end: `firstParenthesisHeader` below is the reading `c2437ec1` replaced, quoted
+       * from that commit's own diff (`const close = text.indexOf(")")`). It cuts BOTH texts to the
+       * same bytes, so the old build had nothing to compare and accepted. Without that assertion
+       * this test would pass just as happily for an edit no reading ever accepted.
+       */
+      test("a LATER parameter's DEFAULT change is refused, which the first-`)` reading used to let through", async () => {
+        const firstParenthesisHeader = (text: string) => {
+          const close = text.indexOf(")");
+          return close < 0 ? text : text.slice(0, close + 1);
+        };
+        const fixture = PAREN_HEADER_FIXTURES[0];
+        const submitted = fixture.definition.replace("b integer DEFAULT 2", "b integer DEFAULT 3");
+        expect(submitted).not.toBe(fixture.definition);
+        expect(firstParenthesisHeader(submitted)).toBe(firstParenthesisHeader(fixture.definition));
+
+        const build = await buildAgainst(fixture, submitted);
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+        expect(build.refusal.sentence).toContain("b integer DEFAULT 3)");
+        expect(build.refusal.sentence).toContain("b integer DEFAULT 2)");
+        expect(build.refusal.sentence).toContain("make it with a CREATE OR REPLACE of your own in the SQL editor");
+      });
 
       test("a function with NO parameters compares its whole header, and its body edit still builds", async () => {
         const built = await buildAgainst(
