@@ -76,21 +76,13 @@ apps:
     plugs:
       - network
       - network-bind
-    # Mirrors the systemd unit shipped by the .deb/.rpm packages
-    # (packaging/linux/libredb-studio.service). The zero-config first run
-    # generates missing auth secrets (JWT_SECRET, ADMIN_PASSWORD) in the
-    # data directory - the directory of STORAGE_SQLITE_PATH.
-    environment:
-      NODE_ENV: production
-      NEXT_TELEMETRY_DISABLED: "1"
-      STORAGE_PROVIDER: sqlite
-      STORAGE_SQLITE_PATH: $SNAP_DATA/libredb-storage.db
-      PORT: "3000"
-      # Local-first: loopback only by default. To expose the daemon on the
-      # network, override the env on the generated systemd unit:
-      #   sudo systemctl edit snap.libredb-studio.libredb-studio.service
-      # with [Service] Environment=HOSTNAME=0.0.0.0
-      HOSTNAME: "127.0.0.1"
+    # No environment block (issue #807): snap-exec applies it over the
+    # caller's environment, so a key set here could never be overridden by
+    # a systemd drop-in. The defaults (loopback bind, port 3000, SQLite
+    # storage under $SNAP_DATA) live in snap/local/launch.sh and apply only
+    # when the operator set nothing:
+    #   sudo systemctl edit snap.libredb-studio.libredb-studio.service
+    # with [Service] Environment=HOSTNAME=0.0.0.0
 
 parts:
   payload:
