@@ -2632,6 +2632,77 @@ describe("RedisProvider", () => {
        * The three other refusal shapes 8.10.0 answered, all `definition`, all with no
        * coordinate, and the object intact after every one of them.
        */
+      /**
+       * The population where the coordinate map is not the identity, and it is MEASURED.
+       *
+       * A body ending with a trailing newline gets an error on the PHANTOM line after the last
+       * one: measured on 8.10.0, `#!lua name=libredb_probe\nlocal function ping(keys, args)\n`
+       * answered
+       * `ERR Error compiling function: user_function:3: 'end' expected (to close 'function' at
+       * line 2) near '<eof>'`, and the same text without the trailing newline answered
+       * `user_function:2`. Line 3 is not a line of the reader's text, so a provider returning the
+       * engine's number would hand Monaco a coordinate it CLAMPS in silence. Core's map answers
+       * `outside`, which the dialog renders as a sentence.
+       */
+      test("a line the reader's text does not have is OUTSIDE, and a trailing newline makes one", async () => {
+        const unterminated = "#!lua name=libredb_probe\nlocal function ping(keys, args)\n";
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(unterminated));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        mockCall = async (_command, ...args) => {
+          if (args[0] === "LOAD") {
+            throw replyError(
+              "ERR Error compiling function: user_function:3: 'end' expected (to close 'function' at line 2) near '<eof>'",
+            );
+          }
+          return [LIBRARY_LOWER];
+        };
+        const outcome = await provider.applyObjectEdit!(build.plan);
+        if (outcome.outcome !== "refused") throw new Error("narrowing");
+        expect(outcome.refusal.at).toEqual({ within: "outside" });
+
+        // The CONTROL, the same body with the newline taken off, where the engine's own number is
+        // a line the reader has and the answer is that line.
+        mockCall = async () => [LIBRARY_LOWER];
+        const shorter = await provider.buildObjectEdit!(request(unterminated.trimEnd()));
+        if (!shorter.built) throw new Error(shorter.refusal.sentence);
+        mockCall = async (_command, ...args) => {
+          if (args[0] === "LOAD") {
+            throw replyError("ERR Error compiling function: user_function:2: 'end' expected near '<eof>'");
+          }
+          return [LIBRARY_LOWER];
+        };
+        const control = await provider.applyObjectEdit!(shorter.plan);
+        if (control.outcome !== "refused") throw new Error("narrowing");
+        expect(control.refusal.at).toEqual({ within: "user", line: 2, column: 1 });
+      });
+
+      /**
+       * Ruling 1a over the WHOLE unit and not only the payload: the apply sends the verb and the
+       * literal arguments the PLAN carries, and does not rebuild the command line from constants
+       * of its own.
+       *
+       * The plan is tampered with by hand, which through the product the route's seal makes
+       * impossible, and that is the point: the binding between the preview and the write has to
+       * be a property of this method rather than of the two agreeing by coincidence today.
+       */
+      test("the command line is the PLAN'S, verb and arguments included", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+        if (build.plan.unit.medium !== "command") throw new Error("narrowing");
+
+        mockCall = async (_command, ...args) => (args[0] === "LOAD" ? LOWER_NAME : [LIBRARY_LOWER]);
+        capturedCalls.length = 0;
+        await provider.applyObjectEdit!({
+          ...build.plan,
+          unit: { ...build.plan.unit, arguments: ["LOAD"] },
+        });
+
+        expect(commandsSent()[1]).toBe(`FUNCTION LOAD ${EDITED}`);
+      });
+
       test("the engine's other refusals are `definition` with the engine's own words", async () => {
         for (const sentence of [
           "ERR No functions registered",
