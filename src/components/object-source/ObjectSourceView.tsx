@@ -1218,15 +1218,16 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
           </p>
         </div>
       ) : part === undefined ? (
-        <div
-          aria-live="polite"
+        // `output` rather than a div carrying role="status": both announce, and `jsx-a11y`'s
+        // prefer-tag-over-role is an ERROR in this repository, not a warning. `output` has an
+        // implicit `role="status"` and an implicit `aria-live="polite"`, so neither is written here.
+        <output
           className="flex flex-1 items-center justify-center gap-2 text-xs text-muted-foreground"
           data-testid="object-source-loading"
-          role="status"
         >
           <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
           Reading the definition...
-        </div>
+        </output>
       ) : (
         <>
           {showSwitcher && (
