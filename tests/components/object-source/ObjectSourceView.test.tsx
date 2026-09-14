@@ -516,6 +516,16 @@ describe("ObjectSourceView", () => {
     // layout, so a coordinate comparison here would pass whatever the order.
     expect(banner.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeGreaterThan(0);
     expect(editorValue()).toContain("APP_ORDERS_PKG");
+    /*
+     * X17 on the screen it was measured on (#789 Phase 3, adjudication 2c). The caption is four
+     * lines above this banner and it used to read "Complete as shown." for a text the banner in
+     * the same viewport says was cut. This is the composition assertion; the caption's own six
+     * truncated compositions are pinned without a DOM in
+     * `tests/unit/components/object-source-caption.test.ts`.
+     */
+    expect(screen.getByTestId("object-source-caption").textContent).toBe(
+      "Rebuilt by the engine from its catalog. Shortened when it was read, so this is not the whole definition.",
+    );
   });
 
   test("the editor is mounted read-only", async () => {

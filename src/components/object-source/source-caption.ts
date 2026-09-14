@@ -21,6 +21,23 @@ import type { ObjectSourceForm, ObjectSourceOrigin } from "@/lib/db/types";
  * the two: PostgreSQL produces `regenerated` in both forms (a view is `partial`, a function is
  * `complete`), and Couchbase produces `partial` from a `rendered` origin. A keyed table would
  * be six literals to keep in step for a fact that is three plus two.
+ *
+ * THE THIRD AXIS, added in Phase 3 to close shipped defect X17 (#789, from discussion #778).
+ * `truncated` says whether ALL OF IT ARRIVED, which is a different question from where the bytes
+ * came from and a different question from whether they run as given. MEASURED on PostgreSQL 18.4:
+ * `form` stays `complete` on a TRUNCATED part, because the engine's rendering of that definition
+ * IS a complete statement and the bound is the READ's and not the object's. So the caption read
+ * `form` alone and answered "Complete as shown." for a text that had been cut, and MEASURED in a
+ * browser on a real object over the bound the pane drew that sentence four lines above the
+ * truncation banner saying the read was bounded at 1,000,000 characters. Reading `form` alone was
+ * wrong for exactly one reason: it answers a question nobody asked it.
+ *
+ * A SECOND FROZEN RECORD rather than a suffix on the existing clause, and rather than a six-cell
+ * table keyed on the pair. The truncated clause REPLACES the form clause instead of appending to
+ * it, because "Complete as shown. Shortened when it was read." is two sentences that contradict
+ * each other and a reader who stops at the first has been told the false one. The record stays
+ * keyed on `form` because the two facts still compose: a truncated `partial` part is the body only
+ * AND it was cut, and a reader owed only one of those is owed the wrong one.
  */
 
 /** Where the bytes came from. One sentence per arm of `ObjectSourceOrigin`, all three used. */
@@ -36,7 +53,17 @@ const FORM_CLAUSE: Readonly<Record<ObjectSourceForm, string>> = Object.freeze({
   partial: "This is the body only, not a complete statement.",
 });
 
-/** The caption for one part, composed origin first and form second. */
-export function sourceCaption(form: ObjectSourceForm, origin: ObjectSourceOrigin): string {
-  return `${ORIGIN_SENTENCE[origin]} ${FORM_CLAUSE[form]}`;
+/**
+ * What a TRUNCATED part is, one clause per arm of `ObjectSourceForm`, both used and neither
+ * claiming completeness in any wording. Pinned by the negative assertion over all six
+ * compositions in `tests/unit/components/object-source-caption.test.ts`.
+ */
+const TRUNCATED_CLAUSE: Readonly<Record<ObjectSourceForm, string>> = Object.freeze({
+  complete: "Shortened when it was read, so this is not the whole definition.",
+  partial: "The body only, and shortened when it was read.",
+});
+
+/** The caption for one part, composed origin first and the form-or-truncation clause second. */
+export function sourceCaption(form: ObjectSourceForm, origin: ObjectSourceOrigin, truncated: boolean): string {
+  return `${ORIGIN_SENTENCE[origin]} ${truncated ? TRUNCATED_CLAUSE[form] : FORM_CLAUSE[form]}`;
 }
