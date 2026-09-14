@@ -316,6 +316,60 @@ async function markersOnTheSourceEditor(page: Page): Promise<MarkerReading[]> {
   }, MARKER_OWNER);
 }
 
+/**
+ * Reload, and reload AGAIN whenever the restored tab's source read was REFUSED (X22, #789).
+ *
+ * MEASURED on 2026-09-14, locally, with `--retries=0` and the CI selection
+ * (`--project=chromium --grep "Functional smoke"`, one worker): the assertion below failed on its
+ * FIRST attempt exactly as it does in CI, and the page snapshot Playwright captured says why. The
+ * source pane read `The source read failed. / Too many requests. Try again in 41 seconds.` and the
+ * object tree beside it read `The object list could not be read / Too many requests. Try again in
+ * 41 seconds.` So it is the FIRST of the two candidates the filing named, the shared account's
+ * query budget, and not a late affordance: the affordance was not slow, the read was refused, and
+ * 41 seconds is longer than the 30-second assertion that was waiting for it.
+ *
+ * The arithmetic behind that, from `src/lib/api/rate-limit.ts`: every test in this file and in
+ * `functional-smoke.spec.ts` signs in as the same `user@libredb.org`, whose per-process `query`
+ * bucket is 120 requests per 60 seconds and is shared by every database-reaching route including
+ * all nine under `db/objects`. A `page.reload()` re-hydrates the whole application on top of
+ * whatever three earlier tests already spent. The bucket is a FIXED window and a refused request
+ * does not increment the counter, so waiting out the `Retry-After` the server itself names buys a
+ * full fresh budget rather than one slot.
+ *
+ * A RELOAD AND NOT A RETRY BUTTON, and the difference is the product gap this test met rather than
+ * a choice made for convenience. The object tree offers `tree-retry` when its read is refused and
+ * `waitForTheObjectTree` presses it; the source pane's failure region offers NO control at all, and
+ * a tab that has recorded a failure never re-reads, because `needsRead` in `ObjectSourceView` is
+ * `document === undefined && failure === undefined`. So reloading is the only way back for a
+ * restored tab whose read was refused, for this test and for a reader. That is filed, with this
+ * measurement behind it, rather than fixed here: the pane is not this spec's file.
+ *
+ * The reload is still the restore under test. `PersistedTabState` persists a Source tab's address
+ * and never its document or its failure, so every reload restores the same tab from localStorage
+ * and issues the same fresh read, and the draft the previous step saved is still in the draft
+ * store. A second reload weakens nothing.
+ */
+async function reloadUntilTheRestoredTabIsRead(page: Page): Promise<void> {
+  const edit = page.getByTestId("object-source-edit");
+  const failure = page.getByTestId("object-source-failure-message");
+  await expect(async () => {
+    await page.reload();
+    // Either outcome, so a refusal is READ rather than waited out for the full timeout: without
+    // the `or` this is the 30-second wait that made X22 look like a slow affordance.
+    await expect(edit.or(failure).first()).toBeVisible({ timeout: 30_000 });
+    if (await edit.isVisible()) return;
+    const sentence = (await failure.textContent()) ?? "";
+    // The server's own number, and a fallback for a refusal that is not the rate limiter's, so a
+    // different failure still costs one bounded wait instead of hanging.
+    const named = /Try again in (\d+) seconds/.exec(sentence);
+    // Recorded in the report, so a GREEN run still says the budget was hit and how long it waited.
+    // Without it this helper would hide exactly the fact X22 was filed about.
+    test.info().annotations.push({ type: "rate-limited", description: sentence });
+    await sleep((Number(named?.[1] ?? 10) + 2) * 1000);
+    throw new Error(`the restored tab's source read did not land: ${sentence}`);
+  }).toPass({ timeout: 240_000, intervals: [0] });
+}
+
 test.describe("Functional smoke: object edit end to end", () => {
   test.skip(!dockerAvailable(), "Docker daemon not available - the object edit E2E needs its own PostgreSQL");
   // Serial: every test drives the SAME function in the same container, and an apply from one test
@@ -412,7 +466,9 @@ test.describe("Functional smoke: object edit end to end", () => {
     // of four fields plus the address, so a restored tab is always read-only and a reader always
     // re-enters editing deliberately.
     await editWithoutApplying(page);
-    await page.reload();
+    // The reload, retried on a REFUSED read rather than waited out: X22, and the helper's docblock
+    // carries the measurement that named the cause.
+    await reloadUntilTheRestoredTabIsRead(page);
     await expect(page.getByTestId("object-source-edit")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("object-source-draft-restore")).toBeVisible({ timeout: 30_000 });
   });
