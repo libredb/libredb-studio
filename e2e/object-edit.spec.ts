@@ -13,10 +13,13 @@
  *    is the same empty array on a clean page and on a page whose listener was never wired.
  * 3. The whole round trip, driven with REAL USER INPUT: Edit, type, preview, apply, and the pane
  *    re-reads the engine's own rendering of what was written.
- * 4. The apply marker's COORDINATE. An uncorrected coordinate is CLAMPED by Monaco rather than
- *    rejected, so it renders silently on the wrong line and no unit test can see it: the marker
- *    below is asserted at line 7 column 3, the position in the READER's document, while the engine's
- *    own position is inside a 20-line assembled batch and would clamp to the document's last line.
+ * 4. The apply marker's COORDINATE. An uncorrected coordinate is neither rejected NOR clamped by
+ *    Monaco: it is kept as given, off the end of the document, and no unit test can see it.
+ *    MEASURED on 2026-09-14 by wave 11's review: shifting the offset-to-position mapping in
+ *    src/lib/db/object-edit.ts by 20 and rebuilding put `monaco.editor.getModelMarkers()` at
+ *    line 27 of a NINE-LINE model, not at the model's last line. The marker below is asserted at
+ *    line 7 column 3, the position in the READER's document, while the engine's own position is
+ *    inside the roughly 20-line assembled batch and cannot produce that pair.
  *
  * There is no E2E baseline for the object tree at all, measured by grep before this file was
  * written, so it is also the first regression test for the Phase 2 tree and Source pane.
@@ -27,6 +30,16 @@
  * on the precedent of e2e/functional-smoke.spec.ts. MEASURED against postgres:16-alpine on
  * 2026-09-14; the day-one provider measurements behind the feature were taken on PostgreSQL 18.4 and
  * are recorded in docs/providers/postgres.md, not here.
+ *
+ * THE DESCRIBE TITLE BELOW IS LOAD-BEARING FOR CI SELECTION, so do not rename it for readability.
+ * This spec needs a Docker daemon, and .github/workflows/ci.yml has exactly one job that has one:
+ * it selects with `--grep "Functional smoke"`, while the container job that has no daemon excludes
+ * with `--grep-invert "Functional smoke"`. Playwright greps the full title path, so the words
+ * "Functional smoke" in the describe are what put these tests in the job that can run them and keep
+ * them out of the job where `test.skip(!dockerAvailable())` would retire them in silence. MEASURED
+ * on 2026-09-14 before the rename: `--grep "Functional smoke"` listed 1 test in 1 file and none of
+ * these five, and `--grep-invert "Functional smoke"` listed all five. Both jobs stayed green while
+ * this file ran on nobody's machine.
  *
  * The connection is created THROUGH THE REAL MODAL rather than seeded through SEED_CONFIG_PATH:
  * seeding would need an environment variable on the webServer entry in playwright.config.ts, which
@@ -295,7 +308,7 @@ async function markersOnTheSourceEditor(page: Page): Promise<MarkerReading[]> {
   }, MARKER_OWNER);
 }
 
-test.describe("Object edit, end to end", () => {
+test.describe("Functional smoke: object edit end to end", () => {
   test.skip(!dockerAvailable(), "Docker daemon not available - the object edit E2E needs its own PostgreSQL");
   // Serial: every test drives the SAME function in the same container, and an apply from one test
   // running inside another test's preview is a race with no product meaning.
@@ -399,11 +412,13 @@ test.describe("Object edit, end to end", () => {
   test("a refused apply marks the READER's own line, not the engine's line in the assembled batch", async ({
     page,
   }) => {
-    // The assertion no unit test can make. An uncorrected coordinate is not rejected by Monaco, it
-    // is CLAMPED: the engine reports its position inside the assembled batch, whose CREATE starts
-    // about twenty lines down behind the guard `DO` block, and handing that number to a nine-line
-    // model paints a marker on the last line in total silence. Line 7 column 3 is where the reader
-    // typed, and it is a value the unmapped coordinate cannot produce.
+    // The assertion no unit test can make. An uncorrected coordinate is neither rejected nor
+    // clamped by Monaco: the engine reports its position inside the assembled batch, whose CREATE
+    // starts about twenty lines down behind the guard `DO` block, and Monaco keeps that number
+    // exactly as handed to it. MEASURED on 2026-09-14 by wave 11's review: shifting the mapping in
+    // src/lib/db/object-edit.ts by 20 and rebuilding reported a marker at line 27 on a NINE-LINE
+    // model, so it is painted past the end of the document and the reader is shown nothing. Line 7
+    // column 3 is where the reader typed, and it is a value the unmapped coordinate cannot produce.
     await openSourceTabOnSeededPostgres(page);
     await page.getByTestId("object-source-edit").click();
     await typeIntoTheEditor(page, EDIT_MARKER);
