@@ -1348,6 +1348,46 @@ const COLLATERAL_BUILT = {
   planToken: "token-for-the-collateral-plan",
 };
 
+/**
+ * The patch BOTH shipped shells emit from `onApplied`, copied from the source rather than
+ * invented: `Studio.tsx` and `StudioWorkspace.tsx` each run
+ * `onSourceChange({ document: undefined, failure: undefined, readAtToken: undefined })` there.
+ * It is what drives the re-read, and it is what used to unmount the collateral report.
+ */
+const SHELL_APPLIED_PATCH: ObjectSourcePatch = { document: undefined, failure: undefined, readAtToken: undefined };
+
+/**
+ * An applier that BUILDS a plan carrying one consequence and APPLIES with one loss, which is the
+ * Redis library shape: the plan warns that the whole container is replaced, and only the catalog
+ * read AFTER the apply knows which function actually went.
+ */
+function collateralApply(): {
+  readonly applier: ObjectSourceApplier;
+  readonly apply: ReturnType<typeof mock>;
+  readonly applied: ReturnType<typeof mock>;
+  readonly patches: ObjectSourcePatch[];
+} {
+  const build = mock(async () => COLLATERAL_BUILT as unknown);
+  const apply = mock(
+    async () =>
+      ({
+        outcome: "applied-with-collateral",
+        lost: [
+          {
+            loses: "replaces-whole-container",
+            fact: {
+              source: "FUNCTION LIST LIBRARYNAME libredb_probe",
+              observed: "libredb_ping is no longer registered",
+            },
+          },
+        ],
+        revision: PLAN.revision,
+        duration: 4,
+      }) as unknown,
+  );
+  return { applier: { build, apply } as unknown as ObjectSourceApplier, apply, applied: mock(() => {}), patches: [] };
+}
+
 function applierDouble(): {
   readonly applier: ObjectSourceApplier;
   readonly build: ReturnType<typeof mock>;
@@ -1358,7 +1398,20 @@ function applierDouble(): {
   return { applier: { build, apply } as unknown as ObjectSourceApplier, build, apply };
 }
 
-/** The shell for the edit tests: it owns the tab state and merges every patch by SPREAD. */
+/**
+ * The shell for the edit tests: it owns the tab state and merges every patch by SPREAD.
+ *
+ * A CLEARED DOCUMENT IS REPRESENTABLE HERE, and that is a repair rather than a tidy-up (#789,
+ * fix round 1 of Task 30). This harness read `document={state.document ?? props.document}`, so a
+ * patch clearing the document to `undefined` fell straight back to the static prop and the pane
+ * kept drawing the definition. Both shipped shells clear it: `Studio.tsx` and
+ * `StudioWorkspace.tsx` both answer `onApplied` with
+ * `onSourceChange({ document: undefined, failure: undefined, readAtToken: undefined })`. So the
+ * population this harness could build EXCLUDED the only two live mounts, and the collateral
+ * report test below was green over a state neither shell reaches. `failure` and `readAtToken`
+ * are passed through for the same reason: the pane writes both through `onChange` and a harness
+ * that drops them cannot model a re-read that failed.
+ */
 function EditHarness(props: {
   readonly document: ObjectSourceDocument;
   readonly applier?: ObjectSourceApplier;
@@ -1367,6 +1420,13 @@ function EditHarness(props: {
   readonly seed?: ObjectSourcePatch;
   /** The one label the shell derives rather than the pane, so a test may move it under a plan. */
   readonly displayName?: string;
+  /**
+   * What the SHELL does when the pane says the apply landed. Both shipped shells clear the
+   * document here, which drives the re-read; a test that leaves this out models neither.
+   */
+  readonly appliedPatch?: ObjectSourcePatch;
+  /** The reader the RE-READ gets, so a test may hang it or fail it. Defaults to the document. */
+  readonly reader?: ObjectSourceReader;
 }) {
   const [state, setState] = React.useState<ObjectSourcePatch>(props.seed ?? {});
   const record = props.onPatch;
@@ -1377,6 +1437,12 @@ function EditHarness(props: {
     },
     [record],
   );
+  const hostApplied = props.onApplied;
+  const appliedPatch = props.appliedPatch;
+  const onApplied = React.useCallback(() => {
+    hostApplied?.();
+    if (appliedPatch !== undefined) setState((previous) => ({ ...previous, ...appliedPatch }));
+  }, [hostApplied, appliedPatch]);
   return (
     <ObjectSourceView
       connection={pgConnection}
@@ -1384,15 +1450,21 @@ function EditHarness(props: {
       kind="function"
       kindLabel="Function"
       displayName={props.displayName ?? "app.f(integer)"}
-      document={state.document ?? props.document}
+      /*
+       * `in` and not `??`: an explicit `document: undefined` is a CLEAR and must reach the pane,
+       * while a document the harness has never been told about falls back to the prop, which is
+       * how the three tests below land a re-read by moving that prop.
+       */
+      document={"document" in state ? state.document : props.document}
+      failure={state.failure}
       activePartId={state.activePartId}
       editingPartId={state.editingPartId}
       dirty={state.dirty}
       refreshToken={0}
-      readAtToken={0}
-      reader={readerFor(props.document)}
+      readAtToken={"readAtToken" in state ? state.readAtToken : 0}
+      reader={props.reader ?? readerFor(props.document)}
       onApply={props.applier}
-      onApplied={props.onApplied}
+      onApplied={onApplied}
       onChange={onChange}
     />
   );
@@ -1436,6 +1508,17 @@ async function enterEditMode(): Promise<void> {
   await waitFor(() => expect(screen.getByTestId("object-source-edit")).toBeTruthy());
   await click("object-source-edit");
   await waitFor(() => expect(editor().readOnly).toBe(false));
+}
+
+/** The whole reader-side journey of a collateral apply: edit, preview, tick the warning, apply. */
+async function applyTheCollateralEdit(): Promise<void> {
+  await enterEditMode();
+  await type("edited");
+  await settleDraft();
+  await click("object-source-preview");
+  await waitFor(() => expect(screen.getByTestId("object-source-apply-ack")).toBeTruthy());
+  await click("object-source-apply-ack");
+  await click("object-source-apply-confirm");
 }
 
 describe("ObjectSourceView edit mode", () => {
@@ -2225,38 +2308,23 @@ describe("ObjectSourceView edit mode", () => {
      * `setPreview(undefined)` and the dialog unmounted on a plain success. A green test over a
      * region no screen could ever show, which is this phase's signature defect one more time.
      *
-     * The population is not theoretical and it got LARGER, not smaller, in the commit before this
-     * one: `3a4511a5` lowered Redis's collateral floor to zero registered functions after a LIVE
-     * measurement on Redis 8.10.0 showed a one-function library losing that function on an apply
-     * that reported success, so a plain everyday edit of a Redis library now reaches this outcome.
-     * The reader ticked a SUPERSET beforehand, which is what keeps ruling 1b amended satisfied.
-     * What was missing is the report of what ACTUALLY went, and only the catalog read AFTER the
-     * apply knows that: the plan's warning says what WOULD be lost.
+     * The population is not theoretical, and the first spelling of this docblock got its size
+     * WRONG in the other direction: it said `3a4511a5` had grown it. RUN in fix round 1,
+     * `git show 3a4511a5 -- src/lib/db/providers/keyvalue/redis.ts`, that commit moves one
+     * behavioural line, `functions.length < 2` to `functions.length === 0`, inside
+     * `libraryCollateral`, which is the BUILD's warning; the outcome's producer is
+     * `if (disappeared.length > 0)`, landed in `1d6ac884` and not touched since. So the WARNING
+     * population grew and this one is exactly what it was: every Redis library edit whose new
+     * body does not re-register every name the old one did, which is the ordinary result of
+     * editing a library of two or more functions. The reader ticked a SUPERSET beforehand, which
+     * is what keeps ruling 1b amended satisfied. What was missing is the report of what ACTUALLY
+     * went, and only the catalog read AFTER the apply knows that: the plan's warning says what
+     * WOULD be lost.
      *
      * This test drives it at the PANE and not at the dialog, so it fails if the mount cannot
      * produce the state, which is exactly what the dialog's own test cannot see.
      */
-    const build = mock(async () => COLLATERAL_BUILT as unknown);
-    const apply = mock(
-      async () =>
-        ({
-          outcome: "applied-with-collateral",
-          lost: [
-            {
-              loses: "replaces-whole-container",
-              fact: {
-                source: "FUNCTION LIST LIBRARYNAME libredb_probe",
-                observed: "libredb_ping is no longer registered",
-              },
-            },
-          ],
-          revision: PLAN.revision,
-          duration: 4,
-        }) as unknown,
-    );
-    const applier = { build, apply } as unknown as ObjectSourceApplier;
-    const patches: ObjectSourcePatch[] = [];
-    const applied = mock(() => {});
+    const { applier, applied, patches } = collateralApply();
     render(
       <EditHarness
         applier={applier}
@@ -2267,14 +2335,7 @@ describe("ObjectSourceView edit mode", () => {
         }}
       />,
     );
-    await enterEditMode();
-    await type("edited");
-    await settleDraft();
-    await click("object-source-preview");
-    await waitFor(() => expect(screen.getByTestId("object-source-apply-ack")).toBeTruthy());
-    await click("object-source-apply-ack");
-
-    await click("object-source-apply-confirm");
+    await applyTheCollateralEdit();
 
     // THE REPORT IS ON SCREEN, and it names the catalog fact read after the apply. Asserted on the
     // rendered text rather than on a testid alone, because a region that renders with the tuple
@@ -2295,6 +2356,85 @@ describe("ObjectSourceView edit mode", () => {
     expect(screen.queryByTestId("object-source-apply-confirm")).toBeNull();
     expect(screen.queryByTestId("object-source-apply-rebuild")).toBeNull();
     expect(screen.getByTestId("object-source-apply-cancel").textContent).toBe("Close");
+  });
+
+  test("the report SURVIVES the document clear both shells answer `onApplied` with", async () => {
+    /*
+     * X24 AT THE LEVEL THE READER ACTUALLY SEES IT (#789 Phase 3, fix round 1 of Task 30).
+     *
+     * The test above holds the preview session open and stops there, and holding the session open
+     * is NOT enough, because this pane's dialog mount used to sit inside the `part !== undefined`
+     * branch of the render. `onApplied` is the shell's cue to re-read, and BOTH shipped shells
+     * answer it by clearing the document: `Studio.tsx` and `StudioWorkspace.tsx` each run
+     * `onSourceChange({ document: undefined, failure: undefined, readAtToken: undefined })`. With
+     * no document there is no `part`, so the branch holding the dialog was replaced by
+     * `object-source-loading` and the report the arm had just created was destroyed by the arm's
+     * own `onApplied`. MEASURED against the real `<Studio />` by the reviewer of round 1 and
+     * reproduced here at the pane: `report GONE | loading yes`.
+     *
+     * So the mount moved OUT of that branch, to the top of the pane, where nothing about the
+     * document can unmount it. The dialog is a Radix portal, so where it sits in this tree costs
+     * the layout nothing; what it buys is that the reader keeps the only screen that names the
+     * loss for as long as the loss is news, rather than for one network round trip.
+     */
+    const { applier, applied, patches } = collateralApply();
+    render(
+      <EditHarness
+        applier={applier}
+        document={withPart(READABLE)}
+        onApplied={applied}
+        onPatch={(patch) => {
+          patches.push(patch);
+        }}
+        appliedPatch={SHELL_APPLIED_PATCH}
+        // The re-read never lands. This is the connection that dropped, the route that is slow,
+        // the tab the reader closes first: the loss is not less real because the read is pending.
+        reader={() => new Promise<never>(() => {})}
+      />,
+    );
+    await applyTheCollateralEdit();
+
+    // The pane behind it is honestly in its loading state, which is the state that used to
+    // REPLACE the dialog. Both are on screen at once, and that is the fix.
+    await waitFor(() => expect(screen.getByTestId("object-source-loading")).toBeTruthy());
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(screen.getByTestId("object-source-apply-failure").textContent ?? "").toContain(
+      "FUNCTION LIST LIBRARYNAME libredb_probe answers: libredb_ping is no longer registered.",
+    );
+    expect(applied).toHaveBeenCalledTimes(1);
+  });
+
+  test("the report survives a re-read that FAILED, which is where losing it is permanent", async () => {
+    /*
+     * The same defect, on the path where it cannot be repaired by waiting (#789 Phase 3, fix
+     * round 1 of Task 30). The apply succeeded and destroyed something; the read that follows it
+     * answers HTTP 500, so the pane draws "The source read failed." and, before this fix, the
+     * only record of what was destroyed was the audit ring, which no reader of this pane can
+     * reach. That is X24 verbatim, one commit after X24 was called closed.
+     *
+     * The failure arrives the way a real one does, through the pane's own read effect and out to
+     * the shell as a `failure` patch, rather than being handed in as a prop.
+     */
+    const { applier, applied, patches } = collateralApply();
+    render(
+      <EditHarness
+        applier={applier}
+        document={withPart(READABLE)}
+        onApplied={applied}
+        onPatch={(patch) => {
+          patches.push(patch);
+        }}
+        appliedPatch={SHELL_APPLIED_PATCH}
+        reader={() => Promise.reject(new Error("HTTP 500 from the source route"))}
+      />,
+    );
+    await applyTheCollateralEdit();
+
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe("HTTP 500 from the source route");
+    expect(screen.getByTestId("object-source-apply-failure").textContent ?? "").toContain(
+      "FUNCTION LIST LIBRARYNAME libredb_probe answers: libredb_ping is no longer registered.",
+    );
   });
 
   test("the apply is called with the connection, the SEALED plan, its token and the classes the reader ticked", async () => {

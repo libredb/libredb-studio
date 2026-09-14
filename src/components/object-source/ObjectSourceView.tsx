@@ -398,8 +398,7 @@ interface MountedEditor {
  * region is drawn from the `failed` state, this pane is the ONLY mount of the dialog in `src`, and
  * with the outcome in this set the pane answered it with `setPreview(undefined)`, so no screen in
  * the shipped product ever named what the apply destroyed. The apply still SUCCEEDED, so the arm
- * below does everything this set's arm does and only holds the session open; see it for why the
- * population grew rather than shrank.
+ * below does everything this set's arm does and only holds the session open.
  */
 const APPLIED_OUTCOMES: ReadonlySet<string> = new Set(["applied"]);
 
@@ -1221,7 +1220,10 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
          *
          * So the apply half is identical to the plain arm above, draft dropped, edit mode ended,
          * host told to re-read, and the preview session alone stays open, in the `failed` state
-         * the dialog already renders the collateral region from. It is not a failure and the
+         * the dialog already renders the collateral region from. HOLDING THE SESSION OPEN IS ONLY
+         * HALF OF IT: `onApplied` makes both shells clear the document, and the dialog's mount had
+         * to leave the branch the document chooses before that stopped destroying this report. It
+         * is at the foot of the render and carries the measurement. It is not a failure and the
          * region does not read as one: it says the change was applied and then names each fact.
          * The order of the three is NOT load-bearing, said plainly because the first draft of this
          * comment claimed it was: MEASURED as a mutation window, moving `setPreview` after
@@ -1229,9 +1231,17 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
          * `source-tab` suite at 33 pass 0 fail. React batches all three inside one promise
          * continuation, so the re-read `onApplied` drives cannot paint a frame between them.
          *
-         * The population is bigger than it looks. Redis is the one shipped engine that produces
-         * this outcome, and its collateral floor is now zero registered functions rather than
-         * two, so an ordinary edit of a one-function library reaches it.
+         * WHOSE POPULATION GREW, SAID CORRECTLY THE SECOND TIME. The first spelling of this
+         * comment said `3a4511a5` had made this OUTCOME more common, which was handed over and
+         * not checked. RUN, `git show 3a4511a5 -- src/lib/db/providers/keyvalue/redis.ts`: its
+         * one behavioural line is `functions.length < 2` becoming `functions.length === 0`
+         * inside `libraryCollateral`, which is the BUILD's warning. The producer of this outcome
+         * is `if (disappeared.length > 0)` in the same provider, landed in `1d6ac884` and
+         * untouched since, so the set of applies that answer `applied-with-collateral` is
+         * byte-identical either side of that fix. The WARNING population grew; this one did not,
+         * and it never needed to: Redis is the one shipped engine that produces this outcome and
+         * it produces it on any library edit whose new body does not re-register every name the
+         * old one did, which is the everyday result of editing a library of two or more.
          */
         setPreview({ ...current, state: { kind: "failed", plan, preimage, outcome: answer } });
         endEdit(draftKeyFor(current.address, current.partId), true);
@@ -1639,24 +1649,44 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
                     }}
                   />
                 </div>
-                {previewHere !== undefined && (
-                  <ApplyPreviewDialog
-                    open
-                    state={previewHere.state}
-                    objectLabel={previewHere.objectLabel}
-                    partLabel={previewHere.partLabel}
-                    address={previewHere.address}
-                    partId={previewHere.partId}
-                    onApply={runApply}
-                    onRebuild={runBuild}
-                    onGoToError={revealPosition}
-                    onClose={closePreview}
-                  />
-                )}
               </>
             )}
           </div>
         </>
+      )}
+
+      {/*
+       * OUTSIDE the document branches, deliberately, and this is the whole of X24's second half
+       * (#789 Phase 3, fix round 1 of Task 30).
+       *
+       * This mount used to sit at the bottom of the `part !== undefined` arm, and the arm is
+       * chosen by the DOCUMENT. `landOutcome`'s collateral arm calls `onApplied`, both shipped
+       * shells answer it by clearing the document, `Studio.tsx` and `StudioWorkspace.tsx` each
+       * running `onSourceChange({ document: undefined, failure: undefined, readAtToken:
+       * undefined })`, and with no document there is no part: the arm holding this dialog was
+       * replaced by the loading region and the report of what the apply had just destroyed was
+       * unmounted by that same apply. MEASURED at the pane and against the real `<Studio />`:
+       * report GONE, loading shown; with the re-read then failing, GONE for good, the loss
+       * surviving only in the audit ring, which is X24 word for word.
+       *
+       * Nothing about the dialog needed the part: every value it takes is read off the preview
+       * session, which is pinned to its own address and part id, and Radix renders it into a
+       * portal, so its position in this tree costs the layout nothing. Two tests hold it here,
+       * one with the re-read hung and one with the re-read answering an error.
+       */}
+      {previewHere !== undefined && (
+        <ApplyPreviewDialog
+          open
+          state={previewHere.state}
+          objectLabel={previewHere.objectLabel}
+          partLabel={previewHere.partLabel}
+          address={previewHere.address}
+          partId={previewHere.partId}
+          onApply={runApply}
+          onRebuild={runBuild}
+          onGoToError={revealPosition}
+          onClose={closePreview}
+        />
       )}
     </div>
   );
