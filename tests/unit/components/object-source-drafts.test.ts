@@ -8,6 +8,7 @@ import {
   writeDraft,
   type SourceDraft,
 } from "@/components/object-source/source-drafts";
+import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import type { ObjectEditRevision } from "@/lib/db/types";
 
 const BASE: ObjectEditRevision = { check: "guarded", token: "t", basis: "b", scope: "server" };
@@ -41,6 +42,12 @@ describe("the key", () => {
     expect(draftKeyFor("conn-1/app.order_total(integer)/function", "definition")).toBe(
       "conn-1/app.order_total(integer)/function/definition",
     );
+  });
+  test("the store's own key is pinned by VALUE, because changing it discards every stored draft", () => {
+    // The suffix is a version, so a shape change is a new key rather than a migration. Nothing
+    // else in the suite reads the string rather than the constant, so a refactor or a bad merge
+    // that edited it would silently orphan every user's drafts with the suite green.
+    expect(DRAFT_KEY).toBe("libredb_source_drafts_v1");
   });
 });
 
@@ -82,6 +89,17 @@ describe("writeDraft", () => {
     expect(readDraft(storage, "a")).toBeUndefined();
   });
 
+  test("a text of exactly the read bound is NOT too long, and the boundary is which side it falls", () => {
+    // SOURCE_CHARACTER_LIMIT is the route's own READ bound, so a maximal read is exactly this
+    // many characters and was never too long. Under `>=` this draft is refused and the pane
+    // prints "longer than the 1,000,000 characters this definition can be read at" about a text
+    // that is exactly that long, which is the false sentence the fourth reason exists to prevent.
+    const storage = fakeStorage();
+    const maximal = draft("z".repeat(SOURCE_CHARACTER_LIMIT), 1);
+    expect(writeDraft(storage, "a", maximal)).toEqual({ ok: true, evicted: [] });
+    expect(readDraft(storage, "a")).toEqual(maximal);
+  });
+
   test("a draft that cannot fit the budget even alone is refused as over budget", () => {
     const storage = fakeStorage();
     // Under the read bound and still too big once escaped: every newline costs two characters
@@ -114,6 +132,17 @@ describe("readDraft", () => {
     expect(readDraft(storage, "a")).toBeUndefined();
     storage.setItem(DRAFT_KEY, JSON.stringify([1, 2]));
     expect(readDraft(storage, "a")).toBeUndefined();
+    // One population per arm of the shape walk, because an arm whose false branch is never taken
+    // is 100 percent line-covered and certifies nothing. Each of these three deleted the arm
+    // above it and the suite stayed green before they existed.
+    storage.setItem(DRAFT_KEY, JSON.stringify({ a: { text: "x", savedAt: "1", base: BASE } }));
+    expect(readDraft(storage, "a")).toBeUndefined();
+    storage.setItem(DRAFT_KEY, JSON.stringify({ a: { text: "x", savedAt: 1 } }));
+    expect(readDraft(storage, "a")).toBeUndefined();
+    // `base` is carried opaquely and is still the field the restore banner compares against the
+    // part's current revision, so a scalar there would reach that comparison as one.
+    storage.setItem(DRAFT_KEY, JSON.stringify({ a: { text: "x", savedAt: 1, base: 5 } }));
+    expect(readDraft(storage, "a")).toBeUndefined();
   });
 });
 
@@ -129,8 +158,8 @@ describe("dropDraft", () => {
 });
 
 /**
- * Four cases the brief's own set does not contain, each added because a mutation the brief
- * REQUIRED to kill survived the set as written. The numbers are in `task-06-report.md`.
+ * Cases the brief's own set does not contain, each added because a mutation that MUST be killed
+ * survived the set as written (#789).
  */
 describe("the populations the eviction policy is actually for", () => {
   test("evicts the oldest by savedAt, which is not the one written first", () => {
@@ -189,5 +218,46 @@ describe("the populations the eviction policy is actually for", () => {
     // this call would turn a write that DID reach the engine into a broken success handler.
     const storage = fakeStorage({ throwOnSet: true });
     expect(() => dropDraft(storage, "a")).not.toThrow();
+  });
+
+  test("a store cost of exactly the budget is within it, and evicts nothing", () => {
+    // The eviction loop's own boundary. Under `>=` this write finds no droppable neighbour, so it
+    // answers `budget` about a record that fits, and the reader is told to shorten a text that was
+    // never over. The record is built to land on the boundary rather than near it.
+    const storage = fakeStorage();
+    const fixed = JSON.stringify({ a: draft("", 1) }).length;
+    // The text has to reach the budget while staying under the READ bound, so it is newlines:
+    // each one costs two characters serialized. The odd character, if any, is a plain one.
+    const serialized = DRAFT_BUDGET_CHARACTERS - DRAFT_KEY.length - fixed;
+    const text = String.fromCharCode(10).repeat(Math.floor(serialized / 2)) + "y".repeat(serialized % 2);
+    const exact = draft(text, 1);
+    expect(text.length).toBeLessThanOrEqual(SOURCE_CHARACTER_LIMIT);
+    expect(DRAFT_KEY.length + JSON.stringify({ a: exact }).length).toBe(DRAFT_BUDGET_CHARACTERS);
+    expect(writeDraft(storage, "a", exact)).toEqual({ ok: true, evicted: [] });
+    expect(readDraft(storage, "a")).toEqual(exact);
+  });
+
+  test("a malformed neighbour in the store is not a throw on the write path", () => {
+    // The asymmetry the read side already declares real: `readStore` treats a half-written record
+    // as a population that exists, and the write path then walked the same bytes trusting them.
+    // MEASURED on the pre-fix module: this raised
+    // `TypeError: null is not an object (evaluating 'entry.savedAt')` out of `oldestDroppable`.
+    const storage = fakeStorage();
+    const filler = "x".repeat(600_000);
+    storage.setItem(DRAFT_KEY, JSON.stringify({ broken: null, old: draft(filler, 1) }));
+    expect(writeDraft(storage, "new", draft(filler, 2))).toEqual({ ok: true, evicted: ["old"] });
+    expect(JSON.parse(storage.getItem(DRAFT_KEY) ?? "null")).toEqual({ new: draft(filler, 2) });
+  });
+
+  test("an entry with no savedAt does not wedge every later write on budget forever", () => {
+    // `undefined < Infinity` is false, so a neighbour without a `savedAt` was never selectable as
+    // a victim: `oldestDroppable` answered undefined with a droppable record sitting right there
+    // and every subsequent write was refused `budget` permanently. Filtering the store through
+    // the same shape walk the read uses removes the entry instead of being stuck behind it.
+    const storage = fakeStorage();
+    const filler = "x".repeat(600_000);
+    storage.setItem(DRAFT_KEY, JSON.stringify({ stale: { text: filler, base: BASE } }));
+    expect(writeDraft(storage, "new", draft(filler, 2))).toEqual({ ok: true, evicted: [] });
+    expect(readDraft(storage, "new")).toBeDefined();
   });
 });

@@ -92,18 +92,40 @@ export function draftKeyFor(address: string, partId: string): string {
   return `${address}/${partId}`;
 }
 
+/**
+ * Every arm here has its own population in the test file, because an arm whose false branch is
+ * never taken is 100 percent line-covered and certifies nothing.
+ *
+ * `base` is checked for being an OBJECT and no further. It is carried opaquely, and the module
+ * that acts on it is the restore banner, which compares it rather than destructuring it, so a
+ * walk of `ObjectEditRevision`'s arms would be this module asserting a contract it does not own
+ * and would go stale the moment that union grows one. A scalar is still rejected: the banner
+ * compares `base` against the part's current revision, and `5` would reach that comparison as a
+ * revision.
+ */
 function isDraftShape(value: unknown): value is SourceDraft {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
   if (typeof candidate.text !== "string") return false;
   if (typeof candidate.savedAt !== "number") return false;
-  return candidate.base !== undefined && candidate.base !== null;
+  return typeof candidate.base === "object" && candidate.base !== null;
 }
 
 /**
- * The whole store, or an empty one. A parse failure, a store that is not a record, and a store
- * that is an array all answer `{}`: this value feeds an editor, and a half-written record must
- * never reach it.
+ * The whole store, or an empty one, WITH EVERY ENTRY ALREADY WALKED. A parse failure, a store
+ * that is not a record, and a store that is an array all answer `{}`, and an entry that is not a
+ * draft is dropped from the record rather than carried into it: this value feeds an editor, and a
+ * half-written record must never reach it.
+ *
+ * THE FILTER IS HERE AND NOT AT THE READ, because the WRITE path walks the same bytes and used to
+ * trust them. MEASURED on the pre-filter module, with a store this module did not write: an entry
+ * of `null` raised `TypeError: null is not an object (evaluating 'entry.savedAt')` out of
+ * `oldestDroppable`, and an entry with no `savedAt` was never selectable as a victim at all, since
+ * `undefined < Infinity` is false, so eviction answered "no droppable neighbour" with a droppable
+ * record sitting right there and every later write was refused `budget` permanently. The
+ * population is tampering, an extension, or a future writer of this key rather than this
+ * repository today, which is why it is robustness; declaring that population real for the read and
+ * not for the write was the defect.
  */
 function readStore(storage: Storage): Record<string, SourceDraft> {
   let parsed: unknown;
@@ -115,7 +137,11 @@ function readStore(storage: Storage): Record<string, SourceDraft> {
     return {};
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
-  return parsed as Record<string, SourceDraft>;
+  const store: Record<string, SourceDraft> = {};
+  for (const [key, entry] of Object.entries(parsed as Record<string, unknown>)) {
+    if (isDraftShape(entry)) store[key] = entry;
+  }
+  return store;
 }
 
 /** The cost the origin itself charges: the key's own characters plus the serialized value's. */
@@ -139,8 +165,11 @@ function oldestDroppable(store: Record<string, SourceDraft>, keep: string): stri
 
 export function readDraft(storage: Storage | null, key: string): SourceDraft | undefined {
   if (storage === null) return undefined;
-  const entry = readStore(storage)[key];
-  return isDraftShape(entry) ? entry : undefined;
+  // No second shape check here: `readStore` has already dropped everything that is not a draft,
+  // and a guard whose false branch cannot be reached is the exact defect this module was reviewed
+  // for. The index is `SourceDraft | undefined` in fact, and typed so.
+  const store: Partial<Record<string, SourceDraft>> = readStore(storage);
+  return store[key];
 }
 
 /**
