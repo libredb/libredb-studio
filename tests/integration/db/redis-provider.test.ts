@@ -2361,11 +2361,54 @@ describe("RedisProvider", () => {
           },
         ]);
 
+        // The EMPTY direction, and its population is a reply this parser could read a library out
+        // of and NOT a functions list: MEASURED on Redis 8.10.0, `FUNCTION LOAD` over a body that
+        // registers nothing answers `ERR No functions registered`, so a library the server holds
+        // always registers at least one function and a live server cannot produce this arm.
+        // A warning naming nothing is worse than no warning, so nothing is what it names (#789).
+        mockCall = async () => [["library_name", LOWER_NAME, "engine", "LUA", "library_code", FIXTURE_LIBRARY_CODE]];
+        const none = await provider.buildObjectEdit!(request(EDITED));
+        if (!none.built) throw new Error(none.refusal.sentence);
+        expect(none.plan.consequences).toEqual([]);
+      });
+
+      /**
+       * D84, MEASURED LIVE and not against a double, which is what moved it from residual to
+       * blocking (#789, discussion #778).
+       *
+       * Against a real Redis 8.10.0 in a container, a library `libredb_probe` registering exactly
+       * `libredb_ping`, loaded again with `FUNCTION LOAD REPLACE` over a body registering
+       * `libredb_other` instead: the load answered `libredb_probe`,
+       * `FUNCTION LIST LIBRARYNAME libredb_probe` answered `libredb_other` alone, and
+       * `FCALL libredb_ping 0` answered `ERR Function not found`. The function was gone.
+       *
+       * The same edit driven through this provider against that container answered
+       * `plan.consequences: []` and then `applied-with-collateral` naming `libredb_ping` as lost,
+       * so the build promised a loss could not happen and the apply reported one. Ruling 1b
+       * amended forbids exactly that: a SUCCESS destroyed something the reader was never shown.
+       *
+       * The premise the old floor rested on, "a library registering exactly one function IS that
+       * function, so a body that re-registers it loses nothing", is about the SUBMITTED text, and
+       * nothing on this path reads the submitted text's registrations: the only identity check is
+       * the shebang library name and no Lua parser is involved anywhere. The rename leaves the
+       * shebang untouched.
+       *
+       * Cost, accepted: every edit of a single-function library now carries one warning and one
+       * acknowledgement tick. The other direction, an apply that stops reporting the loss, would
+       * need evidence the registration cannot move, and the measurement above is that evidence
+       * pointing the other way.
+       */
+      test("a ONE-function library names that function, because the apply can lose it and does", async () => {
         mockCall = async () => [LIBRARY_UPPER];
         const one = await provider.buildObjectEdit!(request(EDITED_UPPER, ["0", UPPER_NAME]));
         if (!one.built) throw new Error(one.refusal.sentence);
-        // The ORDINARY answer, and it is what makes the warning mean something when it appears.
-        expect(one.plan.consequences).toEqual([]);
+
+        expect(one.plan.consequences).toEqual([
+          {
+            loses: "replaces-whole-container",
+            fact: { source: `FUNCTION LIST LIBRARYNAME ${UPPER_NAME}`, observed: "LIBREDB_UPPER_PING" },
+          },
+        ]);
       });
 
       /**
@@ -2590,6 +2633,51 @@ describe("RedisProvider", () => {
             fact: { source: "FUNCTION LIST LIBRARYNAME libredb_probe", observed: "libredb_echo_key" },
           },
         ]);
+      });
+
+      /**
+       * RULING 1b's second axis, over the ONE population that broke it (D84, #789).
+       *
+       * The assertion is the AGREEMENT and not either side alone: every function the apply
+       * reports as lost was named in the plan the reader approved. It is driven over a library
+       * registering exactly ONE function whose registration MOVES, which is the case the build
+       * used to answer `consequences: []` for while this apply answered a loss.
+       *
+       * MEASURED against a real Redis 8.10.0 container on 2026-09-14, this exact edit: the
+       * registered function was replaced and `FCALL` on the old name answered
+       * `ERR Function not found`. This test drives the same shapes through the double so the
+       * measurement is re-runnable without a container.
+       */
+      test("every function the apply reports LOST was named in the plan, at ONE function", async () => {
+        const before = ["libredb_ping"];
+        const after = ["libredb_other"];
+        mockCall = async () => [libraryEntry(LOWER_NAME, FIXTURE_LIBRARY_CODE, before)];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        let lists = 0;
+        mockCall = async (_command, ...args) => {
+          if (args[0] === "LOAD") return LOWER_NAME;
+          lists += 1;
+          return lists === 1
+            ? [libraryEntry(LOWER_NAME, FIXTURE_LIBRARY_CODE, before)]
+            : [libraryEntry(LOWER_NAME, EDITED, after)];
+        };
+        const outcome = await provider.applyObjectEdit!(build.plan);
+        if (outcome.outcome !== "applied-with-collateral") throw new Error("narrowing");
+
+        expect(outcome.lost).toEqual([
+          {
+            loses: "replaces-whole-container",
+            fact: { source: "FUNCTION LIST LIBRARYNAME libredb_probe", observed: "libredb_ping" },
+          },
+        ]);
+        // The agreement, read off the two values rather than asserted twice by literal: the
+        // warned set is the library's whole registered set, so the lost set is inside it.
+        const warned = build.plan.consequences.flatMap((consequence) => consequence.fact.observed.split(", "));
+        const lost = outcome.lost.flatMap((entry) => entry.fact.observed.split(", "));
+        expect(lost.length).toBeGreaterThan(0);
+        expect(lost.filter((name) => !warned.includes(name))).toEqual([]);
       });
 
       test("a reply naming a DIFFERENT library is `applied-elsewhere` carrying the server's own reply", async () => {

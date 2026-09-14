@@ -1011,9 +1011,9 @@ the apply re-reads and compares in its OWN round trip, which NARROWS the window 
 it, because Redis has no transaction spanning the read and the write. `basis` is
 `FUNCTION LIST LIBRARYNAME <name> WITHCODE`.
 
-**The collateral warning is a catalog fact and it runs in BOTH directions.** The build reads the
-library's registered functions out of the SAME reply that carried the code, unconditionally, and a
-library registering two or more of them plans with one consequence:
+**The collateral warning is a catalog fact and it names EVERY function the library registers.** The
+build reads the library's registered functions out of the SAME reply that carried the code,
+unconditionally, and any library plans with one consequence:
 
 ```
 loses:  replaces-whole-container
@@ -1021,12 +1021,26 @@ fact:   { source: "FUNCTION LIST LIBRARYNAME libredb_probe",
           observed: "libredb_echo_key, libredb_ping" }
 ```
 
-A library registering exactly ONE function plans `consequences: []`, which is the ordinary answer and
-is what makes the warning mean something when it appears. A library IS its one function, so
-re-registering it loses nothing, and a body registering none is refused by the engine rather than
-emptying the library. The fixture holds one library of each shape for exactly this: a collateral read
-that only ran when something already suspected a collateral would be a guard whose loop never sees the
-negative case. The names are SORTED, because `FUNCTION LIST` answers them in an internal order and a
+A library registering exactly ONE function is warned about too, and this is a CORRECTION of an
+earlier claim in this file that it planned `consequences: []`.
+That claim rested on the premise "a library IS its one function, so re-registering it loses
+nothing", and the premise is about the SUBMITTED text, which nothing on this path reads: the only
+identity check is the shebang library name and no Lua parser is involved anywhere.
+MEASURED on a Redis 8.10.0 container on 2026-09-14: `libredb_probe` registering only `libredb_ping`,
+loaded again with `FUNCTION LOAD REPLACE` over a body registering `libredb_other` under the same
+shebang, answered `libredb_probe`, `FUNCTION LIST LIBRARYNAME libredb_probe` then answered
+`libredb_other` alone, and `FCALL libredb_ping 0` answered `ERR Function not found`.
+Through this provider that edit built `consequences: []` and applied `applied-with-collateral`
+naming `libredb_ping`, so the build promised a loss could not happen while the apply reported one
+that had, which is a success destroying something the reader was never shown.
+The cost of the correction is one warning and one acknowledgement tick on every single-function
+edit, including the ones that re-register the same name.
+
+`consequences: []` survives for one population and it is not a library shape: a `FUNCTION LIST`
+reply the provider can read a library out of and no function names out of.
+MEASURED on 8.10.0, `FUNCTION LOAD` over a body registering nothing answers
+`ERR No functions registered`, so no live library reaches it.
+The names are SORTED, because `FUNCTION LIST` answers them in an internal order and a
 warning that reworded itself between two identical reads would show a reader a difference that is not
 one. No Lua parser is involved anywhere: the fact is what the library registers TODAY, never a
 prediction about what the submitted text will register.
@@ -1111,7 +1125,8 @@ The fixture was applied by hand, because this image has no init-script directory
 **THE COLLATERAL RUNS IN BOTH DIRECTIONS.**
 `libredb_probe` registers two functions, so a body registering only `libredb_echo_key` builds a plan carrying one consequence, `replaces-whole-container`, whose fact is `{ source: "FUNCTION LIST LIBRARYNAME libredb_probe", observed: "libredb_echo_key, libredb_ping" }`.
 Applying it answers `applied-with-collateral` whose `lost` entry names `libredb_ping` alone, which is the function that actually went, and `FUNCTION LIST` afterwards shows `libredb_probe` registering `libredb_echo_key` only.
-`LIBREDB_PROBE` registers one, so an edit that keeps that one builds `consequences: []` and the apply answers plain `applied`.
+`LIBREDB_PROBE` registers one, so an edit that keeps that one built `consequences: []` and the apply answered plain `applied` ON THE RUN RECORDED HERE.
+That build answer is no longer what this provider gives: a single-function library now carries the same warning, for the measured reason recorded above, and the apply's answer for that edit is unchanged.
 The acknowledgement is enforced by the SERVER and not by the dialog: the identical collateral apply with an empty `acknowledged` answers HTTP 400, `this apply destroys something the plan warned about and the request did not acknowledge: replaces-whole-container`, and the library is untouched.
 
 **A FAILED APPLY LEAVES THE LIBRARY BYTE IDENTICAL.**

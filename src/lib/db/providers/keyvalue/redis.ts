@@ -605,19 +605,36 @@ function libraryFact(name: string, functions: readonly string[]): ObjectEditCata
 /**
  * What a SUCCESSFUL load of this library would destroy, from what it registers TODAY.
  *
- * ONE FUNCTION IS THE ORDINARY ANSWER AND IT IS AN EMPTY LIST, which is what makes the warning
- * mean something when it appears: a library registering exactly one function IS that function, so
- * a body that re-registers it loses nothing, and a body that registers none is refused by the
- * engine (`ERR No functions registered`, measured on 8.10.0) rather than emptying the library.
- * Two or more, and `REPLACE` deletes every one the submitted body does not re-create and reports
- * success, which is measured and is the only day-one producer of a consequence anywhere in the
- * fleet (#789 Phase 3, ruling 1b amended).
+ * EVERY FUNCTION THE LIBRARY REGISTERS IS NAMED, AT ONE AS READILY AS AT TWO. `REPLACE` deletes
+ * every function the submitted body does not re-create and reports success, and the list this
+ * names is what the library registers NOW, never a prediction about the submitted text: no Lua
+ * parser is involved anywhere on this path, and the only identity check the build makes is the
+ * shebang library name (#789 Phase 3, ruling 1b amended).
  *
- * The list it names is what the library registers NOW, never a prediction about the submitted
- * text: no Lua parser is involved anywhere on this path.
+ * THE ONE-FUNCTION FLOOR THAT USED TO BE HERE WAS WRONG AND IT WAS MEASURED WRONG, on a real
+ * Redis 8.10.0 in a container on 2026-09-14 (D84). Its premise was "a library registering exactly
+ * one function IS that function, so a body that re-registers it loses nothing", and the premise
+ * is about the SUBMITTED text, which nothing here reads. Driven live: `libredb_probe` registering
+ * only `libredb_ping`, loaded again with a body registering `libredb_other` under the SAME
+ * shebang, answered `libredb_probe` from the load, `FUNCTION LIST LIBRARYNAME libredb_probe` then
+ * answered `libredb_other` alone, and `FCALL libredb_ping 0` answered `ERR Function not found`.
+ * Through this provider the same edit built `consequences: []` and applied
+ * `applied-with-collateral` naming `libredb_ping`, so the build promised a loss could not happen
+ * and the apply reported one that had. That is a SUCCESS destroying something the reader was
+ * never shown, which is the clause ruling 1b was amended for.
+ *
+ * Cost, accepted: an edit of a single-function library carries one warning and one
+ * acknowledgement tick even when the body re-registers the same name, because the build cannot
+ * know which it does.
+ *
+ * THE EMPTY ARM IS NOT A SINGLE-FUNCTION LIBRARY AND IT IS NOT A LIVE SERVER STATE. MEASURED on
+ * 8.10.0, `FUNCTION LOAD` over a body registering nothing answers `ERR No functions registered`,
+ * so every library the server holds registers at least one. What reaches the empty arm is a
+ * `FUNCTION LIST` reply {@link parseRegisteredFunctionNames} could read no names out of, and a
+ * warning whose fact names nothing is worse than no warning, so it names nothing.
  */
 function libraryCollateral(name: string, functions: readonly string[]): readonly ObjectEditConsequence[] {
-  if (functions.length < 2) return [];
+  if (functions.length === 0) return [];
   return [{ loses: "replaces-whole-container", fact: libraryFact(name, functions) }];
 }
 
