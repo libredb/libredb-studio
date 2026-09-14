@@ -3829,7 +3829,7 @@ describe("Trino object edit: the apply", () => {
     expect(sent).toEqual([SHOW_PLUS_ONE]);
   });
 
-  test("the addressed ROW is verified AFTER the apply: a fork ADDS an overload row", async () => {
+  test("the object the SENT statement wrote is verified AFTER the apply: a fork is `applied-elsewhere`", async () => {
     // MEASURED why this arm is reachable: only the ARGUMENT TYPE LIST forks on 476, a changed
     // return type and a renamed parameter are replaced in place, so a fork needs an argument-type
     // edit, which the build's first-line check already refuses. This post-apply check is the
@@ -3838,10 +3838,14 @@ describe("Trino object edit: the apply", () => {
     // MEASURED on trinodb/trino:476 on 2026-09-14, container `libredb-trino-t08fix`, host port
     // 18509: `SHOW CREATE FUNCTION memory.app.plus_one` answered TWO rows, a
     // `CREATE OR REPLACE FUNCTION memory.app.plus_one(x varchar)` succeeded, and the reply then
-    // answered THREE with the addressed `(x bigint)` row byte-identical. That is the question
-    // this guard asks: not whether the addressed row's RENDERING moved, which is the formatter's
-    // output and moves for reasons that are not a fork, but whether a signature appeared that
-    // was not there before.
+    // answered THREE with the addressed `(x bigint)` row byte-identical. That measurement is why
+    // a fork is REACHABLE; it is not the question this guard asks. The guard compares the
+    // parameter list the SENT statement declares against the signature the addressed row was
+    // FOUND by, and it never looks at the row SET: the row-set question is unsound in both
+    // directions and the two tests below measure both of its failures, an existing overload that
+    // gains no row and another session's sibling that gains one without any fork. It is also not
+    // the addressed row's RENDERING, which is the formatter's output and moves for reasons that
+    // are not a fork.
     const outcome = await applyAgainst({
       before: READ_TEXT,
       after: FORKING_TEXT,
@@ -3851,8 +3855,11 @@ describe("Trino object edit: the apply", () => {
     if (outcome.outcome !== "applied-elsewhere") throw new Error("narrowing");
     // Trino has no transaction to take it back and this design will not issue a DROP to clean up.
     expect(outcome.undone).toBe(false);
-    // The engine's own name for what it wrote, in the shape a path segment addresses it with, so
-    // the dialog can say WHICH object is now there instead of only that one is.
+    // NOT the engine's own name for what it wrote: neither half of this string comes from the
+    // coordinator. The bare name is the one the plan's own path segment carries and the parameter
+    // list is the one the SENT statement declares, minted in the shape a path segment addresses
+    // an overload with, so the dialog can say WHICH object is now there instead of only that one
+    // is.
     expect(outcome.wrote).toBe("plus_one(varchar)");
   });
 
