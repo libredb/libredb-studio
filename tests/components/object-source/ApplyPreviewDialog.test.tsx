@@ -1257,6 +1257,10 @@ describe("ApplyPreviewDialog", () => {
       title: "Applied, and it destroyed something else",
       description: `${LABEL}The new definition is on the server. What else went is named below.`,
     });
+    // The attention level is unchanged and that is deliberate: a destroyed object deserves the
+    // alert an engine refusal gets. The existing alert test drives a REFUSAL, which is a population
+    // that does not contain this case, so the SUCCESS arm is asserted here.
+    expect(role("-failure")).toBe("alert");
     // And the frame is not the only thing on screen that changes: the left column is the one text
     // the server no longer holds.
     expect(headers()).toEqual(["On the server before this apply", "What was sent"]);

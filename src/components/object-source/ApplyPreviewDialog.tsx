@@ -444,7 +444,7 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
             </WarningRow>
           )}
 
-          {state.kind === "failed" && <FailureRegion plan={state.plan} outcome={state.outcome} label={objectLabel} />}
+          {state.kind === "failed" && <OutcomeRegion plan={state.plan} outcome={state.outcome} label={objectLabel} />}
 
           {truncated !== undefined && (
             <WarningRow testId="object-source-apply-preimage-truncated">
@@ -628,8 +628,20 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
  * beside its own sentence, because the shipped error mapper destroys both: MEASURED, `42501`
  * becomes HTTP 401 "Authentication failed" for a credential that is connected and correct, and
  * `42P13` becomes HTTP 500 with the SQLSTATE and the engine's hint gone.
+ *
+ * It is an OUTCOME region and not a failure region: three of the arms below report an apply that
+ * SUCCEEDED, and one of those is the whole reason this region is kept on screen after a success.
+ * `role="alert"` stays on all of them, because an apply that destroyed a sibling function deserves
+ * the same attention as one that was refused; only the name was ever wrong.
+ *
+ * The `data-testid` still reads `object-source-apply-failure`, and that is a KNOWN STALE NAME
+ * rather than an oversight. MEASURED: renaming it to `object-source-apply-outcome` fails 10 tests
+ * across three suites that read it (`ObjectSourceView.test.tsx` 6, `embedded-source.test.tsx` 3,
+ * `source-tab.test.tsx` 1) and one Playwright assertion that reads the code child, and none of
+ * those four files belongs to the change that renamed this one. The rename is a mechanical
+ * substitution of two strings and it travels with an edit to those four files, in one commit.
  */
-function FailureRegion({
+function OutcomeRegion({
   plan,
   outcome,
   label,
