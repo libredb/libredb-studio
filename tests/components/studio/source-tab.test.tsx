@@ -49,6 +49,20 @@ mock.module("@monaco-editor/react", () => ({
   // `QueryEditor` configures the loader at module scope, and this file mocks that component
   // rather than the loader, so the export still has to exist for the module graph to resolve.
   loader: { init: () => Promise.resolve(), config: () => {}, __getMonacoInstance: () => null },
+  // `DiffEditor` is the apply preview's surface (#789 Phase 3). A double that omits an export the
+  // real module HAS does not degrade, it throws: bun answers `SyntaxError: Export named 'DiffEditor'
+  // not found` and fails the WHOLE FILE, so this suite dies the moment the pane's module graph
+  // reaches the preview, without this suite rendering a diff at all. Measured 2026-09-14.
+  DiffEditor: function MockDiffEditor(props: { original?: string; modified?: string; language?: string }) {
+    return (
+      <div
+        data-testid="mock-monaco-diff-editor"
+        data-language={props.language}
+        data-original={props.original ?? ""}
+        data-modified={props.modified ?? ""}
+      />
+    );
+  },
 }));
 
 let capturedSidebarProps: Record<string, unknown> = {};
