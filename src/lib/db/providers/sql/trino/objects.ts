@@ -960,3 +960,127 @@ export function trinoCreateSignature(createStatement: unknown): string | null {
   if (list === null) return null;
   return trinoNormalisedSignature(trinoSplitTopLevel(list).map(trinoParameterType));
 }
+
+// ============================================================================
+// The object edit (#789 Phase 3)
+// ============================================================================
+
+/**
+ * The eleven characters an apply splices into the reader's own text.
+ *
+ * A CONSTANT and not a literal at the splice site, because three things have to agree about
+ * it: the bytes inserted, the `provider` segment that maps them, and the coordinate
+ * conversion that has to subtract exactly them. Measured on Trino 476, the reader's text and
+ * the sent text differ by these eleven characters and by nothing else.
+ */
+export const TRINO_REPLACE_CLAUSE = " OR REPLACE";
+
+/**
+ * Where ` OR REPLACE` goes, ANCHORED TO THE FIRST TOKEN, or `null` when the first token is
+ * not `CREATE` (#789 Phase 3).
+ *
+ * A GLOBAL REPLACE OF `CREATE` IS THE WRONG IMPLEMENTATION AND THE FIXTURE CONTAINS ITS
+ * COUNTEREXAMPLE: a body may hold the word `CREATE` in a string literal or in a column name,
+ * and `text.replace("CREATE", ...)` would rewrite whichever came first while
+ * `text.replaceAll` would rewrite all of them. The anchor is the FIRST non-whitespace run,
+ * and the returned offset is the end of that run, so an apply inserts the clause immediately
+ * after the keyword rather than at a position it searched for.
+ *
+ * Case-insensitive on the keyword, because the comparison is over a token this product did
+ * not write. Measured on 476, `SHOW CREATE FUNCTION` always renders it upper case, so the
+ * lower-case arm is defensive about a text the READER typed rather than about a text the
+ * engine produced, and the reader's text is what is handed in here.
+ *
+ * A LEADING-WHITESPACE ARM EXISTS AND IS DRIVEN: the reader may indent their whole
+ * definition, and the offset then has to be past the keyword rather than past character six.
+ */
+export function trinoSpliceAt(text: string): number | null {
+  const start = text.search(/\S/);
+  if (start === -1) return null;
+  const end = text.slice(start).search(/\s|$/) + start;
+  return text.slice(start, end).toUpperCase() === "CREATE" ? end : null;
+}
+
+/**
+ * A function path segment taken apart into the bare name and the argument types it was minted
+ * from, or `null` when it is not a segment shape at all (#789 Phase 3).
+ *
+ * THE EXACT INVERSE OF {@link functionSegment}, and the provider suite asserts that round trip
+ * over every function in `docker/trino-init/01-object-fixture.sql` rather than over an example.
+ * That fixture is what makes the scan below load-bearing instead of defensive:
+ *
+ * - `we(ird(bigint)` has its FIRST parenthesis inside the NAME, so a left-to-right scan for
+ *   the parameter list reads the name as `we` and the arguments as `ird(bigint`. The scan is
+ *   therefore RIGHT TO LEFT, from the final `)` back to the `(` that matches it.
+ * - `rowparen(row("a)b" bigint,"c" varchar))` holds a `)` inside a QUOTED row-field name, so
+ *   the scan has to toggle on `"`. Toggling from the right is symmetric to toggling from the
+ *   left for Trino's doubled-quote escape, because a `""` pair toggles twice either way.
+ * - `hard(decimal(10,2), array(varchar), row("a" bigint,"b" varchar))` nests three levels, so
+ *   the scan counts depth rather than stopping at the first `(` it meets.
+ *
+ * WHY THIS EXISTS RATHER THAN A SECOND `SHOW FUNCTIONS` ROUND TRIP. An apply holds the PLAN
+ * and nothing else (#789 ruling 1a), and its first round trip has to be the re-read the
+ * `compared` revision is compared against. Resolving the overload through `SHOW FUNCTIONS`
+ * first would put a different statement in front of it, and the re-read would no longer be
+ * the thing that happens immediately before the write.
+ */
+export function trinoFunctionSegmentParts(segment: string): { name: string; argumentTypes: string } | null {
+  if (!segment.endsWith(")")) return null;
+  let quoted = false;
+  let depth = 0;
+  for (let index = segment.length - 1; index >= 0; index -= 1) {
+    const character = segment[index];
+    if (character === '"') quoted = !quoted;
+    else if (quoted) continue;
+    else if (character === ")") depth += 1;
+    else if (character === "(") {
+      depth -= 1;
+      if (depth === 0) {
+        return index === 0
+          ? // `(bigint)` with nothing in front of it names no function.
+            null
+          : { name: segment.slice(0, index), argumentTypes: segment.slice(index + 1, -1) };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * The 0-based offset into `text` of a 1-based line and column, or `null` when the coordinate
+ * is not in the text (#789 Phase 3).
+ *
+ * THE WHOLE CONVERSION AND NOT A SUBTRACTION OF ELEVEN, and the difference is measured rather
+ * than stylistic. Trino 476 reports `errorLocation` as a 1-based `lineNumber` and
+ * `columnNumber` into the statement it was SENT, and the splice is on LINE 1 only: measured on
+ * 476, a `RETURN nope` body error answers `line 3:8` both bare and spliced, so a rule that
+ * subtracted eleven columns from every line would move a body marker eleven characters to the
+ * left. Resolving to an offset and handing that to `userPositionOf` subtracts the splice
+ * exactly where the splice is, which on line 1 is exactly the eleven characters of
+ * {@link TRINO_REPLACE_CLAUSE} and everywhere else is nothing.
+ */
+export function trinoSentOffsetOf(text: string, line: number, column: number): number | null {
+  if (!Number.isInteger(line) || !Number.isInteger(column) || line < 1 || column < 1) return null;
+  const lines = text.split("\n");
+  if (line > lines.length) return null;
+  const before = lines.slice(0, line - 1).reduce((total, one) => total + one.length + 1, 0);
+  const offset = before + column - 1;
+  return offset < text.length ? offset : null;
+}
+
+/**
+ * A SHA-256 of one text, lower-case hex (#789 Phase 3).
+ *
+ * The revision token for an engine that publishes none. MEASURED on Trino 476: no surface the
+ * provider can read carries a version, a modification instant or a generation counter for a
+ * catalog function, so the only thing that can be compared is the definition text itself, and
+ * H3's third state (`compared`) is what that produces. A digest rather than the text, because
+ * the plan travels through a request body and a maximal definition is 1,000,000 characters.
+ *
+ * `crypto.subtle` and not `node:crypto`, matching `src/lib/db/connection-fingerprint.ts`: the
+ * same digest has to be computable wherever a plan is read.
+ */
+export async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}

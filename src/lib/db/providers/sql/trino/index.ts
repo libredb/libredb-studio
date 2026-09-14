@@ -45,6 +45,7 @@
  *   message. That is the one maintenance operation this engine has.
  */
 
+import { randomUUID } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
@@ -60,8 +61,11 @@ import {
   containerDepth,
   declaredKinds,
   findKind,
+  requireEditableKind,
   requireSourceKind,
 } from "@/lib/db/object-kinds";
+import { EDIT_CHARACTER_LIMIT, userPositionOf } from "@/lib/db/object-edit";
+import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import {
   type ActiveSessionDetails,
   type Container,
@@ -75,6 +79,13 @@ import {
   type MaintenanceType,
   type ObjectDetail,
   type ObjectDetailBatch,
+  type ObjectEditBuild,
+  type ObjectEditOutcome,
+  type ObjectEditPlan,
+  type ObjectEditRefusalClass,
+  type ObjectEditRequest,
+  type ObjectEditStep,
+  type ObjectKindSpec,
   type ObjectSourceDocument,
   type PerformanceMetrics,
   type PreparedQuery,
@@ -123,10 +134,15 @@ import {
   trinoMaterializedViewListSql,
   trinoObjectColumnsSql,
   trinoObjectCountsSql,
+  TRINO_REPLACE_CLAUSE,
   TRINO_SOURCE_PART_ID,
+  sha256Hex,
   trinoArgumentSignature,
   trinoCreateSignature,
+  trinoFunctionSegmentParts,
   trinoObjectSourceSql,
+  trinoSentOffsetOf,
+  trinoSpliceAt,
   trinoRelationListSql,
   trinoSchemaListSql,
   trinoSourceStatementFor,
@@ -159,6 +175,35 @@ import {
  * than a reason to refuse the connection.
  */
 const CONNECT_PROBE_SQL = "SELECT 1";
+
+/**
+ * A transport failure CATEGORY -> the apply outcome it is (#789 Phase 3).
+ *
+ * DATA and never a chain of message tests, which is the rule the design states for every
+ * classifier in this phase. The category is a measured seam: `http-transport.ts` maps the
+ * coordinator's own fault NAME to it from a table whose every row was probed on 476, so this
+ * table is one hop from the wire rather than an inference about wording.
+ *
+ * `interrupted` is not a refusal class and is spelled out as its own member, because the three
+ * categories that produce it are the three where the write's disposition is UNKNOWN: the
+ * exchange timed out, it was cancelled, or the coordinator could not be reached with the
+ * statement already sent.
+ *
+ * `resources` is deliberately ABSENT and falls through to `definition` with the coordinator's own
+ * sentence, which is the design's rule for a code the classifier does not recognise. A cluster
+ * that ran out of memory refused this write and changed nothing, and inventing a sixth refusal
+ * class for it would publish a member with no measured producer.
+ */
+const TRINO_APPLY_VERDICT: Readonly<Record<string, ObjectEditRefusalClass | "interrupted">> = Object.freeze({
+  unsupported: "unsupported",
+  auth: "privilege",
+  syntax: "definition",
+  "unknown-object": "definition",
+  engine: "definition",
+  timeout: "interrupted",
+  cancelled: "interrupted",
+  unreachable: "interrupted",
+});
 
 /** What `kill_query` records against the statement it terminates. */
 const KILL_MESSAGE = "Terminated from LibreDB Studio";
@@ -412,6 +457,23 @@ export class TrinoProvider extends SQLBaseProvider {
           labelPlural: "Functions",
           hasSource: true,
           sourceLanguage: "sql",
+          // THE ONE EDITABLE KIND ON THIS ENGINE (#789 Phase 3). Measured on 476: a
+          // `CREATE OR REPLACE FUNCTION` with the identity unchanged replaces the addressed
+          // overload in place, a FAILED one leaves the previous object byte-identical with no
+          // transaction, and the round trip is byte-stable across a spliced apply.
+          //
+          // `view` is DEFERRED and NOT refused, and the distinction is measured rather than
+          // cautious: `CREATE OR REPLACE VIEW` works on 476 and a failed apply leaves the
+          // previous view byte-identical too. It is held back because `SECURITY DEFINER` is in
+          // the read text although the author never typed it, so an edit round-trips a security
+          // principal the reader never chose, and this phase has no test for that consequence
+          // class on this engine.
+          //
+          // `table` and `materialized_view` are REFUSED BY THE ENGINE, measured on the memory
+          // connector: `CREATE OR REPLACE TABLE` answers "This connector does not support
+          // replacing tables" and `CREATE OR REPLACE MATERIALIZED VIEW` answers "This connector
+          // does not support creating materialized views", both `NOT_SUPPORTED` errorCode 13.
+          acceptsSourceEdits: true,
         },
       ],
     };
@@ -1172,6 +1234,18 @@ export class TrinoProvider extends SQLBaseProvider {
           form: "complete",
           origin: "regenerated",
           ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+          // THE AFFORDANCE, and it is `{ offered: true }` for every readable function with no
+          // pre-flight behind it (#789 Phase 3). That absence is MEASURED and not an oversight:
+          // whether an apply is possible here is a per-CATALOG fact, measured on 476 with one of
+          // five catalogs taking a function and one taking a view, and the only surface that
+          // answers it is trying. So the refusal arrives at APPLY time as `unsupported` carrying
+          // the connector's own `NOT_SUPPORTED`, errorCode 13, rather than as a guess at build
+          // time that would be wrong in both directions on different catalogs of one cluster.
+          //
+          // Read off the DECLARATION and never off the kind id, which is the rule for everything
+          // under `src/lib/db`: `table` and both view kinds answer no `edit` field at all, which
+          // is a different fact from an `offered: false` and is what the pane's predicate reads.
+          ...(spec.acceptsSourceEdits === true ? { edit: { offered: true as const } } : {}),
         },
       ],
     };
@@ -1203,6 +1277,363 @@ export class TrinoProvider extends SQLBaseProvider {
       }
     }
     throw new QueryError(`No Trino function ${read.name} in ${read.catalog}.${read.schema}`, this.type, sql);
+  }
+
+  // ==========================================================================
+  // The object edit (#789 Phase 3)
+  // ==========================================================================
+
+  /**
+   * The `SHOW CREATE FUNCTION` reply row belonging to ONE overload, or `undefined`.
+   *
+   * ONE WRITER FOR TWO READERS, the build and the apply, so the statement the build read and
+   * the statement the apply re-reads can never drift apart: the provider suite asserts they
+   * are the same bytes on the two-level declaration AND on a swapped one.
+   *
+   * The overload is addressed from the PATH SEGMENT rather than from a `SHOW FUNCTIONS` round
+   * trip, and that is what lets an apply make its re-read its FIRST round trip, which is what
+   * `compared` means. {@link trinoFunctionSegmentParts} is the exact inverse of the
+   * {@link functionSegment} this provider minted, and the fixture's `we(ird`, `rowparen` and
+   * `hard` are what make it non-vacuous.
+   */
+  private async readOverload(
+    path: readonly string[],
+    kind: string,
+    spec: ObjectKindSpec,
+  ): Promise<{ sql: string; definition: string | undefined }> {
+    const read = objectRead(this.getCapabilities(), spec, path);
+    const parts = trinoFunctionSegmentParts(read.name);
+    if (parts === null) {
+      // The path segment is not one this provider ever minted. It RAISES rather than refusing,
+      // because a refusal reports an engine fact the reader can act on and this is a caller
+      // addressing something that cannot exist: every function segment is `name(argumentTypes)`.
+      throw new QueryError(
+        `A Trino function path segment is name(argumentTypes), received ${JSON.stringify(read.name)}`,
+        this.type,
+      );
+    }
+    const statement = trinoSourceStatementFor(kind);
+    const sql = trinoObjectSourceSql(statement, read.catalog, read.schema, parts.name);
+    const rows = await this.runObjectRows(sql);
+    const signature = trinoArgumentSignature(parts.argumentTypes);
+    const row = rows.find((candidate) => trinoCreateSignature(candidate[statement.column]) === signature);
+    const definition = row?.[statement.column];
+    return { sql, definition: typeof definition === "string" ? definition : undefined };
+  }
+
+  /**
+   * Build the ONE statement that replaces a catalog function's definition (#789 Phase 3).
+   *
+   * THE STRATEGY IS `replace-in-place-statement` AND IT NARROWS THE LOST-UPDATE WINDOW RATHER
+   * THAN CLOSING IT, which is stated here because only a transaction closes one and Trino has
+   * none across a read and a later write. MEASURED on trinodb/trino:476 on 2026-09-14: a failed
+   * `CREATE OR REPLACE FUNCTION` leaves the previous object byte-identical, with no transaction,
+   * confirmed on `function` and on `view`; and the round trip is byte-STABLE, so applying the
+   * read text back verbatim leaves `SHOW CREATE FUNCTION` answering the same bytes.
+   *
+   * THE HEADER IS SPLICED AND NEVER ASSEMBLED, and that is a safety property rather than an
+   * economy. MEASURED on 476, a view's read text carries `SECURITY DEFINER` although the fixture
+   * never typed it, so a header this provider assembled from a catalog row would silently change
+   * who the object runs as. Splicing sends the reader's own bytes plus exactly the eleven
+   * characters of {@link TRINO_REPLACE_CLAUSE}, and the segment map says which eleven.
+   *
+   * THE SPLICE IS ANCHORED TO THE FIRST TOKEN AND IS NEVER A GLOBAL REPLACE. A body may hold the
+   * word `CREATE`, which `docker/trino-init/01-object-fixture.sql` proves with
+   * `mentions_create`, and a `replaceAll` would rewrite the body as well.
+   *
+   * THERE IS NO PRIVILEGE PRE-FLIGHT AND THAT ABSENCE IS MEASURED. Whether an apply is possible
+   * is a per-CATALOG fact on this engine, measured on 476 with one of five catalogs taking a
+   * function and one taking a view, so a build-time guess would be wrong in both directions on
+   * one cluster. The refusal arrives at apply time as `unsupported`, carrying the connector's own
+   * `NOT_SUPPORTED`, errorCode 13.
+   *
+   * FOUR REFUSALS, IN THIS ORDER, and each one answers before anything is sent.
+   */
+  public async buildObjectEdit(request: ObjectEditRequest): Promise<ObjectEditBuild> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = requireEditableKind(capabilities, request.kind, {
+      displayName: this.dialect.displayName,
+      type: this.type,
+    });
+    if (request.partId !== TRINO_SOURCE_PART_ID) {
+      throw new QueryError(
+        `A Trino ${spec.label.toLowerCase()} has one source part, "${TRINO_SOURCE_PART_ID}", received "${request.partId}"`,
+        this.type,
+      );
+    }
+
+    const read = objectRead(capabilities, spec, request.path);
+    // NOT `readOverload`: the BUILD resolves the overload the way the pane's own read does, so
+    // the object a plan is addressed to is the object the reader was shown. `SHOW FUNCTIONS` is
+    // the statement that MINTED the segment, and matching against it parses nothing.
+    const resolved = await this.resolveOverload(read);
+    const statement = trinoSourceStatementFor(request.kind);
+    const sql = trinoObjectSourceSql(statement, read.catalog, read.schema, resolved.name);
+    const rows = await this.runObjectRows(sql);
+    const row = rows.find((candidate) => trinoCreateSignature(candidate[statement.column]) === resolved.signature);
+    const definition = row?.[statement.column];
+    if (typeof definition !== "string" || definition.trim() === "") {
+      // The same fact and the same sentence the source read answers for an absent overload.
+      throw new QueryError(
+        `No Trino ${request.kind} named ${read.name} in ${read.catalog}.${read.schema}`,
+        this.type,
+        sql,
+      );
+    }
+
+    const refuse = (refusal: ObjectEditRefusalClass, sentence: string): ObjectEditBuild => ({
+      built: false,
+      // `at: { within: "none" }` on every one of them, and it is a fact rather than a default:
+      // nothing has been sent, so no engine has reported a position and there is no coordinate to
+      // convert. An `outside` here would claim a position was reported and could not be placed.
+      refusal: { refusal, sentence, at: { within: "none" } },
+    });
+
+    // 1. The read bound. A part the pane could only show TRUNCATED is never editable: submitting
+    //    the bounded text back is a truncation dressed as an edit, and it would delete everything
+    //    past the bound. The number is core's `EDIT_CHARACTER_LIMIT`, so this refusal and the
+    //    pane's bound can never drift apart, and the fixture's `over_limit_fn` is the population:
+    //    measured on 476, `SHOW CREATE FUNCTION` answers 1,001,094 characters for it.
+    if (definition.length > EDIT_CHARACTER_LIMIT) {
+      return refuse(
+        "guard",
+        `this definition is ${definition.length.toLocaleString("en-US")} characters and the Source pane is ` +
+          `bounded at ${EDIT_CHARACTER_LIMIT.toLocaleString("en-US")} characters, so the text you edited is a ` +
+          "truncation of it and submitting it back would delete everything past the bound",
+      );
+    }
+
+    // 2. Byte-identical text. A refusal and never a no-op apply, because sending an apply that
+    //    cannot change anything spends a write path, an audit row and a round trip on nothing.
+    if (request.text === definition) {
+      return refuse("definition", "this text is identical to the definition on the server");
+    }
+
+    // 3. The FIRST TOKEN, which is also where the clause goes. Checked before the first line so
+    //    the reader who pasted an `ALTER` gets told that rather than a diff of two headers.
+    //    STATED PLAINLY: check 4 below would refuse the same texts with the same class, because
+    //    the read text is `SHOW CREATE` output and always opens with CREATE, so this check buys
+    //    a SENTENCE and not a second safety net, and the suite pins it by that sentence.
+    const at = trinoSpliceAt(request.text);
+    if (at === null) {
+      const firstToken = request.text.trim().split(/\s/)[0];
+      return refuse(
+        "identity",
+        `this text does not begin with CREATE, it begins with "${firstToken}", and LibreDB applies a ` +
+          "definition by sending the CREATE statement the server itself printed with OR REPLACE spliced " +
+          "into it. Run the statement you want in the SQL editor instead",
+      );
+    }
+
+    // 4. The identity, which here is FIRST-LINE equality against the FORMATTER's own output.
+    //    MEASURED on 476: the read text is the formatter's, comments are dropped, expressions are
+    //    parenthesised, `U&'\0041'` becomes `'A'` and blocks are re-indented, so the first line is
+    //    canonical and the fixture's own shapes put the whole parameter list on it, including
+    //    `decimal(10, 2)`, `array(varchar)`, a ROW with a quoted `"a)b"` field and a `we(ird`
+    //    identifier. UNMEASURED and named rather than reported around: whether the formatter ever
+    //    WRAPS a very long parameter list onto a second line. The check fails SAFE either way,
+    //    because a wrapped header the reader did not touch is byte-identical to itself, so the
+    //    failure mode is a false refusal and never a false apply.
+    //
+    //    Both headers are shown, because the reader's next action is to put the original identity
+    //    back or to create the new function deliberately, and neither is possible from a sentence
+    //    that only says no.
+    const submittedHeader = request.text.split("\n")[0];
+    const currentHeader = definition.split("\n")[0];
+    if (submittedHeader !== currentHeader) {
+      return refuse(
+        "identity",
+        `this text declares "${submittedHeader}" and the object being edited is "${currentHeader}", and ` +
+          "LibreDB refuses an edited header rather than sending it. MEASURED on Trino 476, a changed " +
+          "ARGUMENT TYPE LIST creates a SECOND function and leaves this one untouched, while a changed " +
+          "return type and a renamed parameter are replaced in place: make the change you want with a " +
+          "CREATE OR REPLACE FUNCTION of your own in the SQL editor",
+      );
+    }
+
+    const prefix = request.text.slice(0, at);
+    const step: ObjectEditStep = {
+      text: `${prefix}${TRINO_REPLACE_CLAUSE}${request.text.slice(at)}`,
+      language: spec.sourceLanguage,
+      // THREE segments and never a scalar prefix length: the reader's text is not a suffix of
+      // the sent text, because the eleven characters go INSIDE the first line.
+      segments: [
+        { from: "user", start: 0, end: at },
+        { from: "provider", text: TRINO_REPLACE_CLAUSE },
+        { from: "user", start: at, end: request.text.length },
+      ],
+    };
+
+    return {
+      built: true,
+      plan: {
+        planVersion: 1,
+        planId: randomUUID(),
+        issuedAt: new Date().toISOString(),
+        connectionFingerprint: await connectionFingerprint(this.config),
+        type: this.type,
+        path: [...request.path],
+        kind: request.kind,
+        partId: request.partId,
+        strategy: "replace-in-place-statement",
+        unit: { medium: "statement", steps: [step] },
+        // NONE. The statement is fully qualified by the catalog and schema segments of its own
+        // path, so nothing it does depends on a session another borrower of this connection can
+        // move.
+        session: [],
+        // MEASURED on 476: Trino publishes NO readable revision token in any surface this
+        // provider can reach, so H3's third state applies and the check is a RE-READ inside the
+        // apply, compared byte for byte against this digest. That NARROWS the window and does not
+        // close it, because the re-read and the write are two round trips.
+        revision: {
+          check: "compared",
+          token: await sha256Hex(definition),
+          basis: "SHOW CREATE FUNCTION",
+          scope: "server",
+        },
+        // NOTHING. A `CREATE OR REPLACE FUNCTION` that keeps the identity replaces the addressed
+        // overload and nothing else, measured on 476: the other overloads of the name are
+        // untouched and the reply carries them unchanged. The one way to lose something here is a
+        // changed ARGUMENT TYPE LIST, which forks, and that is refused by check 4 above and
+        // caught again by the post-apply verification rather than warned about.
+        consequences: [],
+      },
+      preimage: { text: definition, language: spec.sourceLanguage },
+    };
+  }
+
+  /**
+   * Send the plan, and NEVER the text again (#789 Phase 3, ruling 1a).
+   *
+   * THREE ROUND TRIPS AT MOST, IN THIS ORDER, and the order is the whole safety argument:
+   *
+   * 1. the RE-READ, which is what `compared` means. It is the FIRST thing this method sends, so
+   *    nothing else can sit between the comparison and the write. A definition that moved is a
+   *    `conflict` and NOTHING is executed.
+   * 2. `plan.unit.steps[0].text`, verbatim, with no parameters and no re-derivation. Nothing here
+   *    re-reads the object to re-assemble a statement and nothing consults `getCapabilities()`
+   *    for anything the plan carries.
+   * 3. the POST-APPLY VERIFICATION, which asks whether the ADDRESSED overload changed. MEASURED
+   *    on 476 why that arm is reachable at all: only the ARGUMENT TYPE LIST forks, a changed
+   *    return type and a renamed parameter are replaced in place, so a fork needs an
+   *    argument-type edit and the build's first-line check already refuses one. This is the
+   *    CONTROL that catches a first-line rule this design got wrong, and `undone` is FALSE
+   *    because Trino has no transaction to take it back and this design will not issue a DROP.
+   *
+   * THIS METHOD OPENS NO TRANSACTION, which on this engine is a statement of fact rather than a
+   * prohibition: a Trino catalog function is created outside any transaction the client can hold.
+   *
+   * A VERDICT THE ENGINE REACHED IS RETURNED AND NEVER THROWN, which is what keeps a deliberate
+   * refusal off the 500 path the shipped error mapper would otherwise put it on. That mapper is
+   * also why a timeout is `interrupted` here: `mapTrinoError` mints a `TimeoutError` for the
+   * `timeout` category and `src/lib/api/errors.ts` answers that 408 `retryable: true`, and a
+   * client that retries an apply whose disposition is unknown applies twice.
+   */
+  public async applyObjectEdit(plan: ObjectEditPlan): Promise<ObjectEditOutcome> {
+    this.ensureConnected();
+    if (plan.unit.medium !== "statement") {
+      // A command unit is not a shape this provider ever issues. It raises rather than refusing,
+      // because a refusal reports an engine fact and this is a plan from somewhere else.
+      throw new QueryError("A Trino object edit plan carries a statement unit, received a command", this.type);
+    }
+    const [step] = plan.unit.steps;
+    const spec = requireEditableKind(this.getCapabilities(), plan.kind, {
+      displayName: this.dialect.displayName,
+      type: this.type,
+    });
+    const started = Date.now();
+
+    const before = await this.readOverload(plan.path, plan.kind, spec);
+    const token = plan.revision.check === "unavailable" ? undefined : plan.revision.token;
+    const current = before.definition ?? "";
+    if (token === undefined || (await sha256Hex(current)) !== token) {
+      // H3's diff: the server's own text as the comparison read it, so the reader is shown what
+      // is there rather than asked to trust a detector. An absent overload answers the empty
+      // string, which is what is there.
+      return {
+        outcome: "conflict",
+        conflict: "object-changed",
+        current: { text: current, language: step.language },
+        duration: Date.now() - started,
+      };
+    }
+
+    try {
+      await this.requireTransport().query(step.text);
+    } catch (error) {
+      return this.classifyApplyFailure(step, error, Date.now() - started);
+    }
+
+    const after = await this.readOverload(plan.path, plan.kind, spec);
+    const written = after.definition ?? "";
+    if (written === current) {
+      return { outcome: "applied-elsewhere", undone: false, duration: Date.now() - started };
+    }
+    return {
+      outcome: "applied",
+      // The NEW token, because the one the plan carried is by definition the OLD one and a client
+      // that re-applied with it would be told the object had not moved.
+      revision: {
+        check: "compared",
+        token: await sha256Hex(written),
+        basis: "SHOW CREATE FUNCTION",
+        scope: "server",
+      },
+      duration: Date.now() - started,
+    };
+  }
+
+  /**
+   * One coordinator failure, turned into the outcome arm it IS (#789 Phase 3).
+   *
+   * The CATEGORY decides, from {@link TRINO_APPLY_VERDICT}, and a category not in the table is
+   * `definition` with the engine's own sentence rather than a guess. The category and not the
+   * integer errorCode, because the transport drops the integer deliberately (its own docblock
+   * says it is the less stable of the two) and keeps the stable fault NAME, which is what
+   * `refusal.code` carries as DATA.
+   *
+   * A failure that is not a transport failure at all is not a verdict the engine reached: the
+   * statement was sent and its answer never arrived, so it is `interrupted` with
+   * `committed: "unknown"`, and a client that retried on it would apply twice.
+   */
+  private classifyApplyFailure(step: ObjectEditStep, error: unknown, duration: number): ObjectEditOutcome {
+    if (!(error instanceof TrinoTransportError)) {
+      return {
+        outcome: "interrupted",
+        committed: "unknown",
+        sentence: error instanceof Error ? error.message : String(error),
+        duration,
+      };
+    }
+    const verdict = TRINO_APPLY_VERDICT[error.category];
+    if (verdict === "interrupted") {
+      return { outcome: "interrupted", committed: "unknown", sentence: error.message, duration };
+    }
+    return {
+      outcome: "refused",
+      refusal: {
+        refusal: verdict ?? "definition",
+        sentence: error.message,
+        ...(error.code === null ? {} : { code: error.code }),
+        // THE WHOLE CONVERSION AND NOT A SUBTRACTION OF ELEVEN. `errorLocation` is 1-based on both
+        // axes and points into the text that was SENT, and the splice is on LINE 1 only: measured
+        // on 476, a `RETURN nope` body error answers `line 3:8` BOTH bare and spliced. Resolving
+        // to an offset and handing that to `userPositionOf` subtracts the splice exactly where the
+        // splice is, and answers `outside` for a coordinate that lands inside the clause this
+        // product wrote. An uncorrected coordinate is silently CLAMPED by Monaco rather than
+        // rejected, so nothing downstream catches this being wrong.
+        at: this.refusalPosition(step, error.location),
+      },
+      duration,
+    };
+  }
+
+  /** Where a coordinator location lands in the reader's own text, or that it lands nowhere. */
+  private refusalPosition(step: ObjectEditStep, location: { line: number; column: number } | null) {
+    if (location === null) return { within: "none" } as const;
+    const offset = trinoSentOffsetOf(step.text, location.line, location.column);
+    return offset === null ? ({ within: "outside" } as const) : userPositionOf(step, offset);
   }
 
   // ==========================================================================

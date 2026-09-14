@@ -893,12 +893,12 @@ through the provider itself on trinodb/trino:476:
 | Container | table | view | materialized_view | function |
 |---|---|---|---|---|
 | `memory` | 2 | 1 | 0 | unavailable |
-| `memory.app` | 2 | 1 | 0 | 7 |
+| `memory.app` | 2 | 1 | 0 | 9 |
 | `tpch.tiny` | 8 | 0 | 0 | 0 |
 
-`memory.app` holds `orders` and `customers`, the view `customer_names`, and seven functions. Not one
-of the seven is padding, and four of them exist only because the **source read** (#789) below needs
-an object that defeats a shortcut:
+`memory.app` holds `orders` and `customers`, the view `customer_names`, and nine functions. Not one
+of them is padding, and six exist only because the **source read** and the **object edit** (#789)
+below need an object that defeats a shortcut:
 
 | Function | What it is there for |
 |---|---|
@@ -908,6 +908,8 @@ an object that defeats a shortcut:
 | `answer()` | The empty argument list. |
 | `we(ird(bigint)` | A function NAME holding an open parenthesis, so the first `(` in the segment belongs to the name. |
 | `rowparen(row("a)b" bigint,"c" varchar))` | A ROW field name holding a CLOSE parenthesis, which is what makes the source read's quote-aware scans load-bearing. |
+| `mentions_create(bigint)` | A BODY holding the word `CREATE`. The apply splices ` OR REPLACE` after the FIRST TOKEN, and a global replace of the word would rewrite this body too. See the object-edit section. |
+| `over_limit_fn(bigint)` | The object OVER the 1,000,000-character source bound: `SHOW CREATE FUNCTION` measured 1,001,094 characters for it on 476. See the object-edit section for why it is an ARRAY of decimals and not a long string literal. |
 
 The server returns `orders` before `customers`, which is what makes the provider's own sort
 observable rather than incidental.

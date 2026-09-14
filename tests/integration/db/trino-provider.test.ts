@@ -32,12 +32,15 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
+import { renderSegments } from "@/lib/db/object-edit";
 import {
   AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
   QueryCancelledError,
   QueryError,
+  TimeoutError,
 } from "@/lib/db/errors";
 import {
   TRINO_ACTIVE_QUERY_COUNT_SQL,
@@ -63,13 +66,17 @@ import {
   trinoObjectColumnsSql,
   trinoObjectCountsSql,
   trinoCreateSignature,
+  functionSegment,
+  sha256Hex,
+  trinoFunctionSegmentParts,
   trinoObjectSourceSql,
+  trinoSpliceAt,
   trinoRelationListSql,
   trinoSchemaListSql,
   trinoSourceStatementFor,
 } from "@/lib/db/providers/sql/trino/objects";
 import { TrinoProvider } from "@/lib/db/providers/sql/trino/index";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import type { ObjectEditBuild, ObjectEditOutcome, ObjectEditPlan, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
@@ -1388,6 +1395,10 @@ const MEMORY_APP_FUNCTION_ROWS: unknown[][] = [
   ["answer", "bigint", "", "scalar", true, ""],
   ["hard", "varchar", 'decimal(10,2), array(varchar), row("a" bigint,"b" varchar)', "scalar", true, ""],
   ["label", "varchar", "bigint, varchar", "scalar", true, ""],
+  // The body holding the word CREATE, which is the population an ANCHORED splice needs (#789
+  // Phase 3), and the object whose read is OVER the 1,000,000-character bound.
+  ["mentions_create", "varchar", "bigint", "scalar", true, ""],
+  ["over_limit_fn", "array(decimal(38,1))", "bigint", "scalar", true, ""],
   ["plus_one", "bigint", "bigint", "scalar", true, ""],
   ["plus_one", "double", "double", "scalar", true, ""],
   ["rowparen", "bigint", 'row("a)b" bigint,"c" varchar)', "scalar", true, ""],
@@ -1436,6 +1447,27 @@ const CREATE_ANSWER = "CREATE FUNCTION memory.app.answer()\nRETURNS bigint\nRETU
 const CREATE_ROWPAREN = 'CREATE FUNCTION memory.app.rowparen(r ROW("a)b" bigint, c varchar))\nRETURNS bigint\nRETURN 1';
 /** The first `(` in this statement is inside the quoted NAME, not the parameter list. */
 const CREATE_WEIRD = 'CREATE FUNCTION memory.app."we(ird"(x bigint)\nRETURNS bigint\nRETURN x';
+/**
+ * A body carrying the word CREATE, verbatim from 476 (#789 Phase 3).
+ *
+ * The apply splices ` OR REPLACE` after the FIRST TOKEN, and this is the object that makes that
+ * anchoring observable: a global replace of the word rewrites the literal in the body too.
+ */
+const CREATE_MENTIONS_CREATE =
+  "CREATE FUNCTION memory.app.mentions_create(x bigint)\nRETURNS varchar\nRETURN 'CREATE TABLE'";
+/**
+ * The object OVER the source bound, rebuilt rather than pasted (#789 Phase 3).
+ *
+ * `docker/trino-init/01-object-fixture.sql` creates it and `SHOW CREATE FUNCTION` answered
+ * 1,001,094 characters for it on trinodb/trino:476 on 2026-09-14. The text is generated here
+ * because a megabyte of `DECIMAL '.1',` in a test file is unreadable and unreviewable, and the
+ * assertion below pins the length the live coordinator produced, so a generator that drifted from
+ * the fixture fails by number.
+ */
+function overLimitDefinition(): string {
+  const elements = Array.from({ length: 77_000 }, () => "DECIMAL '.1'").join(",");
+  return `CREATE FUNCTION memory.app.over_limit_fn(x bigint)\nRETURNS array(decimal(38, 1))\nRETURN ARRAY[${elements}]`;
+}
 
 /** One `SHOW CREATE` reply, in the shape the coordinator sends it. */
 function sourceRows(column: string, definitions: readonly string[]): (id: string) => Reply {
@@ -1722,6 +1754,14 @@ function serveSourceReads(): void {
   serveInstead(at("function", "memory", "app", "answer"), sourceRows("Create Function", [CREATE_ANSWER]));
   serveInstead(at("function", "memory", "app", "rowparen"), sourceRows("Create Function", [CREATE_ROWPAREN]));
   serveInstead(at("function", "memory", "app", "we(ird"), sourceRows("Create Function", [CREATE_WEIRD]));
+  serveInstead(
+    at("function", "memory", "app", "mentions_create"),
+    sourceRows("Create Function", [CREATE_MENTIONS_CREATE]),
+  );
+  serveInstead(
+    at("function", "memory", "app", "over_limit_fn"),
+    sourceRows("Create Function", [overLimitDefinition()]),
+  );
 
   // The two ABSENCES, each carrying the engine's own verbatim refusal rather than a page the
   // provider would then have to interpret. Both were measured on 476 on 2026-09-13.
@@ -1796,7 +1836,7 @@ describe("object surface", () => {
     await assertObjectSurface(provider, {
       containers: FIXTURE_CATALOGS,
       container: ["memory", "app"],
-      kinds: { table: 2, view: 1, function: 7, materialized_view: 0 },
+      kinds: { table: 2, view: 1, function: 9, materialized_view: 0 },
       sampleObject: { path: ["memory", "app", "orders"], kind: "table" },
       emptyKinds: {
         // THIS DEPLOYMENT CANNOT HOLD ONE, which is the stronger of the two absences the
@@ -1959,7 +1999,7 @@ describe("Trino object containers, listings and detail", () => {
       table: { count: 2 },
       view: { count: 1 },
       materialized_view: { count: 0 },
-      function: { count: 7 },
+      function: { count: 9 },
     });
   });
 
@@ -2049,6 +2089,8 @@ describe("Trino object containers, listings and detail", () => {
         kind: "function",
       },
       { path: ["memory", "app", "label(bigint, varchar)"], name: "label", kind: "function" },
+      { path: ["memory", "app", "mentions_create(bigint)"], name: "mentions_create", kind: "function" },
+      { path: ["memory", "app", "over_limit_fn(bigint)"], name: "over_limit_fn", kind: "function" },
       { path: ["memory", "app", "plus_one(bigint)"], name: "plus_one", kind: "function" },
       { path: ["memory", "app", "plus_one(double)"], name: "plus_one", kind: "function" },
       {
@@ -3302,6 +3344,651 @@ describe("Trino function counts stated in shipped files", () => {
     // The inventory, so the guard cannot go quiet. A claim that disappears is as visible
     // here as a claim that arrives, and a run that matched nothing at all fails by name
     // rather than passing over an empty loop.
-    expect(claims).toEqual(["docs/providers/trino.md: seven functions"]);
+    expect(claims).toEqual(["docs/providers/trino.md: nine functions"]);
+  });
+});
+
+// ============================================================================
+// The object edit (#789 Phase 3)
+// ----------------------------------------------------------------------------
+// Every behaviour asserted below was measured on a live trinodb/trino:476 on 2026-09-14,
+// against the `memory` catalog `docker/trino-init/01-object-fixture.sql` seeds, and the
+// measurements are recorded beside the assertions that carry them rather than in a heading:
+//
+//   * `CREATE OR REPLACE FUNCTION` with a changed BODY replaces the addressed overload and
+//     the re-read comes back byte-identical to what was sent minus ` OR REPLACE`;
+//   * a changed RETURN TYPE and a renamed PARAMETER are both replaced IN PLACE, so only the
+//     ARGUMENT TYPE LIST forks, and a fork leaves three rows where there were two;
+//   * a FAILED replace leaves the previous object byte-identical, with no transaction;
+//   * `SECURITY DEFINER` is in a view's read text although the fixture never typed it, which
+//     is why the header is SPLICED and never ASSEMBLED;
+//   * the `memory` connector answers `NOT_SUPPORTED`, errorCode 13, for
+//     `CREATE OR REPLACE MATERIALIZED VIEW` ("This connector does not support creating
+//     materialized views") and for `CREATE OR REPLACE TABLE` ("This connector does not
+//     support replacing tables");
+//   * a body error's `errorLocation` is `line 3:8` BOTH bare and spliced, which is what makes
+//     "subtract eleven columns from every line" wrong and the offset conversion right.
+// ============================================================================
+
+const EDIT_KIND = "function";
+const EDIT_PATH: readonly string[] = ["memory", "app", "plus_one(bigint)"];
+/** The bigint overload's definition, verbatim from 476. The formatter parenthesises the body. */
+const READ_TEXT = CREATE_PLUS_ONE_BIGINT;
+const EDITED = READ_TEXT.replace("RETURN (x + 1)", "RETURN (x + 2)");
+/** What the apply sends: eleven characters spliced in after the first token and nothing else. */
+const PLAN_TEXT = `${EDITED.slice(0, 6)} OR REPLACE${EDITED.slice(6)}`;
+const SHOW_PLUS_ONE = trinoObjectSourceSql(trinoSourceStatementFor(EDIT_KIND), "memory", "app", "plus_one");
+
+/**
+ * A read text OVER the 1,000,000-character bound, in the shape this engine can actually
+ * produce.
+ *
+ * THE BRIEF'S OWN `"x".repeat(1_000_001)` CANNOT REACH THE BOUND CHECK ON TRINO and that is a
+ * property of the engine's overload resolution rather than of this test. `SHOW CREATE
+ * FUNCTION` answers ONE ROW PER OVERLOAD and carries no argument-type column, so the row
+ * belonging to a path segment is found by comparing the parameter list rendered inside each
+ * CREATE statement; a reply with no parameter list at all matches no segment and the read
+ * raises naming the segment BEFORE any bound is consulted. The test below drives the brief's
+ * literal too, and pins that raise, so the divergence is asserted rather than hidden.
+ *
+ * The length is exactly 1,000,001, which is exactly one character past
+ * `EDIT_CHARACTER_LIMIT`, and the shape is the one `over_limit_fn` produces on a live 476.
+ */
+const OVER_LIMIT_HEAD = "CREATE FUNCTION memory.app.plus_one(x bigint)\nRETURNS varchar\nRETURN '";
+const OVER_LIMIT_TEXT = `${OVER_LIMIT_HEAD}${"x".repeat(1_000_001 - OVER_LIMIT_HEAD.length - 1)}'`;
+
+/** The `SHOW CREATE FUNCTION` reply, one queued answer per call, the last one repeating. */
+function sourceQueue(replies: readonly (readonly string[])[]): (id: string) => Reply {
+  let call = 0;
+  return (id) => {
+    const definitions = replies[Math.min(call, replies.length - 1)];
+    call += 1;
+    return sourceRows("Create Function", definitions)(id);
+  };
+}
+
+/** One statement whose SUBMISSION throws, which is what an exchange that never answers is. */
+function throwInstead(statement: string, error: Error): void {
+  const previous = replyFor;
+  replyFor = (sql) => {
+    if (sql === statement) throw error;
+    return previous(sql);
+  };
+}
+
+async function editProvider(): Promise<TrinoProvider> {
+  return await objectProvider({ database: "memory", schema: "app" });
+}
+
+async function buildOn(
+  provider: TrinoProvider,
+  submitted: string,
+  path: readonly string[] = EDIT_PATH,
+): Promise<ObjectEditBuild> {
+  return await provider.buildObjectEdit!({
+    path,
+    kind: EDIT_KIND,
+    partId: TRINO_SOURCE_PART_ID,
+    text: submitted,
+  });
+}
+
+/** Build against a chosen read text, which is what the coordinator answers for the overload. */
+async function buildAgainst(readText: string, submitted: string): Promise<ObjectEditBuild> {
+  const provider = await editProvider();
+  serveInstead(SHOW_PLUS_ONE, sourceRows("Create Function", [readText]));
+  return await buildOn(provider, submitted);
+}
+
+async function planOn(provider: TrinoProvider, submitted: string): Promise<ObjectEditPlan> {
+  const build = await buildOn(provider, submitted);
+  if (!build.built) throw new Error(build.refusal.sentence);
+  return build.plan;
+}
+
+/**
+ * A plan this test builds BY HAND, to reach an arm the build's own checks refuse.
+ *
+ * A legitimate unit-level construction and not a shortcut: the route refuses a plan it did
+ * not seal, the provider is the thing under test, and `applied-elsewhere` exists precisely
+ * for a first-line rule this design got wrong, which by definition no build can produce.
+ */
+async function forcedPlan(submitted: string): Promise<ObjectEditPlan> {
+  const text = `${submitted.slice(0, 6)} OR REPLACE${submitted.slice(6)}`;
+  return {
+    planVersion: 1,
+    planId: "forced-plan-for-the-post-apply-control",
+    issuedAt: "2026-09-14T00:00:00.000Z",
+    connectionFingerprint: await connectionFingerprint(makeConnection({ database: "memory", schema: "app" })),
+    type: "trino",
+    path: [...EDIT_PATH],
+    kind: EDIT_KIND,
+    partId: TRINO_SOURCE_PART_ID,
+    strategy: "replace-in-place-statement",
+    unit: {
+      medium: "statement",
+      steps: [
+        {
+          text,
+          language: "sql",
+          segments: [
+            { from: "user", start: 0, end: 6 },
+            { from: "provider", text: " OR REPLACE" },
+            { from: "user", start: 6, end: submitted.length },
+          ],
+        },
+      ],
+    },
+    session: [],
+    revision: { check: "compared", token: await sha256Hex(READ_TEXT), basis: "SHOW CREATE FUNCTION", scope: "server" },
+    consequences: [],
+  };
+}
+
+/**
+ * Apply, with the coordinator answering `before` to the apply's own re-read and `then` to the
+ * post-apply verification.
+ *
+ * TWO SEPARATE ANSWERS AND NOT ONE, because the two reads ask different questions and a
+ * harness that could not tell them apart could not drive either the conflict arm or the fork
+ * arm. `then` defaults to the reader's own text on a normal apply, which is what a successful
+ * replace leaves on the server, and to `before` on a forced one, which is what a FORK leaves.
+ */
+async function applyAgainst(options: {
+  before: string;
+  after: string;
+  then?: string;
+  capture?: string[];
+  forced?: boolean;
+}): Promise<ObjectEditOutcome> {
+  const provider = await editProvider();
+  serveInstead(SHOW_PLUS_ONE, sourceRows("Create Function", [READ_TEXT]));
+  const plan = options.forced ? await forcedPlan(options.after) : await planOn(provider, options.after);
+  const then = options.then ?? (options.forced ? options.before : options.after);
+  serveInstead(SHOW_PLUS_ONE, sourceQueue([[options.before], [then]]));
+  const mark = sentSql.length;
+  const outcome = await provider.applyObjectEdit!(plan);
+  options.capture?.push(...sentSql.slice(mark));
+  return outcome;
+}
+
+/** Apply against a write the coordinator refuses, or an exchange that never answers at all. */
+async function applyWithTrinoError(fault: Record<string, unknown> | Error): Promise<ObjectEditOutcome> {
+  const provider = await editProvider();
+  serveInstead(SHOW_PLUS_ONE, sourceRows("Create Function", [READ_TEXT]));
+  const plan = await planOn(provider, EDITED);
+  if (fault instanceof Error) throwInstead(PLAN_TEXT, fault);
+  else serveInstead(PLAN_TEXT, refusal(fault));
+  return await provider.applyObjectEdit!(plan);
+}
+
+describe("Trino object edit: the declaration and the affordance", () => {
+  test("declares acceptsSourceEdits on exactly one kind", () => {
+    const provider = new TrinoProvider(makeConnection());
+    const kinds = provider.getCapabilities().objectKinds ?? [];
+    expect(kinds.filter((kind) => kind.acceptsSourceEdits === true).map((kind) => kind.id)).toEqual(["function"]);
+    // `view` is DEFERRED and not refused: MEASURED on 476, `CREATE OR REPLACE VIEW` works and a
+    // failed apply leaves the previous view byte-identical. It is held back only because
+    // SECURITY DEFINER is in the read text although the author never typed it, and the consequence
+    // class for a changed security principal has no test on this engine yet. `table` and
+    // `materialized_view` are REFUSED BY THE ENGINE: NOT_SUPPORTED, errorCode 13, on the memory
+    // connector.
+    expect(
+      kinds
+        .filter((kind) => kind.acceptsSourceEdits !== true)
+        .map((kind) => kind.id)
+        .sort(),
+    ).toEqual(["materialized_view", "table", "view"]);
+  });
+
+  test("every readable function part is offered, because possibility is a per-CATALOG fact", async () => {
+    // No pre-flight exists on this engine and none is invented: measured on 476, one of five
+    // catalogs takes a function and one takes a view, and the only way to know is to try.
+    const provider = await editProvider();
+    const document = await provider.readObjectSource!(["memory", "app", "plus_one(bigint)"], "function");
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.edit).toEqual({ offered: true });
+  });
+
+  test("a kind this provider never declared editable carries no affordance at all", async () => {
+    // The other half of the population, and it is the half a single-kind assertion cannot see:
+    // an `edit` field written unconditionally would offer an edit on a `table`, which the
+    // connector answers NOT_SUPPORTED for, and the route would then have to strip what the
+    // provider should never have written.
+    const provider = await editProvider();
+    for (const [path, kind] of [
+      [["memory", "app", "customers"], "table"],
+      [["memory", "app", "customer_names"], "view"],
+    ] as const) {
+      const [part] = (await provider.readObjectSource!(path, kind)).parts;
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(part.edit).toBeUndefined();
+    }
+  });
+});
+
+describe("Trino object edit: the build", () => {
+  test("the splice is ANCHORED TO THE FIRST TOKEN and is never a global replace", async () => {
+    const build = await buildAgainst(READ_TEXT, EDITED);
+    if (!build.built) throw new Error(build.refusal.sentence);
+    if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+    const [step] = build.plan.unit.steps;
+    // For the fixture's own shape that is `{ at: 6, inserted: " OR REPLACE" }`, which is why a
+    // scalar prefix length cannot describe this engine: the user's text is not a suffix of the sent
+    // text and the insertion is INSIDE the first line.
+    expect(step.segments).toEqual([
+      { from: "user", start: 0, end: 6 },
+      { from: "provider", text: " OR REPLACE" },
+      { from: "user", start: 6, end: EDITED.length },
+    ]);
+    expect(renderSegments(EDITED, step.segments)).toBe(step.text);
+    expect(step.text.startsWith("CREATE OR REPLACE FUNCTION")).toBe(true);
+    // The header is SPLICED and never ASSEMBLED, because MEASURED on 476 `SECURITY DEFINER` lives
+    // in the read text although the author never typed it, and an assembled header would silently
+    // change who a view runs as.
+    expect(step.text).toContain(EDITED.slice(6));
+  });
+
+  test("a body holding the word CREATE is spliced ONCE, at the first token", async () => {
+    // The population a global replace needs, and the fixture holds it: `mentions_create` returns
+    // the literal 'CREATE TABLE', so `replaceAll("CREATE", "CREATE OR REPLACE")` rewrites the
+    // BODY as well and the render invariant stops holding.
+    const edited = CREATE_MENTIONS_CREATE.replace("RETURN 'CREATE TABLE'", "RETURN 'CREATE VIEW'");
+    const provider = await editProvider();
+    serveInstead(
+      trinoObjectSourceSql(trinoSourceStatementFor(EDIT_KIND), "memory", "app", "mentions_create"),
+      sourceRows("Create Function", [CREATE_MENTIONS_CREATE]),
+    );
+    const build = await buildOn(provider, edited, ["memory", "app", "mentions_create(bigint)"]);
+    if (!build.built) throw new Error(build.refusal.sentence);
+    if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+    const [step] = build.plan.unit.steps;
+    expect(renderSegments(edited, step.segments)).toBe(step.text);
+    expect(step.text).toContain("RETURN 'CREATE VIEW'");
+    expect(step.text.split(" OR REPLACE").length).toBe(2);
+  });
+
+  test("a text whose first token is not CREATE is refused rather than spliced", async () => {
+    const build = await buildAgainst(READ_TEXT, "ALTER FUNCTION memory.app.plus_one(x bigint) ...");
+    if (build.built) throw new Error("expected a refusal");
+    expect(build.refusal.refusal).toBe("identity");
+    // The SENTENCE and not only the class, because the first-line check below refuses the same
+    // text with the same class: without this the first-token guard is unkillable.
+    expect(build.refusal.sentence).toContain("does not begin with CREATE");
+    expect(build.refusal.sentence).toContain("ALTER");
+  });
+
+  test("the identity check is FIRST-LINE equality against the FORMATTER's own output", async () => {
+    // MEASURED on 476: the read text is the formatter's output, comments are dropped, expressions
+    // are parenthesised, `U&'\0041'` becomes `'A'` and blocks are re-indented, so its first line is
+    // canonical. The fixture's own shapes put the whole parameter list on that line, including
+    // `decimal(10, 2)`, `array(varchar)`, a ROW with a quoted `"a)b"` field and a `we(ird`
+    // identifier.
+    const renamed = READ_TEXT.replace("plus_one", "plus_two");
+    const build = await buildAgainst(READ_TEXT, renamed);
+    if (build.built) throw new Error("expected a refusal");
+    expect(build.refusal.refusal).toBe("identity");
+    expect(build.refusal.sentence).toContain(READ_TEXT.split("\n")[0]);
+    expect(build.refusal.sentence).toContain(renamed.split("\n")[0]);
+  });
+
+  test("the revision is a COMPARISON, because Trino publishes no readable token anywhere", async () => {
+    const build = await buildAgainst(READ_TEXT, EDITED);
+    if (!build.built) throw new Error(build.refusal.sentence);
+    expect(build.plan.revision).toEqual({
+      check: "compared",
+      token: await sha256Hex(READ_TEXT),
+      basis: "SHOW CREATE FUNCTION",
+      scope: "server",
+    });
+    // No session pins: the statement is fully qualified by the catalog and schema segments of its
+    // own path. No consequences: nothing measured on 476 is destroyed by a successful replace of a
+    // function.
+    expect(build.plan.session).toEqual([]);
+    expect(build.plan.consequences).toEqual([]);
+    expect(build.plan.strategy).toBe("replace-in-place-statement");
+  });
+
+  test("a truncated read refuses before anything is built, and a byte-identical text does too", async () => {
+    expect((await buildAgainst(OVER_LIMIT_TEXT, EDITED)).built).toBe(false);
+    expect((await buildAgainst(READ_TEXT, READ_TEXT)).built).toBe(false);
+  });
+
+  test("the two refusals above are DIFFERENT facts and say so", async () => {
+    const bounded = await buildAgainst(OVER_LIMIT_TEXT, EDITED);
+    if (bounded.built) throw new Error("expected a refusal");
+    expect(bounded.refusal.refusal).toBe("guard");
+    expect(bounded.refusal.sentence).toContain("1,000,001");
+    const identical = await buildAgainst(READ_TEXT, READ_TEXT);
+    if (identical.built) throw new Error("expected a refusal");
+    expect(identical.refusal.refusal).toBe("definition");
+    // Nothing was sent for either, so no engine reported a position and there is no coordinate.
+    expect(bounded.refusal.at).toEqual({ within: "none" });
+    expect(identical.refusal.at).toEqual({ within: "none" });
+  });
+
+  test("the brief's own bare over-length text RAISES, because no overload matches it", async () => {
+    // Pinned rather than hidden. A reply with no parameter list at all belongs to no segment, and
+    // the read says so naming the segment before any bound is consulted. That is why
+    // `OVER_LIMIT_TEXT` above carries the addressed parameter list.
+    await expect(buildAgainst("x".repeat(1_000_001), EDITED)).rejects.toThrow(
+      "No Trino function named plus_one(bigint) in memory.app",
+    );
+  });
+
+  test("the build selects the ADDRESSED overload out of a reply carrying every one of them", async () => {
+    // The default reply is the live one: the DOUBLE overload comes back FIRST, so a build that
+    // took `rows[0]` would compute its revision over the wrong object and refuse a correct edit.
+    const provider = await editProvider();
+    const build = await buildOn(provider, EDITED);
+    if (!build.built) throw new Error(build.refusal.sentence);
+    expect(build.preimage.text).toBe(READ_TEXT);
+    expect(build.plan.revision).toEqual({
+      check: "compared",
+      token: await sha256Hex(READ_TEXT),
+      basis: "SHOW CREATE FUNCTION",
+      scope: "server",
+    });
+  });
+
+  test("the plan carries the connection fingerprint, the path and the part it was built for", async () => {
+    const build = await buildAgainst(READ_TEXT, EDITED);
+    if (!build.built) throw new Error(build.refusal.sentence);
+    expect(build.plan.connectionFingerprint).toBe(
+      await connectionFingerprint(makeConnection({ database: "memory", schema: "app" })),
+    );
+    expect(build.plan.path).toEqual([...EDIT_PATH]);
+    expect(build.plan.kind).toBe(EDIT_KIND);
+    expect(build.plan.partId).toBe(TRINO_SOURCE_PART_ID);
+    expect(build.plan.type).toBe("trino");
+    expect(build.plan.planVersion).toBe(1);
+    // Minted here and nowhere else: the audit's correlation id identifies ONE edit.
+    expect(build.plan.planId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(Number.isNaN(Date.parse(build.plan.issuedAt))).toBe(false);
+  });
+
+  test("a part id this provider never wrote RAISES rather than refusing", async () => {
+    const provider = await editProvider();
+    await expect(
+      provider.buildObjectEdit!({ path: [...EDIT_PATH], kind: EDIT_KIND, partId: "body", text: EDITED }),
+    ).rejects.toThrow('A Trino function has one source part, "definition", received "body"');
+  });
+
+  test("a kind this provider does not apply an edited definition for RAISES by name", async () => {
+    const provider = await editProvider();
+    await expect(
+      provider.buildObjectEdit!({
+        path: ["memory", "app", "customer_names"],
+        kind: "view",
+        partId: TRINO_SOURCE_PART_ID,
+        text: CREATE_CUSTOMER_NAMES,
+      }),
+    ).rejects.toThrow('Trino does not apply an edited definition for the kind "view"');
+  });
+});
+
+describe("Trino object edit: the apply", () => {
+  test("the apply RE-READS and compares before it writes, which is what `compared` means", async () => {
+    const sent: string[] = [];
+    // The re-read and the write are two round trips, so the window is NARROWED and not closed, and
+    // this design does not let the provider close it by inventing a transaction Trino does not have.
+    const outcome = await applyAgainst({ before: READ_TEXT, after: EDITED, capture: sent });
+    expect(sent[0]).toContain("SHOW CREATE FUNCTION");
+    expect(sent[1]).toBe(PLAN_TEXT);
+    expect(outcome.outcome).toBe("applied");
+  });
+
+  test("the re-read addresses the SAME statement the build read", async () => {
+    // The build resolves the overload through SHOW FUNCTIONS; the apply holds the plan alone and
+    // takes the bare name back out of the path segment. This is the guard that the two agree.
+    const sent: string[] = [];
+    await applyAgainst({ before: READ_TEXT, after: EDITED, capture: sent });
+    expect(sent[0]).toBe(SHOW_PLUS_ONE);
+  });
+
+  test("a successful apply answers the NEW revision and never the token the plan carried", async () => {
+    const outcome = await applyAgainst({ before: READ_TEXT, after: EDITED });
+    if (outcome.outcome !== "applied") throw new Error("narrowing");
+    expect(outcome.revision).toEqual({
+      check: "compared",
+      token: await sha256Hex(EDITED),
+      basis: "SHOW CREATE FUNCTION",
+      scope: "server",
+    });
+    expect(outcome.duration).toBeGreaterThanOrEqual(0);
+  });
+
+  test("a definition that MOVED between the build and the apply is a conflict with the current text", async () => {
+    const outcome = await applyAgainst({ before: `${READ_TEXT} -- somebody else`, after: EDITED });
+    if (outcome.outcome !== "conflict" || outcome.conflict !== "object-changed") throw new Error("narrowing");
+    expect(outcome.current.text).toBe(`${READ_TEXT} -- somebody else`);
+  });
+
+  test("a conflict SENDS NOTHING, which is what makes it a detection rather than a report", async () => {
+    const sent: string[] = [];
+    await applyAgainst({ before: `${READ_TEXT} -- somebody else`, after: EDITED, capture: sent });
+    expect(sent).toEqual([SHOW_PLUS_ONE]);
+  });
+
+  test("the addressed row is verified AFTER the apply, and a fork is `applied-elsewhere` UNDONE: false", async () => {
+    // MEASURED why this arm is reachable: only the ARGUMENT TYPE LIST forks on 476, a changed
+    // return type and a renamed parameter are replaced in place, so a fork needs an argument-type
+    // edit, which the build's first-line check already refuses. This post-apply check is the
+    // CONTROL that catches a first-line rule this design got wrong.
+    const outcome = await applyAgainst({ before: READ_TEXT, after: READ_TEXT, forced: true });
+    if (outcome.outcome !== "applied-elsewhere") throw new Error("narrowing");
+    // Trino has no transaction to take it back and this design will not issue a DROP to clean up.
+    expect(outcome.undone).toBe(false);
+  });
+
+  test("NOT_SUPPORTED errorCode 13 is `unsupported` and carries the coordinator's own name", async () => {
+    const outcome = await applyWithTrinoError({
+      errorName: "NOT_SUPPORTED",
+      errorCode: 13,
+      message: "This connector does not support creating functions",
+    });
+    if (outcome.outcome !== "refused") throw new Error("narrowing");
+    expect(outcome.refusal.refusal).toBe("unsupported");
+    expect(outcome.refusal.code).toBe("NOT_SUPPORTED");
+  });
+
+  test("errorLocation is converted by SUBTRACTING the splice, which on line 1 is exactly 11 columns", async () => {
+    const outcome = await applyWithTrinoError({
+      errorName: "COLUMN_NOT_FOUND",
+      errorCode: 46,
+      message: "line 1:34: Column 'nope' cannot be resolved",
+      errorLocation: { lineNumber: 1, columnNumber: 34 },
+    });
+    if (outcome.outcome !== "refused") throw new Error("narrowing");
+    expect(outcome.refusal.at).toEqual({ within: "user", line: 1, column: 23 });
+  });
+
+  test("a body error on a LATER line is NOT shifted, because the splice is on line 1", async () => {
+    // MEASURED on 476: `RETURN nope` answers `line 3:8` BOTH bare and spliced, so a rule that
+    // subtracted eleven columns everywhere would put the marker eleven characters to the left of
+    // the token. The real fault name and errorCode for that reply are COLUMN_NOT_FOUND and 47.
+    const outcome = await applyWithTrinoError({
+      errorName: "COLUMN_NOT_FOUND",
+      errorCode: 47,
+      message: "line 3:8: Column 'nope' cannot be resolved",
+      errorLocation: { lineNumber: 3, columnNumber: 8 },
+    });
+    if (outcome.outcome !== "refused") throw new Error("narrowing");
+    expect(outcome.refusal.at).toEqual({ within: "user", line: 3, column: 8 });
+  });
+
+  test("a coordinate landing INSIDE the spliced clause is `outside` and never a clamped number", async () => {
+    const outcome = await applyWithTrinoError({
+      errorName: "SYNTAX_ERROR",
+      errorCode: 1,
+      message: "line 1:9: mismatched input 'OR'",
+      errorLocation: { lineNumber: 1, columnNumber: 9 },
+    });
+    if (outcome.outcome !== "refused") throw new Error("narrowing");
+    expect(outcome.refusal.at).toEqual({ within: "outside" });
+  });
+
+  test("a refusal the coordinator sent with NO location at all carries no coordinate", async () => {
+    const outcome = await applyWithTrinoError({
+      errorName: "NOT_SUPPORTED",
+      errorCode: 13,
+      message: "This connector does not support creating functions",
+    });
+    if (outcome.outcome !== "refused") throw new Error("narrowing");
+    expect(outcome.refusal.at).toEqual({ within: "none" });
+    // The engine's own sentence, unprefixed, and never a word of this product's own.
+    expect(outcome.refusal.sentence).toBe("This connector does not support creating functions");
+  });
+
+  test("PERMISSION_DENIED is `privilege` and never the 401 the shipped mapper would make of it", async () => {
+    const outcome = await applyWithTrinoError({
+      errorName: "PERMISSION_DENIED",
+      errorCode: 4,
+      message: "Access Denied: Cannot create function memory.app.plus_one",
+    });
+    if (outcome.outcome !== "refused") throw new Error("narrowing");
+    expect(outcome.refusal.refusal).toBe("privilege");
+  });
+
+  test("a fault name the classifier has never seen is `definition` with the engine's own sentence", async () => {
+    const outcome = await applyWithTrinoError({
+      errorName: "TYPE_MISMATCH",
+      errorCode: 43,
+      message: "line 3:8: Cannot cast varchar to bigint",
+    });
+    if (outcome.outcome !== "refused") throw new Error("narrowing");
+    expect(outcome.refusal.refusal).toBe("definition");
+    expect(outcome.refusal.code).toBe("TYPE_MISMATCH");
+  });
+
+  test("a timeout is INTERRUPTED and never a TimeoutError", async () => {
+    // `trino/index.ts:680` mints a TimeoutError directly, and `src/lib/api/errors.ts:108-120`
+    // answers that 408 `retryable: true`. A client that retries an apply whose disposition is
+    // unknown applies twice.
+    const outcome = await applyWithTrinoError(new TimeoutError("Query timed out"));
+    if (outcome.outcome !== "interrupted") throw new Error("narrowing");
+    expect(outcome.committed).toBe("unknown");
+  });
+
+  test("the engine's OWN timeout fault is interrupted too, which is the arm the mapper would 408", async () => {
+    // The wire shape a real deadline produces: EXCEEDED_TIME_LIMIT is the fault name the transport
+    // categorises `timeout`, and that category is what `mapTrinoError` turns into a TimeoutError.
+    const outcome = await applyWithTrinoError({
+      errorName: "EXCEEDED_TIME_LIMIT",
+      errorCode: 66,
+      message: "Query exceeded maximum time limit of 1.00m",
+    });
+    if (outcome.outcome !== "interrupted") throw new Error("narrowing");
+    expect(outcome.committed).toBe("unknown");
+    expect(outcome.sentence).toContain("Query exceeded maximum time limit");
+  });
+
+  test("a cancelled apply is interrupted, because the disposition of the write is unknown", async () => {
+    const outcome = await applyWithTrinoError({
+      errorName: "USER_CANCELED",
+      errorCode: 6,
+      message: "Query was canceled",
+    });
+    if (outcome.outcome !== "interrupted") throw new Error("narrowing");
+    expect(outcome.committed).toBe("unknown");
+  });
+
+  test("a command unit is not a shape this provider ever issues, and it RAISES", async () => {
+    const provider = await editProvider();
+    const plan = await forcedPlan(EDITED);
+    if (plan.unit.medium !== "statement") throw new Error("narrowing");
+    const [payload] = plan.unit.steps;
+    await expect(
+      provider.applyObjectEdit!({
+        ...plan,
+        unit: { medium: "command", name: "FUNCTION", arguments: ["LOAD"], payload },
+      }),
+    ).rejects.toThrow("A Trino object edit plan carries a statement unit, received a command");
+  });
+
+  test("a re-read that answers NO ROW for the addressed overload is a conflict with an empty text", async () => {
+    // The object was DROPPED between the build and the apply. Nothing is sent, and the diff H3
+    // requires shows the reader their text against nothing, which is what is there.
+    const provider = await editProvider();
+    serveInstead(SHOW_PLUS_ONE, sourceRows("Create Function", [READ_TEXT]));
+    const plan = await planOn(provider, EDITED);
+    const mark = sentSql.length;
+    serveInstead(SHOW_PLUS_ONE, sourceRows("Create Function", [CREATE_PLUS_ONE_DOUBLE]));
+    const outcome = await provider.applyObjectEdit!(plan);
+    if (outcome.outcome !== "conflict" || outcome.conflict !== "object-changed") throw new Error("narrowing");
+    expect(outcome.current.text).toBe("");
+    expect(sentSql.slice(mark)).toEqual([SHOW_PLUS_ONE]);
+  });
+});
+
+describe("Trino object edit: the derivations, driven to their BOUND values", () => {
+  /**
+   * Standing ruling 5g (#789), and Trino needs BOTH halves of it.
+   *
+   * A two-level engine makes the naive test pass for an implementation that hardcodes
+   * `catalog = path[0]`, because on the declared order that bind is right. The second
+   * declaration SWAPS the two levels and feeds a path in the swapped order, where the same
+   * three values must still reach the coordinator.
+   */
+  const LEVELS = {
+    declared: [
+      { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+      { id: "schema", label: "Schema", labelPlural: "Schemas" },
+    ],
+    swapped: [
+      { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+    ],
+  } as const;
+
+  for (const [shape, path] of [
+    ["declared", ["memory", "app", "plus_one(bigint)"]],
+    ["swapped", ["app", "memory", "plus_one(bigint)"]],
+  ] as const) {
+    test(`the ${shape} declaration sends the same three values to the coordinator`, async () => {
+      const provider = await editProvider();
+      const real = provider.getCapabilities();
+      spyOn(provider, "getCapabilities").mockReturnValue({
+        ...real,
+        containerLevels: [...LEVELS[shape]],
+      } as ProviderCapabilities);
+      serveInstead(SHOW_PLUS_ONE, sourceRows("Create Function", [READ_TEXT]));
+      const build = await buildOn(provider, EDITED, path);
+      if (!build.built) throw new Error(build.refusal.sentence);
+      // The BOUND value and not a refusal: the statement that reached the cluster.
+      expect(sqlWith("SHOW CREATE FUNCTION")).toBe('SHOW CREATE FUNCTION "memory"."app"."plus_one"');
+      expect(sqlWith("SHOW FUNCTIONS")).toBe('SHOW FUNCTIONS FROM "memory"."app"');
+      expect(build.plan.path).toEqual([...path]);
+    });
+  }
+
+  test("the path segment inverse round-trips every function the fixture holds", async () => {
+    // `trinoFunctionSegmentParts` is what lets the apply address the object from the plan alone,
+    // and the fixture is what makes it non-vacuous: `we(ird` puts a parenthesis inside the NAME,
+    // `rowparen` puts one inside a QUOTED row field, `hard` nests three levels and `answer` has an
+    // empty list.
+    for (const row of MEMORY_APP_FUNCTION_ROWS) {
+      const [name, , argumentTypes] = row as [string, string, string];
+      const segment = functionSegment(name, argumentTypes);
+      expect(trinoFunctionSegmentParts(segment)).toEqual({ name, argumentTypes });
+    }
+  });
+
+  test("a segment that is not a segment shape at all answers null rather than a wrong name", async () => {
+    // `bigint)` is the case the loop EXHAUSTS on: it ends with a close parenthesis, so the scan
+    // starts, and no open parenthesis ever brings the depth back to zero.
+    for (const notASegment of ["plus_one", "", "(bigint)", "plus_one(bigint", ")(", "bigint)"]) {
+      expect(trinoFunctionSegmentParts(notASegment)).toBeNull();
+    }
+  });
+
+  test("the splice anchor is the end of the FIRST TOKEN, whitespace and case included", () => {
+    expect(trinoSpliceAt("CREATE FUNCTION f()")).toBe(6);
+    expect(trinoSpliceAt("  create\nFUNCTION f()")).toBe(8);
+    expect(trinoSpliceAt("CREATE")).toBe(6);
+    expect(trinoSpliceAt("ALTER FUNCTION f()")).toBeNull();
+    expect(trinoSpliceAt("   ")).toBeNull();
+    expect(trinoSpliceAt("")).toBeNull();
   });
 });
