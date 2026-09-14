@@ -848,6 +848,12 @@ a view or a schema-altering statement is the day the question is worth reopening
 
 ---
 
+#### Object edit (#789): nothing to write, for the same reason there is nothing to read
+
+The embedded store declares no source-bearing kind at all, so there is no definition text to edit and no plan to build.
+That absence is measured rather than assumed, and the section above records what the export surface carries instead of a definition.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together: it asserts the absence over EVERY kind this provider declares, not only over the ones that would carry a definition.
+
 ## 7. Monitoring & health
 
 All monitoring derives from `fs.statSync` (file size) and one `kv.range` scan of the keyspace.

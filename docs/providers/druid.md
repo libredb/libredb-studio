@@ -1359,6 +1359,12 @@ transport change rather than a source read:
 That last one is the reason `lookup` is a **deferral and not an absence**, and it is filed in
 [`docs/BACKLOG.md`](../BACKLOG.md) with this measurement rather than only here.
 
+#### Object edit (#789): nothing to write, for the same reason there is nothing to read
+
+This engine is the simplest absence in the fleet: it declares no source-bearing kind at all, so there is no definition text for a reader to edit and no plan for a provider to build.
+The three reasons are the ones in the section above, and none of them changes for a write path.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together: it asserts the absence over EVERY kind this provider declares, not only over the ones that would carry a definition.
+
 ## 7. Monitoring & health
 
 Every read below degrades to empty/zero when the failure `isMonitoringUnavailable()` —

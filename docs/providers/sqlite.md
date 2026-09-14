@@ -645,6 +645,14 @@ Nothing here has an Oracle package's specification-and-body split.
 
 ---
 
+### 6.3 Object edit (#789)
+
+This engine is a REFUSAL, and the reason is that there is no replace grammar to build a strategy on.
+There is no `OR REPLACE` for any kind and no `ALTER VIEW`, each measured against a kind-naming plain-`CREATE` control, and `IF NOT EXISTS` parses as a SILENT NO-OP rather than as an error.
+The only strategy left is a transaction, and a successful apply would still not be evidence the object works, because SQLite never validates a view or a trigger BODY at CREATE time.
+A row can also carry `sql IS NULL`, as `sqlite_autoindex_uq_1` does, so non-editability is a PER-ROW fact on this engine and not only a per-kind one, and the kind-vocabulary guard that scrapes source text (D66) stays untouched by this phase for exactly that reason.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
+
 ## 7. Monitoring & health
 
 Minimal by nature — SQLite keeps almost no server-style runtime statistics.

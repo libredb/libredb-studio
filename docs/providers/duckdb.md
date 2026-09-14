@@ -895,6 +895,15 @@ segment carries an argument type list.
 
 ---
 
+### Object edit (#789)
+
+This engine is a REFUSAL on every kind it declares, and the kinds refuse for three different reasons.
+`view` is the one DEFERRED case and is the cheapest second producer for the collateral machinery: a single `CREATE OR REPLACE` is atomic on failure, and the price is that a byte-identical replace DISCARDS the view's COMMENT.
+`macro` is refused while a Phase 2 defect stands: `CREATE OR REPLACE MACRO` replaces the NAME and deletes every other overload, and the macro read in [`index.ts`](../../src/lib/db/providers/sql/duckdb/index.ts) takes `rows[0]`, so the pane shows one overload and calls it the definition.
+`table` and `sequence` are refused because a SUCCESS would destroy what the user was never shown: `CREATE OR REPLACE TABLE` with the table's own published DDL deletes every row, and a sequence's published `START` is the reached value plus one, so the pane shows a clause the author never typed and which moves on every use.
+Shipping even the `view` case would make this provider the first producer of `revision.scope: "connection"`, which needs an identity for the PROVIDER INSTANCE that `getOrCreateProvider()` does not mint.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
+
 ## 7. Monitoring & health
 
 Measured through a fixture of `main.customers` (5 rows), `main.orders` (7 rows),

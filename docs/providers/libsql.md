@@ -691,6 +691,14 @@ A libSQL object has exactly one text, so there is no batch to assemble and no se
 
 ---
 
+### 6.3 Object edit (#789)
+
+This engine is a REFUSAL, and the reason is that there is no replace grammar to build a strategy on.
+There is no `OR REPLACE` for any kind and no `ALTER VIEW`, each measured against a kind-naming plain-`CREATE` control, and `IF NOT EXISTS` parses as a SILENT NO-OP rather than as an error.
+The only strategy left is a transaction, and a successful apply would still not be evidence the object works, because the SQLite dialect this engine speaks never validates a view or a trigger BODY at CREATE time.
+A row can also carry `sql IS NULL`, as `sqlite_autoindex_uq_1` does, so non-editability is a PER-ROW fact here and not only a per-kind one.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
+
 ## 7. Monitoring & health
 
 Measured through the provider against both deployments (fixture: 2 tables, 3 and 2000 rows, 1 index):

@@ -1515,6 +1515,14 @@ Three things about it are load-bearing:
 
 ---
 
+### Object edit (#789)
+
+This engine is a REFUSAL of the strongest class in the fleet: the FAILURE destroys the object.
+A `CREATE OR REPLACE` that fails to COMPILE overwrites the stored source with the broken text, marks the object `INVALID`, and THE DRIVER DOES NOT THROW, measured on FUNCTION, PROCEDURE, PACKAGE BODY, PACKAGE SPEC, TRIGGER and a `FORCE` VIEW.
+For a TRIGGER that is a table outage rather than one broken object: every INSERT then answers `ORA-04098` while `USER_TRIGGERS.STATUS` still reads `ENABLED`.
+Detecting that success-that-is-not-a-success means reading the driver's warning, and it is unwritable here until an ambient declaration grows: [`db-drivers.d.ts`](../../src/types/db-drivers.d.ts) declares oracledb's `Result` with no `warning` member at all.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
+
 ## 8. Monitoring & health
 
 All from `V$`/`USER_*` views; `getMonitoringData()` (inherited) fans them out in parallel. Each

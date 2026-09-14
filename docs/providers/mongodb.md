@@ -702,6 +702,13 @@ reachable through `describeObject`, which is where an object's properties belong
 
 ---
 
+### Object edit (#789)
+
+This engine is a REFUSAL because it was NOT PROBED, and this section says so rather than implying a measurement.
+The one question an editable `view` turns on, whether `collMod` preserves a view's collation when it rewrites the pipeline, was not run in either wave of #789.
+An unprobed engine cannot be shown to satisfy either half of ruling 1b, so the declaration is withheld rather than guessed.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
+
 ## 7. Monitoring & health
 
 Rich, from `admin().serverStatus()`, `db.stats()`, `currentOp`, `$indexStats`, and the profiler.

@@ -1226,6 +1226,13 @@ curl -s "http://127.0.0.1:8123/?user=libredb&password=$CH_PASSWORD&database=demo
 
 ---
 
+### 6.3 Object edit (#789)
+
+This engine is a REFUSAL, and the reason is that no measured escaper exists for its identifiers.
+A backslash inside a quoted identifier is an ESCAPE in both the double-quote and the backtick form on 26.7.1.1315, and all three identifier quoters in this tree emit `"x\"` for the name `x\`, so the statement a plan would carry is not the statement the author addressed.
+One question here is UNMEASURED and is recorded as such rather than answered: whether a dictionary's credential is really redacted in the text the Phase 2 read returns.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
+
 ## 7. Monitoring & health
 
 Every method below degrades to empty/zero on `ACCESS_DENIED` (497) or `UNKNOWN_TABLE` (60) — and

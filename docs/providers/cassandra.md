@@ -1667,3 +1667,10 @@ service in `database-compose.yml` rewrites `cassandra.yaml` before the node star
 reason. A stock 5.0 node legitimately holds no materialized view and no user-defined function, so on
 one of those the `materialized_view`, `function` and `aggregate` folders are correctly empty and their
 source reads have nothing to read. That is a property of the node, not of the provider.
+
+## 13. Object edit (#789)
+
+This engine is a REFUSAL because it was NOT PROBED, and this section says so rather than implying a measurement.
+Neither wave of #789 ran the two questions an editable Cassandra kind turns on: how a replace behaves across a function's SIGNATURE, and what happens to an aggregate when the function it names is replaced under it.
+Nothing here claims that no strategy exists; it records that nobody measured one, and a declaration made on an unprobed engine is exactly what ruling 1b of this phase refuses.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.

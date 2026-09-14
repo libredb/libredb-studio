@@ -879,6 +879,14 @@ An empty definition text is not engine-reachable either; every module the server
 with a newline and a `CREATE`.
 Both arms are driven in the suite instead, and both are mutation-tested.
 
+#### Object edit (#789)
+
+Four kinds here are DEFERRED rather than refused, and one shape of a fifth is a refusal outright.
+`CREATE OR ALTER` works on `procedure`, `function`, `trigger` and a plain `view`, and a transaction really does revert it, so the failure arm is safe; the price is three unbuilt pieces, no bound parameter on either send path (`Msg 111`), never sending `USE` because it persists on the pooled connection, and reading `uses_quoted_identifier` and `uses_ansi_nulls` beside the definition.
+A view CARRYING AN INDEX is a REFUSAL: `CREATE OR ALTER VIEW` drops its clustered index on a byte-identical body and reports success, which is a destroyed object the user was never shown.
+Shipping the deferred four would make this provider the first producer of the `transactional-replace` strategy and of the `interrupted.committed: "rolled-back"` outcome.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
+
 #### `describeObjects()` describes a whole folder in five statements (#789)
 
 `describeObjects(container, kind, limit?)` answers columns, indexes and foreign keys for EVERY object

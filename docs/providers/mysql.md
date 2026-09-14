@@ -1076,6 +1076,15 @@ Both kinds declare `hasSource`, and neither folder is drawn in the standalone tr
 is kept because it is true about the ENGINE: a connected provider answers both kinds and the source
 route reaches them. Withholding it would be a second wrong declaration rather than a safer one.
 
+#### Object edit (#789)
+
+This engine is a REFUSAL, and the reason is that no non-destructive strategy exists for its routines.
+`CREATE OR REPLACE` is three separate `ERROR 1064` here, on `procedure`, on `function` and on `trigger`, and `ALTER PROCEDURE` and `ALTER FUNCTION` take characteristics only, so nothing on this engine can replace a routine body in place.
+Two kinds are DEFERRED rather than refused and both are safe: `CREATE OR REPLACE VIEW` works, and `ALTER EVENT ... DO` preserves the materialised `STARTS` timestamp instead of restarting the schedule.
+Every routine is additionally refused while the DEFINER question is open: keeping the definer needs `SET_ANY_DEFINER` on MySQL and `SET USER` on MariaDB, the same errno 1227 under two different privilege names, neither is enough for a `SYSTEM_USER` definer, and stripping it silently transfers the object's security principal to the pooled Studio credential.
+MariaDB carries one PERMANENT refusal of its own on top of those: `CREATE OR REPLACE PACKAGE` against a package SPECIFICATION destroys the PACKAGE BODY, on byte-identical spec text, and reports success, and no strategy re-creates the body in the same call.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together: it drives the MariaDB branch separately, because an unconnected provider answers the MySQL six and would never reach `package` at all.
+
 #### The fixture, and running it
 
 [`docker/mysql-init/01-object-fixture.sql`](../../docker/mysql-init/01-object-fixture.sql) and

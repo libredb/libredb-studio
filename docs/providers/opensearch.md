@@ -1120,6 +1120,14 @@ never marked.
 
 ---
 
+#### Object edit (#789)
+
+This engine is a REFUSAL, and the reason is that the READ is lossy, which makes any write back a rewrite dressed as an edit.
+The pane re-serialises the cluster's JSON rather than echoing it: a long past 2^53 comes back re-spelled, `1.0E30` becomes `1e+30`, and map key order changes (D61).
+Sending that text back would apply changes the author never made, on fields they never touched, which is a success that destroys something the user was not shown.
+The same measurement is why the plan digest this phase added is a hand-written length-framed walk and never `JSON.stringify`.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together: one declaration constant serves this id and `elasticsearch`, so the two rows of the census always move together.
+
 ## 7. Monitoring & health
 
 Every read goes through `guarded()`

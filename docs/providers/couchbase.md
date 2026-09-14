@@ -987,6 +987,13 @@ names the function.
 
 ---
 
+## 6c. Object edit (#789)
+
+This engine is a REFUSAL because it was NOT PROBED, and this section says so rather than implying a measurement.
+Neither wave of #789 ran a replace against a UDF on this image, so nothing is known here about what a failed replace, or a byte-identical one, does to the stored function.
+An unprobed engine cannot be shown to satisfy either half of ruling 1b, so the declaration is withheld rather than guessed.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
+
 ## 7. Monitoring & health
 
 Every method below degrades to empty on a permission error
