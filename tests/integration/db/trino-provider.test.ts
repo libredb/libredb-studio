@@ -3404,6 +3404,18 @@ const CANONICALIZED = READ_TEXT.replace(
  * engine whether this design is right about that for a given text.
  */
 const RECASED = READ_TEXT.replace("(x bigint)", "(x BIGINT)").replace("RETURN (x + 1)", "RETURN (x + 9)");
+/**
+ * The same population on the NAME half, and it is the half a type-only shape cannot reach.
+ *
+ * Driven through the shipped provider against `trino-t32r1` on 2026-09-15: reading
+ * `plus_one(bigint)`, re-casing the qualified name to `memory.app.PLUS_ONE` and applying answered
+ * `{"outcome":"applied"}` and left ONE `plus_one` row, the engine echoing the reader's capitals
+ * back in `SHOW CREATE FUNCTION`.
+ */
+const RECASED_NAME = READ_TEXT.replace("memory.app.plus_one", "memory.app.PLUS_ONE").replace(
+  "RETURN (x + 1)",
+  "RETURN (x + 4)",
+);
 /** The one edit that FORKS on 476, and the row the coordinator then answers for it, verbatim. */
 const FORKING_TEXT = READ_TEXT.replace("(x bigint)", "(x varchar)").replace("RETURN (x + 1)", "RETURN (length(x) + 1)");
 const CREATE_PLUS_ONE_VARCHAR =
@@ -3499,6 +3511,19 @@ const CREATE_ROWF_QUOTED = 'CREATE FUNCTION memory.app.rowf(r ROW("ab" bigint))\
 const ROWF_QUOTED_ROW: unknown[] = ["rowf", "bigint", 'row("ab" bigint)', "scalar", true, ""];
 const ROWF_QUOTED_SEGMENT = 'rowf(row("ab" bigint))';
 const CREATE_DQ = 'CREATE FUNCTION memory.app.dq(r ROW("a""b" bigint))\nRETURNS bigint\nRETURN 1';
+/**
+ * The one lossy step the identity reading keeps, and the measurement that says it must.
+ *
+ * `SHOW CREATE FUNCTION memory.app.dec` answers `decimal(10, 2)` with a space and `SHOW FUNCTIONS`
+ * publishes `decimal(10,2)` without one, both verbatim from `trino-t32r1` on 2026-09-15, and
+ * `CREATE OR REPLACE FUNCTION memory.app.dec(x decimal(10,2))` over the spaced one replaced it IN
+ * PLACE, one row before and one after, re-rendered back with the space. So whitespace outside a
+ * quoted identifier is not part of the identity, and dropping it is what stops a reader who closed
+ * a gap inside a type from being refused.
+ */
+const CREATE_DEC = "CREATE FUNCTION memory.app.dec(x decimal(10, 2))\nRETURNS bigint\nRETURN 2";
+const DEC_ROW: unknown[] = ["dec", "bigint", "decimal(10,2)", "scalar", true, ""];
+const DEC_SEGMENT = "dec(decimal(10,2))";
 const DQ_ROW: unknown[] = ["dq", "bigint", 'row("a""b" bigint)', "scalar", true, ""];
 const DQ_SEGMENT = 'dq(row("a""b" bigint))';
 
@@ -3924,6 +3949,24 @@ describe("Trino object edit: the build", () => {
     expect(nameShapes).toHaveLength(3);
   });
 
+  test("whitespace closed up INSIDE a rendered type is not a fork, and builds", async () => {
+    // The other lossy step, and the only one left in the identity reading. MEASURED on 476 in
+    // container `trino-t32r1` on 2026-09-15: `decimal(10,2)` applied over `decimal(10, 2)` left
+    // ONE row and came back re-rendered with the space, so the gap the reader closed is not part
+    // of the identity. Without this the suite cannot tell a reading that drops that whitespace
+    // from one that keeps it, and a reader who tidied a type list would be refused.
+    const build = await buildAgainstExtra({
+      bare: "dec",
+      row: DEC_ROW,
+      segment: DEC_SEGMENT,
+      readText: CREATE_DEC,
+      submitted: CREATE_DEC.replace("decimal(10, 2)", "decimal(10,2)").replace("RETURN 2", "RETURN 3"),
+    });
+    if (!build.built) throw new Error(build.refusal.sentence);
+    if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+    expect(build.plan.unit.steps[0]?.text).toContain("memory.app.dec(x decimal(10,2))");
+  });
+
   test("a qualified name that differs INSIDE its quotes is still refused", async () => {
     // The fail-safe edge of the rule above, and the reason the name is folded by a rule rather
     // than by stripping its quotes: `memory.app."plus one"` is a name a reader can type and
@@ -4308,6 +4351,16 @@ describe("Trino object edit: the apply", () => {
     // identity-preserving, and the write nonetheless left `SHOW CREATE FUNCTION` answering MORE
     // rows than it did before. A parameter rename is that population, MEASURED in place on 476,
     // and a gained row there says the reading was wrong about this text.
+    // BOTH HALVES OF THE IDENTITY, because the trigger compares the name and the types and a
+    // shape that moves only one of them cannot tell a reading of both from a reading of one.
+    const shapes = [RECASED, RECASED_NAME];
+    for (const after of shapes) {
+      const forked = await applyAgainst({ before: READ_TEXT, after, gained: [CREATE_PLUS_ONE_VARCHAR] });
+      if (forked.outcome !== "applied-elsewhere") throw new Error(`narrowing: ${forked.outcome}`);
+      expect(forked.undone).toBe(false);
+      expect(forked.wrote).toBeUndefined();
+    }
+    expect(shapes).toHaveLength(2);
     const outcome = await applyAgainst({ before: READ_TEXT, after: RECASED, gained: [CREATE_PLUS_ONE_VARCHAR] });
     if (outcome.outcome !== "applied-elsewhere") throw new Error("narrowing");
     expect(outcome.undone).toBe(false);
@@ -4322,8 +4375,12 @@ describe("Trino object edit: the apply", () => {
     // this design deliberately widened to allow, and a reader who renamed a parameter would be
     // told their edit went somewhere else. MEASURED on 476: a rename is replaced in place, one row
     // before and one after.
-    const outcome = await applyAgainst({ before: READ_TEXT, after: RECASED });
-    expect(outcome.outcome).toBe("applied");
+    const shapes = [RECASED, RECASED_NAME];
+    for (const after of shapes) {
+      const outcome = await applyAgainst({ before: READ_TEXT, after });
+      expect(outcome.outcome).toBe("applied");
+    }
+    expect(shapes).toHaveLength(2);
   });
 
   test("an edit the FORMATTER canonicalizes back to the pre-image is `applied`, not a fork", async () => {
