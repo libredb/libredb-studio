@@ -3273,6 +3273,46 @@ export class PostgresProvider extends SQLBaseProvider {
     const [step] = plan.unit.steps;
     const started = Date.now();
     const client = await this.pool!.connect();
+    // A CLIENT THAT IS NOT IDLE BELONGS TO SOMEBODY ELSE'S TRANSACTION, and this apply refuses
+    // rather than writing into it (#789 Phase 3, D78). The status is the server's own last
+    // ReadyForQuery byte, read locally, so the check costs no round trip and cannot be defeated by
+    // a BEGIN no splitter sees through, which is the same argument `endOpenQueryTransaction()`
+    // makes for reading it.
+    //
+    // MEASURED on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) through `pg` 8.23 on 2026-09-14,
+    // driving this provider against a throwaway container: a lone `BEGIN` through `query()`
+    // releases its pooled client in status `T`, `pg`'s idle list is LIFO so the next
+    // `pool.connect()` hands back THE SAME client, and without this guard the apply ran inside
+    // that foreign transaction and answered `applied` with a `guarded` revision token. Then
+    // `endOpenQueryTransaction()`, which names that very client, rolled the apply away: `xmin`
+    // 856 back to 825, the definition byte-identical to the pre-image. Ruling 1a is that the bytes
+    // the user approved are the bytes the database ends up with, and they were not. Two more
+    // consequences in the same run: the revision handed back is whichever image the re-read's own
+    // borrowed client happened to see, the post-image on the same client and the PRE-image on a
+    // different one; and the `SET LOCAL search_path` pin SURVIVED into the rest of the foreign
+    // transaction, `SHOW search_path` reading `app, pg_catalog` afterwards.
+    //
+    // NEITHER A ROLLBACK NOR A RETRY. A rollback here destroys work this user was never shown,
+    // which is the axis ruling 1b measures; and `POSTGRES_POOL_MAX=1`, which a single-slot
+    // PgBouncer also produces, has no other client to retry on. So the refusal is the honest
+    // answer, and it is `guard` because the precondition is this design's own: this method opens
+    // no transaction and depends on PostgreSQL's implicit one around its single round trip.
+    const borrowed = client.getTransactionStatus();
+    if (borrowed !== "I") {
+      client.release();
+      return {
+        outcome: "refused",
+        refusal: {
+          refusal: "guard",
+          sentence:
+            "this connection's pooled session is inside a transaction somebody else opened, so an apply " +
+            "sent on it would not be committed by this request and could be rolled back with theirs",
+          // No engine spoke, so there is no SQLSTATE to carry and no reported position to convert.
+          at: { within: "none" },
+        },
+        duration: Date.now() - started,
+      };
+    }
     // THE FAILURE IS CAUGHT HERE AND CLASSIFIED AFTER THE RELEASE, and the order is load-bearing
     // rather than tidy. `classifyApplyFailure` takes a SECOND pooled client for the conflict arm's
     // re-read, and classifying inside the `catch` runs it BEFORE this `finally`, so the failed

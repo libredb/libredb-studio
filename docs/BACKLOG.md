@@ -1073,34 +1073,39 @@ builds is a driver mock, and the guard reads as one over a population nothing he
 **Done when:** the fixture carries a routine with a parameter `DEFAULT` holding a `)` in a string
 literal, and the integration suite's `applied-elsewhere` case is driven against it.
 
-### D78. An object edit on a poisoned pooled client is refused as a `definition` fault, and the client goes back to the pool still poisoned
+### D78. An object edit refuses on a pooled client somebody else left in a transaction, and nothing clears it
 
 MEASURED 2026-09-14 on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) through `pg` 8.23, on a throwaway
-container, with the apply's own emitted shape sent on a client that a bare `BEGIN` plus a failing
-statement had left in status `E`.
+container, driving `PostgresProvider` itself rather than a hand-written statement.
 
-The apply answered SQLSTATE `25P02`, `current transaction is aborted, commands ignored until end of
-transaction block`. `25P02` is not in `APPLY_VERDICT_BY_SQLSTATE`, so `classifyApplyFailure` answers the
-documented default for an unrecognised code, `refused` with class `definition`, and the reader is told
-their definition was rejected when what happened is that somebody else's unfinished transaction was on
-the connection they borrowed. The object was unchanged, so nothing is lost and the failure is safe; what
-is wrong is the class and the sentence.
+What was WRONG and is now fixed here: `applyObjectEdit` sent the plan on whatever pooled client it
+borrowed. A lone `BEGIN` through `query()` releases that client in status `T`, `pg`'s idle list is LIFO
+so the next `pool.connect()` hands the SAME client back, and the apply then ran inside the foreign
+transaction and answered `applied` with a `guarded` revision token. The write was uncommitted, so
+`endOpenQueryTransaction()` on the same connection rolled it away, `xmin` 856 back to 825 and the
+definition byte-identical to the pre-image; the revision handed back was whichever image the re-read's
+own borrowed client happened to see; and the `SET LOCAL search_path` pin survived into the rest of the
+foreign transaction, `SHOW search_path` reading `app, pg_catalog`. The same borrow in status `E`
+answered SQLSTATE `25P02` and, that code not being in `APPLY_VERDICT_BY_SQLSTATE`, was classified
+`refused` with class `definition`, telling the reader their definition was rejected. `applyObjectEdit`
+now reads the client's ReadyForQuery status before it sends anything and refuses with class `guard` when
+it is not `I`, which closes both.
 
-The client is then released in status `E`. `applyObjectEdit` takes its own `pool.connect()`, so the
-client is never `lastQueryClient` and `endOpenQueryTransaction()` cannot name it, and
-`src/app/api/db/objects/edit-apply/route.ts` has no `finally` that asks. So the apply does not create the
-poison and it does not clear it either: it passes it on.
-
-Measured in the same run, as the control: a plain `ROLLBACK` on that client, which is exactly what
-`endOpenQueryTransaction()` issues, returns the status to `I` and the identical apply then succeeds with
-`pg_proc.xmin` moving 844 -> 846.
+What is STILL OPEN and is this entry: the refusal does not CLEAR the transaction, and neither does the
+route. Rolling it back would destroy work the refused user was never shown, so the apply must not; but
+`src/app/api/db/objects/edit-apply/route.ts` has no `finally` and calls nothing, so a client poisoned by
+another route stays poisoned and every object edit on that connection id keeps refusing until some other
+request happens to end it. Measured as the control in the same run: a plain `ROLLBACK` on that client,
+which is what `endOpenQueryTransaction()` issues, returns the status to `I` and the identical apply then
+succeeds.
 
 The population is bounded by D74 rather than open: #823 gave `/api/db/multi-query` a `finally`, so the
 remaining producer of a poisoned client is the single-statement route, which D74 records as READ and not
 yet run.
 
-**Done when:** `25P02` is classified as what it is rather than as a definition fault, and the apply route
-either ends a transaction it did not open or records with evidence why it must not.
+**Done when:** either D74 closes, which removes the producer, or the edit-apply route ends a transaction
+it did not open on the same terms `/api/db/multi-query` does, with the cross-user question that raises
+answered rather than assumed.
 
 ## Value interpolation
 

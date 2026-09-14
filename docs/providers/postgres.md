@@ -795,6 +795,14 @@ A failed apply leaves the routine with the same `oid` and the same `xmin`, so no
 That is also what lets `applied-elsewhere` report `undone: true` here: the post-condition detects the fork AND takes it back in the same round trip, which an engine without a transaction cannot do.
 An error carrying no SQLSTATE at all is not a verdict the engine reached: the statement was sent and its answer never arrived, so it is `interrupted` with `committed: "unknown"`, and a client that retried on it would apply twice.
 
+**The apply refuses a pooled client somebody else left in a transaction.**
+Before it sends anything, `applyObjectEdit` reads the borrowed client's ReadyForQuery transaction status, the same server-sent byte `endOpenQueryTransaction()` reads, and refuses with class `guard` when it is anything but `I`.
+No round trip is spent on the check and nothing is sent when it fires.
+Measured through this provider on 18.4: a lone `BEGIN` on the ordinary query path releases its pooled client in status `T`, `pg`'s idle list is LIFO so the next acquire hands back the same client, and before the guard the apply ran inside that foreign transaction and answered `applied` with a `guarded` revision token, while the write was uncommitted; a later `endOpenQueryTransaction()` on the same connection then rolled it away, `xmin` 856 back to 825 and the definition byte-identical to the pre-image.
+Two more measured consequences of that path: the revision handed back was whichever image the re-read's own borrowed client happened to see, and the `SET LOCAL search_path` pin survived into the rest of the foreign transaction, `SHOW search_path` reading `app, pg_catalog`.
+With the guard, the same sequence answers `refused` with class `guard`, `xmin` does not move and `SHOW search_path` reads `"$user", public`; the control, the identical apply on an idle client, still answers `applied` and its write survives the later rollback.
+Neither a rollback nor a retry: rolling the foreign transaction back destroys work this user was never shown, and `POSTGRES_POOL_MAX=1`, which a single-slot PgBouncer also produces, has no other client to retry on.
+
 **A position is converted into the reader's own coordinates.**
 PostgreSQL's `position` is a 1-based CHARACTER offset into the text that was SENT, and it arrives from `pg` as a string although `QueryError.position` is typed `number`.
 The plan carries a segment map, so an offset inside the provider's guard block is reported as `outside` rather than as a number, and an offset in the reader's text is converted to the line and column of THEIR text.

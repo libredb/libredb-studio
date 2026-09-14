@@ -5872,6 +5872,97 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
       // strategy wraps its own transaction. A client that retried here would apply twice.
       expect(answer.committed).toBe("unknown");
     });
+
+    // ------------------------------------------------------------------------
+    // The borrowed client is somebody else's open transaction (#789 Phase 3, D78)
+    // ------------------------------------------------------------------------
+
+    /**
+     * MEASURED on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) through `pg` 8.23 on 2026-09-14, on a
+     * throwaway container, driving THIS provider and not a hand-written statement: a lone `BEGIN`
+     * through `query()` leaves its pooled client in status `T` and releases it, `pg`'s idle list is
+     * LIFO so the next `pool.connect()` hands the SAME client back (`apply borrowed the SAME client
+     * as the leaker: true`), and before this guard the apply then ran INSIDE that foreign
+     * transaction and answered `outcome: "applied"` with a `guarded` revision token. Three
+     * consequences, all measured in the same run:
+     *
+     * 1. The write is not committed and `endOpenQueryTransaction()` names that very client, so the
+     *    next `POST /api/db/multi-query` on the connection ROLLED THE APPLY AWAY: `xmin` 856 back
+     *    to 825 and the definition byte-identical to the pre-image. Ruling 1a says the bytes the
+     *    user approved are the bytes the database ends up with, and they were not.
+     * 2. The revision handed back is whatever the re-read's own borrowed client happened to see:
+     *    the same client answers the POST-image, a DIFFERENT one cannot see the uncommitted row and
+     *    answers the PRE-image as if it were the new server state.
+     * 3. The `SET LOCAL search_path` pin SURVIVED into the rest of the foreign transaction:
+     *    `SHOW search_path` read `app, pg_catalog` afterwards, against ruling 2e.
+     *
+     * So the apply REFUSES a client that is not idle. It does not roll the foreign transaction back
+     * and it does not retry on another client: rolling one back destroys work this user was never
+     * shown, and a pool of one has no other client to move to.
+     */
+    for (const status of ["T", "E"] as const) {
+      test(`refuses without sending anything when the borrowed client is in status ${status}`, async () => {
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (!build.built) throw new Error(build.refusal.sentence);
+        const sent: string[] = [];
+        mockQueryFn = async (sql) => {
+          sent.push(sql);
+          return { rows: [ROUTINE_ROW] };
+        };
+        mockTxStatus = status;
+        try {
+          const outcome = await provider.applyObjectEdit(build.plan);
+          if (outcome.outcome !== "refused") throw new Error(`expected a refusal, received ${outcome.outcome}`);
+          expect(outcome.refusal.refusal).toBe("guard");
+          expect(outcome.refusal.sentence).toBe(
+            "this connection's pooled session is inside a transaction somebody else opened, so an apply " +
+              "sent on it would not be committed by this request and could be rolled back with theirs",
+          );
+          // A refusal reports an engine fact and the engine reported none here, so there is no
+          // SQLSTATE to carry and no position to convert.
+          expect(outcome.refusal.code).toBeUndefined();
+          expect(outcome.refusal.at).toEqual({ within: "none" });
+          // NOTHING WAS SENT. This is the half that matters: the guard exists so that the plan's
+          // bytes never reach a transaction this request does not control.
+          expect(sent).toEqual([]);
+        } finally {
+          mockTxStatus = "I";
+          await provider.disconnect();
+        }
+      });
+    }
+
+    test("an idle borrowed client is the control: the same plan is sent and applied", async () => {
+      // The population this guard rejects is real (the two tests above) and so is the population it
+      // waves through, which is what stops the guard from being a refusal of everything.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      const sent: string[] = [];
+      mockQueryFn = async (sql) => {
+        sent.push(sql);
+        return { rows: [ROUTINE_ROW] };
+      };
+      mockTxStatus = "I";
+      const outcome = await provider.applyObjectEdit(build.plan);
+      expect(outcome.outcome).toBe("applied");
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      expect(sent[0]).toBe(build.plan.unit.steps[0].text);
+      await provider.disconnect();
+    });
   });
 
   test("THE SESSION IS UNCHANGED, and the apply is what makes the assertion non-vacuous", async () => {
