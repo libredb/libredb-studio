@@ -230,8 +230,11 @@ describe("isObjectEditBuildResponseShape", () => {
 
 describe("the arms the brief's block does not reach", () => {
   test("accepts a provider segment and refuses one whose text is not a string", () => {
+    // `text` is the map laid end to end, because a step whose map does not span its own bytes is
+    // now refused: see "the segment map must correspond to the bytes the engine receives" below.
     const spliced = {
       ...STEP,
+      text: "CREATE OR REPLACE SELECT 1",
       segments: [
         { from: "provider", text: "CREATE OR REPLACE " },
         { from: "user", start: 0, end: 8 },
@@ -367,5 +370,193 @@ describe("the arms the brief's block does not reach", () => {
     expect(
       isObjectEditPlanShape({ ...PLAN, unit: { medium: "command", name: "F", arguments: [null], payload: STEP } }),
     ).toBe(false);
+  });
+});
+
+// Fix round 1 (#789). Every case below was added because a reviewer measured a refusal in this
+// module that no test population reached, or a hybrid that reached the seam and was accepted.
+
+describe("the segment map must correspond to the bytes the engine receives", () => {
+  test("refuses a step whose provider segment is not the text at that offset", () => {
+    // Ruling 1a at the only boundary the embedded seam has: `text` is authoritative and the map is
+    // what the dialog renders, so a map that renders different bytes is a preview that lies. This
+    // exact value was measured through the committed module and returned TRUE, while
+    // `renderSegments("", segments)` from `src/lib/db/object-edit.ts` answered "SELECT 1" and the
+    // engine would have received "DROP DATABASE prod".
+    expect(
+      isObjectEditUnitShape({
+        medium: "statement",
+        steps: [{ text: "DROP DATABASE prod", language: "pgsql", segments: [{ from: "provider", text: "SELECT 1" }] }],
+      }),
+    ).toBe(false);
+  });
+
+  test("refuses a provider segment of the right LENGTH and the wrong bytes", () => {
+    // The length arithmetic alone cannot see this one: 15 characters claimed and 15 delivered, and
+    // the preview would render "SELECT 1 FROM x" while the engine received "DROP DATABASE p".
+    // Without this case the byte comparison in `spansTheText` refuses nothing any test builds.
+    expect(
+      isObjectEditUnitShape({
+        medium: "statement",
+        steps: [
+          { text: "DROP DATABASE p", language: "pgsql", segments: [{ from: "provider", text: "SELECT 1 FROM x" }] },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  test("refuses a user range that overruns the text it is a map of", () => {
+    // Measured through the committed module: TRUE, and `userPositionOf(step, 5)` then answered a
+    // line and column computed off a map overrunning its own text by 999,965 units.
+    expect(
+      isObjectEditUnitShape({
+        medium: "statement",
+        steps: [
+          {
+            text: "CREATE OR REPLACE FUNCTION f() ...",
+            language: "pgsql",
+            segments: [{ from: "user", start: 0, end: 999_999 }],
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  test("refuses a map that is short of the text, and accepts the spliced map that does span it", () => {
+    expect(
+      isObjectEditUnitShape({
+        medium: "statement",
+        steps: [{ text: "SELECT 1 ", language: "pgsql", segments: [{ from: "user", start: 0, end: 8 }] }],
+      }),
+    ).toBe(false);
+    expect(
+      isObjectEditUnitShape({
+        medium: "statement",
+        steps: [
+          {
+            text: "CREATE OR REPLACE SELECT 1",
+            language: "pgsql",
+            segments: [
+              { from: "provider", text: "CREATE OR REPLACE " },
+              { from: "user", start: 0, end: 8 },
+            ],
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  test("refuses a command payload whose map does not span its text", () => {
+    expect(
+      isObjectEditUnitShape({
+        medium: "command",
+        name: "FUNCTION",
+        arguments: [],
+        payload: { text: "#!lua", language: "lua", segments: [{ from: "user", start: 0, end: 4 }] },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("a non-enumerable own property is still an own property", () => {
+  // `Object.keys` returns only ENUMERABLE own keys, so the exclusion arm of `hasExactKeys` was
+  // blind to a property defined with `enumerable: false`. The live population is exactly the one
+  // this module exists for: the embedded seam, where the host's value is a live JS object rather
+  // than JSON (`JSON.parse` cannot produce a non-enumerable own property, so the route is unaffected).
+  const hidden = <T extends object>(value: T, key: string, property: PropertyDescriptor): T => {
+    Object.defineProperty(value, key, { enumerable: false, configurable: true, ...property });
+    return value;
+  };
+
+  test("refuses a command unit hiding `steps`", () => {
+    expect(
+      isObjectEditUnitShape(
+        hidden({ medium: "command", name: "F", arguments: [], payload: STEP }, "steps", { value: [STEP] }),
+      ),
+    ).toBe(false);
+  });
+
+  test("refuses an outcome hiding a `conflict` getter behind a success", () => {
+    expect(
+      isObjectEditOutcomeShape(
+        hidden({ outcome: "applied", revision: PLAN.revision, duration: 1 }, "conflict", {
+          get: () => "object-changed",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  test("refuses a build response hiding a `refusal` behind a plan", () => {
+    expect(
+      isObjectEditBuildResponseShape(
+        hidden({ built: true, plan: PLAN, preimage: { text: "x", language: "pgsql" } }, "refusal", {
+          value: { refusal: "identity", sentence: "s", at: { within: "none" } },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  test("refuses a plan hiding a fourteenth key", () => {
+    expect(isObjectEditPlanShape(hidden({ ...PLAN }, "planToken", { value: "t" }))).toBe(false);
+  });
+});
+
+describe("the refusals that had no population", () => {
+  test("refuses a plan whose fourteenth key is an ordinary enumerable one", () => {
+    // Pins `hasExactKeys(value, PLAN_KEYS)` in `isObjectEditPlanShape`: deleting that line killed
+    // no test before this case existed, so the docblock's "no fourteenth is admitted" was unpinned.
+    expect(isObjectEditPlanShape({ ...PLAN, planToken: "t" })).toBe(false);
+  });
+
+  test("refuses each required plan field emptied on its own", () => {
+    // Six guards that could be deleted together with the file's own suite fully green.
+    expect(isObjectEditPlanShape({ ...PLAN, planId: "" })).toBe(false);
+    expect(isObjectEditPlanShape({ ...PLAN, issuedAt: " " })).toBe(false);
+    expect(isObjectEditPlanShape({ ...PLAN, connectionFingerprint: "" })).toBe(false);
+    expect(isObjectEditPlanShape({ ...PLAN, type: "" })).toBe(false);
+    expect(isObjectEditPlanShape({ ...PLAN, kind: "" })).toBe(false);
+    expect(isObjectEditPlanShape({ ...PLAN, partId: 7 })).toBe(false);
+  });
+
+  test("refuses a build response carrying a malformed plan", () => {
+    // The seam's plan validation is what ruling 1a rests on at the embedded boundary, and before
+    // this case nothing in the file ever sent a build response whose plan was not well formed:
+    // deleting the `isObjectEditPlanShape(value.plan)` guard left the suite green.
+    expect(
+      isObjectEditBuildResponseShape({
+        built: true,
+        plan: { ...PLAN, strategy: "drop-then-create" },
+        preimage: { text: "x", language: "pgsql" },
+      }),
+    ).toBe(false);
+    expect(
+      isObjectEditBuildResponseShape({ built: true, plan: null, preimage: { text: "x", language: "pgsql" } }),
+    ).toBe(false);
+  });
+
+  test("refuses a collateral outcome whose `lost` names a malformed consequence", () => {
+    // `lost.length === 0` was tested; a `lost` carrying a BAD consequence was not, so
+    // `lost.every(isConsequence)` refused nothing this file built.
+    expect(
+      isObjectEditOutcomeShape({
+        outcome: "applied-with-collateral",
+        lost: [{ loses: "destroys-comment", fact: { source: "s", observed: "" } }],
+        revision: PLAN.revision,
+        duration: 1,
+      }),
+    ).toBe(false);
+  });
+
+  test("accepts a line number Monaco will clamp, which is the half of the hazard this boundary cannot close", () => {
+    // Stated so the dialog task meets it as a fact and not a surprise: nothing here can know the
+    // length of the model the marker lands in, so the only clamp this predicate catches is the
+    // 0 that Monaco's 1-based `IMarkerData` cannot place at all.
+    expect(
+      isObjectEditOutcomeShape({
+        outcome: "refused",
+        refusal: { refusal: "definition", sentence: "s", at: { within: "user", line: 1_000_000_000, column: 1 } },
+        duration: 1,
+      }),
+    ).toBe(true);
   });
 });

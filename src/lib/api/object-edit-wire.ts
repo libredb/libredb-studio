@@ -16,7 +16,8 @@ import type {
  * drag `jose` and `node:crypto` into the client bundle.
  *
  * Every predicate asserts EXACTLY the properties of the arm its discriminant names and refuses any
- * other own property, because the type cannot: MEASURED against tsc 6.0.3 and recorded on
+ * other own STRING-KEYED property, enumerable or not (see `hasExactKeys` for why the distinction is
+ * load-bearing and why symbols are left alone), because the type cannot: MEASURED against tsc 6.0.3 and recorded on
  * `ObjectSourcePart` in `src/lib/db/types.ts`, a literal carrying the properties of two arms of a
  * union compiles with no cast, since the excess-property check on a union admits any property
  * declared on ANY member of it. So a command unit carrying `steps`, an outcome that succeeded and
@@ -52,14 +53,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *
  * This is the helper that makes "exactly the properties of the arm the discriminant names" true,
  * and dropping the second half of it is what lets every hybrid through.
+ *
+ * THE EXCLUSION ARM READS `Object.getOwnPropertyNames` AND NOT `Object.keys`, and that is the
+ * whole of the check rather than a preference. MEASURED against the first draft of this module: a
+ * command unit carrying `Object.defineProperty(unit, "steps", { value: [step], enumerable: false })`
+ * passed `isObjectEditUnitShape`, an `applied` outcome carrying a non-enumerable `conflict` getter
+ * passed `isObjectEditOutcomeShape`, and a `built: true` response carrying a non-enumerable
+ * `refusal` passed `isObjectEditBuildResponseShape`, because `Object.keys` returns only the
+ * ENUMERABLE own keys while `value.conflict` reads the hidden one. The live population is precisely
+ * the one this module was written for, the EMBEDDED seam, where the host's answer is a live JS
+ * object: `JSON.parse` cannot produce a non-enumerable own property, so the route path never had it.
+ *
+ * Symbol-keyed own properties are NOT refused, and that is also deliberate. Every read in this
+ * module and in every consumer of these shapes is by string key, so a symbol cannot be the second
+ * half of a hybrid, and refusing one would reject a host object some wrapper had tagged.
  */
 function hasExactKeys(
   value: Record<string, unknown>,
   required: readonly string[],
   optional: readonly string[] = [],
 ): boolean {
-  if (!required.every((key) => Object.hasOwn(value, key))) return false;
-  return Object.keys(value).every((key) => required.includes(key) || optional.includes(key));
+  const own = Object.getOwnPropertyNames(value);
+  if (!required.every((key) => own.includes(key))) return false;
+  return own.every((key) => required.includes(key) || optional.includes(key));
 }
 
 /** A string that carries a fact, rather than one that is present and says nothing. */
@@ -80,33 +96,48 @@ function isDuration(value: unknown): boolean {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-const STRATEGIES: readonly string[] = [
-  "guarded-atomic-batch",
-  "transactional-replace",
-  "replace-in-place-statement",
-  "replace-in-place-command",
-  "alter-in-place",
-  "temp-name-test-create",
-] satisfies readonly ObjectEditStrategy[];
+/**
+ * The three accepted-value lists, each derived from a FULL keyed record of its union.
+ *
+ * `Object.keys(... satisfies Record<Union, true>)` and not `[...] satisfies readonly Union[]`, and
+ * the difference is the whole point. MEASURED with this repository's tsc 6.0.3 on a standalone
+ * probe: `const L: readonly string[] = ["a", "b"] satisfies readonly ("a" | "b" | "c")[]` compiles
+ * SILENTLY, so the array form catches a misspelling (TS2322) and NOT a union that grew a member
+ * the list does not carry. The same probe in the keyed form fails the build both ways: a missing
+ * member is TS1360 ("Property 'c' is missing") and an extra one is TS2353.
+ *
+ * What that buys, in the failure it prevents: a later phase adds a seventh `ObjectEditStrategy`,
+ * nobody updates this file, and typecheck, lint and the 100 percent line gate all stay green while
+ * every plan carrying the new strategy is refused at this seam and the feature silently does not
+ * work for that engine.
+ */
+const STRATEGIES: readonly string[] = Object.keys({
+  "guarded-atomic-batch": true,
+  "transactional-replace": true,
+  "replace-in-place-statement": true,
+  "replace-in-place-command": true,
+  "alter-in-place": true,
+  "temp-name-test-create": true,
+} satisfies Record<ObjectEditStrategy, true>);
 
-const CONSEQUENCE_CLASSES: readonly string[] = [
-  "replaces-whole-container",
-  "destroys-sibling-part",
-  "destroys-overloads",
-  "destroys-index",
-  "destroys-comment",
-  "forks-object",
-  "transfers-security-principal",
-  "changes-module-semantics",
-] satisfies readonly ObjectEditConsequenceClass[];
+const CONSEQUENCE_CLASSES: readonly string[] = Object.keys({
+  "replaces-whole-container": true,
+  "destroys-sibling-part": true,
+  "destroys-overloads": true,
+  "destroys-index": true,
+  "destroys-comment": true,
+  "forks-object": true,
+  "transfers-security-principal": true,
+  "changes-module-semantics": true,
+} satisfies Record<ObjectEditConsequenceClass, true>);
 
-const REFUSAL_CLASSES: readonly string[] = [
-  "identity",
-  "privilege",
-  "definition",
-  "guard",
-  "unsupported",
-] satisfies readonly ObjectEditRefusalClass[];
+const REFUSAL_CLASSES: readonly string[] = Object.keys({
+  identity: true,
+  privilege: true,
+  definition: true,
+  guard: true,
+  unsupported: true,
+} satisfies Record<ObjectEditRefusalClass, true>);
 
 /**
  * One piece of the executed text and where it came from.
@@ -129,6 +160,44 @@ function isSegment(value: unknown): boolean {
 }
 
 /**
+ * The map is checked AGAINST the bytes, which is ruling 1a at the only boundary this seam has.
+ *
+ * `ObjectEditStep.text` is authoritative: it is what the engine receives. `segments` is what the
+ * dialog renders and what `userPositionOf` converts a coordinate through. A step whose map does
+ * not correspond to its own text is a preview that shows one thing while the engine gets another,
+ * and it is checkable FROM THE STEP ALONE, with no input this predicate does not already hold:
+ *
+ * - laid end to end, the segments must span the text EXACTLY, so
+ *   `sum(provider text lengths) + sum(end - start) === text.length`;
+ * - every PROVIDER segment's bytes are fully determined, so the text at that segment's computed
+ *   offset must BE those bytes. This subsumes the whole-step case: a step with no user segment is
+ *   completely determined by its map and must equal it.
+ *
+ * Only the user segments are unverifiable here, because this module never sees the reader's text.
+ *
+ * MEASURED against the first draft, which checked neither: a step
+ * `{ text: "DROP DATABASE prod", segments: [{ from: "provider", text: "SELECT 1" }] }` was accepted,
+ * and `renderSegments("", segments)` answered "SELECT 1" while the engine would have received
+ * "DROP DATABASE prod". A second, `{ text: <34 chars>, segments: [{ from: "user", start: 0,
+ * end: 999999 }] }`, was accepted, and `userPositionOf(step, 5)` then answered a line and column
+ * computed off a map overrunning its own text by 999,965 units.
+ */
+function spansTheText(text: string, segments: readonly unknown[]): boolean {
+  let cursor = 0;
+  for (const segment of segments) {
+    const piece = segment as Record<string, unknown>;
+    if (piece.from === "provider") {
+      const written = piece.text as string;
+      if (text.slice(cursor, cursor + written.length) !== written) return false;
+      cursor += written.length;
+      continue;
+    }
+    cursor += (piece.end as number) - (piece.start as number);
+  }
+  return cursor === text.length;
+}
+
+/**
  * One statement or one command payload.
  *
  * `segments` is required to be non-empty. A step whose map is empty cannot be rendered as a
@@ -141,7 +210,8 @@ function isStep(value: unknown): boolean {
   if (typeof value.text !== "string") return false;
   if (!isFilledString(value.language)) return false;
   if (!Array.isArray(value.segments) || value.segments.length === 0) return false;
-  return value.segments.every(isSegment);
+  if (!value.segments.every(isSegment)) return false;
+  return spansTheText(value.text, value.segments);
 }
 
 /**
@@ -218,6 +288,14 @@ function isConsequence(value: unknown): boolean {
  * Three arms and not an optional pair. 1-based on both axes, which is what Monaco's
  * `IMarkerData.startLineNumber` and `startColumn` take, and a coordinate the provider could not
  * place inside the user's own text is `outside` rather than a number Monaco will silently clamp.
+ *
+ * WHICH HALF OF THE CLAMPING HAZARD THIS CLOSES, said plainly rather than left to read as both.
+ * Monaco clamps in two directions and this boundary can only see one of them. It refuses a 0,
+ * which is not a coordinate a 1-based `IMarkerData` can place at all and which Monaco snaps to the
+ * first character. It CANNOT refuse a line past the end of the model: nothing in this module is
+ * given the model, so `{ within: "user", line: 1e9, column: 1 }` is accepted here and Monaco
+ * clamps it to the end of the model, and there is a test asserting exactly that. The far side of
+ * that hazard belongs to whoever sets the markers, against a model whose length it can read.
  */
 function isPosition(value: unknown): boolean {
   if (!isRecord(value)) return false;
@@ -291,6 +369,14 @@ const PLAN_KEYS: readonly string[] = [
  * here as well as in the digest walk, so a plan minted by a process with a different walk is
  * refused rather than mis-verified. A plan with no `revision` is the two-state collapse H3
  * forbids and is refused at this boundary, not tolerated one level in.
+ *
+ * WHAT THIS PREDICATE DOES NOT CHECK, stated so a consumer does not read the narrowing as more
+ * than it is. `ObjectEditPlan.type` is `DatabaseType`, and the check here is the brief's, a filled
+ * string: MEASURED, `isObjectEditPlanShape({ ...plan, type: "not-an-engine-at-all" })` returns
+ * true. Same class and lower stakes: `path: ["", ""]` and `issuedAt: "yesterday"` both pass. So a
+ * route or a dialog that takes `plan.type` to the provider factory or to a capability table is
+ * reading a string the CALLER typed, and owes its own lookup-failed path. Adding the engine list
+ * here would mean importing a value module into a file that today imports types only.
  */
 export function isObjectEditPlanShape(value: unknown): value is ObjectEditPlan {
   if (!isRecord(value)) return false;
