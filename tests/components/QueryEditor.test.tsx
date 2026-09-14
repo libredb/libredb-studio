@@ -22,6 +22,10 @@ let mockUpdateOptions = mock((..._a: unknown[]) => {});
 // Records the props the mock <Editor> was last rendered with, so a test can assert the
 // component passes `defaultValue` (uncontrolled) rather than `value` (controlled).
 let capturedEditorProps: { value?: string; defaultValue?: string } | null = null;
+// Every string handed to the editor's setValue, in order. A write of text the buffer
+// already holds is not free in real Monaco: it replaces the model's content, which drops
+// the undo stack and moves the caret, so "did not write" is worth asserting.
+let capturedSetValues: string[] = [];
 
 // ── Mock Monaco Editor with React.createElement (not plain objects) ─────────
 mock.module("@monaco-editor/react", () => ({
@@ -89,8 +93,14 @@ mock.module("@monaco-editor/react", () => ({
       const editorMock = {
         getValue: () => valueRef.current,
         setValue: (next: string) => {
+          capturedSetValues.push(next);
           valueRef.current = next;
           setTextValue(next);
+          // Real Monaco reports a programmatic write through the same model-change event
+          // a keystroke raises, so `onChange` fires for Format, Clear, the imperative
+          // setValue and the external-change sync alike. The component counts on that:
+          // it is how the parent's mirror learns about a write it did not make.
+          onChange?.(next);
         },
         getSelection: () => mockSelectionReturn,
         getModel: () =>
@@ -282,6 +292,7 @@ describe("QueryEditor", () => {
     mockDeltaDecorations = mock((..._a: unknown[]) => ["deco-1"]);
     mockUpdateOptions = mock((..._a: unknown[]) => {});
     capturedEditorProps = null;
+    capturedSetValues = [];
     mockClipboardWriteText = mock((data: string) => {
       void data;
       return Promise.resolve();
@@ -1104,28 +1115,177 @@ describe("QueryEditor", () => {
   // -----------------------------------------------------------------------
 
   test("a stale value prop does not overwrite newer typed content", () => {
-    // Parent starts holding "SELECT ", the pre-typing text.
-    const props = createDefaultProps({ value: "SELECT " });
+    // Parent starts holding "SELECT ", the pre-typing text. It mirrors the buffer through
+    // `onContentChange`, which is the shape both hosts mount: every intermediate string
+    // the user types passes through the parent and comes back as `value` a render later.
+    const props = createDefaultProps({ value: "SELECT ", onContentChange: mock(() => {}) });
     const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
 
     const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
     expect(editor.value).toBe("SELECT ");
 
-    // User types several characters: the buffer advances well ahead of the parent state.
+    // User types: the buffer advances through each intermediate string, well ahead of
+    // what the parent has re-rendered with.
     act(() => {
+      fireEvent.change(editor, { target: { value: "SELECT *" } });
+      fireEvent.change(editor, { target: { value: "SELECT * FROM" } });
       fireEvent.change(editor, { target: { value: "SELECT * FROM t" } });
     });
     expect(editor.value).toBe("SELECT * FROM t");
 
-    // A re-render arrives carrying a value that CHANGED from the mounted one but is still
-    // behind the buffer — the parent's onContentChange has only caught an earlier
-    // keystroke. This is the race: `value` differs from the last render (so the sync
-    // effect runs) yet is stale relative to what the user has typed. It must NOT rewrite
-    // the buffer back to the stale text.
+    // A re-render arrives carrying an EARLIER keystroke: the parent has only caught up
+    // that far. This is the race, and applying it would rewrite the buffer with older
+    // text and move the caret.
     act(() => {
       rerender(React.createElement(QueryEditor, { ...props, value: "SELECT *" }));
     });
     expect(editor.value).toBe("SELECT * FROM t");
+  });
+
+  test("a value the editor already holds is not written back into the model", () => {
+    // The parent's mirror catching up is not an edit. Writing the identical string back
+    // would still replace the model's content, which in real Monaco drops the undo stack
+    // and moves the caret, so the sync has to recognise "nothing to do".
+    const props = createDefaultProps({ value: "SELECT 1", onContentChange: mock(() => {}) });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+
+    act(() => {
+      fireEvent.change(editor, { target: { value: "SELECT 1 FROM t" } });
+    });
+    capturedSetValues = [];
+
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT 1 FROM t" }));
+    });
+    expect(capturedSetValues).toEqual([]);
+    expect(editor.value).toBe("SELECT 1 FROM t");
+  });
+
+  test("text this editor sent up earlier still applies when it comes back as an external change", () => {
+    // Loading the same statement again from history or the saved list is an external
+    // write that happens to carry text the user typed a moment ago. Once the parent has
+    // caught up with a later keystroke, that earlier text is no longer outstanding, so it
+    // must land in the buffer rather than be mistaken for an echo of our own.
+    const props = createDefaultProps({ value: "", onContentChange: mock(() => {}) });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+
+    act(() => {
+      fireEvent.change(editor, { target: { value: "SELECT 1" } });
+      fireEvent.change(editor, { target: { value: "SELECT 1 AND 2" } });
+    });
+    // The parent renders with the first of those, so that text is no longer outstanding
+    // while the second still is.
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT 1" }));
+    });
+    expect(editor.value).toBe("SELECT 1 AND 2");
+
+    // The user now loads "SELECT 1" from history: the same text, but this time it is
+    // somebody else's write and has to land.
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT 1 AND 2" }));
+    });
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT 1" }));
+    });
+    expect(editor.value).toBe("SELECT 1");
+  });
+
+  test("switching to a tab holding text the editor just sent up still swaps documents", () => {
+    // Text alone cannot decide this one: the other tab's query is a string this editor
+    // handed the parent moments ago (two tabs on variants of the same statement), so an
+    // echo test reads the switch as its own keystroke coming back and leaves the first
+    // tab's text on screen. Document identity is what separates them.
+    const props = createDefaultProps({ value: "", documentId: "tab-1", onContentChange: mock(() => {}) });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+
+    act(() => {
+      fireEvent.change(editor, { target: { value: "SELECT shared" } });
+      fireEvent.change(editor, { target: { value: "SELECT shared AND more" } });
+    });
+
+    // Tab 2 holds exactly "SELECT shared", which is still outstanding as an echo of tab 1.
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT shared", documentId: "tab-2" }));
+    });
+    expect(editor.value).toBe("SELECT shared");
+
+    // And tab 2 keeps its own text as the user edits it, rather than inheriting anything
+    // left over from tab 1.
+    act(() => {
+      fireEvent.change(editor, { target: { value: "SELECT shared two" } });
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT shared AND more", documentId: "tab-2" }));
+    });
+    expect(editor.value).toBe("SELECT shared AND more");
+  });
+
+  test("a tab returns to its own text after a switch away", () => {
+    // Switching away writes the other tab's text, and switching back writes this tab's
+    // text again. The second write carries a string this editor sent up while the user
+    // was typing in the first tab, so anything the editor still remembers from before the
+    // switch describes a buffer that no longer exists and must not gate it.
+    const props = createDefaultProps({ value: "", documentId: "tab-1", onContentChange: mock(() => {}) });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+
+    act(() => {
+      fireEvent.change(editor, { target: { value: "SELECT tab_one" } });
+    });
+    // Tab 2 opens empty.
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "", documentId: "tab-2" }));
+    });
+    expect(editor.value).toBe("");
+
+    // Back to tab 1.
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT tab_one", documentId: "tab-1" }));
+    });
+    expect(editor.value).toBe("SELECT tab_one");
+  });
+
+  test("a second external write lands even when it repeats text typed before the first", () => {
+    // Two history entries opened one after the other, the second one carrying a string
+    // the user had typed earlier in this tab. Once an external write has replaced the
+    // buffer, nothing the editor sent up before it describes what is on screen any more,
+    // so none of it may gate the next write.
+    const props = createDefaultProps({ value: "", documentId: "tab-1", onContentChange: mock(() => {}) });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+
+    act(() => {
+      fireEvent.change(editor, { target: { value: "SELECT typed" } });
+      fireEvent.change(editor, { target: { value: "SELECT typed more" } });
+    });
+
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT from_history" }));
+    });
+    expect(editor.value).toBe("SELECT from_history");
+
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT typed" }));
+    });
+    expect(editor.value).toBe("SELECT typed");
+  });
+
+  test("switching to a tab that holds the same text leaves the model untouched", () => {
+    // Duplicating a tab puts the same statement in both. Rewriting the model with text it
+    // already holds is not free in real Monaco: it drops the undo stack and moves the
+    // caret, and the user switching tabs did not edit anything.
+    const props = createDefaultProps({ value: "SELECT same", documentId: "tab-1", onContentChange: mock(() => {}) });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    capturedSetValues = [];
+
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, documentId: "tab-2" }));
+    });
+    expect(capturedSetValues).toEqual([]);
+    expect(editor.value).toBe("SELECT same");
   });
 
   test("the editor is uncontrolled: <Editor> receives defaultValue, not value", () => {
@@ -1133,6 +1293,7 @@ describe("QueryEditor", () => {
     // controlled effect would fire on every keystroke echo and could clobber typing;
     // `defaultValue` leaves that effect at its `t === void 0` early-return.
     capturedEditorProps = null;
+    capturedSetValues = [];
     render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1" })));
     expect(capturedEditorProps).not.toBeNull();
     expect(capturedEditorProps!.value).toBeUndefined();
@@ -1140,18 +1301,112 @@ describe("QueryEditor", () => {
   });
 
   test("a genuine external value change (tab switch) still updates the buffer", () => {
-    // The other side of the fix: switching tabs changes `value` to the other tab's text,
-    // which differs from both the buffer and the last synced value, so the component's
-    // own useEffect([value]) must apply it. This must keep working.
-    const props = createDefaultProps({ value: "SELECT tab_one" });
+    // The other side of the fix: switching tabs hands the editor another document, and
+    // its text has to land in the buffer.
+    const props = createDefaultProps({ value: "SELECT tab_one", documentId: "tab-1" });
     const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
     const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
     expect(editor.value).toBe("SELECT tab_one");
 
     act(() => {
-      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT tab_two" }));
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT tab_two", documentId: "tab-2" }));
     });
     expect(editor.value).toBe("SELECT tab_two");
+  });
+
+  test("a new tab opens empty even when the parent has not caught up with the typing", () => {
+    // The measured failure (#808, second half). The new-tab shortcut is registered on
+    // `document` so it fires while Monaco holds focus (#745). Press it mid-word and the
+    // parent is still a render behind, so the empty tab arrives carrying the same empty
+    // string the editor mounted with: `value` never changes, and text alone cannot say
+    // that the document under it did. Measured before this: the new tab opened holding
+    // the previous tab's query, 8 times out of 8 on a throttled CPU.
+    const props = createDefaultProps({ value: "", documentId: "tab-1", onContentChange: mock(() => {}) });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+
+    act(() => {
+      fireEvent.change(editor, { target: { value: "SELECT still_typing" } });
+    });
+
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "", documentId: "tab-2" }));
+    });
+    expect(editor.value).toBe("");
+  });
+
+  test("an external value change applies even while the buffer is ahead of the parent", () => {
+    // The case a divergence test cannot answer. The new-tab shortcut is registered on
+    // `document` so it fires while Monaco holds focus (#745), so an external change CAN
+    // arrive mid-typing, with the parent still one keystroke behind. Telling "our own
+    // echo, late" from "somebody else wrote this" by comparing the buffer against the
+    // last synced string reads both as the same thing, and swallowing the external change
+    // opens the new tab holding the previous tab's text.
+    const onContentChange = mock(() => {});
+    const props = createDefaultProps({ value: "SELECT tab_one", documentId: "tab-1", onContentChange });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+
+    // The user types: the buffer runs ahead, and the parent has not echoed back yet.
+    act(() => {
+      fireEvent.change(editor, { target: { value: "SELECT tab_one typed" } });
+    });
+    expect(editor.value).toBe("SELECT tab_one typed");
+
+    // A new tab opens while those keystrokes are still in flight: `value` is neither the
+    // buffer nor anything this editor sent up, so it is an external write and must land.
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "", documentId: "tab-2" }));
+    });
+    expect(editor.value).toBe("");
+  });
+
+  test("an echo arriving out of order does not rewrite the buffer", () => {
+    // Every intermediate keystroke the parent mirrors comes back as `value`, and under
+    // batching it can come back late and out of order. Each one is still this editor's
+    // own text, so none of them may touch the buffer.
+    const onContentChange = mock(() => {});
+    const props = createDefaultProps({ value: "SELECT ", onContentChange });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+
+    act(() => {
+      fireEvent.change(editor, { target: { value: "SELECT a" } });
+      fireEvent.change(editor, { target: { value: "SELECT ab" } });
+      fireEvent.change(editor, { target: { value: "SELECT abc" } });
+    });
+
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT ab" }));
+    });
+    expect(editor.value).toBe("SELECT abc");
+
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT abc" }));
+    });
+    expect(editor.value).toBe("SELECT abc");
+  });
+
+  test("a programmatic write is not mistaken for an external change when it echoes back", () => {
+    // Format, Clear and the imperative setValue all write the model, and real Monaco
+    // reports those writes through the same change event a keystroke uses, so they echo
+    // to the parent like any other edit. When that echo returns as `value`, the buffer
+    // may already have moved on, and re-applying the echo would undo what the user typed
+    // after the format.
+    const onContentChange = mock(() => {});
+    const props = createDefaultProps({ value: "select 1", onContentChange });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+
+    act(() => {
+      fireEvent.change(editor, { target: { value: "SELECT 1" } }); // the format's own write
+      fireEvent.change(editor, { target: { value: "SELECT 1 and typing" } });
+    });
+
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT 1" }));
+    });
+    expect(editor.value).toBe("SELECT 1 and typing");
   });
 
   // -----------------------------------------------------------------------

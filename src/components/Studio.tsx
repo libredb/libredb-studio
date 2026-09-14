@@ -691,6 +691,7 @@ export default function Studio() {
                           <QueryEditor
                             ref={queryEditorRef}
                             value={tabMgr.currentTab.query}
+                            documentId={tabMgr.currentTab.id}
                             onContentChange={(val) => tabMgr.updateTabById(tabMgr.currentTab.id, { query: val })}
                             onExplain={
                               metadata?.capabilities.supportsExplain
