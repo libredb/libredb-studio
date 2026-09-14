@@ -108,7 +108,7 @@ const unconnected = (type: DatabaseType): DatabaseConnection => ({ ...UNCONNECTE
  * runtime one the driven population below also gives: the census cannot be extended to a new
  * engine by accident, and it cannot skip one either.
  */
-const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection>> = Object.freeze({
+export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection>> = Object.freeze({
   postgres: unconnected("postgres"),
   mysql: unconnected("mysql"),
   sqlite: unconnected("sqlite"),

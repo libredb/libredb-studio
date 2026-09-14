@@ -120,8 +120,12 @@ run_group "Group 0b2: Factory cache and execution profiles" \
 # Measured 2026-09-13: census plus `tests/api/db-objects.test.ts` is 3 fail, the language guard
 # plus the same file is 1 fail, and each of them alone is 0 fail. There is nothing either file can
 # do about it: mocking the factory is what the api layer is for.
+# The edit census joins them for the same reason and adds nothing new to it: it builds every
+# provider through the REAL `createDatabaseProvider` too, and it imports `CENSUS_CONNECTION` from
+# the source census beside it, so the two files share one population and one process.
 run_group "Group 0b3: Object source declaration census" \
   tests/isolated/object-source-declarations.test.ts \
+  tests/isolated/object-edit-declarations.test.ts \
   tests/isolated/monaco-language-ids.test.ts
 
 # Group 0c: exports CJS shim (isolated — importing it pulls @/lib/db/factory into the
