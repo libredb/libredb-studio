@@ -134,6 +134,83 @@ describe("isSourceDocumentShape", () => {
     ).toBe(true);
   });
 
+  test("a malformed `edit` makes THAT PART not editable and leaves the document renderable", () => {
+    // It fails SOFT, and that asymmetry is deliberate: refusing the whole document would regress an
+    // existing adopter's READ, which is a feature they have today, over an affordance that is new.
+    // Absence and malformation both read as not editable, and `partEditability` is what decides
+    // that: `edit?.offered === true` is false for every malformed value, so the part answers
+    // `not-offered` and the pane draws no Edit button.
+    const malformed = { path: ["app", "f"], kind: "function", parts: [{ ...readable, edit: { offered: "yes" } }] };
+    expect(isSourceDocumentShape(malformed)).toBe(true);
+    expect(isSourceDocumentShape({ ...document, parts: [{ ...readable, edit: null }] })).toBe(true);
+    expect(isSourceDocumentShape({ ...document, parts: [{ ...readable, edit: "offered" }] })).toBe(true);
+    expect(isSourceDocumentShape({ ...document, parts: [{ ...readable, edit: { offered: false } }] })).toBe(true);
+  });
+
+  test("a well formed `edit` survives the check", () => {
+    expect(
+      isSourceDocumentShape({
+        path: ["app", "f"],
+        kind: "function",
+        parts: [{ ...readable, edit: { offered: true } }],
+      }),
+    ).toBe(true);
+    expect(
+      isSourceDocumentShape({
+        path: ["app", "f"],
+        kind: "function",
+        parts: [{ ...readable, edit: { offered: false, reason: "no" } }],
+      }),
+    ).toBe(true);
+  });
+
+  test("an `edit` on a REFUSAL part does not make the part editable", () => {
+    // The client half of the same rule the route enforces, and the only half that runs on the
+    // embedded shell, where a host cannot reach `boundSourceDocument` at all. The refusal arm never
+    // reaches `partEditability`: `SourceEditablePart` is the TEXT arm and the refusal pane draws
+    // first, so an `edit` sitting beside `unavailable` decides nothing.
+    const refusal = {
+      path: ["app", "f"],
+      kind: "function",
+      parts: [{ id: "d", label: "D", unavailable: "no", edit: { offered: true } }],
+    };
+    expect(isSourceDocumentShape(refusal)).toBe(true);
+  });
+
+  test("rejects an edit refusal whose reason is longer than a text is allowed to be", () => {
+    /*
+     * THE FOURTH HOST-SUPPLIED RENDERED STRING, and the first one this phase adds (#789 Phase 3).
+     * `partEditability` answers `provider-refused` with `edit.reason` VERBATIM and unprefixed
+     * (`source-editable.ts:110-112`), and `ObjectSourceView` renders that sentence, so an
+     * unbounded `reason` is the same failure `unavailable` and `truncated.reason` were bounded
+     * for: on the embedded seam there is no route in front of this predicate, and a host can hand
+     * the shell tens of megabytes of prose to put in a `<span>`.
+     *
+     * IT IS A HARD REFUSAL and the malformed arm above is soft, which is not an inconsistency: a
+     * malformed `edit` degrades safely, because every downstream reader of it answers "not
+     * offered", while an over-long `reason` degrades into rendering the whole of it. Nothing
+     * downstream bounds it: measured at this commit, `partEditability` does not look at the
+     * length and it is not this task's file. An overrun is a failed read here for exactly the
+     * reason the three strings beside it give, and no Phase 2 adopter regresses, because `edit` is
+     * a field this phase invents and no document written before it carries one.
+     *
+     * The CONTROL sits exactly ON the bound and passes, which is what makes this an off-by-one
+     * assertion rather than a refusal of everything large.
+     */
+    expect(
+      isSourceDocumentShape({
+        ...document,
+        parts: [{ ...readable, edit: { offered: false, reason: "r".repeat(SOURCE_CHARACTER_LIMIT + 1) } }],
+      }),
+    ).toBe(false);
+    expect(
+      isSourceDocumentShape({
+        ...document,
+        parts: [{ ...readable, edit: { offered: false, reason: "r".repeat(SOURCE_CHARACTER_LIMIT) } }],
+      }),
+    ).toBe(true);
+  });
+
   test("rejects a path that is not an array of strings", () => {
     expect(isSourceDocumentShape({ ...document, path: ["app", null] })).toBe(false);
     expect(isSourceDocumentShape({ ...document, path: "app.v" })).toBe(false);

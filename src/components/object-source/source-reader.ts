@@ -84,6 +84,42 @@ function isTruncationShape(value: unknown): boolean {
   );
 }
 
+/**
+ * The affordance's own host-supplied string, and the ONE arm this predicate grows for `edit`
+ * (#789 Phase 3, discussion #778).
+ *
+ * THE PREDICATE'S CONTRACT IS UNCHANGED for a malformed `edit`, and that asymmetry is the whole
+ * of this arm. A part whose `edit` is not a well-formed `ObjectPartEdit` is still a RENDERABLE
+ * part: refusing the document over it would regress an existing adopter's READ, which is a
+ * feature they have today, over an affordance that is new. The affordance is decided by
+ * `partEditability` in `source-editable.ts`, which reads a malformed `edit` as not offered,
+ * because `edit?.offered === true` is false for every malformed value and the `offered: false`
+ * arm additionally requires a filled `reason`. Absence and malformation both read as not
+ * editable, so nothing downstream has to be told them apart.
+ *
+ * WHAT IS REFUSED IS AN OVER-LONG `reason`, and the rule is the one the three strings above it
+ * already follow. `partEditability` answers `provider-refused` carrying `edit.reason` VERBATIM
+ * and unprefixed (`source-editable.ts:110-112`), and the pane renders that sentence, so this is
+ * the FOURTH host-supplied rendered string on a seam with no route in front of it and the first
+ * one this phase adds. Nothing downstream bounds it: measured at this commit, `partEditability`
+ * does not look at the length. The length is checked wherever `reason` is a string, `offered`
+ * being irrelevant to it: a host that ships megabytes under an `offered: true` is handing this
+ * seam the same value with a different label on it.
+ *
+ * AN OVERRUN IS A FAILED READ and never a silent truncation, which is `isSourceDocumentShape`'s
+ * own stated rule for `text`, `unavailable` and `truncated.reason`: this seam cannot cut a
+ * sentence honestly, so it says the read answered a body it cannot render. It regresses no Phase
+ * 2 adopter, because `edit` is a field this phase invents and no document written before it
+ * carries one.
+ *
+ * The alternative, refusing only the AFFORDANCE and keeping the document, cannot be written from
+ * this predicate: it answers a boolean over the whole document and deletes nothing, and the
+ * decision it would have to change lives in a different module.
+ */
+function editReasonOverruns(value: unknown): boolean {
+  return isRecord(value) && typeof value.reason === "string" && value.reason.length > SOURCE_CHARACTER_LIMIT;
+}
+
 function isPartShape(part: unknown): boolean {
   if (!isRecord(part)) return false;
   if (!isFilledString(part.id)) return false;
@@ -100,6 +136,7 @@ function isPartShape(part: unknown): boolean {
   if (!FORMS.includes(part.form as string)) return false;
   if (!ORIGINS.includes(part.origin as string)) return false;
   if (Object.hasOwn(part, "truncated") && !isTruncationShape(part.truncated)) return false;
+  if (Object.hasOwn(part, "edit") && editReasonOverruns(part.edit)) return false;
   return true;
 }
 
@@ -130,6 +167,9 @@ function isPartShape(part: unknown): boolean {
  * refusal SENTENCE is bounded by the same number as a text, because it is a text this component
  * renders and the route carries it through untouched, and so is a truncation mark's REASON, which
  * is the third such string and the one that rule missed the first time (see `isTruncationShape`).
+ * The FOURTH is an `edit` refusal's `reason`, added with the affordance itself in #789 Phase 3
+ * (see `editReasonOverruns`), where the same rule applies for the same reason and the MALFORMED
+ * case deliberately does not: it degrades to "not editable" on its own.
  *
  * AN OVERRUN IS A FAILED READ, never a silent truncation, and that is a decision rather than a
  * shortcut: `truncated` is a claim about WHERE the cut was made and by whom, and this seam
