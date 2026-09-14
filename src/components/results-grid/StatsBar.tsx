@@ -3,7 +3,19 @@
 import React from "react";
 import { QueryResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { ChevronDown, LayoutGrid, Table2, LoaderCircle, EyeOff, Eye, Save, X, Funnel, Lock } from "lucide-react";
+import {
+  ChevronDown,
+  LayoutGrid,
+  Table2,
+  LoaderCircle,
+  EyeOff,
+  Eye,
+  Save,
+  X,
+  Funnel,
+  Lock,
+  WrapText,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { CellChange } from "@/components/ResultsGrid";
 import { describeWarning } from "@/components/results-grid/utils";
@@ -19,6 +31,8 @@ export interface StatsBarProps {
   onClearFilters: () => void;
   viewMode: "card" | "table";
   onSetViewMode: (mode: "card" | "table") => void;
+  wrapText: boolean;
+  onToggleWrapText: () => void;
   // Masking props
   hasSensitive: boolean;
   effectiveMaskingEnabled: boolean;
@@ -41,6 +55,8 @@ export function StatsBar({
   onClearFilters,
   viewMode,
   onSetViewMode,
+  wrapText,
+  onToggleWrapText,
   hasSensitive,
   effectiveMaskingEnabled,
   userCanToggle,
@@ -106,6 +122,19 @@ export function StatsBar({
               {MASKED_LABEL}
             </span>
           ) : null)}
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn(
+            "h-6 px-2 text-xs font-medium gap-1",
+            wrapText ? "text-brand bg-brand-tint/10" : "text-fg-muted",
+          )}
+          onClick={onToggleWrapText}
+          title={wrapText ? "Disable text wrapping" : "Enable text wrapping"}
+        >
+          <WrapText className="w-3 h-3" />
+          {wrapText ? "WRAP ON" : "WRAP"}
+        </Button>
 
         {editingEnabled && pendingChanges && pendingChanges.length > 0 && (
           <div className="flex items-center gap-1">
@@ -116,6 +145,7 @@ export function StatsBar({
               variant="ghost"
               size="sm"
               className="h-6 px-1.5 text-xs text-success hover:bg-success-tint/10"
+              aria-label="Apply changes"
               onClick={onApplyChanges}
             >
               <Save strokeWidth={1.5} className="w-3 h-3" />
@@ -124,6 +154,7 @@ export function StatsBar({
               variant="ghost"
               size="sm"
               className="h-6 px-1.5 text-xs text-danger hover:bg-danger-tint/10"
+              aria-label="Discard changes"
               onClick={onDiscardChanges}
             >
               <X strokeWidth={1.5} className="w-3 h-3" />

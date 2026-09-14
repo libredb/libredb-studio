@@ -8,6 +8,7 @@ import { Pool, type PoolClient, type PoolConfig as PgPoolConfig, type QueryConfi
 import { SQLBaseProvider } from "./sql-base";
 import {
   type DatabaseConnection,
+  type OpenQueryTransactionOutcome,
   type QueryResult,
   type HealthInfo,
   type MaintenanceType,
@@ -1811,6 +1812,20 @@ async function probeExplainFormat(client: PoolClient): Promise<ExplainFormat | u
 export class PostgresProvider extends SQLBaseProvider {
   private pool: Pool | null = null;
 
+  /**
+   * The pooled client the most recent `query()` ran a statement on, kept so that
+   * `endOpenQueryTransaction()` can name it (D71).
+   *
+   * A reference to a RELEASED client, deliberately, and it is not a leak: `release()`
+   * returns the client to the pool's idle list without ending it, so the object stays a
+   * live `pg` Client and `getTransactionStatus()` on it still reports the last
+   * ReadyForQuery status the server sent. Naming the client is the whole point — a
+   * rollback issued through a fresh `pool.connect()` is not guaranteed to reach the
+   * client the script's statements ran on, and rolling back somebody else's transaction
+   * is worse than leaving this one open.
+   */
+  private lastQueryClient: PoolClient | null = null;
+
   // Transaction support: dedicated client held outside pool
   private txClient: PoolClient | null = null;
   private txActive = false;
@@ -2038,6 +2053,11 @@ export class PostgresProvider extends SQLBaseProvider {
     if (this.pool) {
       await this.pool.end();
       this.pool = null;
+      // `pool.end()` ends every client it holds. The reference kept for
+      // `endOpenQueryTransaction()` would then name a dead client whose last reported
+      // ReadyForQuery status never changes again, so it is dropped here rather than left
+      // to answer for a session that no longer exists.
+      this.lastQueryClient = null;
       this.setConnected(false);
     }
   }
@@ -2136,6 +2156,10 @@ export class PostgresProvider extends SQLBaseProvider {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
           const client = await this.pool!.connect();
+          // Recorded BEFORE the statement runs and kept after the release: a statement
+          // that FAILS inside a transaction is exactly the case D71 is about, and the
+          // client it failed on goes back to the pool in status "E".
+          this.lastQueryClient = client;
           try {
             // Track PID for cancellation support
             if (queryId) {
@@ -2350,6 +2374,45 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public isInTransaction(): boolean {
     return this.txActive;
+  }
+
+  /**
+   * End a transaction a statement run through `query()` left open on the pooled client
+   * it borrowed (D71).
+   *
+   * The pool does not make an unfinished transaction benign here, it widens it. Measured
+   * 2026-09-13 on PostgreSQL 17 through the product's own routes: a script that failed
+   * inside its own BEGIN released the client in status "E", and every later request that
+   * drew that client answered HTTP 500 "current transaction is aborted, commands ignored
+   * until end of transaction block" — twelve retries over 60 seconds, 40 seconds of
+   * idleness, a different user, and `POST /api/db/maintenance` eight minutes later. The
+   * client is one of up to ten, so the connection does not fail, it fails INTERMITTENTLY
+   * for every user on every route until the provider is evicted after 30 idle minutes.
+   *
+   * The status is the server's own, not an inference: `pg` records the ReadyForQuery
+   * status byte of every statement ("I" idle, "T" in a transaction, "E" in a failed one)
+   * and publishes it as `getTransactionStatus()` (pg 8.23). So no statement text is read
+   * and no round trip is spent to find out — which matters, because the transaction can
+   * be opened by a BEGIN inside a form no splitter sees through.
+   *
+   * ROLLBACK and not COMMIT: the argument is at `OpenQueryTransactionOutcome`. "E" leaves
+   * no choice in any case — PostgreSQL ignores everything but a transaction-ending
+   * command there, and COMMIT on an aborted transaction rolls back regardless.
+   *
+   * The interactive session `POST /api/db/transaction` drives is never touched: its
+   * client is checked out for the session's whole life and handed back only by
+   * `commitTransaction` / `rollbackTransaction` / `expireTransaction`, so `query()` never
+   * borrows it and it can never be `lastQueryClient`.
+   */
+  public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
+    const client = this.lastQueryClient;
+    if (client === null) return "none";
+
+    const status = client.getTransactionStatus();
+    if (status !== "T" && status !== "E") return "none";
+
+    await client.query("ROLLBACK");
+    return "rolled-back";
   }
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {

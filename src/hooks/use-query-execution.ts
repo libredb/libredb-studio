@@ -510,17 +510,25 @@ export function useQueryExecution({
         // Show multi-statement summary
         if (resultData.multiStatement) {
           const { executedCount, statementCount, hasError } = resultData;
+          // A script that opened a transaction and did not finish it has had it rolled
+          // back by the server, because the connection handle is shared and an unfinished
+          // transaction would otherwise reach the next person to use it (D71). The author
+          // is told either way: before this, the work simply vanished.
+          const transactionNotice =
+            resultData.openTransaction === "rolled-back"
+              ? " This script left a transaction open and it was rolled back, so its changes were discarded. Add COMMIT to keep them."
+              : "";
           if (hasError) {
             const errorStmt = resultData.statements?.find((s: { status: string }) => s.status === "error");
             toast({
               title: `Executed ${executedCount - 1}/${statementCount} statements`,
-              description: `Error in statement ${errorStmt?.index + 1}: ${errorStmt?.error}`,
+              description: `Error in statement ${errorStmt?.index + 1}: ${errorStmt?.error}${transactionNotice}`,
               variant: "destructive",
             });
           } else {
             toast({
               title: `${executedCount} statements executed`,
-              description: `All ${statementCount} statements completed in ${resultData.executionTime}ms`,
+              description: `All ${statementCount} statements completed in ${resultData.executionTime}ms.${transactionNotice}`,
             });
           }
         }

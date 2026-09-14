@@ -7,7 +7,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import type { DatabaseType, QueryWarning } from "@/lib/types";
-import type { DatabaseProvider } from "@/lib/db/types";
+import type { DatabaseProvider, OpenQueryTransactionOutcome } from "@/lib/db/types";
 
 export interface StatementResult {
   index: number;
@@ -101,6 +101,22 @@ async function runStatement(
   }
 }
 
+/**
+ * Whether this provider can end a transaction its own `query()` path left open.
+ *
+ * A runtime shape check, the same one `POST /api/db/transaction` uses for the
+ * interactive session: the method is optional on `DatabaseProvider` because only a
+ * provider that can name the session its statements ran on can answer truthfully
+ * (`endOpenQueryTransaction`'s declaration argues why). `postgres`, `sqlite` and
+ * `duckdb` implement it; on the rest this route leaves the handle exactly as it found
+ * it, because inventing a rollback there would be guessing at another engine's state.
+ */
+function endsOpenTransactions(
+  provider: DatabaseProvider,
+): provider is DatabaseProvider & Required<Pick<DatabaseProvider, "endOpenQueryTransaction">> {
+  return typeof provider.endOpenQueryTransaction === "function";
+}
+
 export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/multi-query", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
@@ -129,21 +145,50 @@ export async function POST(req: NextRequest) {
     const provider = await getOrCreateProvider(connection);
     const results: StatementResult[] = [];
     let totalExecutionTime = 0;
+    let openTransaction: OpenQueryTransactionOutcome = "none";
 
-    for (let i = 0; i < statements.length; i++) {
-      const outcome = await runStatement(
-        provider,
-        statements[i],
-        i,
-        i === statements.length - 1,
-        connection.type,
-        options,
-      );
-      totalExecutionTime += outcome.executionTime;
-      results.push(outcome);
+    // MAY A SCRIPT LEAVE A TRANSACTION OPEN? No, and this finally is the answer.
+    //
+    // The provider this route borrows is cached per `connection.id` for the whole
+    // process (`getOrCreateProvider`), so a transaction that outlives the request does
+    // not belong to the person who opened it any more — it belongs to whoever borrows
+    // the handle next. Measured 2026-09-13 through this route: `BEGIN; CREATE TABLE ...;
+    // SELECT * FROM <missing>` broke out of the loop below and the transaction stayed
+    // open. On PostgreSQL 17 the next request, a DIFFERENT user on POST /api/db/query,
+    // answered HTTP 500 "current transaction is aborted, commands ignored until end of
+    // transaction block", and so did POST /api/db/maintenance eight minutes later; on
+    // SQLite and DuckDB the same script cost the next user's write silently.
+    //
+    // So the transaction ends here, whether the script failed or ran clean, and the
+    // response says what became of it — a user who wrote BEGIN with no COMMIT is told.
+    // It is a finally and not a line after the loop because the loop must not be able to
+    // leave by any path that skips this.
+    //
+    // What it is NOT: a guard on the word BEGIN. The same shape arrives from a BEGIN
+    // inside a statement the splitter cannot see through, so the leak is the missing
+    // rollback and not the keyword. And it is not an unconditional ROLLBACK either:
+    // measured on bun:sqlite 1.4.2 and DuckDB v1.5.5, a rollback with no transaction
+    // active raises, so the provider is asked rather than told.
+    try {
+      for (let i = 0; i < statements.length; i++) {
+        const outcome = await runStatement(
+          provider,
+          statements[i],
+          i,
+          i === statements.length - 1,
+          connection.type,
+          options,
+        );
+        totalExecutionTime += outcome.executionTime;
+        results.push(outcome);
 
-      // Stop execution on error
-      if (outcome.status === "error") break;
+        // Stop execution on error
+        if (outcome.status === "error") break;
+      }
+    } finally {
+      if (endsOpenTransactions(provider)) {
+        openTransaction = await provider.endOpenQueryTransaction();
+      }
     }
 
     // Return the last successful result with rows as the main result (for ResultsGrid)
@@ -164,6 +209,10 @@ export async function POST(req: NextRequest) {
       ...carriedChannels(lastResultWithRows),
       // Multi-statement metadata
       multiStatement: true,
+      // Present only when there was a transaction to end, following the same rule as the
+      // two channels above: the client renders the notice from the field's presence
+      // alone, so an always-present "none" would announce something that did not happen.
+      ...(openTransaction === "rolled-back" && { openTransaction }),
       statementCount: statements.length,
       executedCount: results.length,
       hasError,

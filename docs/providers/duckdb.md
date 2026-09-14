@@ -489,6 +489,27 @@ columnTypes? }`.
   `Count` column is not surfaced (§3.4).
 - **Cancellation** calls `interrupt()` on the connection (§3.9).
 
+### A transaction a statement left open
+
+A `BEGIN` sent through `query()` opens a transaction on the ONE connection this provider holds
+(§3.8), and the provider is cached per `connection.id` for the whole process, so nothing in the
+request cycle closed it and it belonged to whoever borrowed the handle next.
+Measured 2026-09-13 through `POST /api/db/multi-query` on v1.5.5, the loss was silent: after
+`BEGIN; INSERT INTO t VALUES (1); SELECT * FROM <missing>`, the next user's `INSERT` answered
+HTTP 200 and read its own row back, and a later `ROLLBACK` through the app discarded it with no
+error at any point.
+
+`endOpenQueryTransaction()` ends it and reports `"none"` or `"rolled-back"`.
+
+**The ask and the act are one call, because on this engine they cannot be separated.** DuckDB v1.5.5
+publishes no transaction-state reading: `current_transaction_id()` answers in both states (a fresh id
+per implicit transaction outside one, the transaction's own id inside), `transaction_timestamp()` is
+an alias of `get_current_timestamp()`, and the client context object carries only a connection id.
+`duckdb_functions()` lists no other candidate. So the engine's own refusal of a `ROLLBACK` —
+"TransactionContext Error: cannot rollback - no transaction is active" — is the answer, and it costs
+the session nothing: measured, the very next statement runs normally. Any OTHER rollback failure is
+raised rather than read as an answer.
+
 ### EXPLAIN
 
 `explainFormat` is `duckdb-json`. The provider sends `EXPLAIN (FORMAT JSON) <query>`, reads

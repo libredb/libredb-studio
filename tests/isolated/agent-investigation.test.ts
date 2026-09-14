@@ -3655,6 +3655,59 @@ describe("a run that stops having read nothing is told to read it itself", () =>
     expect(result.stopReason).toBe("report-composed");
   });
 
+  test.skip("and so is a model that read something FIRST and then asked the user", async () => {
+    /*
+      The same ending reached by the longer road, and the road the measured losses actually take.
+
+      The gate was `!anyToolCalled`, so the sentence reached a run that had called nothing and
+      was withheld from one that called a tool, looked at what came back, and then asked the
+      user for the rest. That second run is not better off for having read: it is stopped on a
+      question in a run with nobody to answer it, which is the exact ending the sentence was
+      written for, and it has spent a tool call proving it was willing to work.
+
+      `remindToReport` does not cover it either. That one fires — it is gated the other way, on
+      `anyToolCalled` — and it asks for a report. Measured on `glm-4.7-flash`, a
+      query-optimization cell that read 4/5 across ten rolls: the model called `inspect_schema`,
+      was reminded to report, answered the reminder by asking the user to paste the query it had
+      been sent to diagnose, and stopped. Ten of eighteen losses in forty-three runs were that
+      one shape. What it needed was not "file what you found" but "go and find it", which is the
+      sentence this gate was holding back.
+
+      The cost argument the gate's own comment makes is unchanged, and is why the condition can
+      be widened at all: `compose_report` ENDS a run, so a run reaching this branch has composed
+      no report whatever it called, and has already earned `no-report`. The turn cannot cost a
+      pass. Still once per run, and still only where the profile has not measured otherwise.
+    */
+    // SKIPPED, not deleted. Widening the gate to reach this run is a real fix for a measured
+    // loss, and it also gives a second nudge to every run that reads and then narrates - which
+    // is a contract this suite states on purpose ("the reminder is sent once, so a model that
+    // narrates again still stops") and which twenty-two tests encode. That is a design decision
+    // about how many times a run is nudged, not a gate someone mis-wrote, so it is recorded
+    // here with its measurement and left for that decision rather than taken unilaterally.
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    // Reads one thing, asks the user for the rest; then, once the drive has named the
+    // instruments, it goes back and finishes.
+    const script = scriptedModel(
+      callsTool("inspect_schema", { schema: "public" }),
+      asksTheUser,
+      callsTool("inspect_schema", { schema: "public" }),
+      reportOn(),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const events = await eventsOf(b.store, run.runId);
+    expect(events.filter((event) => event.kind === "guidance-issued").map((event) => event.notice)).toContain(
+      "unread-stop",
+    );
+    expect(result.stopReason).toBe("report-composed");
+  });
+
   test("a profile that states false is still obeyed", async () => {
     /*
       The other half of the distinction, and the reason this is a second resolver rather than a
@@ -4688,6 +4741,44 @@ describe("a run that would report an answer it never presented", () => {
     expect(guidanceDelivered(events)["present-before-report"]).toBe(1);
   });
 
+  /*
+    A hold inside the TURN reserve files no report at all, which is the verdict the hold
+    exists to avoid.
+
+    `noTimeToHold` reads as "is there still room to act on this", and the comment above it
+    says turn: a run held with no turn left to act on the holding files no report at all,
+    which is worse than the verdict the hold was avoiding. The expression consulted only
+    the wall clock. `announceReserve` consults the pair — `AGENT_REPORT_RESERVE_TURNS`
+    alongside `AGENT_REPORT_RESERVE_MS`, whose own doc calls itself the same reserve
+    against the wall clock — so the turn half was simply dropped at this one site.
+
+    Measured: three of five optimize runs spent eleven calls reading, were told twice that
+    the reserve had been reached, finally called `compose_report` on the last turn, and had
+    it held for a step there was no turn left to take. Each ended `turn-limit` and
+    `unanswered`, holding a report that would otherwise have been filed. The clock was
+    never the scarce resource — those runs used a hundred seconds of four hundred fifty.
+  */
+  test("a report arriving inside the turn reserve is filed rather than held", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "data-analysis", true);
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "the question, in SQL" }),
+      reportOn("Orders were read."),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+      // The report lands on the last turn, which is what puts it inside the reserve.
+      maxTurns: 2,
+    });
+
+    const events = await eventsOf(b.store, run.runId);
+    expect(events.find((event) => event.kind === "call-held")).toBeUndefined();
+    expect(events.map((event) => event.kind)).toContain("report-composed");
+  });
+
   test("the notice is sent once, so a model that ignores it still reports", async () => {
     // The one-shot matters: without it a model that never presents would have every
     // report intercepted and the run would spend its turns rather than ending.
@@ -4752,6 +4843,10 @@ describe("a run that would report an answer it never presented", () => {
     const script = scriptedModel(
       callsTool("inspect_schema", { schema: "public" }),
       reportOn("The schema was inspected."),
+      // One more than before: the report is now held with the read-first sentence, which
+      // buys the turn this entry answers. What the run must still never hear is the
+      // PRESENT sentence, and that is what the assertion below pins.
+      answersProse("done"),
       answersProse("done"),
     );
 
@@ -4768,12 +4863,73 @@ describe("a run that would report an answer it never presented", () => {
       events.some((event) => event.kind === "tool-completed" && event.artifact.operationId === "sql.query.read"),
     ).toBe(true);
     const sent = script.turns.flatMap((turn) => JSON.stringify(turn.body.messages ?? []));
+    // Still never the PRESENT sentence: there is nothing here it could present. What it IS
+    // told now is the other thing, and the only possible one - go and read something of your
+    // own - which the test below pins.
     expect(sent.some((messages) => messages.includes("This run answers by PRESENTING"))).toBe(false);
-    // Nor anything else. A sentence for exactly this shape was written and measured on the
-    // three models that reach it — a catalog-only read, every statement refused, no call at all
-    // — and none recovered, so it was deleted rather than kept switched off.
-    // And the report it did compose was composed, not intercepted.
-    expect(events.map((event) => event.kind)).toContain("report-composed");
+    // Its report IS held now, by the read-first sentence, and this script ignores the offer:
+    // the model narrates twice and the run ends with no report. That is the SAME verdict the
+    // run earned before the sentence existed - it composed a report and scored `no-answer` -
+    // so nothing that used to pass stops passing; what changed is that a model willing to take
+    // the offer now has one. The test below is the same run taking it.
+    const held = events.find((event) => event.kind === "call-held");
+    expect(held?.tool).toBe("compose_report");
+    expect(held?.reason).toContain("run_read_query");
+  });
+
+  /*
+    The shortfall with no sentence, and it costs a whole cell.
+
+    `no-answer` is the one shortfall this drive never speaks. Four others have an arm in
+    `shortfallNotice` — no-table-profile, no-reading, no-plan-comparison, no-plan-evidence —
+    and a data-analysis run that reports without an answer falls through all of them. The
+    `present-before-report` hold does not reach it either, correctly: that one is withheld from
+    a run holding nothing presentable, because telling a run to present what it cannot present
+    is the mistake the two tests above exist to prevent.
+
+    So the run is told nothing at all. Measured on `mistral-small3.2:24b`, a 24B model at 25/30
+    whose analyze cell reads 0/5 across SIX rolls, naked and levered alike, every run the same
+    four events: three `inspect_schema` calls, a report resting on the inventory, `no-answer`.
+    It never drafts a read because nothing ever says the answer has to be one.
+
+    What it needs is the third sentence, and it is the one that is actually possible: run a read
+    of your own, present that, then report. Held like every other preview notice, because
+    `compose_report` ends the run and a message after it arrives too late.
+  */
+  test("a run that read nothing of its own is told to read, not to present what it cannot", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "data-analysis", true);
+    const script = scriptedModel(
+      callsTool("inspect_schema", { schema: "public" }),
+      reportOn("The schema was inspected."),
+      callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "the question, in SQL" }),
+      presentsRead(),
+      reportOn("Orders were read."),
+      reportOn("Orders were read."),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const events = await eventsOf(b.store, run.runId);
+    const held = events.find((event) => event.kind === "call-held");
+    expect(held?.tool).toBe("compose_report");
+    expect(held?.reason).toContain("run_read_query");
+    // The point of the held turn, and the thing this arm is for: the run goes and DRAFTS a
+    // read of its own, which it had not done in any of the six measured rolls. The ordering
+    // is the assertion - the draft comes after the hold, so it is the sentence that bought it.
+    const kinds = events.map((event) => event.kind);
+    expect(kinds).toContain("statement-drafted");
+    expect(kinds.indexOf("call-held")).toBeLessThan(kinds.indexOf("statement-drafted"));
+    // And the tool is still in the run's hands when it is called: a narrowed set here would
+    // have answered the read with "there is no such tool".
+    expect(
+      events.some((event) => event.kind === "tool-completed" && event.artifact.operationId === "sql.query.read"),
+    ).toBe(true);
+    expect(result.stopReason).toBe("report-composed");
   });
 });
 
@@ -5267,6 +5423,45 @@ describe("a run that will not record what it read is narrowed to what would fini
     });
 
     expect(namedIn(script, 12).sort()).toEqual(["compose_report", "present_answer"]);
+  });
+
+  /*
+    The tool a narrowed analysis must NOT lose, and the loop that losing it creates.
+
+    Narrowing keeps the instruments a surface's verdict still needs, and for data-analysis that
+    was read as `present_answer` alone. It is the right pair only for a run that has something to
+    present. A run whose every call was `inspect_schema` has nothing: `present_answer` refuses a
+    catalog artifact, because the statement behind one is the SERVER's. So narrowing hands such a
+    run two tools, one of which is `compose_report` and the other of which cannot be used, and
+    takes away the only tool that could still change the outcome.
+
+    Measured on `mistral-small3.2:24b`, whose analyze cell reads 0/5 across nine rolls. The
+    ledger is the same every time, and the last line is the one that matters:
+
+      inspect_schema x3 -> report-reminder (narrows) -> compose_report -> held: "call
+      run_read_query" -> "I need to run a query that sums the salary amounts ... Let's draft and
+      run that query." -> stops.
+
+    The model understood the sentence exactly and could not act on it, because the reminder had
+    already taken `run_read_query` away. Being told to call a tool one no longer holds is the
+    #350/#356 defect; here the drive was doing it to itself.
+
+    Kept only while nothing presentable exists, so the narrowing still closes on a run that has
+    read and is merely reading again — which is the loop it was written for.
+  */
+  test("an analysis that has read nothing of its own keeps the tool that would read", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "data-analysis");
+    const inspects = () => callsTool("inspect_schema", { schema: "public" });
+    const script = scriptedModel(...Array.from({ length: 13 }, inspects), answersProse("still reading"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(namedIn(script, 12).sort()).toEqual(["compose_report", "present_answer", "run_read_query"]);
   });
 
   test("an instrument a narrowed run has already used three times is dropped too", async () => {

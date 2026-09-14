@@ -43,6 +43,8 @@ describe("results-grid/StatsBar", () => {
         onClearFilters={onClearFilters}
         viewMode="card"
         onSetViewMode={mock(() => {})}
+        wrapText={false}
+        onToggleWrapText={mock(() => {})}
         hasSensitive={false}
         effectiveMaskingEnabled={false}
         userCanToggle={false}
@@ -71,6 +73,8 @@ describe("results-grid/StatsBar", () => {
         onClearFilters={mock(() => {})}
         viewMode="table"
         onSetViewMode={onSetViewMode}
+        wrapText={false}
+        onToggleWrapText={mock(() => {})}
         hasSensitive
         effectiveMaskingEnabled={false}
         userCanToggle
@@ -88,6 +92,29 @@ describe("results-grid/StatsBar", () => {
     expect(onSetViewMode).toHaveBeenCalledTimes(2);
   });
 
+  test("supports text wrapping toggle", () => {
+    const onToggleWrapText = mock(() => {});
+    const { queryByText } = render(
+      <StatsBar
+        result={makeResult()}
+        filteredRowCount={2}
+        activeFilterCount={0}
+        onClearFilters={mock(() => {})}
+        viewMode="table"
+        onSetViewMode={mock(() => {})}
+        wrapText={false}
+        onToggleWrapText={onToggleWrapText}
+        hasSensitive={false}
+        effectiveMaskingEnabled={false}
+        userCanToggle={false}
+      />,
+    );
+
+    expect(queryByText("WRAP")).not.toBeNull();
+    fireEvent.click(queryByText("WRAP")!);
+    expect(onToggleWrapText).toHaveBeenCalledTimes(1);
+  });
+
   test("shows locked masked label when user cannot toggle", () => {
     const { queryByText } = render(
       <StatsBar
@@ -97,6 +124,8 @@ describe("results-grid/StatsBar", () => {
         onClearFilters={mock(() => {})}
         viewMode="card"
         onSetViewMode={mock(() => {})}
+        wrapText={false}
+        onToggleWrapText={mock(() => {})}
         hasSensitive
         effectiveMaskingEnabled
         userCanToggle={false}
@@ -114,6 +143,8 @@ describe("results-grid/StatsBar", () => {
         onClearFilters={mock(() => {})}
         viewMode="card"
         onSetViewMode={mock(() => {})}
+        wrapText={false}
+        onToggleWrapText={mock(() => {})}
         hasSensitive={false}
         effectiveMaskingEnabled={false}
         userCanToggle={false}
@@ -130,6 +161,8 @@ describe("results-grid/StatsBar", () => {
         onClearFilters={mock(() => {})}
         viewMode="card"
         onSetViewMode={mock(() => {})}
+        wrapText={false}
+        onToggleWrapText={mock(() => {})}
         hasSensitive={false}
         effectiveMaskingEnabled={false}
         userCanToggle={false}
@@ -150,6 +183,8 @@ describe("results-grid/StatsBar", () => {
         onClearFilters={mock(() => {})}
         viewMode="card"
         onSetViewMode={mock(() => {})}
+        wrapText={false}
+        onToggleWrapText={mock(() => {})}
         hasSensitive={false}
         effectiveMaskingEnabled={false}
         userCanToggle={false}
@@ -173,6 +208,8 @@ describe("results-grid/StatsBar", () => {
         onClearFilters={mock(() => {})}
         viewMode="card"
         onSetViewMode={mock(() => {})}
+        wrapText={false}
+        onToggleWrapText={mock(() => {})}
         hasSensitive={false}
         effectiveMaskingEnabled={false}
         userCanToggle={false}
@@ -196,6 +233,8 @@ describe("results-grid/StatsBar", () => {
         onClearFilters={mock(() => {})}
         viewMode="card"
         onSetViewMode={mock(() => {})}
+        wrapText={false}
+        onToggleWrapText={mock(() => {})}
         hasSensitive={false}
         effectiveMaskingEnabled={false}
         userCanToggle={false}
@@ -213,7 +252,7 @@ describe("results-grid/StatsBar", () => {
     const pendingChanges: CellChange[] = [
       { rowIndex: 0, columnId: "name", originalValue: "Alice", newValue: "Alicia" },
     ];
-    const { container, queryByText } = render(
+    const { queryByText, getByLabelText } = render(
       <StatsBar
         result={makeResult()}
         filteredRowCount={2}
@@ -221,6 +260,8 @@ describe("results-grid/StatsBar", () => {
         onClearFilters={mock(() => {})}
         viewMode="card"
         onSetViewMode={mock(() => {})}
+        wrapText={false}
+        onToggleWrapText={mock(() => {})}
         hasSensitive={false}
         effectiveMaskingEnabled={false}
         userCanToggle={false}
@@ -232,9 +273,8 @@ describe("results-grid/StatsBar", () => {
     );
 
     expect(queryByText("1 change")).not.toBeNull();
-    const buttons = container.querySelectorAll("button");
-    fireEvent.click(buttons[0]!);
-    fireEvent.click(buttons[1]!);
+    fireEvent.click(getByLabelText("Apply changes"));
+    fireEvent.click(getByLabelText("Discard changes"));
     expect(onApplyChanges).toHaveBeenCalledTimes(1);
     expect(onDiscardChanges).toHaveBeenCalledTimes(1);
   });

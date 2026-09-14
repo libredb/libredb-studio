@@ -138,6 +138,7 @@ export function ResultsGrid({
   const [editingCell, setEditingCell] = useState<{ rowIndex: number; columnId: string } | null>(null);
   const [editValue, setEditValue] = useState<string>("");
   const [viewMode, setViewMode] = useState<"card" | "table">("card");
+  const [wrapText, setWrapText] = useState(false);
   const [selectedRow, setSelectedRow] = useState<{ row: Record<string, unknown>; index: number } | null>(null);
   const [columnFilters, setColumnFilters] = useState<Map<string, string>>(new Map());
   const [activeFilterCol, setActiveFilterCol] = useState<string | null>(null);
@@ -218,6 +219,9 @@ export function ResultsGrid({
   }, []);
 
   const columns = useMemo<ColumnDef<typeof tableFeatureSet, Record<string, unknown>>[]>(() => {
+    // `truncate` carries its own `white-space: nowrap`, so wrapping has to replace it here,
+    // on the element holding the value, not only on the cell around it.
+    const valueFlow = wrapText ? "whitespace-pre-wrap break-words" : "truncate h-full";
     return result.fields.map((field) => ({
       // `id` + `accessorFn`, never `accessorKey`: TanStack reads a DOT in an
       // accessorKey as a path into the row, so `shipping.city` was fetched as
@@ -371,7 +375,7 @@ export function ResultsGrid({
         if (effectiveMaskingEnabled && sensitivePattern && val !== null && val !== undefined && !isRevealed) {
           const masked = maskValueByPattern(val, sensitivePattern);
           return (
-            <div className="truncate w-full h-full flex items-center gap-1 group/cell">
+            <div className={cn("w-full flex gap-1 group/cell", valueFlow, wrapText ? "items-start" : "items-center")}>
               <span className="text-fg-muted italic">{masked}</span>
               {userCanReveal && (
                 <button
@@ -393,7 +397,7 @@ export function ResultsGrid({
         if (effectiveMaskingEnabled && sensitivePattern && isRevealed) {
           const { display, className } = formatCellValue(val);
           return (
-            <div className="truncate w-full h-full flex items-center gap-1">
+            <div className={cn("w-full flex gap-1", valueFlow, wrapText ? "items-start" : "items-center")}>
               <span className={className}>{display}</span>
               <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-purple/50 shrink-0" />
             </div>
@@ -410,7 +414,7 @@ export function ResultsGrid({
         // editing at all (issue #269).
         if (!editingEnabled) {
           return (
-            <div className={cn("truncate w-full h-full", pendingChange && "bg-warning-tint/10 rounded px-0.5")}>
+            <div className={cn("w-full", valueFlow, pendingChange && "bg-warning-tint/10 rounded px-0.5")}>
               <span className={cn(className, pendingChange && "text-warning")}>{display}</span>
             </div>
           );
@@ -418,7 +422,7 @@ export function ResultsGrid({
 
         return (
           <div
-            className={cn("truncate w-full h-full cursor-text", pendingChange && "bg-warning-tint/10 rounded px-0.5")}
+            className={cn("w-full cursor-text", valueFlow, pendingChange && "bg-warning-tint/10 rounded px-0.5")}
             onDoubleClick={() => {
               setEditingCell({ rowIndex: row.index, columnId: column.id });
               setEditValue(pendingChange ? pendingChange.newValue : String(val ?? ""));
@@ -433,6 +437,7 @@ export function ResultsGrid({
       maxSize: 500,
     }));
   }, [
+    wrapText,
     result.fields,
     result.columnTypes,
     editingCell,
@@ -528,6 +533,14 @@ export function ResultsGrid({
         onClearFilters={handleClearFilters}
         viewMode={viewMode}
         onSetViewMode={setViewMode}
+        wrapText={wrapText}
+        onToggleWrapText={() => {
+          // Both virtualizers cache every row they measured. Dropping the cache on each
+          // toggle is what lets rows grown while wrapping shrink back once it is off.
+          rowVirtualizer.measure();
+          mobileTableVirtualizer.measure();
+          setWrapText((value) => !value);
+        }}
         hasSensitive={hasSensitive}
         effectiveMaskingEnabled={effectiveMaskingEnabled}
         userCanToggle={userCanToggle}
@@ -614,14 +627,16 @@ export function ResultsGrid({
                 <button
                   type="button"
                   key={virtualRow.index}
+                  data-index={virtualRow.index}
                   style={{
                     position: "absolute",
                     top: 0,
                     left: 0,
                     right: 0,
-                    height: `${virtualRow.size}px`,
+                    ...(wrapText ? { minHeight: "48px" } : { height: `${virtualRow.size}px` }),
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
+                  ref={wrapText ? mobileTableVirtualizer.measureElement : undefined}
                   className="flex hover:bg-brand-tint/[0.03] transition-colors border-b border-hairline cursor-pointer text-left"
                   onClick={() => setSelectedRow({ row, index: virtualRow.index })}
                 >
@@ -638,9 +653,11 @@ export function ResultsGrid({
                       <div
                         key={field}
                         className={cn(
-                          "h-full px-4 py-3 border-r border-hairline text-xs font-mono whitespace-nowrap overflow-hidden flex items-center",
+                          "px-4 py-3 border-r border-hairline text-xs font-mono overflow-hidden flex min-w-[120px]",
+                          wrapText
+                            ? "whitespace-pre-wrap break-words items-start"
+                            : "h-full whitespace-nowrap items-center",
                           idx === 0 && "sticky left-0 z-10 bg-sunken shadow-[2px_0_8px_rgba(0,0,0,0.3)]",
-                          "min-w-[120px]",
                         )}
                       >
                         <span className={className}>{displayValue}</span>
@@ -687,8 +704,11 @@ export function ResultsGrid({
                 <div
                   key={row.id}
                   data-index={virtualRow.index}
+                  ref={wrapText ? rowVirtualizer.measureElement : undefined}
                   style={{
-                    height: `${virtualRow.size}px`,
+                    // A fixed height is all measureElement would ever read back, so a
+                    // wrapping row sizes to its content and reports that instead.
+                    ...(wrapText ? { minHeight: "36px" } : { height: `${virtualRow.size}px` }),
                     transform: `translateY(${virtualRow.start}px)`,
                     position: "absolute",
                     top: 0,
@@ -700,7 +720,12 @@ export function ResultsGrid({
                     <div
                       key={cell.id}
                       style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
-                      className="h-full px-4 py-2 border-r border-hairline text-xs font-mono whitespace-nowrap overflow-hidden group-hover:border-hairline-strong flex items-center shrink-0"
+                      className={cn(
+                        "px-4 py-2 border-r border-hairline text-xs font-mono overflow-hidden group-hover:border-hairline-strong flex shrink-0",
+                        wrapText
+                          ? "whitespace-pre-wrap break-words items-start"
+                          : "h-full whitespace-nowrap items-center",
+                      )}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </div>

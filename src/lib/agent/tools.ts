@@ -672,6 +672,74 @@ const presentAnswerSchema = z.strictObject({
  * (`part.invalid !== true`). `tests/isolated/agent-investigation.test.ts` drives the whole path
  * through the real SDK so that edit fails a test rather than a run.
  */
+/**
+ * A claims array a model sent as a STRING of JSON, read back once before validation.
+ *
+ * The same encoding `readSerializedPresentation` was written for, on the tool that ENDS a run.
+ * That one costs a presentation; this one costs everything the run did.
+ *
+ * Measured on `llama3.1:8b` — the most-pulled tool-capable model on Ollama — five operate runs
+ * produced SEVENTY `INVALID_TOOL_INPUT` declines and every one was the same line:
+ *
+ *     the fields that did not match — claims: expected array, received string
+ *
+ * The model serialized the array rather than nesting it, roughly fourteen times per run, until
+ * the turn limit ended the run. By then the sentence is complete — it names the field, the type
+ * expected and the type that arrived — and the model still cannot act on it. A message can only
+ * do so much; this is the other half, and the repository already decided that half is worth
+ * having when it wrote the sibling.
+ *
+ * Every bound the sibling states holds here unchanged and for the same reasons: read ONCE and
+ * never recursively, so this accepts a serialization the model chose rather than inventing a
+ * second encoding; at the CALL BOUNDARY rather than in the schema, so the contract the SDK
+ * advertises stays byte-identical; and the value still goes through the same strict schema, so a
+ * string holding the wrong shape is refused exactly as the object would have been. Nothing is
+ * admitted here that would not have been admitted written properly.
+ */
+/** Whether `claims` arrived as a string that is not JSON, which no read here can recover. */
+function claimsArrivedAsUnparseableText(input: unknown): boolean {
+  if (typeof input !== "object" || input === null) return false;
+  const { claims } = input as { claims?: unknown };
+  if (typeof claims !== "string") return false;
+  try {
+    JSON.parse(claims);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * What a run is told when its claims arrived as text that is not JSON.
+ *
+ * `readSerializedClaims` recovers the case a model serialized properly. This is the case it
+ * cannot: measured on `llama3.1:8b`, the claims arrive as a PYTHON repr — single quotes
+ * throughout — with the claim true, the source right and the correlation id one the run actually
+ * produced. Only the quote character is wrong. Converting it here would be inventing an encoding
+ * rather than reading one the model chose, and it breaks on the first apostrophe in a sentence.
+ *
+ * What was wrong was the sentence. `claims: expected array, received string` is true and, to a
+ * model that believes it sent an array, unusable — across five assess runs it re-sent the
+ * identical bytes THIRTY times. This names the fault and what a JSON array requires, and quotes
+ * nothing the model wrote: the rule the refusals here are bounded by is that a server sentence
+ * carries the path and the shape, never the value.
+ */
+const AGENT_CLAIMS_NOT_JSON =
+  "Your claims argument arrived as TEXT rather than as an array, and it is not JSON either. Send the array itself as the argument value — not a string containing it. If your tooling can only send a string, it must be JSON: double quotes around every key and every string value, never single quotes.";
+
+function readSerializedClaims(input: unknown): unknown {
+  if (typeof input !== "object" || input === null) return input;
+  const { claims } = input as { claims?: unknown };
+  if (typeof claims !== "string") return input;
+  try {
+    return { ...input, claims: JSON.parse(claims) };
+  } catch {
+    // Left as the string it was, for the sibling's reason: the schema refuses it, and reporting a
+    // parse failure here would replace the contract's own wording with this function's.
+    return input;
+  }
+}
+
 function readSerializedPresentation(input: unknown): unknown {
   if (typeof input !== "object" || input === null) return input;
   const { presentation } = input as { presentation?: unknown };
@@ -1351,7 +1419,7 @@ function exampleRecommendCall(events: readonly AgentRunEvent[]): string | undefi
  * this looks for a completed data read with a statement of the model's behind it, which is
  * exactly what the tool accepts, and offers nothing when there is none.
  */
-function presentableArtifact(events: readonly AgentRunEvent[]): string | undefined {
+export function presentableArtifact(events: readonly AgentRunEvent[]): string | undefined {
   const drafted = new Set(events.flatMap((event) => (event.kind === "statement-drafted" ? [event.stepId] : [])));
   let latest: string | undefined;
   for (const event of events) {
@@ -2116,12 +2184,74 @@ function arrivedAt(input: unknown, path: readonly PropertyKey[]): string {
  * long list read as prose is how a refusal becomes another wall.
  */
 function describeIssues(issues: readonly z.core.$ZodIssue[], input: unknown): string {
-  const named = issues.slice(0, 3).map((issue) => {
-    const where = issue.path.length === 0 ? "the arguments object" : issue.path.join(".");
-    if (issue.code === "invalid_type")
-      return `${where}: expected ${issue.expected}, received ${arrivedAt(input, issue.path)}`;
-    if (issue.code === "unrecognized_keys") return `${where}: remove ${issue.keys.join(", ")}`;
-    /*
+  const renames = renamesAmong(issues, input);
+  const renamedTo = new Set(renames.values());
+  const named = [
+    ...[...renames].map(([from, to]) => `rename ${from} to ${to}`),
+    ...issues.flatMap((issue) => {
+      const where = issue.path.length === 0 ? "the arguments object" : issue.path.join(".");
+      // Both halves of a rename are dropped here rather than filtered out of `issues` above,
+      // because an `unrecognized_keys` issue can carry keys a rename did not claim and those
+      // still have to be named.
+      if (issue.code === "invalid_type" && issue.path.length === 1 && renamedTo.has(String(issue.path[0]))) return [];
+      if (issue.code === "unrecognized_keys") {
+        const surplus = issue.keys.filter((key) => !renames.has(key));
+        return surplus.length === 0 ? [] : [`${where}: remove ${surplus.join(", ")}`];
+      }
+      return [describeIssue(issue, where, input)];
+    }),
+  ].slice(0, 3);
+  return `the fields that did not match — ${named.join("; ")}`;
+}
+
+/**
+ * The pairs of issues that are one mistake wearing two names.
+ *
+ * A model that sends `artifact_id` where the schema says `artifact` is refused twice over:
+ * the field is missing AND a field is surplus. Both sentences are true, neither says they
+ * are the same field, and the value the model sent was never wrong — only the key was. What
+ * it reads is that something is absent and something is extra, and the repair that suggests
+ * itself is to send the extra field again with more of it. That is the loop every other
+ * refusal in this file exists to end, arriving by a route none of them cover.
+ *
+ * Measured on `llama3.1:8b`, the most-pulled tool-capable model on Ollama: five analyze runs,
+ * `present_answer` declined in every one, never once on the value it carried. `artifact_id`
+ * is not an exotic guess — it is what the field is called in most APIs that have one.
+ *
+ * A near miss and nothing looser: the two names have to be the same word once punctuation and
+ * case are set aside, one of them possibly carrying an affix the other does not. Anything
+ * broader would start pairing fields that are genuinely different, and a confident rename to
+ * the WRONG field is worse than the two sentences it replaced.
+ *
+ * The rule the message is bounded by is untouched. Both names are keys — the model's and the
+ * schema's — which are structural exactly as a path is, and the value never crosses over.
+ */
+function renamesAmong(issues: readonly z.core.$ZodIssue[], input: unknown): ReadonlyMap<string, string> {
+  const absent = issues.flatMap((issue) =>
+    issue.code === "invalid_type" && issue.path.length === 1 && arrivedAt(input, issue.path) === "nothing"
+      ? [String(issue.path[0])]
+      : [],
+  );
+  const surplus = issues.flatMap((issue) => (issue.code === "unrecognized_keys" ? issue.keys : []));
+  const bare = (name: string): string => name.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
+  const pairs = new Map<string, string>();
+  for (const key of surplus) {
+    // First match wins and each side is claimed once, so two surplus keys cannot both rename
+    // onto one absent field and leave the model choosing between them.
+    const match = absent.find(
+      (name) =>
+        !new Set(pairs.values()).has(name) && (bare(key).includes(bare(name)) || bare(name).includes(bare(key))),
+    );
+    if (match !== undefined && !pairs.has(key)) pairs.set(key, match);
+  }
+  return pairs;
+}
+
+/** One issue in this layer's words; see `describeIssues`, which owns the rules. */
+function describeIssue(issue: z.core.$ZodIssue, where: string, input: unknown): string {
+  if (issue.code === "invalid_type")
+    return `${where}: expected ${issue.expected}, received ${arrivedAt(input, issue.path)}`;
+  /*
       A closed set is named, because "invalid value" was not something a model could act on.
 
       One evaluated model was refused `recommend_change` thirty-two times in one run on this
@@ -2134,8 +2264,8 @@ function describeIssues(issues: readonly z.core.$ZodIssue[], input: unknown): st
       example does it, the citable-id list does it — and a closed set is its cheapest case:
       the permitted values are in the schema, already in hand at the point of refusal.
     */
-    if (issue.code === "invalid_value") return `${where}: expected one of ${issue.values.join(", ")}`;
-    /*
+  if (issue.code === "invalid_value") return `${where}: expected one of ${issue.values.join(", ")}`;
+  /*
       A DISCRIMINATED union lands here, and it is deliberately left alone.
 
       `claims.0.evidence.2.source: invalid union` looks like the same fault as the two cases above
@@ -2150,9 +2280,7 @@ function describeIssues(issues: readonly z.core.$ZodIssue[], input: unknown): st
       the full sentence — is a reporting gap, not a blocked run, and pretending otherwise would
       have put dead code in front of a model that was never short of the answer.
     */
-    return `${where}: ${issue.code.replaceAll("_", " ")}`;
-  });
-  return `the fields that did not match — ${named.join("; ")}`;
+  return `${where}: ${issue.code.replaceAll("_", " ")}`;
 }
 
 /**
@@ -4143,7 +4271,14 @@ export function composeReportTool(
     throw new Error("agent tool layer: the report's run record does not belong to this run");
   }
 
-  const parsed = parseToolInput(reportSchema, input);
+  /*
+    Named before the schema is asked, because the schema's own answer here is the one a model
+    cannot act on: it reports `claims: expected array, received string`, which a model that
+    serialized an array agrees with. Reached only where the read above could not recover the
+    value, so a properly serialized array never sees this.
+  */
+  if (claimsArrivedAsUnparseableText(input)) return unavailable("INVALID_TOOL_INPUT", AGENT_CLAIMS_NOT_JSON);
+  const parsed = parseToolInput(reportSchema, readSerializedClaims(input));
   if (!parsed.ok)
     return invalidEvidenceInput(
       parsed.problems,

@@ -1,11 +1,19 @@
 "use client";
 
 import React, { useState, useMemo, useCallback, useEffect } from "react";
-import { Columns3, GripVertical, ArrowRight } from "lucide-react";
+import { Columns3, GripVertical, ArrowRight, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DatabaseType, QueryResult } from "@/lib/types";
 import { quoteLiteral } from "@/lib/sql/values";
 import { quoteIdentifier } from "@/lib/sql/identifier";
+import { downloadText } from "@/lib/export/download";
+import { pivotTableText } from "@/lib/export/pivot-table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface PivotTableProps {
   result: QueryResult | null;
@@ -106,6 +114,29 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
 
     return { colKeys, pivotRows };
   }, [rows, rowField, colField, valueField, aggFunction]);
+
+  const exportPivot = useCallback(
+    (format: "csv" | "json") => {
+      if (!pivotData || !rowField) return;
+
+      const headers = [
+        rowField,
+        ...pivotData.colKeys.map((ck) => (ck === "__all__" ? `${AGG_LABELS[aggFunction]}(${valueField || "*"})` : ck)),
+      ];
+
+      const rows = pivotData.pivotRows.map((row) => [
+        row.rowKey,
+        ...pivotData.colKeys.map((ck) => row.values.get(ck) || "0"),
+      ]);
+
+      downloadText(
+        pivotTableText(headers, rows, format),
+        format === "csv" ? "text/csv" : "application/json",
+        `pivot_table_${Date.now()}.${format}`,
+      );
+    },
+    [pivotData, rowField, valueField, aggFunction],
+  );
 
   // Generate SQL
   const generateSQL = useCallback(() => {
@@ -233,6 +264,24 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
           >
             <ArrowRight strokeWidth={1.5} className="w-3 h-3" /> Generate SQL
           </button>
+        )}
+        {pivotData && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium rounded-md hover:bg-surface-hover"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export
+              </button>
+            </DropdownMenuTrigger>
+
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => exportPivot("csv")}>Export as CSV</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => exportPivot("json")}>Export as JSON</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
 

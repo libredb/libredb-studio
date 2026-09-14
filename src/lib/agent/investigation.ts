@@ -124,6 +124,7 @@ import {
   inspectSchemaTool,
   runReadQueryTool,
   selectAgentTools,
+  presentableArtifact,
 } from "./tools";
 import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
@@ -576,7 +577,42 @@ function shortfallNotice(
   table: string | undefined,
   plansInspected: number,
   readingsHeld: number,
+  holdsPresentable: boolean,
 ): ShortfallAdvice | null {
+  /*
+    The shortfall this drive never spoke, and it is worth a whole cell.
+
+    Four shortfalls have an arm below and `no-answer` had none, so a data-analysis run that
+    reported without an answer fell through all of them. `present-before-report` does not reach
+    it either, and correctly: that hold is withheld from a run holding nothing presentable,
+    because a run told to present what it cannot present neither presents nor reports — the
+    mistake two tests in this suite exist to prevent.
+
+    So the run heard nothing at all. Measured on `mistral-small3.2:24b`, a 24B model otherwise
+    at 25/30 whose analyze cell read 0/5 across six rolls, naked and levered alike, every run
+    the same four events: three `inspect_schema` calls, a report resting on the inventory,
+    `no-answer`. It never drafts a read, because nothing ever says the answer has to be one.
+
+    The sentence this arm gives is the one that IS possible: draft a read, present that, report.
+    Only for a run holding nothing presentable — where the run holds one, the present notice is
+    the better sentence and owns the case.
+  */
+  if (shortfall === "no-answer") {
+    if (holdsPresentable) return null;
+    return {
+      said: [
+        "This workflow answers by PRESENTING a result you read yourself, and this run has drafted no read: a report resting on the inventory is scored as having answered nothing.",
+        "Your compose_report call was not run. Call run_read_query with a statement of your own that answers the objective, then present_answer with the artifact id it reports, and then call compose_report again.",
+      ].join(" "),
+      // NOT narrowed, and that is the whole care of this arm. The narrowed set for
+      // data-analysis is `compose_report` plus `present_answer`; `run_read_query` is not in
+      // it. Narrowing here would take away the very tool this sentence names, the run would
+      // call it, be answered "there is no such tool", and spend the turn the hold just bought
+      // — the #350/#356 defect, and the ledger of this test showed it happening: the held
+      // report was followed by a declined read.
+      narrow: false,
+    };
+  }
   if (shortfall === "no-table-profile") {
     const named = table === undefined ? "a table this run's inventory lists" : `"${table}"`;
     return {
@@ -2174,7 +2210,31 @@ const AGENT_NARROWED_EXTRA_TOOLS: Readonly<Record<AgentRunWorkflowType, readonly
 function narrowedToolNames(record: AgentRunRecord, since = Number.POSITIVE_INFINITY): ReadonlySet<AgentToolName> {
   const held = new Set(selectAgentTools(record).map((definition) => definition.name));
   const kept = new Set<AgentToolName>();
-  for (const name of ["compose_report" as const, ...AGENT_NARROWED_EXTRA_TOOLS[record.workflowType]]) {
+  /*
+    The tool a narrowed analysis must not lose.
+
+    `present_answer` is the instrument this surface's verdict needs, and keeping it is right for a
+    run that HAS something to present. A run whose every call was `inspect_schema` has nothing:
+    that tool refuses a catalog artifact, because the statement behind one is the server's. So the
+    narrowing would hand such a run `compose_report` plus a tool it cannot use, and take away the
+    only one that could still change the outcome.
+
+    Measured on `mistral-small3.2:24b`, analyze 0/5 across nine rolls, the same ledger every time:
+    three catalog reads, the reminder (which narrows), a report held with "call run_read_query",
+    and then the model saying it would draft exactly that query - and stopping, because the
+    reminder had already taken the tool away. Being told to call a tool one no longer holds is the
+    #350/#356 defect, arriving here from the drive itself.
+
+    Only while nothing presentable exists, so the narrowing still closes on the run it was written
+    for: one that has read and is merely reading again.
+  */
+  const stillOwesARead =
+    AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType] && presentableArtifact(record.events) === undefined;
+  for (const name of [
+    "compose_report" as const,
+    ...AGENT_NARROWED_EXTRA_TOOLS[record.workflowType],
+    ...(stillOwesARead ? (["run_read_query"] as const) : []),
+  ]) {
     if (held.has(name) && !usedUp(record, name, since)) kept.add(name);
   }
   return kept;
@@ -3555,16 +3615,25 @@ export async function runInvestigation(
           was sent to diagnose — holding, at that moment, the two instruments that would have
           found it. There is no user on the other end of a run, so the question is a stop.
 
-          `remindToReport` above cannot serve it: it is gated on `anyToolCalled`, correctly,
-          because a run that read nothing has nothing to file. This sentence is the other half
-          — not "file what you found" but "go and find it", naming the instruments.
+          `remindToReport` above cannot serve it. That one fires here too — it is gated the
+          other way, on `anyToolCalled` — and what it asks for is a report. This sentence is the
+          other half: not "file what you found" but "go and find it", naming the instruments.
 
-          Granted only where the run has lost anyway. `compose_report` is one of the tools
-          `anyToolCalled` counts, so a run reaching here with it false composed no report and
-          has already earned `no-report`; the turn cannot cost a pass. Once, and — because a
-          bound that cannot protect a passing run protects nothing — offered to whoever needs
-          it: `answersUnreadStop` reads a stated `false` as the measurement it is and an absent
-          profile as the absence it is, so a model nobody has measured is told to read.
+          Not gated on having read nothing, which is the shape the question takes only the first
+          time a model meets a surface. Measured on `glm-4.7-flash`, a query-optimization cell
+          that read 4/5 across ten rolls: it called `inspect_schema`, was reminded to report,
+          answered the reminder by asking the user to paste the very statement it had been sent
+          to diagnose, and stopped. Ten of eighteen losses across forty-three runs were that one
+          shape. A run that read first is not better off for having read — it is stopped on a
+          question nobody will answer, having already spent a call proving it was willing.
+
+          Granted only where the run has lost anyway, and that is what makes the width safe:
+          `compose_report` ENDS a run, so a run reaching this branch composed no report whatever
+          else it called, and has already earned `no-report`; the turn cannot cost a pass. Once,
+          and — because a bound that cannot protect a passing run protects nothing — offered to
+          whoever needs it: `answersUnreadStop` reads a stated `false` as the measurement it is
+          and an absent profile as the absence it is, so a model nobody has measured is told to
+          read.
         */
         if (
           record.mode === "agent" &&
@@ -3624,8 +3693,18 @@ export async function runInvestigation(
 
           Read once and applied to all three holds, because the reasoning does not distinguish
           between them and a gate on one site would be a difference nothing justifies.
+
+          Both halves of the reserve, because "no turn left" is the literal reading of the
+          sentence above and for a long while only the clock half was written here. A run can
+          be minutes from its deadline and one turn from its ceiling, and it is the ceiling
+          that ends most runs: `announceReserve` spends the last turns telling the model to
+          report, the model finally does, and the hold then asks for a step there is no turn
+          to take. Measured on an optimize cell where three of five runs died exactly that
+          way — eleven reads, two reserve notices, a report held on the last turn, verdict
+          `unanswered` — while using a hundred seconds of a four-hundred-fifty-second budget.
         */
-        const noTimeToHold = resources.deadline.remainingMs() <= AGENT_REPORT_RESERVE_MS;
+        const noTimeToHold =
+          resources.deadline.remainingMs() <= AGENT_REPORT_RESERVE_MS || maxTurns - turns <= AGENT_REPORT_RESERVE_TURNS;
         // A run whose workflow answers by presenting, which read something and is about
         // to report without presenting it, is one call short of an answer. Checked here
         // and not after the call, because `compose_report` ends the run.
@@ -3718,6 +3797,9 @@ export async function runInvestigation(
                 (event) => event.kind === "tool-completed" && event.artifact.operationId === "sql.explain.estimate",
               ).length,
               sofar.events.filter((event) => event.kind === "tool-completed").length,
+              // Asked of the same function `present_answer` asks, so "presentable" cannot
+              // drift between the notice and the tool it points at.
+              presentableArtifact(sofar.events) !== undefined,
             );
             return advice === null ? [] : [{ shortfall, advice }];
           })[0];

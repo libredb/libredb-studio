@@ -51,7 +51,7 @@ for a web-based editor:
   connect time — see [Runtime & driver selection](#runtime--driver-selection). All packaged
   distribution channels — the official Docker image, `npx @libredb/studio`, the Homebrew tap, the
   `.deb`/`.rpm` packages, and the standalone tarballs — run the built app with `node server.js` (the
-  Docker image's runner stage is `node:26.8.1-trixie-slim`; the other channels bundle their own pinned
+  Docker image's runner stage is `node:26.8.2-trixie-slim`; the other channels bundle their own pinned
   Node 24 runtime), so they all use `node:sqlite`. `bun:sqlite` is used for local development
   (`bun dev`) and the test suite, where Next.js runs directly under Bun. Only on a runtime with
   neither driver does `connect()` throw a `DatabaseConfigError`.
@@ -192,6 +192,21 @@ Since #464 the client can see that: `supportsTransactions: false`
 SANDBOX toggle from the editor toolbar here. Before that flag existed the only gate was
 `isTransactionProvider(provider)` inside the route — a runtime shape check the browser cannot read —
 so the controls rendered on every connection and the route answered HTTP 400.
+
+### 3.5 `endOpenQueryTransaction()` — a transaction a statement left open
+
+A `BEGIN` sent through `query()` is a different thing from the API above: it opens a transaction on
+the one handle this provider holds, and nothing in the request cycle closed it.
+That handle is cached per `connection.id` for the whole process, so the transaction outlived the
+request and belonged to whoever borrowed the handle next.
+Measured 2026-09-13 through `POST /api/db/multi-query`: after `BEGIN; INSERT INTO t VALUES (1); SELECT * FROM <missing>`, the next user's `INSERT` answered HTTP 200 and read its own row back, `sqlite3` in another process saw nothing at all, a second writer was refused with "database is locked", and a later `ROLLBACK` through the app discarded the second user's write with no error at any point.
+
+`endOpenQueryTransaction()` ends it and says whether there was one:
+`"none"` or `"rolled-back"`.
+The question is answered without a round trip, because SQLite answers it itself: `sqlite3_get_autocommit` is published by both drivers, as `inTransaction` on bun:sqlite and `isTransaction` on node:sqlite, bridged to one name in [`sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts).
+Asking matters: measured on bun:sqlite 1.4.2, a `ROLLBACK` with no transaction active raises "cannot rollback - no transaction is active", so a caller that rolled back unconditionally would report an error on every script that ended cleanly.
+Rolled back and not committed: a script that never said COMMIT did not ask for its work to be kept.
+`POST /api/db/multi-query` calls this in a `finally` and reports the outcome, so the person who wrote the `BEGIN` is told what became of it.
 
 ---
 
