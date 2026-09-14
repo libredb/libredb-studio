@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D83, U17 · 41
+- [Drivers and connections](#drivers-and-connections) — D1–D84, U17 · 42
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X25, U2–U21 · 18
@@ -1256,6 +1256,47 @@ adopted from the review.
 provider does not declare editable and asserts the refusal, or with a docblock on `postgres.ts` saying by
 name why the check is not there and what carries it instead.
 
+### D84. A one-function Redis library can lose its function on a SUCCESS with no consequence shown
+
+`libraryCollateral` (`src/lib/db/providers/keyvalue/redis.ts:620`) opens with `if (functions.length < 2)
+return [];`, so a library registering exactly ONE function builds a plan whose `consequences` are empty:
+no warning, no acknowledgement checkbox, nothing to tick. The apply's collateral arm
+(`redis.ts:1922-1928`) has no such floor: it reports `applied-with-collateral` for every function in
+`before.functions` that is absent from `after`, one included.
+
+The two therefore disagree over a population a reader reaches with an ordinary edit. `libraryCollateral`'s
+own docblock states the premise that closes the gap, "a library registering exactly one function IS that
+function, so a body that re-registers it loses nothing", and the premise is about the SUBMITTED text,
+which nothing on this path reads: the only identity check is the shebang library name (`redis.ts:1767`)
+and no Lua parser is involved anywhere. Renaming the registration inside the body leaves the shebang name
+untouched, so the edit is accepted and the old function is gone.
+
+MEASURED against the provider's own apply double on 2026-09-14, a library `libredb_probe` registering only
+`libredb_ping`, edited to register `libredb_other`:
+
+```
+build.plan.consequences  []
+outcome                  {"outcome":"applied-with-collateral",
+                          "lost":[{"loses":"replaces-whole-container",
+                                   "fact":{"source":"FUNCTION LIST LIBRARYNAME libredb_probe",
+                                           "observed":"libredb_ping"}}], ...}
+```
+
+The probe was a temporary test in `tests/integration/db/redis-provider.test.ts` and was removed; the
+output above is the evidence. No container was started, so what a live 8.10.0 answers for that exact edit
+is a separate claim and is unmeasured here. The pane makes it silent rather than merely imprecise:
+`applied-with-collateral` is in `APPLIED_OUTCOMES`, so the dialog closes on a plain success, which is X24.
+
+Ruling 1b's second axis, a success destroying nothing the user was not shown, is what this breaks.
+
+Found by the review of the review of PR #831 (#789, discussion #778).
+
+**Done when:** the build and the apply agree about a one-function library. Either `libraryCollateral`
+names the single registered function as a consequence, which makes the warning honest and costs the
+reader one tick on every single-function edit, or the apply's arm stops reporting a loss the build
+promised could not happen, which is the answer only if some check proves the registration cannot move.
+The first is the safe direction and the second needs evidence this entry does not have.
+
 
 ## Value interpolation
 
@@ -1700,13 +1741,19 @@ The outcome itself is real and reached: `src/lib/db/providers/keyvalue/redis.ts:
 the functions a library registered BEFORE the apply are not all registered after, which is the everyday
 result of editing a library of two or more functions.
 
-NOTHING IS DESTROYED UNSHOWN, so ruling 1b's second axis holds: the plan's `consequences` name the
-library's whole registered set before the apply, the reader ticks the acknowledgement, and the outcome's
-`lost` is a strict SUBSET of what they were shown. What is lost is precision. The reader is told what
-MIGHT go and is never told what DID, and the audit ring records `object_edit_collateral_loss` where the
-reader's screen records a plain success.
+FOR A LIBRARY OF TWO OR MORE FUNCTIONS nothing is destroyed unshown, so ruling 1b's second axis holds
+there: `libraryCollateral` (`redis.ts:619`) names the library's whole registered set before the apply, the
+reader ticks the acknowledgement, and the outcome's `lost` is a strict SUBSET of what they were shown.
+What is lost is precision. The reader is told what MIGHT go and is never told what DID, and the audit ring
+records `object_edit_collateral_loss` where the reader's screen records a plain success.
 
-Found by the external review of PR #831 (#789, discussion #778).
+THAT SENTENCE IS NARROWED TO TWO OR MORE, and the round-1 spelling of this entry stated it over the whole
+population without qualification, which was wrong. `libraryCollateral` returns `[]` below two functions
+while the outcome arm reports a loss at one, so a ONE-function library is a success that destroys
+something the reader was never shown. Filed on its own as D84, measured, not the same defect as this one.
+
+Found by the external review of PR #831 (#789, discussion #778), and the over-broad verification sentence
+by the review of that review.
 
 **Done when:** either the outcome's `lost` facts reach the reader after a successful apply, or the arm is
 deleted and the dialog's outcome type stops admitting a state its only mount cannot produce. Deciding
