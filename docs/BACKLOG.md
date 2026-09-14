@@ -1566,24 +1566,36 @@ Nothing is visible to the reader and nothing is lost. It matters because it is n
 **Done when:** the widget releases the models before they are disposed, and the E2E spec can assert an
 empty console after an apply.
 
-### X22. The object-edit E2E's restored-tab test is flaky on its first CI run
+### X22. The object-edit E2E's restored-tab test fails its first attempt on every CI run so far
 
-MEASURED on the first run this spec ever had in CI, #831's `Functional Smoke (PostgreSQL)` job
-(actions run 34868635360, job 104060110399, 2026-09-14): 6 tests, **1 flaky, 5 passed**. The flaky one
-is `e2e/object-edit.spec.ts:409`, `a RESTORED tab is read-only until the reader presses Edit again`.
-It failed its first attempt at line 416, `expect(page.getByTestId("object-source-edit")).toBeVisible({
-timeout: 30_000 })`, with `element(s) not found` after the full 30 seconds, and passed on the retry.
-The job is green because Playwright retries, so nothing turns red and the intermittency is invisible
-unless a person reads the log.
+MEASURED on BOTH runs this spec has had in CI, #831's `Functional Smoke (PostgreSQL)` job (job
+104060110399 and job 104066966292, 2026-09-14): 6 tests, **1 flaky, 5 passed**, the same one each
+time. It is `e2e/object-edit.spec.ts:409`, `a RESTORED tab is read-only until the reader presses Edit
+again`, failing its first attempt at line 416,
+`expect(page.getByTestId("object-source-edit")).toBeVisible({ timeout: 30_000 })`, with
+`element(s) not found` after the full 30 seconds, and passing on the retry. Two runs out of two is
+not an intermittency: the first attempt fails every time and Playwright's retry is what makes the job
+green, so nothing turns red unless a person reads the log.
 
 The step under test is a `page.reload()` immediately after an edit that was not applied: the tab is
 restored from `localStorage`, the source is re-read, and the edit affordance appears once that read
-lands. WHY the affordance was absent for thirty seconds is NOT measured. Two candidates, neither
-checked: the re-read was still in flight on a cold runner, or the restored tab reached a state where
-the affordance is withheld. They are different defects and the log does not separate them.
+lands. WHY the affordance was absent for thirty seconds is NOT measured, and the log does not say.
+Two candidates, neither checked. First, the re-read was refused: every test in the file signs in as
+the same shared account and the spec's own `waitForTheObjectTree` documents that account hitting the
+120-requests-per-60-seconds `query` bucket on the fifth test of a run, and 60 seconds is longer than
+this assertion's 30. Second, the restored tab reached a state that withholds the affordance. They are
+different defects.
 
-**Done when:** the failure is reproduced with the reason named, either as a wait this test is missing
-or as a product state the reload can reach, and the retry is no longer what makes the job green.
+One fact that bears on the first and is worth having before anyone re-drives this: the OBJECT TREE
+offers the reader a `tree-retry` button when its read is refused, and `waitForTheObjectTree` presses
+it, but the source pane's failure region (`object-source-failure` in `ObjectSourceView.tsx`) offers
+NO retry control at all. A reader whose source read is refused has no way back except reopening the
+tab, so if the first candidate is the cause then the test is meeting a real product gap and not just
+a slow runner.
+
+**Done when:** the failure is reproduced with the reason named, and the first attempt passes, so
+Playwright's retry is no longer what makes the job green. If the cause is the refused read, closing
+this also means deciding whether the source pane should offer the recovery the tree already does.
 
 ## Dependencies
 
