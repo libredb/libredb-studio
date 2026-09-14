@@ -89,6 +89,36 @@ describe("readBoundedJson", () => {
     await expect(readBoundedJson(chunked, 1024)).rejects.toThrow("this request body is larger than");
   });
 
+  test("the bound is EXCLUSIVE: exactly byteLimit bytes resolves, one byte more is refused", async () => {
+    // THE BOUNDARY ITSELF, which the over-limit tests above do not reach: they send 2048 and 4,107
+    // bytes against a 1024 bound, so `>=` in place of `>` passes every one of them. The arithmetic
+    // in `readBoundedJson`'s docblock reasons explicitly that a body AT `EDIT_BODY_BYTE_LIMIT` is
+    // inside the bound, and the 413's sentence, "larger than N bytes", is FALSE of a body of
+    // exactly N. Both sides are asserted because one side alone is satisfied by the wrong operator.
+    //
+    // THE HARNESS IS MEASURED rather than assumed: the byte length of each body is asserted before
+    // it is sent, so a test that silently sent 65 bytes for the at-limit case would fail as a
+    // harness error rather than pass as a bound.
+    const limit = 64;
+    const body = (bytes: number): string => `{"t":"${"x".repeat(bytes - 8)}"}`;
+    expect(new TextEncoder().encode(body(limit)).byteLength).toBe(limit);
+    expect(new TextEncoder().encode(body(limit + 1)).byteLength).toBe(limit + 1);
+
+    expect(await readBoundedJson(request(body(limit)), limit)).toEqual({ t: "x".repeat(limit - 8) });
+    await expect(readBoundedJson(request(body(limit + 1)), limit)).rejects.toThrow(
+      "this request body is larger than 64 bytes",
+    );
+  });
+
+  test("an EMPTY JSON object is returned rather than refused, which the default read does not do", async () => {
+    // The divergence between the two body reads on one handler, pinned on this side. `readBoundedJson`
+    // has three conditions and "no named fields" is not one of them: `{}` parsed, and it is a JSON
+    // object, so it is answered and `resolveConnection` is what refuses it. `readDefaultBody` refuses
+    // `{}` itself with `Empty request body`. The handler-level half of this pair, both answers
+    // measured end to end, is `tests/api/object-route-handler.test.ts`.
+    expect(await readBoundedJson(request("{}"), 1024)).toEqual({});
+  });
+
   test("a body that is not a JSON OBJECT is refused rather than reaching a provider", async () => {
     await expect(readBoundedJson(request("[1,2,3]"), 1024)).rejects.toThrow("this request body is not valid JSON");
     await expect(readBoundedJson(request("null"), 1024)).rejects.toThrow("this request body is not valid JSON");

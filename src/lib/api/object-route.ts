@@ -185,12 +185,24 @@ async function readDefaultBody(req: NextRequest): Promise<Record<string, unknown
  * grep: `node_modules/next/dist/server/body-streams.js` declares
  * `DEFAULT_BODY_CLONE_SIZE_LIMIT = 10 * 1024 * 1024`, and over it `cloneBodyStream` sets
  * `limitExceeded`, pushes `null` into both streams and logs a `console.warn`, which ENDS the body
- * early rather than failing the request. `next-server.js:1289` installs that clone on every
- * non-upgrade request, with `experimental.proxyClientMaxBodySize` as the only override, so the
- * clone is not conditional on a middleware file being present in this repository even though
- * middleware is what the clone is for. The two
- * HTTP SENTENCES are a live measurement made earlier in this phase against a running server, not
- * something this file re-ran, and they are recorded here because they are the reason the function
+ * early rather than failing the request.
+ *
+ * WHERE THAT TRUNCATION IS REACHED FROM, re-measured by grep against the installed next 16.3.4 in
+ * this checkout, because an earlier revision of this docblock got it backwards. `next-server.js:1289`
+ * calls `getCloneableBody` on every non-upgrade request, with `experimental.proxyClientMaxBodySize`
+ * as the only override, but that call only REGISTERS the wrapper on the request meta and counts
+ * nothing. The count and the truncation live entirely inside `cloneBodyStream`, `body-streams.js:80`
+ * to `:118`, and `cloneBodyStream` has exactly THREE call sites: `next-server.js:1210`, which is
+ * inside the middleware adapter invocation, `adapterFn({ ..., page: 'middleware' })`;
+ * `web/sandbox/sandbox.js:94`; and `lib/router-server.js:417` for a proxied request. So the INSTALL
+ * is unconditional and the TRUNCATION is conditional on middleware actually running. The outcome for
+ * this repository is the same either way, because `src/proxy.ts` IS a middleware, and the truncated
+ * clone is what the route then reads: `cloneBodyStream` assigns its second stream to `buffered`, and
+ * `finalize()` calls `replaceRequestBody(readable, buffered)`, which swaps the short stream onto the
+ * incoming request.
+ *
+ * The two HTTP SENTENCES are a live measurement made earlier in this phase against a running server,
+ * not something this file re-ran, and they are recorded here because they are the reason the function
  * exists.
  *
  * THE ARITHMETIC, done here rather than asserted, because the three numbers only make sense
@@ -229,6 +241,16 @@ async function readDefaultBody(req: NextRequest): Promise<Record<string, unknown
  * The parse is refused rather than coerced for the reason `optionalBoolean` gives above: a body
  * that is not an object would reach `resolveConnection` as one, and an array has no `connection`
  * and no `connectionId`, so the caller would meet a connection error for a body mistake.
+ *
+ * WHERE THIS DIVERGES FROM `readDefaultBody`, said out loud because the two now run on the SAME
+ * handler and answer differently for one body. `readDefaultBody` refuses `{}` itself, with
+ * `Empty request body` at 400. This function RETURNS `{}`: it parsed, and it is a JSON object, and
+ * "carries no named field this route wants" is a question for the route and not for a body reader.
+ * The caller's outcome is a 400 either way, because `resolveConnection({})` raises
+ * `Either connection or connectionId is required` at 400, so this is a difference in SENTENCE and
+ * not a hole. Both halves are pinned: the empty object is returned in
+ * `tests/unit/lib/api/object-route-edit.test.ts` and both end-to-end answers are measured in
+ * `tests/api/object-route-handler.test.ts`.
  */
 export async function readBoundedJson(req: NextRequest, byteLimit: number): Promise<Record<string, unknown>> {
   // `req.body` is null for a request that carried no body at all, which is what a GET or a bodiless
@@ -602,14 +624,35 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  *    read", and offers an Edit button over the text it just said it does not have.
  * 2. THE PART IS TRUNCATED, whether the PROVIDER marked it or `boundText` just did. A truncated
  *    part is a PREFIX, and submitting a prefix back replaces the object with the part of itself
- *    the reader was shown. That is ruling 1b's second clause, a SUCCESS destroying something the
- *    user was not shown, and it is the server-side half of X17: the caption tells a human, and
- *    this tells the machine.
+ *    the reader was shown, which is ruling 1b's second clause: a SUCCESS destroying something the
+ *    user was not shown. It is the server-side half of X17: the caption tells a human, and this
+ *    tells the machine. It WITHDRAWS THE OFFER; it does not make the submission impossible, and
+ *    the write-path paragraph below says whose job that is.
  * 3. THE KIND IS NOT EDITABLE ON THE CONNECTED PROVIDER, by `kindAcceptsSourceEdits`. This is D57,
  *    the defect where a client's declaration can be a different server's, closed on the read path:
  *    the affordance travels with the document from the server that answered it.
  *
- * WHAT THIS CANNOT COVER, said out loud rather than left for a reader to assume the opposite.
+ * WHICH OF THE THREE RULES HAS A LIVE PRODUCER TODAY, measured by grep at this commit rather than
+ * implied by the fact that all three are tested. The fleet's ONLY producer of `edit` is
+ * `src/lib/db/providers/sql/postgres.ts:2734`, and it spreads the affordance only on the readable
+ * routine arm and only when `kindAcceptsSourceEdits(capabilities, kind)` is already true. So rules 1
+ * and 3 have NO live producer: the only thing that can build their population is a DEFECTIVE or a
+ * future provider, and the unit tests construct it deliberately, which is this module's own
+ * ENFORCE-rather-than-trust precedent and not an oversight. Rule 2 DOES have one, because that same
+ * site spreads `truncated` and `edit` from a single read, so a PostgreSQL routine whose definition is
+ * over `SOURCE_CHARACTER_LIMIT` reaches it today.
+ *
+ * THE WRITE PATH IS NOT COVERED HERE AT ALL, and it is the larger gap. Deleting a field from a READ
+ * response cannot bind a caller: a client that never calls `/api/db/objects/source`, or that simply
+ * ignores the field that was deleted, can POST the truncated prefix straight to the edit routes.
+ * MEASURED by grep at this commit, nothing on the write path enforces either fact: `object-edit.ts`
+ * names neither `truncated` nor `acceptsSourceEdits`. That is an obligation ON THE EDIT-PLAN ROUTE,
+ * stated here by name so it is not read as already discharged: that route must REFUSE a plan whose
+ * part is truncated, and REFUSE a kind that fails `kindAcceptsSourceEdits` on the CONNECTED provider.
+ * Until it does, this function decides what the UI is OFFERED and never what the server ACCEPTS.
+ *
+ * WHAT THIS CANNOT COVER ON THE READ PATH ITSELF, said out loud rather than left for a reader to
+ * assume the opposite.
  * It kills the class on the ROUTE path ONLY. A HOST cannot reach here at all, MEASURED and already
  * recorded on `boundSourceDocument`: `handleObjectRequest` takes its provider from
  * `getOrCreateProvider`, which resolves through a closed `switch (connection.type)` in

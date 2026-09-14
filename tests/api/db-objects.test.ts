@@ -4,7 +4,14 @@ import path from "node:path";
 import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 import { createMockProvider } from "../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
-import { INVENTORY_LIMIT, INVENTORY_PAIR_LIMIT } from "@/lib/api/object-route";
+import {
+  INVENTORY_LIMIT,
+  INVENTORY_PAIR_LIMIT,
+  ObjectRouteError,
+  handleObjectRequest,
+  readBoundedJson,
+  type ObjectRequestContext,
+} from "@/lib/api/object-route";
 import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
 // The CLIENT's shape check, imported into the route's own suite on purpose: the route carries a
 // refusal sentence through untouched and the client refuses that document, and one test pinning
@@ -1717,5 +1724,165 @@ describe("POST /api/db/objects/source", () => {
 
     expect(response.status).toBe(401);
     expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(0);
+  });
+});
+
+// ============================================================================
+// The two seams Phase 3 added to the handler, driven THROUGH the handler
+// ============================================================================
+
+/**
+ * `options.readBody` and the three-field context are the plumbing the two edit routes are built on,
+ * and until these tests existed NOTHING in this repository passed `options` or read a single field
+ * of the context. Measured by mutation at the commit that added them: replacing the substitution arm
+ * with a copy of the default arm left 188 tests passing, and fabricating the session and the route in
+ * the context literal left the same 188 passing. A deliverable with no caller is a deliverable with
+ * no guard, so the caller is built here rather than waited for (#789).
+ *
+ * The handler is driven DIRECTLY rather than through one of the seven routes, because the two routes
+ * that will pass `options` do not exist yet and a test that waited for them would be a test this
+ * phase's own defect could not reach.
+ */
+describe("the body read the handler actually performs", () => {
+  const probeRoute = "api/db/objects/probe";
+  const post = (body: unknown) =>
+    createMockRequest(`/${probeRoute}`, { method: "POST", body }) as never as Parameters<typeof handleObjectRequest>[0];
+
+  test("options.readBody SUBSTITUTES the default, measured on a body the DEFAULT refuses", async () => {
+    // `{}` is the discriminating body: `readDefaultBody` answers 400 "Empty request body" for it, so
+    // a handler that reached the default instead of the double cannot answer 200 here. That is what
+    // makes this kill an inverted ternary or a drifted option name rather than merely execute a line.
+    const request = post({});
+    let sawRequest: unknown;
+    let sawBody: unknown;
+    const response = await handleObjectRequest(
+      request,
+      probeRoute,
+      async (_provider, body) => {
+        sawBody = body;
+        return { ok: true };
+      },
+      {
+        readBody: async (req) => {
+          sawRequest = req;
+          return { connectionId: "seed-1", marker: "read-by-the-substitute" };
+        },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({ ok: true });
+    expect(sawRequest).toBe(request);
+    expect(sawBody).toEqual({ connectionId: "seed-1", marker: "read-by-the-substitute" });
+  });
+
+  test("with NO options the default read runs, and it refuses that same body", async () => {
+    // The control. Without it, a `readBody` that was never consulted and a default that never runs
+    // are indistinguishable.
+    const response = await handleObjectRequest(post({}), probeRoute, async () => ({ ok: true }));
+
+    expect(response.status).toBe(400);
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({ error: "Empty request body" });
+  });
+
+  test("the two reads DIVERGE on an empty JSON object, and the divergence is pinned here", async () => {
+    // `readDefaultBody` refuses `{}` itself; `readBoundedJson` RETURNS it and `resolveConnection` is
+    // what then refuses. Both answers are 400 and both sentences are true of the body, but they are
+    // different sentences on one handler, so the pair is asserted rather than left for a later reader
+    // to discover from a bug report.
+    const response = await handleObjectRequest(post({}), probeRoute, async () => ({ ok: true }), {
+      readBody: (req) => readBoundedJson(req, 1024),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toMatchObject({
+      error: "Either connection or connectionId is required",
+    });
+  });
+
+  test("readBoundedJson's 413 reaches the wire THROUGH the handler, sentence and status", async () => {
+    // The edit routes' exact call shape, with a small limit standing in for EDIT_BODY_BYTE_LIMIT so
+    // the body is a test-sized one. Before this, `readBoundedJson` had never once been reached
+    // through `handleObjectRequest`, so nothing proved its `ObjectRouteError` was rendered by the
+    // catch rather than escaping as a 500.
+    const response = await handleObjectRequest(
+      post({ text: "x".repeat(2048) }),
+      probeRoute,
+      async () => ({ ok: true }),
+      { readBody: (req) => readBoundedJson(req, 1024) },
+    );
+
+    expect(response.status).toBe(413);
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({
+      error: "this request body is larger than 1024 bytes",
+    });
+  });
+
+  test("a refusal carrying a code renders the code on a REAL response", async () => {
+    // The `code` arm was unit-tested through `objectRouteErrorBody` and had never been driven through
+    // an HTTP response. The edit routes are its live producer; this is the shape they will answer.
+    const response = await handleObjectRequest(post({ connectionId: "seed-1" }), probeRoute, async () => {
+      throw new ObjectRouteError("that plan is not one this server will run", 400, ApiErrorCode.EDIT_PLAN_INVALID);
+    });
+
+    expect(response.status).toBe(400);
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({
+      error: "that plan is not one this server will run",
+      code: "EDIT_PLAN_INVALID",
+    });
+  });
+});
+
+/**
+ * The three fields an audit event for an applied DDL is attributed with. A wrong binding here names
+ * the wrong caller or the wrong route on a write against a live engine, and no other test in this
+ * phase would go red for it (#789).
+ */
+describe("the context the handler hands run", () => {
+  const probeRoute = "api/db/objects/probe";
+  const post = (body: unknown) =>
+    createMockRequest(`/${probeRoute}`, { method: "POST", body }) as never as Parameters<typeof handleObjectRequest>[0];
+
+  test("it carries the RESOLVED connection, the guard's session and the route, and nothing else", async () => {
+    let seen: ObjectRequestContext | undefined;
+    // The body names a connectionId and NO connection, so an object taken from the BODY cannot be
+    // what the context carries: only the resolution answers `{ id: "seed-1", name: "Seeded", ... }`.
+    const response = await handleObjectRequest(post({ connectionId: "seed-1" }), probeRoute, async (_p, _b, ctx) => {
+      seen = ctx;
+      return { ok: true };
+    });
+
+    expect(response.status).toBe(200);
+    expect(seen?.connection).toEqual({ id: "seed-1", name: "Seeded", type: "postgres" } as never);
+    expect(seen?.session).toEqual({ role: "admin", username: "admin" });
+    expect(seen?.route).toBe(probeRoute);
+    expect(Object.keys(seen ?? {}).sort()).toEqual(["connection", "route", "session"]);
+  });
+
+  test("an INLINE connection reaches the context as the resolution answered it", async () => {
+    let seen: ObjectRequestContext | undefined;
+    await handleObjectRequest(post({ connection }), probeRoute, async (_p, _b, ctx) => {
+      seen = ctx;
+      return { ok: true };
+    });
+
+    expect(seen?.connection).toEqual(connection as never);
+  });
+
+  test("the session is the one the guard answered, not a second read of it", async () => {
+    // A second `getSession` inside the handler would answer this one; the guard's answer is the
+    // first. Asserting the SECOND value would pass either way, so the override is queued once and
+    // the context must still carry the FIRST.
+    mockGetSession.mockResolvedValueOnce({ role: "user", username: "auditor" } as unknown as {
+      role: string;
+      username: string;
+    });
+    let seen: ObjectRequestContext | undefined;
+    await handleObjectRequest(post({ connectionId: "seed-1" }), probeRoute, async (_p, _b, ctx) => {
+      seen = ctx;
+      return { ok: true };
+    });
+
+    expect(seen?.session).toEqual({ role: "user", username: "auditor" });
   });
 });
