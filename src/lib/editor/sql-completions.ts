@@ -7,6 +7,8 @@
 
 import type * as Monaco from "monaco-editor";
 import { extractAliases, resolveAlias } from "@/lib/sql";
+import { formatPostgresIdentifier } from "./postgres-identifiers";
+import type { DatabaseType } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Static constants
@@ -207,6 +209,7 @@ export interface SchemaCompletionCache {
 export function registerSQLCompletionProvider(
   monaco: typeof Monaco,
   schemaCompletionCache: SchemaCompletionCache,
+  databaseType?: DatabaseType,
 ): Monaco.IDisposable {
   return monaco.languages.registerCompletionItemProvider("sql", {
     triggerCharacters: [".", " "],
@@ -239,7 +242,10 @@ export function registerSQLCompletionProvider(
         .map((table) => ({
           label: table.label,
           kind: monaco.languages.CompletionItemKind.Class,
-          insertText: table.label,
+          // Preserve ordinary identifiers; quote catalog names only when needed
+          // to preserve case, escape special characters, or avoid keywords.
+          insertText:
+            databaseType === "postgres" ? table.label.split(".").map(formatPostgresIdentifier).join(".") : table.label,
           range: tableRange,
           detail: `Table (${table.rowCount} rows)`,
           documentation: table.columnNames,
@@ -248,10 +254,13 @@ export function registerSQLCompletionProvider(
 
       // Dot-triggered: Show columns for specific table or alias
       if (lastChar === ".") {
-        const matches = line.substring(0, position.column - 1).match(/(\w+)\.$/);
-        if (matches) {
-          const identifier = matches[1].toLowerCase();
-
+        const textToDot = line.substring(0, position.column - 1);
+        // Only PostgreSQL completions introduce quoted table names in this PR.
+        // Other dialects retain their existing bare-identifier lookup.
+        const quotedIdentifier =
+          databaseType === "postgres" ? textToDot.match(/"((?:[^"]|"")+)"\.$/)?.[1].replace(/""/g, '"') : undefined;
+        const identifier = (quotedIdentifier ?? textToDot.match(/(\w+)\.$/)?.[1])?.toLowerCase();
+        if (identifier) {
           // Helper to find columns by table name (handles schema.table format)
           const findColumns = (tableName: string) => {
             const tableNameLower = tableName.toLowerCase();
