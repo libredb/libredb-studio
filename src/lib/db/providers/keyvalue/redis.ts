@@ -14,6 +14,7 @@
  * HGETALL user:1
  */
 
+import { createHash, randomUUID } from "node:crypto";
 import Redis, { type RedisOptions } from "ioredis";
 import { BaseDatabaseProvider } from "../../base-provider";
 import {
@@ -22,7 +23,10 @@ import {
   containerDepth,
   declaredKinds,
   findKind,
+  requireEditableKind,
 } from "../../object-kinds";
+import { EDIT_CHARACTER_LIMIT, userPositionOf } from "../../object-edit";
+import { connectionFingerprint } from "../../connection-fingerprint";
 import { comparePaths } from "../../object-path";
 import {
   type DatabaseConnection,
@@ -49,6 +53,15 @@ import {
   type KindCount,
   type ObjectDetail,
   type ObjectDetailBatch,
+  type ObjectEditBuild,
+  type ObjectEditCatalogFact,
+  type ObjectEditConsequence,
+  type ObjectEditOutcome,
+  type ObjectEditPlan,
+  type ObjectEditPosition,
+  type ObjectEditRefusalClass,
+  type ObjectEditRequest,
+  type ObjectEditStep,
   type ObjectKindSpec,
   type ObjectSourceDocument,
 } from "../../types";
@@ -156,6 +169,12 @@ const REDIS_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
     labelPlural: "Function Libraries",
     hasSource: true,
     sourceLanguage: "lua",
+    // THE ONE EDITABLE KIND ON THIS ENGINE (#789 Phase 3). `keyspace` declares nothing, and
+    // that is the same refusal `hasSource` already makes for it: a key prefix is a grouping
+    // this server derived from a bounded SCAN, nobody wrote a definition for it, so there is
+    // nothing to edit and no folder that could offer one. A library is the opposite: it is
+    // stored, named, persisted and replicated, and `FUNCTION LOAD REPLACE` writes it back.
+    acceptsSourceEdits: true,
   },
 ] as const);
 
@@ -386,21 +405,155 @@ function parseFunctionLibraries(reply: unknown): string[] {
  * The pairs are walked rather than indexed, the same rule `parseFunctionLibraries` records:
  * the nested `functions` value is itself a list of key/value lists, so a parser reading
  * positions takes a field name for a library name the moment the server adds a field.
+ *
+ * The walk itself moved into {@link parseFunctionLibrary} when the edit path arrived (#789
+ * Phase 3), because that path needs the library's REGISTERED FUNCTIONS out of the same reply and
+ * two walks of one reply could disagree about which entry they read.
  */
 function parseFunctionLibraryCode(reply: unknown, name: string): string | undefined {
+  return parseFunctionLibrary(reply, name)?.code;
+}
+
+/**
+ * The registered function names out of one library entry's nested `functions` value, SORTED.
+ *
+ * Measured on redis 8.10.0 through ioredis (RESP2): the value is a list of key/value lists,
+ * `[["name", "libredb_ping", "description", null, "flags", []], ...]`, so the names are found by
+ * walking each inner list's pairs and reading the one whose key is `name`. Indexing would take a
+ * field name for a function name the moment the server adds a field.
+ *
+ * SORTED HERE AND NOT AT THE CALL SITE, because the order the server answers in is an internal
+ * one: measured against the committed fixture, `libredb_probe` comes back `libredb_ping` first
+ * although it was loaded `libredb_echo_key` first. The collateral warning is built from this
+ * list, and a warning whose wording changed between two identical reads of an unchanged library
+ * would show a reader a difference that is not one (#789 Phase 3).
+ */
+function parseRegisteredFunctionNames(value: unknown): string[] {
+  const names: string[] = [];
+  for (const registered of Array.isArray(value) ? value : []) {
+    if (!Array.isArray(registered)) continue;
+    for (let index = 0; index + 1 < registered.length; index += 2) {
+      if (String(registered[index]) !== "name") continue;
+      const name = registered[index + 1];
+      if (typeof name === "string") names.push(name);
+      break;
+    }
+  }
+  return names.sort((left, right) => left.localeCompare(right));
+}
+
+/**
+ * One library out of a `FUNCTION LIST ... WITHCODE` reply, selected BYTE-EQUAL, with the two
+ * facts the edit path needs from the SAME round trip (#789).
+ *
+ * The selection rule and its measurement are {@link parseFunctionLibraryCode}'s, which is now a
+ * reader of this function: the library dictionary is CASE-SENSITIVE and `LIBRARYNAME` is a
+ * CASE-INSENSITIVE glob, so ONE lookup answers BOTH of the fixture's libraries and `reply[0]`
+ * would hand back the other one's Lua.
+ *
+ * ONE PARSE FOR BOTH FACTS, and that is a correctness property rather than an economy: the
+ * collateral warning names the functions of the library whose CODE the preview shows, and two
+ * reads of that reply could legitimately disagree, since another session can load between them.
+ *
+ * `undefined` is ABSENCE: measured on redis 8.10.0, `FUNCTION LIST LIBRARYNAME no_such_library`
+ * answers an EMPTY ARRAY and not an error, so emptiness is the only signal there is.
+ */
+function parseFunctionLibrary(
+  reply: unknown,
+  name: string,
+): { readonly code: string | undefined; readonly functions: readonly string[] } | undefined {
   for (const entry of Array.isArray(reply) ? reply : []) {
     if (!Array.isArray(entry)) continue;
     let matched = false;
     let code: string | undefined;
+    let functions: readonly string[] = [];
     for (let index = 0; index + 1 < entry.length; index += 2) {
       const key = String(entry[index]);
       const value = entry[index + 1];
       if (key === "library_name" && value === name) matched = true;
       if (key === "library_code" && typeof value === "string") code = value;
+      if (key === "functions") functions = parseRegisteredFunctionNames(value);
     }
-    if (matched) return code;
+    if (matched) return { code, functions };
   }
   return undefined;
+}
+
+/**
+ * The one part id a Redis function library's source document has, with ONE writer for the three
+ * methods that must agree on it: the read that mints it, the build that refuses any other, and
+ * the plan that carries it back (#789).
+ */
+const REDIS_SOURCE_PART_ID = "definition";
+
+/**
+ * The engine identity `requireEditableKind` puts in its three sentences, as one object rather
+ * than two adjacent strings, which is that function's own measured rule: `displayName` and
+ * `type` are both strings and a positional pair of them can be swapped in silence.
+ */
+const REDIS_ENGINE = Object.freeze({ displayName: "Redis", type: "redis" as const });
+
+/**
+ * The COMMAND every apply of this strategy sends, as the engine spells it, in ONE place.
+ *
+ * The verb and its two literal arguments are the plan's own fields rather than literals inside
+ * the apply, which is ruling 1a: the bytes the reader approved in the preview are the bytes the
+ * engine receives, and an apply that rebuilt the command line from constants of its own could
+ * send something the preview never showed.
+ */
+const REDIS_LOAD_COMMAND = Object.freeze({ name: "FUNCTION", arguments: Object.freeze(["LOAD", "REPLACE"]) });
+
+/**
+ * A SHA-256 of the library's bytes, hex, which is this engine's revision token (#789 Phase 3).
+ *
+ * `node:crypto` rather than the `crypto.subtle` walk `connection-fingerprint.ts` and the Trino
+ * provider spell out, and the difference is deliberate: a fingerprint has to be computable
+ * WHEREVER a plan is read, including by the route, while a revision token is produced and
+ * compared by THIS provider alone. Core never compares two tokens, never parses one and never
+ * carries one between two plans, which `ObjectEditRevision`'s own docblock states.
+ *
+ * A content hash is SOUND here and it is not sound everywhere: MEASURED on redis 8.10.0,
+ * `FUNCTION LIST WITHCODE` answers the bytes AS LOADED, with no reformatting of any kind, so two
+ * reads of an unchanged library are byte-identical. On an engine that renders a definition from
+ * a parse tree the same hash would move on a server upgrade and refuse every edit.
+ */
+function libraryDigest(code: string): string {
+  return createHash("sha256").update(code).digest("hex");
+}
+
+/**
+ * The library name a submitted body DECLARES, out of its shebang line (#789 Phase 3).
+ *
+ * THE SHEBANG IS THE IDENTITY ON THIS ENGINE. There is no other addressing: `FUNCTION LOAD`
+ * takes no name argument, and MEASURED on redis 8.10.0 the reply IS the name the server read out
+ * of this line. So an edited shebang does not fail, it writes somewhere else, and three measured
+ * outcomes follow from one line of text:
+ *
+ * - A CONSISTENT rename of the library and its functions SUCCEEDS, creates a SECOND library and
+ *   leaves the original answering. The reader sees a success, the pane re-reads the original
+ *   address, and their edit is nowhere on the screen.
+ * - A name that is an EXISTING OTHER library REPLACES that library, wholesale. Measured against
+ *   the fixture: a body whose shebang said `name=LIBREDB_PROBE`, submitted while addressed at
+ *   `libredb_probe`, replaced `LIBREDB_PROBE` and left `libredb_probe` answering `pong`. So this
+ *   check protects an object the reader was never even shown.
+ * - A ONE-CHARACTER typo in the name alone is refused loudly by the engine itself,
+ *   `ERR Function libredb_ping already exists`, because function names are global to the server.
+ *   That one costs nothing; the two above cost the reader their edit or somebody else's library.
+ *
+ * `undefined` for a first line this cannot read, which the caller turns into the same `identity`
+ * refusal. That is the safe direction: the cost of failing to parse a shebang the server would
+ * have accepted is a FALSE REFUSAL, and the cost of the other direction is a lost object.
+ * MEASURED: a body with no shebang at all is refused by the engine too,
+ * `ERR Missing library metadata`, so the population where this is stricter than the server is
+ * one the server also refuses.
+ *
+ * The ENGINE token is deliberately NOT checked. An unknown one is refused loudly and harmlessly
+ * (`ERR Engine 'moon' not found`, measured), and Redis is free to add a second engine.
+ */
+function shebangLibraryName(text: string): string | undefined {
+  const [first] = text.split("\n");
+  const match = /^#!\s*(\S+)\s+name=(\S+)\s*$/.exec(first);
+  return match?.[2];
 }
 
 /**
@@ -422,6 +575,134 @@ function parseFunctionLibraryCode(reply: unknown, name: string): string | undefi
  */
 function isServerErrorReply(error: unknown): boolean {
   return error instanceof Error && error.name === "ReplyError";
+}
+
+/**
+ * The exact command the revision token is a digest OF, as a plan reader will see it.
+ *
+ * `ObjectEditRevision.basis` is "the engine expression the comparison is over", so it carries the
+ * library name: two tokens from two libraries are never comparable and the field is what says so
+ * (#789 Phase 3).
+ */
+function libraryReadBasis(name: string): string {
+  return `FUNCTION LIST LIBRARYNAME ${name} WITHCODE`;
+}
+
+/**
+ * The catalog fact behind a collateral warning: WHICH surface was read and WHAT it answered.
+ *
+ * `WITHCODE` is deliberately absent from the source string although the reply came from the same
+ * round trip: the fact being reported is the library's registered FUNCTIONS, and
+ * `FUNCTION LIST LIBRARYNAME <name>` is the command a reader would run to check it. Core composes
+ * the sentence from this in `describeConsequence`, and a provider may never write that prose:
+ * the class is closed and the fact is a value an engine answered, so the only thing left to get
+ * wrong is one sentence with one owner (#789 Phase 3, ruling 1b amended).
+ */
+function libraryFact(name: string, functions: readonly string[]): ObjectEditCatalogFact {
+  return { source: `FUNCTION LIST LIBRARYNAME ${name}`, observed: functions.join(", ") };
+}
+
+/**
+ * What a SUCCESSFUL load of this library would destroy, from what it registers TODAY.
+ *
+ * ONE FUNCTION IS THE ORDINARY ANSWER AND IT IS AN EMPTY LIST, which is what makes the warning
+ * mean something when it appears: a library registering exactly one function IS that function, so
+ * a body that re-registers it loses nothing, and a body that registers none is refused by the
+ * engine (`ERR No functions registered`, measured on 8.10.0) rather than emptying the library.
+ * Two or more, and `REPLACE` deletes every one the submitted body does not re-create and reports
+ * success, which is measured and is the only day-one producer of a consequence anywhere in the
+ * fleet (#789 Phase 3, ruling 1b amended).
+ *
+ * The list it names is what the library registers NOW, never a prediction about the submitted
+ * text: no Lua parser is involved anywhere on this path.
+ */
+function libraryCollateral(name: string, functions: readonly string[]): readonly ObjectEditConsequence[] {
+  if (functions.length < 2) return [];
+  return [{ loses: "replaces-whole-container", fact: libraryFact(name, functions) }];
+}
+
+/**
+ * Where a Redis refusal points, in the coordinates of the text the reader submitted (#789).
+ *
+ * MEASURED on redis 8.10.0 with two points, so the claim is a measurement and not an inference:
+ * a `@@@` on physical line 2 of the submitted body answered
+ * `ERR Error compiling function: user_function:2: unexpected symbol near '@'` and the same error
+ * on physical line 4 answered `user_function:4`. The count is 1-based and INCLUDES the shebang
+ * line, which is the reader's line 1, so the mapping is the identity.
+ *
+ * IT IS STILL CONVERTED THROUGH CORE'S COORDINATE MAP rather than returned as a number. Two
+ * reasons, and neither is symmetry for its own sake: the conversion is what rejects a line the
+ * reader's text does not have, and MEASURED in a real browser an out-of-range coordinate handed
+ * to `setModelMarkers` did not throw, did not warn and was silently CLAMPED to the end of the
+ * model, so nothing downstream catches a number this function gets wrong. And if this engine ever
+ * gains a splice, the identity stops holding and the map is already the thing being read.
+ *
+ * `none` when the sentence carries no coordinate at all, which is the answer for every refusal
+ * shape here except a compile error: `ERR No functions registered`, `ERR Missing library
+ * metadata`, `ERR Engine 'moon' not found` and `ERR Function libredb_ping already exists` are all
+ * about the body as a whole.
+ */
+function redisErrorPosition(payload: ObjectEditStep, sentence: string): ObjectEditPosition {
+  const match = /user_function:(\d+):/.exec(sentence);
+  if (match === null) return { within: "none" };
+  const line = Number(match[1]);
+  let offset = 0;
+  for (let seen = 1; seen < line; seen += 1) {
+    const next = payload.text.indexOf("\n", offset);
+    if (next < 0) return { within: "outside" };
+    offset = next + 1;
+  }
+  return userPositionOf(payload, offset);
+}
+
+/**
+ * The error prefixes whose reader action is "use a different connection" (#789 Phase 3).
+ *
+ * Redis's first word IS its error code, which is why it is carried in `ObjectEditRefusal.code` as
+ * data as well as read here. Both are measured on 8.10.0: `NOPERM User libredb_nofunction has no
+ * permissions to run the 'function|load' command` from the ACL user
+ * `docker/redis-init/01-object-fixture.redis` creates, and
+ * `READONLY You can't write against a read only replica.` from a replica. They map to `privilege`
+ * although only one of them is about permissions, because the refusal CLASS is a statement about
+ * what the reader does next and both answers are the same one.
+ */
+const REDIS_PRIVILEGE_CODES: readonly string[] = Object.freeze(["NOPERM", "READONLY"]);
+
+/**
+ * One `FUNCTION LOAD` rejection, turned into the outcome arm it IS (#789 Phase 3).
+ *
+ * THE FIRST QUESTION IS NOT WHICH REFUSAL, IT IS WHETHER THE SERVER SPOKE AT ALL, and
+ * `isServerErrorReply` is what tells the two apart. It is the same distinction
+ * `readObjectSource` already makes and it carries the same measurement: an error REPLY arrives as
+ * a `redis-errors` `ReplyError`, and a dropped socket arrives as a plain `Error` named `Error`
+ * with "Connection is closed." or "Stream isn't writeable and enableOfflineQueue options is
+ * false". Nobody answering is not the server answering no, and the difference decides whether the
+ * write may have landed: `interrupted` says `committed: "unknown"`, which is the only honest
+ * answer, and never `"rolled-back"`, which only a provider that opened its own transaction may
+ * claim.
+ *
+ * Everything else the server says is `definition`, carrying the engine's own sentence unprefixed
+ * and its own first-word code as data. A code this table does not know is NOT guessed at: the
+ * four other shapes measured on 8.10.0 are all about the body, and inventing a class for an
+ * unmeasured fifth would be an inference in a measurement's voice.
+ */
+function redisApplyFailure(payload: ObjectEditStep, error: unknown, duration: number): ObjectEditOutcome {
+  const sentence = error instanceof Error ? error.message : String(error);
+  if (!isServerErrorReply(error)) {
+    return { outcome: "interrupted", committed: "unknown", sentence, duration };
+  }
+  const code = sentence.split(" ")[0];
+  const refusal = REDIS_PRIVILEGE_CODES.includes(code) ? "privilege" : "definition";
+  return {
+    outcome: "refused",
+    refusal: {
+      refusal,
+      sentence,
+      code,
+      at: refusal === "privilege" ? { within: "none" } : redisErrorPosition(payload, sentence),
+    },
+    duration,
+  };
 }
 
 // ============================================================================
@@ -1354,16 +1635,288 @@ export class RedisProvider extends BaseDatabaseProvider {
       kind,
       parts: [
         {
-          id: "definition",
+          id: REDIS_SOURCE_PART_ID,
           label: "Definition",
           text: bounded.text,
           language,
           form: "complete",
           origin: "stored",
           ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+          // THE AFFORDANCE, read off the DECLARATION and never off the kind id (#789 Phase 3).
+          // A kind this engine declares and does not accept edits for answers no `edit` field
+          // at all, which is a different fact from an `offered: false` and is what the pane's
+          // predicate reads.
+          //
+          // IT IS OFFERED ON A TRUNCATED PART TOO, and that is deliberate rather than an
+          // oversight. The bound is the CALLER's and the same object read without one is
+          // whole, so a provider that withheld the affordance here would be answering a
+          // property of this REQUEST as a property of the object. The refusal that matters is
+          // made twice where it can be made honestly: the pane's own predicate reads
+          // `truncated` before it reads `edit`, and `buildObjectEdit` re-reads the definition
+          // and refuses `guard` when the server's bytes are longer than the read bound.
+          ...(spec.acceptsSourceEdits === true ? { edit: { offered: true as const } } : {}),
         },
       ],
     };
+  }
+
+  /**
+   * Build the ONE command that replaces a function library's definition (#789 Phase 3).
+   *
+   * THE EDITABLE UNIT IS THE LIBRARY AND NEVER ONE FUNCTION, which is what the Phase 2
+   * declaration already says: `function` is the kind, its objects are libraries, and
+   * `FUNCTION LIST WITHCODE` answers a library's whole Lua source. Redis publishes no surface
+   * that writes one registered function.
+   *
+   * THE STRATEGY IS `replace-in-place-command` AND THE PREVIEWABLE UNIT IS A COMMAND, which is
+   * why {@link ObjectEditUnit} has two arms at all. The apply is
+   * `FUNCTION LOAD REPLACE <library code>`, and MEASURED on redis 8.10.0 its reply is the library
+   * NAME the server read out of the shebang. Rendering that as pseudo-SQL would be a lie about
+   * what runs.
+   *
+   * RULING 1b, BOTH AXES, MEASURED on 8.10.0 in a container created for this task:
+   * - A FAILURE CANNOT LOSE THE OBJECT. Four refusal shapes were measured, a compile error
+   *   (`ERR Error compiling function: user_function:5: '=' expected near 'local'`), a body
+   *   registering nothing (`ERR No functions registered`), a missing shebang
+   *   (`ERR Missing library metadata`) and an unknown engine (`ERR Engine 'moon' not found`), and
+   *   after every one of them `FCALL libredb_ping 0` still answered `pong`.
+   * - A SUCCESS CAN DESTROY SOMETHING, which is the second axis and the reason
+   *   {@link ObjectEditPlan.consequences} is filled here. `REPLACE` replaces the WHOLE LIBRARY:
+   *   measured, a body carrying only `libredb_ping` loaded successfully, answered
+   *   `"libredb_probe"`, and `FCALL libredb_echo_key` then answered `ERR Function not found`. The
+   *   sibling was deleted and success was reported.
+   *
+   * THE COLLATERAL READ RUNS IN BOTH DIRECTIONS AND IS NOT CONDITIONAL ON ANYTHING. It is the
+   * same round trip that reads the definition, so it costs nothing, and running it only when
+   * something already suspects a collateral would be a guard whose loop never sees the negative
+   * case: `consequences: []` would never be produced and the empty arm would be dead. The
+   * fixture holds one library of each shape for exactly this, `libredb_probe` with two
+   * registered functions and `LIBREDB_PROBE` with one, and they are also the pair that proves
+   * the byte-for-byte selection, because `LIBRARYNAME` is a CASE-INSENSITIVE glob over a
+   * CASE-SENSITIVE dictionary.
+   *
+   * NO LUA PARSER IS INVOLVED ANYWHERE, here or in the apply. The warning says what the library
+   * REGISTERS TODAY, which is a catalog fact, and never what the submitted text will register,
+   * which would be a prediction from a Lua source this provider does not evaluate.
+   *
+   * THREE REFUSALS, IN THIS ORDER, and each one answers before anything is sent.
+   *
+   * A READ THE SERVER REFUSES RAISES rather than becoming a refusal, which is the one asymmetry
+   * with `readObjectSource`: a NOPERM on `FUNCTION LIST` leaves this method knowing nothing about
+   * the object, so there is no plan to issue and no fact a refusal could carry. The pane's own
+   * read has already reported that sentence in the part it draws.
+   */
+  public async buildObjectEdit(request: ObjectEditRequest): Promise<ObjectEditBuild> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = requireEditableKind(capabilities, request.kind, REDIS_ENGINE);
+    if (request.partId !== REDIS_SOURCE_PART_ID) {
+      throw new QueryError(
+        `A Redis ${spec.label.toLowerCase()} has one source part, "${REDIS_SOURCE_PART_ID}", ` +
+          `received "${request.partId}"`,
+        "redis",
+      );
+    }
+    assertObjectPathShape(capabilities, request.kind, request.path);
+    // The LAST segment and never `path[1]`: at depth 2 the second segment is a container, and
+    // the suite drives this by spying a two-level declaration in.
+    const name = request.path[request.path.length - 1];
+    const library = parseFunctionLibrary(await this.callFunctionList(name), name);
+    if (library === undefined || library.code === undefined || library.code.trim() === "") {
+      // The same fact and the same sentence the source read answers for an absent library:
+      // measured, `FUNCTION LIST LIBRARYNAME no_such_library` answers an EMPTY ARRAY, so
+      // emptiness is absence and a build that carried on would plan a write against nothing.
+      throw new QueryError(`Redis holds no function library called "${name}"`, "redis");
+    }
+    const definition = library.code;
+
+    const refuse = (refusal: ObjectEditRefusalClass, sentence: string): ObjectEditBuild => ({
+      built: false,
+      // `at: { within: "none" }` on every one of them, and it is a fact rather than a default:
+      // nothing has been sent, so no engine has reported a position and there is no coordinate
+      // to convert.
+      refusal: { refusal, sentence, at: { within: "none" } },
+    });
+
+    // 1. The read bound. A part the pane could only show TRUNCATED is never editable: submitting
+    //    the bounded text back is a truncation dressed as an edit, and it would delete
+    //    everything past the bound. The number is core's `EDIT_CHARACTER_LIMIT`, so this refusal
+    //    and the pane's bound can never drift apart, and the fixture's `libredb_bulk` is the
+    //    population: MEASURED on 8.10.0, `FUNCTION LOAD` ACCEPTS a library over that bound and
+    //    `FUNCTION LIST LIBRARYNAME libredb_bulk WITHCODE` reports 1,000,243 characters for it.
+    if (definition.length > EDIT_CHARACTER_LIMIT) {
+      return refuse(
+        "guard",
+        `this definition is ${definition.length.toLocaleString("en-US")} characters and the Source pane is ` +
+          `bounded at ${EDIT_CHARACTER_LIMIT.toLocaleString("en-US")} characters, so the text you edited is a ` +
+          "truncation of it and submitting it back would delete everything past the bound",
+      );
+    }
+
+    // 2. Byte-identical text. A refusal and never a no-op apply, because sending an apply that
+    //    cannot change anything spends a write path, an audit row and a round trip on nothing.
+    //    It is a BYTE comparison and it is sound on this engine for the reason
+    //    {@link libraryDigest} records: the bytes come back as they were loaded.
+    if (request.text === definition) {
+      return refuse("definition", "this text is identical to the definition on the server");
+    }
+
+    // 3. The SHEBANG, which is the whole identity on this engine. The three measured outcomes an
+    //    edited one produces are in {@link shebangLibraryName}, and the worst of them replaces a
+    //    library the reader was never shown.
+    const declared = shebangLibraryName(request.text);
+    if (declared !== name) {
+      const wanted = `#!${spec.sourceLanguage} name=${name}`;
+      return refuse(
+        "identity",
+        (declared === undefined
+          ? `this text has no library shebang on its first line, so it names no library at all, and the ` +
+            `object being edited declares "${wanted}"`
+          : `this text declares the library "${declared}" and the object being edited is "${name}"`) +
+          ". MEASURED on Redis 8.10.0, FUNCTION LOAD takes no name argument and the shebang IS the address: a " +
+          "body naming another library creates a second one, or REPLACES an existing one wholesale, and " +
+          "either way this object is unchanged and your edit is not where you are looking. Put the original " +
+          "name back, or load the new library with a FUNCTION LOAD of your own in the editor",
+      );
+    }
+
+    const payload: ObjectEditStep = {
+      text: request.text,
+      language: spec.sourceLanguage,
+      // ONE segment, and the whole of it is the reader's. There is no splice anywhere on this
+      // engine: the command carries the body verbatim, so the coordinate arithmetic is the
+      // identity and a compile error's line number is already the reader's own.
+      segments: [{ from: "user", start: 0, end: request.text.length }],
+    };
+
+    return {
+      built: true,
+      plan: {
+        planVersion: 1,
+        planId: randomUUID(),
+        issuedAt: new Date().toISOString(),
+        connectionFingerprint: await connectionFingerprint(this.config),
+        type: this.type,
+        path: [...request.path],
+        kind: request.kind,
+        partId: request.partId,
+        strategy: "replace-in-place-command",
+        unit: {
+          medium: "command",
+          name: REDIS_LOAD_COMMAND.name,
+          arguments: [...REDIS_LOAD_COMMAND.arguments],
+          payload,
+        },
+        // NONE. `FUNCTION LOAD` is server-scoped: measured on 8.10.0, one load is visible from
+        // every numbered database and `SELECT` does not change what `FUNCTION LIST` answers, so
+        // nothing this apply does depends on a session another borrower of this connection can
+        // move.
+        session: [],
+        revision: {
+          check: "compared",
+          token: libraryDigest(definition),
+          basis: libraryReadBasis(name),
+          scope: "server",
+        },
+        consequences: libraryCollateral(name, library.functions),
+      },
+      preimage: { text: definition, language: spec.sourceLanguage },
+    };
+  }
+
+  /**
+   * Send the plan, and NEVER the text again (#789 Phase 3, ruling 1a).
+   *
+   * THE COMMAND LINE IS THE PLAN'S OWN, verb, literal arguments and payload, and it is not
+   * rebuilt from constants here. That is what makes the preview binding: the dialog renders
+   * `plan.unit` and this sends `plan.unit`, so byte-identity is structural rather than promised.
+   *
+   * THREE ROUND TRIPS AT MOST, IN THIS ORDER, and the order is the safety argument:
+   *
+   * 1. the RE-READ, which is what `compared` means, and it is the FIRST thing sent so nothing
+   *    this design does sits between the comparison and the write. A library that moved is a
+   *    `conflict` and NOTHING is executed. It NARROWS the window and does not close it: another
+   *    session can still load between this read and the next round trip, and no transaction on
+   *    this engine spans the two.
+   * 2. the LOAD. Its reply is the library name the server read out of the shebang, MEASURED, and
+   *    that name is compared against the addressed one. That comparison is a CONTROL rather than
+   *    the primary guard, because the build's shebang check already refused a text naming
+   *    another library: what it catches is a shebang-extraction bug in this file, and the arm it
+   *    reaches is `applied-elsewhere` with the server's own reply in `wrote`. `undone` is FALSE,
+   *    because Redis offers this design nothing to take it back with and it will not issue a
+   *    `FUNCTION DELETE` of its own.
+   * 3. the RE-READ AFTER, which supplies the NEW revision token and answers the collateral
+   *    question. `lost` is a catalog fact read AFTER the write and never a restatement of the
+   *    warning: the plan said what WOULD be lost, this says what WAS.
+   *
+   * The third round trip is skipped on the `applied-elsewhere` arm, because the addressed library
+   * was not written: MEASURED on 8.10.0, a consistent rename left the original answering and a
+   * shebang naming another existing library replaced THAT one and left this one untouched.
+   *
+   * A VERDICT THE ENGINE REACHED IS RETURNED AND NEVER THROWN, which is what keeps a deliberate
+   * refusal off the 500 path the shipped error mapper would otherwise put it on.
+   */
+  public async applyObjectEdit(plan: ObjectEditPlan): Promise<ObjectEditOutcome> {
+    this.ensureConnected();
+    if (plan.unit.medium !== "command") {
+      // A statement unit is not a shape this provider ever issues. It raises rather than
+      // refusing, because a refusal reports an engine fact and this is a plan from somewhere
+      // else.
+      throw new QueryError("A Redis object edit plan carries a command unit, received a statement", "redis");
+    }
+    const unit = plan.unit;
+    const capabilities = this.getCapabilities();
+    requireEditableKind(capabilities, plan.kind, REDIS_ENGINE);
+    assertObjectPathShape(capabilities, plan.kind, plan.path);
+    const name = plan.path[plan.path.length - 1];
+    const started = Date.now();
+
+    const before = parseFunctionLibrary(await this.callFunctionList(name), name);
+    const current = before?.code ?? "";
+    const token = plan.revision.check === "unavailable" ? undefined : plan.revision.token;
+    if (token === undefined || libraryDigest(current) !== token) {
+      // H3's diff: the server's own text as this comparison read it, so the reader is shown what
+      // is there rather than asked to trust a detector. A library that was DELETED answers the
+      // empty string, which is what is there.
+      return {
+        outcome: "conflict",
+        conflict: "object-changed",
+        current: { text: current, language: unit.payload.language },
+        duration: Date.now() - started,
+      };
+    }
+
+    let reply: unknown;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      reply = await (this.client as any).call(unit.name, ...unit.arguments, unit.payload.text);
+    } catch (error) {
+      return redisApplyFailure(unit.payload, error, Date.now() - started);
+    }
+
+    const wrote = String(reply);
+    if (wrote !== name) {
+      return { outcome: "applied-elsewhere", undone: false, wrote, duration: Date.now() - started };
+    }
+
+    const after = parseFunctionLibrary(await this.callFunctionList(name), name);
+    const revision = {
+      check: "compared" as const,
+      token: libraryDigest(after?.code ?? ""),
+      basis: libraryReadBasis(name),
+      scope: "server" as const,
+    };
+    const registered = after?.functions ?? [];
+    const disappeared = (before?.functions ?? []).filter((registeredBefore) => !registered.includes(registeredBefore));
+    if (disappeared.length > 0) {
+      return {
+        outcome: "applied-with-collateral",
+        lost: [{ loses: "replaces-whole-container", fact: libraryFact(name, disappeared) }],
+        revision,
+        duration: Date.now() - started,
+      };
+    }
+    return { outcome: "applied", revision, duration: Date.now() - started };
   }
 
   /**

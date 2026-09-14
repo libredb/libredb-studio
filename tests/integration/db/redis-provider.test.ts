@@ -5,6 +5,7 @@
  * before importing the RedisProvider class.
  */
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
@@ -12,6 +13,9 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { isSourcePartUnavailable, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/types";
 import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
+import { describeConsequence, renderSegments, userPositionOf, EDIT_CHARACTER_LIMIT } from "@/lib/db/object-edit";
+import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
+import type { ObjectEditOutcome } from "@/lib/db/types";
 
 // ============================================================================
 // Mock Setup — MUST come before provider import
@@ -226,6 +230,50 @@ const MOCK_FUNCTION_WITHCODE: unknown[] = [
 let functionWithCodeReply: unknown[] = MOCK_FUNCTION_WITHCODE;
 
 /**
+ * When set, EVERY `FUNCTION` call answers through this function instead of the three reply
+ * variables above, and the arguments it receives are the ones the provider sent (#789 Phase 3).
+ *
+ * The edit path needs a reply that CHANGES between round trips, which a variable cannot express:
+ * one apply sends `FUNCTION LIST ... WITHCODE`, then `FUNCTION LOAD REPLACE`, then the same
+ * `FUNCTION LIST` again, and the whole collateral question is the difference between the first
+ * list and the third round trip's.
+ *
+ * IT DISPATCHES ON THE ARGUMENTS THE PROVIDER BUILT, which standing ruling 5b names as a blind
+ * spot: a fake that routes on the request cannot see a change to the request. The apply tests
+ * therefore also assert the exact command line every round trip carried, through
+ * `capturedCalls`, so the bytes are pinned by something other than the dispatcher that reads
+ * them.
+ */
+let mockCall: ((command: string, ...args: string[]) => Promise<unknown>) | null = null;
+
+/**
+ * One `FUNCTION LIST ... WITHCODE` entry, in the flat RESP2 key/value shape ioredis hands back,
+ * measured on redis 8.10.0 (#789 Phase 3).
+ *
+ * The Lua code is ALSO reachable as `.library_code` on the returned array, which is a property
+ * the driver never sets and the provider never reads: every parser in `redis.ts` walks the entry
+ * by INDEX two at a time, so a named property is invisible to it. It exists so a test can assert
+ * against the same bytes it built the reply from without a second constant that could drift.
+ *
+ * `functions` is given in the order a server answered it rather than sorted, because the
+ * provider is the thing that has to sort: `FUNCTION LIST` answers in an internal order, so a
+ * warning built from it would otherwise change its wording between two identical reads.
+ */
+function libraryEntry(name: string, code: string, functions: readonly string[]) {
+  const entry: unknown[] = [
+    "library_name",
+    name,
+    "engine",
+    "LUA",
+    "functions",
+    functions.map((registered) => ["name", registered, "description", null, "flags", []]),
+    "library_code",
+    code,
+  ];
+  return Object.assign(entry, { library_code: code, library_name: name });
+}
+
+/**
  * When set, `FUNCTION LIST` rejects with this sentence. Three of the four Redis-wire
  * relatives do exactly that and each says it differently (all measured 2026-09-11):
  * KeyDB 6.3.4 "ERR unknown command `FUNCTION`, with args beginning with: `LIST`, ",
@@ -368,6 +416,7 @@ mock.module("ioredis", () => {
       }
       if (cmd === "CONFIG") return databasesReply;
       if (cmd === "FUNCTION") {
+        if (mockCall !== null) return await mockCall(command, ...args);
         if (functionTransportFailure !== null) throw functionTransportFailure;
         if (functionRefusal !== null) throw replyError(functionRefusal);
         // WITHCODE is the source read and LIST without it is the listing. The two answer
@@ -1348,6 +1397,7 @@ describe("RedisProvider", () => {
       functionWithCodeReply = MOCK_FUNCTION_WITHCODE;
       functionRefusal = null;
       functionTransportFailure = null;
+      mockCall = null;
       scanRefusal = null;
       scanOverflows = false;
       scanCalls = 0;
@@ -1369,6 +1419,7 @@ describe("RedisProvider", () => {
           labelPlural: "Function Libraries",
           hasSource: true,
           sourceLanguage: "lua",
+          acceptsSourceEdits: true,
         },
       ]);
       // The derived-grouping refusal, carried forward: `keyspace` rows are this server's
@@ -2079,6 +2130,620 @@ describe("RedisProvider", () => {
       expect(batch.details.map((detail) => detail.path)).toEqual([["main", "3", "report:*"]]);
       expect(batch.details[0].columns.map((column) => column.name)).toEqual(["key", "value", "type"]);
       expect(capturedRedisOptions[capturedRedisOptions.length - 1].db).toBe(3);
+    });
+
+    // ------------------------------------------------------------------------
+    // Object edit (#789 Phase 3)
+    // ------------------------------------------------------------------------
+
+    /**
+     * The apply path, over the fixture's own pair of libraries.
+     *
+     * EVERY MEASUREMENT NAMED HERE WAS TAKEN ON redis 8.10.0, in container
+     * `libredb-redis-t09` on host port 16379, created and removed for this task, holding
+     * `docker/redis-init/01-object-fixture.redis` applied the way that file's own compose
+     * comment says: `docker exec -i <container> redis-cli --no-raw < <the fixture>`.
+     */
+    describe("object edit (#789)", () => {
+      /** The library the tests address, and the two libraries the server answers for it. */
+      const LOWER_NAME = "libredb_probe";
+      const UPPER_NAME = "LIBREDB_PROBE";
+
+      const LIBRARY_LOWER = libraryEntry(LOWER_NAME, FIXTURE_LIBRARY_CODE, ["libredb_ping", "libredb_echo_key"]);
+      const LIBRARY_UPPER = libraryEntry(UPPER_NAME, FIXTURE_UPPER_LIBRARY_CODE, ["LIBREDB_UPPER_PING"]);
+
+      /**
+       * The reader's edit: the fixture library with `'pong'` changed to `'PONG!'`, which is a
+       * change to the BODY and not to the shebang, and it still registers both functions.
+       */
+      const EDITED = FIXTURE_LIBRARY_CODE.replace("return 'pong'", "return 'PONG!'");
+      /** The same edit on the one-function library, which is the collateral's empty direction. */
+      const EDITED_UPPER = FIXTURE_UPPER_LIBRARY_CODE.replace("return 'PONG'", "return 'PONG!!'");
+
+      const request = (text: string, path: readonly string[] = ["0", LOWER_NAME]) => ({
+        path,
+        kind: "function",
+        partId: "definition",
+        text,
+      });
+
+      test("declares acceptsSourceEdits on the function library and NOT on the key pattern", () => {
+        const kinds = provider.getCapabilities().objectKinds ?? [];
+        expect(kinds.filter((kind) => kind.acceptsSourceEdits === true).map((kind) => kind.id)).toEqual(["function"]);
+        // `keyspace` is a prefix grouping this server derived from a bounded SCAN and nobody wrote a
+        // definition for it, so there is nothing to edit and no folder that could offer one.
+        expect(kinds.filter((kind) => kind.acceptsSourceEdits !== true).map((kind) => kind.id)).toEqual(["keyspace"]);
+      });
+
+      test("every function part the reader is shown carries the edit affordance", async () => {
+        const document = await provider.readObjectSource!(["0", LOWER_NAME], "function");
+        const [part] = document.parts;
+        if (isSourcePartUnavailable(part)) throw new Error("the fixture library is readable");
+
+        expect(part.edit).toEqual({ offered: true });
+      });
+
+      test("the build reads WITHCODE and selects the library BYTE FOR BYTE", async () => {
+        // MEASURED: `LIBRARYNAME` is a CASE-INSENSITIVE glob over a CASE-SENSITIVE dictionary, so the
+        // reply can hold more than one library and the selection is a byte comparison of
+        // `library_name`. The fixture's coexisting `libredb_probe` and `LIBREDB_PROBE` are the proof.
+        mockCall = async () => [LIBRARY_UPPER, LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+        expect(build.preimage.text).toBe(LIBRARY_LOWER.library_code);
+        expect(build.preimage.language).toBe("lua");
+        expect(commandsSent()).toEqual(["FUNCTION LIST LIBRARYNAME libredb_probe WITHCODE"]);
+      });
+
+      test("the unit is a COMMAND, and the payload is the reader's bytes verbatim", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+        expect(build.plan.unit).toEqual({
+          medium: "command",
+          name: "FUNCTION",
+          arguments: ["LOAD", "REPLACE"],
+          payload: { text: EDITED, language: "lua", segments: [{ from: "user", start: 0, end: EDITED.length }] },
+        });
+        // There is no splice, so the coordinate arithmetic is the identity and a compile error's line
+        // number is already the reader's own.
+        expect(build.plan.strategy).toBe("replace-in-place-command");
+        expect(build.plan.session).toEqual([]);
+      });
+
+      /**
+       * The rest of the plan, which is what the route seals and the dialog renders.
+       *
+       * `connectionFingerprint` is recomputed here from the SAME connection the provider was
+       * built with, which is the comparison the route makes: it recomputes from the connection
+       * THAT request resolved and refuses a mismatch, so a provider that wrote a constant would
+       * be caught by nothing else in this suite.
+       */
+      test("the plan carries the identity the route ENFORCES rather than trusts", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        expect(build.plan.planVersion).toBe(1);
+        expect(build.plan.type).toBe("redis");
+        expect(build.plan.path).toEqual(["0", LOWER_NAME]);
+        expect(build.plan.kind).toBe("function");
+        expect(build.plan.partId).toBe("definition");
+        expect(build.plan.connectionFingerprint).toBe(await connectionFingerprint(baseConfig));
+        expect(build.plan.planId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+        expect(Date.parse(build.plan.issuedAt)).not.toBeNaN();
+        // Two plans for the same edit are two DIFFERENT edits, and the audit's correlation id is
+        // this value: a planId that repeated would file two applies under one id.
+        const second = await provider.buildObjectEdit!(request(EDITED));
+        if (!second.built) throw new Error(second.refusal.sentence);
+        expect(second.plan.planId).not.toBe(build.plan.planId);
+      });
+
+      /**
+       * The content hash is SOUND on this engine and only on this engine, which is why the
+       * `compared` arm carries a token here at all: MEASURED on 8.10.0, `FUNCTION LIST WITHCODE`
+       * answers the bytes AS LOADED, with no reformatting of any kind, so two reads of an
+       * unchanged library are byte-identical.
+       */
+      test("the revision is a content hash of the bytes the read answered", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        expect(build.plan.revision).toEqual({
+          check: "compared",
+          token: createHash("sha256").update(FIXTURE_LIBRARY_CODE).digest("hex"),
+          basis: "FUNCTION LIST LIBRARYNAME libredb_probe WITHCODE",
+          scope: "server",
+        });
+      });
+
+      test("the payload's segment map renders back to the payload's own bytes", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+        if (build.plan.unit.medium !== "command") throw new Error("narrowing");
+
+        const { payload } = build.plan.unit;
+        expect(renderSegments(EDITED, payload.segments)).toBe(payload.text);
+      });
+
+      test("the SHEBANG is the identity, and a consistent rename is refused", async () => {
+        // MEASURED on 8.10.0: a one-character typo in the shebang is refused loudly by the engine
+        // itself (`ERR Function libredb_ping already exists`, because function names are global), but a
+        // CONSISTENT rename of the library and its functions SUCCEEDS, the reply is the NEW library
+        // name, and the original library is still there and still answering. That is the most natural
+        // edit a person makes, and without this check the reader sees a success, the pane re-reads the
+        // original address and shows the original text, and their edit has vanished.
+        mockCall = async () => [LIBRARY_LOWER];
+        const renamed = EDITED.replace("name=libredb_probe", "name=libredb_probe_v2");
+        const build = await provider.buildObjectEdit!(request(renamed));
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+      });
+
+      /**
+       * The same refusal for a text with NO shebang at all, and the reason it is `identity`
+       * rather than `definition`.
+       *
+       * MEASURED on 8.10.0, a body with no shebang is refused by the engine
+       * (`ERR Missing library metadata`), so nothing is lost either way. It is refused HERE
+       * because the question this check asks is "does this text name the object the plan is
+       * addressed to", and a text that names no library does not name this one. Failing that
+       * way round is the safe direction: the cost is a false refusal, never a false apply.
+       */
+      test("a text with no shebang names no library, so it names not this one", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED.split("\n").slice(1).join("\n")));
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+        expect(build.refusal.at).toEqual({ within: "none" });
+        expect(build.refusal.sentence).toContain("#!lua name=libredb_probe");
+      });
+
+      /**
+       * The CASE half of the same rule, which is the one a case-insensitive comparison passes.
+       *
+       * MEASURED: the dictionary is case-SENSITIVE and both libraries exist, so a text whose
+       * shebang says `LIBREDB_PROBE` addressed at `libredb_probe` would REPLACE the other
+       * library wholesale. MEASURED on 8.10.0 by doing exactly that: `FCALL LIBREDB_UPPER_PING`
+       * then answered the new body's value while `libredb_probe` still answered `pong`.
+       */
+      test("a shebang differing only in CASE is a different library, and is refused", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(
+          request(EDITED.replace("name=libredb_probe", "name=LIBREDB_PROBE")),
+        );
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+      });
+
+      test("THE COLLATERAL RUNS IN BOTH DIRECTIONS, over a fixture that holds one of each", async () => {
+        // A collateral read that only runs when something already suspects a collateral is a guard
+        // whose loop never sees the negative case, so `consequences: []` would never be produced and
+        // the empty arm would be dead.
+        mockCall = async () => [LIBRARY_LOWER];
+        const two = await provider.buildObjectEdit!(request(EDITED));
+        if (!two.built) throw new Error(two.refusal.sentence);
+        expect(two.plan.consequences).toEqual([
+          {
+            loses: "replaces-whole-container",
+            fact: { source: "FUNCTION LIST LIBRARYNAME libredb_probe", observed: "libredb_echo_key, libredb_ping" },
+          },
+        ]);
+
+        mockCall = async () => [LIBRARY_UPPER];
+        const one = await provider.buildObjectEdit!(request(EDITED_UPPER, ["0", UPPER_NAME]));
+        if (!one.built) throw new Error(one.refusal.sentence);
+        // The ORDINARY answer, and it is what makes the warning mean something when it appears.
+        expect(one.plan.consequences).toEqual([]);
+      });
+
+      /**
+       * CORE renders the sentence, and this engine is the only day-one producer of a
+       * consequence, so this is the only place in the tree where the composition is driven by a
+       * real one rather than by a literal.
+       */
+      test("core's sentence for that consequence reads the fact this provider measured", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        expect(describeConsequence(build.plan.consequences[0])).toBe(
+          "Applying this replaces the whole container, so anything in it that your text does not " +
+            "re-create is deleted. FUNCTION LIST LIBRARYNAME libredb_probe answers: libredb_echo_key, libredb_ping.",
+        );
+      });
+
+      /**
+       * The order the warning names its functions in is OURS and not the server's.
+       *
+       * MEASURED on 8.10.0: `FUNCTION LIST` answers the registered functions in an internal
+       * order, and the fixture's own library comes back `libredb_ping` first. A warning built
+       * from that order would change its wording between two identical reads of an unchanged
+       * library, and a reader comparing two previews would see a difference that is not one.
+       */
+      test("the consequence's observed value is sorted, so two reads word it the same", async () => {
+        mockCall = async () => [libraryEntry(LOWER_NAME, FIXTURE_LIBRARY_CODE, ["libredb_ping", "libredb_echo_key"])];
+        const first = await provider.buildObjectEdit!(request(EDITED));
+        mockCall = async () => [libraryEntry(LOWER_NAME, FIXTURE_LIBRARY_CODE, ["libredb_echo_key", "libredb_ping"])];
+        const second = await provider.buildObjectEdit!(request(EDITED));
+        if (!first.built || !second.built) throw new Error("both build");
+
+        expect(first.plan.consequences).toEqual(second.plan.consequences);
+      });
+
+      test("a text identical to the server's bytes is refused rather than applied for nothing", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(FIXTURE_LIBRARY_CODE));
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("definition");
+        expect(build.refusal.sentence).toContain("identical");
+      });
+
+      /**
+       * A part the pane could only show TRUNCATED is never editable, and the population is the
+       * fixture's own `libredb_bulk`.
+       *
+       * MEASURED on 8.10.0: `FUNCTION LOAD` ACCEPTS a library over the read bound, and
+       * `FUNCTION LIST LIBRARYNAME libredb_bulk WITHCODE` reports a `library_code` of 1,000,243
+       * characters for the one `docker/redis-init/01-object-fixture.redis` loads. Submitting the
+       * bounded text back would delete the 243 characters past the bound and report success.
+       */
+      test("a definition over the read bound is refused, and the fixture holds one", async () => {
+        const oversized = `#!lua name=libredb_bulk\n--[[${"-".repeat(1_000_100)}]]\nredis.register_function('libredb_bulk_ping', function() return 'bulk' end)`;
+        expect(oversized.length).toBeGreaterThan(EDIT_CHARACTER_LIMIT);
+        mockCall = async () => [libraryEntry("libredb_bulk", oversized, ["libredb_bulk_ping"])];
+
+        const build = await provider.buildObjectEdit!(request(oversized.slice(0, 24), ["0", "libredb_bulk"]));
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("guard");
+        expect(build.refusal.sentence).toContain(oversized.length.toLocaleString("en-US"));
+      });
+
+      test("a library the server does not hold RAISES, because an empty reply is absence", async () => {
+        mockCall = async () => [];
+        await expect(provider.buildObjectEdit!(request(EDITED, ["0", "no_such_library"]))).rejects.toThrow(
+          /Redis holds no function library called "no_such_library"/,
+        );
+      });
+
+      test("the entry guards refuse a kind, a part and a path shape, each by name", async () => {
+        await expect(provider.buildObjectEdit!({ ...request(EDITED), kind: "stream" })).rejects.toThrow(
+          /Redis declares no object kind "stream"/,
+        );
+        await expect(provider.buildObjectEdit!({ ...request(EDITED), kind: "keyspace" })).rejects.toThrow(
+          /Redis does not apply an edited definition for the kind "keyspace"/,
+        );
+        await expect(provider.buildObjectEdit!({ ...request(EDITED), partId: "body" })).rejects.toThrow(
+          /one source part, "definition", received "body"/,
+        );
+        await expect(provider.buildObjectEdit!(request(EDITED, []))).rejects.toThrow(/\[database, name\]/);
+      });
+
+      /**
+       * Standing ruling 5g on the SIXTH method: a two-level declaration spied in, driven to the
+       * BOUND VALUE rather than to a refusal.
+       *
+       * The library name is `path[path.length - 1]` and never `path[0]`. Both spellings are
+       * behaviour-identical on this one-level engine, which is exactly why the wrong one keeps
+       * surviving reviews, so the declaration is swapped and the command line is asserted.
+       */
+      test("the build follows a two-level declaration to the library name it binds", async () => {
+        const base = provider.getCapabilities();
+        spyOn(provider, "getCapabilities").mockReturnValue({
+          ...base,
+          containerLevels: [
+            { id: "catalog", label: "Cluster", labelPlural: "Clusters" },
+            { id: "schema", label: "Database", labelPlural: "Databases" },
+          ],
+        });
+        mockCall = async () => [LIBRARY_LOWER];
+
+        const build = await provider.buildObjectEdit!(request(EDITED, ["main", "3", LOWER_NAME]));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        expect(commandsSent()).toEqual(["FUNCTION LIST LIBRARYNAME libredb_probe WITHCODE"]);
+        expect(build.plan.path).toEqual(["main", "3", LOWER_NAME]);
+        expect(build.plan.consequences[0].fact.source).toBe("FUNCTION LIST LIBRARYNAME libredb_probe");
+      });
+
+      // ----------------------------------------------------------------------
+      // The apply
+      // ----------------------------------------------------------------------
+
+      /**
+       * One apply, against a server whose function list CHANGES across the write.
+       *
+       * `before` is what the addressed library registered when the plan was built and when the
+       * apply re-read it; `after` is what it registers once the load has landed; `reply` is what
+       * `FUNCTION LOAD REPLACE` answered, which MEASURED on 8.10.0 is the library name the server
+       * read out of the shebang.
+       */
+      const applyAgainst = async (options: {
+        before: readonly string[];
+        after: readonly string[];
+        reply: string;
+      }): Promise<ObjectEditOutcome> => {
+        mockCall = async () => [libraryEntry(LOWER_NAME, FIXTURE_LIBRARY_CODE, options.before)];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        let lists = 0;
+        mockCall = async (_command, ...args) => {
+          if (args[0] === "LOAD") return options.reply;
+          lists += 1;
+          return lists === 1
+            ? [libraryEntry(LOWER_NAME, FIXTURE_LIBRARY_CODE, options.before)]
+            : [libraryEntry(LOWER_NAME, EDITED, options.after)];
+        };
+        capturedCalls.length = 0;
+        return await provider.applyObjectEdit!(build.plan);
+      };
+
+      /** The same apply, with the LOAD rejecting the way the SERVER refuses. */
+      const applyWithRedisError = async (message: string): Promise<ObjectEditOutcome> =>
+        await applyWithLoadFailure(replyError(message));
+
+      /** The same apply, with the LOAD rejecting the way a DROPPED SOCKET does. */
+      const applyWithTransportFailure = async (error: unknown): Promise<ObjectEditOutcome> =>
+        await applyWithLoadFailure(error);
+
+      const applyWithLoadFailure = async (failure: unknown): Promise<ObjectEditOutcome> => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        mockCall = async (_command, ...args) => {
+          if (args[0] === "LOAD") throw failure;
+          return [LIBRARY_LOWER];
+        };
+        return await provider.applyObjectEdit!(build.plan);
+      };
+
+      test("a body that registers BOTH functions is `applied`", async () => {
+        const outcome = await applyAgainst({
+          before: ["libredb_echo_key", "libredb_ping"],
+          after: ["libredb_echo_key", "libredb_ping"],
+          reply: "libredb_probe",
+        });
+        expect(outcome.outcome).toBe("applied");
+      });
+
+      /**
+       * The three round trips, in order, with the bytes the plan sealed.
+       *
+       * Asserted against the driver's own record rather than against the dispatcher the harness
+       * routes on, which is standing ruling 5b: a fake that picks its reply by reading the
+       * request cannot see a change to the request.
+       */
+      test("the apply sends the PLAN'S OWN unit, between a re-read and a re-read", async () => {
+        await applyAgainst({ before: ["libredb_ping"], after: ["libredb_ping"], reply: "libredb_probe" });
+
+        expect(commandsSent()).toEqual([
+          "FUNCTION LIST LIBRARYNAME libredb_probe WITHCODE",
+          `FUNCTION LOAD REPLACE ${EDITED}`,
+          "FUNCTION LIST LIBRARYNAME libredb_probe WITHCODE",
+        ]);
+      });
+
+      test("the applied outcome carries the NEW revision, never the one the plan came with", async () => {
+        const outcome = await applyAgainst({
+          before: ["libredb_ping"],
+          after: ["libredb_ping"],
+          reply: "libredb_probe",
+        });
+        if (outcome.outcome !== "applied") throw new Error("narrowing");
+
+        expect(outcome.revision).toEqual({
+          check: "compared",
+          token: createHash("sha256").update(EDITED).digest("hex"),
+          basis: "FUNCTION LIST LIBRARYNAME libredb_probe WITHCODE",
+          scope: "server",
+        });
+        expect(outcome.duration).toBeGreaterThanOrEqual(0);
+      });
+
+      test("a body that registers only ONE is `applied-with-collateral` naming what disappeared", async () => {
+        // MEASURED: a body carrying only the edited function DELETED the sibling function and reported
+        // success. `lost` is a catalog fact read AFTER the apply, never a restatement of the warning:
+        // the plan said what WOULD be lost, this says what WAS. No Lua parser is involved anywhere,
+        // because predicting registrations from the reader's text is the fragile version of this.
+        const outcome = await applyAgainst({
+          before: ["libredb_echo_key", "libredb_ping"],
+          after: ["libredb_ping"],
+          reply: "libredb_probe",
+        });
+        if (outcome.outcome !== "applied-with-collateral") throw new Error("narrowing");
+        expect(outcome.lost).toEqual([
+          {
+            loses: "replaces-whole-container",
+            fact: { source: "FUNCTION LIST LIBRARYNAME libredb_probe", observed: "libredb_echo_key" },
+          },
+        ]);
+      });
+
+      test("a reply naming a DIFFERENT library is `applied-elsewhere` carrying the server's own reply", async () => {
+        // The reply of FUNCTION LOAD REPLACE IS the library name the server read from the shebang,
+        // MEASURED, so the provider compares it against the addressed name. It is a CONTROL rather than
+        // the primary guard, because the shebang check already refused that text, and it is what
+        // catches a shebang extraction bug.
+        const outcome = await applyAgainst({
+          before: ["libredb_ping"],
+          after: ["libredb_ping"],
+          reply: "libredb_probe_v2",
+        });
+        if (outcome.outcome !== "applied-elsewhere") throw new Error("narrowing");
+        expect(outcome.undone).toBe(false);
+        expect(outcome.wrote).toBe("libredb_probe_v2");
+      });
+
+      test("a read-only replica maps to PRIVILEGE, because the reader's action is the same", async () => {
+        // `READONLY You can't write against a read only replica.` The reader's next action is to use a
+        // different connection, which is exactly what a privilege refusal tells them.
+        const outcome = await applyWithRedisError("READONLY You can't write against a read only replica.");
+        if (outcome.outcome !== "refused") throw new Error("narrowing");
+        expect(outcome.refusal.refusal).toBe("privilege");
+      });
+
+      /**
+       * The ACL refusal, which is the same reader action and the fixture's own user.
+       *
+       * MEASURED on 8.10.0 against `libredb_nofunction`, the user
+       * `docker/redis-init/01-object-fixture.redis` creates with `-function`:
+       * `NOPERM User libredb_nofunction has no permissions to run the 'function|load' command`.
+       */
+      test("an ACL refusal maps to PRIVILEGE too, and carries the server's own sentence", async () => {
+        const outcome = await applyWithRedisError(
+          "NOPERM User libredb_nofunction has no permissions to run the 'function|load' command",
+        );
+        if (outcome.outcome !== "refused") throw new Error("narrowing");
+        expect(outcome.refusal.refusal).toBe("privilege");
+        expect(outcome.refusal.sentence).toBe(
+          "NOPERM User libredb_nofunction has no permissions to run the 'function|load' command",
+        );
+        expect(outcome.refusal.at).toEqual({ within: "none" });
+      });
+
+      test("a compile error's line number is already the READER's, because there is no splice", async () => {
+        const outcome = await applyWithRedisError(
+          "ERR Error compiling function: user_function:4: unexpected symbol near 'retur'",
+        );
+        if (outcome.outcome !== "refused") throw new Error("narrowing");
+        expect(outcome.refusal.refusal).toBe("definition");
+        expect(outcome.refusal.at).toEqual({ within: "user", line: 4, column: 1 });
+      });
+
+      /**
+       * The control on the arithmetic above, and it is the one that makes the identity claim
+       * mean something: the line the engine names is converted THROUGH core's coordinate map,
+       * so a line past the end of the reader's text is `outside` rather than a number Monaco
+       * would silently clamp.
+       */
+      test("a line number past the end of the reader's text is OUTSIDE, never clamped", async () => {
+        const outcome = await applyWithRedisError(
+          "ERR Error compiling function: user_function:400: unexpected symbol near 'retur'",
+        );
+        if (outcome.outcome !== "refused") throw new Error("narrowing");
+        expect(outcome.refusal.at).toEqual({ within: "outside" });
+      });
+
+      /**
+       * The three other refusal shapes 8.10.0 answered, all `definition`, all with no
+       * coordinate, and the object intact after every one of them.
+       */
+      test("the engine's other refusals are `definition` with the engine's own words", async () => {
+        for (const sentence of [
+          "ERR No functions registered",
+          "ERR Missing library metadata",
+          "ERR Engine 'moon' not found",
+          "ERR Function libredb_ping already exists",
+        ]) {
+          const outcome = await applyWithRedisError(sentence);
+          if (outcome.outcome !== "refused") throw new Error("narrowing");
+          expect(outcome.refusal.refusal).toBe("definition");
+          expect(outcome.refusal.sentence).toBe(sentence);
+          expect(outcome.refusal.at).toEqual({ within: "none" });
+        }
+      });
+
+      test("a TRANSPORT failure is INTERRUPTED and never a refusal", async () => {
+        // `isServerErrorReply` is what tells the two apart, and the distinction is the same one
+        // `readObjectSource` already makes: nobody answering is not the server answering no.
+        const outcome = await applyWithTransportFailure(new Error("Connection is closed."));
+        if (outcome.outcome !== "interrupted") throw new Error("narrowing");
+        expect(outcome.committed).toBe("unknown");
+        expect(outcome.sentence).toBe("Connection is closed.");
+      });
+
+      /**
+       * H3's lost update, with the diff it requires.
+       *
+       * The window is NARROWED and not closed, and this is the read that narrows it: it is the
+       * apply's FIRST round trip, so nothing this design does sits between the comparison and
+       * the write. Another session can still get in, which is what `compared` says out loud.
+       */
+      test("a library that moved between the read and the write is a CONFLICT, and nothing is sent", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        const moved = `${FIXTURE_LIBRARY_CODE}\n-- somebody else got here first`;
+        mockCall = async () => [libraryEntry(LOWER_NAME, moved, ["libredb_ping"])];
+        capturedCalls.length = 0;
+        const outcome = await provider.applyObjectEdit!(build.plan);
+
+        if (outcome.outcome !== "conflict" || outcome.conflict !== "object-changed") throw new Error("narrowing");
+        expect(outcome.current).toEqual({ text: moved, language: "lua" });
+        expect(commandsSent()).toEqual(["FUNCTION LIST LIBRARYNAME libredb_probe WITHCODE"]);
+      });
+
+      test("a library DELETED between the read and the write conflicts with the empty text", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        mockCall = async () => [];
+        const outcome = await provider.applyObjectEdit!(build.plan);
+        if (outcome.outcome !== "conflict" || outcome.conflict !== "object-changed") throw new Error("narrowing");
+        expect(outcome.current.text).toBe("");
+      });
+
+      test("a plan carrying a STATEMENT unit is not one this provider issued, and it raises", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        await expect(
+          provider.applyObjectEdit!({
+            ...build.plan,
+            unit: {
+              medium: "statement",
+              steps: [{ text: "SELECT 1", language: "sql", segments: [{ from: "provider", text: "SELECT 1" }] }],
+            },
+          }),
+        ).rejects.toThrow(/carries a command unit, received a statement/);
+      });
+
+      test("the apply re-resolves the kind on the DECLARATION, and refuses one it will not write", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        await expect(provider.applyObjectEdit!({ ...build.plan, kind: "keyspace" })).rejects.toThrow(
+          /Redis does not apply an edited definition for the kind "keyspace"/,
+        );
+      });
+
+      /**
+       * Standing ruling 5g on the apply as well, because the apply addresses the library by the
+       * same rule and a plan carries the whole path.
+       */
+      test("the apply follows a two-level declaration to the library name it binds", async () => {
+        const base = provider.getCapabilities();
+        spyOn(provider, "getCapabilities").mockReturnValue({
+          ...base,
+          containerLevels: [
+            { id: "catalog", label: "Cluster", labelPlural: "Clusters" },
+            { id: "schema", label: "Database", labelPlural: "Databases" },
+          ],
+        });
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED, ["main", "3", LOWER_NAME]));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        let lists = 0;
+        mockCall = async (_command, ...args) => {
+          if (args[0] === "LOAD") return LOWER_NAME;
+          lists += 1;
+          return lists === 1 ? [LIBRARY_LOWER] : [libraryEntry(LOWER_NAME, EDITED, ["libredb_ping"])];
+        };
+        capturedCalls.length = 0;
+        const outcome = await provider.applyObjectEdit!(build.plan);
+
+        expect(outcome.outcome).toBe("applied-with-collateral");
+        expect(commandsSent()[0]).toBe("FUNCTION LIST LIBRARYNAME libredb_probe WITHCODE");
+      });
     });
   });
 });
