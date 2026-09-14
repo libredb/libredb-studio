@@ -659,6 +659,133 @@ One writer for both, because two copies are two chances for the read to answer "
 It is among the ids the installed `monaco-editor` 0.56.0 registers, unlike `plsql` and `tsql`, which Oracle and SQL Server have to render under `sql`.
 A PL/pgSQL body inside a `$function$` dollar-quoted string is highlighted as PostgreSQL SQL rather than as a procedural language, which is the closest this bundle can come.
 
+### 3.1.6 Object edit (#789)
+
+Two kinds accept an edited definition back, `function` and `procedure`, and both declare `acceptsSourceEdits: true`.
+Everything below was measured on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) through `pg`, against a container brought up on `docker/postgres-init/`.
+
+**The three kinds that are REFUSED, each with the engine fact behind it, and one that is deferred.**
+A refusal here is a decision with a reason, not a gap somebody has not got to yet.
+
+| Kind | Why it is not editable |
+| --- | --- |
+| `view` | `pg_get_viewdef` returns the bare `SELECT` and NOTHING else: no column alias list, no `WITH CHECK OPTION`, no `security_barrier`. A `CREATE OR REPLACE VIEW` header assembled from it would silently remove a write constraint and a row-security control. |
+| `materialized_view` | The same missing header, and there is no statement to put it in: `CREATE OR REPLACE MATERIALIZED VIEW` is `42601 syntax error at or near "MATERIALIZED"`. Replacing one means `DROP` plus `CREATE`, which ruling 1b forbids on every engine at every scope. |
+| `trigger` | DEFERRED and cheap. `CREATE OR REPLACE TRIGGER` does exist on 18.4, so this is the first kind a later phase adds. The listing join it depends on is unpinned (D64), and that pin is owed with the kind. |
+| `table`, `sequence` | No definition text at all, so there is nothing to edit. PostgreSQL publishes no `pg_get_tabledef` and no `pg_get_sequencedef`, which is the same fact that keeps both out of the Source tab. |
+
+**Strategy: `guarded-atomic-batch`, and it is atomic because the engine makes it so.**
+The whole apply is ONE parameterless `client.query()` carrying four statements, and PostgreSQL wraps a multi-statement simple query in its own implicit transaction.
+Measured: a `DO` block raising `42P13` in front of the CREATE left `pg_proc` untouched, and a failing CREATE after a DROP left the same `oid` and the same `xmin`.
+This provider opens NO transaction of its own, deliberately: `txActive` is one flag per connection id (D72) and a dangling `BEGIN` poisons one pooled client for the whole process (D71), and the implicit transaction already gives this strategy every guarantee it claims.
+
+**The read, and why the oid is passed rather than cast.**
+The build re-reads the object through the same statement the Source tab uses, extended with five columns: `md5(pg_get_functiondef(p.oid))`, `pg_get_userbyid(p.proowner)`, `pg_has_role(current_user, p.proowner, 'USAGE')`, `current_setting('search_path')` and `current_setting('check_function_bodies')`.
+The oid is handed to `pg_get_functiondef` and no `::regprocedure` cast is used, for the reason [§3.1.5](#315-object-source-789) gives and measured again here: the cast resolves a NAME, name resolution needs `USAGE` on the schema, and a provider that casts manufactures a `42501` the engine never made.
+`pg_has_role(current_user, proowner, 'USAGE')` is ONE expression rather than an owner comparison plus a membership query, because a role is a member of itself, so it is true for the owner and for every member of the owning role, which is exactly the population `CREATE OR REPLACE` accepts.
+
+**The ownership pre-flight, answered on the READ.**
+`CREATE OR REPLACE` on somebody else's function is an OWNERSHIP check and not a privilege check.
+Measured with the `src_probe` role that `docker/postgres-init/03-object-fixture.sql` creates, holding `GRANT USAGE` and `GRANT CREATE` on the schema: the read carries `edit: { offered: false }` with the sentence naming the owner, and the build refuses `privilege` before the reader types anything.
+The CONTROL is in the same session: that same role creating a function OF ITS OWN in that same schema succeeds, so the refusal is about ownership and no grant can make the apply work.
+The engine's own sentence is `must be owner of function order_total`, SQLSTATE `42501`, and the shipped error mapper turns it into HTTP 500 because the message matches none of its substrings, which is why this answer is given before a statement is sent.
+
+**The five build refusals, in the order they are answered.**
+
+| Class | When | The sentence, or its shape |
+| --- | --- | --- |
+| `guard` | The definition is longer than the Source pane's bound | "this definition is N characters and the Source pane is bounded at 1,000,000 characters, so the text you edited is a truncation of it and submitting it back would delete everything past the bound" |
+| `privilege` | This connection does not own the routine | "this connection's database account does not own \"app.order_total(integer)\", which is owned by \"postgres\", and PostgreSQL checks ownership rather than privilege for CREATE OR REPLACE" |
+| `guard` | `check_function_bodies` is not `on` | "this connection's session has check_function_bodies = off, and PostgreSQL then accepts a body it would otherwise reject, so an apply would report success and store a definition that cannot run" |
+| `definition` | The text is byte-identical to the server's | "this text is identical to the definition on the server" |
+| `identity` | The header changed | "this text declares \"...\" and the object being edited is \"...\". PostgreSQL would not replace it: CREATE OR REPLACE with a different name or a different argument list creates a SECOND routine and leaves this one untouched, after which every call site fails 42725 is not unique" |
+
+The identity comparison is everything up to and including the first `)` and it needs no parser, because both sides are `pg_get_functiondef` output: the reader started from it and the build re-read it, so the question is whether they are the same bytes the engine wrote.
+Its limit is stated rather than left to be found: a parameter DEFAULT holding a `)` inside a string literal cuts the header early on both sides, so a change after that `)` passes this check and is caught by the post-condition below instead.
+The byte-identical case is a refusal and not a no-op apply because it removes the whole false-positive population from that post-condition: with it, "this apply did not change the object it was addressed to" can only mean a fork.
+
+A sixth refusal, `unsupported`, exists for a server that answers no `md5(pg_get_functiondef(oid))` at all.
+A guarded batch with no token to guard on is not this strategy, so it is refused rather than downgraded in silence to an unguarded write.
+
+**The emitted unit, and its three private SQLSTATEs.**
+Four statements in one round trip:
+
+```
+SET LOCAL search_path = "app", pg_catalog;
+DO $lb...$ <the pre-condition block> $lb...$;
+<the reader's text>;
+DO $lb...$ <the post-condition block> $lb...$;
+```
+
+Every interpolated value is dollar-quoted with a randomly tagged delimiter, and there is NO literal escaping anywhere in the apply.
+That is deliberate: a dollar-quoted string ignores every escape, so the statement does not depend on `standard_conforming_strings`, another session GUC a previous borrower of the pooled connection can change and which single-quote doubling would depend on.
+A value that happens to contain its own generated tag is refused rather than emitted.
+
+The pre-condition compares the routine's current `md5(pg_get_functiondef(oid))` against the token the plan carries and raises `LB001` if it moved, then compares `check_function_bodies` against the value read at build and raises `LB002` if that moved.
+The post-condition raises `LB003` when the addressed object's md5 did NOT change, which is a fork: the CREATE succeeded and wrote something else.
+
+Three private codes and not one, because they mean three different outcomes, a `conflict`, a `refused` and an `applied-elsewhere`, and one shared code would force the classifier back onto reading messages.
+All three are in the range PostgreSQL documents for user-defined conditions.
+The classifier maps SQLSTATE as DATA: `LB001` to `conflict`, `LB002` to a `guard` refusal, `LB003` to `applied-elsewhere`, `42501` to `privilege`, and `42601`, `42P13`, `42809` and `42P16` to `definition`.
+One message is read and only one: `tuple concurrently updated` arrives under `XX000`, the catch-all internal-error class, so the code cannot distinguish it from any other internal error and there is nothing else to read. It is consulted only for a code the table does not carry.
+
+**The pinned `search_path`, its cost and its repair.**
+The apply pins `search_path` to the object's own container schema plus `pg_catalog`, and the preview shows the pinned value as a line the reader sees before confirming.
+
+The `SET LOCAL` and the statement MUST travel in ONE round trip, and splitting them fails in silence.
+Measured: `SET LOCAL search_path = app, pg_catalog` sent as its own round trip answers `WARNING: SET LOCAL can only be used in transaction blocks` and the value does not take effect, `SHOW search_path` still reading `"$user", public`; the same `SET LOCAL` in one round trip with the CREATE answers `SET` then `CREATE FUNCTION` with no warning; and the CONTROL, the identical CREATE without the pin, answers `ERROR: relation "t" does not exist`.
+`pg` does not surface that warning as a rejection, so a split pin would leave the apply running under whatever the previous borrower of the pooled connection left, with nothing downstream able to see it.
+A new session reads the default, so the pin does not leak, and the explicit `BEGIN`/`COMMIT` form behaves identically.
+
+Why it is pinned at all: with `check_function_bodies` at its default `on`, a `LANGUAGE plpgsql` body creates under ANY path, while a `LANGUAGE sql` body and a `BEGIN ATOMIC` body are name-resolved at CREATE time and fail under the wrong one.
+A `SET` issued by one Studio user's request is read back by every later request on the same connection id, so without the pin the same edit would succeed or fail depending on who used the connection last.
+
+THE COST, accepted and stated rather than discovered: a previously-working body that reads ANOTHER schema unqualified IS refused by this pin.
+Measured, a function whose body read `other.u` rewritten to read `u` answers `relation "u" does not exist`, `42P01`, pointed at the reader's own line and column.
+`pg_proc.proconfig` is NULL for a function that does not declare its own `SET search_path`, so the value the object was created under is not recoverable from the catalog and there is nothing else to pin to.
+THE REPAIR is either of two things the reader can do: qualify the name, or give the function its own `SET search_path`, which `pg_get_functiondef` then emits and which round trips untouched.
+
+**`check_function_bodies` is asserted and never set.**
+Measured: with it `off`, `CREATE OR REPLACE FUNCTION` over a body naming a table that does not exist answers `CREATE FUNCTION` and a BROKEN FUNCTION IS CREATED AND SUCCESS IS REPORTED.
+`SET LOCAL check_function_bodies = on` in the apply's own round trip refuses the same statement with `ERROR: relation "totally_absent_table" does not exist`.
+It is session-scoped and session state is measured persisting across Studio users on the cached provider, so the population this assertion exists for is reachable by a previous borrower rather than hypothetical.
+The plan reads it at build and the pre-condition compares it at apply; the build refuses outright when it is anything but `on`.
+
+**The revision, and the four candidates that were measured and rejected.**
+The revision is `md5(pg_get_functiondef(oid))`, computed SERVER SIDE, with `check: "guarded"` and `scope: "server"`.
+
+| Candidate | Why not |
+| --- | --- |
+| `xmin` | Moves on a byte-identical replace and on a `GRANT EXECUTE`, so it produces FALSE conflicts. |
+| `ctid` | Moves on a plain `VACUUM FULL` while `xmin` survives. |
+| A frozen row's `xmin` | Reports 1, which is not a version of anything. |
+| `proconfig` | Records nothing about the body at all. |
+
+The md5 of the engine's own rendering did not move on `COMMENT ON` or on `GRANT EXECUTE` and did move on a real body change, on all five measured rows.
+
+**The failure behaviour.**
+A raise anywhere in the round trip rolls the whole thing back.
+A failed apply leaves the routine with the same `oid` and the same `xmin`, so nothing that depends on it, no `GRANT` and no comment, is disturbed.
+That is also what lets `applied-elsewhere` report `undone: true` here: the post-condition detects the fork AND takes it back in the same round trip, which an engine without a transaction cannot do.
+An error carrying no SQLSTATE at all is not a verdict the engine reached: the statement was sent and its answer never arrived, so it is `interrupted` with `committed: "unknown"`, and a client that retried on it would apply twice.
+
+**A position is converted into the reader's own coordinates.**
+PostgreSQL's `position` is a 1-based CHARACTER offset into the text that was SENT, and it arrives from `pg` as a string although `QueryError.position` is typed `number`.
+The plan carries a segment map, so an offset inside the provider's guard block is reported as `outside` rather than as a number, and an offset in the reader's text is converted to the line and column of THEIR text.
+Measured end to end: a syntax error introduced into the body of `app.order_total` answered `position` in the assembled statement and landed on line 6, column 3 of the reader's own text.
+An uncorrected coordinate would not be caught anywhere downstream: Monaco silently CLAMPS an out-of-range marker rather than rejecting it.
+
+**The doubled semicolon.**
+`SELECT 1;;SELECT 2;` in one parameterless query is ACCEPTED and answers both rows, so the terminator after the reader's text is appended unconditionally rather than conditionally on their last character.
+
+**The limit every claim on this page carries (D62).**
+Every PostgreSQL row above is a claim about 18.4.
+This type id also serves CockroachDB and Materialize, and neither was probed for any of it.
+That is why the classifier answers `definition` with THE ENGINE'S OWN SENTENCE for a code it does not recognise, rather than guessing at a class, and why a server answering no md5 gets an `unsupported` refusal rather than an unguarded write.
+
+**Reproducing all of it.**
+`docker/postgres-init/03-object-fixture.sql` creates the population every claim here needs: `app.over_limit_fn(integer)`, whose definition measured 1,215,122 characters and which the read bound refuses; `app.huge_fn(integer)`, its control at 945,116 characters, which builds; and the two grants that make the ownership refusal non-vacuous.
+
 ### 3.2 Schema SQL hoisted to module scope
 
 The object surface's statements are module-level `const`s, not inline template literals inside the
