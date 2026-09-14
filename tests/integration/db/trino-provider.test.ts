@@ -3455,22 +3455,75 @@ const NLROW_FUNCTION_ROW: unknown[] = ["nlrow", "bigint", 'row("a\nb" bigint), b
 const NLROW_PATH: readonly string[] = ["memory", "app", 'nlrow(row("a\nb" bigint), bigint)'];
 
 /**
- * Build against the split-header object, with the listing carrying it beside the fixture's own.
+ * THE FORK THE COMPARISON FORM CANNOT SEE: two objects whose renderings differ only INSIDE a
+ * quoted identifier.
+ *
+ * Every byte below is verbatim from trinodb/trino:476 in container `trino-t32r1` on host port
+ * 18633 on 2026-09-15, and the three pairs were all driven on that coordinator:
+ *
+ *   * `rowf(r row("a b" bigint))` and `rowf(r row("ab" bigint))` COEXIST, two rows in
+ *     `SHOW FUNCTIONS FROM memory.app` where there was one, so deleting the space is a fork;
+ *   * `rowf(r row("Ab" bigint))` beside `rowf(r row("ab" bigint))` COEXIST too, so the CASE of
+ *     a quoted field name is part of the identity;
+ *   * `dq(r row("a""b" bigint))` and `dq(r row(ab bigint))` COEXIST, so a doubled quote is one
+ *     field named `a"b` and never two identifiers.
+ *
+ * `trinoNormalisedSignature` lower-cases each rendered type and strips every space and every
+ * double quote, which is the only form the engine's TWO renderings of one signature agree on
+ * and is therefore what the overload RESOLUTION must compare. It maps each pair above onto ONE
+ * string, so an identity check built on it certifies nothing for any of them. Measured through
+ * the shipped provider against that coordinator before this repair: reading
+ * `rowf(row("a b" bigint))`, deleting the one space and applying answered
+ * `{"outcome":"applied","revision":{"check":"compared","token":"7b3ae7ef25d1..."}}` and left TWO
+ * `rowf` rows. The reader was told their edit had landed while the catalog had forked.
+ *
+ * The three objects are NOT in `docker/trino-init/01-object-fixture.sql`: this task owns the
+ * provider and this suite and not that file, so they are served here and recorded in the report.
+ */
+const CREATE_ROWF_SPACED = 'CREATE FUNCTION memory.app.rowf(r ROW("a b" bigint))\nRETURNS bigint\nRETURN 1';
+const ROWF_SPACED_ROW: unknown[] = ["rowf", "bigint", 'row("a b" bigint)', "scalar", true, ""];
+const ROWF_SPACED_SEGMENT = 'rowf(row("a b" bigint))';
+const CREATE_ROWF_QUOTED = 'CREATE FUNCTION memory.app.rowf(r ROW("ab" bigint))\nRETURNS bigint\nRETURN 2';
+const ROWF_QUOTED_ROW: unknown[] = ["rowf", "bigint", 'row("ab" bigint)', "scalar", true, ""];
+const ROWF_QUOTED_SEGMENT = 'rowf(row("ab" bigint))';
+const CREATE_DQ = 'CREATE FUNCTION memory.app.dq(r ROW("a""b" bigint))\nRETURNS bigint\nRETURN 1';
+const DQ_ROW: unknown[] = ["dq", "bigint", 'row("a""b" bigint)', "scalar", true, ""];
+const DQ_SEGMENT = 'dq(row("a""b" bigint))';
+
+/**
+ * Build against an object the fixture does not hold, with the listing carrying it beside the
+ * fixture's own.
  *
  * The listing is EXTENDED rather than replaced, because the build resolves the overload the way
  * the pane's read does and a one-row listing would not be a reply this coordinator sends.
  */
-async function buildAgainstNlrow(readText: string, submitted: string): Promise<ObjectEditBuild> {
+async function buildAgainstExtra(options: {
+  bare: string;
+  row: unknown[];
+  segment: string;
+  readText: string;
+  submitted: string;
+}): Promise<ObjectEditBuild> {
   const provider = await editProvider();
   serveInstead(
     trinoFunctionListSql("memory", "app"),
-    rows(FUNCTION_COLUMNS, [...MEMORY_APP_FUNCTION_ROWS, NLROW_FUNCTION_ROW]),
+    rows(FUNCTION_COLUMNS, [...MEMORY_APP_FUNCTION_ROWS, options.row]),
   );
   serveInstead(
-    trinoObjectSourceSql(trinoSourceStatementFor(EDIT_KIND), "memory", "app", "nlrow"),
-    sourceRows("Create Function", [readText]),
+    trinoObjectSourceSql(trinoSourceStatementFor(EDIT_KIND), "memory", "app", options.bare),
+    sourceRows("Create Function", [options.readText]),
   );
-  return await buildOn(provider, submitted, NLROW_PATH);
+  return await buildOn(provider, options.submitted, ["memory", "app", options.segment]);
+}
+
+async function buildAgainstNlrow(readText: string, submitted: string): Promise<ObjectEditBuild> {
+  return await buildAgainstExtra({
+    bare: "nlrow",
+    row: NLROW_FUNCTION_ROW,
+    segment: NLROW_PATH[2] as string,
+    readText,
+    submitted,
+  });
 }
 
 /** The `SHOW CREATE FUNCTION` reply, one queued answer per call, the last one repeating. */
@@ -3753,6 +3806,122 @@ describe("Trino object edit: the build", () => {
     if (build.built !== true) throw new Error(build.refusal.sentence);
     if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
     expect(build.plan.unit.steps[0]?.text).toBe(`CREATE OR REPLACE${submitted.slice(6)}`);
+  });
+
+  test("a SPACE deleted inside a quoted ROW field name is refused, which the comparison form cannot see", async () => {
+    // THE REGRESSION THIS TEST EXISTS FOR, measured live on trinodb/trino:476 in container
+    // `trino-t32r1` on host port 18633 on 2026-09-15: with ONE `rowf` overload present, reading
+    // it through this provider, deleting the one space inside the quoted ROW field name and
+    // applying answered `applied` with a revision token, and `SHOW FUNCTIONS FROM memory.app`
+    // then answered TWO `rowf` rows. The reader was told the edit landed and was never shown the
+    // `applied-elsewhere` sentence at all.
+    const submitted = CREATE_ROWF_SPACED.replace('"a b"', '"ab"');
+    // THE CONTROL, and it is what makes this a test about the identity reading rather than about
+    // any difference at all: the two texts are ONE string under the comparison form the overload
+    // resolution has to use, so a key built on that form certifies nothing here.
+    expect(trinoCreateSignature(submitted)).toBe(trinoCreateSignature(CREATE_ROWF_SPACED));
+    const build = await buildAgainstExtra({
+      bare: "rowf",
+      row: ROWF_SPACED_ROW,
+      segment: ROWF_SPACED_SEGMENT,
+      readText: CREATE_ROWF_SPACED,
+      submitted,
+    });
+    if (build.built) throw new Error("expected a refusal");
+    expect(build.refusal.refusal).toBe("identity");
+    expect(build.refusal.sentence).toContain('rowf(ROW("ab" bigint))');
+  });
+
+  test("the CASE of a quoted ROW field name is part of the identity, and is refused", async () => {
+    // MEASURED on the same container: `rowf(r row("Ab" bigint))` created a THIRD row beside
+    // `row("a b" bigint)` and `row("ab" bigint)`. A quoted identifier keeps its case on this
+    // engine, so this is a different type and a different overload.
+    const submitted = CREATE_ROWF_QUOTED.replace('"ab"', '"Ab"');
+    expect(trinoCreateSignature(submitted)).toBe(trinoCreateSignature(CREATE_ROWF_QUOTED));
+    const build = await buildAgainstExtra({
+      bare: "rowf",
+      row: ROWF_QUOTED_ROW,
+      segment: ROWF_QUOTED_SEGMENT,
+      readText: CREATE_ROWF_QUOTED,
+      submitted,
+    });
+    if (build.built) throw new Error("expected a refusal");
+    expect(build.refusal.refusal).toBe("identity");
+    expect(build.refusal.sentence).toContain('rowf(ROW("Ab" bigint))');
+  });
+
+  test("a DOUBLED quote is one field name and not two, so dropping it is refused", async () => {
+    // MEASURED on the same container: `dq(r row("a""b" bigint))` and `dq(r row(ab bigint))` are
+    // TWO rows, so `a""b` is the single field name `a"b` and reducing it to `ab` forks. A reader
+    // that toggled on every quote without pairing them would read `"a""b"` as the two identifiers
+    // `a` and `b`, and would then call this edit harmless.
+    const submitted = CREATE_DQ.replace('"a""b"', "ab");
+    expect(trinoCreateSignature(submitted)).toBe(trinoCreateSignature(CREATE_DQ));
+    const build = await buildAgainstExtra({
+      bare: "dq",
+      row: DQ_ROW,
+      segment: DQ_SEGMENT,
+      readText: CREATE_DQ,
+      submitted,
+    });
+    if (build.built) throw new Error("expected a refusal");
+    expect(build.refusal.refusal).toBe("identity");
+    expect(build.refusal.sentence).toContain("dq(ROW(ab bigint))");
+  });
+
+  test("the quoting and the case Trino ITSELF folds away are not a fork, and build", async () => {
+    // THE OTHER HALF OF THE POPULATION, without which the three refusals above are a guard that
+    // refuses every header edit. All four rows were driven on trinodb/trino:476 in container
+    // `trino-t32r1` on host port 18633 on 2026-09-15 and every one of them replaced the object IN
+    // PLACE, the row count unchanged:
+    //
+    //   * `row(ab bigint)` over `row("ab" bigint)`: one row, re-rendered `ROW(ab bigint)`, so a
+    //     delimited identifier that needs no delimiters names the same field as the bare one;
+    //   * `row(Ab bigint)` over the same: still one row, so an UNQUOTED identifier folds to lower
+    //     case while a quoted one does not;
+    //   * `memory.app.PLUS_ONE(x bigint)` over `plus_one`: one row, re-rendered with the reader's
+    //     own capitals;
+    //   * `memory.app."Plus_One"(x bigint)` over `plus_one`: one row, and `CREATE FUNCTION
+    //     memory.app.casefn` over an existing `memory.app."CaseFn"` answers ALREADY_EXISTS,
+    //     errorCode 12. A FUNCTION NAME folds its case even when it is delimited, which is the
+    //     one place this engine's two identifier rules differ, and it is why the name half and
+    //     the type half of the identity are folded by different rules rather than by one.
+    const typeShapes = [CREATE_ROWF_QUOTED.replace('"ab"', "ab"), CREATE_ROWF_QUOTED.replace('"ab"', "Ab")];
+    for (const submitted of typeShapes) {
+      const build = await buildAgainstExtra({
+        bare: "rowf",
+        row: ROWF_QUOTED_ROW,
+        segment: ROWF_QUOTED_SEGMENT,
+        readText: CREATE_ROWF_QUOTED,
+        submitted,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+    }
+    const nameShapes = [
+      READ_TEXT.replace("memory.app.plus_one", "memory.app.PLUS_ONE"),
+      READ_TEXT.replace("memory.app.plus_one", 'memory.app."plus_one"'),
+      READ_TEXT.replace("memory.app.plus_one", 'memory.app."Plus_One"'),
+    ];
+    for (const submitted of nameShapes) {
+      const build = await buildAgainst(READ_TEXT, submitted);
+      if (!build.built) throw new Error(build.refusal.sentence);
+    }
+    // Neither loop asserts anything if it runs zero times, so both populations are pinned by
+    // count.
+    expect(typeShapes).toHaveLength(2);
+    expect(nameShapes).toHaveLength(3);
+  });
+
+  test("a qualified name that differs INSIDE its quotes is still refused", async () => {
+    // The fail-safe edge of the rule above, and the reason the name is folded by a rule rather
+    // than by stripping its quotes: `memory.app."plus one"` is a name a reader can type and
+    // `memory.app."sp ace"(x bigint)` is a function this coordinator really holds, created and
+    // read back on `trino-t32r1`. A space inside the quotes is a different name, and dropping
+    // the quote characters would make it the same one.
+    const build = await buildAgainst(READ_TEXT, READ_TEXT.replace("memory.app.plus_one", 'memory.app."plus one"'));
+    if (build.built) throw new Error("expected a refusal");
+    expect(build.refusal.refusal).toBe("identity");
+    expect(build.refusal.sentence).toContain('memory.app."plus one"(bigint)');
   });
 
   test("a RENAMED parameter builds, because on 476 a rename is replaced in place", async () => {

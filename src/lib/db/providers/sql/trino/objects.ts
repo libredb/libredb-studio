@@ -1054,6 +1054,87 @@ export function trinoSpliceAt(text: string): number | null {
 }
 
 /**
+ * One rendered identifier, or one whole rendered TYPE, in the form Trino's OWN identifier rules
+ * make two spellings of one thing equal, and nothing more (#789 Phase 3).
+ *
+ * THIS EXISTS BECAUSE {@link trinoNormalisedSignature} IS THE WRONG READING FOR AN IDENTITY, and
+ * the difference cost a live fork. That form strips EVERY space and EVERY double quote, which is
+ * what the two RENDERINGS of one signature demand of the overload resolution and is far more than
+ * this engine's identifier rules allow. Measured on trinodb/trino:476 in container `trino-t32r1`
+ * on host port 18633 on 2026-09-15, three pairs that reduce to ONE string under that form and
+ * COEXIST as two rows in `SHOW FUNCTIONS FROM memory.app`:
+ *
+ *     rowf(r row("a b" bigint))     beside  rowf(r row("ab" bigint))
+ *     rowf(r row("Ab" bigint))      beside  rowf(r row("ab" bigint))
+ *     dq(r row("a""b" bigint))      beside  dq(r row(ab bigint))
+ *
+ * and three pairs that reduce to one string and really ARE one object, each one applied over the
+ * other on that container with the row count unchanged:
+ *
+ *     row(ab bigint)                over    row("ab" bigint)
+ *     row(Ab bigint)                over    row("ab" bigint)
+ *     memory.app.PLUS_ONE(x bigint) over    memory.app.plus_one(x bigint)
+ *
+ * So the rule is not "strip the quotes" and it is not "keep the quotes": it is Trino's, which is
+ * that an UNDELIMITED identifier folds to lower case and a DELIMITED one is the text between its
+ * quotes, with `""` standing for one quote. A delimited identifier whose text is already a legal
+ * lower-case bare identifier therefore names exactly what the bare spelling names, and is emitted
+ * bare; anything else keeps its delimiters, so `"a b"`, `"Ab"` and `a"b` can never collapse onto
+ * `ab`. Whitespace OUTSIDE the quotes is dropped, which is what makes `decimal(10, 2)` and
+ * `decimal(10,2)` one string and is the one lossy step left: it also removes the boundary between
+ * a ROW field's bare name and its type, so `row(a bigint)` and `row(ab igint)` still reduce to the
+ * same text and the second is not a type this engine will parse.
+ *
+ * `foldQuotedCase` IS THE ONE PLACE THIS ENGINE HAS TWO RULES RATHER THAN ONE, measured rather
+ * than assumed. A quoted ROW FIELD name keeps its case, which is what makes `row("Ab" bigint)` a
+ * second overload; a quoted FUNCTION name does not, and `CREATE FUNCTION memory.app.casefn(x
+ * bigint)` over an existing `memory.app."CaseFn"` answers `ALREADY_EXISTS`, errorCode 12, on the
+ * same container. So the name half passes `true` and the type half passes `false`, and a single
+ * rule would be wrong for one of them either way.
+ *
+ * THE DOUBLED-QUOTE ARM IS LOAD BEARING AND ITS POPULATION IS SERVER PRODUCED. `SHOW CREATE
+ * FUNCTION memory.app.dq` answers `ROW("a""b" bigint)` verbatim on that container, and a scan
+ * that toggled on every quote without pairing them would read it as the two bare identifiers `a`
+ * and `b` and emit `ab`, which is a DIFFERENT overload there: the two coexist as two rows.
+ *
+ * There is no "the closing quote never arrived" arm, and its absence is a consequence of the
+ * caller rather than an oversight: every text this reader sees has already been through
+ * {@link trinoParenthesisedSpan}, whose scan is quote aware, so a statement whose quotes do not
+ * pair has no readable parenthesis span and is refused before it reaches here. The loop ends at
+ * the end of the text and needs no branch to say so.
+ */
+function trinoFoldIdentifiers(text: string, foldQuotedCase: boolean): string {
+  let folded = "";
+  let index = 0;
+  while (index < text.length) {
+    if (text[index] !== '"') {
+      const character = text[index] as string;
+      if (!/\s/.test(character)) folded += character.toLowerCase();
+      index += 1;
+      continue;
+    }
+    let quoted = "";
+    index += 1;
+    while (index < text.length) {
+      if (text[index] !== '"') {
+        quoted += text[index];
+        index += 1;
+        continue;
+      }
+      if (text[index + 1] !== '"') {
+        index += 1;
+        break;
+      }
+      quoted += '"';
+      index += 2;
+    }
+    const content = foldQuotedCase ? quoted.toLowerCase() : quoted;
+    folded += /^[a-z_][a-z0-9_]*$/.test(content) ? content : `"${content.replace(/"/g, '""')}"`;
+  }
+  return folded;
+}
+
+/**
  * The IDENTITY a `CREATE` statement declares: the qualified name it writes and the argument
  * types it declares, or `null` when neither can be read out of it (#789 Phase 3).
  *
@@ -1150,7 +1231,9 @@ export function trinoCreateIdentity(createStatement: string, keywords: readonly 
   // `CREATE FUNCTION(x bigint)` names nothing, and neither does a head that is only keywords.
   if (name === "") return null;
   const argumentTypes = trinoArgumentTypesIn(createStatement.slice(span.open + 1, span.close));
-  return { name, argumentTypes, key: `${String(name.length)}:${name}:${trinoNormalisedSignature(argumentTypes)}` };
+  const foldedName = trinoFoldIdentifiers(name, true);
+  const foldedTypes = argumentTypes.map((type) => trinoFoldIdentifiers(type, false)).join(",");
+  return { name, argumentTypes, key: `${String(foldedName.length)}:${foldedName}:${foldedTypes}` };
 }
 
 /**
