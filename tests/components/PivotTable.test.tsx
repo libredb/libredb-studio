@@ -81,6 +81,23 @@ describe("PivotTable", () => {
     ]);
   });
 
+  test("exports the column field and aggregation the screen shows, not the defaults", () => {
+    const { container, getByText } = render(<PivotTable result={result} />);
+    fireEvent.change(container.querySelectorAll("select")[1]!, { target: { value: "status" } });
+    fireEvent.click(getByText("SUM"));
+
+    fireEvent.click(getByText("Export as CSV"));
+    fireEvent.click(getByText("Export as JSON"));
+
+    expect(mockDownloadText.mock.calls[0][0]).toBe(
+      ["dept,active,inactive", "Engineering,90000.00,85000.00", "Sales,145000.00,0"].join("\n"),
+    );
+    expect(JSON.parse(mockDownloadText.mock.calls[1][0])).toEqual([
+      { dept: "Engineering", active: "90000.00", inactive: "85000.00" },
+      { dept: "Sales", active: "145000.00", inactive: "0" },
+    ]);
+  });
+
   test("shows empty state when result is null", () => {
     const { queryByText } = render(<PivotTable result={null} />);
     expect(queryByText("Pivot Table")).not.toBeNull();
