@@ -700,16 +700,33 @@ The engine's own sentence is `must be owner of function order_total`, SQLSTATE `
 | `definition` | The text is byte-identical to the server's | "this text is identical to the definition on the server" |
 | `identity` | The header changed | "this text declares \"...\" and the object being edited is \"...\", and LibreDB refuses an edited header rather than sending it. CREATE OR REPLACE with a different name or a different argument list creates a SECOND routine and leaves this one untouched, after which every call site fails 42725 is not unique. A changed parameter DEFAULT is rendered inside this same header and PostgreSQL replaces that one in place, so it is refused here as well: make it with a CREATE OR REPLACE of your own in the SQL editor" |
 
-The identity comparison is everything up to and including the first `)` and it needs no parser, because both sides are `pg_get_functiondef` output: the reader started from it and the build re-read it, so the question is whether they are the same bytes the engine wrote.
+The identity comparison is everything up to and including the parenthesis that CLOSES THE PARAMETER LIST, found by a left-to-right scan that counts nesting and skips single-quoted and double-quoted text, and the comparison itself needs no parser, because both sides are `pg_get_functiondef` output: the reader started from it and the build re-read it, so the question is whether they are the same bytes the engine wrote.
+It read the FIRST `)` until #789 task 31, and that ended the header early for every routine whose header carries a parenthesis before the parameter list closes, after which a change to a LATER parameter was never compared at all.
+SEVEN such shapes were measured on 18.4 by creating the object and reading `pg_get_functiondef` back, re-measured on 2026-09-15 on a `postgres:18` container answering `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1)` where all seven renderings and their `md5(pg_get_functiondef(oid))` came back byte for byte, and all seven are ordinary PostgreSQL: a parameter `DEFAULT` holding a call, rendered `DEFAULT abs('-1'::integer)`; a `DEFAULT` holding a `)` and a `DEFAULT` holding a `(` inside a string literal; a quoted function NAME as in `app."we)ird"(a integer, b integer)`; a quoted PARAMETER name as in `app.pn("a)b" integer, c integer)`; and the two mixed-quote shapes `app.mix("a')b" integer, c integer)` and `app.mix2(a text DEFAULT '")'::text, b integer DEFAULT 1)`, which are why the scan tracks both quote kinds and has each ignore the other.
+The shape a reader expects to be the dangerous one is NOT in that population and cannot be: `pg_get_functiondef` renders parameter types through `format_type(t, NULL)` and DROPS the type modifier, so a function declared `(a numeric(10,2), b varchar(9), c char(5), d time(3), e timestamp(3), f decimal(8,4), g interval hour to second(2), h bit(4))` is rendered `(a numeric, b character varying, c character, d time without time zone, e timestamp without time zone, f numeric, g interval, h bit)`, with every parenthesis gone.
+A typmod therefore only ever reaches this comparison from the text the READER submitted.
 It has a limit in EACH direction and both are stated rather than left to be found.
 
-In the FALSE-ACCEPT direction: a parameter DEFAULT holding a `)` inside a string literal cuts the header early on both sides, so a change after that `)` passes this check, and the post-condition below is what catches it.
+In the FALSE-ACCEPT direction there is no case left on the server's side.
+The CURRENT text is always the engine's own rendering and is cut at the right place, so an accept requires the submitted text to cut to exactly those bytes, and any mis-cut of the submitted text produces different bytes and refuses.
+A shape `pg_get_functiondef` never renders, a dollar-quoted DEFAULT being the one to expect, is therefore a possible false REFUSE and never a false accept.
+The post-condition below is still the control on this one, and it is what caught the case this reading used to let through.
 
 In the FALSE-REFUSE direction: `pg_get_functiondef` renders parameter DEFAULTS inside the header, so a CHANGED DEFAULT is refused as an identity change although PostgreSQL would have replaced the routine in place.
 Measured: `CREATE OR REPLACE FUNCTION app.f_def(a integer DEFAULT 1)` re-created as `DEFAULT 2` left `count(*) = 1` and `oid = 16787` with `xmin` moving 857 to 858, and `pg_get_functiondef` then rendered `DEFAULT 2`.
 The refusal stays, because telling a changed DEFAULT from a changed argument list inside the rendered header needs a parser for the header and this design has none: to a byte comparison they are the same bytes.
 What the refusal does NOT do any more is claim the engine would fork the object, which is a fact that is false for this population.
 Change a default with a `CREATE OR REPLACE` of your own in the SQL editor.
+
+**What #789 task 31 NARROWED, which is a cost this fix accepted rather than a defect.**
+Reading the header to the parameter list's real end means a change to a LATER parameter's `DEFAULT` is now compared too, and it is refused.
+Until that fix it was accepted, and the two halves of that sentence rest on different evidence, so both are named.
+The BUILD accepting it is measured by re-running the replaced reading, `text.indexOf(")")` as `c2437ec1`'s own diff carries it, over the two texts: it cuts both to `CREATE OR REPLACE FUNCTION app.dc(a integer DEFAULT abs('-1'::integer)` and has nothing left to compare.
+The APPLY then performing it follows from the engine measurement below rather than from a run of the old code end to end: the addressed row is rewritten, so the post-condition's `xmin` comparison finds it moved and raises nothing.
+MEASURED on 2026-09-15 on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1): `CREATE OR REPLACE FUNCTION app.dc(a integer DEFAULT abs(-1), b integer DEFAULT 3)` over the `DEFAULT 2` form of the same routine left ONE `pg_proc` row with `oid = 16385` unmoved and `xmin` moving 754 to 762, and `pg_get_functiondef` then rendered `b integer DEFAULT 3`, so this is an ordinary in-place replace the engine performs and the apply would have reported `applied`.
+It is refused for the reason above and no other: inside the rendered header a changed DEFAULT and a changed argument list are the same bytes to a byte comparison, and the one is a replace while the other is a silent fork.
+A parameter RENAME and a type modifier the reader types onto a parameter the server renders without one are in the same class, both measured on 18.4 as in-place replaces: adding `numeric(10,2)` to a parameter already rendered `numeric` left `oid = 16385` with `xmin` moving 754 to 779.
+All of them are refused with the same sentence, which names the SQL editor as the way to make the edit.
 
 The byte-identical case is a refusal and not a no-op apply because an apply that cannot change anything spends a write path, an audit row and a lock on nothing.
 It was documented here as emptying the post-condition's false-positive population, and that claim was MEASURED FALSE and withdrawn: see the post-condition below.
@@ -846,9 +863,14 @@ Read each row for what it actually compares, because two of the five are not "un
 
 The last row is the only case here where the engine ACCEPTED the statement.
 `CREATE OR REPLACE` created a second row, the post-condition saw that the addressed row's `xmin` had not moved, raised `LB003`, and the implicit transaction took the fork back inside the same round trip.
-That object is NOT in the committed fixture: the identity check cuts the rendered header at the first `)`, so only a parameter `DEFAULT` holding a `)` inside a string literal lets a changed argument list past it, and the fixture has no such object.
+That object is NOT in the committed fixture: at the time of the run the identity check cut the rendered header at the first `)`, so only a parameter `DEFAULT` holding a `)` inside a string literal let a changed argument list past it, and the fixture has no such object.
 It was created for the run as `CREATE FUNCTION app.<name>(a text DEFAULT 'x)y', b integer DEFAULT 1) RETURNS text LANGUAGE sql AS $b$ SELECT a $b$` and the edit changed `b integer` to `b bigint`.
 Re-measured under the name `app.r19f1_paren` on the same 18.4 image: `edit-plan` built, `edit-apply` answered `applied-elsewhere` with `undone: true`, and `oid|xmin|argument types` read `16793|879|text,integer` both before and after with one row left, so the fork was made and taken back inside the round trip.
+
+THAT PATH IS CLOSED since #789 task 31, and the row above stays because it is what the acceptance run measured rather than what a reader can reproduce today.
+The same edit is now refused at build time as `identity`, with both whole headers in the sentence, so the `applied-elsewhere` outcome recorded here is an outcome the build no longer lets a reader reach through a changed argument list.
+Whether ANY text that passes the identity comparison can still fork the routine was not measured, so the post-condition stays as the second line and `applied-elsewhere` stays in this provider's outcome set: a guard is not removed because nobody could name a case for it.
+What is measured is that the byte-identical re-render, which used to trip this post-condition and is recorded above, no longer does, because the guard compares `xmin` and not the rendering.
 
 **A SUCCESSFUL APPLY CAN DESTROY AN OBJECT THE PLAN NEVER NAMED, and that is open (`docs/BACKLOG.md` D76).**
 The reader's text is spliced into the emitted unit as a whole segment of one parameterless simple query, and PostgreSQL runs every statement in such a query, so a text that carries a second statement after its terminator runs that statement too.
