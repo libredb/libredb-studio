@@ -991,8 +991,14 @@ export const TRINO_REPLACE_CLAUSE = " OR REPLACE";
  * lower-case arm is defensive about a text the READER typed rather than about a text the
  * engine produced, and the reader's text is what is handed in here.
  *
- * A LEADING-WHITESPACE ARM EXISTS AND IS DRIVEN: the reader may indent their whole
- * definition, and the offset then has to be past the keyword rather than past character six.
+ * THE LEADING-WHITESPACE ARM IS REACHED IN THE PRODUCT AND CHANGES NO OUTCOME THERE, said
+ * plainly rather than dressed as a safety net. This runs BEFORE the build's first-line identity
+ * check, so an indented submission does reach it and does get a non-zero offset; that submission
+ * is then refused anyway, because its first line is not byte-identical to the formatter's. The
+ * arm is what keeps the offset correct rather than what keeps anything safe, and the same
+ * reasoning is why a `replace("CREATE", ...)` at the splice site is EXTENSIONALLY EQUAL to this
+ * anchor for every text that survives the identity check: measured as a mutation, it kills no
+ * test, and `replaceAll` kills one.
  */
 export function trinoSpliceAt(text: string): number | null {
   const start = text.search(/\S/);
