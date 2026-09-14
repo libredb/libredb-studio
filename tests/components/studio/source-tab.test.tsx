@@ -31,6 +31,8 @@ let sourceReads: Array<{ path: unknown; kind: unknown }> = [];
 let sourceAnswer: { status: number; body: unknown } = { status: 200, body: {} };
 /** A source read that never settles, so a pane can be caught with NOTHING in hand. */
 let sourceHangs = false;
+/** Every render of the active tab's source state, in order, for the clear the apply writes. */
+let sourceStates: Array<{ id: string; source: SourceTabState }> = [];
 
 const DEFINITION = "CREATE OR REPLACE FUNCTION app.order_total(integer)\n  RETURNS numeric AS $$ SELECT 1 $$;";
 
@@ -188,7 +190,8 @@ const inlineEditingAnswer = {
 
 mock.module("@/hooks/use-inline-editing", () => ({ useInlineEditing: () => inlineEditingAnswer }));
 
-const toastAnswer = { toast: () => {} };
+const mockToast = mock((_argument: unknown) => {});
+const toastAnswer = { toast: mockToast };
 mock.module("@/hooks/use-toast", () => ({ useToast: () => toastAnswer }));
 
 const storageSyncAnswer = {
@@ -291,6 +294,15 @@ mock.module("@/components/studio/index", () => {
      */
     BottomPanel: (props: Record<string, unknown>) => {
       capturedBottomPanelProps = props;
+      /*
+       * The ACTIVE tab's source state, recorded once per render (#789 Phase 3).
+       *
+       * `currentTab` is a prop this shell already hands out, so recording it introduces no seam
+       * the product does not have: the apply's clear is a write onto the tab, and this is where
+       * a test can watch the tab from outside the component that owns it.
+       */
+      const tab = props.currentTab as QueryTab | undefined;
+      if (tab?.source !== undefined) sourceStates.push({ id: tab.id, source: tab.source });
       return <div data-testid="bottom-panel" />;
     },
     BottomPanelMode: {},
@@ -308,9 +320,10 @@ const { default: Studio } = await import("@/components/Studio");
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { DatabaseObject } from "@/lib/db/types";
-import type { QueryTab } from "@/lib/types";
+import type { QueryTab, SourceTabState } from "@/lib/types";
 import { StudioTabBar } from "@/components/studio/StudioTabBar";
 import type { TreeRowActionHandlers } from "@/components/object-tree/row-actions";
+import { pathKey } from "@/lib/db/object-path";
 
 const ROUTINE: DatabaseObject = { path: ["app", "order_total(integer)"], name: "order_total", kind: "function" };
 const TABLE: DatabaseObject = { path: ["app", "orders"], name: "orders", kind: "table" };
@@ -345,11 +358,61 @@ const readableDocument = {
   ],
 };
 
+/**
+ * The APPLY fixtures (#789 Phase 3).
+ *
+ * The plan is what a provider issues and what `isObjectEditPlanShape` accepts. Its single user
+ * segment spans the whole of the step's text on purpose: `spansTheText` in
+ * `src/lib/api/object-edit-wire.ts` refuses a plan whose segments laid end to end fall short of
+ * `text.length`, and a short segment makes every preview test below silently exercise the pane's
+ * UNREADABLE arm while reading as if it drove the happy path. Measured against the shipped
+ * predicate while wave 8 was written, and repeated here because the same fixture is being built
+ * a second time in a second suite.
+ */
+const STEP_TEXT = "CREATE OR REPLACE FUNCTION app.order_total(integer)\n  RETURNS numeric AS $$ SELECT 2 $$;";
+
+const PLAN = {
+  planVersion: 1,
+  planId: "plan-1",
+  issuedAt: "2026-09-14T00:00:00.000Z",
+  connectionFingerprint: "fingerprint",
+  type: "postgres",
+  path: [...ROUTINE.path],
+  kind: "function",
+  partId: "definition",
+  strategy: "guarded-atomic-batch",
+  unit: {
+    medium: "statement",
+    steps: [{ text: STEP_TEXT, language: "sql", segments: [{ from: "user", start: 0, end: STEP_TEXT.length }] }],
+  },
+  session: [],
+  revision: { check: "compared", token: "t1", basis: "pg_proc.xmin", scope: "connection" },
+  consequences: [],
+};
+
+const BUILT = { built: true, plan: PLAN, preimage: { text: DEFINITION, language: "sql" }, planToken: "token-1" };
+const APPLIED = { outcome: "applied", revision: PLAN.revision, duration: 3 };
+
+/** The two edit routes' request bodies, in the order the pane sent them. */
+let editRequests: Array<{ url: string; body: unknown }> = [];
+let applyAnswer: { status: number; body: unknown } = { status: 200, body: APPLIED };
+
 const realFetch = globalThis.fetch;
 
 function installFetch(): void {
   globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
     const text = String(url);
+    if (text.includes("/api/db/objects/edit-plan")) {
+      editRequests.push({ url: text, body: JSON.parse(String(init?.body ?? "{}")) });
+      return Response.json(BUILT);
+    }
+    if (text.includes("/api/db/objects/edit-apply")) {
+      editRequests.push({ url: text, body: JSON.parse(String(init?.body ?? "{}")) });
+      return new Response(JSON.stringify(applyAnswer.body), {
+        status: applyAnswer.status,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (text.includes("/api/db/objects/source")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as { path?: unknown; kind?: unknown };
       sourceReads.push({ path: body.path, kind: body.kind });
@@ -394,6 +457,10 @@ beforeEach(() => {
   sourceReads = [];
   sourceAnswer = { status: 200, body: readableDocument };
   sourceHangs = false;
+  sourceStates = [];
+  editRequests = [];
+  applyAnswer = { status: 200, body: APPLIED };
+  mockToast.mockClear();
   connectionManagerAnswer.activeConnection = pgConn;
   mockExecuteQuery.mockClear();
   mockExecuteHandedOverStatement.mockClear();
@@ -929,5 +996,257 @@ describe("the tab bar tells a Source tab apart", () => {
     );
     const row = screen.getByRole("textbox").parentElement as HTMLElement;
     expect(iconOf(row)).toBe("lucide-file-code");
+  });
+});
+
+/**
+ * The APPLY, wired into the standalone shell (#789 Phase 3, discussion #778).
+ *
+ * MEASURED before this task existed: the Source pane NEVER re-reads after a change made
+ * elsewhere in the same app. A new body was applied to `p3probe.order_total` through
+ * `POST /api/db/query` while its Source tab was open, and the tab kept showing the old text with
+ * no stale banner. This shell's `objectRefreshToken` is a counter it increments for what IT ran,
+ * and a raw query is not one of them, so the pane had nothing to notice.
+ *
+ * What is REAL here: the pane, the preview dialog, `httpSourceApplier`, `useTabManager` and the
+ * tab strip. `globalThis.fetch` answers the two edit routes, so the apply is a round trip through
+ * the shipped applier rather than an injected double, which is the half `ObjectSourceView`'s own
+ * suite cannot reach: it hands the pane an applier object and never the URL.
+ */
+const EDITABLE_PART = { ...readableDocument.parts[0], edit: { offered: true } };
+const EDITABLE_DOCUMENT = { ...readableDocument, parts: [EDITABLE_PART] };
+
+const OTHER_VIEW = {
+  path: ["app", "order_summary"],
+  kind: "view",
+  parts: [
+    {
+      id: "definition",
+      label: "View",
+      text: "CREATE VIEW app.order_summary AS SELECT 1;",
+      language: "sql",
+      form: "complete",
+      origin: "regenerated",
+    },
+  ],
+};
+
+/** The kind list WITHOUT the shell-side declaration, which is what a real `provider-meta` sends. */
+const WITHOUT_EDIT_DECLARATION = KINDS;
+/** The same list with the function kind declared editable, for the negative half's control. */
+const WITH_EDIT_DECLARATION = KINDS.map((kind) =>
+  kind.id === "function" ? { ...kind, acceptsSourceEdits: true } : kind,
+);
+
+const SOURCE_TAB_ID = `source:function:${encodeURIComponent(pathKey([...ROUTINE.path]))}`;
+
+async function click(testId: string): Promise<void> {
+  await act(async () => {
+    (screen.getByTestId(testId) as HTMLElement).click();
+    await Promise.resolve();
+  });
+}
+
+/** The states the named tab's `source` passed through, in render order. */
+function statesFor(tabId: string): SourceTabState[] {
+  return sourceStates.filter((entry) => entry.id === tabId).map((entry) => entry.source);
+}
+
+/** Open the function's Source tab and wait for the definition to be on screen. */
+async function openFunctionTab(): Promise<void> {
+  act(() => sidebarActions().onViewSource?.(ROUTINE));
+  await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+}
+
+/** Edit, Preview, confirm. Every step is the gesture a reader makes, in that order. */
+async function applySuccessfully(): Promise<void> {
+  await click("object-source-edit");
+  await waitFor(() => expect(screen.getByTestId("object-source-preview")).toBeTruthy());
+  await click("object-source-preview");
+  await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+  await click("object-source-apply-confirm");
+  await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+}
+
+describe("a successful apply in the standalone shell", () => {
+  test("moves the catalog token, clears THIS tab and drops the draft, in ONE commit", async () => {
+    /*
+     * The order is safe and it is TRACED rather than asserted: both writes batch into ONE commit,
+     * so the viewer re-renders with `refreshToken = n+1` and `document === undefined`;
+     * `needsRead` in `ObjectSourceView` becomes true; the address was removed from `asked.current`
+     * when the previous read landed; so the effect issues a fresh read with `tokenAtRead = n+1`
+     * and the landed read writes `readAtToken = n+1`, which EQUALS `refreshToken`.
+     *
+     * WHAT THIS ASSERTS AND WHY IT IS NOT THE BRIEF'S `patchesFor`. The clear is a write this
+     * shell makes onto its own tab through the same callback the pane holds, so there is no
+     * boundary a test can watch a PATCH cross without a seam the product does not have. The tab's
+     * STATE is watchable, through `currentTab`, and the clear's whole content is the state it
+     * produces. Non-vacuity is the reason the two indices are separate assertions: the tab's
+     * source state is ALSO all-undefined before the first read has landed, so an assertion that
+     * merely found a cleared state would pass over a shell that cleared nothing.
+     */
+    sourceAnswer = { status: 200, body: EDITABLE_DOCUMENT };
+    render(<Studio />);
+    await openFunctionTab();
+
+    // The second Source tab, read at token 0, so it is a real other tab and not a hypothetical.
+    sourceAnswer = { status: 200, body: OTHER_VIEW };
+    act(() => sidebarActions().onViewSource?.({ path: ["app", "order_summary"], name: "order_summary", kind: "view" }));
+    await waitFor(() => expect(sourceReads).toHaveLength(2));
+    await waitFor(() =>
+      expect((screen.getByTestId("source-editor") as HTMLTextAreaElement).value).toContain("order_summary"),
+    );
+
+    act(() => {
+      screen.getAllByRole("tab")[1].click();
+    });
+    await waitFor(() => expect((screen.getByTestId("source-editor") as HTMLTextAreaElement).value).toBe(DEFINITION));
+
+    sourceAnswer = { status: 200, body: EDITABLE_DOCUMENT };
+    await applySuccessfully();
+
+    // The clear landed on the tab, AFTER that tab had a document in hand.
+    const states = statesFor(SOURCE_TAB_ID);
+    const held = states.findIndex((state) => state.document !== undefined && state.readAtToken !== undefined);
+    expect(held).toBeGreaterThanOrEqual(0);
+    const cleared = states.findIndex(
+      (state, index) =>
+        index > held && state.document === undefined && state.failure === undefined && state.readAtToken === undefined,
+    );
+    expect(cleared).toBeGreaterThan(held);
+
+    // The token moved, so the pane re-read: a third read for the SAME address.
+    await waitFor(() => expect(sourceReads).toHaveLength(3));
+    expect(sourceReads[2]).toEqual({ path: [...ROUTINE.path], kind: "function" });
+    await waitFor(() => expect((screen.getByTestId("source-editor") as HTMLTextAreaElement).value).toBe(DEFINITION));
+
+    /*
+     * The tab that applied is NOT marked stale while every OTHER open Source tab is, which is the
+     * honest split: the tab that applied knows exactly what happened, the others know only that
+     * something did.
+     */
+    expect(screen.queryByTestId("object-source-stale")).toBeNull();
+
+    act(() => {
+      screen.getAllByRole("tab")[2].click();
+    });
+    await waitFor(() => expect(screen.getByTestId("object-source-stale")).toBeTruthy());
+  });
+
+  test("the pane falls to its loading state for one round trip and SAYS so", async () => {
+    // The region the reader was looking at is replaced, so the loading line plus a success toast
+    // carry the fact. The re-read is held in flight here, which is the only way the loading state
+    // is observable at all: with a route that answers at once it is one render wide.
+    sourceAnswer = { status: 200, body: EDITABLE_DOCUMENT };
+    render(<Studio />);
+    await openFunctionTab();
+
+    sourceHangs = true;
+    await applySuccessfully();
+
+    await waitFor(() => expect(screen.getByTestId("object-source-loading")).toBeTruthy());
+    expect(screen.getByTestId("object-source-loading").textContent).toContain("Reading the definition...");
+    expect(mockToast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Applied. Reading the definition again." }),
+    );
+  });
+
+  test("the apply goes out over THIS application's own two routes, with the plan it was given", async () => {
+    // What the pane's own suite cannot see: it is handed an applier object and never a URL, so
+    // the standalone shell is the only place the wiring of `httpSourceApplier` to the mount is
+    // observable. Both bodies are asserted, because a build that reached the route and an apply
+    // that did not is a preview nothing can act on.
+    sourceAnswer = { status: 200, body: EDITABLE_DOCUMENT };
+    render(<Studio />);
+    await openFunctionTab();
+    await applySuccessfully();
+
+    expect(editRequests.map((request) => request.url)).toEqual([
+      "/api/db/objects/edit-plan",
+      "/api/db/objects/edit-apply",
+    ]);
+    expect(editRequests[0].body).toMatchObject({
+      path: [...ROUTINE.path],
+      kind: "function",
+      partId: "definition",
+      text: DEFINITION,
+    });
+    expect(editRequests[1].body).toMatchObject({ plan: PLAN, planToken: "token-1", acknowledged: [] });
+  });
+
+  test("an apply that FAILED moves nothing: no token, no clear, no re-read", async () => {
+    /*
+     * The control for the three assertions above, over the population the shell must not act on.
+     * `onApplied` is called by the pane only for an outcome in `APPLIED_OUTCOMES`, so a shell that
+     * moved the token on every dialog close would throw away a definition the reader is still
+     * looking at and send them round a read they did not need.
+     */
+    sourceAnswer = { status: 200, body: EDITABLE_DOCUMENT };
+    applyAnswer = {
+      status: 200,
+      body: {
+        outcome: "failed",
+        committed: "no",
+        sentence: 'ERROR: syntax error at or near "SELCT"',
+        duration: 2,
+      },
+    };
+    render(<Studio />);
+    await openFunctionTab();
+
+    await click("object-source-edit");
+    await waitFor(() => expect(screen.getByTestId("object-source-preview")).toBeTruthy());
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+    await click("object-source-apply-confirm");
+
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
+    expect(sourceReads).toHaveLength(1);
+    expect(mockToast).not.toHaveBeenCalled();
+    expect(statesFor(SOURCE_TAB_ID).at(-1)?.document).toBeDefined();
+  });
+});
+
+/**
+ * D57, closed by construction rather than by a comment.
+ *
+ * MEASURED end to end on a live MariaDB 12.3.2: `provider-meta` answered the MySQL six for a
+ * server whose connected provider serves `package` in full. This shell's copy of a declaration is
+ * therefore a statement about SOME server and not necessarily the connected one, so it may decide
+ * a label and it may not decide whether a definition can be replaced. Editability comes from the
+ * PART, which travelled with the read from the connected provider.
+ *
+ * DRIVEN, and not asserted over a source string. An earlier draft of this test was
+ * `expect(source(Studio)).not.toContain("acceptsSourceEdits")` over a helper the plan never
+ * defined, which passes when `source()` answers `""` and is therefore an uncontrolled negative
+ * over a population it cannot prove non-empty.
+ */
+describe("the kind lookup does NOT grow a writable arm, and the edit gate reads the PART", () => {
+  test("a part that offers the edit shows the control even where the shell's copy withholds it", async () => {
+    capabilitiesOverride = { objectKinds: WITHOUT_EDIT_DECLARATION };
+    buildMetadata();
+    sourceAnswer = { status: 200, body: EDITABLE_DOCUMENT };
+    render(<Studio />);
+    await openFunctionTab();
+
+    // The label still comes from the declaration, which is the ONE thing this copy decides.
+    expect(screen.getByTestId("object-source-kind").textContent).toBe("Function");
+    expect(screen.queryByTestId("object-source-edit")).not.toBeNull();
+  });
+
+  test("a part with no edit shows no control even where the shell's copy declares the kind editable", async () => {
+    // The declaration flipped the other way. If the shell consulted its own copy, exactly one of
+    // these two tests would fail, which is what makes the pair a control rather than two halves
+    // of the same assertion.
+    capabilitiesOverride = { objectKinds: WITH_EDIT_DECLARATION };
+    buildMetadata();
+    sourceAnswer = { status: 200, body: readableDocument };
+    render(<Studio />);
+    await openFunctionTab();
+
+    expect(screen.getByTestId("object-source-kind").textContent).toBe("Function");
+    expect(screen.queryByTestId("object-source-edit")).toBeNull();
+    // And the pane says WHY, in the words the predicate owns, rather than drawing nothing.
+    expect(screen.getByTestId("object-source-edit-refusal").getAttribute("data-refusal")).toBe("not-offered");
   });
 });

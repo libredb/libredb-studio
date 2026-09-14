@@ -31,7 +31,7 @@ import { AgentRail } from "@/components/agent/AgentRail";
 import { DatabaseConnection, SavedQuery } from "@/lib/types";
 import type { DatabaseObject } from "@/lib/db/types";
 import { findKind, kindHasSource, relationKindIds } from "@/lib/db/object-kinds";
-import { ObjectSourceView, type ObjectSourcePatch } from "@/components/object-source";
+import { httpSourceApplier, ObjectSourceView, type ObjectSourcePatch } from "@/components/object-source";
 import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
 import { lazyRetry } from "@/lib/lazy";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
@@ -222,6 +222,39 @@ export default function Studio() {
     },
     [setTabs, activeTabId],
   );
+
+  /**
+   * What this shell does after an apply that CHANGED the addressed object (#789 Phase 3).
+   *
+   * MEASURED, and it is the reason this handler exists at all: the Source pane NEVER re-reads
+   * after a change made elsewhere in the same app. A new body was applied to
+   * `p3probe.order_total` through `POST /api/db/query` while its Source tab was open, and the tab
+   * kept showing the pre-apply text with no stale banner. `objectRefreshToken` above is a counter
+   * this shell increments for what IT ran, and a raw query is not one of them, so an apply that
+   * did not move it would leave the reader looking at the definition they just replaced.
+   *
+   * TWO WRITES IN ONE HANDLER, and the batching is the point rather than an optimisation. React
+   * commits both together, so the pane re-renders exactly once, with `refreshToken = n+1` AND
+   * `document === undefined`. Its read effect then issues a fresh read recording `tokenAtRead =
+   * n+1`, and the landed read writes `readAtToken = n+1`, which EQUALS the counter. So the tab
+   * that applied is NOT marked stale, while every other open Source tab is: the tab that applied
+   * knows exactly what happened, and the others know only that something did. Split into two
+   * commits, with the clear first, the read goes out at token n and comes back stale on the one
+   * tab whose reader is certain about what changed.
+   *
+   * The CLEAR is `onSourceChange`'s explicit-undefined form, which is a clear and not a no-op,
+   * and it addresses the ACTIVE tab. That is correct and not an approximation: the pane that
+   * performed the apply is mounted in the active tab, because it is the only Source pane this
+   * shell renders.
+   *
+   * The DRAFT is not dropped here. The pane drops it itself, keyed on the part its PLAN was built
+   * for, which is a key this shell does not hold and must not guess.
+   */
+  const handleApplied = useCallback(() => {
+    objectsChanged();
+    onSourceChange({ document: undefined, failure: undefined, readAtToken: undefined });
+    toast({ title: "Applied. Reading the definition again." });
+  }, [objectsChanged, onSourceChange, toast]);
 
   // 5. Query Execution
   const queryExec = useQueryExecution({
@@ -949,6 +982,27 @@ export default function Studio() {
                               activePartId={sourceTab.activePartId}
                               refreshToken={objectRefreshToken}
                               readAtToken={sourceTab.readAtToken}
+                              editingPartId={sourceTab.editingPartId}
+                              dirty={sourceTab.dirty}
+                              /*
+                                WHO performs the apply, passed EXPLICITLY rather than defaulted
+                                inside the pane (#789 Phase 3). That is the difference that lets
+                                the embedded shell withhold it, and withholding it is what keeps
+                                an existing adopter unchanged: with no `onApply` the pane is
+                                exactly Phase 2, no bar and no sentence.
+
+                                NOTHING HERE CONSULTS `metadata.capabilities` for the edit gate,
+                                and that is D57 closed by construction. The kind lookup above
+                                resolves a LABEL and nothing else. MEASURED end to end on a live
+                                MariaDB 12.3.2: `provider-meta` answered the MySQL six for a
+                                server whose connected provider serves `package` in full, so this
+                                shell's copy of a declaration is a statement about some server
+                                and not necessarily the connected one. The affordance travels
+                                with the read instead, on the part, from the provider that
+                                answered it.
+                              */
+                              onApply={httpSourceApplier}
+                              onApplied={handleApplied}
                               onChange={onSourceChange}
                             />
                           </div>
