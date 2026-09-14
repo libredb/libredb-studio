@@ -1257,12 +1257,28 @@ const PERF_TRANSACTION_STATS_SQL = `
         WHERE datname = $1
       `;
 
-// getPerformanceMetrics: checkpoint timings (columns absent on older PG).
-const PERF_CHECKPOINT_SQL = `
+// getPerformanceMetrics: which view carries the checkpoint timings. PostgreSQL 17
+// moved them from pg_stat_bgwriter to pg_stat_checkpointer and renamed them, so the
+// server is asked whether the new view exists rather than its version number, which
+// a wire-compatible fork need not report in step with its catalog.
+const PERF_CHECKPOINTER_PROBE_SQL = `
+          SELECT pg_catalog.to_regclass('pg_catalog.pg_stat_checkpointer') IS NOT NULL AS has_checkpointer
+        `;
+
+// getPerformanceMetrics: checkpoint timings on PostgreSQL 17 and later.
+const PERF_CHECKPOINTER_SQL = `
           SELECT
-            checkpoint_write_time,
-            checkpoint_sync_time
-          FROM pg_stat_bgwriter
+            write_time,
+            sync_time
+          FROM pg_catalog.pg_stat_checkpointer
+        `;
+
+// getPerformanceMetrics: checkpoint timings before PostgreSQL 17.
+const PERF_BGWRITER_CHECKPOINT_SQL = `
+          SELECT
+            checkpoint_write_time AS write_time,
+            checkpoint_sync_time AS sync_time
+          FROM pg_catalog.pg_stat_bgwriter
         `;
 
 // getSlowQueries: pg_stat_statements stats ($1 = database, $2 = limit).
@@ -2908,24 +2924,26 @@ export class PostgresProvider extends SQLBaseProvider {
         txRow = undefined;
       }
 
-      // Get checkpoint stats (optional - columns may not exist in older PG versions)
-      // "N/A" from the start rather than "0", so an unread counter never leaves
-      // here looking like a checkpoint that took no time.
+      // Get checkpoint stats. "N/A" from the start rather than "0", so an unread
+      // counter never leaves here looking like a checkpoint that took no time.
       let checkpointWriteTime = "N/A";
       try {
-        const checkpointRes = await client.query(PERF_CHECKPOINT_SQL);
+        // Reading the old columns and catching the failure answered "N/A" on every
+        // PostgreSQL 17+ server, and wrote an ERROR into its log on every monitoring
+        // refresh (#825). The probe picks the view that has them instead.
+        const probeRes = await client.query(PERF_CHECKPOINTER_PROBE_SQL);
+        const checkpointRes = await client.query(
+          probeRes.rows[0]?.has_checkpointer ? PERF_CHECKPOINTER_SQL : PERF_BGWRITER_CHECKPOINT_SQL,
+        );
         const checkpointRow = checkpointRes.rows[0];
-        const writeTime = measuredNumber(checkpointRow?.checkpoint_write_time);
-        const syncTime = measuredNumber(checkpointRow?.checkpoint_sync_time);
-        // Either half alone is a reading; neither is not. PostgreSQL 17 moved both
-        // columns from pg_stat_bgwriter to pg_stat_checkpointer, so on 17+ the query
-        // throws and the catch below answers - measured 2026-08-23 through this
-        // provider against postgres:18, which reported checkpointWriteTime "N/A".
+        const writeTime = measuredNumber(checkpointRow?.write_time);
+        const syncTime = measuredNumber(checkpointRow?.sync_time);
+        // Either half alone is a reading; neither is not.
         if (writeTime !== undefined || syncTime !== undefined) {
           checkpointWriteTime = `${(((writeTime ?? 0) + (syncTime ?? 0)) / 1000).toFixed(1)}s`;
         }
       } catch {
-        // The columns do not exist on this server (17+), or the view is not readable.
+        // No to_regclass() (Materialize), or the view is not readable by this role.
         checkpointWriteTime = "N/A";
       }
 

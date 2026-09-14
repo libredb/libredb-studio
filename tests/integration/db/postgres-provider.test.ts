@@ -496,13 +496,29 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
     });
   }
 
-  // getPerformanceMetrics: pg_stat_bgwriter (checkpoint stats)
+  // getPerformanceMetrics: which view carries the checkpoint timings. The default
+  // server is a PostgreSQL 17+ one, where pg_stat_checkpointer exists.
+  if (normalized.includes("to_regclass('pg_catalog.pg_stat_checkpointer')")) {
+    return Promise.resolve({ rows: [{ has_checkpointer: true }], fields: [], rowCount: 1 });
+  }
+
+  // getPerformanceMetrics: pg_stat_checkpointer (checkpoint stats, PostgreSQL 17+)
+  if (normalized.includes("from pg_catalog.pg_stat_checkpointer")) {
+    return Promise.resolve({
+      rows: [{ write_time: "9000", sync_time: "1500" }],
+      fields: [],
+      rowCount: 1,
+    });
+  }
+
+  // getPerformanceMetrics: pg_stat_bgwriter (checkpoint stats before PostgreSQL 17)
   if (normalized.includes("pg_stat_bgwriter")) {
     return Promise.resolve({
       rows: [
+        // The statement aliases the pre-17 column names to the pg_stat_checkpointer ones.
         {
-          checkpoint_write_time: "12500",
-          checkpoint_sync_time: "3200",
+          write_time: "12500",
+          sync_time: "3200",
         },
       ],
       fields: [],
@@ -1882,8 +1898,71 @@ describe("PostgresProvider", () => {
       expect("bufferPoolUsage" in metrics).toBe(false);
       expect(typeof metrics.deadlocks).toBe("number");
       expect(metrics.deadlocks).toBe(3);
-      expect(typeof metrics.checkpointWriteTime).toBe("string");
-      expect(metrics.checkpointWriteTime).not.toBe("N/A");
+      expect(metrics.checkpointWriteTime).toBe("10.5s");
+    });
+
+    test("reads the checkpoint timings from pg_stat_checkpointer on PostgreSQL 17 and later", async () => {
+      // PostgreSQL 17 moved both columns out of pg_stat_bgwriter and renamed them.
+      // Asking the old view for them there failed, and the server logged
+      // `column "checkpoint_write_time" does not exist` on every monitoring refresh (#825).
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const seen: string[] = [];
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        seen.push(sql.trim().toLowerCase());
+        return originalMock(sql, params);
+      };
+
+      const metrics = await provider.getPerformanceMetrics();
+      expect(metrics.checkpointWriteTime).toBe("10.5s");
+      expect(seen.some((sql) => sql.includes("from pg_catalog.pg_stat_checkpointer"))).toBe(true);
+      expect(seen.some((sql) => sql.includes("checkpoint_write_time"))).toBe(false);
+    });
+
+    test("reads the checkpoint timings from pg_stat_bgwriter before PostgreSQL 17", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const seen: string[] = [];
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        seen.push(normalized);
+        if (normalized.includes("to_regclass('pg_catalog.pg_stat_checkpointer')")) {
+          return { rows: [{ has_checkpointer: false }], fields: [], rowCount: 1 };
+        }
+        return originalMock(sql, params);
+      };
+
+      const metrics = await provider.getPerformanceMetrics();
+      // 12500 ms written plus 3200 ms synced, the pre-17 fixture.
+      expect(metrics.checkpointWriteTime).toBe("15.7s");
+      expect(seen.some((sql) => sql.includes("from pg_catalog.pg_stat_checkpointer"))).toBe(false);
+    });
+
+    test("answers N/A and reads no view when the server cannot say which view it has", async () => {
+      // A wire-compatible engine with no to_regclass() (Materialize) refuses the probe.
+      // Guessing a view there would send a statement that has to fail.
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const seen: string[] = [];
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        seen.push(normalized);
+        if (normalized.includes("to_regclass('pg_catalog.pg_stat_checkpointer')")) {
+          throw new Error('function "to_regclass" does not exist');
+        }
+        return originalMock(sql, params);
+      };
+
+      const metrics = await provider.getPerformanceMetrics();
+      expect(metrics.checkpointWriteTime).toBe("N/A");
+      expect(seen.some((sql) => sql.includes("pg_stat_bgwriter"))).toBe(false);
+      expect(seen.some((sql) => sql.includes("from pg_catalog.pg_stat_checkpointer"))).toBe(false);
     });
 
     test("handles checkpoint fallback gracefully", async () => {
@@ -1893,8 +1972,8 @@ describe("PostgresProvider", () => {
       const originalMock = mockQueryFn;
       mockQueryFn = async (sql: string, params?: unknown[]) => {
         const normalized = sql.trim().toLowerCase();
-        if (normalized.includes("pg_stat_bgwriter")) {
-          throw new Error("permission denied for pg_stat_bgwriter");
+        if (normalized.includes("from pg_catalog.pg_stat_checkpointer")) {
+          throw new Error("permission denied for pg_stat_checkpointer");
         }
         return originalMock(sql, params);
       };
@@ -1963,19 +2042,17 @@ describe("PostgresProvider", () => {
     });
 
     test("reports an absent checkpoint reading as N/A rather than as zero seconds", async () => {
-      // pg_stat_bgwriter still exists on PostgreSQL 17+ but the two checkpoint
-      // columns moved to pg_stat_checkpointer, so the query throws there and the
-      // catch already answers "N/A". This is the other shape: the view answers,
-      // and both columns are NULL.
+      // A view that is unreadable already answers "N/A" through the catch. This is
+      // the other shape: the view answers, and both columns are NULL.
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
       const originalMock = mockQueryFn;
       mockQueryFn = async (sql: string, params?: unknown[]) => {
         const normalized = sql.trim().toLowerCase();
-        if (normalized.includes("pg_stat_bgwriter")) {
+        if (normalized.includes("from pg_catalog.pg_stat_checkpointer")) {
           return {
-            rows: [{ checkpoint_write_time: null, checkpoint_sync_time: null }],
+            rows: [{ write_time: null, sync_time: null }],
             fields: [],
             rowCount: 1,
           };

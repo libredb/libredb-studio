@@ -719,11 +719,13 @@ Monitoring never hard-fails on a missing optional feature:
   *differently*: `getSlowQueries()` falls back to a `pg_stat_activity` snapshot of
   currently-running queries when the extension isn't installed, whereas `getHealth()`'s lighter
   slow-query block returns a single placeholder row (`pg_stat_statements extension not enabled`).
-- WAL size (`getStorageStats`) and `pg_stat_bgwriter` checkpoint times are superuser/version-gated;
-  failures are swallowed and the field is simply omitted or reported as `N/A`. PostgreSQL 17 moved
-  `checkpoint_write_time`/`checkpoint_sync_time` from `pg_stat_bgwriter` to `pg_stat_checkpointer`,
-  so on 17+ the query throws and `checkpointWriteTime` is `"N/A"` — measured 2026-08-23 through this
-  provider against `postgres:18`. It is never `"0.0s"` for an unread counter.
+- WAL size (`getStorageStats`) is superuser-gated; a failure is swallowed and the field is simply omitted.
+- Checkpoint times come from whichever view carries them.
+  PostgreSQL 17 moved `checkpoint_write_time`/`checkpoint_sync_time` from `pg_stat_bgwriter` to `pg_stat_checkpointer` as `write_time`/`sync_time`, so `getPerformanceMetrics()` first asks `to_regclass('pg_catalog.pg_stat_checkpointer')` and reads that view when it exists, `pg_stat_bgwriter` otherwise.
+  It asks for the view rather than the version number because a wire-compatible fork need not report one in step with the other.
+  Before #825 the provider always read the old columns, so every 17+ server answered `"N/A"` and logged `column "checkpoint_write_time" does not exist` on each monitoring refresh.
+  Measured 2026-09-14 through this provider against `postgres` 14.24, 15.19, 16.15, 17.11 and 18.4: all five report a reading, and none logs an error.
+  A server with no `to_regclass()` (Materialize), or a view the role cannot read, reports `"N/A"`, never `"0.0s"` for an unread counter.
 - A metric the statistics views did not publish is **omitted rather than defaulted**
   ([§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)); `deadlocks` is absent when
   `pg_stat_database` has no row for the database, rather than reported as zero deadlocks.
@@ -1083,7 +1085,7 @@ base) fans these out in parallel.
 |--------|----------------|-------|
 | `getHealth()` | `pg_stat_activity`, `pg_database_size`, `pg_statio_user_tables`, `pg_stat_statements` | connections, size, cache-hit % (`N/A` when unmeasurable — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)), top-5 slow queries (single placeholder row if the extension is absent), 10 sessions |
 | `getOverview()` | `version()`, `pg_postmaster_start_time()`, `pg_settings`, `pg_database_size`, `pg_tables`/`pg_indexes` | version, uptime, conns, max_conns, size, table/index counts |
-| `getPerformanceMetrics()` | `pg_statio_user_tables`, `pg_stat_database`, `pg_stat_bgwriter` | cache-hit % (omitted when unmeasurable), deadlocks, checkpoint write time (gated, `N/A`); **no buffer-pool %** — see [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
+| `getPerformanceMetrics()` | `pg_statio_user_tables`, `pg_stat_database`, `pg_stat_checkpointer` (17+) or `pg_stat_bgwriter` | cache-hit % (omitted when unmeasurable), deadlocks, checkpoint write time (`N/A` when unreadable); **no buffer-pool %** — see [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `pg_stat_statements` → fallback `pg_stat_activity` | detailed per-statement stats; fallback shows live active queries |
 | `getActiveSessions()` | `pg_stat_activity` | pid, user, state, query, wait events, duration; excludes own backend |
 | `getTableStats()` | `pg_stat_user_tables` + size functions | live/dead tuples, sizes, last (auto)vacuum/analyze, bloat ratio |
