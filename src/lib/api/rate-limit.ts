@@ -141,9 +141,9 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   // search, inventory, source, edit-plan, edit-apply), which reach this bucket through
   // handleObjectRequest in object-route.ts and so carry no bucket literal of their own. Counted
   // from the route directories under src/app/api/db/objects/ and not from a grep, which is the
-  // whole reason this second paragraph exists: those nine carry no literal to find. Seven of the
-  // nine directories exist as this comment is written and the last two land later on the same
-  // branch, so a reader who counts today and gets seven has counted correctly and early.
+  // whole reason this second paragraph exists: those nine carry no literal to find. All nine
+  // directories exist; this passage used to say seven did, because the count moved ahead of the
+  // last two routes landing, and a reader who counts today gets nine.
   //
   // A SLOT IS NOT A UNIT OF COST HERE EITHER, and the two new routes are the sharpest example in
   // this bucket. An edit-apply slot runs DDL against a live engine; a db/pool-stats slot reads a

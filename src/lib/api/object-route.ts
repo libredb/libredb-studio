@@ -37,8 +37,8 @@ import type { ApiErrorCode } from "@/lib/api/error-codes";
  * new line of any of them. The eighth and ninth, the edit plan and the edit apply, are Phase 3's
  * and were built the same way. SEVEN became NINE with the count's own basis, which is the route
  * directories under `src/app/api/db/objects/`, and not as a bare digit: `src/lib/api/rate-limit.ts`
- * carries the same census and moved in the same commit. Seven of the nine exist as this is
- * written; the edit-plan and edit-apply routes land later on the same branch.
+ * carries the same census and moved in the same commit. All nine directories exist: this sentence
+ * used to say seven of them did, because the count moved before the last two routes landed.
  *
  * `route` is the same string the caller passes for error-response context, so `POST /${route}`
  * reuses it rather than threading a second, guard-specific string through every call site.
