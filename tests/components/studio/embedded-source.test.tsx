@@ -1347,7 +1347,7 @@ describe("the embedded workspace applies an object edit through the host", () =>
           refusal: {
             refusal: "privilege",
             sentence: "must be owner of function order_total",
-            at: { within: "object" },
+            at: { within: "none" },
           },
           duration: 2,
         }) as unknown as ObjectEditOutcome,
@@ -1356,6 +1356,16 @@ describe("the embedded workspace applies an object edit through the host", () =>
     await click("object-source-apply-confirm");
     await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
 
+    /*
+     * WHICH failure, and it is asserted because the first draft of this test did not: a refusal
+     * whose `at` was `{ within: "object" }`, which is not one of the three arms `isPosition`
+     * accepts, made the outcome unreadable, and an unreadable outcome returns from `landOutcome`
+     * BEFORE the line the counter mutation moves. The test passed and the mutation killed nothing.
+     * Pinning the engine's own sentence is what puts the refused arm in the population.
+     */
+    expect(screen.getByTestId("object-source-apply-failure").textContent).toContain(
+      "must be owner of function order_total",
+    );
     expect(refreshTokenPassedToTheViewer()).toBe(0);
     expect(screen.queryByTestId("object-source-stale")).toBeNull();
   });
@@ -1419,7 +1429,7 @@ describe("the embedded workspace applies an object edit through the host", () =>
       apply: async () =>
         ({
           outcome: "refused",
-          refusal: { refusal: "privilege", sentence: HUGE, at: { within: "object" } },
+          refusal: { refusal: "privilege", sentence: HUGE, at: { within: "none" } },
           duration: 1,
         }) as unknown as ObjectEditOutcome,
     });
