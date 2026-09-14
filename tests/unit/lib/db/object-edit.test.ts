@@ -117,6 +117,51 @@ describe("describeConsequence", () => {
   });
 });
 
+/**
+ * One distinguishing substring per class, a TOTAL record so a ninth class fails to COMPILE here.
+ *
+ * Fix round 1, finding 1. The two assertions above are that every sentence interpolates the fact
+ * and that the eight sentences are DISTINCT, and neither binds a consequence CLASS to its own
+ * SENTENCE. MEASURED at this base: swapping the `destroys-index` and `destroys-comment` arrows
+ * killed 0 of 32 tests, and replacing the `replaces-whole-container` sentence with "Applying this
+ * is safe and nothing else in the container is affected." also killed 0 of 32, with format, lint,
+ * typecheck, the whole of tests/unit and the 100 percent line gate all green, because every arrow
+ * still executed and still interpolated the fact. That second mutation has a day-one producer:
+ * `replace-in-place-command` on Redis 8.10.0 is the one live source of `replaces-whole-container`,
+ * and FUNCTION LOAD REPLACE drops every other function in the library, so the mutated dialog would
+ * tell the reader the apply is safe on the one path where it is not.
+ *
+ * This record is also what pins `CLASSES` to the type. MEASURED: adding a ninth class to
+ * `ObjectEditConsequenceClass` with its arrow in `CONSEQUENCE_SENTENCE` makes THIS record fail to
+ * compile (TS2741 at this line), and adding the ninth entry here while leaving `CLASSES` at eight
+ * makes the first assertion below go red. The hand-written list can no longer fall behind the
+ * union in silence.
+ */
+const DISTINGUISHING: Readonly<Record<ObjectEditConsequenceClass, string>> = {
+  "replaces-whole-container": "whole container",
+  "destroys-sibling-part": "other part",
+  "destroys-overloads": "overload",
+  "destroys-index": "index",
+  "destroys-comment": "comment",
+  "forks-object": "SECOND object",
+  "transfers-security-principal": "principal",
+  "changes-module-semantics": "evaluates this module",
+};
+
+describe("describeConsequence names the right consequence", () => {
+  test("every class's sentence names ITS OWN loss, and no other class's sentence does", () => {
+    expect(Object.keys(DISTINGUISHING).sort()).toEqual([...CLASSES].sort());
+    const fact = { source: "s", observed: "o" };
+    for (const loses of CLASSES) {
+      expect(describeConsequence({ loses, fact })).toContain(DISTINGUISHING[loses]);
+      for (const other of CLASSES) {
+        if (other === loses) continue;
+        expect(describeConsequence({ loses: other, fact })).not.toContain(DISTINGUISHING[loses]);
+      }
+    }
+  });
+});
+
 describe("the pinned path sentence", () => {
   const refusal = (code?: string): ObjectEditRefusal => ({
     refusal: "definition",

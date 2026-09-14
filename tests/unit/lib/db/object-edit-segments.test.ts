@@ -86,6 +86,23 @@ describe("userTextOf", () => {
     expect(userTextOf(step)).toBe(user);
   });
 
+  test("a segment whose end precedes its start is a drift and answers undefined", () => {
+    // Fix round 1, finding 2, MUTATION X1. Deleting `if (length < 0) return undefined;` killed 0
+    // of 32 tests, and raw line coverage cannot see it because the `if` line itself executes on
+    // every consistent fixture. This step is the population that guard rejects: an inverted
+    // `user` range. Without the guard the walk answers "ab", a text assembled from a range no
+    // provider ever sent, and every marker computed from it sits on the wrong character.
+    const step: ObjectEditStep = {
+      text: "ab",
+      language: "sql",
+      segments: [
+        { from: "user", start: 0, end: 2 },
+        { from: "user", start: 1, end: 0 },
+      ],
+    };
+    expect(userTextOf(step)).toBeUndefined();
+  });
+
   test("a GAP between two user segments cannot be reconstructed and answers undefined", () => {
     const step: ObjectEditStep = {
       text: "abXYef",
@@ -156,6 +173,33 @@ describe("userPositionOf", () => {
   test("an offset past the end of the sent text is outside, and so is a negative one", () => {
     expect(userPositionOf(PG_STEP, PG_STEP.text.length)).toEqual({ within: "outside" });
     expect(userPositionOf(PG_STEP, -1)).toEqual({ within: "outside" });
+  });
+
+  test("a NON-INTEGER offset is outside, and it is not the range check that says so", () => {
+    // Fix round 1, finding 2, MUTATION X2. Deleting `!Number.isInteger(sentOffset) ||` from the
+    // entry guard killed 0 of 32 tests. The live population is named by this module's own
+    // docblock: PostgreSQL's `position` arrives as a STRING although `QueryError.position` is
+    // typed `number`, so a provider doing a byte-to-character or a `parseFloat` conversion can
+    // hand in a fraction. 62.5 is inside the user segment and inside the range, so only the
+    // integer clause can reject it; without that clause the map answers a confident
+    // `{ within: "user", line: 1, column: 63 }` and Monaco renders the marker silently.
+    expect(userPositionOf(PG_STEP, 62.5)).toEqual({ within: "outside" });
+  });
+
+  test("an offset AT the end of an over-covering step is outside", () => {
+    // Fix round 1, finding 2, MUTATION X3. Changing `sentOffset >= step.text.length` to `>`
+    // killed 0 of 32 tests, and the suite's own
+    // `userPositionOf(PG_STEP, PG_STEP.text.length)` does NOT pin it: on a consistent step the
+    // walk runs off the end and the trailing `return { within: "outside" }` answers the same
+    // thing. Here the segments OVER-COVER the text, so with `>` the walk finds offset 3 inside
+    // the user segment and answers `{ within: "user", line: 1, column: 4 }`, a column past the
+    // end of a 3-character text.
+    const step: ObjectEditStep = {
+      text: "abc",
+      language: "sql",
+      segments: [{ from: "user", start: 0, end: 5 }],
+    };
+    expect(userPositionOf(step, step.text.length)).toEqual({ within: "outside" });
   });
 
   test("a step whose segments do not cover its own text answers outside rather than a position", () => {
