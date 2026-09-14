@@ -704,8 +704,17 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
  * as a change to this one.
  *
  * That count is a property of the TREE and not of the rename, so it has to be re-taken whenever
- * the owning suite changes: the number above read 24 until this commit, because it was measured
- * before the two tests that added the last two `-failure` call sites landed in the same commit.
+ * the owning suite changes: the number above read 24 until it was corrected, because it was
+ * measured before the two tests that added the last two `-failure` call sites landed in the same
+ * commit. Re-measured unchanged at 26 after the command-medium tests landed.
+ *
+ * Two things a mechanical `sed` over the tree gets WRONG, both MEASURED in that same window:
+ * a whole-tree grep for the literal string finds FIVE files and 21 occurrences and misses this
+ * region's own suite entirely, because that suite composes the prefix
+ * (`const testId = (suffix: string) => ...` and `testId("-failure")`), so the rename has to run
+ * over the `-failure` suffix form as well; and the substitution rewrites THIS paragraph into a
+ * false one, `still reads object-source-apply-outcome ... KNOWN STALE NAME`, so the paragraph
+ * comes out with the rename rather than going through it.
  */
 function OutcomeRegion({
   plan,
