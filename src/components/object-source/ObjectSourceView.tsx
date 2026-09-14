@@ -435,7 +435,11 @@ function sentenceOf(error: unknown): string {
  *
  * `pathKey` and never `JSON.stringify`, per standing ruling 5g.
  */
-function namesThisObject(document: ObjectSourceDocument, path: readonly string[], kind: string): boolean {
+function namesThisObject(
+  document: { readonly path: readonly string[]; readonly kind: string },
+  path: readonly string[],
+  kind: string,
+): boolean {
   return document.kind === kind && pathKey(document.path) === pathKey(path);
 }
 
@@ -1209,6 +1213,11 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
         if (!answer.built) {
           setPreview(undefined);
           setBuildRefusal({ address, refusal: answer.refusal.refusal, sentence: answer.refusal.sentence });
+          return;
+        }
+        if (!namesThisObject(answer.plan, path, kind) || answer.plan.partId !== shot.partId) {
+          setPreview(undefined);
+          setBuildRefusal({ address, refusal: "unreadable", sentence: UNREADABLE_BUILD });
           return;
         }
         setPreview({

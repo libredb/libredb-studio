@@ -1328,6 +1328,80 @@ describe("the embedded workspace applies an object edit through the host", () =>
     expect(refreshTokenPassedToTheViewer()).toBe(0);
   });
 
+  test("a host plan addressed to ANOTHER object is refused, and the host's apply is never called", async () => {
+    /*
+     * THE SECOND HALF OF THE EXTERNAL REVIEW OF PR #831, and this shell is where it bites hardest.
+     * `isObjectEditPlanShape` answers whether a value IS a plan. It cannot answer whether the plan
+     * is a plan for the object whose text the reader just edited, and on this seam there is nothing
+     * else that could: the standalone shell has a server-minted token whose fingerprint and address
+     * the apply route re-derives, and here there is no token, no route and no server. The host's
+     * answer is the seal.
+     *
+     * So a host whose `build` is merely MISTAKEN, answering the previous tab's plan out of a cache
+     * or losing a race between two open Source tabs, gets the reader's text for object A written
+     * over object B, having shown them object A's diff the whole way. That is ruling 1a's own claim
+     * failing on its own terms: the address is part of what was approved.
+     *
+     * THE READ SEAM ALREADY DOES THIS. `namesThisObject` in
+     * `src/components/object-source/ObjectSourceView.tsx` refuses a DOCUMENT whose path and kind
+     * are not the ones that were asked for, and its docblock records why: without it the wrong
+     * object renders under the asked-for name with nothing on screen saying so. The BUILD seam has
+     * no equivalent, which is the gap.
+     *
+     * Three cases and not one, because the address has three components and a predicate that
+     * checked only the path would pass a one-case test while leaving two ways through. Each is a
+     * separate mount with a `cleanup()` between, which is this file's own pattern.
+     */
+    const elsewhere: readonly { readonly label: string; readonly plan: ObjectEditPlan }[] = [
+      { label: "another path", plan: { ...PLAN, path: ["app", "order_tax(integer)"] } as ObjectEditPlan },
+      { label: "another kind", plan: { ...PLAN, kind: "procedure" } as unknown as ObjectEditPlan },
+      { label: "another part", plan: { ...PLAN, partId: "header" } as unknown as ObjectEditPlan },
+    ];
+
+    for (const { label, plan } of elsewhere) {
+      const applied: string[] = [];
+      render(
+        workspace({
+          reader: editingReader({
+            build: async () =>
+              ({ built: true, plan, preimage: { text: DEFINITION, language: "sql" } }) as ObjectEditBuild,
+            apply: async (_connectionId: string, sent: ObjectEditPlan) => {
+              applied.push(sent.planId);
+              return APPLIED;
+            },
+          }),
+        }),
+      );
+      await openSourceTab();
+      await click("object-source-edit");
+      await waitFor(() => expect(screen.getByTestId("object-source-preview")).toBeTruthy());
+      await click("object-source-preview");
+
+      // The dialog is never drawn, so there is no confirm button to press and the reader is never
+      // shown a diff for one object over a plan addressed to another. `${label}` is in the message
+      // so a failure names which of the three components got through.
+      await waitFor(() => expect(screen.getByTestId("object-source-edit-refused")).toBeTruthy());
+      expect(screen.getByTestId("object-source-edit-refused").getAttribute("data-refusal")).toBe("unreadable");
+      expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull();
+      expect({ label, applied }).toEqual({ label, applied: [] });
+      cleanup();
+    }
+
+    // THE CONTROL, and it is the reason the three cases above are not vacuous: the SAME gestures
+    // over a plan that DOES address this pane reach the dialog and the host's apply. A pane that
+    // refused every build, or a preview button that had stopped working, would pass every line
+    // above and fail here.
+    const reached: string[] = [];
+    await applySuccessfullyThroughTheHost({
+      build: async () => BUILT,
+      apply: async (_connectionId: string, sent: ObjectEditPlan) => {
+        reached.push(sent.planId);
+        return APPLIED;
+      },
+    });
+    expect(reached).toEqual(["host-plan-1"]);
+  });
+
   test("this shell's refreshToken becomes a counter IT owns, and only its OWN apply moves it", async () => {
     /*
      * `refreshToken={0}` was a DECISION and not a stub, and an apply breaks its stated premise,
