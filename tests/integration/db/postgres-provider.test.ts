@@ -9,6 +9,7 @@ import {
   isSourcePartUnavailable,
   sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ContainerLevels, ObjectEditRefusalClass, ReadOnlyStatementBudget } from "@/lib/db/types";
@@ -4858,17 +4859,36 @@ describe("PostgreSQL object source", () => {
  * `definition` is `MEASURED_FUNCTION_DEFINITION` verbatim, so the identity rule and the
  * byte-identical refusal below are asked of the engine's own rendering and never of a
  * hand-written approximation of it. `revision` is the md5 of exactly those bytes: it was read
- * back with `SELECT md5(pg_get_functiondef('app.order_total(integer)'::regprocedure))` and it is
- * recomputable from the constant above it.
+ * back with `SELECT md5(pg_get_functiondef('app.order_total(integer)'::regprocedure))` on
+ * PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) and it is recomputable from the constant above it.
+ *
+ * FINDING 3, wave 5 review: the value that stood here first was `9d7b0d59cbc2bd88b0d55a7845da1b2a`
+ * and it was NOT the md5 of the constant, so the docblock made a recomputability claim the engine
+ * refuted. The value below is what the live server answered for exactly these 228 bytes and what
+ * `md5()` in node answers for them, and the test right after this constant is what keeps the claim
+ * true rather than merely written.
  */
 const ROUTINE_ROW = {
   definition: MEASURED_FUNCTION_DEFINITION,
-  revision: "9d7b0d59cbc2bd88b0d55a7845da1b2a",
+  revision: "0254cc4b95d136b16c693d64a43b1080",
   owner: "postgres",
   may_replace: true,
   search_path: '"$user", public',
   check_function_bodies: "on",
 };
+
+/**
+ * THE FIXTURE'S OWN CLAIM, ASSERTED (#789 Phase 3, finding 3 of the wave 5 review).
+ *
+ * A docblock that says a token is recomputable and is wrong about it costs the next reader the
+ * time to work out which of the two measurements lied. This is the claim as a test: MEASURED on
+ * PostgreSQL 18.4, `SELECT md5(pg_get_functiondef('app.order_total(integer)'::regprocedure))`
+ * answered `0254cc4b95d136b16c693d64a43b1080` and `length()` answered 228 for the same rendering.
+ */
+test("the fixture's revision IS the md5 of the fixture's definition", () => {
+  expect(MEASURED_FUNCTION_DEFINITION.length).toBe(228);
+  expect(createHash("md5").update(MEASURED_FUNCTION_DEFINITION).digest("hex")).toBe(ROUTINE_ROW.revision);
+});
 
 /** The reader's edit: one word of the body changed, and the identity untouched. */
 const EDITED = MEASURED_FUNCTION_DEFINITION.replace("coalesce(sum(", "COALESCE(sum(");
@@ -4928,6 +4948,31 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         offered: false,
         reason:
           'this connection\'s database account does not own "app.order_total(integer)", which is owned by "app_owner", and PostgreSQL checks ownership rather than privilege for CREATE OR REPLACE',
+      });
+      await provider.disconnect();
+    });
+
+    test("a NULL may_replace reads as FALSE, and never as an offer to write", async () => {
+      // FINDING 4 and FINDING 9, wave 5 review: the "a NULL or absent value reads as false"
+      // sentence in `routineEditAffordance`'s docblock had NO test, and the reviewer's mutation
+      // `row.may_replace === true` -> `row.may_replace !== false` SURVIVED at 242 pass 0 fail.
+      //
+      // THE LIVE POPULATION, and it is D62's: this type id also serves CockroachDB and
+      // Materialize, and a fork whose `pg_has_role` answers NULL rather than a boolean turns "we
+      // could not find out whether you may write this" into "you may write this", after which the
+      // pane offers an edit the engine will refuse.
+      const provider = await connected();
+      mockQueryFn = async () => ({
+        rows: [{ definition: MEASURED_FUNCTION_DEFINITION, may_replace: null, owner: "app_owner" }],
+      });
+      const document = await provider.readObjectSource(["app", "order_total(integer)"], "function");
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(part.edit).toEqual({
+        offered: false,
+        reason:
+          'this connection\'s database account does not own "app.order_total(integer)", which is owned by ' +
+          '"app_owner", and PostgreSQL checks ownership rather than privilege for CREATE OR REPLACE',
       });
       await provider.disconnect();
     });
@@ -5007,6 +5052,62 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         "RAISE EXCEPTION 'libredb: this apply did not change the object it was addressed to'",
       );
       expect(step.language).toBe("pgsql");
+      await provider.disconnect();
+    });
+
+    test("the post-condition asks whether the addressed ROW was rewritten, never whether its rendering moved", async () => {
+      // FINDING 1, wave 5 review, SEVERITY 1 and CONFIRMED END TO END. The post-condition used to
+      // compare `md5(pg_get_functiondef(oid))` against the plan's revision and raise LB003 when it
+      // had not moved, on the premise that the build's byte-identical refusal emptied the
+      // false-positive population. IT DID NOT. `pg_get_functiondef` is a CANONICAL rendering, so an
+      // edit that differs from the server's bytes and re-renders to the same bytes passes the build
+      // and then trips the post-condition.
+      //
+      // MEASURED on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) through the SHIPPED provider, before
+      // the repair: `app.order_total(integer)` re-indented (`\n RETURNS numeric\n LANGUAGE sql`
+      // typed back as `\nRETURNS numeric\nLANGUAGE SQL`) built, applied, and answered
+      // `{"outcome":"applied-elsewhere","undone":true}` for a legitimate edit of the user's own
+      // object. Server md5 before and after an identical CREATE issued directly was
+      // `d9a63a78c5f93adf2aa325d3e0139be3` both times while `pg_proc.xmin` moved 776 -> 778.
+      //
+      // xmin is the right POST-CONDITION for the same reason it is the wrong TOKEN: it moves on
+      // every rewrite of the row including a byte-identical one, which is exactly the question
+      // "was the row I addressed the row that got written". It is captured in the PRE block and
+      // compared in the POST block, both inside the apply's own round trip, so the comparison is
+      // against the value the guard itself read and not against anything a build could have
+      // remembered. MEASURED after the repair, same engine, same unit: the canonicalized edit
+      // answers `SET | DO | CREATE FUNCTION | DO` with no raise, and a unit whose text creates a
+      // DIFFERENT routine answers `ERROR: libredb: this apply did not change the object it was
+      // addressed to` and leaves `count(*) = 0` for the forked name, so the round trip rolled back.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      const [prefix, , suffix] = build.plan.unit.steps[0].segments;
+      if (prefix.from !== "provider" || suffix.from !== "provider") throw new Error("narrowing");
+      // The PRE block captures the addressed row's xmin, transaction-locally, so it is gone when
+      // the round trip ends: MEASURED, a new session answers
+      // `ERROR: unrecognized configuration parameter "libredb.row_version"`.
+      expect(prefix.text).toContain("PERFORM set_config('libredb.row_version'");
+      expect(prefix.text).toContain("p.xmin::text");
+      // The POST block compares THAT, and nothing about the rendering. The negative is the half
+      // that pins the repair: a revision comparison here is what reported the legitimate edit as
+      // `applied-elsewhere`.
+      expect(suffix.text).toContain("IS NOT DISTINCT FROM current_setting('libredb.row_version')");
+      expect(suffix.text).not.toContain("md5");
+      expect(suffix.text).not.toContain(ROUTINE_ROW.revision);
+      // The CONTROL that stops the two assertions above passing over an empty suffix: the LB003
+      // raise is still in it, and the PRE block still guards the revision with LB001.
+      expect(suffix.text).toContain(
+        "RAISE EXCEPTION 'libredb: this apply did not change the object it was addressed to'",
+      );
+      expect(prefix.text).toContain(`IS DISTINCT FROM $lb`);
       await provider.disconnect();
     });
 
@@ -5099,10 +5200,40 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         await provider.disconnect();
       });
 
+      test("a GUC this server answered NOTHING for is the same GUARD refusal, saying so", async () => {
+        // FINDING 10, wave 5 review: the reviewer mutated `row.check_function_bodies !== "on"` to
+        // `=== "off"` and it SURVIVED at 242 pass 0 fail, because the only population the suite
+        // built was the literal string "off". The `?? "an unreadable value"` arm of the sentence
+        // was prose nothing could reach.
+        //
+        // WHAT THIS POPULATION IS, named rather than implied: on PostgreSQL 18.4
+        // `current_setting('check_function_bodies')` always answers a string, and a server with no
+        // such GUC raises 42704 out of the build rather than answering null, so this row is NOT
+        // reachable on this engine. It is D62's: a wire-compatible fork answering NULL for a
+        // `current_setting` this provider selects. The arm ships because the alternative is to
+        // read "no answer" as "on", which is the one reading that lets a broken body through.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [{ ...ROUTINE_ROW, check_function_bodies: null }] });
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("guard");
+        expect(build.refusal.sentence).toContain("check_function_bodies = an unreadable value");
+        await provider.disconnect();
+      });
+
       test("text byte-identical to the server's is a DEFINITION refusal and never a no-op apply", async () => {
-        // A refusal rather than a no-op because it removes the entire false-positive population from
-        // the post-condition below: with it, "this apply did not change the object" can only mean a
-        // fork.
+        // A refusal rather than a no-op because an apply that cannot change anything spends a write
+        // path, an audit row and a lock on nothing.
+        //
+        // It was documented as removing the post-condition's entire false-positive population, and
+        // the wave 5 review MEASURED that claim false: `pg_get_functiondef` is canonical, so a
+        // reformatted edit passes this refusal and re-renders to the same bytes. The post-condition
+        // asks a different question now, and the test above is where that is pinned.
         const provider = await connected();
         mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
         const build = await provider.buildObjectEdit({
@@ -5134,6 +5265,38 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         expect(build.refusal.refusal).toBe("identity");
         expect(build.refusal.sentence).toContain("order_total_v2");
         expect(build.refusal.sentence).toContain("order_total(order_id integer)");
+        await provider.disconnect();
+      });
+
+      test("a changed parameter DEFAULT is refused too, and the sentence does NOT claim a fork", async () => {
+        // FINDING 2, wave 5 review. `pg_get_functiondef` renders parameter defaults INSIDE the
+        // header, so a changed DEFAULT lands in this same refusal. MEASURED on PostgreSQL 18.4
+        // (Debian 18.4-1.pgdg13+1): `CREATE OR REPLACE FUNCTION app.f_def(a integer DEFAULT 1)`
+        // re-created as `DEFAULT 2` left `count(*) = 1` and `oid = 16787` with `xmin` moving
+        // 857 -> 858, an ordinary in-place replace, and `pg_get_functiondef` then rendered
+        // `DEFAULT 2`. So the old sentence, which said PostgreSQL "would not replace it" and that
+        // "every call site fails 42725 is not unique", stated an engine fact that is FALSE for
+        // this population, on one of the most ordinary edits a function has.
+        //
+        // The refusal STAYS, because separating a changed DEFAULT from a changed argument list
+        // inside the rendered header needs a parser for the header and this design has none: the
+        // two are the same bytes to a byte comparison. What changes is that the sentence now says
+        // which of the two it cannot tell apart, and names the repair.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        const defaulted = ROUTINE_ROW.definition.replace("(order_id integer)", "(order_id integer DEFAULT 0)");
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: defaulted,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+        expect(build.refusal.sentence).toContain("changed parameter DEFAULT is rendered inside this same header");
+        expect(build.refusal.sentence).toContain("PostgreSQL replaces that one in place");
+        // The claim the engine refutes must not be in there as an unconditional one.
+        expect(build.refusal.sentence).not.toContain("PostgreSQL would not replace it");
         await provider.disconnect();
       });
 
@@ -5392,6 +5555,28 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
       expect(answer.conflict).toBe("engine-refused-concurrent");
     });
 
+    test("a SQLSTATE this design recognises WINS over the message, and that is the ordering pinned", async () => {
+      // FINDING 11, wave 5 review: the reviewer dropped `verdict === undefined &&` from the
+      // `tuple concurrently updated` arm and it SURVIVED at 242 pass 0 fail, so the docblock's
+      // claim that the message is "only ever consulted for a code that is not data" was certified
+      // by prose alone.
+      //
+      // THE POPULATION, stated with its evidence class: this error is SYNTHETIC. A code in
+      // `APPLY_VERDICT_BY_SQLSTATE` carrying that message was not observed on PostgreSQL 18.4, and
+      // the arm's live population is the XX000 case the test above covers. What is asserted here
+      // is the ORDERING between two readers of one error, which is a property of this file and not
+      // of the engine, and it is the only way to assert it.
+      const answer = await applyWithEngineError(
+        Object.assign(new Error("cannot change return type of existing function, tuple concurrently updated"), {
+          code: "42P13",
+        }),
+      );
+      // Without the `verdict === undefined` half this answers `conflict` / `engine-refused-concurrent`,
+      // which would tell the reader to retry an edit the engine will refuse every time.
+      if (answer.outcome !== "refused") throw new Error("narrowing");
+      expect(answer.refusal.refusal).toBe("definition");
+    });
+
     test("a conflict re-reads and carries the server's CURRENT text for the diff", async () => {
       const answer = await applyWithEngineError(
         Object.assign(new Error("libredb: this definition changed since it was read"), { code: "LB001" }),
@@ -5411,6 +5596,51 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
       // PostgreSQL's post-condition raises inside the same implicit transaction, so the whole round
       // trip rolls back and the second object is gone.
       expect(answer.undone).toBe(true);
+    });
+
+    test("the failed client is RELEASED before the conflict arm takes a second one", async () => {
+      // FINDING 7, wave 5 review. `classifyApplyFailure` used to run inside the `catch`, which is
+      // BEFORE the `finally { client.release() }`, so the conflict arm's re-read asked the pool
+      // for a SECOND client while the failed one was still checked out. Harmless at the default
+      // pool size and a deadlock on a pool of one, which `POSTGRES_POOL_MAX=1` and a single-slot
+      // PgBouncer both produce.
+      //
+      // The order is asserted rather than the count, because two clients held at once and two
+      // clients taken in sequence are the same count.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      const order: string[] = [];
+      const connectSpy = spyOn(lastPool!, "connect").mockImplementation(async () => {
+        order.push("connect");
+        return mockClient;
+      });
+      const releaseSpy = spyOn(mockClient, "release").mockImplementation(() => {
+        order.push("release");
+      });
+      let first = true;
+      mockQueryFn = async () => {
+        if (first) {
+          first = false;
+          throw Object.assign(new Error("libredb: this definition changed since it was read"), { code: "LB001" });
+        }
+        return { rows: [ROUTINE_ROW] };
+      };
+      try {
+        const answer = await provider.applyObjectEdit(build.plan);
+        expect(answer.outcome).toBe("conflict");
+      } finally {
+        connectSpy.mockRestore();
+        releaseSpy.mockRestore();
+      }
+      expect(order).toEqual(["connect", "release", "connect", "release"]);
+      await provider.disconnect();
     });
 
     test("a driver failure with no SQLSTATE is INTERRUPTED and never a false success", async () => {

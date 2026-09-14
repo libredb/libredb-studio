@@ -698,11 +698,21 @@ The engine's own sentence is `must be owner of function order_total`, SQLSTATE `
 | `privilege` | This connection does not own the routine | "this connection's database account does not own \"app.order_total(integer)\", which is owned by \"postgres\", and PostgreSQL checks ownership rather than privilege for CREATE OR REPLACE" |
 | `guard` | `check_function_bodies` is not `on` | "this connection's session has check_function_bodies = off, and PostgreSQL then accepts a body it would otherwise reject, so an apply would report success and store a definition that cannot run" |
 | `definition` | The text is byte-identical to the server's | "this text is identical to the definition on the server" |
-| `identity` | The header changed | "this text declares \"...\" and the object being edited is \"...\". PostgreSQL would not replace it: CREATE OR REPLACE with a different name or a different argument list creates a SECOND routine and leaves this one untouched, after which every call site fails 42725 is not unique" |
+| `identity` | The header changed | "this text declares \"...\" and the object being edited is \"...\", and LibreDB refuses an edited header rather than sending it. CREATE OR REPLACE with a different name or a different argument list creates a SECOND routine and leaves this one untouched, after which every call site fails 42725 is not unique. A changed parameter DEFAULT is rendered inside this same header and PostgreSQL replaces that one in place, so it is refused here as well: make it with a CREATE OR REPLACE of your own in the SQL editor" |
 
 The identity comparison is everything up to and including the first `)` and it needs no parser, because both sides are `pg_get_functiondef` output: the reader started from it and the build re-read it, so the question is whether they are the same bytes the engine wrote.
-Its limit is stated rather than left to be found: a parameter DEFAULT holding a `)` inside a string literal cuts the header early on both sides, so a change after that `)` passes this check and is caught by the post-condition below instead.
-The byte-identical case is a refusal and not a no-op apply because it removes the whole false-positive population from that post-condition: with it, "this apply did not change the object it was addressed to" can only mean a fork.
+It has a limit in EACH direction and both are stated rather than left to be found.
+
+In the FALSE-ACCEPT direction: a parameter DEFAULT holding a `)` inside a string literal cuts the header early on both sides, so a change after that `)` passes this check, and the post-condition below is what catches it.
+
+In the FALSE-REFUSE direction: `pg_get_functiondef` renders parameter DEFAULTS inside the header, so a CHANGED DEFAULT is refused as an identity change although PostgreSQL would have replaced the routine in place.
+Measured: `CREATE OR REPLACE FUNCTION app.f_def(a integer DEFAULT 1)` re-created as `DEFAULT 2` left `count(*) = 1` and `oid = 16787` with `xmin` moving 857 to 858, and `pg_get_functiondef` then rendered `DEFAULT 2`.
+The refusal stays, because telling a changed DEFAULT from a changed argument list inside the rendered header needs a parser for the header and this design has none: to a byte comparison they are the same bytes.
+What the refusal does NOT do any more is claim the engine would fork the object, which is a fact that is false for this population.
+Change a default with a `CREATE OR REPLACE` of your own in the SQL editor.
+
+The byte-identical case is a refusal and not a no-op apply because an apply that cannot change anything spends a write path, an audit row and a lock on nothing.
+It was documented here as emptying the post-condition's false-positive population, and that claim was MEASURED FALSE and withdrawn: see the post-condition below.
 
 A sixth refusal, `unsupported`, exists for a server that answers no `md5(pg_get_functiondef(oid))` at all.
 A guarded batch with no token to guard on is not this strategy, so it is refused rather than downgraded in silence to an unguarded write.
@@ -721,8 +731,17 @@ Every interpolated value is dollar-quoted with a randomly tagged delimiter, and 
 That is deliberate: a dollar-quoted string ignores every escape, so the statement does not depend on `standard_conforming_strings`, another session GUC a previous borrower of the pooled connection can change and which single-quote doubling would depend on.
 A value that happens to contain its own generated tag is refused rather than emitted.
 
-The pre-condition compares the routine's current `md5(pg_get_functiondef(oid))` against the token the plan carries and raises `LB001` if it moved, then compares `check_function_bodies` against the value read at build and raises `LB002` if that moved.
-The post-condition raises `LB003` when the addressed object's md5 did NOT change, which is a fork: the CREATE succeeded and wrote something else.
+The pre-condition compares the routine's current `md5(pg_get_functiondef(oid))` against the token the plan carries and raises `LB001` if it moved, then compares `check_function_bodies` against the value read at build and raises `LB002` if that moved, then captures the addressed row's `pg_proc.xmin` into a transaction-local setting.
+The post-condition raises `LB003` when that row's `xmin` is UNCHANGED, which means the CREATE wrote some other row: a fork.
+
+**The post-condition asks whether the addressed ROW was rewritten, and never whether its rendering moved.**
+It compared the md5 until the difference was measured, on the premise that the byte-identical refusal left it no false positives.
+It had one: `pg_get_functiondef` is a CANONICAL rendering, so an edit that differs from the server's bytes and re-renders to the same bytes passes the build.
+Measured through this provider on 18.4, `app.order_total(integer)` re-indented with `sql` upper-cased answered `applied-elsewhere` and was rolled back, a legitimate edit reported as somebody else's object and taken back.
+`xmin` moves on EVERY rewrite of the row including a byte-identical one, which is the same property that makes it a bad revision TOKEN and the right post-condition.
+It is captured inside the apply rather than carried from the build, because a value read at build time is stale by any `GRANT EXECUTE` in between and that would make a real fork invisible.
+Measured after the repair: the same canonicalized edit answers `applied`, and a unit whose text creates a DIFFERENT routine answers `LB003` and leaves `count(*) = 0` for the forked name.
+The setting the capture travels in is transaction-local: a new session answers `unrecognized configuration parameter`, and the same pooled session keeps the name and reads it back as the empty string, so the captured value does not survive the round trip.
 
 Three private codes and not one, because they mean three different outcomes, a `conflict`, a `refused` and an `applied-elsewhere`, and one shared code would force the classifier back onto reading messages.
 All three are in the range PostgreSQL documents for user-defined conditions.
@@ -756,7 +775,7 @@ The revision is `md5(pg_get_functiondef(oid))`, computed SERVER SIDE, with `chec
 
 | Candidate | Why not |
 | --- | --- |
-| `xmin` | Moves on a byte-identical replace and on a `GRANT EXECUTE`, so it produces FALSE conflicts. |
+| `xmin` | Moves on a byte-identical replace and on a `GRANT EXECUTE`, so it produces FALSE conflicts. That same property is what makes it the POST-CONDITION above: a revision answers "is the text still the one I read", where a move that changed nothing is a false conflict, and the post-condition answers "was the row I addressed the row that got written", where it is the whole signal. |
 | `ctid` | Moves on a plain `VACUUM FULL` while `xmin` survives. |
 | A frozen row's `xmin` | Reports 1, which is not a version of anything. |
 | `proconfig` | Records nothing about the body at all. |

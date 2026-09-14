@@ -689,6 +689,13 @@ function viewSourceSql(relkind: string): string {
 // `proconfig` records nothing about the body at all. The md5 of the engine's own rendering did
 // not move on COMMENT ON or on GRANT EXECUTE and did move on a real body change.
 //
+// THE SAME MEASUREMENT MAKES `xmin` THE RIGHT POST-CONDITION, and the two are not in tension:
+// a revision answers "is the TEXT still the one I read", where a move that changed nothing is a
+// false conflict, and the post-condition answers "was the ROW I addressed the row that got
+// written", where a move that changed nothing is the whole signal. `buildObjectEdit` reads this
+// md5 for the guard and the emitted unit reads `xmin` for the post-condition, and neither is
+// used for the other's question.
+//
 // `pg_has_role(current_user, p.proowner, 'USAGE')` is ONE expression rather than a comparison
 // against `current_user` plus a membership query, because a role IS a member of itself: the
 // single call is true for the owner and for any member of the owning role, which is exactly
@@ -699,6 +706,16 @@ function viewSourceSql(relkind: string): string {
 //
 // The two `current_setting` columns are the session facts the plan pins and asserts, read at
 // BUILD so the preview can show the reader what the apply will run under.
+//
+// `check_function_bodies` has two readers, the build's third refusal and the pre block's LB002
+// assertion. `search_path` HAS NONE TODAY, and that is recorded rather than left for the next
+// reader to discover: the plan pins the object's own container schema plus `pg_catalog`, which is
+// derived from the path and never from this column, so the value the connection happened to carry
+// is read and then dropped. It stays selected because it is the session fact the pin REPLACES,
+// which is the one thing a reader asking "what did my apply run under, and what would it have run
+// under" needs, and the surface that will show it is the preview's session list rather than this
+// provider. Nothing in this file reads `row.search_path`: `grep` it and the answer is this
+// comment.
 //
 // The oid is still passed and never cast, for `viewSourceSql`'s measured reason, and
 // `ROUTINE_IDENTITY_EXPR` is still the single writer of the identity expression.
@@ -806,12 +823,24 @@ const SOURCE_PART_ID = "definition";
  * FUNCTION` with a changed argument type is a SILENT SUCCESS that creates a SECOND `pg_proc` row
  * and leaves the original untouched, after which every call site fails `42725 is not unique`.
  *
- * THE LIMIT, stated because a reader would otherwise over-read this: a parameter DEFAULT holding
- * a `)` inside a string literal cuts the header early, identically on both sides, so a change
- * AFTER that `)` passes this check. That case is caught one layer down and deliberately: the
- * emitted unit's post-condition raises `LB003` when the addressed object did not change, inside
- * the same implicit transaction, so the fork is detected AND rolled back. This function is the
- * first line and the post-condition is the control on it.
+ * THE LIMIT IN THE FALSE-ACCEPT DIRECTION: a parameter DEFAULT holding a `)` inside a string
+ * literal cuts the header early, identically on both sides, so a change AFTER that `)` passes this
+ * check. That case is caught one layer down and deliberately: the emitted unit's post-condition
+ * raises `LB003` when the addressed ROW was not rewritten, inside the same implicit transaction,
+ * so a fork is detected AND rolled back. This function is the first line and the post-condition is
+ * the control on it.
+ *
+ * THE LIMIT IN THE FALSE-REFUSE DIRECTION, which the wave 5 review MEASURED and which this
+ * function cannot close: `pg_get_functiondef` renders parameter DEFAULTS inside this header, and a
+ * changed DEFAULT is an ordinary in-place replace. MEASURED on 18.4,
+ * `CREATE OR REPLACE FUNCTION app.f_def(a integer DEFAULT 1)` re-created as `DEFAULT 2` left
+ * `count(*) = 1` and `oid = 16787` with `xmin` moving 857 -> 858, and the rendering then said
+ * `DEFAULT 2`. So this refusal REFUSES an edit PostgreSQL would have performed. It stays refused
+ * rather than parsed apart, because telling a changed DEFAULT from a changed argument list inside
+ * the rendered header needs a parser for the header and this design has none: to a byte comparison
+ * they are the same bytes. What the refusal must NOT do is state a fork it cannot know, which is
+ * what its sentence did until this measurement, and `docs/providers/postgres.md` carries both
+ * directions of the limit.
  */
 function routineIdentityHeader(text: string): string {
   const close = text.indexOf(")");
@@ -866,7 +895,43 @@ const APPLY_VERDICT_BY_SQLSTATE: Readonly<Record<string, ObjectEditRefusalClass 
  * internal-error class, so there is nothing else to read: the code cannot distinguish it from
  * any other internal error. It is checked AFTER the table above, so a SQLSTATE this design
  * recognises always wins and the message is only ever consulted for a code that is not data.
+ *
+ * THE EVIDENCE CLASS OF THAT ORDERING, named because the wave 5 review found it certified by prose
+ * alone and its mutation surviving: the precedence is asserted by a test that feeds this classifier
+ * an error carrying `42P13` AND this message, which is a SYNTHETIC error. No code in the table was
+ * observed carrying this message on 18.4. What the test certifies is a property of this file, that
+ * one error has two readers and the code reads first, and there is no other way to certify it.
  */
+/**
+ * The transaction-local custom GUC the apply's PRE block stashes the addressed row's `xmin` in,
+ * written ALREADY QUOTED because it is a SQL literal in two places (#789 Phase 3).
+ *
+ * ONE writer for two readers: the `set_config` in the pre block and the `current_setting` in the
+ * post block are the same name, and two literals would let the capture and the comparison drift
+ * into two names, after which the post block raises `42704 unrecognized configuration parameter`
+ * on every apply.
+ *
+ * It is a constant rather than a value derived from anything, so nothing a caller controls reaches
+ * it and no quoting question arises.
+ *
+ * WHAT IT LEAVES BEHIND, MEASURED on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) rather than assumed,
+ * because "transaction-local" is two different answers depending on who asks. `set_config(...,
+ * true)` inside the apply's implicit transaction is visible to the post block in the same round
+ * trip. A NEW session answers `ERROR: unrecognized configuration parameter "libredb.row_version"`.
+ * THE SAME POOLED SESSION, which is the one that matters here because D73 measured session state
+ * persisting across Studio users on the cached provider, keeps the placeholder and reads it back as
+ * the EMPTY STRING: `current_setting('libredb.row_version', true)` answered null before the apply
+ * and `""` after it on backend pid 167. The captured value does not survive, so nothing leaks and
+ * no later apply can read a stale row version: the pre block writes it before the post block reads
+ * it, in the same transaction, or the pre block raised and there is no post block.
+ *
+ * The one shape that would read the empty string is a capture subquery answering NULL, which
+ * `set_config` stores as `''` rather than as NULL (MEASURED: `set_config(..., NULL, true)` returns
+ * `''` and reads back `= '' -> t`). It is unreachable here rather than handled: an absent row makes
+ * the md5 guard above it NULL, `IS DISTINCT FROM` the revision, and LB001 raises first.
+ */
+const ROW_VERSION_SETTING_LITERAL = "'libredb.row_version'";
+
 const CONCURRENT_UPDATE_SENTENCE = "tuple concurrently updated";
 
 /**
@@ -2905,6 +2970,13 @@ export class PostgresProvider extends SQLBaseProvider {
     //    BROKEN FUNCTION IS CREATED AND SUCCESS IS REPORTED. It is session-scoped, and D73
     //    measured session state persisting across Studio users on the cached provider, so the
     //    population this refuses is reachable by a previous borrower rather than hypothetical.
+    //    THE COMPARISON IS AGAINST "on" AND NEVER AGAINST "off", and the `?? "an unreadable
+    //    value"` arm is what that buys: a row that answered NO value at all is refused with a
+    //    sentence that says so rather than being read as `on`. Its evidence class is named
+    //    because the two differ: `= off` is MEASURED on 18.4, while the no-value row is D62's and
+    //    is built by a test at this provider's boundary rather than by any server this task
+    //    probed, since `current_setting` on 18.4 always answers a string and a server with no such
+    //    GUC raises 42704 out of the read above.
     if (row.check_function_bodies !== "on") {
       return refuse(
         "guard",
@@ -2914,9 +2986,16 @@ export class PostgresProvider extends SQLBaseProvider {
       );
     }
 
-    // 4. Byte-identical text. A refusal and never a no-op apply, because it removes the entire
-    //    false-positive population from the post-condition below: with it, "this apply did not
-    //    change the object it was addressed to" can only mean a fork.
+    // 4. Byte-identical text. A refusal and never a no-op apply, because sending an apply that
+    //    cannot change anything spends a write path, an audit row and a lock on nothing.
+    //
+    //    WHAT THIS REFUSAL DOES NOT BUY, corrected after the wave 5 review measured it: it does
+    //    NOT empty the post-condition's false-positive population, which is what this comment and
+    //    `docs/providers/postgres.md` both claimed. `pg_get_functiondef` is a CANONICAL rendering,
+    //    so an edit that differs from the server's bytes and re-renders to the same bytes passes
+    //    here. MEASURED on 18.4: a re-indented header with `sql` upper-cased built, applied, and
+    //    was reported `applied-elsewhere` and rolled back. The post-condition below now asks
+    //    whether the addressed ROW was rewritten instead, which that edit answers yes to.
     if (request.text === definition)
       return refuse("definition", "this text is identical to the definition on the server");
 
@@ -2928,9 +3007,12 @@ export class PostgresProvider extends SQLBaseProvider {
     if (submitted !== current) {
       return refuse(
         "identity",
-        `this text declares "${submitted}" and the object being edited is "${current}". PostgreSQL would not ` +
-          "replace it: CREATE OR REPLACE with a different name or a different argument list creates a SECOND " +
-          "routine and leaves this one untouched, after which every call site fails 42725 is not unique",
+        `this text declares "${submitted}" and the object being edited is "${current}", and LibreDB refuses an ` +
+          "edited header rather than sending it. CREATE OR REPLACE with a different name or a different " +
+          "argument list creates a SECOND routine and leaves this one untouched, after which every call site " +
+          "fails 42725 is not unique. A changed parameter DEFAULT is rendered inside this same header and " +
+          "PostgreSQL replaces that one in place, so it is refused here as well: make it with a CREATE OR " +
+          "REPLACE of your own in the SQL editor",
       );
     }
 
@@ -2969,16 +3051,41 @@ export class PostgresProvider extends SQLBaseProvider {
       `  IF current_setting('check_function_bodies') IS DISTINCT FROM ${this.dollarQuote(row.check_function_bodies)}\n` +
       `  THEN RAISE EXCEPTION 'libredb: a session setting this preview depends on changed' USING ERRCODE = 'LB002';\n` +
       `  END IF;\n` +
+      `  PERFORM set_config(${ROW_VERSION_SETTING_LITERAL},\n` +
+      `    (SELECT p.xmin::text\n` +
+      `        ${guardSubject}), true);\n` +
       `END`;
     // The post-condition catches what a byte comparison cannot see. MEASURED on 18.4: a raise
     // anywhere in this round trip rolls the WHOLE thing back, so a fork is detected AND undone in
     // the same round trip, which is what makes `applied-elsewhere` carry `undone: true` here and
     // false on an engine with no transaction.
+    //
+    // IT ASKS WHETHER THE ADDRESSED ROW WAS REWRITTEN, NOT WHETHER ITS RENDERING MOVED, and the
+    // difference is a SEVERITY 1 defect this file shipped and the wave 5 review caught end to end.
+    // A revision comparison here reads a CANONICAL rendering: an edit that differs from the
+    // server's bytes and re-renders to the same bytes passes the byte-identical refusal above and
+    // then trips this guard. MEASURED on 18.4 through this provider: `app.order_total(integer)`
+    // re-indented and with `sql` upper-cased answered `applied-elsewhere` and was rolled back,
+    // while the server's md5 was `d9a63a78c5f93adf2aa325d3e0139be3` before and after and
+    // `pg_proc.xmin` moved 776 -> 778. So the guard compares `xmin`, which moves on EVERY rewrite
+    // of the row including a byte-identical one. That is the same property that makes `xmin` a
+    // bad revision TOKEN, where a move that changes nothing is a false conflict, and the right
+    // POST-CONDITION, where it is the only thing that answers "was the row I addressed the row
+    // that got written".
+    //
+    // The value is captured in the PRE block rather than carried from the build, because a value
+    // read at build time is stale by any GRANT EXECUTE in between and that would make the fork
+    // INVISIBLE. It travels in a transaction-local custom GUC, which is gone when the round trip
+    // ends: MEASURED, a new session answers `ERROR: unrecognized configuration parameter
+    // "libredb.row_version"`. MEASURED after the repair, same engine, same emitted shape: the
+    // canonicalized edit answers `SET | DO | CREATE FUNCTION | DO` with no raise, and a unit whose
+    // text creates a DIFFERENT routine answers `ERROR: libredb: this apply did not change the
+    // object it was addressed to` with `count(*) = 0` for the forked name afterwards.
     const postBlock =
       `BEGIN\n` +
-      `  IF (SELECT md5(pg_catalog.pg_get_functiondef(p.oid))\n` +
+      `  IF (SELECT p.xmin::text\n` +
       `        ${guardSubject})\n` +
-      `     IS NOT DISTINCT FROM ${this.dollarQuote(revision)}\n` +
+      `     IS NOT DISTINCT FROM current_setting(${ROW_VERSION_SETTING_LITERAL})\n` +
       `  THEN RAISE EXCEPTION 'libredb: this apply did not change the object it was addressed to' USING ERRCODE = 'LB003';\n` +
       `  END IF;\n` +
       `END`;
@@ -3084,12 +3191,22 @@ export class PostgresProvider extends SQLBaseProvider {
     const [step] = plan.unit.steps;
     const started = Date.now();
     const client = await this.pool!.connect();
+    // THE FAILURE IS CAUGHT HERE AND CLASSIFIED AFTER THE RELEASE, and the order is load-bearing
+    // rather than tidy. `classifyApplyFailure` takes a SECOND pooled client for the conflict arm's
+    // re-read, and classifying inside the `catch` runs it BEFORE this `finally`, so the failed
+    // client is still checked out while the re-read asks for another one. At the default pool size
+    // that is invisible; on a pool of one, which `POSTGRES_POOL_MAX=1` and a single-slot PgBouncer
+    // both produce, the re-read waits for a client that is waiting for it.
+    let failure: { error: unknown } | undefined;
     try {
       await client.query(step.text);
     } catch (error) {
-      return await this.classifyApplyFailure(plan, step, error, Date.now() - started);
+      failure = { error };
     } finally {
       client.release();
+    }
+    if (failure !== undefined) {
+      return await this.classifyApplyFailure(plan, step, failure.error, Date.now() - started);
     }
 
     const after = await this.readRoutineAfterApply(plan);
