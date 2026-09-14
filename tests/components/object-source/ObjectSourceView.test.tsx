@@ -2228,8 +2228,17 @@ describe("ObjectSourceView edit mode", () => {
      *     this file 92 pass 0 fail AND `source-tab.test.tsx` 33 pass 0 fail. NOTHING in this
      *     repository killed it, because every other plan in both suites carries no consequence
      *     and `acknowledged: []` is then the correct value. That is what this test is for.
-     *   * `current = preview` instead of `previewHere`, unbinding the apply from the address:
-     *     1 fail here already, so that binding is guarded and is not re-asserted below.
+     *   * `current = preview` instead of `previewHere` in `runApply`, unbinding the apply from
+     *     the address: 94 pass 0 fail, re-measured in fix round 1 at this file's baseline. The
+     *     round-1 spelling of this line claimed 1 fail and that claim was FALSE. The mutant is
+     *     UNOBSERVABLE rather than merely uncovered: `runApply` has exactly one caller,
+     *     `onApply={runApply}` on `ApplyPreviewDialog`, and that mount is itself gated on
+     *     `previewHere !== undefined`, so at every reachable call `preview` and `previewHere` are
+     *     the same object. What a test CAN reach is the render-site binding, and
+     *     "a build that lands after the reader moved to another tab does not open over that tab"
+     *     is what kills that one. A SECOND caller of `runApply`, a keyboard shortcut or a
+     *     host-driven apply, or a dialog re-mounted from `preview`, would put the word back in the
+     *     reachable population, and nothing in this file would then notice it going.
      *
      * WHAT THE UNKILLED MUTATION COSTS A READER, and it is a live population rather than a
      * theoretical one: `src/app/api/db/objects/edit-apply/route.ts:128` refuses a plan whose
@@ -2253,11 +2262,16 @@ describe("ObjectSourceView edit mode", () => {
     await click("object-source-apply-confirm");
 
     await waitFor(() => expect(apply).toHaveBeenCalledTimes(1));
-    // All four by VALUE. The plan is the one the BUILD issued and not a rebuild of it, which is
-    // ruling 1a's own claim: the bytes the reader approved are the bytes the engine receives.
+    // All four by VALUE, which is the half ruling 1a actually needs: the bytes the reader
+    // approved are the bytes the engine receives. `toHaveBeenCalledWith` is DEEP equality and
+    // certifies no more than that, measured in fix round 1: with `runApply` mutated to send
+    // `structuredClone(plan)` this file is 94 pass 0 fail on the line below alone.
     expect(apply).toHaveBeenCalledWith(pgConnection, COLLATERAL_PLAN, "token-for-the-collateral-plan", [
       "replaces-whole-container",
     ]);
+    // And the plan is the OBJECT the build issued, not a rebuild of it that happens to compare
+    // equal. This is the assertion that goes red under the `structuredClone` mutation above.
+    expect((apply.mock.calls[0] as readonly unknown[])[1]).toBe(COLLATERAL_PLAN);
   });
 
   test("a successful apply after a re-read MOVED the active part drops the draft of the part applied", async () => {

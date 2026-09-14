@@ -4281,8 +4281,12 @@ describe("Trino object edit: the derivations, driven to their BOUND values", () 
      * punctuation is never reached, because the scan returns before entering it. That is an
      * argument and not a measurement, which is exactly why the cases below are RUN.
      *
-     * A LEFT-TO-RIGHT SCAN IS THE DRIFT THIS GUARDS, and it is measured: mutated that way, the
-     * fixture round trip above fails on `we(ird` and this one fails on the first row.
+     * A LEFT-TO-RIGHT SCAN IS THE DRIFT THIS GUARDS, and it is measured: mutated that way, this
+     * file is 187 pass 3 fail, the fixture round trip above fails on `we(ird`, and this one fails
+     * on the SECOND row, `a(b)c`, which comes back as `{name: "a", argumentTypes: "b)c(bigint"}`.
+     * The FIRST row is not the one that kills it and the round-1 spelling of this line said it
+     * was: `we)ird(bigint)` has its first `(` at index 6, so a left-to-right scan round-trips it
+     * correctly. Row two is load-bearing and row one is not; do not trim the list to row one.
      */
     const beyond: readonly (readonly [string, string])[] = [
       // A close parenthesis in the NAME, which the fixture has no example of.
